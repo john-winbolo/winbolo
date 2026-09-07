@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Стріляти
 STR_DLGKEYSETUP_LAYMINE=Встановити міну
 STR_DLGKEYSETUP_TANKVIEW=Вид танка
 STR_DLGKEYSETUP_PILLVIEW=Вид бункера
+STR_DLGKEYSETUP_BASEVIEW=Вид бази
+STR_DLGKEYSETUP_ALLYVIEW=Вид союзних танків
 STR_DLGKEYSETUP_SCROLLUP=Вгору
 STR_DLGKEYSETUP_SCROLLDOWN=Вниз
 STR_DLGKEYSETUP_SCROLLLEFT=Ліворуч
@@ -1911,6 +1913,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=Облікові записи WinBolo.net можна �
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Надсилати повтори гравцям
 STR_LV_HIDE_LOBBY=Сховати Лобі
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Видимість
+STR_DLGLOBBY_VIEW_PILL=Вид бункера
+STR_DLGLOBBY_VIEW_BASE=Вид бази
+STR_DLGLOBBY_VIEW_ALLY=Вид союзних танків
+STR_DLGLOBBY_VIEW_ALWAYS=Завжди
+STR_DLGLOBBY_VIEW_KEY=Клавіша
+STR_DLGLOBBY_VIEW_DECAY=Згасання
+STR_DLGLOBBY_VIEW_OFF=Вимк.
+STR_DLGLOBBY_VIEW_DECAY_SECS=сек
+STR_DLGLOBBY_CLASSIC_MODE_CB=Класичний режим
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Встановлює «Вид бункера» на «Клавіша», а «Вид бази»\nта «Вид союзних танків» — на «Вимк.», і утримує їх так.\nЯкщо вимкнути режим, ці три залишаться там, куди їх\nпоставив класичний режим.\nВін також приховує огляд карти та карту на весь екран\nна екрані кожного гравця. Сервер у будь-якому разі\nнадсилає ті самі дані, тож це зручність, а не гарантія\nпроти зміненого клієнта.
+STR_MENU_CLASSIC_MODE_TIP=На сервері увімкнено класичний режим, тому цей вид вимкнено.
+STR_DLGLOBBY_ALLIES_TREES_CB=Бачити союзників у лісі
+STR_DLGLOBBY_ALLIES_TREES_TIP=Союзні танки, що стоять у лісі, показуються на вашому\nекрані, а не приховуються. Туман війни все одно діє,\nтому ви бачите їх лише там, де бачите й так. Вимкнено —\nкласичне правило, і класичний режим примусово вимикає\nце налаштування.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Тема
 STR_DLGSKIN_DEFAULT=За замовчуванням
@@ -1951,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Опублікувати можна лише тем
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Ця тема має детальнішу графіку лише для деяких спрайтів, тому «За масштабом» створює ті самі тайли, що й «Класична». «Висока деталізація» використовує детальнішу графіку там, де вона є в темі.
 STR_DLGSKIN_RECFILTER_LBL=Рекомендований фільтр:
 STR_DLGSKIN_RECOMMENDED_TAG=(рекомендовано)
+
+# Огляд карти та карта на весь екран
+STR_MENU_MAP_OVERVIEW=Огляд карти
+STR_MENU_OVERVIEW_IN_WINDOW=Весь екран
+STR_OVERVIEW_FOLLOWING=стеження
+STR_OVERVIEW_FREE=вільна
+STR_DLGKEYSETUP_OVERVIEWZOOM=Масштаб карти (утримувати)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Стеження на карті (перемикання)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Збільшити карту
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Зменшити карту
+STR_DLGWELCOME_SWITCH_CLASSIC=Перемкнутися на класичний режим
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Перемкнутися на весь екран
+
+# Налаштування «Екран і звук»: весь екран і HUD-панелі карти
+STR_DLGSETTINGS_FULLSCREEN=Весь екран
+STR_DLGSETTINGS_FULLSCREEN_TIP=Заповнює весь екран замість роботи у вікні.\nЗапам'ятовується для наступного разу.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Прозорість newswire
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Наскільки карта просвічує крізь newswire вздовж\nнизу вигляду на весь екран. 0% означає повну\nнепрозорість, а повзунок зупиняється на 90%, тож\nзробити її невидимою не можна.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Автоприховування newswire
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Ховає newswire за нижній край екрана, якщо довгий\nчас не надходять нові повідомлення, і повертає її\nназад після наступного повідомлення. Вимкнено —\nтримає її на екрані всю гру.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Прозорість інструментів побудови
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Наскільки карта просвічує крізь інструменти\nпобудови вздовж лівого краю вигляду на весь\nекран. 0% означає повну непрозорість, а повзунок\nзупиняється на 90%, тож зробити їх невидимими\nне можна.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Прозорість панелі статусу
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Наскільки карта просвічує крізь панель статусу\nвздовж правого краю вигляду на весь екран — LGM,\nзнищення і смерті, рядки бази, бункера і танка,\nа також смужки запасів. 0% означає повну\nнепрозорість, а повзунок зупиняється на 90%, тож\nзробити її невидимою не можна.
+
+# Підпис виду об'єкта
+STR_ITEMVIEW_PILL=Вид бункера
+STR_ITEMVIEW_BASE=Вид бази
+STR_ITEMVIEW_ALLY=Вид союзних танків
+STR_ITEMVIEW_ALLY_NAMED=Вид союзних танків — {player}
+
+# Тег видимості у браузері серверів
+STR_DLGBROWSER_VIEWS_LBL=Види:
+STR_DLGBROWSER_VIEWS_CLASSIC=Класичний
+STR_DLGBROWSER_VIEWS_ALLYTREES=Союзники в лісі

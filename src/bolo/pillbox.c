@@ -213,20 +213,12 @@ void pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
 }
 
 
-/*********************************************************
-*NAME:          pillsExistPos
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/10/98
-*LAST MODIFIED: 28/10/98
-*PURPOSE:
-*  Returns whether a pillbox exist at a specific location
-*
-*ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  xValue - X Location
-*  yValue - Y Location
-*********************************************************/
-bool pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
+/* The scan both pillsExistPos and pillsViewExistPos run. skipStale drops a pill
+ * whose square this client has not been told is current, which is the
+ * difference between the two. A pill this client watched leave its square is
+ * dropped either way — there is nothing to draw at a square we know the pill
+ * is not on. */
+static bool pillsScanExistPos(pillboxes *value, BYTE xValue, BYTE yValue, bool skipStale) {
 	bool returnValue; /* Value to return */
 	BYTE count;       /* Looping Variable */
 
@@ -236,12 +228,57 @@ bool pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
 		/* Does the pill's map coords match what was passed and is it not in a tank? */
 		if ((((*value)->item[count].x) == xValue)
 		&& (((*value)->item[count].y) == yValue)
-		&& (((*value)->item[count].inTank) == FALSE)) {
+		&& (((*value)->item[count].inTank) == FALSE)
+		&& (((*value)->posStale[count]) != PILL_SQUARE_MOVED)
+		&& (skipStale == FALSE || ((*value)->posStale[count]) == PILL_SQUARE_CONFIRMED)) {
 			returnValue = TRUE;
 		}
 		count++;
 	}
 	return returnValue;
+}
+
+/*********************************************************
+*NAME:          pillsExistPos
+*AUTHOR:        John Morrison
+*CREATION DATE: 28/10/98
+*LAST MODIFIED: 28/10/98
+*PURPOSE:
+*  Returns whether a pillbox exist at a specific location
+*  A pill whose square this client has not been told is
+*  current does not count as being there, so movement, turn
+*  rate and shell collision never meet a pill that is only
+*  remembered. pillsViewExistPos is the variant the view
+*  builder draws from.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+bool pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
+	return pillsScanExistPos(value, xValue, yValue, TRUE);
+}
+
+/*********************************************************
+*NAME:          pillsViewExistPos
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  pillsExistPos without the position-current filter: is
+*  there a pill here as far as this client last saw. The
+*  view builder draws from this, so a pill you have lost
+*  sight of stays on screen at the square you last saw it
+*  on, rather than the ground underneath showing through.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+bool pillsViewExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
+	return pillsScanExistPos(value, xValue, yValue, FALSE);
 }
 
 /*********************************************************
@@ -539,7 +576,10 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
   returnValue = PILL_EVIL_15;
 
   while (done == FALSE && count < ((*value)->numPills)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
+    /* The same skip pillsViewExistPos makes, which is asked first: two pills
+       on one square must not answer differently about which of them is there. */
+    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE
+        && ((*value)->posStale[count]) != PILL_SQUARE_MOVED) {
       /* Pillbox has been Hit */
       done = TRUE;
 
@@ -844,7 +884,8 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
 *LAST MODIFIED: 15/1/99
 *PURPOSE:
 *  Returns whether a pillbox a specific location is dead
-*  or not.
+*  or not. A pill whose square this client has not been
+*  told is current does not count as being there.
 *
 *ARGUMENTS:
 *  value  - Pointer to the pillbox structure
@@ -858,17 +899,42 @@ bool pillsDeadPos(pillboxes *value, BYTE xValue, BYTE yValue) {
 	returnValue = FALSE;
 	count = 0;
 	while (returnValue == FALSE && count < ((*value)->numPills)) {
-		/* Do the pill's map coords match what was passed and does it have zero armour and is it not in a tank? */
+		/* Do the pill's map coords match what was passed and does it have zero armour and is it not in a tank?
+		   A pill whose square we have not been told is current answers no, the same as in pillsExistPos —
+		   every caller of this one is gameplay, so there is no view variant to pair with it. */
 		if ((((*value)->item[count].x) == xValue)
 		&& (((*value)->item[count].y) == yValue)
 		&& (((*value)->item[count].armour == 0))
-		&& (((*value)->item[count].inTank == FALSE)))
+		&& (((*value)->item[count].inTank == FALSE))
+		&& (((*value)->posStale[count]) == 0))
 		{
 			returnValue = TRUE;
 		}
 		count++;
 	}
 	return returnValue;
+}
+
+/* The scan both pillsGetPillNum and pillsGetViewPillNum run. skipStale drops a
+ * pill whose square this client has not been told is current, which is the
+ * difference between the two. */
+static BYTE pillsScanPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careInTank, bool inTank, bool skipStale) {
+  BYTE returnValue; /* Value to return */
+  BYTE count;       /* Looping Variable */
+
+  returnValue = PILL_NOT_FOUND-1;
+  count = 0;
+  while (count < ((*value)->numPills)) {
+    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue
+        && (skipStale == FALSE || ((*value)->posStale[count]) == 0)) {
+      if (careInTank == FALSE || ((*value)->item[count].inTank == inTank)) {
+        returnValue = (BYTE) (count+1);
+        count = (*value)->numPills;
+      }
+    }
+    count++;
+  }
+  return returnValue;
 }
 
 /*********************************************************
@@ -879,6 +945,9 @@ bool pillsDeadPos(pillboxes *value, BYTE xValue, BYTE yValue) {
 *PURPOSE:
 *  Returns the pill number of a pillbox at that location
 *  If not found returns PILL_NOT_FOUND
+*  A pill whose square this client has not been told is
+*  current is passed over. pillsGetViewPillNum is the
+*  variant the camera and the displays use.
 *
 *ARGUMENTS:
 *  value      - Pointer to the pillbox structure
@@ -888,21 +957,133 @@ bool pillsDeadPos(pillboxes *value, BYTE xValue, BYTE yValue) {
 *  inTank     - The intank state to check if we care
 *********************************************************/
 BYTE pillsGetPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careInTank, bool inTank) {
-  BYTE returnValue; /* Value to return */
-  BYTE count;       /* Looping Variable */
+  return pillsScanPillNum(value, xValue, yValue, careInTank, inTank, TRUE);
+}
 
-  returnValue = PILL_NOT_FOUND-1;
-  count = 0;
-  while (count < ((*value)->numPills)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
-      if (careInTank == FALSE || ((*value)->item[count].inTank == inTank)) {
-        returnValue = (BYTE) (count+1);
-        count = (*value)->numPills;
-      }
-    }
-    count++;
+/*********************************************************
+*NAME:          pillsGetViewPillNum
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  pillsGetPillNum without the position-current filter:
+*  which pill this client last saw at that square, whether
+*  or not the server has confirmed it is still there. The
+*  camera and the displays use this so a pill you have lost
+*  sight of stays selectable and stays drawn where you last
+*  saw it.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  xValue     - X Location of pillbox
+*  yValue     - Y Location of pillbox
+*  careInTank - Whether we are about the in tank state
+*  inTank     - The intank state to check if we care
+*********************************************************/
+BYTE pillsGetViewPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careInTank, bool inTank) {
+  return pillsScanPillNum(value, xValue, yValue, careInTank, inTank, FALSE);
+}
+
+/*********************************************************
+*NAME:          pillsSetPosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Records what this client knows about a pill's square:
+*  one of PILL_SQUARE_CONFIRMED, PILL_SQUARE_REMEMBERED or
+*  PILL_SQUARE_MOVED.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*  state   - One of the PILL_SQUARE_ values
+*********************************************************/
+void pillsSetPosState(pillboxes *value, BYTE pillNum, BYTE state) {
+  if (pillNum < MAX_PILLS) {
+    (*value)->posStale[pillNum] = state;
   }
-  return returnValue;
+}
+
+/*********************************************************
+*NAME:          pillsGetPosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Returns what this client knows about a pill's square, as
+*  one of the PILL_SQUARE_ values.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*********************************************************/
+BYTE pillsGetPosState(pillboxes *value, BYTE pillNum) {
+  if (pillNum < MAX_PILLS) {
+    return (*value)->posStale[pillNum];
+  }
+  return PILL_SQUARE_CONFIRMED;
+}
+
+/*********************************************************
+*NAME:          pillsUpdatePosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Folds one arriving pill update into that pill's square
+*  state. Call it before writing the new inTank, so the
+*  in-tank flag it reads is the one this client held.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  pillNum    - Pillbox index, 0 based
+*  posCurrent - The position-current bit off the wire
+*  nowInTank  - The in-tank flag that arrived
+*********************************************************/
+void pillsUpdatePosState(pillboxes *value, BYTE pillNum, bool posCurrent,
+                         bool nowInTank) {
+  bool wasInTank; /* The in-tank flag this client held */
+
+  if (pillNum >= MAX_PILLS) {
+    return;
+  }
+
+  wasInTank = (*value)->item[pillNum].inTank;
+  if (posCurrent == TRUE) {
+    /* The square arrived with the update, so it is where the pill is —
+       whatever we believed about it before. */
+    (*value)->posStale[pillNum] = PILL_SQUARE_CONFIRMED;
+  } else if (wasInTank == TRUE && nowInTank == FALSE) {
+    /* It has been put down, and we were not told where. The square we hold is
+       the one it was picked up from, which it is no longer on. */
+    (*value)->posStale[pillNum] = PILL_SQUARE_MOVED;
+  } else if ((*value)->posStale[pillNum] != PILL_SQUARE_MOVED) {
+    /* Nothing new about the square. Only a confirmed one clears the moved
+       state, so an unconfirmed update cannot talk us back into drawing it. */
+    (*value)->posStale[pillNum] = PILL_SQUARE_REMEMBERED;
+  }
+}
+
+/*********************************************************
+*NAME:          pillsIsPosStale
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Returns whether a pill's square is one this client has
+*  not been told is current — remembered or moved, as
+*  against confirmed.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*********************************************************/
+bool pillsIsPosStale(pillboxes *value, BYTE pillNum) {
+  if (pillNum < MAX_PILLS) {
+    return (*value)->posStale[pillNum] != PILL_SQUARE_CONFIRMED;
+  }
+  return FALSE;
 }
 
 /*********************************************************
@@ -1207,13 +1388,14 @@ BYTE pillsGetArmourPos(pillboxes *value, BYTE mx, BYTE my) {
 * whether a pill was found in that direction. 
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  xMove  - -1 for moving left, 1 for right, 0 for neither
-*  yMove  - -1 for moving up, 1 for down, 0 for neither
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  xMove    - -1 for moving left, 1 for right, 0 for neither
+*  yMove    - -1 for moving up, 1 for down, 0 for neither
 *********************************************************/
-bool pillsMoveView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove, int yMove) {
+bool pillsMoveView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, int xMove, int yMove) {
   bool returnValue; /* Value to return */
   double nearest;   /* Nearest */
   BYTE count;       /* Looping variable */
@@ -1226,11 +1408,11 @@ bool pillsMoveView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove
   returnValue = FALSE;
   found = 0;
   count = 0;
-  oldPill = pillsGetPillNum(value, *mx, *my, FALSE, FALSE);
+  oldPill = pillsGetViewPillNum(value, *mx, *my, FALSE, FALSE);
   oldPill--;
   myPlayerNum = sim->viewPlayer;
   while (count < (*value)->numPills) {
-    if (count != oldPill && (playersIsAllie(&sim->plyrs, myPlayerNum, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if (count != oldPill && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, myPlayerNum, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
       if (((yMove == 0 && (xMove < 0 && (*value)->item[count].x < *mx)) || (xMove > 0 && (*value)->item[count].x > *mx)) || ((xMove == 0 && (yMove < 0 && (*value)->item[count].y < *my)) || (yMove > 0 && (*value)->item[count].y > *my))) {
         if (utilIsItemInRange(*mx, *my, (*value)->item[count].x, (*value)->item[count].y, (WORLD) nearest, &dist) == TRUE) {
           nearest = dist;
@@ -1263,12 +1445,13 @@ bool pillsMoveView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove
 * pills location
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  prev   - Whether a previous pill is being passed
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  prev     - Whether a previous pill is being passed
 *********************************************************/
-bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool prev) {
+bool pillsGetNextView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, bool prev) {
   bool returnValue; /* Value to return */
   bool done;        /* Finished */
   bool okLoop;      /* Ok to loop */
@@ -1283,7 +1466,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
 
   /* Find out the previous amount */
   if (prev == TRUE) {
-    count = pillsGetPillNum(value, *mx, *my, FALSE, FALSE);
+    count = pillsGetViewPillNum(value, *mx, *my, FALSE, FALSE);
     if (count == PILL_NOT_FOUND) {
       count = 0;
     } else {
@@ -1299,7 +1482,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
 
   /* Find the next item */
   while (done == FALSE && count < ((*value)->numPills)) {
-    if ((playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if ((eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
       done = TRUE;
       *mx = (*value)->item[count].x;
       *my = (*value)->item[count].y;
@@ -1311,7 +1494,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
   if (done == FALSE && okLoop == TRUE) {
     count = 0;
     while (done == FALSE && count < ((*value)->numPills)) {
-      if ((playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+      if ((eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
         done = TRUE;
         *mx = (*value)->item[count].x;
         *my = (*value)->item[count].y;
@@ -1323,6 +1506,20 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
   /* If we still haven't found one then one doesn't exist at all */
   if (done == FALSE) {
     returnValue = FALSE;
+  }
+
+  return returnValue;
+}
+
+/* The one pill-view predicate — see internal/pillbox.h. */
+bool pillsCanView(GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer) {
+  bool returnValue; /* Value to return */
+
+  returnValue = FALSE;
+  if (pillIdx < (*value)->numPills) {
+    if ((playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[pillIdx].owner) == TRUE) && ((*value)->item[pillIdx].armour) != 0 && ((*value)->item[pillIdx].inTank) == FALSE) {
+      returnValue = TRUE;
+    }
   }
 
   return returnValue;
@@ -1344,24 +1541,15 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
 *  my    - Y Map position
 *********************************************************/
 bool pillsCheckView(GameSim *sim, pillboxes *value, BYTE mx, BYTE my) {
-  bool returnValue; /* Value to return */
-  BYTE playNumber;  /* My player number */
-  BYTE pillNum;     /* The pillbox number */
+  BYTE pillNum; /* The pillbox number */
 
-    returnValue = TRUE;
-  pillNum = pillsGetPillNum(value, mx, my, FALSE, FALSE);
-  playNumber = sim->viewPlayer;
-
+  pillNum = pillsGetViewPillNum(value, mx, my, FALSE, FALSE);
   if (pillNum == PILL_NOT_FOUND || pillNum == (PILL_NOT_FOUND-1)) {
-    returnValue = FALSE;
-  } else {
-    pillNum--;
-    if ((playersIsAllie(&sim->plyrs, playNumber, (*value)->item[pillNum].owner) == FALSE) || ((*value)->item[pillNum].armour) == 0 || ((*value)->item[pillNum].inTank) == TRUE) {
-      returnValue = FALSE;
-    }
+    return FALSE;
   }
-  
-  return returnValue;
+  pillNum--;
+
+  return pillsCanView(sim, value, pillNum, sim->viewPlayer);
 }
 
 /*********************************************************
@@ -1433,6 +1621,14 @@ void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen) {
   if ((*value)->numPills > MAX_PILLS) {
     (*value)->numPills = MAX_PILLS;
   }
+  /* The copy above stops at the wire format, so the position-current flags
+   * still describe whatever list was here before. Every square in the blob is
+   * one this client was given, so start them all current and let the next
+   * snapshot say which of them the pill has moved off. That does mean a pill
+   * that really has moved counts as solid for up to a full-sync interval after
+   * a mid-game resync; the other default would make every pill on the map
+   * non-solid for the same window, including the one you are driving at. */
+  memset((*value)->posStale, 0, sizeof((*value)->posStale));
 }
 
 /*********************************************************
@@ -1632,7 +1828,8 @@ void pillsMigratePlanted(GameSim *sim, BYTE oldOwner, BYTE newOwner) {
 *LAST MODIFIED: 10/11/99
 *PURPOSE:
 *  Returns whether a pillbox a specific location is dead
-*  or not.
+*  or not. A pill whose square this client has not been
+*  told is current does not count as being there.
 *
 *ARGUMENTS:
 *  value  - Pointer to the pillbox structure
@@ -1646,7 +1843,11 @@ bool pillsIsCapturable(pillboxes *value, BYTE xValue, BYTE yValue) {
   returnValue = FALSE;
   count = 0;
   while (returnValue == FALSE && count < ((*value)->numPills)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && ((*value)->item[count].armour == 0)  && ((*value)->item[count].inTank == FALSE)) {
+    /* The same position-current test pillsGetPillNum makes: the pickup loop
+       asks this first and then asks pillsGetPillNum which pill it was, so a
+       pill only one of the two can see would leave the tank carrying a pill
+       number that does not exist. */
+    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && ((*value)->item[count].armour == 0)  && ((*value)->item[count].inTank == FALSE) && ((*value)->posStale[count]) == 0) {
       returnValue = TRUE;
       count = (*value)->numPills;
     }

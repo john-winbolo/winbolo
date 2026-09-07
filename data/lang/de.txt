@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Schießen
 STR_DLGKEYSETUP_LAYMINE=Mine legen
 STR_DLGKEYSETUP_TANKVIEW=Panzeransicht
 STR_DLGKEYSETUP_PILLVIEW=Bunkeransicht
+STR_DLGKEYSETUP_BASEVIEW=Basenansicht
+STR_DLGKEYSETUP_ALLYVIEW=Ansicht verbündeter Panzer
 STR_DLGKEYSETUP_SCROLLUP=Hoch
 STR_DLGKEYSETUP_SCROLLDOWN=Runter
 STR_DLGKEYSETUP_SCROLLLEFT=Links
@@ -1911,6 +1913,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=WinBolo.net-Konten können nur im Hauptmenü geändert
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Wiederholungen an Spieler senden
 STR_LV_HIDE_LOBBY=Lobby ausblenden
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Sichtbarkeit
+STR_DLGLOBBY_VIEW_PILL=Bunkeransicht
+STR_DLGLOBBY_VIEW_BASE=Basenansicht
+STR_DLGLOBBY_VIEW_ALLY=Ansicht verbündeter Panzer
+STR_DLGLOBBY_VIEW_ALWAYS=Immer
+STR_DLGLOBBY_VIEW_KEY=Taste
+STR_DLGLOBBY_VIEW_DECAY=Verblassen
+STR_DLGLOBBY_VIEW_OFF=Aus
+STR_DLGLOBBY_VIEW_DECAY_SECS=Sek.
+STR_DLGLOBBY_CLASSIC_MODE_CB=Klassischer Modus
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Setzt Bunkeransicht auf Taste und Basenansicht sowie\ndie Ansicht verbündeter Panzer auf Aus und hält sie dort.\nWird er wieder ausgeschaltet, bleiben diese drei so,\nwie der klassische Modus sie gesetzt hat.\nAußerdem werden die Kartenübersicht und die Vollbildkarte\nauf dem Bildschirm jedes Spielers ausgeblendet. Der Server\nsendet in beiden Fällen die gleichen Daten — das ist also\neine Bequemlichkeitsregel und keine Garantie gegenüber\neinem veränderten Client.
+STR_MENU_CLASSIC_MODE_TIP=Auf dem Server ist der klassische Modus aktiv, daher ist diese Ansicht abgeschaltet.
+STR_DLGLOBBY_ALLIES_TREES_CB=Verbündete im Wald sehen
+STR_DLGLOBBY_ALLIES_TREES_TIP=Verbündete Panzer, die im Wald stehen, werden auf\ndeinem Bildschirm gezeichnet statt versteckt. Der Nebel\ndes Krieges gilt weiterhin, du siehst sie also nur dort,\nwo du ohnehin siehst. Aus ist die klassische Regel, und\nder klassische Modus schaltet es zwangsweise aus.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standard
@@ -1951,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Nur ein Skin im eigenen Skin-Ordner kann veröffent
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Dieser Skin hat feinere Grafiken nur für einige Sprites, daher erzeugt "An Zoom anpassen" dieselben Kacheln wie "Klassisch". "Hohes Detail" verwendet die feineren Grafiken, wo der Skin sie hat.
 STR_DLGSKIN_RECFILTER_LBL=Empfohlener Filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(empfohlen)
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=Kartenübersicht
+STR_MENU_OVERVIEW_IN_WINDOW=Vollbild
+STR_OVERVIEW_FOLLOWING=folgt
+STR_OVERVIEW_FREE=frei
+STR_DLGKEYSETUP_OVERVIEWZOOM=Kartenzoom (halten)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Kartenverfolgung (umschalten)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Karte vergrößern
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Karte verkleinern
+STR_DLGWELCOME_SWITCH_CLASSIC=Zu Klassisch wechseln
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Zu Vollbild wechseln
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=Vollbild
+STR_DLGSETTINGS_FULLSCREEN_TIP=Füllt den gesamten Bildschirm, statt in einem Fenster zu laufen.\nWird für das nächste Mal gemerkt.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire-Transparenz
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Wie viel von der Karte durch die Newswire am unteren Rand\nder Vollbildansicht durchscheint. 0% ist undurchsichtig, und\nder Regler stoppt bei 90%, damit sie nicht unsichtbar werden kann.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Newswire automatisch ausblenden
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Blendet die Newswire nach einer Weile ohne neue\nNachrichten am unteren Bildschirmrand aus und schiebt\nsie bei der nächsten Nachricht wieder hoch. Aus lässt\nsie das ganze Spiel über sichtbar.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Bauwerkzeug-Transparenz
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Wie viel von der Karte durch die Bauwerkzeuge am\nlinken Rand der Vollbildansicht durchscheint. 0% ist\nundurchsichtig, und der Regler stoppt bei 90%, damit sie\nnicht unsichtbar werden können.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Statusleisten-Transparenz
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Wie viel von der Karte durch die Statusleiste am\nrechten Rand der Vollbildansicht durchscheint - den\nLGM, Kills und Tode, die Basis-, Bunker- und\nPanzerzeilen sowie die Vorratsbalken. 0% ist\nundurchsichtig, und der Regler stoppt bei 90%, damit\nsie nicht unsichtbar werden kann.
+
+# Item view caption
+STR_ITEMVIEW_PILL=Bunkeransicht
+STR_ITEMVIEW_BASE=Basenansicht
+STR_ITEMVIEW_ALLY=Ansicht verbündeter Panzer
+STR_ITEMVIEW_ALLY_NAMED=Ansicht verbündeter Panzer — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=Ansichten:
+STR_DLGBROWSER_VIEWS_CLASSIC=Klassisch
+STR_DLGBROWSER_VIEWS_ALLYTREES=Verbündete im Wald

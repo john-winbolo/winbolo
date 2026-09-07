@@ -24,17 +24,22 @@
 /* Rasterize flags at this height; width determined by aspect ratio */
 #define RASTER_HEIGHT 44
 
-/* Cache: 26x26 grid indexed by (row * 26 + col) where row = c0-'a', col = c1-'a'.
- * NULL means not yet loaded; FAILED_SENTINEL means load was attempted and failed. */
+/* Caches: 26x26 grid indexed by (row * 26 + col) where row = c0-'a', col = c1-'a'.
+ * NULL means not yet loaded; FAILED_*SENTINEL means load was attempted and
+ * failed. The surface cache is the source: renderer-free rasterizations that
+ * per-renderer consumers (the tank-label caches) build their own textures
+ * from. The texture cache on top serves the main window's ImGui panels. */
 #define CACHE_SIZE (26 * 26)
+static SDL_Surface *flagSurfCache[CACHE_SIZE];
 static SDL_Texture *flagCache[CACHE_SIZE];
 static SDL_Renderer *s_renderer = NULL;
 static NSVGrasterizer *s_rasterizer = NULL;
 
-/* Sentinel value to distinguish "not loaded" from "failed to load" */
-#define FAILED_SENTINEL ((SDL_Texture *)(uintptr_t)1)
+/* Sentinel values to distinguish "not loaded" from "failed to load" */
+#define FAILED_SENTINEL      ((SDL_Texture *)(uintptr_t)1)
+#define FAILED_SURF_SENTINEL ((SDL_Surface *)(uintptr_t)1)
 
-static SDL_Texture *loadFlag(const char c0, const char c1) {
+static SDL_Surface *loadFlagSurface(const char c0, const char c1) {
     char path[256];
     SDL_snprintf(path, sizeof(path), "data/flags/%c%c.svg", c0, c1);
 
@@ -52,31 +57,20 @@ static SDL_Texture *loadFlag(const char c0, const char c1) {
     int w = (int)(image->width * scale + 0.5f);
     int h = RASTER_HEIGHT;
 
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) {
+    /* Rasterize straight into a surface that owns its pixels, so the cached
+     * surface outlives this call. */
+    SDL_Surface *surface = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) {
         nsvgDelete(image);
         return NULL;
     }
-
-    memset(pixels, 0, (size_t)(w * h * 4));
-    nsvgRasterize(s_rasterizer, image, 0, 0, scale, pixels, w, h, w * 4);
+    memset(surface->pixels, 0, (size_t)surface->pitch * (size_t)h);
+    nsvgRasterize(s_rasterizer, image, 0, 0, scale,
+                  (unsigned char *)surface->pixels, w, h, surface->pitch);
     nsvgDelete(image);
 
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32,
-                                                  pixels, w * 4);
-    if (!surface) {
-        SDL_free(pixels);
-        return NULL;
-    }
-
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(s_renderer, surface);
-    SDL_DestroySurface(surface);
-    SDL_free(pixels);
-
-    if (tex) {
-        WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[FLAGS] Loaded %s (%dx%d)", path, w, h);
-    }
-    return tex;
+    WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[FLAGS] Loaded %s (%dx%d)", path, w, h);
+    return surface;
 }
 
 bool flagsCreate(SDL_Renderer *renderer) {
@@ -84,6 +78,7 @@ bool flagsCreate(SDL_Renderer *renderer) {
     s_renderer = renderer;
     s_rasterizer = nsvgCreateRasterizer();
     memset(flagCache, 0, sizeof(flagCache));
+    memset(flagSurfCache, 0, sizeof(flagSurfCache));
     WB_LOG_INFO(WB_LOG_CAT_ASSET, "[FLAGS] Initialized (SVG-based, lazy loading)");
     return s_rasterizer != NULL;
 }
@@ -94,6 +89,10 @@ void flagsDestroy(void) {
             SDL_DestroyTexture(flagCache[i]);
         }
         flagCache[i] = NULL;
+        if (flagSurfCache[i] && flagSurfCache[i] != FAILED_SURF_SENTINEL) {
+            SDL_DestroySurface(flagSurfCache[i]);
+        }
+        flagSurfCache[i] = NULL;
     }
     if (s_rasterizer) {
         nsvgDeleteRasterizer(s_rasterizer);
@@ -102,8 +101,8 @@ void flagsDestroy(void) {
     s_renderer = NULL;
 }
 
-SDL_Texture *flagsGetTexture(const char countryCode[2]) {
-    if (!s_renderer || !s_rasterizer || !countryCode) {
+SDL_Surface *flagsGetSurface(const char countryCode[2]) {
+    if (!s_rasterizer || !countryCode) {
         return NULL;
     }
 
@@ -115,6 +114,34 @@ SDL_Texture *flagsGetTexture(const char countryCode[2]) {
     }
 
     int idx = (c0 - 'a') * 26 + (c1 - 'a');
+    SDL_Surface *cached = flagSurfCache[idx];
+
+    if (cached == FAILED_SURF_SENTINEL) {
+        return NULL;
+    }
+    if (cached) {
+        return cached;
+    }
+
+    /* First request for this code — try to load */
+    SDL_Surface *surface = loadFlagSurface(c0, c1);
+    flagSurfCache[idx] = surface ? surface : FAILED_SURF_SENTINEL;
+    return surface;
+}
+
+SDL_Texture *flagsGetTexture(const char countryCode[2]) {
+    if (!s_renderer) {
+        return NULL;
+    }
+
+    SDL_Surface *surface = flagsGetSurface(countryCode);
+    if (!surface) {
+        return NULL;
+    }
+
+    char c0 = (char)tolower((unsigned char)countryCode[0]);
+    char c1 = (char)tolower((unsigned char)countryCode[1]);
+    int idx = (c0 - 'a') * 26 + (c1 - 'a');
     SDL_Texture *cached = flagCache[idx];
 
     if (cached == FAILED_SENTINEL) {
@@ -124,8 +151,7 @@ SDL_Texture *flagsGetTexture(const char countryCode[2]) {
         return cached;
     }
 
-    /* First request for this code — try to load */
-    SDL_Texture *tex = loadFlag(c0, c1);
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(s_renderer, surface);
     flagCache[idx] = tex ? tex : FAILED_SENTINEL;
     return tex;
 }

@@ -102,6 +102,12 @@
 #define STR_DLGKEYSETUP_LAYMINE             235
 #define STR_DLGKEYSETUP_TANKVIEW            236
 #define STR_DLGKEYSETUP_PILLVIEW            237
+#define STR_DLGKEYSETUP_BASEVIEW            2003
+#define STR_DLGKEYSETUP_ALLYVIEW            2004
+#define STR_DLGKEYSETUP_OVERVIEWZOOM        1993
+#define STR_DLGKEYSETUP_OVERVIEWFOLLOW      2005
+#define STR_DLGKEYSETUP_OVERVIEWZOOMIN      2006
+#define STR_DLGKEYSETUP_OVERVIEWZOOMOUT     2007
 #define STR_DLGKEYSETUP_SCROLLUP            238
 #define STR_DLGKEYSETUP_SCROLLDOWN          240
 #define STR_DLGKEYSETUP_SCROLLLEFT          241
@@ -384,6 +390,8 @@
 #define STR_MENU_FILE                       539
 #define STR_MENU_NEW                        540
 #define STR_MENU_SAVE_MAP                   541
+#define STR_MENU_MAP_OVERVIEW               1987
+#define STR_MENU_OVERVIEW_IN_WINDOW         1990
 #define STR_MENU_EXIT                       542
 #define STR_MENU_EDIT                       543
 #define STR_MENU_FRAME_RATE                 544
@@ -434,6 +442,9 @@
 #define STR_BRAINSETTINGS_NONE              588
 #define STR_BRAINSETTINGS_TITLE             589
 
+/* Map overview pop-out */
+#define STR_OVERVIEW_FOLLOWING              1988
+#define STR_OVERVIEW_FREE                   1989
 /* Settings panel additions (pre-game) */
 #define STR_DLGSETTINGS_TUTORIAL            590
 #define STR_DLGSETTINGS_PLAY_TUTORIAL       591
@@ -835,6 +846,10 @@
 #define STR_DLGWELCOME_LOGVIEWER            791
 #define STR_DLGWELCOME_INTERNET             792
 
+/* The two faces of the welcome screen's full screen button. Which one is
+ * shown is decided from the window's real state, not from the preference. */
+#define STR_DLGWELCOME_SWITCH_CLASSIC       1991
+#define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794
@@ -1543,7 +1558,41 @@
 #define STR_DLGLOBBY_SERVERDISP_INTERNET    1383
 /* Connectivity badge */
 #define STR_DLGLOBBY_CONN_TEST_TIP          1384
-
+/* Visibility block (pill / base / allied tank view rules) */
+#define STR_DLGLOBBY_VISIBILITY_LBL         1994
+#define STR_DLGLOBBY_VIEW_PILL              1995
+#define STR_DLGLOBBY_VIEW_BASE              1996
+#define STR_DLGLOBBY_VIEW_ALLY              1997
+#define STR_DLGLOBBY_VIEW_ALWAYS            1998
+#define STR_DLGLOBBY_VIEW_KEY               1999
+#define STR_DLGLOBBY_VIEW_DECAY             2000
+#define STR_DLGLOBBY_VIEW_OFF               2001
+#define STR_DLGLOBBY_VIEW_DECAY_SECS        2002
+#define STR_DLGLOBBY_CLASSIC_MODE_CB        2008
+#define STR_DLGLOBBY_CLASSIC_MODE_TIP       2009
+#define STR_MENU_CLASSIC_MODE_TIP           2010
+#define STR_DLGLOBBY_ALLIES_TREES_CB        2011
+#define STR_DLGLOBBY_ALLIES_TREES_TIP       2012
+/* Settings > Display & Sound > Full Screen */
+#define STR_DLGSETTINGS_FULLSCREEN          2013
+#define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014
+#define STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP 2015
+#define STR_DLGSETTINGS_NEWS_AUTOHIDE       2016
+#define STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP   2017
+#define STR_DLGSETTINGS_BUILD_TRANSPARENCY  2018
+#define STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP 2019
+#define STR_DLGSETTINGS_STATUS_TRANSPARENCY 2020
+#define STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP 2021
+#define STR_DLGSETTINGS_FULLSCREEN_TIP      2022
+/* Item view caption — the corner label and the full screen map's caption */
+#define STR_ITEMVIEW_PILL                   2023
+#define STR_ITEMVIEW_BASE                   2024
+#define STR_ITEMVIEW_ALLY                   2025
+#define STR_ITEMVIEW_ALLY_NAMED             2026
+/* Server browser visibility tag in the detail pane */
+#define STR_DLGBROWSER_VIEWS_LBL            2027
+#define STR_DLGBROWSER_VIEWS_CLASSIC        2028
+#define STR_DLGBROWSER_VIEWS_ALLYTREES      2029
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468

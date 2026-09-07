@@ -821,6 +821,205 @@ BYTE basesGetBaseNum(bases *value, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
+*NAME:          basesCanView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* The one base-view predicate: a base can be watched when it
+* belongs to somebody the view player is allied with. A
+* neutral base belongs to nobody, so it never qualifies.
+*
+*ARGUMENTS:
+*  sim        - Pointer to the game sim
+*  value      - Pointer to the bases structure
+*  baseIdx    - Base index (0 based)
+*  viewPlayer - Player doing the watching
+*********************************************************/
+bool basesCanView(GameSim *sim, bases *value, BYTE baseIdx, BYTE viewPlayer) {
+  bool returnValue; /* Value to return */
+
+  returnValue = FALSE;
+  if (baseIdx < (*value)->numBases) {
+    if (((*value)->item[baseIdx].owner) != NEUTRAL && (playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[baseIdx].owner) == TRUE)) {
+      returnValue = TRUE;
+    }
+  }
+
+  return returnValue;
+}
+
+/*********************************************************
+*NAME:          basesCheckView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* We are currently watching the base at position mx and my.
+* This function checks it is still ours to watch, so we can
+* carry on viewing through it.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the bases structure
+*  mx    - X Map position
+*  my    - Y Map position
+*********************************************************/
+bool basesCheckView(GameSim *sim, bases *value, BYTE mx, BYTE my) {
+  bool returnValue; /* Value to return */
+  BYTE baseNum;     /* The base at that square, 1 based */
+
+  returnValue = FALSE;
+  baseNum = basesGetBaseNum(value, mx, my);
+  if (baseNum != BASE_NOT_FOUND) {
+    returnValue = basesCanView(sim, value, (BYTE)(baseNum - 1), sim->viewPlayer);
+  }
+
+  return returnValue;
+}
+
+/*********************************************************
+*NAME:          basesMoveView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Allows players to step through their bases in a direction.
+* Returns whether a base was found that way. The base
+* equivalent of pillsMoveView.
+*
+*ARGUMENTS:
+*  sim      - Pointer to the game sim
+*  value    - Pointer to the bases structure
+*  eligible - Bit per base index: that base may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  xMove    - -1 for moving left, 1 for right, 0 for neither
+*  yMove    - -1 for moving up, 1 for down, 0 for neither
+*********************************************************/
+bool basesMoveView(GameSim *sim, bases *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, int xMove, int yMove) {
+  bool returnValue; /* Value to return */
+  double nearest;   /* Nearest */
+  BYTE count;       /* Looping variable */
+  BYTE found;       /* Have we found the item */
+  double dist;
+  BYTE oldBase;     /* The base we are on now, 0 based */
+  bool matches;     /* Is this base the way we are looking */
+
+  nearest = 65000;
+  returnValue = FALSE;
+  found = 0;
+  count = 0;
+  oldBase = basesGetBaseNum(value, *mx, *my);
+  oldBase--;
+  while (count < (*value)->numBases) {
+    if (count != oldBase && (eligible & ((PlayerBitMap)1 << count)) != 0 && basesCanView(sim, value, count, sim->viewPlayer) == TRUE) {
+      /* One axis at a time: a horizontal press only considers bases to the
+       * left or right, a vertical press only ones above or below. */
+      matches = FALSE;
+      if (yMove == 0) {
+        if ((xMove < 0 && ((*value)->item[count].x < *mx)) ||
+            (xMove > 0 && ((*value)->item[count].x > *mx))) {
+          matches = TRUE;
+        }
+      }
+      if (xMove == 0) {
+        if ((yMove < 0 && ((*value)->item[count].y < *my)) ||
+            (yMove > 0 && ((*value)->item[count].y > *my))) {
+          matches = TRUE;
+        }
+      }
+      if (matches == TRUE) {
+        if (utilIsItemInRange(*mx, *my, (*value)->item[count].x, (*value)->item[count].y, (WORLD) nearest, &dist) == TRUE) {
+          nearest = dist;
+          found = count;
+          returnValue = TRUE;
+        }
+      }
+    }
+    count++;
+  }
+
+  if (returnValue == TRUE) {
+    *mx = (*value)->item[found].x;
+    *my = (*value)->item[found].y;
+  }
+  return returnValue;
+}
+
+/*********************************************************
+*NAME:          basesGetNextView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Returns whether a next allied base exists. If so then it
+* puts its map co-ordinates into the parameters passed. If a
+* previous base is being used then the parameter 'prev' is
+* true and mx & my are set to the last base's location. The
+* base equivalent of pillsGetNextView.
+*
+*ARGUMENTS:
+*  sim      - Pointer to the game sim
+*  value    - Pointer to the bases structure
+*  eligible - Bit per base index: that base may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  prev     - Whether a previous base is being passed
+*********************************************************/
+bool basesGetNextView(GameSim *sim, bases *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, bool prev) {
+  bool returnValue; /* Value to return */
+  bool done;        /* Finished */
+  bool okLoop;      /* Ok to loop */
+  BYTE playNumber;  /* My player number */
+  BYTE count;       /* Counting variable */
+
+  count = 0;
+  returnValue = TRUE;
+  done = FALSE;
+  okLoop = FALSE;
+  playNumber = sim->viewPlayer;
+
+  /* Find out the previous amount */
+  if (prev == TRUE) {
+    count = basesGetBaseNum(value, *mx, *my);
+    if (count == BASE_NOT_FOUND) {
+      count = 0;
+    } else {
+      count--;
+      if (basesCanView(sim, value, count, playNumber) == TRUE) {
+        okLoop = TRUE;
+        count++;
+      } else {
+        count = 0;
+      }
+    }
+  }
+
+  /* Find the next item */
+  while (done == FALSE && count < ((*value)->numBases)) {
+    if ((eligible & ((PlayerBitMap)1 << count)) != 0 && basesCanView(sim, value, count, playNumber) == TRUE) {
+      done = TRUE;
+      *mx = (*value)->item[count].x;
+      *my = (*value)->item[count].y;
+    }
+    count++;
+  }
+
+  /* If not found still and we are looping do it here */
+  if (done == FALSE && okLoop == TRUE) {
+    count = 0;
+    while (done == FALSE && count < ((*value)->numBases)) {
+      if ((eligible & ((PlayerBitMap)1 << count)) != 0 && basesCanView(sim, value, count, playNumber) == TRUE) {
+        done = TRUE;
+        *mx = (*value)->item[count].x;
+        *my = (*value)->item[count].y;
+      }
+      count++;
+    }
+  }
+
+  /* If we still haven't found one then one doesn't exist at all */
+  if (done == FALSE) {
+    returnValue = FALSE;
+  }
+
+  return returnValue;
+}
+
+/*********************************************************
 *NAME:          basesRefueling
 *AUTHOR:        John Morrison
 *CREATION DATE: 10/1/99

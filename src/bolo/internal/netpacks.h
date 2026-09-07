@@ -31,6 +31,7 @@
 #include "global.h"
 #include "platform_net.h"  /* struct in_addr */
 #include "wire_limits.h"   /* PACKET_MAX_CHAT_MESSAGE */
+#include "view_policy.h"   /* ViewPolicy — INFO_PACKET.view_policies helpers */
 #include "playername_validate.h"  /* playerNameValidate / playerNameCompare */
 
 #define MAX_UDPPACKET_SIZE 1024
@@ -94,14 +95,64 @@ typedef struct BOLO_PACK_ATTR {
   BYTE max_players;       /* server's join-slot cap (MAX_TANKS when unset) */
   char map_md5[32];       /* 32 lowercase hex chars, no NUL; zero-filled  */
                           /* when the map is random/unknown               */
+  BYTE view_policies;     /* 2 bits per ViewCategory: pill = bits 0-1,    */
+                          /* base = bits 2-3, ally = bits 4-5; bit 6 is   */
+                          /* classic mode, bit 7 is allies in trees       */
 } INFO_PACKET;
 #pragma pack(pop)
-BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 112, INFO_PACKET_must_be_112_bytes);
 
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts
  * it and parses only the common prefix. */
 #define INFO_PACKET_LEGACY_SIZE 76
+
+/* INFO_PACKET wire size before view_policies was appended. Discovery
+ * accepts this length and reports the built-in view defaults for it. */
+#define INFO_PACKET_PRE_VIEWS_SIZE 111
+
+/* Pack the three per-category policies, the classic-mode flag and the
+ * allies-in-trees flag into INFO_PACKET.view_policies. Classic mode
+ * rides bit 6 and allies in trees bit 7, beside the ally visibility
+ * they sit alongside. */
+static inline BYTE infoPacketPackViewPolicies(ViewPolicy pill,
+                                              ViewPolicy base,
+                                              ViewPolicy ally,
+                                              bool classic,
+                                              bool alliesInTrees) {
+  return (BYTE)(((unsigned)pill & 0x3u)
+              | (((unsigned)base & 0x3u) << 2)
+              | (((unsigned)ally & 0x3u) << 4)
+              | (classic ? 0x40u : 0u)
+              | (alliesInTrees ? 0x80u : 0u));
+}
+
+/* Read the three policies, the classic-mode flag and the allies-in-trees
+ * flag back out of a received INFO_PACKET. A packet shorter than the
+ * full layout predates the byte, so it reports the built-in defaults
+ * (pill always, base off, ally always, classic mode off, allies in
+ * trees off) instead of whatever the short read left in the struct. */
+static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
+                                              size_t len,
+                                              ViewPolicy *pill,
+                                              ViewPolicy *base,
+                                              ViewPolicy *ally,
+                                              bool *classic,
+                                              bool *alliesInTrees) {
+  if (info == NULL || len < sizeof(INFO_PACKET)) {
+    if (pill) *pill = viewPolicyAlways;
+    if (base) *base = viewPolicyOff;
+    if (ally) *ally = viewPolicyAlways;
+    if (classic) *classic = false;
+    if (alliesInTrees) *alliesInTrees = false;
+    return;
+  }
+  if (pill) *pill = (ViewPolicy)(info->view_policies & 0x3u);
+  if (base) *base = (ViewPolicy)((info->view_policies >> 2) & 0x3u);
+  if (ally) *ally = (ViewPolicy)((info->view_policies >> 4) & 0x3u);
+  if (classic) *classic = (info->view_policies & 0x40u) != 0;
+  if (alliesInTrees) *alliesInTrees = (info->view_policies & 0x80u) != 0;
+}
 #endif
 
 /* INFO_PACKET.flags bit values (the byte that was spare1). */
@@ -555,6 +606,30 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
                                               address-spoofed READY could
                                               otherwise reset a healthy
                                               client's stream). */
+
+#define PACKET_VIEW_STATE              214  /* client → server
+                                              { kind 1, target 1 } — the view
+                                              the sender's client is in: 0=tank,
+                                              1=pill, 2=base, 3=ally, with the
+                                              item index (pill/base) or player
+                                              number (ally) in target. The
+                                              server stores the claim per slot
+                                              and grants at most what the view
+                                              policies allow. */
+
+#define PACKET_VIEW_CYCLE              215  /* client → server
+                                              { kind 1, direction 1, from 1 } —
+                                              "give me the next thing to watch".
+                                              kind is the sort of item wanted
+                                              (0=tank, 1=pill, 2=base, 3=ally),
+                                              direction is a ViewCycleDirection
+                                              (next/previous plus the four
+                                              scroll directions), and from is
+                                              what the sender is watching now
+                                              (0xFF when it is watching
+                                              nothing). The server picks from
+                                              live state and answers with
+                                              CTRL_VIEW_TARGET. */
 
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1

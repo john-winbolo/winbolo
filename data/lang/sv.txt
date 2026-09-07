@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Skjut
 STR_DLGKEYSETUP_LAYMINE=Lägg ut mina
 STR_DLGKEYSETUP_TANKVIEW=Tankvy
 STR_DLGKEYSETUP_PILLVIEW=Bunkervy
+STR_DLGKEYSETUP_BASEVIEW=Basvy
+STR_DLGKEYSETUP_ALLYVIEW=Vy för allierade tanks
 STR_DLGKEYSETUP_SCROLLUP=Upp
 STR_DLGKEYSETUP_SCROLLDOWN=Ned
 STR_DLGKEYSETUP_SCROLLLEFT=Vänster
@@ -1911,6 +1913,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=WinBolo.net-konton kan bara ändras från huvudmenyn, 
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Skicka repriser till spelare
 STR_LV_HIDE_LOBBY=Göm lobbyn
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Synlighet
+STR_DLGLOBBY_VIEW_PILL=Bunkervy
+STR_DLGLOBBY_VIEW_BASE=Basvy
+STR_DLGLOBBY_VIEW_ALLY=Vy för allierade tanks
+STR_DLGLOBBY_VIEW_ALWAYS=Alltid
+STR_DLGLOBBY_VIEW_KEY=Tangent
+STR_DLGLOBBY_VIEW_DECAY=Uttoning
+STR_DLGLOBBY_VIEW_OFF=Av
+STR_DLGLOBBY_VIEW_DECAY_SECS=sek
+STR_DLGLOBBY_CLASSIC_MODE_CB=Klassiskt läge
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Ställer Bunkervy på Tangent, och Basvy och Vy för\nallierade tanks på Av, och håller dem där. Stänger du av\ndet igen ligger de tre kvar där det klassiska läget satte\ndem.\nDet döljer också kartöversikten och kartan i helskärm på\nvarje spelares egen skärm. Servern skickar samma data\noavsett, så det här är en bekvämlighetsregel och ingen\ngaranti mot en modifierad klient.
+STR_MENU_CLASSIC_MODE_TIP=Servern har klassiskt läge på, så den här vyn är avstängd.
+STR_DLGLOBBY_ALLIES_TREES_CB=Se allierade i skogen
+STR_DLGLOBBY_ALLIES_TREES_TIP=Allierade tanks som står i skogen ritas på din skärm\ni stället för att gömmas. Krigsdimman gäller ändå, så\ndu ser dem bara där du redan ser. Av är den klassiska\nregeln, och klassiskt läge stänger av det.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standard
@@ -1951,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Endast ett skin i din egen skinmapp kan publiceras.
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Det här skinnet har finare grafik för endast vissa sprites, så Matcha zoom bygger samma rutor som Klassisk. Hög detalj använder den finare grafiken där skinnet har den.
 STR_DLGSKIN_RECFILTER_LBL=Rekommenderat filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(rekommenderad)
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=Kartöversikt
+STR_MENU_OVERVIEW_IN_WINDOW=Helskärm
+STR_OVERVIEW_FOLLOWING=följer
+STR_OVERVIEW_FREE=fri
+STR_DLGKEYSETUP_OVERVIEWZOOM=Kartzoom (håll)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Kartföljning (växla)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Zooma in kartan
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Zooma ut kartan
+STR_DLGWELCOME_SWITCH_CLASSIC=Byt till klassiskt
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Byt till helskärm
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=Helskärm
+STR_DLGSETTINGS_FULLSCREEN_TIP=Fyller hela skärmen istället för att köra i ett fönster.\nSparas till nästa gång.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire-genomskinlighet
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Hur mycket av kartan som syns genom newswiren längs\nnederkanten av helskärmsvyn. 0% är heltäckande, och\nreglaget stannar vid 90% så den inte kan göras osynlig.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Dölj newswiren automatiskt
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Låt newswiren glida ner under skärmens nederkant efter\natt inga nya meddelanden mottagits på ett tag, och\nglid tillbaka upp vid nästa meddelande. Av håller den\nkvar på skärmen hela spelet.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Byggverktygens genomskinlighet
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Hur mycket av kartan som syns genom byggverktygen\nnedför vänsterkanten av helskärmsvyn. 0% är heltäckande,\noch reglaget stannar vid 90% så de inte kan göras\nosynliga.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Statuspanelens genomskinlighet
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Hur mycket av kartan som syns genom statuspanelen\nnedför högerkanten av helskärmsvyn - LGM, dödar och\ndödsfall, bas-, bunker- och tankraderna, samt\nförrådsstaplarna. 0% är heltäckande, och reglaget\nstannar vid 90% så den inte kan göras osynlig.
+
+# Item view caption
+STR_ITEMVIEW_PILL=Bunkervy
+STR_ITEMVIEW_BASE=Basvy
+STR_ITEMVIEW_ALLY=Vy för allierade tanks
+STR_ITEMVIEW_ALLY_NAMED=Vy för allierade tanks — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=Vyer:
+STR_DLGBROWSER_VIEWS_CLASSIC=Klassiskt
+STR_DLGBROWSER_VIEWS_ALLYTREES=Allierade i skogen

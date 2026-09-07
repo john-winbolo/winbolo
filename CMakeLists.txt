@@ -774,6 +774,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
     src/gui/sdl3/sdl3draw_status.c
+    src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
@@ -834,6 +835,10 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_fog.cpp
+    src/gui/sdl3/overview_hud_layout.cpp
+    src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/wb_theme.cpp
@@ -1405,11 +1410,15 @@ set(CLIENT_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_fog.cpp
+    src/gui/sdl3/overview_hud_layout.cpp
+    src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -2122,6 +2131,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sdl3draw_status.c
+    src/gui/sdl3/tank_label.c
     src/logviewer/bolo_shim.c
     src/logviewer/game_view.c
 )
@@ -3149,6 +3159,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/common/mp_diag_log.c
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
+    tests/unit/test_view_policy_settings.c
+    tests/unit/test_classic_mode_settings.c
+    tests/unit/test_allies_in_trees_settings.c
+    tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
@@ -3205,6 +3219,20 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_fx_viewport_cull.c
+    tests/unit/test_view_policy_rects.c
+    tests/unit/test_tree_hide.c
+    tests/unit/test_lgm_visibility.c
+    tests/unit/test_view_state.c
+    tests/unit/test_view_target_codec.c
+    tests/unit/test_view_target_apply.c
+    tests/unit/test_view_cycling.c
+    tests/unit/test_pill_pos_current.c
+    tests/unit/test_viewport_calc.c
+    tests/unit/test_overview_map.c
+    tests/unit/test_overview_view_policy.c
+    tests/unit/test_overview_camera.cpp
+    tests/unit/test_overview_fog.cpp
+    tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -3228,6 +3256,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
+    tests/unit/test_loopback_map_cull.c
+    tests/unit/test_view_ally_loopback.c
     tests/unit/test_loopback_upload.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
@@ -3235,8 +3265,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_join_rate_limit.c
     tests/unit/test_cookie_handshake.c
     tests/unit/test_map_amp_gate.c
+    tests/unit/test_map_reask_throttle.c
     tests/unit/test_map_resync.c
     tests/unit/test_map_compress_roundtrip.c
+    tests/unit/test_map_shadow.c
     tests/unit/test_resync_finalize.c
     tests/unit/test_conn_migration.c
     tests/unit/test_viewtick_rewind.c
@@ -3371,6 +3403,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
+    tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
@@ -3397,6 +3430,18 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
+    # The overview's camera maths, its fog mask and the in-window HUD
+    # geometry. The only src/gui/sdl3 files in this target: all three are
+    # arithmetic over plain structs with no ImGui and no SDL_Renderer include,
+    # so they link into a binary that has neither, and test_overview_camera.cpp
+    # / test_overview_fog.cpp / test_overview_hud_layout.cpp exercise them
+    # directly. The drawing half (overview_view.cpp) stays out. They keep the
+    # gui profile's public-only access rather than borrowing this target's T2;
+    # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
+    # meet to be added here, and when the exception lapses.
+    src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_fog.cpp
+    src/gui/sdl3/overview_hud_layout.cpp
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -3628,6 +3673,8 @@ set(_unit_test_names
     command_codec_roundtrip_variants
     command_codec_lobby_claim_start
     command_codec_rating_posted
+    command_codec_view_state
+    command_codec_view_cycle
     lobby_claim_start_host_swaps_occupied
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected
@@ -3737,6 +3784,20 @@ set(_unit_test_names
     lobby_lock_bit_lookup
     lobby_lock_rejects_settings
     lobby_lock_mask_roundtrip
+    view_policy_defaults
+    view_policy_apply_validates
+    view_policy_lock_bits
+    view_policy_lobby_reset
+    classic_mode_defaults
+    classic_mode_forces_views
+    classic_mode_lock_bit
+    classic_mode_lock_implied
+    classic_mode_lock_blocks_dispatch
+    classic_mode_lobby_reset
+    allies_in_trees_defaults
+    allies_in_trees_classic_mode
+    info_packet_view_policy_layout
+    info_packet_view_policy_length_tier
     upload_cap_enforced
     map_field_clamps_evil
     map_field_clamps_passthrough
@@ -3846,6 +3907,8 @@ set(_unit_test_names
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
     lv_logged_name_from_join_event
+    lv_game_settings_from_walk
+    lv_game_settings_absent
     blocks_stream
     stream_load
     stream_pump
@@ -3886,6 +3949,65 @@ set(_unit_test_names
     base_armour_fog_of_war
     two_clients_full_sync_independent
     fx_viewport_cull
+    view_rects_default_baseline
+    view_rects_always_base_ally
+    view_rects_off
+    view_rects_decay
+    view_rects_dead_player
+    view_pill_pos_current
+    view_pill_pos_reveal
+    view_pill_update_event_fogged
+    view_pill_pos_bot_advantage
+    tree_hide_enemy
+    tree_hide_ally_option
+    lgm_visibility_tank_in_trees
+    lgm_visibility_tank_visible
+    view_state_key_grants_rect
+    view_state_bad_claims_degrade
+    view_state_invalidation
+    view_state_lifecycle
+    view_cycle_pick_order
+    view_cycle_pick_policy
+    view_cycle_pick_direction
+    view_target_codec
+    view_target_apply
+    view_cycle_bases
+    view_cycle_base_direction
+    view_cycle_allies
+    view_cycle_ally_direction
+    view_cycle_exits
+    view_cycle_decay_skip
+    view_cycle_eligible_mask
+    view_cycle_ally_stub
+    view_cycle_stale_pill
+    pill_pos_current_lookups
+    pill_pos_current_num_split
+    pill_pos_current_duplicate_square
+    pill_pos_current_snapshot_apply
+    pill_pos_current_server_unchanged
+    pill_pos_current_moved_state
+    pill_pos_current_carry_cycle
+    viewport_calc_square_pure
+    viewport_calc_pill_square_moved
+    overview_regions
+    overview_reveal
+    overview_freeze_no_leak
+    overview_pill_capture
+    overview_reset
+    overview_decay_mirror
+    overview_decay_view_exit
+    overview_policy_baseline
+    overview_policy_categories
+    overview_policy_decay
+    overview_loopback
+    overview_camera
+    overview_scroll
+    overview_fog
+    overview_hud_layout
+    overview_dead_tank
+    overview_entities
+    overview_gunsight
+    tank_pos_dead
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -3930,14 +4052,35 @@ set(_unit_test_names
     join_rate_limit
     cookie_handshake
     map_amp_gate
+    map_reask_throttle
     map_resync_cut_and_deliver_once
     map_resync_duplicate_request_no_recut
     map_resync_send_gate_holds
     map_resync_stale_gen_rejected
     map_compress_roundtrip_stock
+    map_compress_capacity_refuses
+    map_compress_incompressible
     map_compress_roundtrip_mutated
     map_checksum_ignores_mines
     map_resync_base_crater_converges
+    map_shadow_tracks_real
+    map_shadow_crc_matches
+    map_shadow_blob_identical
+    map_shadow_seed_lifecycle
+    map_shadow_cull_withholds
+    map_shadow_sweep_converges
+    map_shadow_sweep_bounds
+    map_shadow_round_start_capture
+    map_shadow_join_seeds_round_start
+    map_shadow_round_start_fallback
+    pill_shadow_tracks_real
+    pill_shadow_crc_matches
+    pill_shadow_blob_identical
+    pill_shadow_fullsync_move_matches
+    pill_shadow_withheld_crc_matches
+    loopback_map_cull
+    loopback_map_cull_resync
+    view_ally_loopback
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
     install_compressed_map_rejects_garbage
@@ -3991,6 +4134,7 @@ set(_unit_test_names
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
+    key_claims
     addrparse_host_only
     addrparse_host_port
     addrparse_scheme

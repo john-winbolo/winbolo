@@ -32,7 +32,6 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
-#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -45,14 +44,11 @@
 #include "screentank.h"
 #include "alliance_enums.h"
 #include "tilenum.h"
-#include "flags.h"           /* country-flag textures for tank labels */
-#include "sdl3imgui.h"       /* brain icon + per-player bot flag */
+#include "tank_label.h"      /* the shared name + flag / brain-icon drawer */
 
 /* Local copies of constants that sdl3draw.c keeps as file-local
  * #defines. Duplicating them is the simplest way to keep this
  * module self-contained. */
-#define SDL3_MAX_PLAYERS 16
-#define SDL3_MAX_NAME_LEN 64
 #define SDL3_MSG_LEN 512
 
 /* -----------------------------------------------------------------
@@ -90,16 +86,15 @@ static float         gStatusBasesOrgX = -1, gStatusBasesOrgY = -1;
  * (b)-class statics — owned by this module, moved verbatim from
  * sdl3draw.c.
  * ----------------------------------------------------------------- */
-static SDL_Texture *gLabelTex[SDL3_MAX_PLAYERS];
-static char         gLabelStr[SDL3_MAX_PLAYERS][SDL3_MAX_NAME_LEN];
-/* Parsed out of the label string each time it changes: the country code to
- * draw as a flag beside the name ("" = none), and whether the slot is a bot
- * (draw the brain icon instead). Parallel to gLabelTex/gLabelStr. */
-static char         gLabelCountry[SDL3_MAX_PLAYERS][3];
-static bool         gLabelBot[SDL3_MAX_PLAYERS];
+/* The classic view's label cache — textures built on the main window's
+ * renderer by the shared drawer in tank_label.c. The overview hosts hold
+ * their own caches for their renderers. */
+static TankLabelCache gLabelCache;
 
 static char gMsgTop[SDL3_MSG_LEN];
 static char gMsgBottom[SDL3_MSG_LEN];
+/* SDL_GetTicks when the message lines last changed to something non-empty */
+static Uint64 gMsgActivityTick = 0;
 static int  gCachedKills  = 0;
 static int  gCachedDeaths = 0;
 
@@ -126,7 +121,7 @@ static bool gCachedBaseValid = false;
  * Local helpers (static — moved verbatim from sdl3draw.c).
  * sdl3RenderText is also kept as a static duplicate in sdl3draw.c
  * because non-moved code in that file (sdl3DrawStartDelay,
- * sdl3DrawNetFailed, sdl3DrawPillInView, sdl3DrawMainScreen) calls
+ * sdl3DrawNetFailed, sdl3DrawItemInView, sdl3DrawMainScreen) calls
  * it as well.
  * ----------------------------------------------------------------- */
 /*********************************************************
@@ -649,6 +644,7 @@ void sdl3DrawCopyBasesStatusBars(int x, int y) {
 void sdl3DrawResetCachedText(void) {
   gMsgTop[0] = '\0';
   gMsgBottom[0] = '\0';
+  gMsgActivityTick = 0;
   gCachedKills  = 0;
   gCachedDeaths = 0;
   /* Invalidate texture caches so stale text isn't rendered */
@@ -664,16 +660,31 @@ void sdl3DrawResetCachedText(void) {
 
 void sdl3DrawMessages(int x, int y, char *top, char *bottom) {
   (void)x; (void)y;
-  /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
-  if (top)    SDL_strlcpy(gMsgTop,    top,    SDL3_MSG_LEN);
-  else        gMsgTop[0] = '\0';
-  if (bottom) SDL_strlcpy(gMsgBottom, bottom, SDL3_MSG_LEN);
-  else        gMsgBottom[0] = '\0';
+  const char *newTop    = top    ? top    : "";
+  const char *newBottom = bottom ? bottom : "";
+  /* Cache only — sdl3RenderCachedText() draws these into the next frame.
+     Text arriving or scrolling stamps the activity tick; a change to two
+     empty lines is the ticker going quiet, not activity. */
+  if ((SDL_strcmp(newTop, gMsgTop) != 0 ||
+       SDL_strcmp(newBottom, gMsgBottom) != 0) &&
+      (newTop[0] != '\0' || newBottom[0] != '\0')) {
+    gMsgActivityTick = SDL_GetTicks();
+  }
+  SDL_strlcpy(gMsgTop,    newTop,    SDL3_MSG_LEN);
+  SDL_strlcpy(gMsgBottom, newBottom, SDL3_MSG_LEN);
+}
+
+Uint64 sdl3DrawGetMessageActivityTick(void) {
+  return gMsgActivityTick;
 }
 
 void sdl3DrawGetCachedMessages(const char **top, const char **bottom) {
   if (top)    *top    = gMsgTop;
   if (bottom) *bottom = gMsgBottom;
+}
+
+TTF_Font *sdl3DrawGetMessageFont(void) {
+  return gFontMsg;
 }
 
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
@@ -685,58 +696,7 @@ void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
 
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py) {
-  if (!gRenderer || !str || str[0] == '\0') return;
-  if (playerNum >= SDL3_MAX_PLAYERS) return;
-
-  /* Rebuild the cached texture if the name changed */
-  if (strncmp(gLabelStr[playerNum], str, SDL3_MAX_NAME_LEN - 1) != 0) {
-    if (gLabelTex[playerNum]) {
-      SDL_DestroyTexture(gLabelTex[playerNum]);
-      gLabelTex[playerNum] = NULL;
-    }
-    strncpy(gLabelStr[playerNum], str, SDL3_MAX_NAME_LEN - 1);
-    gLabelStr[playerNum][SDL3_MAX_NAME_LEN - 1] = '\0';
-
-    /* Split the label into the name and its trailing location. The label
-     * builder appends "@" + location only in long-label mode, and player
-     * names cannot contain '@', so the last '@' is the separator. A bot
-     * gets the brain icon (its location, if any, is dropped); a human with
-     * a 2-letter country code gets the flag. Anything else (short labels,
-     * or our own "@This Computer") is left as plain text with no icon. */
-    char nameOnly[SDL3_MAX_NAME_LEN];
-    strncpy(nameOnly, str, SDL3_MAX_NAME_LEN - 1);
-    nameOnly[SDL3_MAX_NAME_LEN - 1] = '\0';
-    gLabelCountry[playerNum][0] = '\0';
-    gLabelBot[playerNum] = false;
-
-    char *at = strrchr(nameOnly, '@');
-    if (at) {
-      const char *loc = at + 1;
-      if (sdl3ImguiPlayerIsBot(playerNum) && sdl3ImguiGetBrainIcon()) {
-        *at = '\0';
-        gLabelBot[playerNum] = true;
-      } else if (isalpha((unsigned char)loc[0]) && isalpha((unsigned char)loc[1]) &&
-                 loc[2] == '\0' && flagsGetTexture(loc)) {
-        *at = '\0';
-        gLabelCountry[playerNum][0] = loc[0];
-        gLabelCountry[playerNum][1] = loc[1];
-        gLabelCountry[playerNum][2] = '\0';
-      }
-      /* No icon available (flags not loaded, unknown country, …): leave
-       * nameOnly as the full "name@loc" string so the label is unchanged. */
-    }
-
-    if (gFontMsg) {
-      SDL_Color fg = {200, 200, 200, 255};
-      SDL_Surface *sFg = TTF_RenderText_Blended(gFontMsg, nameOnly, 0, fg);
-      if (sFg) {
-        gLabelTex[playerNum] = SDL_CreateTextureFromSurface(gRenderer, sFg);
-        SDL_DestroySurface(sFg);
-      }
-    }
-  }
-
-  if (!gLabelTex[playerNum]) return;
+  if (!gRenderer) return;
 
   /* Compute screen position matching sdl3DrawTanks placement.
      In tablet mode, gZoomFactor is temporarily set to the tablet scale
@@ -769,38 +729,15 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
   float sy = (float)(originY - tileH + bby * gZoomFactor - gCurrentEdgeY);
 
   /* Place label to the right of the tank sprite (matches Win32 behaviour) */
-  float texW, texH;
-  SDL_GetTextureSize(gLabelTex[playerNum], &texW, &texH);
   sx += (float)tileW;
 
   /* Clip label to game-area left edge */
   if (sx < (float)originX) sx = (float)originX;
 
-  SDL_SetTextureBlendMode(gLabelTex[playerNum], SDL_BLENDMODE_BLEND);
-  SDL_FRect d = { sx, sy, texW, texH };
-  SDL_RenderTexture(gRenderer, gLabelTex[playerNum], NULL, &d);
-
-  /* Country flag (humans) or brain icon (bots) drawn just after the name,
-   * at 75% of the text height with partial alpha so the icon sits
-   * unobtrusively beside the name. Texture is shared with chat/lobby/browser
-   * renders, so the alpha mod is restored to 255 after drawing. */
-  SDL_Texture *icon = NULL;
-  float iconW = 0.0f, iconH = 0.0f;
-  if (gLabelBot[playerNum]) {
-    icon = sdl3ImguiGetBrainIcon();
-    if (icon) { iconH = texH * 0.75f; iconW = iconH; }  /* brain icon is square */
-  } else if (gLabelCountry[playerNum][0] != '\0') {
-    icon = flagsGetTexture(gLabelCountry[playerNum]);
-    if (icon) { iconH = texH * 0.75f; iconW = iconH * (float)FLAG_WIDTH / (float)FLAG_HEIGHT; }
-  }
-  if (icon) {
-    float gap = 2.0f * (float)gZoomFactor;
-    SDL_SetTextureBlendMode(icon, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureAlphaMod(icon, 170);
-    SDL_FRect id = { sx + texW + gap, sy + (texH - iconH) * 0.5f, iconW, iconH };
-    SDL_RenderTexture(gRenderer, icon, NULL, &id);
-    SDL_SetTextureAlphaMod(icon, 255);
-  }
+  /* The face is already opened at 13 px times the zoom, so the glyphs draw
+   * at the size they were rendered. */
+  tankLabelDraw(&gLabelCache, gRenderer, gFontMsg, str, playerNum,
+                sx, sy, 1.0f);
 }
 
 void sdl3DrawStatusGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
@@ -893,10 +830,7 @@ void sdl3DrawStatusSetPanelOrigins(float tanksX, float tanksY,
 
 void sdl3DrawStatusShutdown(void) {
   /* Destroy owned (b)-class texture caches */
-  for (int i = 0; i < SDL3_MAX_PLAYERS; i++) {
-    if (gLabelTex[i]) { SDL_DestroyTexture(gLabelTex[i]); gLabelTex[i] = NULL; }
-    gLabelStr[i][0] = '\0';
-  }
+  tankLabelCacheFlush(&gLabelCache);
   if (gTexMsgTop) { SDL_DestroyTexture(gTexMsgTop); gTexMsgTop = NULL; }
   if (gTexMsgBot) { SDL_DestroyTexture(gTexMsgBot); gTexMsgBot = NULL; }
   if (gTexKills)  { SDL_DestroyTexture(gTexKills);  gTexKills  = NULL; }

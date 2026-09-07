@@ -78,6 +78,10 @@ int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
 int run_command_codec_lobby_claim_start(void);
 int run_command_codec_rating_posted(void);
+int run_command_codec_view_state(void);
+/* CMD_VIEW_CYCLE codec round-trip: kind + direction + from survive the wire,
+ * including from == 0xFF, and the fixed body length is enforced. */
+int run_command_codec_view_cycle(void);
 int run_lobby_claim_start_host_swaps_occupied(void);
 int run_lobby_claim_start_host_swap_into_none(void);
 int run_lobby_claim_start_non_host_occupied_rejected(void);
@@ -229,6 +233,20 @@ int run_ranked_shape_gate(void);
 int run_lobby_lock_bit_lookup(void);
 int run_lobby_lock_rejects_settings(void);
 int run_lobby_lock_mask_roundtrip(void);
+int run_view_policy_defaults(void);
+int run_view_policy_apply_validates(void);
+int run_view_policy_lock_bits(void);
+int run_view_policy_lobby_reset(void);
+int run_classic_mode_defaults(void);
+int run_classic_mode_forces_views(void);
+int run_classic_mode_lock_bit(void);
+int run_classic_mode_lock_implied(void);
+int run_classic_mode_lock_blocks_dispatch(void);
+int run_classic_mode_lobby_reset(void);
+int run_allies_in_trees_defaults(void);
+int run_allies_in_trees_classic_mode(void);
+int run_info_packet_view_policy_layout(void);
+int run_info_packet_view_policy_length_tier(void);
 int run_upload_cap_enforced(void);
 int run_map_field_clamps_evil(void);
 int run_map_field_clamps_passthrough(void);
@@ -694,6 +712,14 @@ int run_lv_hide_lobby_periodic_snapshot(void);
  * the log's own join event instead. */
 int run_lv_logged_name_from_join_event(void);
 
+/* Load-time settings walk (test_lv_calibration.c): the settings a round was
+ * played under are the last log_GameSettings the file holds, so the walk
+ * collects them and a replay of the lobby's earlier event does not put the
+ * opening settings back. A log with no settings event reports none, including
+ * one opened straight after a log that had them. */
+int run_lv_game_settings_from_walk(void);
+int run_lv_game_settings_absent(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
@@ -791,6 +817,261 @@ int run_two_clients_full_sync_independent(void);
  * pillbox screen, so an fx near an owned pillbox but off the tank screen is
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
+
+/* Policy-driven viewport rects (test_view_policy_rects.c):
+ * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
+ * bases and tanks each grant a screen under always, nothing under off (and
+ * nothing under key without a claim), and under decay only while the
+ * recipient's proximity clock is unexpired — a dead allied pill grants
+ * nothing, and a player with no tank keeps a rect at its last known position
+ * instead of seeing the whole map. */
+int run_view_rects_default_baseline(void);
+int run_view_rects_always_base_ally(void);
+int run_view_rects_off(void);
+int run_view_rects_decay(void);
+int run_view_rects_dead_player(void);
+
+/* Per-recipient pill squares over the same rects (test_view_policy_rects.c): a
+ * pill inside them reports its real square with the position-current bit set,
+ * one outside every rect reports the square that recipient was last given with
+ * the bit clear while its owner, armour and in-tank flag keep arriving, the
+ * square corrects itself once the recipient's screen reaches it, the
+ * EVENT_PILL_UPDATE the builder emits is rewritten the same way rather than
+ * dropped, and an advantage brain's snapshot is exempt while a plain computer
+ * player's is not. */
+int run_view_pill_pos_current(void);
+int run_view_pill_pos_reveal(void);
+int run_view_pill_update_event_fogged(void);
+int run_view_pill_pos_bot_advantage(void);
+
+/* Server-side tree hide (test_tree_hide.c): serverSimBuildSnapshot ships a
+ * tank standing in trees more than MIN_TREEHIDE_DIST from the recipient on
+ * either axis as a TANK_SNAPSHOT_HIDDEN_FLAG stub — in full inside that
+ * distance, in full just after it has fired, and in full for an ally while the
+ * server's allies-in-trees option is on, never for an enemy. */
+int run_tree_hide_enemy(void);
+int run_tree_hide_ally_option(void);
+
+/* Server-side LGM visibility (test_lgm_visibility.c): a man on the parachute,
+ * and a man standing on open ground, are sent whatever the owning tank is
+ * doing — so hiding a tank in trees must not take its man with it, and the
+ * entry that carries the man must still not carry the tank's position. */
+int run_lgm_visibility_tank_in_trees(void);
+int run_lgm_visibility_tank_visible(void);
+
+/* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
+ * view a client is in, a viewPolicyKey category grants the claimed item a rect
+ * beside the recipient's own tank screen while it still qualifies rather than
+ * in place of it, and every claim the server cannot
+ * honour is accepted and degraded to the tank view — on arrival, per tick as
+ * the target stops qualifying, on the round reset, and when the player being
+ * viewed through leaves. */
+int run_view_state_key_grants_rect(void);
+int run_view_state_bad_claims_degrade(void);
+int run_view_state_invalidation(void);
+int run_view_state_lifecycle(void);
+
+/* Server-side ally picking (test_view_state.c): CMD_VIEW_CYCLE asks the server
+ * which ally to watch, serverSimPickAlly answers from live state — next and
+ * previous step in slot order and wrap, a dead ally, an un-allied player and
+ * the sender itself are never offered, and viewPolicyOff / an expired
+ * viewPolicyDecay clock leave nothing to watch. Every ally request is answered
+ * with a CTRL_VIEW_TARGET carrying the request's `from` back; a non-ally kind
+ * is answered with nothing. The four scroll directions each compare one
+ * coordinate, and compare it strictly, with the nearest match winning and a
+ * press with no origin stepping from the start instead. */
+int run_view_cycle_pick_order(void);
+int run_view_cycle_pick_policy(void);
+int run_view_cycle_pick_direction(void);
+
+/* CTRL_VIEW_TARGET body-codec round-trip (test_view_target_codec.c): the
+ * server's answer to a view-cycle request encodes/decodes through the body
+ * tables, with the nothing-to-watch case and the fixed body length. */
+int run_view_target_codec(void);
+
+/* Applying the server's answer (test_view_target_apply.c): a CTRL_VIEW_TARGET
+ * for our own slot whose fromEcho matches the ally we are stepping from parks
+ * the camera on the ally it names; an answer for another slot or echoing an
+ * earlier press is dropped, and a not-found answer leaves the tank view in
+ * place. Also the shape checks the arm makes before reading the answer — a
+ * kind other than ALLY and a target off the end of the player table are both
+ * dropped, while a not-found answer stands whatever its target byte holds. */
+int run_view_target_apply(void);
+
+/* Item-view cycling helpers (test_view_cycling.c): basesGetNextView and
+ * playersGetNextAllyView walk the allied bases and the allied live tanks in
+ * order and wrap, skipping enemy, neutral, dead and un-allied items and
+ * reporting FALSE when nothing qualifies; basesMoveView and
+ * playersMoveAllyView take the nearest item in the pressed direction on both
+ * axes and never one that is only nearer the other way; and
+ * viewportUpdateItemView drops the view once a base is captured or an ally
+ * dies or leaves, while following an ally that is still driving. Under a
+ * decay policy the cycling also steps over the items whose clocks have run
+ * out, clientSimViewEligibleMask being where that question is asked and
+ * answering "every item" for the other three policies, and an ally the server
+ * has stopped sending centres on the square it was last seen at until the
+ * stub run outlasts the grace. */
+int run_view_cycle_bases(void);
+int run_view_cycle_base_direction(void);
+int run_view_cycle_allies(void);
+int run_view_cycle_ally_direction(void);
+int run_view_cycle_exits(void);
+int run_view_cycle_decay_skip(void);
+int run_view_cycle_eligible_mask(void);
+int run_view_cycle_ally_stub(void);
+int run_view_cycle_stale_pill(void);
+
+/* The per-pill position-current flag (test_pill_pos_current.c): the lookups
+ * movement, turn rate and shell collision ask pass over a pill whose square
+ * this client has not been told is current, while the view and camera siblings
+ * still answer for it at the square it was last seen on; two pills on one
+ * square resolve to the one that is really there in either order; the client's
+ * apply path sets the flag from the snapshot bit on both the pill block and
+ * EVENT_PILL_UPDATE, writing the square as sent either way; a pill watched
+ * going into a tank and coming out again with no square sent stops being drawn
+ * anywhere until its real square arrives, while a pill nobody has touched
+ * keeps drawing; and a server's own list, which never carries a flag, answers
+ * exactly as it did. */
+int run_pill_pos_current_lookups(void);
+int run_pill_pos_current_num_split(void);
+int run_pill_pos_current_duplicate_square(void);
+int run_pill_pos_current_snapshot_apply(void);
+int run_pill_pos_current_server_unchanged(void);
+int run_pill_pos_current_moved_state(void);
+int run_pill_pos_current_carry_cycle(void);
+
+/* Pure viewport square calculator (test_viewport_calc.c):
+ * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
+ * never yields TANK_TRANSPARENT, and resolves pill and base squares by the
+ * alliance of the player being asked about. It draws a pill at a square this
+ * client only remembers, and the terrain underneath at one the pill was
+ * carried away from. */
+int run_viewport_calc_square_pure(void);
+int run_viewport_calc_pill_square_moved(void);
+
+/* Overview region geometry (test_overview_map.c): overviewMapBuildRegions
+ * gives the tank a 29x29 block and every viewable pillbox a 15x15 one,
+ * trimmed at the map edges, tank rect first and pills in index order, and
+ * never writes more rects than the caller allowed for; and
+ * overviewMapDeathBlackout puts the overview's blackout in the stretch of a
+ * death wait running from the tick the classic view cuts to static through to
+ * the respawn. */
+int run_overview_regions(void);
+
+/* Overview reveal (test_overview_map.c): one display tick on a freshly joined
+ * client marks exactly the squares in the union of its regions live, fills
+ * them with what the per-square calculator produces, and leaves every other
+ * square of the map unseen. */
+int run_overview_reveal(void);
+
+/* Overview freeze (test_overview_map.c): a square the tank drives away from
+ * keeps the tile it carried and never picks up a later terrain change the
+ * client has already applied, while the same change inside the block the tank
+ * drove into does reach the memory. */
+int run_overview_freeze_no_leak(void);
+
+/* Overview farewell stamp (test_overview_map.c): a pill that dies, is
+ * captured or is picked up takes its block out of the live set, and the
+ * block's last stamp shows the pill as it ended rather than as it was a tick
+ * earlier. Removing the tank freezes its block the same way. */
+int run_overview_pill_capture(void);
+
+/* Overview lifetime (test_overview_map.c): clientSimResetWorld empties the
+ * memory back to unseen, and a mid-game map resync leaves what has been seen
+ * exactly where it was. */
+int run_overview_reset(void);
+
+/* Overview decay clocks (test_overview_map.c): a display tick stamps the items
+ * the local tank is beside, for the categories on viewPolicyDecay and no
+ * others; an item's block appears while its clock is inside the window, fades
+ * over the end of it and freezes what it was showing when it runs out; and the
+ * clocks start over on a round reset and a fresh map install while surviving a
+ * mid-game resync. The view exit reads the same window: an item view whose
+ * clock has run out drops back to the tank view, while one inside its window
+ * and one on any other policy are left alone. */
+int run_overview_decay_mirror(void);
+int run_overview_decay_view_exit(void);
+
+/* Overview regions under the view policies (test_overview_view_policy.c): the
+ * rules a server ships with produce the region set the overview has always
+ * had; always sweeps a category, key grants only what the player is watching
+ * and off grants nothing, each kind in its own block size and in the order the
+ * farewell stamp replays; and a decay window runs from full brightness through
+ * the fade to nothing, with an item the player could never watch earning
+ * nothing from having been driven past. */
+int run_overview_policy_baseline(void);
+int run_overview_policy_categories(void);
+int run_overview_policy_decay(void);
+
+/* Overview over the wire (test_overview_map.c): the same reveal checks against
+ * a world delivered by a real UDP join and map download, plus a staged map
+ * event that reaches a live square's tile and leaves an unseen one alone. */
+int run_overview_loopback(void);
+
+/* Overview camera maths (test_overview_camera.cpp): a square's centre
+ * round-trips through view pixels at every step of the 0.5x-4x zoom ladder,
+ * a zoom step holds the world point under the cursor still unless follow
+ * owns the centre, centre-on-tank puts the tank at the view centre, zoom and
+ * pan stop at the ladder's and the map's bounds, and the visible-square
+ * range matches hand-worked spans at the map edges. */
+int run_overview_camera(void);
+
+/* Overview camera scroll (test_overview_camera.cpp): the animated form of the
+ * keep-on-screen nudge. A point already inside the view starts nothing, an
+ * off-screen one starts a scroll that moves nothing until the first tick, and
+ * ticks summing to OVERVIEW_SCROLL_MS land the centre exactly where the
+ * instant nudge would have put it — the least move, not the point. In between
+ * the eased centre only ever goes towards the target and never past it, a tick
+ * longer than the whole duration stops on it, a re-aim part way runs from the
+ * centre it had reached with the clock back at zero, and a pan, a zoom step or
+ * a centre-on-tank ends the scroll where the follow tick does not. The follow
+ * flag comes through all of it untouched. */
+int run_overview_scroll(void);
+
+/* Overview fog mask (test_overview_fog.cpp): a live square comes out clear and
+ * ground past the ramp fully fogged, the fade rises square by square out of
+ * every edge and is darker diagonally off a corner than the same way out of an
+ * edge, overlapping regions take the brightest answer, a region against the
+ * map border keeps its brightness to the border without writing past the end
+ * of the mask, and no regions at all fogs the whole map. */
+int run_overview_fog(void);
+
+/* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
+ * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
+ * in the classic order without overlapping and stay inside their backing
+ * strip, the build select stands clear on the left edge with five evenly
+ * stacked clickable items, the newswire strip spans the bottom edge, every
+ * slice is cut from inside the 515x325 chrome, and a window too small for a
+ * legible column is refused without writing to the caller's layout. */
+int run_overview_hud_layout(void);
+
+/* Overview dead tank (test_overview_map.c): a tank that is dead and waiting to
+ * respawn holds its block on the square it died on — the corner it reads from
+ * reveals nothing, the block keeps its tiles and goes on taking terrain
+ * changes, and it follows the tank to wherever it respawns. */
+int run_overview_dead_tank(void);
+
+/* Overview entity filter (test_overview_map.c): the per-frame lists
+ * clientSimPrepareOverviewEntities builds cover the whole map, and
+ * overviewEntityIsVisible is what keeps an enemy tank the client still knows
+ * about off the picture once it leaves the block the player can see. The
+ * local player's own tank obeys the same test: watching a pill under
+ * viewPolicyKey closes the block round the tank, and the tank goes off the
+ * picture with it until the view is left. */
+int run_overview_entities(void);
+
+/* Overview gunsight accessor (test_overview_map.c): clientSimGetGunsightPos
+ * reports the crosshair's square and pixel offset while the tank is alive and
+ * the sight is shown, and declines — writing nothing — for a hidden sight and
+ * for a tank that is dead and waiting to respawn, where clientSimGetGunsightTile
+ * still answers with the map origin. */
+int run_overview_gunsight(void);
+
+/* My-tank position accessor (test_overview_map.c): clientSimGetMyTankMapPos
+ * reports the tank's square while it is alive, fails while it is dead and
+ * waiting to respawn rather than handing back the map origin it reads as, and
+ * leaves the caller's out-params alone when it fails. */
+int run_tank_pos_dead(void);
 
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
@@ -915,6 +1196,12 @@ int run_cookie_handshake(void);
  * the map stream flow — the cookie is the sole amplification gate. */
 int run_map_amp_gate(void);
 
+/* The map-download re-ask interval (test_map_reask_throttle.c): a re-ask
+ * recompresses the slot's terrain, re-sends JOIN_ACCEPT and restarts the
+ * stream, so a joined client must not be able to drive that in a loop. The
+ * first READY of a download is the arming ask and is never held off. */
+int run_map_reask_throttle(void);
+
 /* Map-desync resync queue logic (test_map_resync.c): the resync cut empties
  * the slot's map-event queue (ackedSeq == nextSeq); baked-in changes are not
  * re-sent and a post-cut change delivers exactly once; a duplicate request
@@ -927,11 +1214,79 @@ int run_map_resync_stale_gen_rejected(void);
 
 /* Map compressed-codec round-trip (test_map_compress_roundtrip.c): a real map
  * (and a mutated one carrying mine-range terrain near pills/bases) must survive
- * mapSaveCompressedMap -> mapLoadCompressedMap tile-for-tile. */
+ * mapSaveCompressedMap -> mapLoadCompressedMap tile-for-tile, and the
+ * compressor must refuse a map that does not fit the output capacity it was
+ * given rather than write past it. */
 int run_map_compress_roundtrip_stock(void);
+int run_map_compress_capacity_refuses(void);
+int run_map_compress_incompressible(void);
 int run_map_compress_roundtrip_mutated(void);
 int run_map_checksum_ignores_mines(void);
 int run_map_resync_base_crater_converges(void);
+
+/* Per-client copies of the terrain (test_map_shadow.c): each slot's
+ * clientKnownMap follows the live map across frames of scattered terrain
+ * changes; its checksum equals the live map's and equals what
+ * serverSimBuildSnapshot stamps into that slot's header;
+ * serverSimGetCompressedMapFor produces the same bytes as
+ * serverSimGetCompressedMap; and a join, a round reset and a lobby map change
+ * each re-seed the copies. */
+int run_map_shadow_tracks_real(void);
+int run_map_shadow_crc_matches(void);
+int run_map_shadow_blob_identical(void);
+int run_map_shadow_seed_lifecycle(void);
+
+/* Culled copies (test_map_shadow.c): a slot the UDP transport has marked is
+ * skipped by the tick — the transport writes it one square at a time as it
+ * queues events — and the catch-up sweep pays back what such a slot is owed
+ * inside the rects it is given, at the cap it is given, converging to silence
+ * and clamping rects that run off the map. */
+int run_map_shadow_cull_withholds(void);
+int run_map_shadow_sweep_converges(void);
+int run_map_shadow_sweep_bounds(void);
+
+/* The round-start copy (test_map_shadow.c): it is taken wherever a map is
+ * installed and stands still between those points; a slot seeded from it — what
+ * a player joining a running game gets — holds and compresses to the terrain
+ * the round started on rather than the live map, and a sweep over the changed
+ * ground converges it; with nothing captured the seed falls back to the live
+ * map. */
+int run_map_shadow_round_start_capture(void);
+int run_map_shadow_join_seeds_round_start(void);
+int run_map_shadow_round_start_fallback(void);
+
+/* Per-client records of the pill squares (test_map_shadow.c): each slot's
+ * clientKnownPillX/Y follows the live pill list across frames in which pills
+ * move; the checksum over a slot's terrain copy and its pill squares equals the
+ * live one and equals what serverSimBuildSnapshot stamps;
+ * serverSimGetCompressedMapFor produces the same bytes as
+ * serverSimGetCompressedMap while the two agree and the round-start squares
+ * once they do not; and a full-sync snapshot's pill entries and pill events
+ * rebuild, in the client's order, the list the header's checksum was taken
+ * over — for a pill the recipient can see, and for one whose square it is not
+ * being told. */
+int run_pill_shadow_tracks_real(void);
+int run_pill_shadow_crc_matches(void);
+int run_pill_shadow_blob_identical(void);
+int run_pill_shadow_fullsync_move_matches(void);
+int run_pill_shadow_withheld_crc_matches(void);
+
+/* Map-event culling over the loopback transport (test_loopback_map_cull.c): a
+ * change a wire client cannot see is neither queued to it nor written into its
+ * copy, its checksum still describes the map it holds so it never resyncs, an
+ * in-process slot takes the same change, a visible change arrives as before,
+ * and driving over to the stale ground catches it up. The second case forces a
+ * resync while the client is behind: the blob is its copy, not the live map. */
+int run_loopback_map_cull(void);
+int run_loopback_map_cull_resync(void);
+
+/* Ally view over the loopback transport (test_view_ally_loopback.c): under
+ * viewPolicyKey, with an allied in-process player parked outside every rect
+ * the wire client has and absent from the client's interpolation mask, the
+ * ally key still reaches them and the server then starts sending them; the
+ * same press with that ally in its death wait reaches nobody and leaves the
+ * camera on the tank. */
+int run_view_ally_loopback(void);
 
 /* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
  * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a
@@ -1019,6 +1374,12 @@ int run_tkexp_lgm_pairing(void);
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
+
+/* Game-binding claims (test_key_claims.c). keyIsClaimedByGame() must report
+ * every keyItems field as owned by the game, so a second window that drives
+ * the game — the Map Overview pop-out — never shadows a bound key, and must
+ * leave scancode 0 and unbound keys free. */
+int run_key_claims(void);
 
 /* Pasted server-address splitting for the manual join dialog
  * (test_server_address_parse.c). */

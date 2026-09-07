@@ -166,6 +166,14 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
   /* The mDNS responder is always our current producer, so the rich
    * flags/counts/md5 keys are present in the TXT record. */
   out->hasRichInfo = true;
+  /* The TXT record set carries no view-policy keys, so report the same
+   * defaults an INFO packet without the view byte reports. memset alone
+   * would leave the base view reading "always". There is no classic-mode
+   * or allies-in-trees key either, and for those memset gives the right
+   * answer — both off. */
+  out->pillView = viewPolicyAlways;
+  out->baseView = viewPolicyOff;
+  out->allyView = viewPolicyAlways;
 
   if (r->haveAddr) {
     a = r->addr;

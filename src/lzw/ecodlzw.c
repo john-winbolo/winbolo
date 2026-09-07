@@ -30,6 +30,8 @@ unsigned char *compressSrc, *compressDest;
 int compressLen; /* Length of the compressed array */
 int uncompressLen; /* Length of the data to compress */
 int compressUpto; /* Where we are up to in the compression */
+int compressDestCap; /* Capacity of compressDest in bytes (encode bound) */
+int compressOverflow; /* Set TRUE if a write past compressDestCap was attempted */
 
 /* Pseudo procedures */
 static __inline int conend_of_data() {
@@ -42,12 +44,24 @@ static __inline int conend_of_data() {
 
 
 static __inline unsigned char conread_byte() {
+  /* No source bound check here, unlike decread_byte in dcodlzw.c. Every read
+   * in lzwencoding is guarded by a conend_of_data test first, and the source
+   * is a map the server already holds rather than anything off the wire, so
+   * the read cannot run past compressSrc as the encoder stands. A read added
+   * without that guard would need the check adding with it. */
   compressUpto++;
   return compressSrc[compressUpto-1];
 }
 
 
 static __inline void conwrite_byte(unsigned char c) {
+  /* Bound every write to the destination capacity. RLE type 1 adds a run
+   * header byte per run, so an incompressible 64KB map encodes larger than
+   * its input and would otherwise run off the end of a 64KB destination. */
+  if (compressLen >= compressDestCap) {
+    compressOverflow = TRUE;
+    return;
+  }
   compressDest[compressLen] = c;
   compressLen++;
 }
@@ -55,6 +69,10 @@ static __inline void conwrite_byte(unsigned char c) {
 void conwrite_array(unsigned char *c, int numBytes) {
   int count = 0;
   while (count < numBytes) {
+    if (compressLen >= compressDestCap) {
+      compressOverflow = TRUE;
+      return;
+    }
     compressDest[compressLen] = c[count];
     compressLen++;
     count++;
@@ -62,8 +80,9 @@ void conwrite_array(unsigned char *c, int numBytes) {
 }
 
   
-int lzwencoding(unsigned char *src, unsigned char *dest, int len)
-/* Returned parameters: None
+int lzwencoding(unsigned char *src, unsigned char *dest, int len, int destCap)
+/* Returned parameters: encoded byte count, or -1 if the encoding did not fit
+   in destCap bytes.
    Action: Compresses with RLE type 1 method all bytes read by the function 'read_byte'
    Errors: An input/output error could disturb the running of the program
 */
@@ -75,6 +94,8 @@ int lzwencoding(unsigned char *src, unsigned char *dest, int len)
   compressLen = 0;
   compressUpto = 0;
   uncompressLen = len;
+  compressDestCap = destCap;
+  compressOverflow = FALSE;
 
   if (!conend_of_data())
      { byte1=conread_byte();    /* Is there at least a byte to analyze? */
@@ -141,13 +162,16 @@ int lzwencoding(unsigned char *src, unsigned char *dest, int len)
                              }
                       }
                }
-            while ((!conend_of_data())||(frame_size>=2));
+            while (((!conend_of_data())||(frame_size>=2))&&(!compressOverflow));
           }
        if (frame_size==1)
           { conwrite_byte(0);
             conwrite_byte(byte1);
           }
      }
+  if (compressOverflow) {
+    return -1;
+  }
   return compressLen;
 }
 

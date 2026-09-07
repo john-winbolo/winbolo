@@ -187,6 +187,19 @@ int gameFrontDialogY = -1;
 float gameFrontLobbySplit = 0.0f;
 float gameFrontLobbySplitRecap = 0.0f;
 
+/* Map overview pop-out geometry and camera state ([WINDOW] section on
+   desktop). The wasm build never opens the pop-out — a browser tab has no
+   second OS window — but sdl3imgui.cpp is shared and references the
+   symbols. */
+int   gameFrontOverviewW = 640;
+int   gameFrontOverviewH = 640;
+int   gameFrontOverviewX = -1;
+int   gameFrontOverviewY = -1;
+float gameFrontOverviewZoom = 1.0f;
+bool  gameFrontOverviewFollow = TRUE;
+bool  gameFrontShowMapOverview = FALSE;
+bool  gameFrontFullScreen = FALSE;
+
 bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;
@@ -212,6 +225,17 @@ char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
 bool           gameFrontHostingLogging          = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays     = TRUE;
+
+/* Visibility rules a hosted game starts with. Same story as the hosting
+ * knobs above — held for the dialogs, never applied to a server here. */
+int gameFrontViewPillPolicy    = viewPolicyAlways;
+int gameFrontViewBasePolicy    = viewPolicyOff;
+int gameFrontViewAllyPolicy    = viewPolicyAlways;
+int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+bool gameFrontClassicMode      = FALSE;
+bool gameFrontAlliesInTrees    = FALSE;
 
 /* Server-authoritative state — the Transport handle itself now lives
  * inside humanSim; only high-level lifecycle gating is tracked here. */
@@ -260,6 +284,10 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiAllyView     = DEFAULT_ALLYVIEW;
   keys->kiLGMView      = DEFAULT_LGMVIEW;
   keys->kiBaseView     = DEFAULT_BASEVIEW;
+  keys->kiOverviewZoom = DEFAULT_OVERVIEW_ZOOM;
+  keys->kiOverviewFollow  = DEFAULT_OVERVIEW_FOLLOW;
+  keys->kiOverviewZoomIn  = DEFAULT_OVERVIEW_ZOOMIN;
+  keys->kiOverviewZoomOut = DEFAULT_OVERVIEW_ZOOMOUT;
   keys->kiScrollUp     = DEFAULT_SCROLLUP;
   keys->kiScrollDown   = DEFAULT_SCROLLDOWN;
   keys->kiScrollLeft   = DEFAULT_SCROLLLEFT;
@@ -878,6 +906,15 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
 }
+
+void gameFrontSetViewPillPolicy(int policy)  { gameFrontViewPillPolicy = policy; }
+void gameFrontSetViewBasePolicy(int policy)  { gameFrontViewBasePolicy = policy; }
+void gameFrontSetViewAllyPolicy(int policy)  { gameFrontViewAllyPolicy = policy; }
+void gameFrontSetViewPillDecaySecs(int secs) { gameFrontViewPillDecaySecs = secs; }
+void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs; }
+void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
+void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
+void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */
 void gameFrontSetSteamPresenceMenu(void)           { }

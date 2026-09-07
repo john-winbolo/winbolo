@@ -150,7 +150,7 @@ uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample);
 /* Upper bound on one non-stub tank entry: the 11-byte core (incl. presence
  * mask) plus every field group present at once. NOT the typical on-wire size —
  * most entries are far smaller because absent (zero) groups are omitted. */
-#define TANK_SNAPSHOT_WIRE_SIZE 28
+#define TANK_SNAPSHOT_WIRE_SIZE 29
 
 /* ---- Serialization helpers ---- */
 

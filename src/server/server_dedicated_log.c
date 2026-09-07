@@ -116,7 +116,22 @@ static bool s_roundRan = FALSE;
 static bool s_lobbyEnterPending = FALSE;
 static bool s_gameStartPending = FALSE;
 static bool s_mapMsgPending = FALSE;
+static bool s_settingsPending = FALSE;
 static char s_pendingMapMsg[256];
+
+/* Bytes of settings the log_GameSettings blob carries. The layout is written
+ * out in docs/replay-format.md; it is append-only, so a later field lands
+ * after byte 13 and this grows with it. */
+#define LOG_SETTINGS_PAYLOAD_LEN 14
+
+/* The settings last written to the open log. CTRL_LOBBY_SETTINGS is published
+ * for map changes, phase transitions and joins as well as real edits, so the
+ * drained lobby-edit path compares against this and writes nothing when the
+ * settings did not actually move. The three unconditional emit sites write
+ * regardless and refresh it, so the settings a round was played under are
+ * always in the running segment. Invalid until the open log has one. */
+static BYTE s_lastSettings[LOG_SETTINGS_PAYLOAD_LEN];
+static bool s_lastSettingsValid = FALSE;
 
 static void serverDedicatedLogRenameForMap(ServerSim *sim);
 
@@ -296,6 +311,66 @@ static void serverDedicatedLogRenameForMap(ServerSim *sim) {
     }
 }
 
+/* Build the settings blob in the pascal-string form logAddEvent takes: out[0]
+ * is the byte count, out[1..] the fields. Every multi-byte value is
+ * big-endian, matching the framing the serializer writes around it. The
+ * values are read straight off the sim, so this records what the server is
+ * running with rather than what the header captured when the file opened. */
+static void serverDedicatedLogBuildSettings(ServerSim *sim, char *out) {
+    uint16_t pillDecay = sim->viewDecaySecs[viewCategoryPill];
+    uint16_t baseDecay = sim->viewDecaySecs[viewCategoryBase];
+    uint16_t allyDecay = sim->viewDecaySecs[viewCategoryAlly];
+    uint16_t timeMinutes = serverSimGetTimeMinutes(sim);
+    BYTE flags = 0;
+
+    if (sim->sim.hiddenMines)       flags |= 0x01u;
+    if (serverSimGetTimeLimit(sim)) flags |= 0x02u;
+    if (sim->autoLockOnGameStart)   flags |= 0x04u;
+    if (sim->ranked)                flags |= 0x08u;
+    /* Whether a password is set, never the password text. */
+    if (sim->hasPassword)           flags |= 0x10u;
+    if (sim->allowNewPlayers)       flags |= 0x20u;
+
+    out[0]  = (char)LOG_SETTINGS_PAYLOAD_LEN;
+    /* Same packing as INFO_PACKET.view_policies, so the three carriers of the
+     * visibility rules all read the same byte. */
+    out[1]  = (char)infoPacketPackViewPolicies(sim->viewPolicy[viewCategoryPill],
+                                               sim->viewPolicy[viewCategoryBase],
+                                               sim->viewPolicy[viewCategoryAlly],
+                                               sim->classicMode,
+                                               sim->alliesInTrees);
+    out[2]  = (char)((pillDecay >> 8) & 0xFF);
+    out[3]  = (char)(pillDecay & 0xFF);
+    out[4]  = (char)((baseDecay >> 8) & 0xFF);
+    out[5]  = (char)(baseDecay & 0xFF);
+    out[6]  = (char)((allyDecay >> 8) & 0xFF);
+    out[7]  = (char)(allyDecay & 0xFF);
+    out[8]  = (char)gameTypeGet(&sim->sim.game);
+    out[9]  = (char)sim->botAiType;
+    out[10] = (char)flags;
+    out[11] = (char)((timeMinutes >> 8) & 0xFF);
+    out[12] = (char)(timeMinutes & 0xFF);
+    out[13] = (char)((sim->serverLocks >> 8) & 0xFF);
+    out[14] = (char)(sim->serverLocks & 0xFF);
+}
+
+/* Write the current settings to the log. `force` is TRUE where the record has
+ * to be there whatever came before — the log opening, and the round starting —
+ * and FALSE on the drained lobby-edit path, which skips a repeat of settings
+ * already written. */
+static void serverDedicatedLogEmitSettings(ServerSim *sim, bool force) {
+    char blob[LOG_SETTINGS_PAYLOAD_LEN + 1];
+
+    serverDedicatedLogBuildSettings(sim, blob);
+    if (!force && s_lastSettingsValid &&
+        memcmp(s_lastSettings, blob + 1, LOG_SETTINGS_PAYLOAD_LEN) == 0) {
+        return;
+    }
+    logAddEvent(log_GameSettings, 0, 0, 0, 0, 0, blob);
+    memcpy(s_lastSettings, blob + 1, LOG_SETTINGS_PAYLOAD_LEN);
+    s_lastSettingsValid = TRUE;
+}
+
 static void handleLobbyEnter(ServerSim *sim) {
     BYTE i;
 
@@ -315,8 +390,13 @@ static void handleLobbyEnter(ServerSim *sim) {
      * reset at the end of the stash, deliberately: the invariant then holds
      * whichever path opened this log. */
     s_roundRan = FALSE;
+    /* The settings written below belong to this file and nothing before it. */
+    s_lastSettingsValid = FALSE;
     if (s_isLogging) {
         logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
+        /* What the lobby opened with. The host can edit any of it before the
+         * countdown, which is why the round start writes it again. */
+        serverDedicatedLogEmitSettings(sim, TRUE);
         for (i = 0; i < MAX_TANKS; i++) {
             if (sim->playerConnected[i]) {
                 const char *name = transportUdpServerGetPlayerName(i);
@@ -387,6 +467,9 @@ static void handleGameStart(ServerSim *sim) {
          * which is what makes it worth publishing when it closes. */
         s_roundRan = TRUE;
         logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
+        /* The settings the round is actually played under, whatever the lobby
+         * opened with and whatever the host changed since. */
+        serverDedicatedLogEmitSettings(sim, TRUE);
         /* Team-derived alliances from serverSimReapplyTeamAlliances are
          * applied silently — playersAcceptAlliance writes the bitmap but
          * doesn't emit log events the way the in-game /accept path does
@@ -412,6 +495,7 @@ static void handleGameStart(ServerSim *sim) {
 
     /* No-lobby case — start the log on the running transition. */
     serverDedicatedLogResolveFileName(sim);
+    s_lastSettingsValid = FALSE;
     s_isLogging = logStart(s_logFileName, sim,
                            0, MAX_TANKS, sim->hasPassword);
     if (s_isLogging) {
@@ -419,6 +503,9 @@ static void handleGameStart(ServerSim *sim) {
          * starts at the running transition, with no lobby segment in front
          * of it — so the publish gate has to be armed here too. */
         s_roundRan = TRUE;
+        /* No lobby means no edits and no second chance: this is the only
+         * settings record a -nolobby or -maprotate round gets. */
+        serverDedicatedLogEmitSettings(sim, TRUE);
         fprintf(stderr, "Logging to %s\n", s_logFileName);
     }
 }
@@ -434,7 +521,7 @@ static void serverDedicatedLogDrain(void) {
         return;
     }
     if (s_lobbyEnterPending == FALSE && s_gameStartPending == FALSE &&
-        s_mapMsgPending == FALSE) {
+        s_mapMsgPending == FALSE && s_settingsPending == FALSE) {
         return;
     }
     /* Lobby enter first: it is the arm that opens the log, and the two below
@@ -450,12 +537,19 @@ static void serverDedicatedLogDrain(void) {
     if (s_gameStartPending == TRUE) {
         handleGameStart(sim);
     }
+    /* Settings after the two above: when a lobby edit and one of them land in
+     * the same tick, the record they wrote is the current one and this adds
+     * nothing. */
+    if (s_settingsPending == TRUE) {
+        serverDedicatedLogEmitSettings(sim, FALSE);
+    }
     if (s_mapMsgPending == TRUE) {
         logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, s_pendingMapMsg);
     }
     s_lobbyEnterPending = FALSE;
     s_gameStartPending = FALSE;
     s_mapMsgPending = FALSE;
+    s_settingsPending = FALSE;
 }
 
 static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
@@ -492,6 +586,15 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
             break;
         case CTRL_LOBBY_MAP_CHANGE:
             handleLobbyMapChange(sim);
+            break;
+        case CTRL_LOBBY_SETTINGS:
+            /* Settings apply on whichever thread drove the edit, so the write
+             * has to wait for the drain like the map message does. An edit
+             * before the log opens needs nothing queued: handleLobbyEnter
+             * records the settings the file opens with. */
+            if (sim->wantLogging && logIsRecording()) {
+                s_settingsPending = TRUE;
+            }
             break;
         default:
             break;
@@ -608,6 +711,8 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     s_lobbyEnterPending = FALSE;
     s_gameStartPending = FALSE;
     s_mapMsgPending = FALSE;
+    s_settingsPending = FALSE;
+    s_lastSettingsValid = FALSE;
     s_serveMode = ROUND_LOG_SERVE_AUTO;
     s_dontSendLog = dontSendLog;
     s_logSim = sim;
@@ -661,6 +766,8 @@ void serverDedicatedLogUninstall(void) {
     s_lobbyEnterPending = FALSE;
     s_gameStartPending = FALSE;
     s_mapMsgPending = FALSE;
+    s_settingsPending = FALSE;
+    s_lastSettingsValid = FALSE;
     s_serveMode = ROUND_LOG_SERVE_AUTO;
     /* s_pendingUploadFile is deliberately left alone: a round stashed for
      * WinBolo.net that could not go out yet (the session was down) is still

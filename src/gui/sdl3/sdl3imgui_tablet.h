@@ -48,9 +48,16 @@ typedef struct {
   float mineRadius;
   float mineCenterX, mineCenterY;
 
-  /* View buttons — pill view and tank view */
+  /* View buttons — one column, stacked up from the pill slot with the tank
+     button on top. The show flags follow the server's visibility rules: a
+     category turned off has no button, and the ones above it move down into
+     its place. */
   float pillViewCenterX, pillViewCenterY, pillViewRadius;
+  float baseViewCenterX, baseViewCenterY, baseViewRadius;
+  float allyViewCenterX, allyViewCenterY, allyViewRadius;
   float tankViewCenterX, tankViewCenterY, tankViewRadius;
+  float viewBtnGap;
+  bool  showPillViewBtn, showBaseViewBtn, showAllyViewBtn;
 
   /* Gunsight +/- buttons (circles) */
   float gsIncCenterX, gsIncCenterY, gsIncRadius;

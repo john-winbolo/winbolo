@@ -91,6 +91,14 @@ struct MacMenuState {
     bool gameInfoOpen;
     /* Players menu popouts */
     bool sendMsgOpen;
+    bool mapOverviewOpen;
+    bool mapOverviewEnabled;   /* the overview needs a running game to draw */
+    bool overviewInWindow;
+    bool overviewInWindowEnabled;
+    /* Window > Enter Full Screen. One flag for both of the toggle's halves:
+     * the full screen map in a game sets it too, so it is checked whichever
+     * of them the player is in. */
+    bool fullScreenOn;
     /* Alliance gating — mirrors the in-window Players menu's pre-compute
      * so the native Request/Leave Alliance items grey out identically. */
     bool canRequest;       /* any unallied, checked peer eligible to request */

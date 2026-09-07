@@ -3959,14 +3959,14 @@ struct MapPreview *mapGenRunAsPreview(const MapGenConfig *cfg,
     /* Always serialize — both to populate outBuf for the caller (if
      * provided) and to drive the MapPreview construction below. Use a
      * scratch buffer when the caller doesn't provide one. */
-    BYTE  scratch[256 * 1024];
+    BYTE  scratch[MAP_COMPRESSED_MAX_SIZE];
     BYTE *serBuf  = outBuf;
     int   serCap  = outBufCap;
     if (serBuf == NULL || serCap < (int)sizeof(scratch)) {
         serBuf = scratch;
         serCap = (int)sizeof(scratch);
     }
-    int len = mapSaveCompressedMap(&mp, &pb, &bs, &ss, serBuf);
+    int len = mapSaveCompressedMap(&mp, &pb, &bs, &ss, serBuf, serCap);
 
     if (outCompressedLen != NULL) {
         *outCompressedLen = (outBuf != NULL && serBuf == outBuf) ? len : 0;

@@ -284,6 +284,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->savedAllowNewPlayers = TRUE;
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
+    /* Visibility rules. Pills and allied tanks stay always-visible (the
+     * historical behaviour); bases start off. memset would give every
+     * category viewPolicyAlways and a zero decay, so set all three. */
+    sim->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+    sim->viewPolicy[viewCategoryBase] = viewPolicyOff;
+    sim->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+    for (count = 0; count < VIEW_CATEGORY_COUNT; count++) {
+        sim->viewDecaySecs[count] = VIEW_DECAY_DEFAULT_SECS;
+    }
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
@@ -367,6 +376,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
     }
 
+    /* Bind every slot's copy of the terrain to the map just created. The
+     * three creators re-seed once their map is loaded; doing it here as well
+     * means no slot's handle is left NULL by the memset above. */
+    serverSimShadowSeedAll(sim);
+
     /* Publish the sim as live before any caller can arm an activeSim slot
      * for it.  Paired with serverSimUnregisterLive in serverSimDestroy,
      * which the failure paths of the three creators also route through. */
@@ -422,14 +436,17 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
 
     /* Cache the initial map state for between-round resets */
     {
-        BYTE tempBuf[65536];
-        int len = serverSimGetCompressedMap(sim, tempBuf);
+        BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
+        int len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
             memcpy(sim->cachedMapData, tempBuf, len);
             sim->cachedMapDataLen = len;
         }
     }
+
+    /* The map is loaded — restart every slot's copy of the terrain from it. */
+    serverSimShadowSeedAll(sim);
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;
@@ -456,14 +473,17 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
 
     /* Cache the initial map state for between-round resets */
     {
-        BYTE tempBuf[65536];
-        int len = serverSimGetCompressedMap(sim, tempBuf);
+        BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
+        int len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
             memcpy(sim->cachedMapData, tempBuf, len);
             sim->cachedMapDataLen = len;
         }
     }
+
+    /* The map is loaded — restart every slot's copy of the terrain from it. */
+    serverSimShadowSeedAll(sim);
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;
@@ -473,7 +493,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
                                     gameType game, bool hiddenMines,
                                     int32_t startDelay, int32_t gameLen) {
     ServerSim *sim;
-    BYTE tempBuf[65536];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     char seedStr[64];
     int x, y;
@@ -531,7 +551,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     snprintf(sim->mapName, MAP_STR_SIZE, "rand_%.30s", seedStr);
 
     /* Cache compressed map data for client distribution */
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
         serverSimDestroy(sim);
@@ -539,6 +559,9 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     }
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
+
+    /* The generated map is in place — restart every slot's copy from it. */
+    serverSimShadowSeedAll(sim);
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;

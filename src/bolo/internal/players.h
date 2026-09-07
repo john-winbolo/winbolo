@@ -420,6 +420,71 @@ void playersMakeScreenName(struct ClientSim *cs, players *plrs, BYTE selfPlayer,
 bool playersIsAllie(players *plrs, BYTE playerA, BYTE playerB);
 
 /*********************************************************
+*NAME:          playersCanAllyView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* The one ally-view predicate: an allied player's tank can be
+* watched when the slot is in use, is not our own, is allied
+* to the view player, and its bit is set in viewable.
+*
+* viewable carries the aliveness the caller knows about. The
+* client holds no tank object for anybody but itself, so the
+* only record it has of a remote tank being alive is the
+* interpolation context (clientSimAllyViewMask); tests and
+* any caller with real tanks build the same mask from
+* tankGetDeathWait.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game sim
+*  viewable  - Bit per player slot: that tank is alive
+*  playerNum - The player to check
+*********************************************************/
+bool playersCanAllyView(struct GameSim *sim, PlayerBitMap viewable, BYTE playerNum);
+
+/*********************************************************
+*NAME:          playersMoveAllyView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Allows players to step through their allies' tanks in a
+* direction. Returns whether an ally was found that way, and
+* if so writes its player number and last known map square.
+* The allied-tank equivalent of pillsMoveView.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game sim
+*  viewable  - Bit per player slot: that tank is alive
+*  eligible  - Bit per player slot: that ally may be selected
+*  playerNum - Pointer to hold the ally's player number (and prev)
+*  mx        - Pointer to hold X Map position (and prev)
+*  my        - Pointer to hold Y Map position (and prev)
+*  xMove     - -1 for moving left, 1 for right, 0 for neither
+*  yMove     - -1 for moving up, 1 for down, 0 for neither
+*********************************************************/
+bool playersMoveAllyView(struct GameSim *sim, PlayerBitMap viewable, PlayerBitMap eligible, BYTE *playerNum, BYTE *mx, BYTE *my, int xMove, int yMove);
+
+/*********************************************************
+*NAME:          playersGetNextAllyView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Returns whether a next watchable ally exists. If so then it
+* puts its player number and last known map square into the
+* parameters passed. If a previous ally is being used then
+* the parameter 'prev' is true and playerNum holds it, so the
+* search carries on from the slot after it and wraps. The
+* allied-tank equivalent of pillsGetNextView.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game sim
+*  viewable  - Bit per player slot: that tank is alive
+*  eligible  - Bit per player slot: that ally may be selected
+*  playerNum - Pointer to hold the ally's player number (and prev)
+*  mx        - Pointer to hold X Map position
+*  my        - Pointer to hold Y Map position
+*  prev      - Whether a previous ally is being passed
+*********************************************************/
+bool playersGetNextAllyView(struct GameSim *sim, PlayerBitMap viewable, PlayerBitMap eligible, BYTE *playerNum, BYTE *mx, BYTE *my, bool prev);
+
+/*********************************************************
 *NAME:          playersGetNumAllie
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
