@@ -94,6 +94,7 @@
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "mapgen.h"
+#include "ovperf.h"   /* the hosted server tick's timing counters */
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
@@ -397,13 +398,22 @@ static volatile bool spServerPaused = false;
 static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
   (void)userdata; (void)id;
   if (spServerTimerShutdown) return 0;
+#if WB_OVPERF
+  uint64_t ovEntry = ovPerfNow();
+#endif
   /* Read spServerSim under the mutex so a concurrent shutdown can NULL
    * it out without us racing with a freed pointer cached on this stack
    * frame.  serverInstanceTick re-takes the mutex internally; the
    * threading mutex is recursive on both Windows and SDL3.  Single
    * non-NULL check covers both SP and listen-server now that both go
    * through this timer. */
+#if WB_OVPERF
+  uint64_t ovMutexWaitStart = ovPerfNow();
+#endif
   threadsWaitForMutex();
+#if WB_OVPERF
+  ovPerfServerTick(ovEntry, ovMutexWaitStart, ovPerfNow());
+#endif
   bool alive = (!spServerTimerShutdown && spServerSim != NULL);
   /* Paused freezes the tick but keeps the timer armed (return interval),
    * so a single-player resume picks straight back up. */

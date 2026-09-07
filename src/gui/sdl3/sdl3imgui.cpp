@@ -80,6 +80,7 @@ extern "C" {
 extern "C" {
 #include "client_net.h"
 #include "../clientmutex.h" /* the overview's render reads sim state */
+#include "ovperf.h"         /* the pop-out's client-mutex wait and hold counters */
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -5647,13 +5648,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                loop, which at 0.5x zoom on a large window is far more squares
                than the main view's 15x15. Start here if frame times
                regress with the overview open. */
+#if WB_OVPERF
+            uint64_t ovWaitStart = ovPerfNow();
+#endif
             clientMutexWaitFor();
+#if WB_OVPERF
+            uint64_t ovAcquired = ovPerfNow();
+#endif
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
                                         ovTiles, s_overviewTilesScale, ovCross,
                                         s_popMapOverview.width,
                                         s_popMapOverview.height, cs, false);
             clientMutexRelease();
+#if WB_OVPERF
+            ovPerfPopoutLock(ovWaitStart, ovAcquired, ovPerfNow());
+#endif
         }
         if (popOutBeginFrame(&s_popMapOverview)) {
             /* The map fills the window edge to edge: the image is exactly

@@ -66,6 +66,7 @@ add_library(bolo_static STATIC
     net_packet_debug.c
     obs_builder.c
     overview_map.c
+    ovperf.c
     pillbox.c
     ping_display.c
     playername_validate.c

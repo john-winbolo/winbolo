@@ -53,6 +53,7 @@
 #include "client_render.h"
 #include "client_frontend_tick.h"
 #include "client_sim.h"
+#include "ovperf.h"   /* the frame's client-mutex wait and hold counters */
 #include "frontend.h"
 #include "tutorial.h"
 #include "../../steam/steam_wrapper.h"
@@ -696,14 +697,27 @@ int main(int argc, char *argv[]) {
            causing a visible "jump-back" flicker. */
         {
           DWORD tick = SDL_GetTicks();
+#if WB_OVPERF
+          uint64_t ovWaitStart = ovPerfNow();
+          uint64_t ovAcquired;
+#endif
           clientMutexWaitFor();
+#if WB_OVPERF
+          ovAcquired = ovPerfNow();
+#endif
           if (finishedLoop == FALSE) {
             clientSimRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
+#if WB_OVPERF
+          ovPerfFrameLock(ovWaitStart, ovAcquired, ovPerfNow());
+#endif
           dwSysFrame += (SDL_GetTicks() - tick);
         }
+#if WB_OVPERF
+        ovPerfFrameEnd();
+#endif
         /* Consume the timer signal so it doesn't accumulate */
         SDL_SetAtomicInt(&needsRedraw, 0);
 

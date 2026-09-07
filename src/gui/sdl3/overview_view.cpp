@@ -56,6 +56,7 @@ extern "C" {
 #include "cursor.h"         /* cursorSetCursor — the game's crosshair pointer */
 #include "input.h"          /* inputBumpGunsight — the wheel's other job */
 #include "overview_types.h"
+#include "ovperf.h"         /* the terrain loop's draw-cost counters */
 #include "screentank.h"
 #include "screenlgm.h"
 #include "screenbullet.h"
@@ -287,10 +288,21 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
 
     /* x outer, y inner: the memory is [x][y], so the inner walk is
      * contiguous. */
+#if WB_OVPERF
+    uint64_t ovT0 = ovPerfNow();
+    int ovVisited = 0, ovDrawn = 0, ovCalls = 0;
+#endif
     for (int mx = left; mx <= right; mx++) {
         for (int my = top; my <= bottom; my++) {
+#if WB_OVPERF
+            ovVisited++;
+#endif
             BYTE tile = om->tile[mx][my];
             if (tile == OVERVIEW_UNSEEN) continue;  /* the black clear shows */
+#if WB_OVPERF
+            ovDrawn++;
+            ovCalls++;
+#endif
 
             BYTE flags = om->flags[mx][my];
             float sx = 0.0f, sy = 0.0f;
@@ -314,9 +326,15 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
 
             if ((flags & OVERVIEW_F_MINE) != 0) {
                 SDL_RenderTexture(r, tiles, &mineSrc, &dest);
+#if WB_OVPERF
+                ovCalls++;
+#endif
             }
         }
     }
+#if WB_OVPERF
+    ovPerfTerrain(ovT0, ovPerfNow(), ovVisited, ovDrawn, ovCalls);
+#endif
 }
 
 /* (Re)create the fog texture when the renderer changes. White, so the fog's
