@@ -377,10 +377,11 @@ static bool overviewAllyLive(struct GameSim *sim, BYTE myPlayerNum,
  * and that item still earns its block. Key is one view at a time: while this
  * holds, the block round the player's own tank is not built either, so the map
  * shows the one thing being watched and nothing else — the same single screen
- * the classic view gives them while they are in an item view. The server culls
- * to the same rule, so the ground round the tank is not arriving either. The
- * three predicates each turn an out-of-range target away, so the watched index
- * needs no checking here. */
+ * the classic view gives them while they are in an item view. This is the map
+ * choosing what to draw, not what it has: the server sends the recipient's own
+ * tank screen whatever it is watching, because the client predicts its tank
+ * against that ground. The three predicates each turn an out-of-range target
+ * away, so the watched index needs no checking here. */
 static bool overviewKeyViewLive(struct GameSim *sim, BYTE myPlayerNum,
                                 const OverviewViewInputs *in) {
   BYTE alpha; /* Where the predicates report brightness; unwanted here */
@@ -514,8 +515,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     useMY = om->lastTankMY;
   }
 
-  /* Watching an item under viewPolicyKey closes the block round the tank,
-   * which is what the builder does with it too. Asked here as well so
+  /* Watching an item under viewPolicyKey closes the block round the tank, so
+   * the map shows the one thing being watched. Asked here as well so
    * tankWasLive records what was actually built and the farewell replay below
    * stays paired with the regions that produced its rects. */
   if (overviewKeyViewLive(sim, myPlayerNum, in) == TRUE) {
