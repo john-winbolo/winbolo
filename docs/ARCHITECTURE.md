@@ -36,7 +36,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links three leaf `src/gui/sdl3` geometry files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources". |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links four leaf `src/gui/sdl3` geometry files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources". |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -1970,13 +1970,15 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Three `src/gui/sdl3` files —
-`overview_camera.cpp`, `overview_fog.cpp` and
-`overview_hud_layout.cpp` — are compiled *into* `WinBoloUnitTests`,
+same target, and it is not a T2 grant. Four `src/gui/sdl3` files —
+`overview_camera.cpp`, `overview_fog.cpp`, `overview_hud_layout.cpp`
+and `sprite_positions.c` — are compiled *into* `WinBoloUnitTests`,
 the only files from a renderer directory that are. They hold the map
-overview's camera maths, its fog mask and its in-window HUD geometry,
-and `test_overview_camera.cpp`, `test_overview_fog.cpp` and
-`test_overview_hud_layout.cpp` call them directly.
+overview's camera maths, its fog mask, its in-window HUD geometry and
+the sprite placement arithmetic behind `mapview.c`'s drawers, and
+`test_overview_camera.cpp`, `test_overview_fog.cpp`,
+`test_overview_hud_layout.cpp` and `test_mapview_sprite_scale.c` call
+them directly.
 
 They do not borrow the target's T2 access. They keep the `gui`
 profile's public-only rule: between them they include `types.h` and

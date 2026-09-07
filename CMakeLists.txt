@@ -816,6 +816,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
+    src/gui/sdl3/mapview_overlay.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
@@ -1458,7 +1459,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -3292,9 +3293,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_overview_snapshot.c
+    tests/unit/test_mapview_sprite_scale.c
+    tests/unit/test_mapview_overlay.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
     tests/unit/test_interp_render.c
@@ -3494,18 +3499,27 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
-    # The overview's camera maths, its fog mask and the in-window HUD
-    # geometry. The only src/gui/sdl3 files in this target: all three are
-    # arithmetic over plain structs with no ImGui and no SDL_Renderer include,
-    # so they link into a binary that has neither, and test_overview_camera.cpp
-    # / test_overview_fog.cpp / test_overview_hud_layout.cpp exercise them
-    # directly. The drawing half (overview_view.cpp) stays out. They keep the
-    # gui profile's public-only access rather than borrowing this target's T2;
+    # The overview's camera maths, its fog mask, the in-window HUD geometry
+    # and the sprite placement arithmetic behind mapview.c's drawers. The
+    # only src/gui/sdl3 files in this target: all four are arithmetic over
+    # plain values with no ImGui and no SDL_Renderer include, so they link
+    # into a binary that has neither, and test_overview_camera.cpp /
+    # test_overview_fog.cpp / test_overview_hud_layout.cpp /
+    # test_mapview_sprite_scale.c exercise them directly. The drawing halves
+    # (overview_view.cpp, mapview.c) stay out. They keep the gui profile's
+    # public-only access rather than borrowing this target's T2;
     # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
     # meet to be added here, and when the exception lapses.
+    #
+    # sprite_positions.c qualifies on the same footing as the other three:
+    # its includes are the tile atlas coordinates, tilenum.h, global.h and the
+    # GfxAnimSmoothness enum, and its functions are float arithmetic over
+    # their arguments. It is the file the log viewer already links on its
+    # own for the atlas table.
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
+    src/gui/sdl3/sprite_positions.c
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4091,6 +4105,18 @@ set(_unit_test_names
     overview_entities
     overview_gunsight
     tank_pos_dead
+    overview_snapshot_mirror
+    overview_snapshot_isolation
+    overview_snapshot_filter
+    overview_snapshot_generation
+    mapview_sprite_classic
+    mapview_sprite_ladder
+    mapview_sprite_shell_tip
+    mapview_sprite_lgm_snap
+    mapview_overlay_gunsight
+    mapview_overlay_tank_label
+    mapview_overlay_cursor
+    mapview_overlay_item_labels
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -4102,6 +4128,7 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     jitter_buffer_grow
     shell_projection
+    screen_bullets_build
     ping_smoother
     client_timing
     interp_render

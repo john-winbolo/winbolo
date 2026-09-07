@@ -60,6 +60,11 @@ void          overviewViewDestroy(OverviewView *v);
    renderer as the tile sheet for the same reason. NULL just leaves the
    crosshair undrawn.
 
+   Everything the render reads from the sim comes through `snap`, which the
+   host fills with clientSimFillOverviewSnapshot while it holds the client
+   mutex and hands over here with the mutex released: nothing in this call
+   touches the ClientSim. NULL draws the cleared frame and nothing on it.
+
    `ownsWindow` means the same thing it does in overviewViewHandleInput: this
    view has replaced the classic one rather than sitting beside it. Here it
    decides whether the picture gets a border while an item view is on: the
@@ -68,7 +73,8 @@ void          overviewViewDestroy(OverviewView *v);
 void          overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                           SDL_Texture *tiles, int sheetScale,
                                           SDL_Texture *crosshair,
-                                          int w, int h, ClientSim *cs,
+                                          int w, int h,
+                                          const struct OverviewSnapshot *snap,
                                           bool ownsWindow);
 SDL_Texture  *overviewViewGetTexture(const OverviewView *v);
 void          overviewViewGetSize(const OverviewView *v, int *outW, int *outH);
