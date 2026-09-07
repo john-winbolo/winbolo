@@ -1417,6 +1417,13 @@ int run_addrparse_empty(void);
  * its signal level, and conceals a dropped packet. */
 int run_voice_core_roundtrip(void);
 
+/* Saved audio device name matching (test_voice_device.c): a name that is
+ * present resolves to its index wherever it sits in the list, and every way
+ * of being absent - not there, empty, NULL, an empty list, a prefix rather
+ * than the whole name - answers -1, which the caller reads as the system
+ * default. A hole in the list is stepped over. */
+int run_voice_device_resolve(void);
+
 /* Voice segment framing (test_voice_segment.c): fields survive both
  * directions with the payload left pointing into the caller's buffer, and
  * every short, oversized, or out-of-range segment is refused. */

@@ -52,6 +52,26 @@ static SDL_AudioStream *playbackStream = NULL;
  * from that player, so a quiet game costs nothing. */
 static SDL_AudioStream *speakerStreams[MAX_TANKS];
 
+/* The resolved device choice for each direction: a display name that was
+ * present when it was set, or "" for the system default.  The name the player
+ * asked for is held by voice_client.c, which keeps it whether the device is
+ * there or not; only what can actually be opened gets this far. */
+static char recordingDeviceName[VOICE_DEVICE_NAME_MAX];
+static char playbackDeviceName[VOICE_DEVICE_NAME_MAX];
+
+/* Devices reported to a caller in one enumeration.  Well past what a machine
+ * has plugged in; anything past it is ignored rather than grown into. */
+#define VOICE_DEVICE_LIST_MAX 32
+
+/* The last enumeration of each direction, copied out of SDL because
+ * SDL_GetAudioDeviceName hands back a string it owns and the name calls
+ * promise a pointer that outlives the enumeration it came from.  Separate per
+ * direction so counting one does not throw away the other. */
+static char recordingDeviceList[VOICE_DEVICE_LIST_MAX][VOICE_DEVICE_NAME_MAX];
+static int recordingDeviceListCount = 0;
+static char playbackDeviceList[VOICE_DEVICE_LIST_MAX][VOICE_DEVICE_NAME_MAX];
+static int playbackDeviceListCount = 0;
+
 /*********************************************************
 *NAME:          voiceOpenChatDevice
 *AUTHOR:        John Morrison
@@ -102,6 +122,130 @@ static SDL_AudioStream *voiceOpenChatDevice(SDL_AudioDeviceID device,
 }
 
 /*********************************************************
+*NAME:          voiceEnumerateDevices
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Refills one direction's name list from the devices present
+*  and returns how many were kept.
+*
+*  The names are copied rather than pointed at: SDL owns what
+*  SDL_GetAudioDeviceName returns, and the list the ids came
+*  from is freed before the caller ever reads them.
+*
+*ARGUMENTS:
+*  recording - true for the microphones, false for playback
+*  list      - the name list to refill
+*********************************************************/
+static int voiceEnumerateDevices(bool recording,
+                                 char list[][VOICE_DEVICE_NAME_MAX]) {
+    SDL_AudioDeviceID *ids;
+    int count = 0;
+    int kept = 0;
+    int i;
+
+    ids = recording ? SDL_GetAudioRecordingDevices(&count)
+                    : SDL_GetAudioPlaybackDevices(&count);
+    if (ids == NULL) {
+        return 0;
+    }
+    if (count > VOICE_DEVICE_LIST_MAX) {
+        count = VOICE_DEVICE_LIST_MAX;
+    }
+
+    for (i = 0; i < count; i++) {
+        const char *name = SDL_GetAudioDeviceName(ids[i]);
+        if (name == NULL) {
+            continue;
+        }
+        SDL_strlcpy(list[kept], name, VOICE_DEVICE_NAME_MAX);
+        kept++;
+    }
+
+    SDL_free(ids);
+    return kept;
+}
+
+/*********************************************************
+*NAME:          resolveDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Turns a chosen device name into the id to open it by,
+*  answering with the fallback when that name is not among
+*  the devices present.
+*
+*  Opening SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK or _RECORDING
+*  leaves SDL following the system default by itself, so
+*  "system default" is this fallback and is not a case
+*  handled anywhere else.
+*
+*ARGUMENTS:
+*  recording - true for a microphone, false for playback
+*  chosen    - the display name, or "" for the system default
+*  fallback  - the id to answer with when chosen is not there
+*********************************************************/
+static SDL_AudioDeviceID resolveDevice(bool recording, const char *chosen,
+                                       SDL_AudioDeviceID fallback) {
+    SDL_AudioDeviceID *ids;
+    const char *names[VOICE_DEVICE_LIST_MAX];
+    SDL_AudioDeviceID resolved = fallback;
+    int count = 0;
+    int match;
+    int i;
+
+    if (chosen == NULL || chosen[0] == '\0') {
+        return fallback;
+    }
+
+    ids = recording ? SDL_GetAudioRecordingDevices(&count)
+                    : SDL_GetAudioPlaybackDevices(&count);
+    if (ids == NULL) {
+        return fallback;
+    }
+    if (count > VOICE_DEVICE_LIST_MAX) {
+        count = VOICE_DEVICE_LIST_MAX;
+    }
+
+    /* The names are only read while the id list is still held, so pointing at
+     * SDL's own storage is safe here in a way it is not for the snapshot the
+     * name calls hand out. */
+    for (i = 0; i < count; i++) {
+        names[i] = SDL_GetAudioDeviceName(ids[i]);
+    }
+
+    match = voiceDeviceResolveName(chosen, names, count);
+    if (match >= 0) {
+        resolved = ids[match];
+    }
+
+    SDL_free(ids);
+    return resolved;
+}
+
+/*********************************************************
+*NAME:          voiceDevicePresent
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Whether a device of that display name is plugged in now.
+*
+*  Asked by resolving against an id of 0, which SDL never
+*  hands out for a real device, so the fallback coming back
+*  is unambiguously "not there".
+*
+*ARGUMENTS:
+*  recording - true for a microphone, false for playback
+*  name      - the display name to look for
+*********************************************************/
+static bool voiceDevicePresent(bool recording, const char *name) {
+    return resolveDevice(recording, name, 0) != 0;
+}
+
+/*********************************************************
 *NAME:          voiceBackendInit
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -129,8 +273,10 @@ bool voiceBackendInit(void) {
     spec.channels = 1;
     spec.freq = VOICE_SAMPLE_RATE;
 
-    playbackStream =
-        voiceOpenChatDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
+    playbackStream = voiceOpenChatDevice(
+        resolveDevice(false, playbackDeviceName,
+                      SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK),
+        &spec);
     if (!playbackStream) {
         fprintf(stderr, "Voice error: open playback device: %s\n",
                 SDL_GetError());
@@ -198,8 +344,10 @@ bool voiceBackendCaptureStart(void) {
         spec.channels = 1;
         spec.freq = VOICE_SAMPLE_RATE;
 
-        captureStream =
-            voiceOpenChatDevice(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec);
+        captureStream = voiceOpenChatDevice(
+            resolveDevice(true, recordingDeviceName,
+                          SDL_AUDIO_DEVICE_DEFAULT_RECORDING),
+            &spec);
         if (!captureStream) {
             fprintf(stderr, "Voice error: open recording device: %s\n",
                     SDL_GetError());
@@ -350,8 +498,10 @@ bool voiceBackendSpeakerOpen(int player) {
     spec.channels = 1;
     spec.freq = VOICE_SAMPLE_RATE;
 
-    speakerStreams[player] =
-        voiceOpenChatDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
+    speakerStreams[player] = voiceOpenChatDevice(
+        resolveDevice(false, playbackDeviceName,
+                      SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK),
+        &spec);
     if (speakerStreams[player] == NULL) {
         fprintf(stderr, "Voice error: open playback device: %s\n",
                 SDL_GetError());
@@ -491,6 +641,229 @@ void voiceBackendLoopbackClear(void) {
     if (playbackStream) {
         SDL_ClearAudioStream(playbackStream);
     }
+}
+
+/*********************************************************
+*NAME:          voiceBackendRecordingDeviceCount
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Takes a fresh list of the microphones present and returns
+*  how many are in it.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendRecordingDeviceCount(void) {
+    recordingDeviceListCount =
+        voiceEnumerateDevices(true, recordingDeviceList);
+    return recordingDeviceListCount;
+}
+
+/*********************************************************
+*NAME:          voiceBackendPlaybackDeviceCount
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Takes a fresh list of the playback devices present and
+*  returns how many are in it.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendPlaybackDeviceCount(void) {
+    playbackDeviceListCount = voiceEnumerateDevices(false, playbackDeviceList);
+    return playbackDeviceListCount;
+}
+
+/*********************************************************
+*NAME:          voiceBackendRecordingDeviceName
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  One microphone's display name out of the last list taken,
+*  or NULL when index is outside it.
+*
+*ARGUMENTS:
+*  index - 0..count-1 from the recording device count
+*********************************************************/
+const char *voiceBackendRecordingDeviceName(int index) {
+    if (index < 0 || index >= recordingDeviceListCount) {
+        return NULL;
+    }
+    return recordingDeviceList[index];
+}
+
+/*********************************************************
+*NAME:          voiceBackendPlaybackDeviceName
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  One playback device's display name out of the last list
+*  taken, or NULL when index is outside it.
+*
+*ARGUMENTS:
+*  index - 0..count-1 from the playback device count
+*********************************************************/
+const char *voiceBackendPlaybackDeviceName(int index) {
+    if (index < 0 || index >= playbackDeviceListCount) {
+        return NULL;
+    }
+    return playbackDeviceList[index];
+}
+
+/*********************************************************
+*NAME:          voiceBackendSetRecordingDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Takes the microphone to capture from, by display name, and
+*  moves an open capture stream onto it.  "" and NULL are the
+*  system default; a name no device present answers to is
+*  refused with nothing changed.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+bool voiceBackendSetRecordingDevice(const char *name) {
+    bool wasCapturing;
+
+    if (name == NULL) {
+        name = "";
+    }
+    if (name[0] != '\0' && !voiceDevicePresent(true, name)) {
+        return false;
+    }
+    if (SDL_strcmp(name, recordingDeviceName) == 0) {
+        return true;
+    }
+    SDL_strlcpy(recordingDeviceName, name, sizeof(recordingDeviceName));
+
+    if (captureStream) {
+        /* A stream belongs to the device it was opened on, so moving means
+         * making a new one.  Whether it was actually capturing is carried
+         * across: the runtime pauses the microphone rather than closing it,
+         * and a device change must not turn it live under a player who had
+         * it off. */
+        wasCapturing = !SDL_AudioStreamDevicePaused(captureStream);
+        SDL_DestroyAudioStream(captureStream);
+        captureStream = NULL;
+
+        /* Opening a microphone again can put the operating system's
+         * permission prompt back up.  That is acceptable here - the player
+         * just asked for this device.  An open that fails leaves no capture
+         * stream, which the runtime retries on its own; the choice was still
+         * taken, so this still reports success. */
+        if (voiceBackendCaptureStart() && !wasCapturing) {
+            voiceBackendCaptureStop();
+        }
+    }
+
+    return true;
+}
+
+/*********************************************************
+*NAME:          voiceBackendSetPlaybackDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Takes the device to play through, by display name, and
+*  moves every open playback stream onto it - the microphone
+*  test's and one per remote talker.  "" and NULL are the
+*  system default; a name no device present answers to is
+*  refused with nothing changed.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+bool voiceBackendSetPlaybackDevice(const char *name) {
+    SDL_AudioSpec spec;
+    int i;
+
+    if (name == NULL) {
+        name = "";
+    }
+    if (name[0] != '\0' && !voiceDevicePresent(false, name)) {
+        return false;
+    }
+    if (SDL_strcmp(name, playbackDeviceName) == 0) {
+        return true;
+    }
+    SDL_strlcpy(playbackDeviceName, name, sizeof(playbackDeviceName));
+
+    /* Whatever these streams still held goes with them.  At 20 ms a frame
+     * that is a fraction of a second of somebody mid-word, against a device
+     * change the player asked for. */
+    if (playbackStream) {
+        SDL_zero(spec);
+        spec.format = SDL_AUDIO_S16;
+        spec.channels = 1;
+        spec.freq = VOICE_SAMPLE_RATE;
+
+        SDL_DestroyAudioStream(playbackStream);
+        playbackStream = voiceOpenChatDevice(
+            resolveDevice(false, playbackDeviceName,
+                          SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK),
+            &spec);
+        if (playbackStream) {
+            SDL_ResumeAudioStreamDevice(playbackStream);
+        } else {
+            fprintf(stderr, "Voice error: open playback device: %s\n",
+                    SDL_GetError());
+            fflush(stderr);
+        }
+    }
+
+    /* Every talker as well, or the microphone test comes out of the chosen
+     * device and the other players stay on the old one. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (speakerStreams[i] == NULL) {
+            continue;
+        }
+        SDL_DestroyAudioStream(speakerStreams[i]);
+        speakerStreams[i] = NULL;
+        voiceBackendSpeakerOpen(i);
+    }
+
+    return true;
+}
+
+/*********************************************************
+*NAME:          voiceBackendGetRecordingDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  The microphone being opened on, or "" for the system
+*  default.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceBackendGetRecordingDevice(void) {
+    return recordingDeviceName;
+}
+
+/*********************************************************
+*NAME:          voiceBackendGetPlaybackDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  The device being played through, or "" for the system
+*  default.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceBackendGetPlaybackDevice(void) {
+    return playbackDeviceName;
 }
 
 /*********************************************************

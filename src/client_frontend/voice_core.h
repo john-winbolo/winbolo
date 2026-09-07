@@ -112,6 +112,17 @@ typedef struct {
 
 void voiceSpeakerGetStats(const VoiceSpeaker *sp, VoiceSpeakerStats *out);
 
+/* Longest audio device name kept, terminator included. Names are free-form
+ * strings from the driver, so a longer one is truncated rather than assumed
+ * not to happen. */
+#define VOICE_DEVICE_NAME_MAX 256
+
+/* Index of saved in names[0..count-1], or -1 for no match, which the caller
+ * reads as "use the system default". Empty or NULL saved is -1 too. Matches
+ * the display name exactly; a NULL entry in names is skipped. */
+int voiceDeviceResolveName(const char *saved, const char *const *names,
+                           int count);
+
 #ifdef __cplusplus
 }
 #endif

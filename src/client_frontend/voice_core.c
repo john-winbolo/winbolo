@@ -370,3 +370,26 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
 
     return true;
 }
+
+/* Audio device ids are handed out per run and do not survive a restart, so a
+ * chosen device is persisted by display name and matched against the devices
+ * present the next time round.  The matching sits here rather than in the
+ * platform backend so it can be exercised without an audio device. */
+int voiceDeviceResolveName(const char *saved, const char *const *names,
+                           int count) {
+    int i;
+
+    if (saved == NULL || saved[0] == '\0' || names == NULL) {
+        return -1;
+    }
+
+    for (i = 0; i < count; i++) {
+        /* A hole in the list is a device whose name the platform would not
+         * give up; skip it rather than stopping on it. */
+        if (names[i] != NULL && strcmp(names[i], saved) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}

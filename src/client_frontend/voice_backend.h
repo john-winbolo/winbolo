@@ -231,6 +231,119 @@ void voiceBackendLoopbackPlay(const int16_t *pcm);
 void voiceBackendLoopbackClear(void);
 
 /*********************************************************
+*NAME:          voiceBackendRecordingDeviceCount
+*PURPOSE:
+*  Captures the microphones present and returns how many
+*  there are, for indexing voiceBackendRecordingDeviceName.
+*
+*  A snapshot, not a live list: devices come and go, and what
+*  the name calls answer with is what was there at this call.
+*  0 where the platform gives no choice of device at all,
+*  which is what tells a caller to leave the control out
+*  rather than draw an empty one.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendRecordingDeviceCount(void);
+
+/*********************************************************
+*NAME:          voiceBackendPlaybackDeviceCount
+*PURPOSE:
+*  The same for the playback devices, over its own snapshot -
+*  counting one direction does not disturb the other.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendPlaybackDeviceCount(void);
+
+/*********************************************************
+*NAME:          voiceBackendRecordingDeviceName
+*PURPOSE:
+*  Returns the display name of one microphone out of the
+*  snapshot the last voiceBackendRecordingDeviceCount took,
+*  or NULL when index is outside it.
+*
+*  The pointer is the backend's own and stays good until the
+*  next count of the same direction, which replaces the
+*  snapshot.  Nothing SDL owns is handed back.
+*
+*ARGUMENTS:
+*  index - 0..count-1 from voiceBackendRecordingDeviceCount
+*********************************************************/
+const char *voiceBackendRecordingDeviceName(int index);
+
+/*********************************************************
+*NAME:          voiceBackendPlaybackDeviceName
+*PURPOSE:
+*  The same for one playback device, over the playback
+*  snapshot.
+*
+*ARGUMENTS:
+*  index - 0..count-1 from voiceBackendPlaybackDeviceCount
+*********************************************************/
+const char *voiceBackendPlaybackDeviceName(int index);
+
+/*********************************************************
+*NAME:          voiceBackendSetRecordingDevice
+*PURPOSE:
+*  Chooses which microphone to capture from, by display name.
+*  NULL or "" is the system default and always succeeds; any
+*  other name is resolved against the devices present, and a
+*  name that is not among them returns false having changed
+*  nothing.
+*
+*  A call that succeeds and changes the choice closes and
+*  reopens whatever streams are open on the old device.  The
+*  backend does that itself - a caller does not orchestrate
+*  it - and reopening a microphone can put the operating
+*  system's permission prompt back up.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+bool voiceBackendSetRecordingDevice(const char *name);
+
+/*********************************************************
+*NAME:          voiceBackendSetPlaybackDevice
+*PURPOSE:
+*  The same for playback, and on the same terms.  Every
+*  stream on the old device is reopened, remote talkers and
+*  the microphone test alike; whatever any of them still had
+*  queued is dropped with the stream it was queued on.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+bool voiceBackendSetPlaybackDevice(const char *name);
+
+/*********************************************************
+*NAME:          voiceBackendGetRecordingDevice
+*PURPOSE:
+*  Returns the resolved choice - the microphone being opened
+*  on - or "" for the system default.  Never NULL.
+*
+*  This is not the name the player asked for: a chosen device
+*  that is not present was never taken, so it does not read
+*  back here.  Whoever asked holds that.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceBackendGetRecordingDevice(void);
+
+/*********************************************************
+*NAME:          voiceBackendGetPlaybackDevice
+*PURPOSE:
+*  The same for playback.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceBackendGetPlaybackDevice(void);
+
+/*********************************************************
 *NAME:          voiceBackendNowMs
 *PURPOSE:
 *  Monotonic milliseconds since some fixed point in this

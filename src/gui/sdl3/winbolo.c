@@ -1670,6 +1670,26 @@ float windowGetVoiceVolume(void) {
   return voiceGetOutputVolume();
 }
 
+/* The chosen audio devices, by display name, "" for the system default.
+ * Nothing to clamp — the voice module holds the name and truncates it — but
+ * they sit with the rest of the façade so gameFrontPutPrefs reads them back
+ * the same way as everything else here. */
+void windowSetVoiceRecordingDevice(const char *name) {
+  voiceSetRecordingDevice(name);
+}
+
+const char *windowGetVoiceRecordingDevice(void) {
+  return voiceGetRecordingDevice();
+}
+
+void windowSetVoicePlaybackDevice(const char *name) {
+  voiceSetPlaybackDevice(name);
+}
+
+const char *windowGetVoicePlaybackDevice(void) {
+  return voiceGetPlaybackDevice();
+}
+
 #if defined(WINBOLO_VOICE_AEC)
 /* Echo cancellation of the other players' voices out of this microphone.
  * Same shape as the voice settings above: the canceller module holds the

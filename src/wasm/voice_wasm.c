@@ -888,6 +888,139 @@ void voiceBackendLoopbackClear(void) {
 }
 
 /*********************************************************
+*NAME:          voiceBackendRecordingDeviceCount
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Reports that there is nothing to choose between.
+*
+*  The browser picks the microphone and the speakers itself,
+*  through its own permission and output pickers, and gives
+*  the page no say in either.  An empty list is what tells
+*  the settings dialog to leave the control out rather than
+*  draw one that cannot do anything.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendRecordingDeviceCount(void) {
+    return 0;
+}
+
+/*********************************************************
+*NAME:          voiceBackendPlaybackDeviceCount
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  The same for playback: nothing to choose between.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendPlaybackDeviceCount(void) {
+    return 0;
+}
+
+/*********************************************************
+*NAME:          voiceBackendRecordingDeviceName
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  No microphone list, so every index is outside it.
+*
+*ARGUMENTS:
+*  index - ignored
+*********************************************************/
+const char *voiceBackendRecordingDeviceName(int index) {
+    (void)index;
+    return NULL;
+}
+
+/*********************************************************
+*NAME:          voiceBackendPlaybackDeviceName
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  No playback list either.
+*
+*ARGUMENTS:
+*  index - ignored
+*********************************************************/
+const char *voiceBackendPlaybackDeviceName(int index) {
+    (void)index;
+    return NULL;
+}
+
+/*********************************************************
+*NAME:          voiceBackendSetRecordingDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Accepts the system default, which is the only thing this
+*  platform can be asked for, and refuses any named device.
+*
+*  A prefs file carried over from a desktop machine names a
+*  device that means nothing here; refusing it leaves capture
+*  on whatever the browser gives, which is the right answer.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+bool voiceBackendSetRecordingDevice(const char *name) {
+    return name == NULL || name[0] == '\0';
+}
+
+/*********************************************************
+*NAME:          voiceBackendSetPlaybackDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  The same for playback.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+bool voiceBackendSetPlaybackDevice(const char *name) {
+    return name == NULL || name[0] == '\0';
+}
+
+/*********************************************************
+*NAME:          voiceBackendGetRecordingDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Always the system default.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceBackendGetRecordingDevice(void) {
+    return "";
+}
+
+/*********************************************************
+*NAME:          voiceBackendGetPlaybackDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Always the system default.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceBackendGetPlaybackDevice(void) {
+    return "";
+}
+
+/*********************************************************
 *NAME:          voiceBackendNowMs
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026

@@ -123,6 +123,10 @@ void  windowSetVoiceMicGain(float gain);
 float windowGetVoiceMicGain(void);
 void  windowSetVoiceVolume(float gain);
 float windowGetVoiceVolume(void);
+void  windowSetVoiceRecordingDevice(const char *name);
+const char *windowGetVoiceRecordingDevice(void);
+void  windowSetVoicePlaybackDevice(const char *name);
+const char *windowGetVoicePlaybackDevice(void);
 void  windowSetShowTankMicIcons(bool on);
 bool  windowGetShowTankMicIcons(void);
 #if defined(WINBOLO_VOICE_AEC)
@@ -3535,6 +3539,16 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (!(vv >= 0.0f && vv <= 2.0f)) vv = 1.0f;
     windowSetVoiceVolume(vv);
   }
+  /* The chosen audio devices, by display name — "" is the system default,
+     and so is a name nothing present answers to. Read into a bounded buffer
+     and truncated, because the name is free-form and comes from the driver.
+
+     These two keys are machine-local and must not be carried by any profile
+     sync: a device name saved on a desktop means nothing on a Steam Deck. */
+  prefsGetString("VOICE", "Recording Device", "", buff, FILENAME_MAX);
+  windowSetVoiceRecordingDevice(buff);
+  prefsGetString("VOICE", "Playback Device", "", buff, FILENAME_MAX);
+  windowSetVoicePlaybackDevice(buff);
   prefsGetString("VOICE", "Tank Icons", "Yes", buff, FILENAME_MAX);
   windowSetShowTankMicIcons(YESNO_TO_TRUEFALSE(buff[0]));
 #if defined(WINBOLO_VOICE_AEC)
@@ -3838,6 +3852,11 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("VOICE", "Mic Gain", buff);
   snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceVolume());
   prefsSetString("VOICE", "Voice Volume", buff);
+  /* Written back even when the device is not plugged in at the moment, so
+     the choice survives it being away. Machine-local, as on the read side:
+     never carried by a profile sync. */
+  prefsSetString("VOICE", "Recording Device", windowGetVoiceRecordingDevice());
+  prefsSetString("VOICE", "Playback Device", windowGetVoicePlaybackDevice());
   prefsSetString("VOICE", "Tank Icons", TRUEFALSE_TO_STR(windowGetShowTankMicIcons()));
 #if defined(WINBOLO_VOICE_AEC)
   prefsSetString("VOICE", "Echo Cancel", TRUEFALSE_TO_STR(windowGetVoiceEchoCancel()));

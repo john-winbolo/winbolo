@@ -1984,6 +1984,11 @@ static const LangEntry langTable[] = {
 
     /* Key setup — self-mute binding */
     {2059, "Mute microphone"},
+
+    /* Voice settings — which microphone and which speakers voice uses */
+    {2060, "Microphone"},
+    {2061, "Playback device"},
+    {2062, "System default"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

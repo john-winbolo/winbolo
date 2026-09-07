@@ -352,6 +352,106 @@ float voiceGetOutputVolume(void);
 float voiceGetInputLevel(void);
 
 /*********************************************************
+*NAME:          voiceRecordingDeviceCount
+*PURPOSE:
+*  Returns how many microphones there are to choose between,
+*  taken fresh at the call. Zero where the platform gives no
+*  choice, which is the settings dialog's cue to leave the
+*  control out.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceRecordingDeviceCount(void);
+
+/*********************************************************
+*NAME:          voiceRecordingDeviceName
+*PURPOSE:
+*  Returns one microphone's display name out of the list the
+*  last voiceRecordingDeviceCount took, or NULL when index is
+*  outside it. Good until the next count.
+*
+*ARGUMENTS:
+*  index - 0..count-1
+*********************************************************/
+const char *voiceRecordingDeviceName(int index);
+
+/*********************************************************
+*NAME:          voicePlaybackDeviceCount
+*PURPOSE:
+*  The same for the playback devices, over a list of their
+*  own.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voicePlaybackDeviceCount(void);
+
+/*********************************************************
+*NAME:          voicePlaybackDeviceName
+*PURPOSE:
+*  The same for one playback device.
+*
+*ARGUMENTS:
+*  index - 0..count-1
+*********************************************************/
+const char *voicePlaybackDeviceName(int index);
+
+/*********************************************************
+*NAME:          voiceSetRecordingDevice
+*PURPOSE:
+*  Chooses the microphone by display name. NULL or "" means
+*  the system default, and so does a name no device present
+*  answers to - capture falls back rather than going silent.
+*
+*  The device the player chose is kept verbatim even when it
+*  is not present, so a headset that is unplugged today is
+*  still chosen when it comes back. A name longer than the
+*  buffer is truncated.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+void voiceSetRecordingDevice(const char *name);
+
+/*********************************************************
+*NAME:          voiceGetRecordingDevice
+*PURPOSE:
+*  Returns the microphone the player chose, "" for the system
+*  default. Never NULL.
+*
+*  What was asked for, not what is open: an absent device
+*  still reads back, which is what keeps it in the prefs file
+*  instead of being overwritten with whatever stood in.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceGetRecordingDevice(void);
+
+/*********************************************************
+*NAME:          voiceSetPlaybackDevice
+*PURPOSE:
+*  Chooses the playback device by display name, on the same
+*  terms as voiceSetRecordingDevice.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+void voiceSetPlaybackDevice(const char *name);
+
+/*********************************************************
+*NAME:          voiceGetPlaybackDevice
+*PURPOSE:
+*  Returns the playback device the player chose, "" for the
+*  system default. Never NULL.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceGetPlaybackDevice(void);
+
+/*********************************************************
 *NAME:          voiceTick
 *PURPOSE:
 *  Pumps captured audio through the codec and out to the

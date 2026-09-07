@@ -110,6 +110,14 @@ static float micGain = 1.0f;
 static float outputVolume = 1.0f;
 static float inputLevel = 0.0f;
 
+/* The recording and playback devices the player chose, by display name, ""
+ * for the system default.  Kept verbatim whether or not the device is present:
+ * gameFrontPutPrefs reads them back out at save time, and a headset that is
+ * unplugged today must not be quietly overwritten with whatever stood in for
+ * it.  The backend holds only the choice it could resolve. */
+static char wantedRecordingDevice[VOICE_DEVICE_NAME_MAX];
+static char wantedPlaybackDevice[VOICE_DEVICE_NAME_MAX];
+
 /* The player's own transmit gate, from the mic icon on their row or the mute
  * key.  Never cleared: this is a standing intent, like a hardware mute switch,
  * so a disconnect, a reconnect, a device change or any per-speaker reset all
@@ -871,6 +879,166 @@ static void applyOutputVolume(int16_t *pcm) {
 *********************************************************/
 float voiceGetInputLevel(void) {
     return inputLevel;
+}
+
+/*********************************************************
+*NAME:          copyDeviceName
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Copies a device name into one of the fixed buffers above,
+*  truncating rather than assuming a length: the name is a
+*  free-form string that came from an audio driver.
+*
+*ARGUMENTS:
+*  dest - a VOICE_DEVICE_NAME_MAX buffer
+*  name - the name to copy, or NULL for the system default
+*********************************************************/
+static void copyDeviceName(char *dest, const char *name) {
+    size_t len;
+
+    if (name == NULL) {
+        name = "";
+    }
+    len = strlen(name);
+    if (len >= VOICE_DEVICE_NAME_MAX) {
+        len = VOICE_DEVICE_NAME_MAX - 1;
+    }
+    memcpy(dest, name, len);
+    dest[len] = '\0';
+}
+
+/*********************************************************
+*NAME:          voiceRecordingDeviceCount
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns how many microphones there are to choose between.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceRecordingDeviceCount(void) {
+    return voiceBackendRecordingDeviceCount();
+}
+
+/*********************************************************
+*NAME:          voiceRecordingDeviceName
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns one microphone's display name out of the list the
+*  last count took.
+*
+*ARGUMENTS:
+*  index - 0..count-1
+*********************************************************/
+const char *voiceRecordingDeviceName(int index) {
+    return voiceBackendRecordingDeviceName(index);
+}
+
+/*********************************************************
+*NAME:          voicePlaybackDeviceCount
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns how many playback devices there are to choose
+*  between.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voicePlaybackDeviceCount(void) {
+    return voiceBackendPlaybackDeviceCount();
+}
+
+/*********************************************************
+*NAME:          voicePlaybackDeviceName
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns one playback device's display name out of the list
+*  the last count took.
+*
+*ARGUMENTS:
+*  index - 0..count-1
+*********************************************************/
+const char *voicePlaybackDeviceName(int index) {
+    return voiceBackendPlaybackDeviceName(index);
+}
+
+/*********************************************************
+*NAME:          voiceSetRecordingDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Takes the microphone the player chose, by display name.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+void voiceSetRecordingDevice(const char *name) {
+    copyDeviceName(wantedRecordingDevice, name);
+    /* The backend only takes a device that is present, and its answer is
+     * deliberately not passed on: what the player asked for is held here
+     * either way, so an absent device stays chosen and capture runs on the
+     * default until it comes back. */
+    voiceBackendSetRecordingDevice(wantedRecordingDevice);
+}
+
+/*********************************************************
+*NAME:          voiceGetRecordingDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the microphone the player chose, "" for the system
+*  default.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceGetRecordingDevice(void) {
+    return wantedRecordingDevice;
+}
+
+/*********************************************************
+*NAME:          voiceSetPlaybackDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Takes the playback device the player chose, by display
+*  name.
+*
+*ARGUMENTS:
+*  name - the display name, or NULL/"" for the system default
+*********************************************************/
+void voiceSetPlaybackDevice(const char *name) {
+    copyDeviceName(wantedPlaybackDevice, name);
+    voiceBackendSetPlaybackDevice(wantedPlaybackDevice);
+}
+
+/*********************************************************
+*NAME:          voiceGetPlaybackDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the playback device the player chose, "" for the
+*  system default.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+const char *voiceGetPlaybackDevice(void) {
+    return wantedPlaybackDevice;
 }
 
 /*********************************************************

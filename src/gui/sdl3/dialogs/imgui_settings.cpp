@@ -60,6 +60,7 @@ extern "C" {
 #include "imgui_news.h"
 #if defined(WINBOLO_VOICE)
 #include "../../voice.h"
+#include "voice_core.h"  /* VOICE_DEVICE_NAME_MAX — the device name buffers */
 #endif
 }
 
@@ -671,6 +672,44 @@ static bool skinPublishStart(void) {
                                         s_pubAsNew ? 0 : s_pubExistingId);
 }
 #endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
+
+#if defined(WINBOLO_VOICE)
+/* The audio devices offered by the two combos in the voice section.
+ *
+ * Enumerating asks the driver what is plugged in, which is far too much to do
+ * on every frame of a dialog that redraws continuously, so the lists are held
+ * here and refreshed when the section comes back on screen.  "Came back" is
+ * read off the frame the section last drew on: it draws every frame while it
+ * is visible, so any gap in that run is it having been away.  Deriving it that
+ * way rather than seeding the lists when the dialog opens is what makes both
+ * ways into this tab — the pre-game dialog and the in-game overlay — refresh
+ * without either of them having to ask.
+ *
+ * Names are copied rather than pointed at: the voice module's own list is only
+ * good until the next count, and this one is read for the whole frame.  The
+ * cap is the same order as the backend's; a machine with more devices than
+ * this plugged in shows the first of them. */
+#define VOICE_DEVICE_LIST_CAP 32
+static int  s_voiceMicCount = 0;
+static int  s_voiceOutCount = 0;
+static char s_voiceMicNames[VOICE_DEVICE_LIST_CAP][VOICE_DEVICE_NAME_MAX];
+static char s_voiceOutNames[VOICE_DEVICE_LIST_CAP][VOICE_DEVICE_NAME_MAX];
+static int  s_voiceDeviceFrame = -1;
+
+/* Refills one list from the voice module, capped at what there is room for. */
+static int voiceFillDeviceNames(bool recording,
+                                char names[][VOICE_DEVICE_NAME_MAX]) {
+    int count = recording ? voiceRecordingDeviceCount()
+                          : voicePlaybackDeviceCount();
+    if (count > VOICE_DEVICE_LIST_CAP) count = VOICE_DEVICE_LIST_CAP;
+    for (int i = 0; i < count; i++) {
+        const char *name = recording ? voiceRecordingDeviceName(i)
+                                     : voicePlaybackDeviceName(i);
+        SDL_strlcpy(names[i], name ? name : "", VOICE_DEVICE_NAME_MAX);
+    }
+    return count;
+}
+#endif
 
 /* -------------------------------------------------------
  * Display & Sound tab — the display and sound controls shared by
@@ -1501,6 +1540,72 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
         ImGui::SameLine();
         ImGui::TextUnformatted(pttName);
+    }
+    {
+        int frame = ImGui::GetFrameCount();
+        if (frame != s_voiceDeviceFrame + 1) {
+            s_voiceMicCount = voiceFillDeviceNames(true, s_voiceMicNames);
+            s_voiceOutCount = voiceFillDeviceNames(false, s_voiceOutNames);
+        }
+        s_voiceDeviceFrame = frame;
+    }
+    /* Left out entirely where there is nothing to choose between — the web
+       build has the browser pick — rather than drawn as an empty control. */
+    if (s_voiceMicCount > 0) {
+        /* Copied because picking an entry rewrites what the getter returns,
+           and the rest of the list is compared against it after that. */
+        char wanted[VOICE_DEVICE_NAME_MAX];
+        SDL_strlcpy(wanted, voiceGetRecordingDevice(), sizeof(wanted));
+        /* The closed combo names the chosen device even when it is not
+           plugged in, so an absent headset still reads as the choice rather
+           than silently as the default it is running on. */
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MICDEVICE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(240);
+        if (ImGui::BeginCombo("##voicemicdev",
+                              wanted[0] != '\0'
+                                  ? wanted
+                                  : langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT))) {
+            if (ImGui::Selectable(langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT),
+                                  wanted[0] == '\0')) {
+                voiceSetRecordingDevice("");
+            }
+            for (int i = 0; i < s_voiceMicCount; i++) {
+                /* Scoped by index: two devices can carry the same name. */
+                ImGui::PushID(i);
+                if (ImGui::Selectable(s_voiceMicNames[i],
+                                      strcmp(s_voiceMicNames[i], wanted) == 0)) {
+                    voiceSetRecordingDevice(s_voiceMicNames[i]);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    if (s_voiceOutCount > 0) {
+        char wanted[VOICE_DEVICE_NAME_MAX];
+        SDL_strlcpy(wanted, voiceGetPlaybackDevice(), sizeof(wanted));
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_OUTDEVICE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(240);
+        if (ImGui::BeginCombo("##voiceoutdev",
+                              wanted[0] != '\0'
+                                  ? wanted
+                                  : langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT))) {
+            if (ImGui::Selectable(langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT),
+                                  wanted[0] == '\0')) {
+                voiceSetPlaybackDevice("");
+            }
+            for (int i = 0; i < s_voiceOutCount; i++) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(s_voiceOutNames[i],
+                                      strcmp(s_voiceOutNames[i], wanted) == 0)) {
+                    voiceSetPlaybackDevice(s_voiceOutNames[i]);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
     }
     {
         float gain = voiceGetMicGain();
