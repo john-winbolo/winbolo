@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Atirar
 STR_DLGKEYSETUP_LAYMINE=Colocar mina
 STR_DLGKEYSETUP_TANKVIEW=Visão do tanque
 STR_DLGKEYSETUP_PILLVIEW=Visão do bunker
+STR_DLGKEYSETUP_BASEVIEW=Visão da base
+STR_DLGKEYSETUP_ALLYVIEW=Visão de tanques aliados
 STR_DLGKEYSETUP_SCROLLUP=Cima
 STR_DLGKEYSETUP_SCROLLDOWN=Baixo
 STR_DLGKEYSETUP_SCROLLLEFT=Esquerda
@@ -1909,6 +1911,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=As contas do WinBolo.net só podem ser alteradas no me
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Enviar replays aos jogadores
 STR_LV_HIDE_LOBBY=Ocultar sala de espera
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Visibilidade
+STR_DLGLOBBY_VIEW_PILL=Visão do bunker
+STR_DLGLOBBY_VIEW_BASE=Visão da base
+STR_DLGLOBBY_VIEW_ALLY=Visão de tanques aliados
+STR_DLGLOBBY_VIEW_ALWAYS=Sempre
+STR_DLGLOBBY_VIEW_KEY=Tecla
+STR_DLGLOBBY_VIEW_DECAY=Desvanecer
+STR_DLGLOBBY_VIEW_OFF=Desativado
+STR_DLGLOBBY_VIEW_DECAY_SECS=s
+STR_DLGLOBBY_CLASSIC_MODE_CB=Modo clássico
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Define Visão do bunker como Tecla, e Visão da base e Visão\nde tanques aliados como Desativado, e as mantém assim. Ao\ndesligá-lo, essas três continuam onde o modo clássico as\ndeixou.\nEle também oculta o panorama do mapa e o mapa em tela cheia\nna tela de cada jogador. O servidor envia os mesmos dados\nde qualquer forma, então esta é uma regra de conveniência,\nnão uma garantia contra um cliente modificado.
+STR_MENU_CLASSIC_MODE_TIP=O servidor está com o modo clássico ligado, então esta visão está desativada.
+STR_DLGLOBBY_ALLIES_TREES_CB=Ver aliados nas árvores
+STR_DLGLOBBY_ALLIES_TREES_TIP=Tanques aliados parados nas árvores são desenhados na\nsua tela em vez de ficarem escondidos. A névoa de guerra\ncontinua valendo, então você só os vê onde já vê.\nDesligado é a regra clássica, e o modo clássico o\ndesliga.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Padrão
@@ -1949,3 +1966,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Somente um skin na sua própria pasta de skins pode
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Este skin tem arte mais detalhada apenas para alguns sprites, então Corresponder ao zoom gera os mesmos tiles que Clássico. Alto detalhe usa a arte mais detalhada onde o skin a possui.
 STR_DLGSKIN_RECFILTER_LBL=Filtro recomendado:
 STR_DLGSKIN_RECOMMENDED_TAG=(recomendado)
+
+# Panorama do mapa e o mapa em tela cheia
+STR_MENU_MAP_OVERVIEW=Panorama do mapa
+STR_MENU_OVERVIEW_IN_WINDOW=Tela cheia
+STR_OVERVIEW_FOLLOWING=seguindo
+STR_OVERVIEW_FREE=livre
+STR_DLGKEYSETUP_OVERVIEWZOOM=Zoom do mapa (manter pressionado)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Seguir mapa (alternar)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Ampliar mapa
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Reduzir mapa
+STR_DLGWELCOME_SWITCH_CLASSIC=Mudar para o clássico
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Mudar para tela cheia
+
+# Configurações de Tela e som: tela cheia e os painéis de HUD do mapa
+STR_DLGSETTINGS_FULLSCREEN=Tela cheia
+STR_DLGSETTINGS_FULLSCREEN_TIP=Preenche a tela toda em vez de rodar em uma janela.\nLembrado para a próxima vez.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Transparência do newswire
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Quanto do mapa aparece através do newswire na parte de\nbaixo da visão em tela cheia. 0% é sólido, e o controle\ndeslizante para em 90% para que não possa ficar invisível.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Ocultar o newswire automaticamente
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Esconde o newswire por baixo da tela depois de um\ntempo sem novas mensagens, e o traz de volta na\npróxima mensagem. Desativado o mantém na tela\ndurante toda a partida.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Transparência das ferramentas de construção
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Quanto do mapa aparece através das ferramentas de\nconstrução à esquerda da visão em tela cheia. 0% é\nsólido, e o controle deslizante para em 90% para que\nnão possam ficar invisíveis.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Transparência do painel de status
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Quanto do mapa aparece através do painel de status à\ndireita da visão em tela cheia - o construtor, abates\ne mortes, as linhas base/bunker/tanque, e as barras de\nestoque. 0% é sólido, e o controle deslizante para em\n90% para que não possa ficar invisível.
+
+# Legenda da visão de item
+STR_ITEMVIEW_PILL=Visão do bunker
+STR_ITEMVIEW_BASE=Visão da base
+STR_ITEMVIEW_ALLY=Visão de tanques aliados
+STR_ITEMVIEW_ALLY_NAMED=Visão de tanques aliados — {player}
+
+# Etiqueta de visibilidade do navegador de servidores
+STR_DLGBROWSER_VIEWS_LBL=Visões:
+STR_DLGBROWSER_VIEWS_CLASSIC=Clássico
+STR_DLGBROWSER_VIEWS_ALLYTREES=Aliados nas árvores

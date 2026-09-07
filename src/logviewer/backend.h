@@ -492,6 +492,26 @@ gameType lv_screenGetGameType();
 *********************************************************/
 bool lv_screenGetAllowHiddenMines();
 
+/* Most bytes a log_GameSettings payload can hold: the event frames it behind
+ * a single length byte. */
+#define LV_GAME_SETTINGS_MAX 255
+
+/*********************************************************
+*NAME:          lv_screenGetGameSettings
+*PURPOSE:
+* Copies the lobby settings the loaded log recorded (the
+* raw log_GameSettings payload, layout in
+* docs/replay-format.md) into out and returns how many
+* bytes were written. Returns 0 when the log carries no
+* settings event, which is every log written before the
+* event existed.
+*
+*ARGUMENTS:
+*  out    - Buffer to copy the payload into
+*  maxLen - Bytes out can hold
+*********************************************************/
+int lv_screenGetGameSettings(BYTE *out, int maxLen);
+
 /*********************************************************
 *NAME:          lv_screenGetGameTimeLeft
 *AUTHOR:        John Morrison

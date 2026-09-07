@@ -44,7 +44,7 @@
 static void serverSimApplyMapChange(ServerSim *sim);
 
 bool serverSimRandomMapRegenerate(ServerSim *sim) {
-    BYTE tempBuf[65536];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     char seedStr[64];
     char msg[128];
@@ -102,7 +102,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     basesClearMines(&sim->sim);
 
     /* Update cached map */
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
@@ -366,7 +366,7 @@ void serverSimMapDirDestroy(ServerSim *sim) {
 
 static bool serverSimApplyRandomMapConfig(ServerSim *sim,
                                           const MapGenConfig *cfg) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     int x, y;
 
@@ -402,7 +402,7 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
     }
     basesClearMines(&sim->sim);
 
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = (BYTE *)malloc(len);
     if (sim->cachedMapData == NULL) {
@@ -426,7 +426,7 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
 }
 
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     char msg[256];
 
@@ -532,7 +532,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     }
 
     /* Refresh cached compressed map. */
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
@@ -564,7 +564,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
 bool serverSimReloadCompressedInMemory(ServerSim *sim,
                                        const uint8_t *bytes, int len,
                                        const char *mapName) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int compressedLen;
     char msg[256];
 
@@ -688,7 +688,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     sim->mapName[MAP_STR_SIZE - 1] = '\0';
 
     /* Refresh cached compressed map. */
-    compressedLen = serverSimGetCompressedMap(sim, tempBuf);
+    compressedLen = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = malloc(compressedLen);
     if (sim->cachedMapData == NULL) {
@@ -722,9 +722,9 @@ bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
     int len;
     bool ok;
     if (sim == NULL || cs == NULL) return FALSE;
-    buf = (BYTE *)malloc(65536);
+    buf = (BYTE *)malloc(MAP_COMPRESSED_MAX_SIZE);
     if (buf == NULL) return FALSE;
-    len = serverSimGetCompressedMap(sim, buf);
+    len = serverSimGetCompressedMap(sim, buf, MAP_COMPRESSED_MAX_SIZE);
     if (len <= 0) {
         free(buf);
         return FALSE;
@@ -799,7 +799,7 @@ const char *serverSimGetPreviousMapName(const ServerSim *sim) {
 }
 
 bool serverSimRevertPreview(ServerSim *sim) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     if (!sim || !sim->previousMapData) {
         mpDiagLog("[srv] revertPreview REJECTED (no preview to revert)");
@@ -828,7 +828,7 @@ bool serverSimRevertPreview(ServerSim *sim) {
     sim->mapMd5Hex[0] = '\0';
 
     memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = (BYTE *)malloc(len);
     if (sim->cachedMapData) {
@@ -1102,6 +1102,12 @@ static void serverSimApplyMapChange(ServerSim *sim) {
     mpDiagLog("[srv] applyMapChange map='%.32s' cachedLen=%d random=%d",
               sim->mapName, sim->cachedMapDataLen,
               (int)sim->randomMapEnabled);
+
+    /* The live map has just been replaced and every audience is about to be
+     * handed the new one, so restart every slot's copy of the terrain from it.
+     * Without this a slot's copy would still hold the previous map and the
+     * checksum in its snapshot header would not match what it was sent. */
+    serverSimShadowSeedAll(sim);
 
     /* A reservation from the previous map can index past the new map's
      * start list; drop those, then re-cluster every now-unassigned slot

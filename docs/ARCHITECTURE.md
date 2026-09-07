@@ -36,7 +36,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links three leaf `src/gui/sdl3` geometry files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources". |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -66,6 +66,59 @@ T2 access via dedicated CMake profiles.
    are per-frame views the sim publishes for drawing. Read them.
    Do not mutate them. (Where the receive-side API can be tightened
    to `const`, it should be.)
+
+5. **For remembered terrain, read `OverviewMap` — never `brainMap`.**
+   Two map-shaped arrays hang off a `ClientSim` and only one of them
+   answers "what has this player seen?".
+
+   `clientSimGetOverviewMap` returns the fog memory: for each square,
+   the tile it carried the last time the local player could see it,
+   plus the regions they can see this instant. It stores the *drawn*
+   tile — alliance-correct pillboxes and bases, mines only where the
+   client knows one — and freezes a square when it leaves view. The
+   memory is seeded from the map when it lands (the terrain is in the
+   map file every client holds — for a client that joined a running
+   game, the terrain as the round started; see "Per-client terrain"),
+   so every square reads dimmed from the first frame; entities stay
+   gated on the live regions, and a seeded square freezes like any
+   other until the player can see it.
+
+   Which regions are live follows the server's view policies rather
+   than the client's own idea of what it may watch: the tank's own
+   block, plus a block on each viewable pillbox, allied base and
+   allied tank whose category the server allows. A category set to
+   `off` contributes none. Under `key`, watching an item takes the
+   tank's own block away for as long as it lasts — one view at a
+   time, the way the classic screen leaves the tank behind while the
+   player is in an item view. That is the map choosing what to draw,
+   not what it holds: the server sends the recipient's own tank screen
+   whatever it is watching, because the client predicts its tank
+   against the ground round it. Under `decay` a
+   region also carries a brightness — full while its proximity clock
+   is inside the window, ramping down over the last
+   `VIEW_DECAY_FADE_SECS` seconds of it, and gone once the clock runs
+   out, at which point the squares under it freeze the way any region
+   leaving view does. So the fog never shows as live a square the
+   server is not feeding.
+
+   `clientSimGetBrainMap` returns the terrain array brains reason
+   over, and it is not a record of anything the player saw. It holds
+   raw map bytes rather than tiles; `viewport.c` writes every square
+   the viewport passes over into it; `screenBrainMapFillFromMap`
+   fills it from the entire map for bots; and `mapSetPos` refreshes
+   a square on the server sim whenever the terrain there changes,
+   whoever can or cannot see it. Drawing from it would show ground
+   the player cannot currently see: for the local host and for bots
+   it carries terrain changes made anywhere on the map, and a bot's
+   copy is filled from the whole map outright. A client on the wire
+   is the narrower case — the server withholds the changes outside
+   its viewports, so what never arrived cannot be in `brainMap`
+   either — but the rule is the same one either way, and
+   `OverviewMap` is the array that answers the question being asked.
+
+   The two are deliberately not unified. Pointing brains at the fog
+   memory would change how bots play, which is a gameplay decision
+   and not a refactor.
 
 ## What clients must not do
 
@@ -98,14 +151,15 @@ because the broken client did not run the same code path.
 
 4. **Do not introduce new T2 exceptions casually.** The four
    exceptions that exist today (`mapeditor`, `braintest`, `gym`,
-   `tests/unit/`) each carry a documented scope and expiry condition — see the
-   "Privileged exceptions" section below. `src/server/`,
+   `tests/unit/`) each carry a documented scope and a written note
+   of what they rest on — see the "Privileged exceptions" section
+   below. `src/server/`,
    `src/headless/`, `src/wasm/`, `src/android/`, and `src/ios/`
    all run the sim and all participate in this bug class. A new
    exception requires the same justification structure: bounded
-   scope, written expiry condition, and a reason the asymmetric-
-   runtime bug class doesn't apply. The default answer is still
-   "add a T1 accessor".
+   scope, a written note of what it rests on, and a reason the
+   asymmetric-runtime bug class doesn't apply. The default answer
+   is still "add a T1 accessor".
 
 5. **Do not include T3 from non-renderer binaries.** `src/gui/`,
    the mobile renderers (`src/android/`, `src/ios/`, `src/wasm/`),
@@ -629,7 +683,7 @@ blocking is per-channel):
 | id | channel | flavor | carries |
 | --- | --- | --- | --- |
 | 0 | `CHANNEL_GAME` | message | reliable must-arrive game events: kills, mine reveals, server / assistant / LGM-lost text |
-| 1 | `CHANNEL_MAP` | message | terrain-change events (`EVENT_MAP_CHANGE`) |
+| 1 | `CHANNEL_MAP` | message | terrain-change events (`EVENT_MAP_CHANGE`), per recipient — a client on the wire is sent only the changes inside its own viewports; in-process clients take every change (see "Per-client terrain") |
 | 2 | `CHANNEL_CONTROL` | message | lobby / chat / alliance / phase control events |
 | 3 | `CHANNEL_BULK` | stream | map preview / upload / download / resync blobs |
 | 4 | `CHANNEL_GAME_EFFECT` | best-effort | ephemeral game events: sounds, explosions, captures, and pill/base state deltas |
@@ -705,13 +759,21 @@ hands the parsed header to a **recipient-agnostic sink** that decides where the
 blob lands and what to do on completion — so preview, upload, download, and resync
 (`BULK_KIND_*`) all ride the one machinery.
 
+The *contents* of a map download or resync blob are not shared between clients:
+each is built for the one slot it is going to, from that slot's own copy of the
+terrain (`serverSimGetCompressedMapFor`), so a client is never streamed ground it
+was culled out of. See "Per-client terrain". A lobby map preview and a lobby map
+change are lobby-wide and do serialise the live map.
+
 A join download is pull-started: the server arms it at `JOIN_ACCEPT` but streams
 only after the client's `PACKET_MAP_DL_READY` confirms its receive buffers exist,
 so the stream head can never race the accept that sizes them. The client re-sends
 the READY if the stream never starts or stalls outright, and the server answers a
 re-ask with a full restart behind a `CHANNEL_BULK` re-base — the recovery for a
 transfer whose bytes the channel has already acked but the receiver could not
-keep (e.g. its framing was reset mid-body).
+keep (e.g. its framing was reset mid-body). The restart recompresses that slot's
+own copy and re-sends `JOIN_ACCEPT` first, because the client drops a stream whose
+header size disagrees with the size its accept carried.
 
 **Off-socket testability.** Because the reliability burden lives behind a pure
 byte-buffer seam, the whole loss / reorder / dup matrix is a unit test with no
@@ -725,6 +787,68 @@ on `CHANNEL_CONTROL`, a new transfer in `bulk_transfer.c` on `CHANNEL_BULK` — 
 in a hand-rolled socket send. (The reliability logic was extracted into these small
 off-socket modules rather than shrinking `transport_udp_server.c`, which stayed
 large as per-client mux/bulk wiring moved in.)
+
+## Per-client terrain
+
+The server does not send every terrain change to every client. It keeps, per
+slot, a copy of the terrain that client is supposed to have —
+`clientKnownMap[MAX_TANKS]` in `ServerSim` — and every question of the form
+"what map does this client hold?" is answered from that copy rather than from
+the live map.
+
+**What writes the copy.** A slot the UDP transport has marked culled
+(`shadowCulledSlots`, set when the transport takes the slot and cleared when it
+goes) has each map event tested against that client's viewport set — the same
+rects `serverSimBuildViewports` produces for entity culling: the tank's own
+screen plus a screen for each pillbox, base and allied tank its view policies
+allow, plus, while a `key` category is granting the item the client reports
+watching, that item's screen beside them. An event inside the rects is queued on
+`CHANNEL_MAP` as before *and* its new terrain byte written into that slot's
+copy. An event outside them is skipped and the copy keeps the old byte — that
+staleness is the record of what the client is owed. The write is tied to the
+enqueue, not to the test, so a queue-full drop also leaves the copy stale and
+heals the same way. In-process clients — the local host player and bots — are
+never marked culled: they take every change, and their copy tracks the live
+map. The one gap is a tick that produces more than `MAX_MAP_EVENTS` terrain
+changes: the overflow never reaches any copy, and since each client's checksum
+is taken over its own copy, the two ends still agree and nothing asks for a
+resync. It takes a pathological tick to reach, and no normal round comes near
+it.
+
+**How ground fills in as a client drives into it.** There is no "this client
+entered an area" event; the disagreement itself is the trigger.
+`serverSimShadowSweep` compares a slot's copy against the live map *inside that
+slot's current rects* and turns each differing square into an
+`EVENT_MAP_CHANGE` on that client's queue, advancing the copy as it emits. It
+runs on a slot-staggered `MAP_SWEEP_STRIDE` cadence (each slot comes up every
+five frames) and emits at most `MAP_SWEEP_MAX_EVENTS` a sweep, and never more
+than the queue has room for, so driving into long-changed ground cannot crowd
+out live changes; whatever is left over is still a difference and goes out on a
+following sweep. The sweep is held off while a resync is in flight, since that
+transfer carries the whole copy anyway.
+
+**The checksum is taken over the copy.** `hdr.mapChecksum` is stamped on each
+client's own full-sync tick from `mapCalcChecksum` over
+`clientKnownMap[slot]`, not over the live map. This is what keeps a culled
+client out of a resync loop: it legitimately does not hold the live map, so
+hashing the live map would give it a mismatch it could never clear — three
+mismatches ask for a resync, the resync would deliver a map that still does not
+hash to the live one, and the client would keep asking until it hit
+`MAP_RESYNC_MAX_ATTEMPTS` and disconnected. Hashing what the client was
+actually sent makes the two ends agree by construction once the sweep has
+caught up. The recording paths (`noCull`) have no client copy behind them and
+hash the live map.
+
+**Resync and join read the copy too.** A resync blob is built by
+`serverSimGetCompressedMapFor(sim, slot, …)`, which serialises that slot's copy
+alongside the current (public) pill/base/start structs — streaming the live map
+there would hand a client exactly the ground it was culled out of. A wire client
+joining a game already running is re-seeded from the round-start copy of the
+terrain (`serverSimShadowSeedRoundStart`) and its download blob comes from that
+same copy, so arriving — or leaving and rejoining — tells it nothing about what
+has happened since the round began; it is paid the differences by the sweep as
+its viewports cover the ground. A lobby or countdown joiner keeps the current
+map, which nothing has changed yet.
 
 ## Adding a new server event
 
@@ -769,7 +893,7 @@ A single publish therefore reaches every audience by construction: a
 publish that reaches one audience reaches the other by definition,
 and the asymmetric-runtime bug class is closed.
 
-This is foot-gun removal, not compile-time enforcement. The old
+This removes the easy mistake, not compile-time enforcement. The old
 `transportUdpServerBroadcast*` helpers are gone, so the easy copy-
 paste pattern that produced asymmetric runtimes no longer exists.
 But `udpSendTo`, `packHeader`, and the `PACKET_*` constants are
@@ -785,7 +909,7 @@ public/internal split provides.
 | --- | --- |
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
 | Fixed-layout binary message (per-tick snapshots) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
-| Bulk byte transfer (map preview / download / resync) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c` |
+| Bulk byte transfer (map preview / download / resync) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c`. Download and resync blobs are built per recipient |
 | Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, PONG) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
 
 These rows say where each payload is *defined*; **how** it is reliably
@@ -1379,6 +1503,13 @@ set of intentional differences:
 - The dynamic per-player roster row in the in-window Players menu is
   not replicated natively. The Players Panel window owns that
   surface; the native menu has only the static action items.
+- Window > Enter Full Screen (⌃⌘F) has no in-window twin. It sits with
+  Minimize / Zoom / Bring All To Front, which are AppKit window
+  commands, by macOS convention. It is not a divergence in behaviour:
+  it calls `sdl3ImguiToggleFullScreen`, the same command Alt+Enter
+  makes, which in a game is the full screen map that File > Overview
+  in Window drives in both bars, and outside one is the app full
+  screen flag.
 
 Add new exceptions sparingly and only with a justification — every
 diverged item is a future asymmetric-UI bug.
@@ -1720,9 +1851,19 @@ no-op stub returning failure. Same pattern as
 
 ## Privileged exceptions
 
-Three non-bolo directories are permitted to include T2 headers
+Four non-bolo directories are permitted to include T2 headers
 today. Each has its own CMake profile in `cmake/bolo_lib.cmake`,
-a scoped justification, and a written expiry condition.
+a scoped justification, and a written note of what it rests on.
+
+Nothing here is time-limited, and nothing removes itself. Each
+exception was granted because some fact about that directory is
+true — it never ticks a sim, it is not shipped, it has one
+consumer — and the **Rests on** line names that fact. If the fact
+stops being true the reason for the exception has gone with it,
+and the directory goes back under the ordinary rule. Whoever
+makes that change is the one who has to notice: the build will
+not complain, so a stale entry here is a lie about the codebase
+rather than a broken compile.
 
 ### `src/mapeditor/`
 
@@ -1737,10 +1878,21 @@ Scope: map-data structures (`bolo_map.h`, `pillbox.h`, `bases.h`,
 `starts.h`, and friends) plus the map-render math it needs for
 the editor preview.
 
-**Expires** the moment anyone adds in-editor playtest, live
-preview against a running sim, or any other path that ticks the
-world from the editor. At that point mapeditor joins the T1+T3+T4
-group and the map-data access moves behind T1 accessors.
+The same scope covers the non-shipping map generators under
+`src/mapeditor/tools/` — currently `make_tile_test_map.c`, the
+`MakeTileTestMap` target (`EXCLUDE_FROM_ALL`, see
+[TOOLS.md](TOOLS.md#maketiletestmap)). They write `.map` files
+through the same map-data headers and never tick a sim, so they
+sit inside the editor's exception rather than needing one of
+their own. They belong here and not in `tools/`, which is a
+public-only directory — see the `tests/`, `tools/` row in "Who
+may include what".
+
+**Rests on** the editor never ticking the world. Remove this the
+moment anyone adds in-editor playtest, live preview against a
+running sim, or any other path that runs the sim from the editor:
+at that point mapeditor joins the T1+T3+T4 group and the map-data
+access moves behind T1 accessors.
 
 ### `src/braintest/`
 
@@ -1753,8 +1905,9 @@ and no production code path depends on them.
 Scope: brain introspection (`bot_manager.h`, `brain_pathfinder.h`,
 `brain_overlay.h`, `braincore.h`, `control_event.h`).
 
-**Expires** the moment a second consumer needs the same access —
-at which point the right answer is to deep-copy the introspected
+**Rests on** BrainTest being the only consumer of these getters.
+Remove this the moment a second one needs the same access — at
+which point the right answer is to deep-copy the introspected
 state into POD types on a public header.
 
 ### `src/gym/`
@@ -1768,40 +1921,93 @@ Scope: `GameSim` layout (`game_sim.h`) and the per-substruct
 headers (`players.h`, `tank.h`, `shells.h`, `lgm.h`, etc.) used
 for observation and reward extraction.
 
-**Expires** the moment gym ships in any player-facing
-distribution. At that point the observation builder migrates
-onto the snapshot APIs the GUI clients already use, and gym
-drops back to the standard public-only access.
+**Rests on** gym not being shipped to players. Remove this the
+moment it ships in any player-facing distribution: at that point
+the observation builder migrates onto the snapshot APIs the GUI
+clients already use, and gym drops back to the standard
+public-only access.
 
 ### `tests/unit/`
 
-The `WinBoloUnitTests` binary exercises in-process invariants
-that aren't reachable through T1 today — passive transport
-queue mechanics under cross-thread access, subscriber-side
-ClientSim state after a control-event publish. It is not
-shipped to players, has a single consumer (CTest), and is not
-a runtime peer of the GUI / server / mobile / wasm clients, so
-the asymmetric-runtime bug class does not apply.
+The `WinBoloUnitTests` binary asserts on in-process invariants
+that have no T1 expression: wire-codec and channel-mux byte
+layouts, per-client snapshot and terrain-copy state, client-side
+view and overview bookkeeping, passive transport queue mechanics
+under cross-thread access, subscriber-side ClientSim state after a
+control-event publish. It is not shipped to players, has a single
+consumer (CTest), and is not a runtime peer of the GUI / server /
+mobile / wasm clients, so the asymmetric-runtime bug class does
+not apply.
 
-Scope: `transport.h` (the passive `transport_local` queue
-indices the concurrency test asserts on), `game_sim.h` plus
-`players.h` (the subscriber-dispatch test reads the client's
-player table back through `&cs->sim.plyrs` after
-`CTRL_PLAYER_NAME` delivery).
+Scope: broad, and deliberately so — a test asserts on the state
+the code actually keeps. In practice it reaches the sim state
+structs (`game_sim.h`, `players.h`, `tank.h`, `pillbox.h`,
+`bases.h`, `shells.h`, `mines.h`, `lgm.h`, `starts.h`,
+`allience.h`, `bolo_map.h`), both sim internals
+(`client_sim_internal.h`, `server_sim_internal.h` and the
+`server_sim_*` helper headers), the wire and transport layer
+(`transport.h`, `transport_udp.h`, `transport_udp_internal.h`,
+`channel_mux.h`, `bulk_transfer.h`, `netpacks.h`, `wire_codec.h`,
+`wire_messages.h`, the control and command codecs), the client's
+view and render internals (`viewport.h`, `overview_map.h`,
+`interpolation.h`, `scroll.h`, `messages.h`), and the bot and
+brain headers (`bot_manager.h`, `braincore.h`,
+`brain_pathfinder.h`).
 
-**Expires** the moment T1 accessors expose the passive
-transport's queue state and the subscriber-side player view
-the tests currently reach T2 to observe. At that point the
-tests migrate to T1+T3+T4 (the default `tests/` row in "Who
-may include what" above) and this profile is removed.
+**Rests on** the binary not being a runtime peer: not shipped in a
+player-facing distribution, and no consumer beyond CTest. Remove
+this if either stops being true — at that point it is a peer like
+any other and the bug class applies to it.
+
+**Kept honest by** review of the scope list, not by that condition,
+which is not expected to fire. The list above is the part that can
+rot: it reached its present size by being appended to, a header at
+a time, while the sentence describing it stayed still. So it is
+read at each release — every T2 include a new T1 accessor has made
+unnecessary comes off, and nothing goes on without a line saying
+what it observes that T1 cannot. A list that grows across two
+releases with nothing coming off means the review has stopped, and
+the grant needs re-arguing rather than extending.
+
+**Linked GUI sources.** A second, narrower exception rides on the
+same target, and it is not a T2 grant. Three `src/gui/sdl3` files —
+`overview_camera.cpp`, `overview_fog.cpp` and
+`overview_hud_layout.cpp` — are compiled *into* `WinBoloUnitTests`,
+the only files from a renderer directory that are. They hold the map
+overview's camera maths, its fog mask and its in-window HUD geometry,
+and `test_overview_camera.cpp`, `test_overview_fog.cpp` and
+`test_overview_hud_layout.cpp` call them directly.
+
+They do not borrow the target's T2 access. They keep the `gui`
+profile's public-only rule: between them they include `types.h` and
+`overview_types.h` from `public/`, two GUI-local geometry headers,
+and the C++ standard library — nothing else. That is the rule which
+qualifies a file for this list: **arithmetic over plain structs, with
+no ImGui, no `SDL_Renderer`, and no window or device state — geometry
+a test can call with no display attached.** The drawing half of the
+overview (`overview_view.cpp`) does not qualify and stays out.
+
+The alternative was moving the maths into `src/bolo/`, which would
+put pixel, zoom and panel-layout concerns onto the sim purely to buy
+testability. Keeping them in the renderer and linking three leaf
+files is the smaller distortion of the two.
+
+**Rests on** each of the three still meeting that rule, so it is
+checked per file rather than for the group. One that gains an ImGui
+or renderer include has left the category, and the answer is to
+split the geometry back out — the link break is the signal, not a
+build problem to route around by widening the test binary. A fourth
+file joins only on the same test: leaf geometry, or it does not go
+in.
 
 ### Adding a new exception
 
 A new exception requires the same structure: a directory with its
 own CMake profile, a documented scope (which T2 headers and why),
-and a written expiry condition (the change of circumstance that
-brings the asymmetric-runtime bug class back into scope). Without
-that, the default answer is "add a T1 accessor".
+and a written note of what it rests on — the fact about that
+directory which makes the asymmetric-runtime bug class not apply,
+stated so that when the fact changes the exception goes with it.
+Without that, the default answer is "add a T1 accessor".
 
 ## Per-file T2 grants
 

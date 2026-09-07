@@ -473,8 +473,11 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
  *   [lobbyStartDelay 4 BE] [hostSlot 1]
+ *   [pillView 1] [baseView 1] [allyView 1]
+ *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
+ *   [classicMode 1] [alliesInTrees 1]
  *
- * The trailing four bytes are appended after the base layout so the
+ * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
  * optionally and leaves zero-init defaults in place when the sender
  * omits them, which keeps old/new codec pairs interoperable.
@@ -483,12 +486,16 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
- * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + scenarioMap(1)
- * + scenarioExtraTeams(1) + scenarioDesc(1 len + up to 255 bytes,
- * length-prefixed — the payload macro reserves the maximum; the encoder
- * emits only the actual length). */
+ * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
+ * policies(3) + three view decay seconds(6) + classicMode(1)
+ * + alliesInTrees(1) + scenarioMap(1) + scenarioExtraTeams(1)
+ * + scenarioDesc(1 len + up to 255 bytes, length-prefixed — the payload
+ * macro reserves the maximum; the encoder emits only the actual
+ * length). main's fields come first on the wire so main's layout is
+ * unchanged and the scenario fields stay the trailing tail. */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 1 + 1 + 1 + 255)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 \
+     + 1 + 1 + 1 + 255)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -527,6 +534,15 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
     pos += 4;
     buf[pos++] = evt->u.lobbySettings.hostSlot;
+    for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+        buf[pos++] = (uint8_t)evt->u.lobbySettings.viewPolicy[vc];
+    }
+    for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+        packU16(buf + pos, evt->u.lobbySettings.viewDecaySecs[vc]);
+        pos += 2;
+    }
+    buf[pos++] = evt->u.lobbySettings.lobbyClassicMode ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyAlliesInTrees ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyScenarioMap ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyScenarioExtraTeams ? 1 : 0;
     {
@@ -1033,6 +1049,47 @@ static bool decodeRoundRatingPostedBody(const uint8_t *buf, size_t len,
     outEvt->u.ratingPosted.fromPlayer = buf[0];
     memcpy(outEvt->u.ratingPosted.key, buf + 1, RATING_POSTED_KEY_BODY_LEN);
     outEvt->u.ratingPosted.key[RATING_POSTED_KEY_BODY_LEN] = '\0';
+    return true;
+}
+
+/* CTRL_VIEW_TARGET body wire format (fixed length):
+ *   [origSlot 1] [kind 1] [target 1] [mapX 1] [mapY 1] [found 1] [fromEcho 1]
+ * Every field is a single byte, so the body is the same size on every event
+ * and the decoder can reject anything else outright. Delivered body-only on
+ * CHANNEL_CONTROL; there is no full-packet wrapper or PACKET_* type for this
+ * event. */
+#define VIEW_TARGET_BODY_LEN 7
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeViewTargetBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < VIEW_TARGET_BODY_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.viewTarget.origSlot;
+    buf[1] = evt->u.viewTarget.kind;
+    buf[2] = evt->u.viewTarget.target;
+    buf[3] = evt->u.viewTarget.mapX;
+    buf[4] = evt->u.viewTarget.mapY;
+    buf[5] = evt->u.viewTarget.found;
+    buf[6] = evt->u.viewTarget.fromEcho;
+    *outLen = VIEW_TARGET_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeViewTargetBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (len != VIEW_TARGET_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_VIEW_TARGET;
+    outEvt->u.viewTarget.origSlot = buf[0];
+    outEvt->u.viewTarget.kind     = buf[1];
+    outEvt->u.viewTarget.target   = buf[2];
+    outEvt->u.viewTarget.mapX     = buf[3];
+    outEvt->u.viewTarget.mapY     = buf[4];
+    outEvt->u.viewTarget.found    = buf[5];
+    outEvt->u.viewTarget.fromEcho = buf[6];
     return true;
 }
 
@@ -1851,6 +1908,23 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.hostSlot = buf[pos++];
     }
+    if (len >= pos + VIEW_CATEGORY_COUNT) {
+        for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+            outEvt->u.lobbySettings.viewPolicy[vc] = (ViewPolicy)buf[pos++];
+        }
+    }
+    if (len >= pos + (2 * VIEW_CATEGORY_COUNT)) {
+        for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+            outEvt->u.lobbySettings.viewDecaySecs[vc] = unpackU16(buf + pos);
+            pos += 2;
+        }
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyClassicMode = buf[pos++] ? true : false;
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyAlliesInTrees = buf[pos++] ? true : false;
+    }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyScenarioMap = buf[pos++] ? true : false;
     }
@@ -2263,6 +2337,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_STATS]           = encodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = encodeSpectatorChatBody,
     [CTRL_ROUND_RATING_POSTED]   = encodeRoundRatingPostedBody,
+    [CTRL_VIEW_TARGET]           = encodeViewTargetBody,
     [CTRL_NEWSWIRE_MUTE]         = encodeNewswireMuteBody,
 };
 
@@ -2303,6 +2378,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_STATS]           = decodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = decodeSpectatorChatBody,
     [CTRL_ROUND_RATING_POSTED]   = decodeRoundRatingPostedBody,
+    [CTRL_VIEW_TARGET]           = decodeViewTargetBody,
     [CTRL_NEWSWIRE_MUTE]         = decodeNewswireMuteBody,
 };
 

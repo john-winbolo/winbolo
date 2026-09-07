@@ -678,6 +678,15 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
     break;
+  case log_GameSettings:
+    /* event code + length-prefixed settings blob. The blob is binary, not
+       text: it carries 0x00 bytes, and only the leading length byte decides
+       how much is copied. */
+    out[off++] = itemNum;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
   case log_GameVoteStart:
     /* event code + kind + initiator player + team (0 = global) */
     out[off++] = itemNum;

@@ -221,6 +221,10 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/lobby_start_list.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_view.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/overview_camera.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/overview_fog.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/overview_hud_layout.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/overview_view.cpp
     ${PROJ_ROOT}/src/gui/sdl3/wb_theme.cpp
     ${PROJ_ROOT}/src/gui/sdl3/minimap_render.c
     ${PROJ_ROOT}/src/gui/sdl3/luabrainshandler.c
@@ -234,6 +238,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/sprite_positions.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw_status.c
+    ${PROJ_ROOT}/src/gui/sdl3/tank_label.c
     ${PROJ_ROOT}/src/gui/sdl3/tileloader.c
     ${PROJ_ROOT}/src/gui/sdl3/skin_source.c
     ${PROJ_ROOT}/src/gui/sdl3/gfx_settings.c

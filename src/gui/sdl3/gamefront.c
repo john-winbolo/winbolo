@@ -229,6 +229,18 @@ bool           gameFrontHostingLogging         = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
 
+/* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
+ * Defaults match serverSimInit so hosting with an untouched INI leaves
+ * the sim exactly as it was created. */
+int gameFrontViewPillPolicy    = viewPolicyAlways;
+int gameFrontViewBasePolicy    = viewPolicyOff;
+int gameFrontViewAllyPolicy    = viewPolicyAlways;
+int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+bool gameFrontClassicMode      = FALSE;
+bool gameFrontAlliesInTrees    = FALSE;
+
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
@@ -301,6 +313,21 @@ int gameFrontLobbyW = -1;
 int gameFrontLobbyH = -1;
 float gameFrontLobbySplit = 0.0f;
 float gameFrontLobbySplitRecap = 0.0f;
+
+/* Map overview pop-out geometry, camera state and last-open flag. The
+   defaults are the size the window was created at before it had preferences,
+   2x zoom with follow on (what overviewCameraInit picks), no saved position
+   and closed. */
+int   gameFrontOverviewW = 640;
+int   gameFrontOverviewH = 640;
+int   gameFrontOverviewX = -1;
+int   gameFrontOverviewY = -1;
+float gameFrontOverviewZoom = 2.0f;
+bool  gameFrontOverviewFollow = TRUE;
+bool  gameFrontShowMapOverview = FALSE;
+
+/* App full screen mode, and with it the in-window Full Screen Map view. */
+bool  gameFrontFullScreen = FALSE;
 
 /* Dialog states */
 openingStates dlgState = openStart;
@@ -691,6 +718,18 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         OKStart = FALSE;
       }
     }
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Full screen covers the menus and the lobby too, so the window goes
+       full screen here rather than waiting for a game. The preferences are
+       already read and the window is created hidden, so the first dialog is
+       the first thing drawn and there is no windowed flash. Big Picture,
+       tablet and the Deck are full screen from creation and are left alone. */
+    if (OKStart && gameFrontFullScreen && !uiModeIsTablet() &&
+        !uiModeIsSteamDeck() && !steam_is_big_picture()) {
+      SDL_SetWindowFullscreen(sdl3DrawGetWindow(), true);
+    }
+#endif
 
 #if defined(__APPLE__) && !defined(BOLO_MOBILE)
     /* Install only the Dock-icon menu now so it is live during the
@@ -2069,6 +2108,79 @@ void gameFrontSetHostingServeReplays(bool serve) {
   prefsSetString("HOSTING", "Serve Replays", TRUEFALSE_TO_STR(serve));
 }
 
+/* Visibility write-through setters. Same shape as the hosting ones
+ * above: update the global and persist the [GAME OPTIONS] key now. The
+ * policies are stored as words so a hand-edited INI reads clearly. */
+static const char *viewPolicyPrefWord(int policy) {
+  return (policy == viewPolicyKey)   ? "Key"
+       : (policy == viewPolicyDecay) ? "Decay"
+       : (policy == viewPolicyOff)   ? "Off"
+                                     : "Always";
+}
+
+/* Reads back what viewPolicyPrefWord wrote. A word that is none of the four
+ * returns the caller's fallback, so a mistyped INI value cannot turn a
+ * category on. */
+static int viewPolicyFromPrefWord(const char *word, int fallback) {
+  if (strcmp(word, "Always") == 0) return viewPolicyAlways;
+  if (strcmp(word, "Key")    == 0) return viewPolicyKey;
+  if (strcmp(word, "Decay")  == 0) return viewPolicyDecay;
+  if (strcmp(word, "Off")    == 0) return viewPolicyOff;
+  return fallback;
+}
+
+static int viewDecayClamp(int secs) {
+  if (secs < VIEW_DECAY_MIN_SECS) return VIEW_DECAY_MIN_SECS;
+  if (secs > VIEW_DECAY_MAX_SECS) return VIEW_DECAY_MAX_SECS;
+  return secs;
+}
+
+void gameFrontSetViewPillPolicy(int policy) {
+  gameFrontViewPillPolicy = policy;
+  prefsSetString("GAME OPTIONS", "Pill View", viewPolicyPrefWord(policy));
+}
+
+void gameFrontSetViewBasePolicy(int policy) {
+  gameFrontViewBasePolicy = policy;
+  prefsSetString("GAME OPTIONS", "Base View", viewPolicyPrefWord(policy));
+}
+
+void gameFrontSetViewAllyPolicy(int policy) {
+  gameFrontViewAllyPolicy = policy;
+  prefsSetString("GAME OPTIONS", "Ally View", viewPolicyPrefWord(policy));
+}
+
+void gameFrontSetViewPillDecaySecs(int secs) {
+  char buf[16];
+  gameFrontViewPillDecaySecs = viewDecayClamp(secs);
+  intToStr(gameFrontViewPillDecaySecs, buf, sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Pill View Decay", buf);
+}
+
+void gameFrontSetViewBaseDecaySecs(int secs) {
+  char buf[16];
+  gameFrontViewBaseDecaySecs = viewDecayClamp(secs);
+  intToStr(gameFrontViewBaseDecaySecs, buf, sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Base View Decay", buf);
+}
+
+void gameFrontSetViewAllyDecaySecs(int secs) {
+  char buf[16];
+  gameFrontViewAllyDecaySecs = viewDecayClamp(secs);
+  intToStr(gameFrontViewAllyDecaySecs, buf, sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Ally View Decay", buf);
+}
+
+void gameFrontSetClassicMode(bool on) {
+  gameFrontClassicMode = on;
+  prefsSetString("GAME OPTIONS", "Classic Mode", TRUEFALSE_TO_STR(on));
+}
+
+void gameFrontSetAlliesInTrees(bool on) {
+  gameFrontAlliesInTrees = on;
+  prefsSetString("GAME OPTIONS", "Allies In Trees", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2625,6 +2737,28 @@ bool gameFrontSetupServer(void) {
   /* Embedded listen server: silence its console messages — no server console. */
   serverSimSetQuiet(spServerSim, true);
 
+  /* Visibility rules from the [GAME OPTIONS] prefs, pushed onto the sim
+   * after create rather than through ServerInstanceConfig. */
+  serverSimSetViewPolicy(spServerSim, viewCategoryPill,
+                         (ViewPolicy)gameFrontViewPillPolicy,
+                         (uint16_t)gameFrontViewPillDecaySecs);
+  serverSimSetViewPolicy(spServerSim, viewCategoryBase,
+                         (ViewPolicy)gameFrontViewBasePolicy,
+                         (uint16_t)gameFrontViewBaseDecaySecs);
+  serverSimSetViewPolicy(spServerSim, viewCategoryAlly,
+                         (ViewPolicy)gameFrontViewAllyPolicy,
+                         (uint16_t)gameFrontViewAllyDecaySecs);
+  /* After the three policies, so classic mode wins over them when both
+   * are set, and allies in trees before classic mode, which forces it
+   * back off. Both only pushed when on — off is what the sim was
+   * created with. */
+  if (gameFrontAlliesInTrees) {
+    serverSimSetAlliesInTrees(spServerSim, true);
+  }
+  if (gameFrontClassicMode) {
+    serverSimSetClassicMode(spServerSim, true);
+  }
+
   /* Resolve a brain path so the lobby's "Add Bot" works regardless of
    * whether the host set compTanks at startup. The AI Policy can be
    * flipped on later via the lobby UI; without a pre-resolved brain
@@ -2925,6 +3059,18 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_BASEVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Base View", def, buff, FILENAME_MAX);
   keys->kiBaseView = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_ZOOM, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Zoom", def, buff, FILENAME_MAX);
+  keys->kiOverviewZoom = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_FOLLOW, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Follow", def, buff, FILENAME_MAX);
+  keys->kiOverviewFollow = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_ZOOMIN, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Zoom In", def, buff, FILENAME_MAX);
+  keys->kiOverviewZoomIn = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_ZOOMOUT, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Zoom Out", def, buff, FILENAME_MAX);
+  keys->kiOverviewZoomOut = atoi(buff);
 
   /* Scrolling */
   intToStr(DEFAULT_SCROLLUP, def, sizeof(def));
@@ -3162,6 +3308,42 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
+  /* Visibility rules for games this client hosts. Clamped on read so a
+   * hand-edited INI can't inject an out-of-range decay. A word that is
+   * none of the four reads as that row's own default, matching the
+   * dedicated server's -pillview / -baseview / -allyview (Off for bases). */
+  {
+    static const struct {
+      const char *policyKey;
+      const char *decayKey;
+      const char *policyDefault;
+      int        *policyOut;
+      int        *decayOut;
+    } viewPrefs[] = {
+      { "Pill View", "Pill View Decay", "Always",
+        &gameFrontViewPillPolicy, &gameFrontViewPillDecaySecs },
+      { "Base View", "Base View Decay", "Off",
+        &gameFrontViewBasePolicy, &gameFrontViewBaseDecaySecs },
+      { "Ally View", "Ally View Decay", "Always",
+        &gameFrontViewAllyPolicy, &gameFrontViewAllyDecaySecs },
+    };
+    intToStr(VIEW_DECAY_DEFAULT_SECS, def, sizeof(def));
+    for (int vi = 0; vi < (int)(sizeof(viewPrefs) / sizeof(viewPrefs[0])); vi++) {
+      prefsGetString("GAME OPTIONS", viewPrefs[vi].policyKey,
+                     viewPrefs[vi].policyDefault, buff, FILENAME_MAX);
+      int fallback =
+          viewPolicyFromPrefWord(viewPrefs[vi].policyDefault, viewPolicyAlways);
+      *viewPrefs[vi].policyOut = viewPolicyFromPrefWord(buff, fallback);
+      prefsGetString("GAME OPTIONS", viewPrefs[vi].decayKey, def, buff,
+                     FILENAME_MAX);
+      *viewPrefs[vi].decayOut = viewDecayClamp(atoi(buff));
+    }
+    prefsGetString("GAME OPTIONS", "Classic Mode", "No", buff, FILENAME_MAX);
+    gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
+    prefsGetString("GAME OPTIONS", "Allies In Trees", "No", buff, FILENAME_MAX);
+    gameFrontAlliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+  }
+
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
   gameFrontUseUpnp = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("SETTINGS", "Use NAT Traversal", "Yes", buff, FILENAME_MAX);
@@ -3215,6 +3397,32 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showBaseLabels = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Label Own Tank", "No", buff, FILENAME_MAX);
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("MENU", "Show Map Overview", "No", buff, FILENAME_MAX);
+  gameFrontShowMapOverview = YESNO_TO_TRUEFALSE(buff[0]);
+  /* The key keeps the name it has always had so settings in existing player
+     files carry over; what it feeds now drives full screen for the whole app,
+     not just the in-window map view a game opens with. */
+  prefsGetString("MENU", "Show Full Screen Map", "No", buff, FILENAME_MAX);
+  gameFrontFullScreen = YESNO_TO_TRUEFALSE(buff[0]);
+  /* The full screen map's three HUD panels: how see-through each is drawn,
+     and whether the newswire hides itself between messages. Each falls back
+     to what sdl3draw already holds, which is its own default, and sdl3draw
+     clamps the transparencies it is given. */
+  intToStr(sdl3DrawGetNewswireTransparency(), def, sizeof(def));
+  prefsGetString("SETTINGS", "Newswire Transparency", def, buff, FILENAME_MAX);
+  sdl3DrawSetNewswireTransparency(atoi(buff));
+  prefsGetString("SETTINGS", "Newswire Auto Hide",
+                 TRUEFALSE_TO_STR(sdl3DrawGetNewswireAutoHide()), buff,
+                 FILENAME_MAX);
+  sdl3DrawSetNewswireAutoHide(YESNO_TO_TRUEFALSE(buff[0]));
+  intToStr(sdl3DrawGetBuildPanelTransparency(), def, sizeof(def));
+  prefsGetString("SETTINGS", "Build Panel Transparency", def, buff,
+                 FILENAME_MAX);
+  sdl3DrawSetBuildPanelTransparency(atoi(buff));
+  intToStr(sdl3DrawGetStatusPanelTransparency(), def, sizeof(def));
+  prefsGetString("SETTINGS", "Status Panel Transparency", def, buff,
+                 FILENAME_MAX);
+  sdl3DrawSetStatusPanelTransparency(atoi(buff));
 #if defined(__IPHONEOS__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
 #else
@@ -3266,6 +3474,22 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     prefsGetString("WINDOW", "Lobby Split Recap", splitDefault, buff, FILENAME_MAX);
     gameFrontLobbySplitRecap = (float)atof(buff);
   }
+
+  /* Map overview pop-out: size, position, and the camera state it reopens
+     with. -1 for either coordinate means no saved position, so the window
+     lands wherever the OS puts it. */
+  prefsGetString("WINDOW", "Overview Width",  "640", buff, FILENAME_MAX);
+  gameFrontOverviewW = atoi(buff);
+  prefsGetString("WINDOW", "Overview Height", "640", buff, FILENAME_MAX);
+  gameFrontOverviewH = atoi(buff);
+  prefsGetString("WINDOW", "Overview X", "-1", buff, FILENAME_MAX);
+  gameFrontOverviewX = atoi(buff);
+  prefsGetString("WINDOW", "Overview Y", "-1", buff, FILENAME_MAX);
+  gameFrontOverviewY = atoi(buff);
+  prefsGetString("WINDOW", "Overview Zoom", "2", buff, FILENAME_MAX);
+  gameFrontOverviewZoom = (float)atof(buff);
+  prefsGetString("WINDOW", "Overview Follow", "Yes", buff, FILENAME_MAX);
+  gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
@@ -3367,6 +3591,14 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "LGM View", buff);
   intToStr(keys->kiBaseView, buff, sizeof(buff));
   prefsSetString("KEYS", "Base View", buff);
+  intToStr(keys->kiOverviewZoom, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Zoom", buff);
+  intToStr(keys->kiOverviewFollow, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Follow", buff);
+  intToStr(keys->kiOverviewZoomIn, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Zoom In", buff);
+  intToStr(keys->kiOverviewZoomOut, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Zoom Out", buff);
 
   /* Scrolling */
   intToStr(keys->kiScrollUp, buff, sizeof(buff));
@@ -3469,6 +3701,22 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("GAME OPTIONS", "Time Length", buff);
   prefsSetString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow));
   prefsSetString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide));
+  prefsSetString("GAME OPTIONS", "Pill View",
+                 viewPolicyPrefWord(gameFrontViewPillPolicy));
+  prefsSetString("GAME OPTIONS", "Base View",
+                 viewPolicyPrefWord(gameFrontViewBasePolicy));
+  prefsSetString("GAME OPTIONS", "Ally View",
+                 viewPolicyPrefWord(gameFrontViewAllyPolicy));
+  intToStr(gameFrontViewPillDecaySecs, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "Pill View Decay", buff);
+  intToStr(gameFrontViewBaseDecaySecs, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "Base View Decay", buff);
+  intToStr(gameFrontViewAllyDecaySecs, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "Ally View Decay", buff);
+  prefsSetString("GAME OPTIONS", "Classic Mode",
+                 TRUEFALSE_TO_STR(gameFrontClassicMode));
+  prefsSetString("GAME OPTIONS", "Allies In Trees",
+                 TRUEFALSE_TO_STR(gameFrontAlliesInTrees));
 
   prefsSetString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp));
   prefsSetString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal));
@@ -3499,6 +3747,19 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels));
   prefsSetString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels));
   prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));
+  prefsSetString("MENU", "Show Map Overview",
+                 TRUEFALSE_TO_STR(gameFrontShowMapOverview));
+  prefsSetString("MENU", "Show Full Screen Map",
+                 TRUEFALSE_TO_STR(gameFrontFullScreen));
+  /* The full screen map's HUD panels. */
+  intToStr(sdl3DrawGetNewswireTransparency(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "Newswire Transparency", buff);
+  prefsSetString("SETTINGS", "Newswire Auto Hide",
+                 TRUEFALSE_TO_STR(sdl3DrawGetNewswireAutoHide()));
+  intToStr(sdl3DrawGetBuildPanelTransparency(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "Build Panel Transparency", buff);
+  intToStr(sdl3DrawGetStatusPanelTransparency(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "Status Panel Transparency", buff);
   /* Window settings (zoom, custom size, position, dialog position) — flush immediately,
      bypassing debounce since this is the shutdown save path. */
   gameFrontFlushWindowSettings();
@@ -3569,6 +3830,21 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Lobby Split", buff);
   SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontLobbySplitRecap);
   prefsSetString("WINDOW", "Lobby Split Recap", buff);
+
+  intToStr(gameFrontOverviewW, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview Width", buff);
+  intToStr(gameFrontOverviewH, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview Height", buff);
+  intToStr(gameFrontOverviewX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview X", buff);
+  intToStr(gameFrontOverviewY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview Y", buff);
+  /* The zoom is one of a handful of ladder rungs — 0.5 to 4, the finest gap
+     being 0.25 — so two decimals name every one of them exactly. */
+  SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontOverviewZoom);
+  prefsSetString("WINDOW", "Overview Zoom", buff);
+  prefsSetString("WINDOW", "Overview Follow",
+                 TRUEFALSE_TO_STR(gameFrontOverviewFollow));
 
   s_windowSettingsDirty = false;
 }

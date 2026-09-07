@@ -176,6 +176,7 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
     if (s->firstLeft || s->firstRight) mask |= TANK_PRESENT_TURNRAMP;
     if (s->pingMs)      mask |= TANK_PRESENT_PING;
     if (s->clientFlags) mask |= TANK_PRESENT_FLAGS;
+    if (s->hiddenFlags) mask |= TANK_PRESENT_HIDDEN;
 
     buf[1] = mask;
     packU16(buf + 2, s->worldX);
@@ -209,7 +210,8 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
         packU16(buf + pos, s->pingMs);
         pos += 2;
     }
-    if (mask & TANK_PRESENT_FLAGS) buf[pos++] = s->clientFlags;
+    if (mask & TANK_PRESENT_FLAGS)  buf[pos++] = s->clientFlags;
+    if (mask & TANK_PRESENT_HIDDEN) buf[pos++] = s->hiddenFlags;
     return pos;
 }
 
@@ -271,6 +273,10 @@ static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
         if (avail < pos + 1) return 0;
         s->clientFlags = buf[pos++];
     }
+    if (mask & TANK_PRESENT_HIDDEN) {
+        if (avail < pos + 1) return 0;
+        s->hiddenFlags = buf[pos++];
+    }
     return (int)pos;
 }
 
@@ -299,6 +305,7 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->firstLeft = 0x71; s->firstRight = 0x72;
         s->pingMs = 0x8081;
         s->clientFlags = 0x91;
+        s->hiddenFlags = 0xA1;
     } else {
         s->playerNum = 0x7F;
         s->worldX = 0xFFFF; s->worldY = 0xFFFF;
@@ -313,6 +320,7 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->firstLeft = 0xFF; s->firstRight = 0xFF;
         s->pingMs = 0xFFFF;
         s->clientFlags = 0xFF;
+        s->hiddenFlags = 0xFF;
     }
 }
 
@@ -345,11 +353,11 @@ static int check_tank(void) {
                       "tank_snapshot golden pack != fixture");
     }
 
-    /* (exhaustive group combos) all 128 group subsets, two value patterns. */
+    /* (exhaustive group combos) all 256 group subsets, two value patterns. */
     for (pass = 0; pass < 2; pass++) {
         TankSnapshot filled;
         fillTank(&filled, pass);
-        for (combo = 0; combo < 128; combo++) {
+        for (combo = 0; combo < 256; combo++) {
             TankSnapshot s, sg, sr;
             uint8_t g[WC_BYTES], r[WC_BYTES];
             int ng, nr, ug, ur;

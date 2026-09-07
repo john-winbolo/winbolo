@@ -130,6 +130,20 @@ static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
+/* Visibility rules for the fast-mode server sim, indexed by
+ * ViewCategory. Defaults match serverSimInit: pills and allied tanks
+ * always visible, bases off, 30-second decay everywhere. */
+static ViewPolicy optViewPolicy[VIEW_CATEGORY_COUNT] = {
+  viewPolicyAlways, viewPolicyOff, viewPolicyAlways
+};
+static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
+  VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS
+};
+/* Classic Bolo view; overrides the three switches above when set. */
+static bool optClassicMode = false;
+/* Send allied tanks standing in trees to their allies; off is classic. */
+static bool optAlliesInTrees = false;
+
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
 #define BINARY_NUM_CHANNELS 10
@@ -819,6 +833,31 @@ static const char *verboseOwnerStr(BYTE owner, BYTE self, PlayerBitMap alliesBit
   return "enemy";
 }
 
+/* Fingerprint of the tiles the overview has remembered. The state log carries
+ * this one number per tick rather than the 65536-byte array, so a baseline
+ * diff still trips the moment any remembered square changes. FNV-1a, over
+ * tile[][] alone: seen and live ride alongside it as their own fields, and the
+ * flags say nothing those two do not. Returns 0 for a client with no memory to
+ * read, so that line still has all three members. */
+static uint32_t overviewTileHash(const OverviewMap *om) {
+  const unsigned char *p; /* The tile array as a flat byte run */
+  size_t n;               /* Bytes in it */
+  size_t i;               /* Looping variable */
+  uint32_t h;             /* Hash so far */
+
+  if (om == NULL) {
+    return 0;
+  }
+  p = (const unsigned char *)om->tile;
+  n = sizeof(om->tile);
+  h = 2166136261u; /* FNV-1a offset basis */
+  for (i = 0; i < n; i++) {
+    h ^= (uint32_t)p[i];
+    h *= 16777619u; /* FNV-1a prime */
+  }
+  return h;
+}
+
 static void logStateVerbose(int tickNum) {
   static bool needMapInit = TRUE;
   FILE *f;
@@ -1106,6 +1145,18 @@ static void logStateVerbose(int tickNum) {
     }
   }
   fprintf(f, "]");
+
+  /* What the player has been shown of the map, as counts plus a fingerprint of
+   * the remembered tiles. The pre-loop tick-0 record is written before the
+   * first display tick has run, so it reports nothing seen and no live region;
+   * every later record describes the tick that just ran. */
+  {
+    const OverviewMap *om = clientSimGetOverviewMap(humanSim);
+    fprintf(f, ",\"overview\":{\"seen\":%u,\"live\":%d,\"hash\":%u}",
+            om != NULL ? om->seenCount : 0u,
+            om != NULL ? om->liveCount : 0,
+            (unsigned)overviewTileHash(om));
+  }
 
   fprintf(f, "}\n");
   fflush(f);
@@ -1478,8 +1529,51 @@ static void printUsage(const char *prog) {
     "Fast mode options:\n"
     "  --fast            Run locally as fast as possible (no wall-clock gating)\n"
     "  --map FILE        Path to .map file (required with --fast)\n"
-    "  --stdin           Read input from stdin (one JSON line per game tick)\n",
+    "  --stdin           Read input from stdin (one JSON line per game tick)\n"
+    "\n"
+    "Visibility options (apply to the fast-mode server sim):\n"
+    "  --pillview MODE   Pillbox visibility: always (default), key, decay, off\n"
+    "  --baseview MODE   Base visibility: always, key, decay, off (default off)\n"
+    "  --allyview MODE   Allied tank visibility: always (default), key, decay, off\n"
+    "  --pillviewdecay S Seconds a pill stays visible under \"decay\" (5-600,\n"
+    "                    default 30)\n"
+    "  --baseviewdecay S Same for bases (5-600, default 30)\n"
+    "  --allyviewdecay S Same for allied tanks (5-600, default 30)\n"
+    "  --alliesintrees   Send allied tanks standing in trees to their allies\n"
+    "                    instead of withholding them (off by default, and off\n"
+    "                    under --classicmode)\n"
+    "  --classicmode     Classic Bolo view: sets pillview key, baseview off\n"
+    "                    and allyview off, overriding those three switches,\n"
+    "                    and turns allies in trees off\n"
+    "  An unknown mode word or a decay outside the range is an error here,\n"
+    "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
+}
+
+/* Shared body for --pillview / --baseview / --allyview. Rejects an
+ * unknown mode word the same way --ai and --gametype reject one. */
+static bool parseViewPolicyWord(const char *word, ViewPolicy *out) {
+  if (strcmp(word, "always") == 0) *out = viewPolicyAlways;
+  else if (strcmp(word, "key") == 0) *out = viewPolicyKey;
+  else if (strcmp(word, "decay") == 0) *out = viewPolicyDecay;
+  else if (strcmp(word, "off") == 0) *out = viewPolicyOff;
+  else {
+    fprintf(stderr, "Error: unknown view policy '%s' (use: always, key, decay, off)\n", word);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* Shared body for the three --*viewdecay switches. */
+static bool parseViewDecayWord(const char *word, const char *sw, int *out) {
+  int secs = atoi(word);
+  if (secs < VIEW_DECAY_MIN_SECS || secs > VIEW_DECAY_MAX_SECS) {
+    fprintf(stderr, "Error: %s %d out of range (%d-%d)\n", sw, secs,
+            VIEW_DECAY_MIN_SECS, VIEW_DECAY_MAX_SECS);
+    return FALSE;
+  }
+  *out = secs;
+  return TRUE;
 }
 
 static bool parseArgs(int argc, char **argv) {
@@ -1535,6 +1629,25 @@ static bool parseArgs(int argc, char **argv) {
         fprintf(stderr, "Error: unknown game type '%s' (use: strict, tournament, open)\n", argv[i]);
         return FALSE;
       }
+    } else if (strcmp(argv[i], "--pillview") == 0 && i + 1 < argc) {
+      if (!parseViewPolicyWord(argv[++i], &optViewPolicy[viewCategoryPill])) return FALSE;
+    } else if (strcmp(argv[i], "--baseview") == 0 && i + 1 < argc) {
+      if (!parseViewPolicyWord(argv[++i], &optViewPolicy[viewCategoryBase])) return FALSE;
+    } else if (strcmp(argv[i], "--allyview") == 0 && i + 1 < argc) {
+      if (!parseViewPolicyWord(argv[++i], &optViewPolicy[viewCategoryAlly])) return FALSE;
+    } else if (strcmp(argv[i], "--pillviewdecay") == 0 && i + 1 < argc) {
+      if (!parseViewDecayWord(argv[++i], "--pillviewdecay",
+                              &optViewDecaySecs[viewCategoryPill])) return FALSE;
+    } else if (strcmp(argv[i], "--baseviewdecay") == 0 && i + 1 < argc) {
+      if (!parseViewDecayWord(argv[++i], "--baseviewdecay",
+                              &optViewDecaySecs[viewCategoryBase])) return FALSE;
+    } else if (strcmp(argv[i], "--allyviewdecay") == 0 && i + 1 < argc) {
+      if (!parseViewDecayWord(argv[++i], "--allyviewdecay",
+                              &optViewDecaySecs[viewCategoryAlly])) return FALSE;
+    } else if (strcmp(argv[i], "--alliesintrees") == 0) {
+      optAlliesInTrees = true;
+    } else if (strcmp(argv[i], "--classicmode") == 0) {
+      optClassicMode = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -1625,6 +1738,27 @@ static int cachedCompressedMapLen = 0;
 /* Flag: first verbose log call after setup needs first=TRUE to fill brain map */
 static bool verboseNeedMapInit = TRUE;
 
+/* Visibility rules from the CLI, applied to the created sim rather than
+ * through ServerInstanceConfig. With no switches given it writes back the
+ * defaults serverSimInit set. Call before serverInstanceStartup: startup
+ * snapshots the lobby settings at the end of its body and the lobby restores
+ * that snapshot when the last human leaves, so values applied afterwards are
+ * dropped on the first reset. */
+static void applyViewPolicyOptions(ServerSim *sim) {
+  for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+    serverSimSetViewPolicy(sim, (ViewCategory)vc, optViewPolicy[vc],
+                           (uint16_t)optViewDecaySecs[vc]);
+  }
+  if (optAlliesInTrees) {
+    serverSimSetAlliesInTrees(sim, true);
+  }
+  /* After the loop and after allies in trees, so classic mode wins over
+   * the three switches and over that one. */
+  if (optClassicMode) {
+    serverSimSetClassicMode(sim, true);
+  }
+}
+
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
@@ -1643,6 +1777,7 @@ static bool fastModeSetupGame(void) {
     } else {
       cfg.skipLobby    = true;
     }
+    applyViewPolicyOptions(fastServerSim);
     serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
@@ -1719,8 +1854,9 @@ static int runFastMode(void) {
 
   /* Cache compressed map for fast resets */
   {
-    BYTE tempMap[65536];
-    cachedCompressedMapLen = serverSimGetCompressedMap(fastServerSim, tempMap);
+    BYTE tempMap[MAP_COMPRESSED_MAX_SIZE];
+    cachedCompressedMapLen = serverSimGetCompressedMap(fastServerSim, tempMap,
+                                                       (int)sizeof(tempMap));
     if (cachedCompressedMapLen <= 0) {
       fprintf(stderr, "Error: failed to compress map\n");
       serverSimDestroy(fastServerSim);
@@ -1748,6 +1884,7 @@ static int runFastMode(void) {
     } else {
       cfg.skipLobby    = true;
     }
+    applyViewPolicyOptions(fastServerSim);
     serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);

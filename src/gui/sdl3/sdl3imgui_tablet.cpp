@@ -43,6 +43,7 @@ extern "C" {
 #include "global.h"
 #include "screentank.h"
 #include "client_sim.h"
+#include "client_command.h" /* VIEW_KIND_* — which view a button selects */
 #include "client_render.h"  /* clientRenderFrame */
 #include "../gamefront.h"
 #include "../tiles.h"
@@ -195,17 +196,31 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->gsIncCenterX = gutterCenterX + cfg->gsIncRadius + gsGap * 0.5f;
   cfg->gsIncCenterY = gsRowY;
 
-  /* Pill view / Tank view — vertical stack in gap between viewport edge and mine button */
+  /* Item views / Tank view — vertical stack in gap between viewport edge and
+     mine button. Every button is here; tabletViewButtonsApplyPolicies drops
+     the ones the server turned off and closes the gaps. */
   cfg->pillViewRadius = cfg->gsIncRadius;
+  cfg->baseViewRadius = cfg->gsIncRadius;
+  cfg->allyViewRadius = cfg->gsIncRadius;
   cfg->tankViewRadius = cfg->gsIncRadius;
   float viewGapLeft = gutterLeft;
   float viewGapRight = cfg->mineCenterX - cfg->mineRadius;
   float viewBtnX = (viewGapLeft + viewGapRight) * 0.5f;
-  float viewBtnGap = pad;
+  cfg->viewBtnGap = pad;
   cfg->pillViewCenterX = viewBtnX;
-  cfg->pillViewCenterY = cfg->fireCenterY;  /* bottom — aligned with fire/mine */
+  cfg->baseViewCenterX = viewBtnX;
+  cfg->allyViewCenterX = viewBtnX;
   cfg->tankViewCenterX = viewBtnX;
-  cfg->tankViewCenterY = cfg->pillViewCenterY - cfg->pillViewRadius - viewBtnGap - cfg->tankViewRadius;
+  cfg->showPillViewBtn = true;
+  cfg->showBaseViewBtn = true;
+  cfg->showAllyViewBtn = true;
+  {
+    float step = cfg->pillViewRadius * 2.0f + cfg->viewBtnGap;
+    cfg->pillViewCenterY = cfg->fireCenterY;  /* bottom — aligned with fire/mine */
+    cfg->baseViewCenterY = cfg->pillViewCenterY - step;
+    cfg->allyViewCenterY = cfg->baseViewCenterY - step;
+    cfg->tankViewCenterY = cfg->allyViewCenterY - step;
+  }
 
   /* --- Top bar buttons — spread across gutter --- */
   cfg->topBtnSize = gutterW * 0.25f;
@@ -277,6 +292,23 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   if (cfg->scrollJoyOuterRadius > gutterW * 0.30f) cfg->scrollJoyOuterRadius = gutterW * 0.30f;
   if (cfg->scrollJoyOuterRadius < 20.0f * pixelScale) cfg->scrollJoyOuterRadius = 20.0f * pixelScale;
   cfg->scrollJoyInnerRadius = cfg->scrollJoyOuterRadius * 0.42f;
+}
+
+/* Drop the view buttons whose category the server turned off and stack the
+   rest back up from the pill slot, so the column has no holes in it. Runs
+   after tabletLayoutConfigure and before anything reads the slots (the
+   chrome behind them takes its top edge from the tank button). */
+static void tabletViewButtonsApplyPolicies(TabletLayoutConfig *cfg, ClientSim *cs) {
+  cfg->showPillViewBtn = clientSimGetViewPolicy(cs, viewCategoryPill) != viewPolicyOff;
+  cfg->showBaseViewBtn = clientSimGetViewPolicy(cs, viewCategoryBase) != viewPolicyOff;
+  cfg->showAllyViewBtn = clientSimGetViewPolicy(cs, viewCategoryAlly) != viewPolicyOff;
+
+  float step = cfg->pillViewRadius * 2.0f + cfg->viewBtnGap;
+  float y = cfg->fireCenterY;   /* bottom of the column */
+  if (cfg->showPillViewBtn) { cfg->pillViewCenterY = y; y -= step; }
+  if (cfg->showBaseViewBtn) { cfg->baseViewCenterY = y; y -= step; }
+  if (cfg->showAllyViewBtn) { cfg->allyViewCenterY = y; y -= step; }
+  cfg->tankViewCenterY = y;
 }
 
 /* -------------------------------------------------------
@@ -732,51 +764,69 @@ static void renderGunsightButtons(void) {
 }
 
 /* -------------------------------------------------------
- * View toggle button (pill view / tank view)
+ * View buttons (pill / base / allied tank / tank view)
  * ------------------------------------------------------- */
+
+/* The view buttons that are on screen, bottom of the column first. A category
+   the server's visibility rules switched off has no row, so it is neither
+   drawn nor hit-tested. Fills at most 4 rows; returns how many. */
+struct TabletViewButton {
+  TouchButtonID id;
+  float         cx, cy, r;
+  int           tileX, tileY;
+};
+
+static int tabletViewButtons(TabletViewButton *out) {
+  int n = 0;
+  if (s_cfg.showPillViewBtn) {
+    out[n++] = { TOUCH_BTN_PILL_VIEW, s_cfg.pillViewCenterX, s_cfg.pillViewCenterY,
+                 s_cfg.pillViewRadius, PILL_GOOD15_X, PILL_GOOD15_Y };
+  }
+  if (s_cfg.showBaseViewBtn) {
+    out[n++] = { TOUCH_BTN_BASE_VIEW, s_cfg.baseViewCenterX, s_cfg.baseViewCenterY,
+                 s_cfg.baseViewRadius, BASE_GOOD_X, BASE_GOOD_Y };
+  }
+  if (s_cfg.showAllyViewBtn) {
+    out[n++] = { TOUCH_BTN_ALLY_VIEW, s_cfg.allyViewCenterX, s_cfg.allyViewCenterY,
+                 s_cfg.allyViewRadius, TANK_GOOD_0_X, TANK_GOOD_0_Y };
+  }
+  out[n++] = { TOUCH_BTN_TANK_VIEW, s_cfg.tankViewCenterX, s_cfg.tankViewCenterY,
+               s_cfg.tankViewRadius, TANK_SELF_0_X, TANK_SELF_0_Y };
+  return n;
+}
+
+/* Which button the current view lights up. */
+static TouchButtonID tabletSelectedViewButton(ClientSim *cs) {
+  switch (clientSimGetViewKind(cs)) {
+    case VIEW_KIND_PILL: return TOUCH_BTN_PILL_VIEW;
+    case VIEW_KIND_BASE: return TOUCH_BTN_BASE_VIEW;
+    case VIEW_KIND_ALLY: return TOUCH_BTN_ALLY_VIEW;
+    default:             return TOUCH_BTN_TANK_VIEW;
+  }
+}
 
 static void renderViewButtons(ClientSim *cs) {
   ImDrawList *dl = ImGui::GetForegroundDrawList();
-  bool inPillView = clientSimIsInPillView(cs);
   SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
+  TouchButtonID selectedBtn = tabletSelectedViewButton(cs);
+  TabletViewButton btns[4];
+  int count = tabletViewButtons(btns);
 
-  /* Pill view button */
-  {
-    bool active = inputTouchIsButtonHeld(TOUCH_BTN_PILL_VIEW);
-    bool selected = inPillView;
+  for (int i = 0; i < count; i++) {
+    const TabletViewButton &b = btns[i];
+    bool active = inputTouchIsButtonHeld(b.id);
+    bool selected = (b.id == selectedBtn);
     float alpha = (active || selected) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
-    float cx = s_cfg.pillViewCenterX, cy = s_cfg.pillViewCenterY, r = s_cfg.pillViewRadius;
-    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+    dl->AddCircleFilled(ImVec2(b.cx, b.cy), b.r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
     ImU32 outline = selected ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
-    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+    dl->AddCircle(ImVec2(b.cx, b.cy), b.r, scaleAlpha(outline, alpha), 32, 2.0f);
     if (tilesTex) {
-      float iconHalf = r * 0.65f;
-      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
-      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
-      ImVec2 uv0((float)PILL_GOOD15_X / TILESHEET_W, (float)PILL_GOOD15_Y / TILESHEET_H);
-      ImVec2 uv1((float)(PILL_GOOD15_X + TILE_SIZE_X) / TILESHEET_W,
-                  (float)(PILL_GOOD15_Y + TILE_SIZE_Y) / TILESHEET_H);
-      ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
-      dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
-    }
-  }
-
-  /* Tank view button */
-  {
-    bool active = inputTouchIsButtonHeld(TOUCH_BTN_TANK_VIEW);
-    bool selected = !inPillView;
-    float alpha = (active || selected) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
-    float cx = s_cfg.tankViewCenterX, cy = s_cfg.tankViewCenterY, r = s_cfg.tankViewRadius;
-    dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
-    ImU32 outline = selected ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
-    dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
-    if (tilesTex) {
-      float iconHalf = r * 0.65f;
-      ImVec2 pMin(cx - iconHalf, cy - iconHalf);
-      ImVec2 pMax(cx + iconHalf, cy + iconHalf);
-      ImVec2 uv0((float)TANK_SELF_0_X / TILESHEET_W, (float)TANK_SELF_0_Y / TILESHEET_H);
-      ImVec2 uv1((float)(TANK_SELF_0_X + TILE_SIZE_X) / TILESHEET_W,
-                  (float)(TANK_SELF_0_Y + TILE_SIZE_Y) / TILESHEET_H);
+      float iconHalf = b.r * 0.65f;
+      ImVec2 pMin(b.cx - iconHalf, b.cy - iconHalf);
+      ImVec2 pMax(b.cx + iconHalf, b.cy + iconHalf);
+      ImVec2 uv0((float)b.tileX / TILESHEET_W, (float)b.tileY / TILESHEET_H);
+      ImVec2 uv1((float)(b.tileX + TILE_SIZE_X) / TILESHEET_W,
+                  (float)(b.tileY + TILE_SIZE_Y) / TILESHEET_H);
       ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
       dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
     }
@@ -1347,8 +1397,11 @@ static void registerTouchButtons(void) {
   inputTouchRegisterButton(TOUCH_BTN_MINE, s_cfg.mineCenterX, s_cfg.mineCenterY, s_cfg.mineRadius);
   inputTouchRegisterButton(TOUCH_BTN_GS_INCREASE, s_cfg.gsIncCenterX, s_cfg.gsIncCenterY, s_cfg.gsIncRadius);
   inputTouchRegisterButton(TOUCH_BTN_GS_DECREASE, s_cfg.gsDecCenterX, s_cfg.gsDecCenterY, s_cfg.gsDecRadius);
-  inputTouchRegisterButton(TOUCH_BTN_PILL_VIEW, s_cfg.pillViewCenterX, s_cfg.pillViewCenterY, s_cfg.pillViewRadius);
-  inputTouchRegisterButton(TOUCH_BTN_TANK_VIEW, s_cfg.tankViewCenterX, s_cfg.tankViewCenterY, s_cfg.tankViewRadius);
+  TabletViewButton viewBtns[4];
+  int viewBtnCount = tabletViewButtons(viewBtns);
+  for (int i = 0; i < viewBtnCount; i++) {
+    inputTouchRegisterButton(viewBtns[i].id, viewBtns[i].cx, viewBtns[i].cy, viewBtns[i].r);
+  }
 }
 
 /* -------------------------------------------------------
@@ -1369,6 +1422,7 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
 
   /* Reconfigure layout each frame */
   tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
+  tabletViewButtonsApplyPolicies(&s_cfg, cs);
 
   /* Draw beveled chrome background behind everything */
   renderTabletBackground();
@@ -1403,14 +1457,25 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
     s_armourInitialized = true;
   }
 
-  /* Handle view button taps */
+  /* Handle view button taps. A tap on the view you are already in is left
+     alone, matching what the pill button has always done. */
   if (inputTouchIsButtonTapped(TOUCH_BTN_PILL_VIEW)) {
-    if (!clientSimIsInPillView(cs)) {
+    if (clientSimGetViewKind(cs) != VIEW_KIND_PILL) {
       clientSimPillView(cs, 0, 0);
     }
   }
+  if (inputTouchIsButtonTapped(TOUCH_BTN_BASE_VIEW)) {
+    if (clientSimGetViewKind(cs) != VIEW_KIND_BASE) {
+      clientSimBaseView(cs, 0, 0);
+    }
+  }
+  if (inputTouchIsButtonTapped(TOUCH_BTN_ALLY_VIEW)) {
+    if (clientSimGetViewKind(cs) != VIEW_KIND_ALLY) {
+      clientSimAllyView(cs, 0, 0);
+    }
+  }
   if (inputTouchIsButtonTapped(TOUCH_BTN_TANK_VIEW)) {
-    if (clientSimIsInPillView(cs)) {
+    if (clientSimIsInItemView(cs)) {
       clientSimTankView(cs);
     }
   }

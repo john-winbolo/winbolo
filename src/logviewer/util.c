@@ -47,7 +47,9 @@
 void lv_utilPtoCString(char *src, char *dest) {
 	int count; /* Looping variable */
   int len;   /* Length of the string */
-  len = src[0];
+  /* Unsigned: see the note on the game's copy in src/bolo/util.c. This is
+   * the one that reads server messages back out of a replay log. */
+  len = (unsigned char) src[0];
   for (count=0; count<len; count++) {
     dest[count] = src[count+1];
 	}

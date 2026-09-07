@@ -155,7 +155,8 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
   }
 
   /* 4. Pull the compressed map blob. */
-  compLen = serverSimGetCompressedMap(sim, compressedMap);
+  compLen = serverSimGetCompressedMap(sim, compressedMap,
+                                      (int)sizeof(compressedMap));
   if (compLen <= 0) {
     const char *rendered = langGetText(NETERR_MAPSERIALIZE);
     clientSimSetConnectErrorReason(cs, rendered ? rendered : "Map serialise failed");
@@ -845,6 +846,26 @@ void clientSimNetSendRatingPosted(ClientSim *cs, const char *key32) {
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_RATING_POSTED };
   SDL_strlcpy(cmd.u.ratingPosted.key, key32, sizeof(cmd.u.ratingPosted.key));
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimNetSendViewState(ClientSim *cs, uint8_t kind, uint8_t target) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  ClientCommand cmd = { .type = CMD_VIEW_STATE };
+  cmd.u.viewState.kind   = kind;
+  cmd.u.viewState.target = target;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimNetSendViewCycle(ClientSim *cs, uint8_t kind, uint8_t direction,
+                               uint8_t from) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  ClientCommand cmd = { .type = CMD_VIEW_CYCLE };
+  cmd.u.viewCycle.kind      = kind;
+  cmd.u.viewCycle.direction = direction;
+  cmd.u.viewCycle.from      = from;
   clientSimSubmitCommand(cs, &cmd);
 }
 

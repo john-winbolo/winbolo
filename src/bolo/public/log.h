@@ -106,7 +106,8 @@ log_GameVoteCast,    // opt1=kind, opt2=player,    opt3=voteYes
 log_GameVoteEnd,     // opt1=kind, opt2=result (0=failed,1=passed)
 log_SpectatorJoined, // opt1=spectator slot, opt2/opt3=country[0]/[1], opt4=wbnFlags, reserved byte, then name pstr
 log_SpectatorLeft,   // opt1=spectator slot, then name pstr (names the leaver across slot reuse)
-log_SpectatorChat    // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
+log_SpectatorChat,   // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
+log_GameSettings     // pascal-string blob of every lobby setting (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {

@@ -35,6 +35,7 @@ typedef struct SettingsRenderCtx {
     unsigned char pendingZoom;  /* in-game window-size pick: a ZOOM_FACTOR_*, or
                                    255 = no change (0 is ZOOM_FACTOR_CUSTOM, a
                                    valid value, so it can't be the sentinel) */
+    signed char pendingFullScreen;  /* -1 = no change, 0 = turn off, 1 = turn on */
     /* outputs the section sets, handled by the shell after the frame: */
     bool wantKeySetup;          /* Set Keys pressed */
     bool wantAtlasRebuild;      /* a section needs a font-atlas rebuild
@@ -44,9 +45,11 @@ typedef struct SettingsRenderCtx {
 } SettingsRenderCtx;
 
 /* Render the shared Display & Sound tab (frame rate, window size, UI scale,
- * letterbox, skin).  Window size and UI scale only apply in-game; their
- * results are returned via ctx->pendingZoom / ctx->wantAtlasRebuild for the
- * shell to act on after the frame, and a skin pick via ctx->wantSkinReload. */
+ * letterbox, full screen, skin).  Window size and UI scale only apply in-game;
+ * their results are returned via ctx->pendingZoom / ctx->wantAtlasRebuild for
+ * the shell to act on after the frame, the full screen pick likewise via
+ * ctx->pendingFullScreen — the window must not be moved mid-frame — and a skin
+ * pick via ctx->wantSkinReload. */
 void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
 
 /* Render the shared Game/HUD tab (scrolling behaviour, gunsight).  ctx->cs is
@@ -54,7 +57,8 @@ void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
 void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx);
 
 /* Render the shared Hosting tab (settings for a game hosted from the finder).
- * Shown in both settings shells; currently renders only the apply-note. */
+ * Shown in both settings shells; renders the port, spectator, map-upload,
+ * replay-logging and visibility rows, with the apply-note last. */
 void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx);
 
 /* Render the shared General tab (validated player name + WinBolo.net account).

@@ -45,6 +45,29 @@ typedef struct {
     int           sheetScale;  /* atlas scale: source coords *= sheetScale */
 } MapViewCtx;
 
+/* Source rect for a cell of the tile atlas, inset by a whisker on every
+ * side. The sheet packs sprites edge-to-edge — the row above the tanks is
+ * water, the shells and LGMs sit 3px apart — so a NEAREST sample that lands
+ * exactly on a rect edge and rounds the wrong way shows a line of whatever
+ * is packed next door. On the main view's integer zoom that edge case never
+ * comes up (pixel centres map to texel centres), but a fractional scale —
+ * the overview's zoom rungs, a preview scaled to fit — puts pixel centres
+ * arbitrarily close to the edges. The inset must stay well under 0.5: at
+ * integer zoom the sample nearest each edge sits about 0.5 - inset/cellSize
+ * texels inside, so 0.05 leaves 1:1 rendering picking every texel exactly
+ * while absorbing float error at any scale. Every draw from the atlas goes
+ * through here; a raw SDL_FRect against the sheet is the bug returning. */
+#define MAPVIEW_ATLAS_INSET 0.05f
+
+static inline SDL_FRect mapViewAtlasSrc(int x, int y, int w, int h, int ss) {
+    SDL_FRect r;
+    r.x = (float)(x * ss) + MAPVIEW_ATLAS_INSET;
+    r.y = (float)(y * ss) + MAPVIEW_ATLAS_INSET;
+    r.w = (float)(w * ss) - 2.0f * MAPVIEW_ATLAS_INSET;
+    r.h = (float)(h * ss) - 2.0f * MAPVIEW_ATLAS_INSET;
+    return r;
+}
+
 /* Draw pre-built tile buffer. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,

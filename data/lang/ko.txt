@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=발사
 STR_DLGKEYSETUP_LAYMINE=지뢰 설치
 STR_DLGKEYSETUP_TANKVIEW=탱크 뷰
 STR_DLGKEYSETUP_PILLVIEW=토치카 뷰
+STR_DLGKEYSETUP_BASEVIEW=기지 뷰
+STR_DLGKEYSETUP_ALLYVIEW=아군 탱크 뷰
 STR_DLGKEYSETUP_SCROLLUP=위
 STR_DLGKEYSETUP_SCROLLDOWN=아래
 STR_DLGKEYSETUP_SCROLLLEFT=왼쪽
@@ -1909,6 +1911,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=WinBolo.net 계정은 메인 메뉴에서만 변경할
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=플레이어에게 리플레이 전송
 STR_LV_HIDE_LOBBY=로비 숨기기
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=표시
+STR_DLGLOBBY_VIEW_PILL=토치카 표시
+STR_DLGLOBBY_VIEW_BASE=기지 표시
+STR_DLGLOBBY_VIEW_ALLY=아군 탱크 표시
+STR_DLGLOBBY_VIEW_ALWAYS=항상
+STR_DLGLOBBY_VIEW_KEY=키
+STR_DLGLOBBY_VIEW_DECAY=감쇠
+STR_DLGLOBBY_VIEW_OFF=끄기
+STR_DLGLOBBY_VIEW_DECAY_SECS=초
+STR_DLGLOBBY_CLASSIC_MODE_CB=클래식 모드
+STR_DLGLOBBY_CLASSIC_MODE_TIP=토치카 표시를 '키'로, 기지 표시와 아군 탱크 표시를\n'끄기'로 설정하고 그대로 유지합니다. 다시 끄더라도\n이 세 가지는 클래식 모드가 설정한 값으로 남습니다.\n또한 각 플레이어의 화면에서 지도 전체 보기와 전체 화면\n지도를 숨깁니다. 서버는 어느 쪽이든 같은 데이터를\n보내므로, 이는 편의를 위한 규칙일 뿐 변조된 클라이언트에\n대한 보장은 아닙니다.
+STR_MENU_CLASSIC_MODE_TIP=서버가 클래식 모드이므로 이 보기는 꺼져 있습니다.
+STR_DLGLOBBY_ALLIES_TREES_CB=숲 속 아군 표시
+STR_DLGLOBBY_ALLIES_TREES_TIP=숲 속에 있는 아군 탱크가 숨겨지지 않고 화면에\n표시됩니다. 전장의 안개는 그대로 적용되므로 원래\n보이는 곳에서만 보입니다. 꺼짐이 기존 규칙이며,\n클래식 모드에서는 꺼짐으로 고정됩니다.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=스킨
 STR_DLGSKIN_DEFAULT=기본값
@@ -1949,3 +1966,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=게시할 수 있는 스킨은 자신의 스킨 폴
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=이 스킨은 일부 스프라이트에만 더 정교한 그림이 있어서, 줌에 맞추기는 클래식과 같은 타일을 만들어요. 높은 디테일은 스킨에 정교한 그림이 있는 곳에서 그 그림을 사용해요.
 STR_DLGSKIN_RECFILTER_LBL=추천 필터:
 STR_DLGSKIN_RECOMMENDED_TAG=(추천)
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=지도 전체 보기
+STR_MENU_OVERVIEW_IN_WINDOW=전체 화면
+STR_OVERVIEW_FOLLOWING=추적
+STR_OVERVIEW_FREE=자유
+STR_DLGKEYSETUP_OVERVIEWZOOM=맵 확대 (홀드)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=맵 추적 (토글)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=맵 확대
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=맵 축소
+STR_DLGWELCOME_SWITCH_CLASSIC=클래식으로 전환
+STR_DLGWELCOME_SWITCH_FULLSCREEN=전체 화면으로 전환
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=전체 화면
+STR_DLGSETTINGS_FULLSCREEN_TIP=창 안이 아니라 화면 전체를 채웁니다.\n다음에도 이 설정이 기억됩니다.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire 투명도
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=전체 화면 하단의 Newswire 사이로 맵이 얼마나 비쳐\n보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Newswire 자동 숨기기
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=한동안 새 메시지가 없으면 Newswire를 화면 아래로\n숨기고, 다음 메시지가 오면 다시 올라옵니다. 꺼두면\n게임 내내 화면에 계속 표시됩니다.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=건설 도구 투명도
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=전체 화면 왼쪽의 건설 도구 사이로 맵이 얼마나 비쳐\n보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=상태 패널 투명도
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=전체 화면 오른쪽의 상태 패널(건설자, 킬과 데스, 기지·\n토치카·탱크 줄, 재고 바)이 맵을 얼마나 비쳐 보이게\n하는지를 정합니다. 0%면 불투명하며, 슬라이더는 90%\n까지만 움직여 완전히 투명해지지는 않습니다.
+
+# Item view caption
+STR_ITEMVIEW_PILL=토치카 뷰
+STR_ITEMVIEW_BASE=기지 뷰
+STR_ITEMVIEW_ALLY=아군 탱크 뷰
+STR_ITEMVIEW_ALLY_NAMED=아군 탱크 뷰 — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=표시:
+STR_DLGBROWSER_VIEWS_CLASSIC=클래식
+STR_DLGBROWSER_VIEWS_ALLYTREES=숲 속 아군

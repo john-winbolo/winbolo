@@ -26,6 +26,7 @@ extern "C" {
     int32_t lv_screenGetGameStartDelay(void);
     void lv_screenGetMapName(char *buffer);
     void lv_screenGetPlayerName(char *buffer, unsigned char player, size_t destSize);
+    int lv_screenGetGameSettings(unsigned char *out, int maxLen);
 }
 
 /* Game info state */
@@ -39,12 +40,17 @@ static char s_start_delay[64] = "";
 static char s_wbn_key[64] = "";
 static char s_start_time[64] = "";
 static int s_num_players = 0;
+/* TRUE while s_time_limit holds the replayed world's running clock rather
+ * than a recorded limit: imgui_game_info_update overwrites it every frame the
+ * round has time left on it, and that beats either recorded source. */
+static bool s_time_limit_is_live = false;
 
-/* Game type enum from backend.h */
+/* Game type enum from backend.h, which numbers it from 1. The .wbv header
+ * and the settings event both carry these values. */
 enum {
-    gameOpen = 0,
-    gameTournament = 1,
-    gameStrictTournament = 2
+    gameOpen = 1,
+    gameTournament,
+    gameStrictTournament
 };
 
 /* AI type enum */
@@ -54,6 +60,47 @@ enum {
     aiYesAdvantage = 2,
     aiFull = 3
 };
+
+/* View policy, as the settings payload packs it. Matches ViewPolicy in
+ * src/bolo/public/view_policy.h; spelled out here because this panel
+ * deliberately includes no bolo headers. */
+enum {
+    viewPolicyAlways = 0,
+    viewPolicyKey = 1,
+    viewPolicyDecay = 2,
+    viewPolicyOff = 3
+};
+
+/* Bytes a log_GameSettings payload needs before it carries every field the
+ * panel reads. The layout is append-only, so a longer payload is a newer
+ * writer and the trailing bytes are ignored. */
+#define GAME_SETTINGS_LEN 14
+
+/* Most bytes the event can carry — it frames the payload behind a single
+ * length byte. Matches LV_GAME_SETTINGS_MAX in the log viewer's backend.h,
+ * which this panel does not include. */
+#define GAME_SETTINGS_MAX_LEN 255
+
+/* Lobby settings the recording carries, decoded from that payload. Kept
+ * apart from the strings above: those come from the .wbv header, written
+ * when the lobby opened, and the two arrive independently. */
+static bool s_have_settings = false;
+static int  s_view_policy[3] = {0, 0, 0};
+static int  s_view_decay[3] = {0, 0, 0};
+static bool s_classic_mode = false;
+static bool s_allies_in_trees = false;
+static bool s_ranked = false;
+/* Recorded and decoded, but lobby administrivia the panel does not draw. */
+static bool s_auto_lock = false;
+static bool s_password_set = false;
+static bool s_allow_new_players = false;
+static int  s_lobby_locks = 0;
+/* The four rows the header carries too. The event is what the round was
+ * actually played under, so where it is present these win. */
+static char s_ev_game_type[32] = "";
+static char s_ev_hidden_mines[16] = "";
+static char s_ev_computer_tanks[32] = "";
+static char s_ev_time_limit[64] = "";
 
 void lv_imgui_game_info_init(void) {
     /* Clear all fields initially */
@@ -71,6 +118,8 @@ void lv_imgui_game_info_clear(void) {
     s_wbn_key[0] = '\0';
     s_start_time[0] = '\0';
     s_num_players = 0;
+    s_time_limit_is_live = false;
+    s_have_settings = false;
 }
 
 /* Called from lv_frontEndSetGameInformation in main.c */
@@ -172,11 +221,81 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
     s_num_players = 0;
 }
 
+/* Called every frame from the window body with whatever the decoder has
+ * collected. Every multi-byte value in the payload is big-endian. */
+void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
+    if (payload == NULL || len < GAME_SETTINGS_LEN) {
+        s_have_settings = false;
+        return;
+    }
+
+    /* Byte 0: two bits per category, then the two mode flags. */
+    s_view_policy[0] = payload[0] & 0x03;
+    s_view_policy[1] = (payload[0] >> 2) & 0x03;
+    s_view_policy[2] = (payload[0] >> 4) & 0x03;
+    s_classic_mode = (payload[0] & 0x40) != 0;
+    s_allies_in_trees = (payload[0] & 0x80) != 0;
+
+    s_view_decay[0] = (payload[1] << 8) | payload[2];
+    s_view_decay[1] = (payload[3] << 8) | payload[4];
+    s_view_decay[2] = (payload[5] << 8) | payload[6];
+
+    /* Game type */
+    {
+        langid id;
+        switch (payload[7]) {
+            case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
+            case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
+            case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
+            default:                   id = STR_UNKNOWN;            break;
+        }
+        snprintf(s_ev_game_type, sizeof(s_ev_game_type), "%s", langGetText(id));
+    }
+
+    /* Computer tanks */
+    {
+        langid id;
+        switch (payload[8]) {
+            case aiNone:         id = STR_NO;                  break;
+            case aiYes:          id = STR_YES;                 break;
+            case aiYesAdvantage: id = STR_DLGGAMEINFO_AIADV;   break;
+            case aiFull:         id = STR_DLGGAMEINFO_FULLADV; break;
+            default:             id = STR_UNKNOWN;             break;
+        }
+        snprintf(s_ev_computer_tanks, sizeof(s_ev_computer_tanks), "%s", langGetText(id));
+    }
+
+    /* Byte 9 flags */
+    snprintf(s_ev_hidden_mines, sizeof(s_ev_hidden_mines), "%s",
+             langGetText((payload[9] & 0x01) ? STR_YES : STR_NO));
+    s_auto_lock = (payload[9] & 0x04) != 0;
+    s_ranked = (payload[9] & 0x08) != 0;
+    s_password_set = (payload[9] & 0x10) != 0;
+    s_allow_new_players = (payload[9] & 0x20) != 0;
+
+    /* Time limit — recorded as whole minutes behind an enabled bit, where
+     * the header carries ticks. The minutes are meaningless with the bit
+     * clear, so that case says unlimited rather than printing a number. */
+    if ((payload[9] & 0x02) == 0) {
+        snprintf(s_ev_time_limit, sizeof(s_ev_time_limit), "%s",
+                 langGetText(STR_DLGGAMEINFO_UNLIMITED));
+    } else {
+        MessageArgs args = {};
+        args.number = (payload[10] << 8) | payload[11];
+        snprintf(s_ev_time_limit, sizeof(s_ev_time_limit), "%s",
+                 langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
+    }
+
+    s_lobby_locks = (payload[12] << 8) | payload[13];
+    s_have_settings = true;
+}
+
 /* Update dynamic fields (called periodically) */
 void imgui_game_info_update(void) {
     s_num_players = lv_screenGetNumPlayers();
     
     int32_t timeLeft = lv_screenGetGameTimeLeft();
+    s_time_limit_is_live = (timeLeft != -1);
     if (timeLeft != -1) { /* UNLIMITED_GAME_TIME */
         int32_t minutes = timeLeft / 60 / 50;
         MessageArgs args = {};
@@ -205,7 +324,9 @@ void lv_imgui_game_info_window(void) {
     {
         ImGuiCond cond = lv_g_reset_window_positions ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(280, 180), cond);
+        /* Tall enough for the settings rows a recorded log adds below the
+         * header ones; the user's own size wins once they set one. */
+        ImGui::SetNextWindowSize(ImVec2(280, 300), cond);
         ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10, 30), cond);
     }
 
@@ -235,6 +356,15 @@ void lv_imgui_game_info_window(void) {
             if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
         }
 
+        /* The lobby settings the recording carries. A loaded file has them
+         * from the load-time walk and a live feed picks them up as they
+         * arrive, so they are read here each frame rather than pushed once. */
+        {
+            unsigned char settings[GAME_SETTINGS_MAX_LEN];
+            int len = lv_screenGetGameSettings(settings, (int)sizeof(settings));
+            lv_imgui_game_info_set_settings(settings, len);
+        }
+
         /* Static fields — use a single MessageArgs reused across rows
          * since each ImGui::Text call consumes the rendered string
          * before the next overwrites the format buffer. */
@@ -248,19 +378,25 @@ void lv_imgui_game_info_window(void) {
             strncpy(args.string1, s_version, sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_VERSION_FMT, &args));
         }
+        /* These four rows are in the header and in the settings event alike.
+         * The header is what the lobby opened with; the event is what the
+         * round was played under, so it wins wherever the log has one. */
         {
             MessageArgs args = {};
-            strncpy(args.string1, s_game_type, sizeof(args.string1) - 1);
+            strncpy(args.string1, s_have_settings ? s_ev_game_type : s_game_type,
+                    sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_GAMETYPE, &args));
         }
         {
             MessageArgs args = {};
-            strncpy(args.string1, s_hidden_mines, sizeof(args.string1) - 1);
+            strncpy(args.string1, s_have_settings ? s_ev_hidden_mines : s_hidden_mines,
+                    sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_HIDDENMINES, &args));
         }
         {
             MessageArgs args = {};
-            strncpy(args.string1, s_computer_tanks, sizeof(args.string1) - 1);
+            strncpy(args.string1, s_have_settings ? s_ev_computer_tanks : s_computer_tanks,
+                    sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_COMPUTER_TANKS, &args));
         }
 
@@ -268,8 +404,13 @@ void lv_imgui_game_info_window(void) {
         imgui_game_info_update();
 
         {
+            /* A replayed round with time on the clock counts down in
+             * s_time_limit, which beats both recorded values; with no clock
+             * running the event's limit stands in for the header's. */
             MessageArgs args = {};
-            strncpy(args.string1, s_time_limit, sizeof(args.string1) - 1);
+            const char *limit = (s_have_settings && !s_time_limit_is_live)
+                                    ? s_ev_time_limit : s_time_limit;
+            strncpy(args.string1, limit, sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_TIME_LIMIT, &args));
         }
         {
@@ -296,6 +437,47 @@ void lv_imgui_game_info_window(void) {
             MessageArgs args = {};
             strncpy(args.string1, s_start_time, sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_START_TIME, &args));
+        }
+
+        /* Server visibility rules and the two mode flags, from the settings
+         * event. The row labels come from the lobby form and carry no
+         * punctuation, so the colon is supplied here — the same shape the
+         * live client's Game Information panel uses. */
+        if (s_have_settings) {
+            static const langid viewLabels[3] = {
+                STR_DLGLOBBY_VIEW_PILL,
+                STR_DLGLOBBY_VIEW_BASE,
+                STR_DLGLOBBY_VIEW_ALLY,
+            };
+            const char *modes[] = {
+                langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+                langGetText(STR_DLGLOBBY_VIEW_KEY),
+                langGetText(STR_DLGLOBBY_VIEW_DECAY),
+                langGetText(STR_DLGLOBBY_VIEW_OFF),
+            };
+            for (int r = 0; r < 3; r++) {
+                /* Two bits cannot hold an invalid policy today, but the
+                 * payload is untrusted input and the field could widen:
+                 * fall back to the wire default rather than index past
+                 * modes[], as the live client's panel does. */
+                int policy = s_view_policy[r];
+                if (policy < viewPolicyAlways || policy > viewPolicyOff) {
+                    policy = viewPolicyAlways;
+                }
+                const char *label = langGetText(viewLabels[r]);
+                if (policy == viewPolicyDecay) {
+                    ImGui::Text("%s: %s %d %s", label, modes[policy], s_view_decay[r],
+                                langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+                } else {
+                    ImGui::Text("%s: %s", label, modes[policy]);
+                }
+            }
+            ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
+                        langGetText(s_classic_mode ? STR_YES : STR_NO));
+            ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
+                        langGetText(s_allies_in_trees ? STR_YES : STR_NO));
+            ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_RANKED),
+                        langGetText(s_ranked ? STR_YES : STR_NO));
         }
     }
     ImGui::End();

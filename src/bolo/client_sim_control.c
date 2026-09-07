@@ -34,6 +34,7 @@
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
+#include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
 #include "frontend.h"    /* frontEndAudioReturningToLobby */
 #include "messages.h"
 #include "netpacks.h"
@@ -418,6 +419,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        /* The policy byte is stored raw, with no range check. This mirror
+         * drives nothing the server does not enforce for itself, so a value
+         * outside the enum can only make the local display wrong, never more
+         * permissive: a server clamps the byte in serverSimApplyLobbySetting
+         * before it reaches the wire, and each reader degrades safely on its
+         * own — the overview's region test treats a policy it does not know as
+         * off, while the view keys and buttons ask only whether the policy is
+         * off, so they stay live and the server declines to send. */
+        for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+            cs->viewPolicy[vc]    = evt->u.lobbySettings.viewPolicy[vc];
+            cs->viewDecaySecs[vc] = evt->u.lobbySettings.viewDecaySecs[vc];
+        }
+        cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
+        cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
          * gameLength (it decrements every running tick), so applying it
@@ -561,7 +576,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
              * freshly-compressed map directly and reinstall — there is
              * no MAP_DOWNLOAD wire path to wait on. */
             BYTE buf[MAP_DOWNLOAD_MAX_SIZE];
-            int  len = serverSimGetCompressedMap(cs->boundServerSim, buf);
+            int  len = serverSimGetCompressedMap(cs->boundServerSim, buf,
+                                                 (int)sizeof(buf));
             if (len > 0) {
                 installCompressedMap(cs, buf, len,
                                      serverSimGetMapName(cs->boundServerSim),
@@ -1012,6 +1028,58 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->lobbyLastRejectReason = evt->u.commandRejected.reasonCode;
         }
         break;
+
+    case CTRL_VIEW_TARGET: {
+        /* The server's answer to one of our CMD_VIEW_CYCLE requests: the ally
+         * it picked from live state. Only apply an answer addressed to our own
+         * slot — in-process subscribers (SP-host, bots) receive every publish,
+         * and the wire path is already filtered by udpClientDeliverControl.
+         * Same shape as CTRL_COMMAND_REJECTED and CTRL_SHELL_DEATH above. */
+        BYTE steppingFrom;
+
+        if (evt->u.viewTarget.origSlot != clientSimGetMyPlayerNum(cs)) {
+            break;
+        }
+
+        /* The answer's shape, established here rather than left to the
+         * readers that end up holding the target. This arm applies an ally
+         * view, so a kind that is not ALLY means the target is not a player
+         * slot and must not be taken for one; the target is only read at all
+         * when the server says it found something. Either way the answer is
+         * dropped and not turned into a tank view — one this client cannot
+         * read is not the server saying there is nothing left to watch. */
+        if (evt->u.viewTarget.kind != VIEW_KIND_ALLY) {
+            break;
+        }
+        if (evt->u.viewTarget.found != 0 &&
+            evt->u.viewTarget.target >= MAX_TANKS) {
+            break;
+        }
+
+        /* Throw away an answer to an earlier press. The ally key auto-repeats
+         * every 165ms, so at any real ping several requests are in flight at
+         * once; taking the last answer to arrive would make the view oscillate
+         * and step backwards under a held key. fromEcho is the `from` we sent,
+         * so it matches only the request we are still waiting on, and the view
+         * settles one round trip after the key is released. */
+        steppingFrom = (cs->viewport.viewKind == VIEW_KIND_ALLY)
+                           ? cs->viewport.viewTarget
+                           : (BYTE)VIEW_CYCLE_FROM_NONE;
+        if (evt->u.viewTarget.fromEcho != steppingFrom) {
+            break;
+        }
+
+        if (evt->u.viewTarget.found != 0) {
+            clientSimApplyAllyViewTarget(cs, evt->u.viewTarget.target,
+                                         evt->u.viewTarget.mapX,
+                                         evt->u.viewTarget.mapY);
+        } else {
+            /* Nothing left to watch — every ally is dead, un-allied or gone,
+             * or the policy allows no ally views at all. */
+            clientSimTankView(cs);
+        }
+        break;
+    }
 
     case CTRL_SHELL_DEATH: {
         /* Server closure for one of our predicted shells: cull the ghost so

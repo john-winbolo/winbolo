@@ -40,6 +40,7 @@ int run_fx_viewport_cull(void) {
 
     gs->pb->item[0].owner  = 0;     /* owned by player 0 */
     gs->pb->item[0].inTank = FALSE; /* placed on the map */
+    gs->pb->item[0].armour = PILL_MAX_HEALTH; /* alive — a dead pill grants no view */
     gs->pb->item[0].x      = pillMX;
     gs->pb->item[0].y      = pillMY;
 

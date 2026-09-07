@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Tirer
 STR_DLGKEYSETUP_LAYMINE=Poser une mine
 STR_DLGKEYSETUP_TANKVIEW=Vue tank
 STR_DLGKEYSETUP_PILLVIEW=Vue pillbox
+STR_DLGKEYSETUP_BASEVIEW=Vue base
+STR_DLGKEYSETUP_ALLYVIEW=Vue tanks alliés
 STR_DLGKEYSETUP_SCROLLUP=Haut
 STR_DLGKEYSETUP_SCROLLDOWN=Bas
 STR_DLGKEYSETUP_SCROLLLEFT=Gauche
@@ -1911,6 +1913,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=Les comptes WinBolo.net ne peuvent être modifiés que
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Envoyer les replays aux joueurs
 STR_LV_HIDE_LOBBY=Masquer le salon
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Visibilité
+STR_DLGLOBBY_VIEW_PILL=Vue pillbox
+STR_DLGLOBBY_VIEW_BASE=Vue base
+STR_DLGLOBBY_VIEW_ALLY=Vue tanks alliés
+STR_DLGLOBBY_VIEW_ALWAYS=Toujours
+STR_DLGLOBBY_VIEW_KEY=Touche
+STR_DLGLOBBY_VIEW_DECAY=Estompage
+STR_DLGLOBBY_VIEW_OFF=Désactivé
+STR_DLGLOBBY_VIEW_DECAY_SECS=s
+STR_DLGLOBBY_CLASSIC_MODE_CB=Mode classique
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Règle Vue pillbox sur Touche, et Vue base et Vue tanks\nalliés sur Désactivé, puis les maintient ainsi. En le\ndésactivant, ces trois réglages restent là où le mode\nclassique les a laissés.\nIl masque aussi la vue d'ensemble de la carte et la carte\nen plein écran sur l'écran de chaque joueur. Le serveur\nenvoie les mêmes données dans les deux cas : c'est donc\nune règle de confort, pas une garantie face à un client\nmodifié.
+STR_MENU_CLASSIC_MODE_TIP=Le serveur a le mode classique activé, cette vue est donc désactivée.
+STR_DLGLOBBY_ALLIES_TREES_CB=Voir les alliés dans les arbres
+STR_DLGLOBBY_ALLIES_TREES_TIP=Les tanks alliés qui se trouvent dans les arbres sont\naffichés sur votre écran au lieu d'être cachés. Le\nbrouillard de guerre s'applique toujours : vous ne les\nvoyez que là où vous voyez déjà. Désactivé est la règle\nclassique, et le mode classique le désactive de force.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Par défaut
@@ -1951,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Seul un skin présent dans votre propre dossier de 
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Ce skin possède des graphismes plus fins pour certains sprites seulement, donc « Adapté au zoom » produit les mêmes cases que « Classique ». « Détail élevé » utilise les graphismes plus fins là où le skin les possède.
 STR_DLGSKIN_RECFILTER_LBL=Filtre recommandé :
 STR_DLGSKIN_RECOMMENDED_TAG=(recommandé)
+
+# Vue d'ensemble de la carte et la carte en plein écran
+STR_MENU_MAP_OVERVIEW=Vue d'ensemble de la carte
+STR_MENU_OVERVIEW_IN_WINDOW=Plein écran
+STR_OVERVIEW_FOLLOWING=suivi
+STR_OVERVIEW_FREE=libre
+STR_DLGKEYSETUP_OVERVIEWZOOM=Zoom carte (maintenir)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Suivi carte (bascule)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Zoom avant carte
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Zoom arrière carte
+STR_DLGWELCOME_SWITCH_CLASSIC=Passer en mode classique
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Passer en mode plein écran
+
+# Paramètres Affichage et son : plein écran et les panneaux HUD de la carte
+STR_DLGSETTINGS_FULLSCREEN=Plein écran
+STR_DLGSETTINGS_FULLSCREEN_TIP=Remplit tout l'écran au lieu de s'exécuter dans une\nfenêtre. Mémorisé pour la prochaine fois.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Transparence du newswire
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Quelle part de la carte apparaît à travers le newswire\nen bas de la vue plein écran. 0% est opaque, et le\ncurseur s'arrête à 90% pour qu'il ne soit jamais invisible.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Masquer auto. le newswire
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Fait descendre le newswire hors de l'écran après un\nmoment sans nouveau message, et le fait remonter au\nmessage suivant. Désactivé le garde affiché tout au\nlong de la partie.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Transparence des outils de construction
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Quelle part de la carte apparaît à travers les outils\nde construction sur la gauche de la vue plein écran.\n0% est opaque, et le curseur s'arrête à 90% pour\nqu'ils ne soient jamais invisibles.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Transparence du panneau d'état
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Quelle part de la carte apparaît à travers le panneau\nd'état sur la droite de la vue plein écran - le\nconstructeur, les frags et morts, les lignes base/pillbox/tank,\net les jauges de stock. 0% est opaque, et le curseur\ns'arrête à 90% pour qu'il ne soit jamais invisible.
+
+# Légende de la vue objet
+STR_ITEMVIEW_PILL=Vue pillbox
+STR_ITEMVIEW_BASE=Vue base
+STR_ITEMVIEW_ALLY=Vue tanks alliés
+STR_ITEMVIEW_ALLY_NAMED=Vue tanks alliés — {player}
+
+# Étiquette de visibilité du navigateur de serveurs
+STR_DLGBROWSER_VIEWS_LBL=Vues :
+STR_DLGBROWSER_VIEWS_CLASSIC=Classique
+STR_DLGBROWSER_VIEWS_ALLYTREES=Alliés dans les arbres

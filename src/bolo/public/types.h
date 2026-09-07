@@ -107,6 +107,14 @@ typedef struct pillsObj *pillboxes;
 struct pillsObj {
   pillbox item[MAX_PILLS];
   BYTE numPills;
+  /* Wire format ends here at SIZEOF_PILLS (145 bytes). Past it: what this
+   * client knows about each pill's square. One of the three PILL_SQUARE_
+   * values in pillbox.h — the server has just told us the pill is on it, we
+   * are only remembering it from the last time we were told, or we watched the
+   * pill go into a tank and come out again and the square means nothing. Zero
+   * — the value pillsCreate's memset and every map install leave — is the
+   * confirmed state, so the server's own list is never affected. */
+  BYTE posStale[MAX_PILLS];
 };
 
 /* 25B = 25x8 = 200b needed to be allocated */
@@ -220,6 +228,26 @@ struct tankObj {
 #define MAX_STARTS 16
 #define SIZEOF_STARTS 49
 
+/* Worst-case size of a map serialised by mapSaveCompressedMap, and therefore
+ * the size any buffer handed to it should be.
+ *
+ * The RLE it uses can expand rather than compress. Its worst input is a
+ * three-byte cycle of one literal byte followed by a two-byte run - ABB ABB
+ * ABB ... - which the encoder spends four output bytes on: two for the
+ * one-byte literal frame, two for the run. So the bound is 4/3 of the terrain
+ * array, measured against the encoder rather than estimated: a 64 KiB array
+ * of that shape encodes to 87382 bytes. The fixed bases/pills/starts header
+ * rides in front of it.
+ *
+ * This is not a theoretical shape. Terrain values are small integers, and a
+ * 256x256 array of randomly mixed ones encodes to about 1.05x - already past
+ * the 64 KiB a map occupies uncompressed. A buffer sized to the input is
+ * therefore too small for any map that does not actually compress, and
+ * mapSaveCompressedMap refuses on it: safe, but silent. */
+#define MAP_COMPRESSED_MAX_SIZE                       \
+    (SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS +    \
+     (((MAP_ARRAY_SIZE * MAP_ARRAY_SIZE) * 4) / 3) + 1)
+
 /* Typedefs */
 
 typedef struct {
@@ -250,6 +278,12 @@ BOLO_STATIC_ASSERT(sizeof(pillbox) == 9, pillbox_must_be_9_bytes);
  * fields must sit strictly past that boundary. */
 BOLO_STATIC_ASSERT(offsetof(struct basesObj, stealDebounce) == SIZEOF_BASES,
                    bases_steal_debounce_after_wire_format);
+/* Same rule for pillsObj: the position-current flags sit strictly past the
+ * SIZEOF_PILLS bytes pillsSetPillCompressData copies in. pillbox holds only
+ * BYTE and bool, so item[] and numPills pack to exactly 145 with no pad member
+ * of the kind basesObj needs. */
+BOLO_STATIC_ASSERT(offsetof(struct pillsObj, posStale) == SIZEOF_PILLS,
+                   pills_pos_stale_after_wire_format);
 BOLO_STATIC_ASSERT(sizeof(start) == 3,   start_must_be_3_bytes);
 
 #endif

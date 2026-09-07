@@ -48,6 +48,13 @@ static int parse_full_entry(void) {
         "\"num_players\":5,"
         "\"num_humans\":3,"
         "\"num_bots\":2,"
+        "\"pillview\":1,"
+        "\"baseview\":2,"
+        "\"allyview\":3,"
+        "\"alliesintrees\":true,"
+        "\"pillviewdecay\":45,"
+        "\"baseviewdecay\":90,"
+        "\"allyviewdecay\":15,"
         "\"players\":[\"alice\",\"bob\",\"carol\"]"
         "}]"
         "}";
@@ -78,6 +85,13 @@ static int parse_full_entry(void) {
                   "player counts");
     UT_ASSERT_MSG(s->numPlayerNames == 3, "numPlayerNames=%d", s->numPlayerNames);
     UT_ASSERT_MSG(strcmp(s->players[1], "bob") == 0, "players1=\"%s\"", s->players[1]);
+    UT_ASSERT_MSG(s->pillView == 1 && s->baseView == 2 && s->allyView == 3,
+                  "view policies=%d/%d/%d", s->pillView, s->baseView, s->allyView);
+    UT_ASSERT_MSG(s->alliesInTrees, "alliesInTrees should be true");
+    UT_ASSERT_MSG(s->pillViewDecay == 45 && s->baseViewDecay == 90 &&
+                      s->allyViewDecay == 15,
+                  "decay secs=%d/%d/%d", s->pillViewDecay, s->baseViewDecay,
+                  s->allyViewDecay);
 
     wbnServerListFree(&list);
     return 0;
@@ -116,6 +130,18 @@ static int parse_defaults(void) {
     UT_ASSERT_MSG(s->port == 0 && s->numPlayers == 0 && s->spectatorCount == 0,
                   "missing ints default 0");
     UT_ASSERT_MSG(s->numPlayerNames == 0, "numPlayerNames default 0");
+    /* The view policies do NOT all default to 0 — an absent "baseview"
+     * means bases are off (3), not always-visible. */
+    UT_ASSERT_MSG(s->pillView == 0 && s->baseView == 3 && s->allyView == 0,
+                  "absent view policies=%d/%d/%d, want 0/3/0",
+                  s->pillView, s->baseView, s->allyView);
+    UT_ASSERT_MSG(!s->alliesInTrees, "absent alliesintrees should be false");
+    /* Absent decay seconds are VIEW_DECAY_DEFAULT_SECS, not 0 — a
+     * tracker that has not learned the fields must not report 0s. */
+    UT_ASSERT_MSG(s->pillViewDecay == 30 && s->baseViewDecay == 30 &&
+                      s->allyViewDecay == 30,
+                  "absent decay secs=%d/%d/%d, want 30/30/30",
+                  s->pillViewDecay, s->baseViewDecay, s->allyViewDecay);
     wbnServerListFree(&list);
 
     /* Empty servers array -> success, count 0, nothing to free. */

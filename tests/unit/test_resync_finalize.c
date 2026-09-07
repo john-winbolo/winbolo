@@ -72,7 +72,7 @@ int run_resync_finalize_corrupt_keeps_gen(void) {
     /* A real blob truncated to a short prefix: too few bytes to decode to a full
      * map, so installCompressedMap fails the decode — the realistic shape of a
      * resync corrupted by loss. */
-    n = serverSimGetCompressedMap(h.sim, blob);
+    n = serverSimGetCompressedMap(h.sim, blob, (int)sizeof(blob));
     UT_ASSERT_MSG(n > 16, "server compressed map too small to truncate (%d)", n);
 
     UT_ASSERT_MSG(transportUdpClientTestFinalizeResync(ct, blob, 12),
@@ -110,7 +110,7 @@ int run_resync_finalize_valid_advances_gen(void) {
 
     transportUdpClientTestMapState(ct, &gen0, &count0);
 
-    n = serverSimGetCompressedMap(h.sim, blob);
+    n = serverSimGetCompressedMap(h.sim, blob, (int)sizeof(blob));
     UT_ASSERT_MSG(n > 0, "server compressed map empty (%d)", n);
 
     UT_ASSERT_MSG(transportUdpClientTestFinalizeResync(ct, blob, n),

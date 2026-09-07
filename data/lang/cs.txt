@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Střílet
 STR_DLGKEYSETUP_LAYMINE=Položit minu
 STR_DLGKEYSETUP_TANKVIEW=Pohled na tank
 STR_DLGKEYSETUP_PILLVIEW=Pohled na bunkr
+STR_DLGKEYSETUP_BASEVIEW=Pohled na základnu
+STR_DLGKEYSETUP_ALLYVIEW=Pohled na spojenecké tanky
 STR_DLGKEYSETUP_SCROLLUP=Nahoru
 STR_DLGKEYSETUP_SCROLLDOWN=Dolů
 STR_DLGKEYSETUP_SCROLLLEFT=Vlevo
@@ -1909,6 +1911,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=Účty WinBolo.net lze měnit pouze z hlavní nabídky
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Odesílat záznamy hráčům
 STR_LV_HIDE_LOBBY=Skrýt Lobby
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Viditelnost
+STR_DLGLOBBY_VIEW_PILL=Pohled na bunkr
+STR_DLGLOBBY_VIEW_BASE=Pohled na základnu
+STR_DLGLOBBY_VIEW_ALLY=Pohled na spojenecké tanky
+STR_DLGLOBBY_VIEW_ALWAYS=Vždy
+STR_DLGLOBBY_VIEW_KEY=Klávesa
+STR_DLGLOBBY_VIEW_DECAY=Slábnutí
+STR_DLGLOBBY_VIEW_OFF=Vypnuto
+STR_DLGLOBBY_VIEW_DECAY_SECS=s
+STR_DLGLOBBY_CLASSIC_MODE_CB=Klasický režim
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Nastaví Pohled na bunkr na Klávesa a Pohled na základnu\ni Pohled na spojenecké tanky na Vypnuto a drží je tak.\nPo jeho vypnutí zůstanou tyto tři tam, kam je klasický\nrežim nastavil.\nTaké skryje přehled mapy a mapu na celou obrazovku na\nobrazovce každého hráče. Server posílá stejná data tak\njako tak, takže jde o pohodlí, ne o záruku vůči\nupravenému klientovi.
+STR_MENU_CLASSIC_MODE_TIP=Server má zapnutý klasický režim, takže je toto zobrazení vypnuté.
+STR_DLGLOBBY_ALLIES_TREES_CB=Vidět spojence v lese
+STR_DLGLOBBY_ALLIES_TREES_TIP=Spojenecké tanky stojící v lese se na tvé obrazovce\nkreslí, místo aby byly skryté. Mlha války stále platí,\ntakže je vidíš jen tam, kam vidíš i tak. Vypnuto je\nklasické pravidlo a klasický režim toto nastavení vypne.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Vzhled
 STR_DLGSKIN_DEFAULT=Výchozí
@@ -1949,3 +1966,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Publikovat lze pouze vzhled z tvé vlastní složky
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Tento vzhled má jemnější grafiku jen pro některé sprity, takže Podle přiblížení vytváří stejné dlaždice jako Klasický. Vysoký detail používá jemnější grafiku tam, kde ji vzhled má.
 STR_DLGSKIN_RECFILTER_LBL=Doporučený filtr:
 STR_DLGSKIN_RECOMMENDED_TAG=(doporučeno)
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=Přehled mapy
+STR_MENU_OVERVIEW_IN_WINDOW=Celá obrazovka
+STR_OVERVIEW_FOLLOWING=sleduje
+STR_OVERVIEW_FREE=volně
+STR_DLGKEYSETUP_OVERVIEWZOOM=Přiblížení mapy (podržet)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Sledování mapy (přepnout)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Přiblížit mapu
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Oddálit mapu
+STR_DLGWELCOME_SWITCH_CLASSIC=Přejít na klasický
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Přejít na celou obrazovku
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=Celá obrazovka
+STR_DLGSETTINGS_FULLSCREEN_TIP=Vyplní celou obrazovku místo běhu v okně.\nZapamatuje se pro příště.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Průhlednost newswiru
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Kolik z mapy prosvítá skrz newswire podél spodního\nokraje zobrazení na celou obrazovku. 0% je neprůhledné\na posuvník se zastaví na 90%, aby nemohl zmizet úplně.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Automaticky skrýt newswire
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Schová newswire pod spodní okraj obrazovky poté, co\npo nějakou dobu nepřijde žádná nová zpráva, a vysune\nho zpět při další zprávě. Vypnuto ho nechá na obrazovce\npo celou hru.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Průhlednost stavebních nástrojů
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Kolik z mapy prosvítá skrz stavební nástroje podél\nlevého okraje zobrazení na celou obrazovku. 0% je\nneprůhledné a posuvník se zastaví na 90%, aby nemohly\nzmizet úplně.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Průhlednost stavového panelu
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Kolik z mapy prosvítá skrz stavový panel podél pravého\nokraje zobrazení na celou obrazovku - LGM, zabití a\númrtí, řádky základny, bunkru a tanku a ukazatele\nzásob. 0% je neprůhledné a posuvník se zastaví na\n90%, aby nemohl zmizet úplně.
+
+# Item view caption
+STR_ITEMVIEW_PILL=Pohled na bunkr
+STR_ITEMVIEW_BASE=Pohled na základnu
+STR_ITEMVIEW_ALLY=Pohled na spojenecké tanky
+STR_ITEMVIEW_ALLY_NAMED=Pohled na spojenecké tanky — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=Pohledy:
+STR_DLGBROWSER_VIEWS_CLASSIC=Klasický
+STR_DLGBROWSER_VIEWS_ALLYTREES=Spojenci v lese

@@ -115,7 +115,14 @@ typedef struct {
 #define TANK_PRESENT_TURNRAMP  0x10  /* firstLeft, firstRight (2B) */
 #define TANK_PRESENT_PING      0x20  /* pingMs (2B) */
 #define TANK_PRESENT_FLAGS     0x40  /* clientFlags (1B) */
-/* 0x80 reserved (always 0 for now). */
+#define TANK_PRESENT_HIDDEN    0x80  /* hiddenFlags (1B) */
+
+/* TankSnapshot.hiddenFlags bits.  An entry whose tank is withheld but whose LGM
+ * must still be drawn is not a stub — it is a full entry with the tank's own
+ * fields zeroed and this flag set, so the LGM group can ride along.  The tank's
+ * real position is never on the wire in that case: a client that ignores the
+ * flag reads (0,0), not the hiding place. */
+#define TANK_HIDDEN_POSITION   0x01  /* worldX/worldY/angle/speed are withheld */
 
 /* Per-tank data within a snapshot (wire format).  Variable-length: a stub
  * (playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) is 1 byte on the wire; a full entry
@@ -144,6 +151,7 @@ typedef struct {
     uint8_t  reload;       /* Ticks remaining until can fire again (owning player only) */
     uint16_t pingMs;       /* This player's ping in ms */
     uint8_t  clientFlags;  /* PLAYER_FLAG_* bits — see players.h */
+    uint8_t  hiddenFlags;  /* TANK_HIDDEN_* bits — which fields are withheld */
 } TankSnapshot;
 
 /* Per-shell data within a snapshot (wire format) */
