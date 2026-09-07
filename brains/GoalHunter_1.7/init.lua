@@ -1585,6 +1585,8 @@ function Brain.think(info)
           _dbg_death.evt_cause  = _d[3]
           _dbg_death.evt_killer = _d[1]
           _dbg_death.evt_tick   = now
+          -- 4th data byte = how many pillboxes we were hauling when we died.
+          _dbg_death.evt_carry  = _d[4]
         end
       end
     end
@@ -1597,6 +1599,11 @@ function Brain.think(info)
       _dbg_death.alive_mx     = bit.rshift((info.tankx or 0), 8)
       _dbg_death.alive_my     = bit.rshift((info.tanky or 0), 8)
       _dbg_death.alive_armour = _arm
+      -- Carried pills as of the last ALIVE tick: by the time info.dead is true
+      -- the haul is already on the ground, so this is the only in-brain view of
+      -- what the tank was carrying. The engine's own count rides on the kill
+      -- event (evt_carry) and is preferred when the event landed.
+      _dbg_death.alive_carry  = info.carried_pills or 0
     end
   end
 
@@ -1955,11 +1962,24 @@ function Brain.think(info)
                       })[_terr] or ("t" .. tostring(_terr))
       print2(string.format(
         "DEATH t=%d cause=%s tile=(%d,%d) terrain=%s armour=%s last_hit_age=%d"
-        .. " goal=%s sub=%s killer=%s alive_t=%s",
+        .. " goal=%s sub=%s tgt=(%s,%s) carry=%s carry_evt=%s killer=%s alive_t=%s",
         now, _cause, _mx, _my, _tname, tostring(_dbg_death.alive_armour),
         _dbg_death.drop_tick and (now - _dbg_death.drop_tick) or -1,
         tostring(state.goal and state.goal.kind),
         tostring(state.goal and state.goal.substate),
+        tostring(state.goal and state.goal.mx),
+        tostring(state.goal and state.goal.my),
+        -- carry: how many pillboxes we were hauling, taken from the BRAIN's
+        -- last alive tick. It is NOT taken from the kill event, because the
+        -- engine only fills EVENT_TANK_KILLED data[4] on a DROWNING
+        -- (tank.c tankKill(..., tankGetNumCarriedPills)); both shell-kill call
+        -- sites pass a hardcoded 0 (shells.c), so the event byte reads 0 for
+        -- every shell death — which is most of them. carry_evt prints the raw
+        -- event byte beside it, so a drowning can still be cross-checked and
+        -- the two are never silently conflated.
+        tostring(_dbg_death.alive_carry),
+        tostring((_dbg_death.evt_tick ~= nil and (now - _dbg_death.evt_tick) <= 4
+                  and _dbg_death.evt_carry) or "n/a"),
         tostring(_dbg_death.evt_killer), tostring(_dbg_death.alive_tick)))
     end
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
