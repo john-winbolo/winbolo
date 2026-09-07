@@ -69,7 +69,10 @@ end
 function on_tick(g, tick)
   if not spawn_tried and tick >= 2 then
     spawn_tried = true
-    local s, err = g.spawn_bot("StrayWatch", nil, 0, SPAWN_MODE)
+    -- 2026-09-06: pinned to the KEEL defend evaluator (DEFEND_ALARM_MODE off):
+    -- A2 asserts the arrived NO-BID / WATCH rungs that alarm mode deletes.
+    local s, err = g.spawn_bot("StrayWatch", nil, 0, SPAWN_MODE,
+                               "cfg=DEFEND_ALARM_MODE=false")
     if s == nil then
       g.message("PILL_SCARINESS spawn_bot failed: " .. tostring(err))
     else

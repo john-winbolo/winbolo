@@ -146,6 +146,12 @@ def run_one(variant, ticks, build_dir):
            # sidecar adds the hostile one.
            "-bots", "0" if variant == "A" else "1",
            "-brain", str(BRAIN),
+           # 2026-09-06: DEFEND_ALARM_MODE (Andrew's defend_pill redesign)
+           # deletes the arrived NO-BID / WATCH rungs that A2/B2 assert on, so
+           # this test guards the KEEL defend evaluator by pinning it (same
+           # policy as defend_repair_test / builder_pool_test C). Variant A's
+           # bot is spawned by the sidecar, which carries the same token.
+           "-bot-init", f"0={BRAIN}[cfg=DEFEND_ALARM_MODE=false]",
            # yesfull: the whole (tiny) arena is known from tick 0 - the test is
            # about who is shooting our pill, not about fog.
            "-ai", "yesfull",

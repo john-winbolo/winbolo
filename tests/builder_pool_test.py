@@ -119,6 +119,26 @@ UNDER_FIRE_TICKS = 100
 RESERVE_MARGIN = 40
 
 PORTS = {"A": 50071, "B": 50072, "B2": 50073, "C": 50074, "D": 50075}
+
+# ── variant C is pinned to the KEEL defend evaluator, and here is why ──────
+# C's premise is TWO bots both standing at one worn pill, both offering to
+# repair it, so the bpj claim has a loser to stand down.  What used to put the
+# second bot there was defend_pill's ARRIVED ladder: within DEFEND_ARRIVE_RADIUS
+# a defender bid the flat WATCH (30) / REPAIR (40) rung and parked.
+# DEFEND_ALARM_MODE (2026-09-06) deliberately deletes that ladder -- alarm mode
+# is travel-and-fight only, its alarm needs a hostile tank visible within 11
+# tiles of the pill, and this arena has no enemy at all -- so the second bot has
+# no reason to stay, wanders off, and its repair row reads `unreachable` before
+# the claim ever gets a turn.  That is alarm mode working, not the claim
+# breaking, and the claim is what this arena is for.
+#
+# So the arena keeps its old defend behaviour explicitly.  BOTH bots need the
+# token: slot 0 through -bot-init here, and the ally the sidecar spawns through
+# spawn_bot's 5th argument (see builder_pool_C.scenario.lua).  When alarm mode
+# eventually gets an arena of its own for this de-confliction, this pin is the
+# thing to revisit.
+KEEL_DEFEND = "cfg=DEFEND_ALARM_MODE=false"
+BOT_INIT = {"C": ["-bot-init", f"0={BRAIN}[{KEEL_DEFEND}]"]}
 TICKS = {"A": 9000, "B": 4000, "B2": 4000, "C": 5000, "D": 12000}
 
 # builder_pool.lua
@@ -342,7 +362,7 @@ def run_sim(variant, ticks, build_dir):
     env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=label)
     cmd = [str(ds), "-map", str(HERE / f"builder_pool_{variant}.map"),
            "-port", str(PORTS[variant]), "-nolobby", "-gametype", "open",
-           "-bots", "1", "-brain", str(BRAIN),
+           "-bots", "1", "-brain", str(BRAIN)] + BOT_INIT.get(variant, []) + [
            # yesfull: these arenas are tiny and the experiment is about WHEN the
            # man is spent, not about discovering the map.
            "-ai", "yesfull", "-limit", "20",

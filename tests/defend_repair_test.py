@@ -69,6 +69,27 @@ FINAL = HERE / "defend_repair_final.json"
 STDERR = HERE / "defend_repair_stderr.txt"
 LABEL = "defend_repair_test"
 
+ARG_MAX = 127                       # BotInitSlot.arg, luabrainshandler.h
+
+# WHY THE cfg= TOKEN (2026-09-06).
+#   DEFEND_ALARM_MODE=false -- this file tests the KEEL defend evaluator: the
+#   urgency ladder AND, in assertions 1 and 4, its ARRIVED rungs (the
+#   heat/watch/repair handoff the incident above is about). DEFEND_ALARM_MODE,
+#   which defaults to true, REPLACES both by design: defend_pill is rejected
+#   unless a hostile tank is visible within DEFEND_ALARM_ENEMY_TILES of the
+#   pill AND we are MORE than DEFEND_ALARM_MIN_DIST (9) tiles away, and the
+#   ARRIVED rungs do not exist at all. This arena parks the bot SIX tiles from
+#   its pill, so condition 3 can never hold: measured 2026-09-06 the run
+#   printed `alarm_off:no_enemy_near` x35, `alarm_off:no_trigger` x3 and
+#   `alarm_off:too_close` x2 and never chose defend_pill once, failing
+#   assertion 1 on a behaviour change rather than on a regression.
+#   So the knob is pinned to its PRESETS.keel value here, the same way
+#   tests/builder_pool_test.py variant C pins it: this file's subject is the
+#   old ladder, and the alarm evaluator has its own test
+#   (tests/defend_alarm_test.py). NOT a workaround -- the two evaluators are
+#   different features and each is tested against its own rules.
+TOKENS = "cfg=DEFEND_ALARM_MODE=false"
+
 sys.path.insert(0, str(HERE))
 from generate_defend_repair_map import (        # noqa: E402
     OUR_PILL, PILLS_MAX_HEALTH)
@@ -115,6 +136,12 @@ def run(ticks, build_dir):
     if not ds:
         print(f"FAIL: WinBoloDS not found under {build_dir}")
         return 1
+    if len(TOKENS) > ARG_MAX:
+        print(f"FAIL: the -bot-init token string is {len(TOKENS)} bytes, over "
+              f"the {ARG_MAX}-byte BRAIN_INIT_ARG limit -- SDL_strlcpy would "
+              f"truncate it mid-token and the last cfg= would be silently "
+              f"ignored:\n  {TOKENS}")
+        return 1
     subprocess.run([sys.executable, str(HERE / "generate_defend_repair_map.py")],
                    check=True, stdout=subprocess.DEVNULL)
     hp_trace = build_dir / "defend_repair_hp.log"
@@ -130,6 +157,7 @@ def run(ticks, build_dir):
     env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=LABEL)
     cmd = [str(ds), "-map", str(MAP), "-port", "50053", "-nolobby",
            "-gametype", "open", "-bots", "1", "-brain", str(BRAIN),
+           "-bot-init", f"0={BRAIN}[{TOKENS}]",
            # yesfull: the arena is tiny and the test is about WHEN the bot
            # repairs, not about discovering the map.
            "-ai", "yesfull",
@@ -158,6 +186,25 @@ def run(ticks, build_dir):
         print(f"FAIL: no print2_bot0.log under {sess}")
         return 1
     text = log.read_text(errors="ignore")
+
+    # ── the pin actually landed ───────────────────────────────────────
+    # BRAIN_INIT_ARG truncates SILENTLY (SDL_strlcpy into char arg[128]), and a
+    # dropped cfg= would leave this file testing the ALARM evaluator while
+    # claiming to test the ladder -- which is exactly the confusion the pin
+    # exists to prevent. init.lua echoes one `[cfg] NAME=VALUE (init_arg)` line
+    # per override on the first think, so the token is checked, not assumed.
+    for tok in TOKENS.split(";"):
+        name, _, val = tok[len("cfg="):].partition("=")
+        if f"[cfg] {name}={val} (init_arg)" not in text:
+            print(f"FAIL: the init token `{tok}` never reached the brain -- no "
+                  f"`[cfg] {name}={val} (init_arg)` line in {log.name}. The "
+                  f"-bot-init arg is capped at {ARG_MAX} bytes and is "
+                  f"truncated without a word of warning.")
+            for ln in text.splitlines():
+                if "[cfg]" in ln or "[preset]" in ln:
+                    print("   " + ln.strip())
+            return 1
+    print(f"  pinned: {TOKENS} (confirmed in the brain's own [cfg] echo)")
 
     hits = [(int(t), int(hp)) for (t, x, y, hp) in HIT_RE.findall(text)
             if (int(x), int(y)) == OUR_PILL]

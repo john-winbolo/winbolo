@@ -58,7 +58,15 @@ end
 function on_tick(g, tick)
   if not spawn_tried and tick >= 2 then
     spawn_tried = true
-    local s, err = g.spawn_bot("Ally", ALLY_BRAIN, 0, nil)
+    -- The 5th argument is this bot's BRAIN_INIT_ARG.  cfg=DEFEND_ALARM_MODE=
+    -- false keeps the ALLY on the keel defend evaluator, whose ARRIVED
+    -- WATCH/REPAIR rungs are what park it at the pill and give the bpj claim a
+    -- loser to stand down.  Alarm mode has no arrived ladder and no enemy on
+    -- this map, so without the pin the ally wanders off and the arena stops
+    -- being about the claim.  builder_pool_test.py pins slot 0 the same way and
+    -- carries the full reasoning (see KEEL_DEFEND there).
+    local s, err = g.spawn_bot("Ally", ALLY_BRAIN, 0, nil,
+                               "cfg=DEFEND_ALARM_MODE=false")
     if s == nil then
       g.message("BUILDER_POOL_C spawn_bot failed: " .. tostring(err))
     else
