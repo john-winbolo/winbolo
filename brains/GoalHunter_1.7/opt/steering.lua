@@ -14,6 +14,18 @@ local viz = require("viz")
 local opt = require("optimize")
 local threat = require("threat")
 local print2 = require("print2")
+-- attack.lua owns the attack_tank heat-pill decision (selection, shots_needed
+-- from the engine's speed-halving ladder, volley termination). Required LAZILY
+-- on first use rather than at the top of this file: a new top-level require
+-- changes the order modules are first loaded in, and the whole point of the
+-- ATTACK_TANK_HEAT_PILL knob is that turning it off leaves everything else
+-- exactly as it was. attack.lua's require closure never reaches steering.lua,
+-- so there is no cycle either way.
+local _attack
+local function attack_mod()
+  if not _attack then _attack = require("attack") end
+  return _attack
+end
 
 local M = {}
 
@@ -2433,6 +2445,24 @@ local function tank_combat_steer(state, world, info, goal)
       arm = info.armour, sh = info.shells })
     if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
+  end
+
+  -- ── HEAT A FRIENDLY PILL (C.ATTACK_TANK_HEAT_PILL, default OFF in keel) ──
+  -- Placed AFTER both disengage returns above on purpose: on any tick the
+  -- existing code has decided we must break off (pillbox crossfire, or the
+  -- armour/shells flee check) we never reach here, so a heat volley can
+  -- neither start nor continue while we are under fire in a way that demands
+  -- evasion. attack.lua does all the deciding; this just forwards the keys.
+  if C.ATTACK_TANK_HEAT_PILL then
+    local hk, ht = attack_mod().heat_pill_steer(state, world, info, goal, target,
+                                          now, tmx, tmy, shot_path_clear)
+    if hk then
+      keys = bit.bor(keys, hk)
+      taps = bit.bor(taps, ht)
+      log.reason("steer", { mode = "tank_combat_heat_pill",
+        pill = goal._heat_pid, shots = goal._heat_shots })
+      return keys, taps
+    end
   end
 
   if dist_tiles > C.TANK_COMBAT_ENGAGE_RANGE then
@@ -4860,6 +4890,14 @@ end
 -- pass through untouched and the tank keeps rotating out of trouble on the
 -- spot. Boats are exempt: deep sea is where they belong.
 function M.steer(state, world, info, goal)
+  -- Close out an attack_tank heat volley whose goal was replaced under it (a
+  -- replan, or the enemy tank dying). Runs BEFORE steer_core so the retry latch
+  -- is stamped before tank_combat_steer could pick the same pill again this
+  -- same tick. The state._heat_active guard means keel -- where no volley ever
+  -- starts -- does not even load attack.lua from here.
+  if state._heat_active then
+    attack_mod().heat_pill_reap(state, world, info, goal, state.tick or 0)
+  end
   local keys, taps = steer_core(state, world, info, goal)
   if C.CLIFF_STOP_MASK_ALL_GOALS and keys and not info.inboat then
     local sdir = U.bsin(info.direction)

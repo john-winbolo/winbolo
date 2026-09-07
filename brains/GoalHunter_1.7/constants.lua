@@ -1780,6 +1780,54 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45??)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim tolerance for opportunistic shot
+-- ── attack_tank: heat a FRIENDLY pill mid-fight (2026-09-06) ──────────────
+-- While fighting enemy tank E, a friendly pill CLOSER to E than we are is a
+-- second gun already in position -- but only if it is angry. The engine's
+-- pill "anger" IS its reload period `speed`: PILLBOX_ATTACK_NORMAL 100 =
+-- calm, PILLBOX_MAX_FIRERATE 6 = angriest (src/bolo/internal/pillbox.h:46-48).
+-- It is NOT additive -- every damaging shell HALVES it (speed /= 2, clamped
+-- up to 6; src/bolo/pillbox.c:504-511), so the ladder from calm is
+--     100 -> 50 -> 25 -> 12 -> 6   = exactly HEAT_MAX_HITS (4) hits (attack.lua).
+-- The server damages a pill on ANY shell that lands on its tile, with no
+-- ownership test (src/bolo/shells.c:658-661), so OUR shell angers our OWN
+-- pill and costs it 1 armour -- hence HEAT_MIN_HP. The pill cools by +1 speed
+-- per PILLBOX_COOLDOWN_TIME (32) ticks (src/bolo/pillbox.c:347-355), i.e.
+-- 6 -> 100 in 94 x 32 = 3008 ticks (which is what PILL_ANGER_DECAY models);
+-- across a 4-shot volley (3 x TANK_RELOAD_TIME 13 = 39 engine ticks,
+-- src/bolo/internal/tank.h:161) it recovers 1-2 points that the next hit
+-- halves straight off again, so cool-down never adds a shot to the count.
+-- The brain cannot read `speed`; it uses world.lua's anger PROXY, which adds
+-- PILL_ANGER_BUMP per observed armour drop -- one bump == one halving -- so
+--     shots_needed = HEAT_MAX_HITS - round(anger / PILL_ANGER_BUMP), then capped
+-- by the pill's health via attack.lua heat_allowed_shots (see MIN_HP below).
+M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during attack_tank
+M.ATTACK_TANK_HEAT_MIN_HP       = 5     -- health floor of the volley cap: a pill at or below this
+                                        -- affords no heat shells at all. The cap scales linearly to
+                                        -- PILLS_MAX_HEALTH (15 -> all 4 halvings): hp 15/13/10/7/6
+                                        -- buy 4/3/2/1/0 shells. See attack.lua heat_allowed_shots.
+                                        -- (The ladder length 4 is NOT a knob -- it is the engine's,
+                                        -- HEAT_MAX_HITS in attack.lua.)
+M.ATTACK_TANK_HEAT_MAX_FRAC     = 0.75  -- skip a pill already at >= this fraction of max anger
+-- Which health cap limits the volley. Two values, so the proportional rule can
+-- be benched on its own against the rule it replaced:
+--   "proportional" (default) allow = round(4 x (hp - MIN_HP) / (15 - MIN_HP)),
+--                            so hp 15/13/10/7/6 buy 4/3/2/1/0 shells; a volley
+--                            cut short by it exits `hp_cap`.
+--   "floor"                  no proportional cap: the volley runs to
+--                            shots_needed, limited only by "a shot must not
+--                            take the pill below MIN_HP" (allow = hp - MIN_HP,
+--                            so hp 6 buys 1); it exits `hp_floor`, and entry
+--                            refuses only a pill ALREADY under MIN_HP.
+-- No PRESETS.keel entry: the master ATTACK_TANK_HEAT_PILL is false there, so
+-- keel never reads this.
+M.ATTACK_TANK_HEAT_CAP_MODE     = "proportional"
+M.ATTACK_TANK_HEAT_MAX_MISSES   = 2     -- spare shells allowed for misses before abandoning the volley
+M.ATTACK_TANK_HEAT_RETRY_TICKS  = 150   -- don't re-enter on the same pill within this many ticks
+M.ATTACK_TANK_HEAT_MAX_TICKS    = 150   -- hard ceiling on one volley (aim + fire). Rotating onto the
+                                        -- pill is the slow part: a measured volley spent 39 of its 42
+                                        -- brain ticks taking aim_corr from +10 to +1, and a drifting
+                                        -- tank can hover just outside the +-1 fire gate forever. Bounds
+                                        -- "standing next to our own pill instead of fighting".
 -- Stuck-fire: when aimed at enemy but shot_path_clear keeps rejecting
 -- (wall in the way), fire anyway after this many ticks. Shells will
 -- chip the wall until LOS opens up, so two tanks dug in on opposite
@@ -3673,6 +3721,13 @@ M.GC_STEPMUL = 400
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-09-06: while on attack_tank, the bot now interrupts the fight to
+    -- put the exact number of shells needed into a FRIENDLY pill that sits
+    -- closer to the enemy tank than we do (in gun range, clear LOS, >= 5 HP,
+    -- under 75% anger), maxing its heat so it reloads at PILLBOX_MAX_FIRERATE
+    -- and fights the tank alongside us. KEEL never shoots its own pills, so
+    -- attack_tank goes straight from the disengage checks to close/engage.
+    ATTACK_TANK_HEAT_PILL         = false,
     -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
     -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
     -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy

@@ -8241,6 +8241,493 @@ function M.update_attack_substate(goal, state, world, info)
 
 end
 
+-- =========================================================================
+-- attack_tank: heat a FRIENDLY pillbox mid-fight (C.ATTACK_TANK_HEAT_PILL)
+-- =========================================================================
+-- While we are fighting enemy tank E, a friendly pill that sits CLOSER to E
+-- than we do is a second gun already in position -- but only if it is angry.
+--
+-- ENGINE FACTS (all cited, none guessed):
+--
+--  * A pill's "anger" IS its reload period, the `speed` field.
+--    PILLBOX_ATTACK_NORMAL = 100 is calm, PILLBOX_MAX_FIRERATE = 6 is as
+--    angry as a pill can get   (src/bolo/internal/pillbox.h:46-48).
+--  * Anger is NOT additive.  Every shell that DAMAGES a pill HALVES it:
+--        speed /= 2, then clamped up to PILLBOX_MAX_FIRERATE
+--    (src/bolo/pillbox.c:504-511, and the identical block at :1393-1398).
+--    So the ladder from calm is
+--        100 -> 50 -> 25 -> 12 -> 6
+--    i.e. exactly HEAT_MAX_HITS (4) hits to max heat.  A 5th
+--    hit does nothing to speed: the halving is guarded by `speed > 6`.
+--  * OUR OWN shell angers our OWN pill, and costs it 1 armour.  The server
+--    branch calls pillsDamagePos(sim, mapX, mapY, TRUE, TRUE, owner) for ANY
+--    shell landing on a pill tile with NO ownership test at all
+--    (src/bolo/shells.c:658-661; the damage itself at pillbox.c:485-487).
+--    That is the whole reason for the HP floor below.
+--  * Cool-down: coolDown counts down each tick and, at 0, gives back exactly
+--    +1 speed and re-arms PILLBOX_COOLDOWN_TIME = 32 ticks
+--    (src/bolo/pillbox.c:347-355).  So 6 -> 100 takes 94 x 32 = 3008 ticks --
+--    which is what C.PILL_ANGER_DECAY (3000) models.  Our volley is 4 shots
+--    = 3 x TANK_RELOAD_TIME (13) = 39 engine ticks plus flight
+--    (src/bolo/internal/tank.h:161), over which the pill claws back at most
+--    1-2 speed points; the next hit halves them straight back off, so
+--    cool-down DURING the volley never adds a shot to the count.  (Worst
+--    case the volley ends on speed 7 instead of 6.)
+--
+-- WHAT THE BRAIN CAN ACTUALLY SEE: not `speed`.  world.lua:285-291 keeps a
+-- PROXY, pill.anger in [0,1], which adds C.PILL_ANGER_BUMP (0.3333) per
+-- OBSERVED armour drop and decays linearly over PILL_ANGER_DECAY.  Since one
+-- observed armour drop == one halving, the proxy is just a hit counter:
+--        hits_landed   = round(anger / PILL_ANGER_BUMP)     [0 .. FULL_HITS]
+--        shots_needed  = FULL_HITS - hits_landed            [floored at 0]
+-- (The proxy saturates at 3 bumps = 0.9999 while the engine wants 4 hits;
+-- counting in HITS rather than trusting the proxy's ceiling is what makes the
+-- last shot happen.)
+--
+-- Progress is measured in HITS THAT LANDED -- the pill's observed armour
+-- drop since the volley started -- not in key presses, with a bounded miss
+-- allowance (ATTACK_TANK_HEAT_MAX_MISSES) on the shells-fired delta so a
+-- volley that keeps missing still terminates.
+
+-- HEAT_MAX_HITS is NOT a tunable. It is the length of the engine's halving
+-- ladder, counted off src/bolo/pillbox.c:504-511: from PILLBOX_ATTACK_NORMAL
+-- (100) the sequence `speed /= 2` clamped up to PILLBOX_MAX_FIRERATE (6) runs
+--     100 -> 50 -> 25 -> 12 -> 6
+-- and stops, because the halving is guarded by `speed > 6`. Four hits, and a
+-- fifth changes nothing. Turning it into a knob would only ever let a bot ask
+-- the engine for a fifth halving that does not exist.
+local HEAT_MAX_HITS = 4
+
+-- Hits already landed on a pill, inferred from world.lua's anger proxy.
+local function heat_hits_landed(anger)
+  local bump = C.PILL_ANGER_BUMP or 0.3333
+  if bump <= 0 then return 0 end
+  local n = math.floor((anger or 0) / bump + 0.5)
+  if n < 0 then n = 0 elseif n > HEAT_MAX_HITS then n = HEAT_MAX_HITS end
+  return n
+end
+
+-- Shells needed to take a pill at `anger` all the way to PILLBOX_MAX_FIRERATE.
+function M.heat_pill_shots_needed(anger)
+  local n = HEAT_MAX_HITS - heat_hits_landed(anger)
+  if n < 0 then n = 0 end
+  return n
+end
+
+-- HOW MANY HITS THIS PILL'S HEALTH CAN AFFORD (Andrew, 2026-09-06:
+-- "proportionally less shots to heat up depending how hurt the pill is").
+-- Every heat shell costs the pill 1 armour (src/bolo/shells.c:658-661 ->
+-- pillbox.c:485-487), so a wounded pill buys its rate of fire with armour it
+-- may not have. The allowance scales linearly from "full health, all four
+-- halvings" down to "at the floor, none at all":
+--     allowed = round(HEAT_MAX_HITS x (hp - MIN_HP) / (PILLS_MAX_HEALTH - MIN_HP))
+--     hp 15 -> 4    13 -> 3    10 -> 2    7 -> 1    6 -> 0    <=5 -> 0
+-- NOTE ON ROUNDING: the spec said "floor", but floor sends hp 7 to 0 while the
+-- spec's own worked table says 7 -> 1. Rounding reproduces every value in that
+-- table (15/13/10/7/6/5 -> 4/3/2/1/0/0); floor reproduces all but hp 7. The
+-- enumerated table is the intent, so this rounds.
+-- This REPLACES the old per-shot "hp >= 5" test: the cap is computed ONCE at
+-- entry, so a pill at 10 fires exactly 2 (its health falling to 8 mid-volley
+-- does not re-cap it to 1), and a pill at 6 now fires none at all rather than
+-- one-then-stop.
+--
+-- TWO MODES, so the proportional rule can be benched against the rule it
+-- replaced (C.ATTACK_TANK_HEAT_CAP_MODE):
+--   "proportional" (default) -- the linear allowance above.
+--   "floor"                  -- no proportional cap at all. The volley runs to
+--                               shots_needed; the only limit is that a shot
+--                               must not take the pill below MIN_HP, so the
+--                               allowance is simply hp - MIN_HP (hp 6 buys 1
+--                               shot, hp 5 buys none) and the volley ends
+--                               `hp_floor` rather than `hp_cap`.
+-- Both are clamped to HEAT_MAX_HITS so `allow{n of N}` always reads "n of the
+-- N halvings this pill's health can pay for".
+local function heat_allowed_shots(hp)
+  local min_hp = C.ATTACK_TANK_HEAT_MIN_HP or 5
+  local n
+  if C.ATTACK_TANK_HEAT_CAP_MODE == "floor" then
+    n = (hp or 0) - min_hp
+  else
+    local span = (C.PILLS_MAX_HEALTH or 15) - min_hp
+    if span <= 0 then return 0 end
+    n = math.floor(HEAT_MAX_HITS * ((hp or 0) - min_hp) / span + 0.5)
+  end
+  if n < 0 then n = 0 elseif n > HEAT_MAX_HITS then n = HEAT_MAX_HITS end
+  return n
+end
+
+-- Euclidean tile distance between two map tiles (centre to centre).
+local function heat_tdist(ax, ay, bx, by)
+  local dx, dy = ax - bx, ay - by
+  return math.sqrt(dx * dx + dy * dy)
+end
+
+-- Pick the friendly pill worth heating against enemy tank `target`, or nil.
+-- Deterministic: candidate ids are collected then table.sort-ed, so the scan
+-- order never depends on pairs(); the winner is the lowest id among the
+-- closest-to-the-enemy candidates (ties broken by id).
+-- Emits one HEAT_PILL line per decision, with every factor that produced it.
+local function heat_pill_select(state, world, info, goal, target, now, tmx, tmy, los_fn)
+  local pills = world.pills
+  if not pills then return nil end
+
+  local ids = {}
+  for id in pairs(pills) do ids[#ids + 1] = id end
+  table.sort(ids)
+
+  local d_us_enemy   = heat_tdist(tmx, tmy, target.mx, target.my)
+  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  local max_frac     = C.ATTACK_TANK_HEAT_MAX_FRAC or 0.75
+  local min_hp       = C.ATTACK_TANK_HEAT_MIN_HP or 5
+  local floor_mode   = (C.ATTACK_TANK_HEAT_CAP_MODE == "floor")
+  local retry_ticks  = C.ATTACK_TANK_HEAT_RETRY_TICKS or 150
+  local retry        = state._heat_pill_retry
+
+  local best, best_d = nil, math.huge
+  for _, id in ipairs(ids) do
+    local p = pills[id]
+    if p and p.owner == "friendly" and (p.health or 0) > 0 and not p.in_tank then
+      local hp      = p.health or 0
+      local anger   = p.anger or 0
+      local d_pe    = heat_tdist(p.mx, p.my, target.mx, target.my)
+      local pill_wx, pill_wy = U.m2w(p.mx), U.m2w(p.my)
+      local d_wu    = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+      local in_rng  = d_wu <= fire_range_wu
+      -- need    = shells to reach PILLBOX_MAX_FIRERATE from where the anger
+      --           proxy says this pill already is
+      -- allowed = shells its remaining armour can afford
+      -- shots   = what we will actually fire
+      local need    = M.heat_pill_shots_needed(anger)
+      local allowed = heat_allowed_shots(hp)
+      local shots   = (need < allowed) and need or allowed
+      local reason  = nil
+      local los     = nil   -- nil = never tested (an earlier gate rejected first)
+
+      if d_pe >= d_us_enemy then
+        reason = "not_closer"
+      elseif not in_rng then
+        reason = "out_of_range"
+      elseif floor_mode and hp < min_hp then
+        -- floor mode rejects only a pill already under the floor; a pill AT the
+        -- floor is admitted and simply affords no shots (no_shots_needed).
+        reason = "hp"
+      elseif (not floor_mode) and allowed <= 0 then
+        reason = "hp"
+      elseif anger >= max_frac then
+        reason = "already_hot"
+      elseif shots <= 0 then
+        reason = "no_shots_needed"
+      elseif retry and retry[id] and (now - retry[id]) < retry_ticks then
+        reason = "retry_wait"
+      elseif (info.shells or 0) < shots + (C.SHELL_RESERVE or 0) then
+        reason = "low_shells"
+      else
+        los = los_fn(info, world, pill_wx, pill_wy, p.mx, p.my)
+        if not los then reason = "no_los" end
+      end
+
+      if BRAIN_DEBUG_MODE then
+        -- One line per VERDICT CHANGE, not per tick. The gate is re-asked every
+        -- tick of every attack_tank fight for every friendly pill, and a bot
+        -- with a pill behind it printed the same `SKIP:not_closer` 447 times in
+        -- one measured run. The verdict key carries everything the line reports
+        -- a decision on, so any real change still prints. Logging only -- no
+        -- decision reads this table.
+        local seen = state._heat_pill_seen
+        if not seen then seen = {}; state._heat_pill_seen = seen end
+        local key = string.format("%s|%d|%d|%s", tostring(reason), shots,
+                                  allowed, tostring(los))
+        if seen[id] ~= key then
+          seen[id] = key
+          print2(string.format(
+            "HEAT_PILL t=%d pill=#%s d_pill_enemy{%.1f} d_us_enemy{%.1f} range{%.1f/%.1f} los{%s} hp{%d/%d} anger{%.2f/%.2f} cap{%s} need{%d} allow{%d of %d} shots_needed{%d} -> %s",
+            now, tostring(id), d_pe, d_us_enemy, d_wu / 256.0, fire_range_wu / 256.0,
+            (los == nil) and "?" or tostring(los), hp, min_hp, anger, max_frac,
+            floor_mode and "floor" or "proportional",
+            need, allowed, HEAT_MAX_HITS, shots,
+            reason and ("SKIP:" .. reason) or "ENTER"))
+        end
+      end
+
+      if not reason and d_pe < best_d then
+        best_d = d_pe
+        best   = { id = id, pill = p, shots = shots, d_pe = d_pe,
+                   d_ue = d_us_enemy, hp = hp, anger = anger, d_wu = d_wu,
+                   need = need, allowed = allowed }
+      end
+    end
+  end
+  return best
+end
+
+-- REAP AN ABANDONED VOLLEY.
+-- The volley's bookkeeping lives on the GOAL table, but nothing tells us when
+-- a goal is thrown away: a replan, or the enemy tank dying, simply hands the
+-- next tick a different goal. The volley then evaporated with no HEAT_EXIT
+-- line and, worse, no retry stamp -- so the next attack_tank could pick the
+-- same pill and start over, and a measured early run did exactly that
+-- (2 ENTERs, 213 HEAT_SHOT ticks, zero HEAT_EXITs).
+--
+-- So the ACTIVE volley is mirrored on `state`, which outlives any goal, and
+-- this runs every tick from steering.M.steer whatever the goal is. If the
+-- mirror no longer matches a live attack_tank volley on the current goal, the
+-- volley is closed out properly: a HEAT_EXIT with the reason, and the retry
+-- latch stamped exactly as the ordinary exits stamp it.
+-- No new tunable: it reuses ATTACK_TANK_HEAT_RETRY_TICKS.
+function M.heat_pill_reap(state, world, info, goal, now)
+  local act = state._heat_active
+  if not act then return end
+  -- Still the same volley, on the same goal table, still an attack_tank? Then
+  -- heat_pill_steer owns it and will emit its own exit.
+  if goal and act.goal == goal and goal.kind == "attack_tank"
+     and goal._heat_pid == act.pid then
+    return
+  end
+
+  local pill  = world.pills and world.pills[act.pid] or nil
+  local dead  = (not pill) or (pill.health or 0) <= 0
+  local hits  = pill and ((act.hp0 or 0) - (pill.health or 0)) or 0
+  local fired = (act.shells0 or 0) - (info.shells or 0)
+  if BRAIN_DEBUG_MODE then
+    print2(string.format(
+      "HEAT_EXIT t=%d pill=#%s hits{%d/%d} need{%d} fired{%d} hp{%s} anger{%.2f} -> %s",
+      now, tostring(act.pid), hits, act.shots or 0, act.need or 0, fired,
+      pill and tostring(pill.health) or "gone",
+      pill and (pill.anger or 0) or 0,
+      dead and "target_dead" or "goal_lost"))
+  end
+  state._heat_pill_retry = state._heat_pill_retry or {}
+  state._heat_pill_retry[act.pid] = now
+  state._heat_active = nil
+  -- If the goal table itself survived (reused, or just no longer attack_tank),
+  -- scrub its volley fields too so nothing downstream reads a stale volley.
+  if goal and act.goal == goal then
+    goal._heat_pid, goal._heat_shots, goal._heat_need = nil, nil, nil
+    goal._heat_hp0, goal._heat_shells0, goal._heat_start = nil, nil, nil
+    goal._heat_allow, goal._heat_hold = nil, nil
+    goal._heat_flight, goal._heat_fire_tick = nil, nil
+    if goal.substate == "heat_pill" then goal.substate = nil end
+  end
+end
+
+-- Heat-pill executor.  Returns keys, taps while a volley is running (or
+-- starting) so attack_tank holds fire on E for those few ticks; returns nil
+-- when the fight should proceed normally.
+--
+-- CALLED FROM steering.lua's tank_combat_steer, AFTER both of its disengage
+-- returns -- the pillbox-crossfire break-off (threat.pill_at(tmx,tmy) >=
+-- C.TANK_COMBAT_DEFENDED_DANGER) and the armour/shells flee check.  Those
+-- already `return` before this point, so a volley can never start or continue
+-- on a tick the existing code has decided we must break off: that is the
+-- "under fire, must evade" gate this reuses rather than inventing a new one.
+--
+-- los_fn is steering.lua's shot_path_clear -- the SAME reach-and-blocker test
+-- the fight loop uses to decide whether a shell would land on its target.
+function M.heat_pill_steer(state, world, info, goal, target, now, tmx, tmy, los_fn)
+  if not C.ATTACK_TANK_HEAT_PILL then return nil end
+  if not target or not los_fn then return nil end
+
+  local min_hp = C.ATTACK_TANK_HEAT_MIN_HP or 5
+  local pid    = goal._heat_pid
+  local pill   = pid and world.pills and world.pills[pid] or nil
+
+  -- ── Finish / abandon an in-flight volley ──────────────────────────────
+  if pid then
+    local hits   = pill and ((goal._heat_hp0 or 0) - (pill.health or 0)) or 0
+    local fired  = (goal._heat_shells0 or 0) - (info.shells or 0)
+    local shots  = goal._heat_shots or 0
+    local done   = nil
+
+    -- SHELLS IN FLIGHT. Progress is counted in HITS -- the pill's observed
+    -- armour drop -- but a shell takes 8 brain ticks per tile to get there
+    -- (C.TANK_COMBAT_SHELL_SPEED, 32 WU per brain tick, against a 256 WU tile)
+    -- while the tank reloads in about half that. Firing blind until `hits`
+    -- catches up therefore overshoots by roughly one shell per 8 ticks of
+    -- flight: a volley with PERFECT aim measured `hits{3/4} fired{6}` from
+    -- ~7 tiles and aborted with a false `misses`, having missed nothing.
+    -- So the trigger is allowed only `allow` shells (starting at shots_needed),
+    -- and `allow` is raised by one -- up to the MAX_MISSES budget -- only after
+    -- the shells already fired have had time to LAND and did not all register.
+    -- That way a real miss is still retried and a slow shell never counts as
+    -- one. `flight` is deliberately generous; MAX_TICKS bounds the whole thing.
+    local allow  = goal._heat_allow or shots
+    local flight = goal._heat_flight or 8
+    if fired >= allow and hits < shots
+       and (now - (goal._heat_fire_tick or now)) >= flight then
+      if (allow - shots) < (C.ATTACK_TANK_HEAT_MAX_MISSES or 2) then
+        allow = allow + 1
+        goal._heat_allow = allow
+        goal._heat_fire_tick = now   -- restart the landing clock for the retry
+      end
+    end
+    goal._heat_allow = allow
+    -- The trigger is held once we have `allow` shells fired or in the air.
+    goal._heat_hold = (fired >= allow)
+    if not pill or (pill.health or 0) <= 0 or pill.owner ~= "friendly"
+       or pill.in_tank then
+      done = "pill_gone"
+    elseif hits >= shots then
+      -- Which of the two ceilings actually stopped us? `maxed` means the pill
+      -- is at PILLBOX_MAX_FIRERATE; otherwise its armour ran the volley short
+      -- of that, named for the mode that did it (heat_allowed_shots).
+      if shots < (goal._heat_need or shots) then
+        done = (C.ATTACK_TANK_HEAT_CAP_MODE == "floor") and "hp_floor" or "hp_cap"
+      else
+        done = "maxed"
+      end
+    elseif C.ATTACK_TANK_HEAT_CAP_MODE == "floor"
+           and (pill.health or 0) <= min_hp then
+      -- floor mode, belt and braces: the entry allowance already counted the
+      -- shots the floor permits, but the pill can lose armour to somebody ELSE
+      -- mid-volley. Stop before the shot that would take it under the floor.
+      done = "hp_floor"
+    elseif fired >= allow + (C.ATTACK_TANK_HEAT_MAX_MISSES or 2) then
+      done = "misses"
+    elseif (info.shells or 0) <= (C.SHELL_RESERVE or 0) then
+      done = "out_of_shells"
+    elseif (now - (goal._heat_start or now)) >= (C.ATTACK_TANK_HEAT_MAX_TICKS or 150) then
+      -- Hard ceiling on the whole sequence. Rotating onto the pill is the slow
+      -- part -- a measured volley spent 39 of its 42 ticks getting aim_corr
+      -- from +10 to +1 -- and if the tank is drifting, or the bearing keeps
+      -- moving, `corr` can hover just outside the fire gate indefinitely. Left
+      -- unbounded that is a tank standing next to its own pill not fighting.
+      -- The volley is abandoned, the retry latch stamps, and the fight resumes.
+      done = "timeout"
+    end
+
+    if not done then
+      local pill_wx, pill_wy = U.m2w(pill.mx), U.m2w(pill.my)
+      local d_wu = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+      if d_wu > ((info.gunrange or 14) / 2.0) * 256 then
+        done = "out_of_range"
+      elseif not los_fn(info, world, pill_wx, pill_wy, pill.mx, pill.my) then
+        done = "lost_los"
+      end
+    end
+
+    if done then
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "HEAT_EXIT t=%d pill=#%s hits{%d/%d} need{%d} fired{%d} hp{%s} anger{%.2f} -> %s",
+          now, tostring(pid), hits, shots, goal._heat_need or shots, fired,
+          pill and tostring(pill.health) or "gone",
+          pill and (pill.anger or 0) or 0, done))
+      end
+      state._heat_pill_retry = state._heat_pill_retry or {}
+      state._heat_pill_retry[pid] = now
+      state._heat_active = nil          -- closed out here; nothing to reap
+      goal._heat_pid, goal._heat_shots = nil, nil
+      goal._heat_hp0, goal._heat_shells0, goal._heat_start = nil, nil, nil
+      goal._heat_allow, goal._heat_hold = nil, nil
+      goal._heat_flight, goal._heat_fire_tick = nil, nil
+      goal._heat_need = nil
+      if goal.substate == "heat_pill" then goal.substate = nil end
+      return nil
+    end
+
+    return M.heat_pill_fire(state, world, info, goal, pill, pid, hits,
+                            goal._heat_shots or 0, now)
+  end
+
+  -- ── Consider starting a volley ────────────────────────────────────────
+  -- Heating pays only against an enemy that is actually THERE: a ghost is an
+  -- extrapolation, and the pill would burn our armour and shells at nothing.
+  -- (Same "live enemy" requirement the defend_pill heat gate applies through
+  -- C.HEAT_REQUIRE_ENEMY_RANGE.)
+  if target.ghost then return nil end
+  -- Never start one afloat. heat_pill_fire brakes the tank and holds it still
+  -- to aim, and a boated tank that stops is a boated tank that stays boated:
+  -- a measured run opened a volley at brain tick 12 while still sitting on its
+  -- spawn pond and spent 117 ticks firing from the water instead of coming
+  -- ashore. Getting onto land is always the better use of those ticks.
+  if info.inboat then return nil end
+
+  local cand = heat_pill_select(state, world, info, goal, target, now,
+                                tmx, tmy, los_fn)
+  if not cand then return nil end
+
+  goal._heat_pid     = cand.id
+  goal._heat_shots   = cand.shots
+  goal._heat_hp0     = cand.hp
+  goal._heat_shells0 = info.shells or 0
+  goal._heat_start   = now
+  goal._heat_allow   = cand.shots
+  goal._heat_need    = cand.need      -- shells to MAX heat, before the hp cap
+  goal._heat_hold    = false
+  goal._heat_fire_tick = now
+  -- Brain ticks for one of our shells to reach the pill, plus a margin: a
+  -- shell covers C.TANK_COMBAT_SHELL_SPEED (32) WU per brain tick and a tile
+  -- is 256 WU, so 8 brain ticks per tile. This is the window the miss counter
+  -- waits out before deciding a shell is never going to land.
+  goal._heat_flight  = math.ceil((cand.d_wu or 0) / 256.0 * 8) + 4
+  -- Stamp the retry latch on ENTER as well as on exit. The volley's state
+  -- lives on the GOAL, so a replan that swaps the goal out mid-volley drops it
+  -- silently -- no exit, no stamp -- and the next tick would select the same
+  -- pill and start over, aiming forever without ever landing the hit that
+  -- would raise anger past the already_hot gate. Stamping here bounds that:
+  -- one attempt per pill per ATTACK_TANK_HEAT_RETRY_TICKS however the attempt
+  -- ends. A normal exit re-stamps with the later tick.
+  state._heat_pill_retry = state._heat_pill_retry or {}
+  state._heat_pill_retry[cand.id] = now
+  -- Mirror the volley on `state` so M.heat_pill_reap can close it out if this
+  -- goal is replaced before it finishes (state outlives any goal table).
+  state._heat_active = { pid = cand.id, goal = goal, shots = cand.shots,
+                         need = cand.need, hp0 = cand.hp,
+                         shells0 = info.shells or 0 }
+  return M.heat_pill_fire(state, world, info, goal, cand.pill, cand.id, 0,
+                          cand.shots, now)
+end
+
+-- Aim at the pill and hold the trigger.  The engine's reload paces the
+-- shots; we stop when the observed armour drop says enough of them landed.
+function M.heat_pill_fire(state, world, info, goal, pill, pid, hits, shots, now)
+  local keys, taps = 0, 0
+  goal.substate = "heat_pill"
+
+  if info.gunrange < C.GUNSIGHT_MAX then keys = bit.bor(keys, KEY_MORERANGE) end
+  if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+
+  local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                             pill.mx + 0.5, pill.my + 0.5)
+  local corr = U.adiff(info.direction, aim_dir)
+  local h, t = U.aim_turn_bits(corr, 6, 1)
+  keys = bit.bor(keys, h); taps = bit.bor(taps, t)
+
+  -- Hold the trigger once `allow` shells are fired or still in the air, so the
+  -- volley cannot overshoot while it waits for the hits to register.
+  local shooting = (math.abs(corr) <= 1) and not goal._heat_hold
+  if shooting then
+    keys = bit.bor(keys, KEY_SHOOT)
+    goal._heat_fire_tick = now
+    -- Refresh while firing (and through the shell's flight) so world.lua
+    -- skips the under_attack stamp for HEAT_SELF_STAMP_TICKS: deliberately
+    -- tickling our own pill must not read as an enemy siege to us or an ally.
+    -- Exactly what defend_pill_steer does (steering.lua:1320).
+    pill._heat_shot_tick = now
+  end
+
+  if BRAIN_DEBUG_MODE then
+    print2(string.format(
+      "HEAT_SHOT t=%d pill=#%s %d/%d anger=%.2f hp=%d corr=%+.0f fire=%s allow{%d} hold{%s}",
+      now, tostring(pid), hits, shots, pill.anger or 0, pill.health or 0,
+      corr, tostring(shooting), goal._heat_allow or shots,
+      tostring(goal._heat_hold or false)))
+  end
+
+  if viz.is_on("attack_heat_pill_viz") then
+    viz.circle("attack_heat_pill_viz", pill.mx + 0.5, pill.my + 0.5, 0.55,
+               255, 140, 0, 230)
+    viz.line("attack_heat_pill_viz", info.tankx / 256.0, info.tanky / 256.0,
+             pill.mx + 0.5, pill.my + 0.5, 255, 140, 0, 160)
+    viz.text("attack_heat_pill_viz", pill.mx + 0.5, pill.my - 0.6,
+             string.format("HEAT %d/%d hp=%d a=%.2f", hits, shots,
+                           pill.health or 0, pill.anger or 0),
+             "center", 255, 140, 0, 255)
+  end
+
+  return keys, taps
+end
+
 return M
 --[[ REMOVED: position/aim/engage/curve_away/rush/disengage substates
   if goal.substate == "position" then

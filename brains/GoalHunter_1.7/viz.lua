@@ -172,6 +172,9 @@ M.IDS = {
                         default_on = false },
   heat_pill_viz     = { short = "Heat pill action",
                         long  = "While executing a heat win: line tank->pill, circle on the pill, and fired-count label (heat_pill_position/aim/shoot -> heat_done). Matches defend_pill_steer's sequence." },
+  attack_heat_pill_viz = { short = "attack_tank heat pill",
+                        long  = "C.ATTACK_TANK_HEAT_PILL only. While an attack_tank fight is paused to heat a FRIENDLY pill: orange circle on the chosen pill, the tank->pill shot ray, and a hits/needed + hp + anger label. shots_needed counts the engine's speed HALVINGS (100->50->25->12->6, src/bolo/pillbox.c:504-511), progress counts the pill's observed armour drop, not key presses.",
+                        default_on = false },
 
   -- Pathfinder / nav.
   pf_destination    = { short = "Pathfinder destination",
