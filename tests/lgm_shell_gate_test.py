@@ -49,8 +49,18 @@ the man to walk to.
      tick", never "not this job".
 
      As measured on 2026-09-06 at -seed 42 -brain-lua-seed 42: refused at
-     t=3070 (`shell from pill at +15t, tank`) and dispatched at t=3075; refused
-     at t=3280 (`+4t`) and dispatched at t=3282. 26 dispatches in the run.
+     t=1080 (`shell from pill at +3t, tank`) and dispatched at t=1083; refused
+     at t=2898 (`+21t`) and dispatched at t=2918. 24 dispatches in the run.
+
+     (Those figures moved on 2026-09-06 when perception.lua's friendly-fire
+     repair guard was fixed -- it bit-tested a shell's `info`, which is an ENUM
+     (shells.h SHELLS_BRAIN_FRIENDLY 0 / HOSTILE 1 / NEUTRAL 2), with the
+     bitfield predicate a TANK's info byte wants, so every round this arena's
+     NEUTRAL pillbox fired was booked as our own team's friendly fire and our
+     pill went unrepairable for REPAIR_FRIENDLY_FIRE_REJECT_TICKS after each
+     one. The earlier 26/t=3070/t=3280 run had the same bug; it survived it
+     only because the pre-alarm defend_pill ladder happened to park the tank
+     off-centre, which left ~900-tick gaps in the mis-stamping.)
 
   B  THE CONTROL, one token different (cfg=BUILDER_POOL_SHELL_GATE=false).
      `shell_will_hit` must never appear -- that is what makes A's refusals
@@ -63,8 +73,8 @@ the man to walk to.
 WHAT THIS TEST DOES NOT CLAIM, because it is not true and the author said so
 first: that the gate keeps the man alive. It only knows about rounds ALREADY IN
 THE AIR. A pillbox that reloads while the man is out fires a round the gate was
-never shown, and the man dies to it -- which happens in BOTH arenas here (once
-in A, twice in B at this seed). The two death counts are PRINTED rather than
+never shown, and the man dies to it -- which happens in BOTH arenas here (twice
+in A, once in B at this seed). The two death counts are PRINTED rather than
 asserted against each other, because one run's difference between one death and
 two is not evidence of anything. What IS asserted is the mechanism: the gate
 fires, it names a real round, and it costs nothing but a few ticks.

@@ -596,12 +596,24 @@ function M.update(state, world, info)
   -- ally) is sitting on / right next to, so eval_repair_pill won't heal a pill
   -- the team is shooting down to reposition. Observing the actual bullet is more
   -- reliable than the repos broadcast (no latency) AND covers our OWN shots, so
-  -- we don't heal the pill we were just about to move. Own shots classify
-  -- friendly (OBJECT_HOSTILE==0), same as shot_tracker relies on. cheb<=1
-  -- window absorbs fast shells skipping a tile between snapshot ticks.
+  -- we don't heal the pill we were just about to move.
+  --
+  -- A SHELL'S `info` IS AN ENUM, NOT A BITFIELD (2026-09-06 fix). The C side
+  -- fills it from shells.h's SHELLS_BRAIN_* -- FRIENDLY 0, HOSTILE 1,
+  -- NEUTRAL 2 (brain_data.c:493-497, shells.c:1199-1203) -- so the only
+  -- friendly value is 0. This test used to read
+  -- `bit.band(ob.info, OBJECT_HOSTILE) == 0`, the predicate for a TANK's info
+  -- byte, which is also true of NEUTRAL(2): every round a neutral pillbox
+  -- fired counted as our own team's friendly fire, and any friendly pill
+  -- within one tile of that round's flight path went unrepairable for
+  -- REPAIR_FRIENDLY_FIRE_REJECT_TICKS (400) -- refreshed by the next round,
+  -- so in practice forever while a neutral pill was shooting past it. The two
+  -- other shell scans in this file already read the enum correctly
+  -- (`ob.info == SHELL_FRIENDLY`, SHELL_FRIENDLY = 0); this one now matches.
+  -- cheb<=1 window absorbs fast shells skipping a tile between snapshot ticks.
   local fshot_tiles = nil
   for _, ob in ipairs(info.objects) do
-    if ob.type == 1 and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then  -- 1 = OBJECT_SHOT
+    if ob.type == 1 and ob.info == 0 then  -- 1 = OBJECT_SHOT, 0 = SHELLS_BRAIN_FRIENDLY
       fshot_tiles = fshot_tiles or {}
       fshot_tiles[U.mkey(bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))] = true
     end
