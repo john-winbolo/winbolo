@@ -10,6 +10,7 @@
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":2,"active":0,"triggerSrc":0,"teamId":0,"threshold":0,"yesCount":0,"noCount":0,"eligibleCount":0,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"Mozart","country":"XX","clientType":0,"clientFlags":32,"allies":[0]}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot","country":"XX","clientType":2,"clientFlags":0,"allies":[1]}
+{"tick":0,"type":"CTRL_STATS_SEED","playerCount":2}
 {"tick":0,"type":"CTRL_LOBBY_SYNC_COMPLETE"}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot has joined."}
 {"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
