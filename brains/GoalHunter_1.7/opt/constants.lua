@@ -2539,14 +2539,16 @@ M.CAPACITY_FORCED_TARGET_MS = nil
 M.PROFILE_LITE_NEAR_FRAC = 0.85
 
 -- ?????? Squad coordination (Phase 1: pill blitz) ??????????????????????????????????????????????????????????????????????????????????????????
-M.HARASSER_FRAC       = 0.20   -- fraction of the protocol-bot set that are harassers (floor)
+M.HARASSER_FRAC       = 0.0    -- fraction of the protocol-bot set that are harassers (floor).
+                               -- 2026-09-07 (Andrew): "we do not have any harassers" -- 0.20 -> 0.0;
+                               -- with FRAC and FRAC_MAX both 0, is_harasser designates nobody. KEEL 0.20.
 -- Dynamic harasser ramp: once we hold a clear BASE advantage (base_strength past
 -- HARASSER_BASE_THRESHOLD) AND aren't bleeding pills (pill strength at/above
 -- HARASSER_PILL_FLOOR), raise the harasser fraction from HARASSER_FRAC up toward
 -- HARASSER_FRAC_MAX ??? dominating bases while holding pills means we can spare more
 -- bots to harass. Below the base threshold, or while losing a lot of pills, it
 -- stays at the HARASSER_FRAC floor.
-M.HARASSER_FRAC_MAX       = 0.50  -- harasser fraction ceiling at full base dominance
+M.HARASSER_FRAC_MAX       = 0.0   -- harasser fraction ceiling at full base dominance (2026-09-07: 0.50 -> 0.0, no harassers; KEEL 0.50)
 M.HARASSER_BASE_THRESHOLD = 0.60  -- base_strength (friendly/contested) where the ramp starts
 M.HARASSER_PILL_FLOOR     = 0.40  -- min pill strength to allow ramping ("at least not losing a lot")
 M.BASELINE_SQUAD_SIZE = 3      -- commanders = ceil(non-harasser count / this)
@@ -3784,6 +3786,9 @@ M.PRESETS = {
     -- SHELLS_LOW, so a tank that left a base above both lines could not go
     -- back for a top-off until it had burned down to 20 shells.
     REFUEL_TOPOFF_CANDIDATE = false,
+    -- 2026-09-07: harassers removed (HARASSER_FRAC 0.20 -> 0, FRAC_MAX 0.50 -> 0).
+    HARASSER_FRAC = 0.20,
+    HARASSER_FRAC_MAX = 0.50,
     -- 2026-09-06: SHELLS_LOW 20 -> 19 (Andrew: "SHELLS_LOW=19 is really what I
     -- want"). KEEL treats exactly 20 shells as low; the new default does not.
     SHELLS_LOW = 20,
