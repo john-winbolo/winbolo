@@ -140,6 +140,12 @@ DISP_RE = re.compile(
     r"BP_DISPATCH t=(\d+) job=(\S+) target=\((\d+),(\d+)\)(.*?) score=(-?[\d.]+) "
     r"\((.*?)\)(?: \[linear\])? "
     r"eta=(\S+) trip=(\S+) trees=(\d+)-(\d+) front=(-?\d+)")
+# Both shapes are word{value} CHIPS: BrainTest's pool-grid detail popup parses
+# exactly that form out of the same string (pool_grid.cpp), so the log line and
+# the panel's term table are one thing. Anything after the last chip of each
+# shape -- the `[legs out{..} + build{..} + back{..} pred{..} predsrc{..}
+# wedge{..}]` group builder_pool added on 2026-09-06 -- is trailing and does
+# not have to be matched here; check_legs() below reads it separately.
 LINEAR_TERMS_RE = re.compile(
     r"bp_score\{(-?[\d.]+)\} = hp_w\{(\d+)\} x missing\{(\d+)\} = "
     r"value\{(-?[\d.]+)\} - trip_w\{([\d.]+)\} x trip\{(\S+?)t\} = "
@@ -149,6 +155,43 @@ LEGACY_TERMS_RE = re.compile(
     r"\+ front\{(-?[\d.]+)\} = value\{(-?[\d.]+)\} - trip_w\{[\d.]+\} x "
     r"trip\{(\S+?)t\} = tripcost\{(-?[\d.]+)\} - danger_w\{[\d.]+\} x "
     r"bp_danger\{-?[\d.]+\} = dangercost\{(-?[\d.]+)\}")
+# The three legs of the trip, appended to BOTH shapes since 2026-09-06:
+#   [legs out{47} + build{20} + back{47} pred{same} predsrc{same} wedge{E}]
+# out + build + back has to equal the trip{} the score was charged on, or the
+# line is not hand-checkable however well the rest of it adds up.
+LEGS_RE = re.compile(
+    r"\[legs out\{(\S+?)\} \+ build\{(\S+?)\} \+ back\{(\S+?)\} "
+    r"pred\{[^}]*\} predsrc\{\S+?\}(?: wedge\{\S+?\})?\]")
+
+
+def check_legs(terms, trip, why):
+    """The trip{} the score was charged on has to be the three printed legs.
+
+    Since 2026-09-06 the round trip is out + LGM_BUILD_TIME + back, where back
+    is the walk home to where the TANK is predicted to be (or, on any fallback
+    and with BUILDER_POOL_RETURN_PREDICT off, a mirror of out). Printing a trip
+    the legs beside it do not add up to would make the whole line
+    unreproducible, which is the one thing these lines exist not to be."""
+    m = LEGS_RE.search(terms)
+    if not m:
+        return False, why + (" -- no [legs out{} + build{} + back{} pred{} "
+                             "predsrc{}] chips on the line, so the trip cannot "
+                             "be broken down")
+    try:
+        out_t, build_t, back_t = (int(m.group(1)), int(m.group(2)),
+                                  int(m.group(3)))
+    except ValueError:
+        return False, why + (f" -- unreadable legs "
+                             f"out{{{m.group(1)}}} build{{{m.group(2)}}} "
+                             f"back{{{m.group(3)}}}")
+    if abs((out_t + build_t + back_t) - trip) > 0.51:
+        return False, why + (f" -- but out {out_t} + build {build_t} + back "
+                             f"{back_t} = {out_t + build_t + back_t}, not the "
+                             f"trip {trip:.0f} the score was charged on")
+    return True, why + (f"; trip {trip:.0f} = out {out_t} + build {build_t} + "
+                        f"back {back_t}")
+
+
 
 
 def check_terms(score, terms):
@@ -178,7 +221,7 @@ def check_terms(score, terms):
         if abs(score - printed) > 0.51:
             return False, why + (f" -- the terms say {printed} and the score= "
                                  f"field says {score}")
-        return True, why
+        return check_legs(terms, trip, why)
     m = LEGACY_TERMS_RE.search(terms)
     if m:
         printed, base, urg, front, val, trip, trip_c, dgr_c = (
@@ -201,7 +244,7 @@ def check_terms(score, terms):
         if abs(score - printed) > 0.51:
             return False, why + (f" -- the terms say {printed} and the score= "
                                  f"field says {score}")
-        return True, why
+        return check_legs(terms, trip, why)
     return False, (f"the dispatch line's term breakdown '{terms}' matches "
                    "neither the linear nor the legacy shape -- did "
                    "builder_pool.M.score_terms change without this test?")
