@@ -2865,6 +2865,101 @@ bool clientSimIsMyTankAlive(const ClientSim *cs) {
   return tankGetArmour(&MY_TANK((ClientSim *)cs)) <= TANK_FULL_ARMOUR;
 }
 
+void clientSimBuildShellList(ClientSim *cs, screenBullets *sb,
+                             int left, int rightExcl,
+                             int top, int bottomExcl,
+                             int originX, int originY) {
+  int si;              /* Looping variable */
+  BYTE myPlayer = cs->interpCtx.localPlayer;
+
+  /* Other players' shells. Humans draw the forward-projected layer so
+   * incoming shells appear at their true present position rather than
+   * ~RTT/2 in the past; bots (e.g. BrainTest overlay) draw the raw
+   * serverShellSnaps the brain perceives. Own shells are filtered during
+   * snapshot sync, so neither source contains them. */
+  if (cs->isBot) {
+    for (si = 0; si < clientSimGetServerShellCount(cs); si++) {
+      const ShellSnapshot *ss = &clientSimGetServerShellSnaps(cs)[si];
+      BYTE smx = (BYTE)(ss->worldX >> TANK_SHIFT_MAPSIZE);
+      BYTE smy = (BYTE)(ss->worldY >> TANK_SHIFT_MAPSIZE);
+      if (ss->owner == myPlayer) {
+        continue;
+      }
+      if (smx >= left && smx < rightExcl && smy >= top && smy < bottomExcl) {
+        WORLD conv;
+        BYTE spx, spy, swx, swy, sframe;
+        swx = (BYTE)ss->worldX;
+        swy = (BYTE)ss->worldY;
+        conv = ss->worldX;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv >>= TANK_SHIFT_PIXELSIZE;
+        spx = (BYTE)conv;
+        conv = ss->worldY;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv >>= TANK_SHIFT_PIXELSIZE;
+        spy = (BYTE)conv;
+        sframe = (BYTE)(utilGetDir((TURNTYPE)ss->angle) + SHELL_START_EXPLODE + 1);
+        screenBulletsAddItem(sb, (BYTE)(smx - originX), (BYTE)(smy - originY),
+                             spx, spy, sframe, swx, swy);
+      }
+    }
+  } else {
+    for (si = 0; si < clientSimGetProjectedShellCount(cs); si++) {
+      const ProjectedShell *ps = &clientSimGetProjectedShells(cs)[si];
+      WORLD sx = (WORLD)(int)ps->fx;
+      WORLD sy = (WORLD)(int)ps->fy;
+      BYTE smx = (BYTE)(sx >> TANK_SHIFT_MAPSIZE);
+      BYTE smy = (BYTE)(sy >> TANK_SHIFT_MAPSIZE);
+      /* Ours come from the predicted array below. */
+      if (ps->owner == myPlayer) {
+        continue;
+      }
+      if (smx >= left && smx < rightExcl && smy >= top && smy < bottomExcl) {
+        WORLD conv;
+        BYTE spx, spy, sframe;
+        conv = sx;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv >>= TANK_SHIFT_PIXELSIZE;
+        spx = (BYTE)conv;
+        conv = sy;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv >>= TANK_SHIFT_PIXELSIZE;
+        spy = (BYTE)conv;
+        sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
+        screenBulletsAddItem(sb, (BYTE)(smx - originX), (BYTE)(smy - originY),
+                             spx, spy, sframe, (BYTE)sx, (BYTE)sy);
+      }
+    }
+  }
+
+  /* Client-predicted shells (local player only) */
+  for (si = 0; si < clientSimGetPredictedShellCount(cs); si++) {
+    const PredictedShell *ps = &clientSimGetPredictedShells(cs)[si];
+    BYTE pmx, pmy;
+    /* An expired shell would draw a ghost frame beside its own explosion. */
+    if (ps->length <= SHELL_DEATH) {
+      continue;
+    }
+    pmx = (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE);
+    pmy = (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE);
+    if (pmx >= left && pmx < rightExcl && pmy >= top && pmy < bottomExcl) {
+      WORLD conv;
+      BYTE ppx, ppy, pframe;
+      conv = ps->x;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      ppx = (BYTE)conv;
+      conv = ps->y;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      ppy = (BYTE)conv;
+      pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
+      screenBulletsAddItem(sb, (BYTE)(pmx - originX), (BYTE)(pmy - originY),
+                           ppx, ppy, pframe, (BYTE)ps->x, (BYTE)ps->y);
+    }
+  }
+}
+
 void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
                                       screenLgm *lgms, screenBullets *sb) {
   GameSim *gs; /* The client's own sim, source of the shell and explosion lists */
@@ -2891,66 +2986,17 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
     screenLgmPrepare(cs, lgms, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
   }
   if (sb != NULL) {
-    int si;              /* Looping variable */
-    BYTE myPlayer = cs->interpCtx.localPlayer;
-
     gs = clientSimGetGameSim(cs);
 
     /* Shells do not come from gs->shs. A client's shs list is not where the
      * shells it can see live: other players' arrive as the forward-projected
      * layer and the local player's own as client-side predictions, which is
      * why the main view walks those two arrays rather than calling
-     * shellsCalcScreenBullets. Same two arrays here, minus the viewport
-     * bounds test — the caller wants the whole map and filters per square,
-     * and minus the offset subtraction, so the squares stay absolute like
-     * the rest of what this fills in. */
-    for (si = 0; si < clientSimGetProjectedShellCount(cs); si++) {
-      const ProjectedShell *ps = &clientSimGetProjectedShells(cs)[si];
-      WORLD sx = (WORLD)(int)ps->fx;
-      WORLD sy = (WORLD)(int)ps->fy;
-      WORLD conv;
-      BYTE spx, spy, sframe;
-
-      /* Ours come from the predicted array below. */
-      if (ps->owner == myPlayer) {
-        continue;
-      }
-      conv = sx;
-      conv <<= TANK_SHIFT_MAPSIZE;
-      conv >>= TANK_SHIFT_PIXELSIZE;
-      spx = (BYTE)conv;
-      conv = sy;
-      conv <<= TANK_SHIFT_MAPSIZE;
-      conv >>= TANK_SHIFT_PIXELSIZE;
-      spy = (BYTE)conv;
-      sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
-      screenBulletsAddItem(sb, (BYTE)(sx >> TANK_SHIFT_MAPSIZE),
-                           (BYTE)(sy >> TANK_SHIFT_MAPSIZE), spx, spy, sframe,
-                           (BYTE)sx, (BYTE)sy);
-    }
-
-    for (si = 0; si < clientSimGetPredictedShellCount(cs); si++) {
-      const PredictedShell *ps = &clientSimGetPredictedShells(cs)[si];
-      WORLD conv;
-      BYTE ppx, ppy, pframe;
-
-      /* An expired shell would draw a ghost frame beside its own explosion. */
-      if (ps->length <= SHELL_DEATH) {
-        continue;
-      }
-      conv = ps->x;
-      conv <<= TANK_SHIFT_MAPSIZE;
-      conv >>= TANK_SHIFT_PIXELSIZE;
-      ppx = (BYTE)conv;
-      conv = ps->y;
-      conv <<= TANK_SHIFT_MAPSIZE;
-      conv >>= TANK_SHIFT_PIXELSIZE;
-      ppy = (BYTE)conv;
-      pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
-      screenBulletsAddItem(sb, (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE),
-                           (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE), ppx, ppy,
-                           pframe, (BYTE)ps->x, (BYTE)ps->y);
-    }
+     * shellsCalcScreenBullets. Same list builder here, over a rect every
+     * square passes — the caller wants the whole map and filters per square —
+     * and with no origin to subtract, so the squares stay absolute like the
+     * rest of what this fills in. */
+    clientSimBuildShellList(cs, sb, 0, MAP_ARRAY_SIZE, 0, MAP_ARRAY_SIZE, 0, 0);
 
     explosionsCalcScreenBullets(&gs->expl, sb, 0, MAP_ARRAY_LAST, 0,
                                 MAP_ARRAY_LAST);

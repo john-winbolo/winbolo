@@ -1109,6 +1109,14 @@ int run_catchup_ignores_redundant_duplicates(void);
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
 
+/* Shared shell list builder (test_screen_bullets_build.c): the classic
+ * viewport list with the scroll origin and the overview's whole-map list with
+ * origin 0 come out of clientSimBuildShellList entry for entry as each view
+ * used to build them; a shell outside the viewport is only on the whole-map
+ * list, an expired prediction on neither, and a bot's list reads the server
+ * snapshots instead of the projected layer. */
+int run_screen_bullets_build(void);
+
 /* Ping RTT smoothers (test_ping_smoother.c): the min-over-window and EWMA
  * primitives — window-minimum tracking as samples slide out, EWMA constant
  * convergence, and a monotonic overshoot-free step response. */
