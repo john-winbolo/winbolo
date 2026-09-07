@@ -77,6 +77,53 @@
 #include "players.h"
 #include "viewport.h"
 
+/* ------------------------------------------------------------------
+ * Fog experiment selector: which rule builds the block round the player's
+ * own tank, and whether buildings block sight inside it. Process-global
+ * and runtime-switchable, like the scroll mechanism selector, and not
+ * saved - every launch starts on Envelope with line of sight off. */
+static FogExperiment g_fogExperiment  = fogExperimentEnvelope;
+static bool          g_fogLineOfSight = FALSE;
+
+FogExperiment overviewFogExperimentGet(void) { return g_fogExperiment; }
+void overviewFogExperimentSet(FogExperiment e) { g_fogExperiment = e; }
+bool overviewLineOfSightGet(void) { return g_fogLineOfSight; }
+void overviewLineOfSightSet(bool on) { g_fogLineOfSight = on; }
+
+/* What each experiment is called and what it does, in enum order. Plain
+ * English rather than lang.h ids for the same reason the keys that switch
+ * them are hardcoded scancodes: this is a playtest readout, not shipped UI.
+ * If one of them is kept the strings move to lang.h and the generator runs. */
+static const char *kFogExperimentNames[FOG_EXPERIMENT_COUNT] = {
+  "Envelope",
+  "Lens",
+  "Headlights",
+  "Halo",
+  "Afterimage"
+};
+
+static const char *kFogExperimentBlurbs[FOG_EXPERIMENT_COUNT] = {
+  "Everything the classic view could scroll to",
+  "The classic window, moved by autoscroll and the scroll keys",
+  "The window leads where the tank is pointing",
+  "Ground all round, enemies only where you look",
+  "What you scrolled over lingers, then fades"
+};
+
+const char *overviewFogExperimentName(FogExperiment e) {
+  if ((int)e < 0 || (int)e >= FOG_EXPERIMENT_COUNT) {
+    return "Unknown";
+  }
+  return kFogExperimentNames[(int)e];
+}
+
+const char *overviewFogExperimentBlurb(FogExperiment e) {
+  if ((int)e < 0 || (int)e >= FOG_EXPERIMENT_COUNT) {
+    return "";
+  }
+  return kFogExperimentBlurbs[(int)e];
+}
+
 /* An inclusive square block centred on (cx,cy), trimmed to the map, live
  * outright. The centre and half-width are ints so a block over the top or left
  * edge clamps instead of wrapping through zero. Zeroed first so the whole

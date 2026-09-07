@@ -984,7 +984,8 @@ bool clientSimAllyViewAwaitingFirstData(const ClientSim *cs) {
 
 void clientSimFillOverviewViewInputs(const ClientSim *cs,
                                      OverviewViewInputs *in) {
-  int cat; /* Looping variable */
+  int cat;                 /* Looping variable */
+  const ScrollState *sc;   /* The client's own scroll state */
 
   if (in == NULL) {
     return;
@@ -1006,6 +1007,32 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->allyViewable = clientSimAllyViewMask(cs);
   in->viewKind = cs->viewport.viewKind;
   in->viewTarget = cs->viewport.viewTarget;
+
+  in->experiment = (uint8_t)overviewFogExperimentGet();
+  in->lineOfSight = overviewLineOfSightGet();
+
+  /* A player with no tank in their slot has no window and no facing to report:
+   * those fields keep the zeroes the defaults gave them, and viewValid says so.
+   */
+  if (MY_TANK((ClientSim *)cs) == NULL) {
+    return;
+  }
+
+  /* The classic scroll keeps running whether or not the classic view is on
+   * screen, so its offset is always the square that view would be showing. The
+   * back buffer carries one spare square each side of the 15x15, so the first
+   * square actually visible is one in from the offset. */
+  sc = clientSimGetScroll((ClientSim *)cs);
+  in->viewLeft = (BYTE)(cs->viewport.xOffset + 1);
+  in->viewTop = (BYTE)(cs->viewport.yOffset + 1);
+  in->manualHold = sc->autoScrollOverRide;
+  in->viewSubX = sc->subPosX;
+  in->viewSubY = sc->subPosY;
+  in->facing = tankGetTravelAngel(&MY_TANK((ClientSim *)cs));
+  /* Those readings only say where the player is looking while a live tank is
+   * being followed: an item view has taken the camera off the tank, and a dead
+   * one leaves the offsets wherever the view stopped. */
+  in->viewValid = clientSimIsMyTankAlive(cs) && in->viewKind == VIEW_KIND_TANK;
 }
 
 /* Feeds the overview its per-tick view of the world. Reads the local tank's
@@ -2826,6 +2853,38 @@ int clientSimGetScrollMechanism(void) {
 
 void clientSimSetScrollMechanism(int mech) {
   scrollSetMechanism((ScrollMechanism)mech);
+}
+
+int clientSimGetFogExperiment(void) {
+  return (int)overviewFogExperimentGet();
+}
+
+/* Wrapped rather than cast straight through: the callers step the selector on
+ * and pick rows out of a list, and neither should be able to leave it on a
+ * value the name and blurb tables have no row for. */
+void clientSimSetFogExperiment(int e) {
+  e = ((e % FOG_EXPERIMENT_COUNT) + FOG_EXPERIMENT_COUNT) % FOG_EXPERIMENT_COUNT;
+  overviewFogExperimentSet((FogExperiment)e);
+}
+
+int clientSimFogExperimentCount(void) {
+  return (int)FOG_EXPERIMENT_COUNT;
+}
+
+bool clientSimGetFogLineOfSight(void) {
+  return overviewLineOfSightGet();
+}
+
+void clientSimSetFogLineOfSight(bool on) {
+  overviewLineOfSightSet(on);
+}
+
+const char *clientSimFogExperimentName(int e) {
+  return overviewFogExperimentName((FogExperiment)e);
+}
+
+const char *clientSimFogExperimentBlurb(int e) {
+  return overviewFogExperimentBlurb((FogExperiment)e);
 }
 
 void clientSimSetAutoScrollOverride(ClientSim *cs, bool value) {

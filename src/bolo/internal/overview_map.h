@@ -35,6 +35,37 @@
 
 struct GameSim;
 
+/* Which rule decides the block of squares round the player's own tank.
+ * Envelope is what the map has always drawn - everything the classic 15x15
+ * view could scroll to - and the four above it narrow it in different ways.
+ * All of it is client presentation: the server sends what it always sent, and
+ * the point of having them all is to find which one plays best. */
+typedef enum {
+  fogExperimentEnvelope = 0,
+  fogExperimentLens,
+  fogExperimentHeadlights,
+  fogExperimentHalo,
+  fogExperimentAfterimage,
+  FOG_EXPERIMENT_COUNT
+} FogExperiment;
+
+/* The experiment in force and whether buildings block sight inside the block,
+ * with the name and the one-line description each experiment shows when it is
+ * picked. Process-global and not saved, the way the scroll mechanism selector
+ * is: every launch starts on Envelope with line of sight off. The name and the
+ * blurb live here so the on-screen readout and anything else that lists them
+ * read one source; an index outside the enum gives a placeholder string rather
+ * than a read off the end of the table.
+ *
+ * Frontends reach all six through the int-typed clientSim mirrors rather than
+ * this header, which they may not include. */
+FogExperiment overviewFogExperimentGet(void);
+void          overviewFogExperimentSet(FogExperiment e);
+bool          overviewLineOfSightGet(void);
+void          overviewLineOfSightSet(bool on);
+const char   *overviewFogExperimentName(FogExperiment e);
+const char   *overviewFogExperimentBlurb(FogExperiment e);
+
 /* What the region build needs beyond the sim itself: the server's visibility
  * rules, the proximity clocks the client keeps for the local player under
  * viewPolicyDecay, the tick those clocks are read against, and what the camera
@@ -50,7 +81,15 @@ struct GameSim;
  *
  * allyViewable is the alive-tank bit per slot the ally-view helpers take
  * (clientSimAllyViewMask); with no bits set no allied tank ever earns a
- * region, whatever the policy says. */
+ * region, whatever the policy says.
+ *
+ * The rest is the fog experiment and the state the narrower blocks are placed
+ * from: the classic view is still scrolling under the full screen map, so its
+ * first visible square, the sub-square part of its position and whether the
+ * player is holding it off autoscroll say where the window the player is
+ * driving actually is, and the tank's facing says where they are pointing.
+ * viewValid is false when there is no live tank or the player is watching an
+ * item, which is when those readings mean nothing. */
 typedef struct OverviewViewInputs {
     ViewPolicy      policy[VIEW_CATEGORY_COUNT];
     uint16_t        decaySecs[VIEW_CATEGORY_COUNT];
@@ -62,12 +101,21 @@ typedef struct OverviewViewInputs {
     PlayerBitMap    allyViewable;
     uint8_t         viewKind;      /* VIEW_KIND_* the player is watching */
     BYTE            viewTarget;    /* the pill/base index or ally player number */
+    uint8_t         experiment;    /* FogExperiment */
+    bool            lineOfSight;
+    bool            viewValid;     /* the classic-view fields below mean something */
+    BYTE            viewLeft, viewTop;  /* first visible square of that view */
+    bool            manualHold;    /* the player is holding the view off autoscroll */
+    int16_t         viewSubX, viewSubY; /* sub-square part of the view position */
+    BYTE            facing;        /* the tank's travel direction, 0-15 */
 } OverviewViewInputs;
 
 /* The rules a server ships with: pillboxes always, bases off, allied tanks
  * always. No clocks, no item view, no viewable allies — so what comes out is
  * the tank block and the pillboxes the player can view through, which is the
- * region set the overview has always had. */
+ * region set the overview has always had. The fog fields zero with it, which
+ * reads as Envelope with line of sight off and no classic view to place a
+ * block from. */
 void overviewViewInputsDefaults(OverviewViewInputs *in);
 
 /* Whether one proximity clock is still inside its category's window, and how

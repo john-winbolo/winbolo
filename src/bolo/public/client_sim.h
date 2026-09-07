@@ -1048,6 +1048,21 @@ void         clientSimSetAutoScrollOverride(ClientSim *cs, bool value);
 int          clientSimGetScrollMechanism(void);
 void         clientSimSetScrollMechanism(int mech);
 
+/* Fog-experiment selector for the map overview: which rule builds the block of
+   live squares round the player's own tank (0 = Envelope, the block the map has
+   always drawn), and whether buildings block sight inside it. Values match
+   FogExperiment, exposed as int so GUI callers needn't include the internal
+   overview header, with the count so a caller cycling through them doesn't
+   hardcode it. Name and blurb are the plain English a readout shows, and are
+   safe for any int. Process-global, not saved. */
+int          clientSimGetFogExperiment(void);
+void         clientSimSetFogExperiment(int e);
+int          clientSimFogExperimentCount(void);
+bool         clientSimGetFogLineOfSight(void);
+void         clientSimSetFogLineOfSight(bool on);
+const char  *clientSimFogExperimentName(int e);
+const char  *clientSimFogExperimentBlurb(int e);
+
 /* My-tank helpers for clients that need the local tank's current map
  * tile (e.g. gamepad build cursor).  Return false when the local tank
  * is destroyed / not yet spawned.
