@@ -31,7 +31,9 @@ local bit = require('bitcompat')
 -- special-cased:
 --   rebuild  a 0-HP friendly pill inside the leash -> 4 trees make it live
 --   topup    a damaged-but-alive friendly pill inside the leash
---   farm     opportunistic wood
+--   farm     opportunistic wood -- up to FOUR rows since 2026-09-06, the
+--            nearest forest in each of four 90-degree wedges (N/E/S/W), so a
+--            near forest the man cannot straight-line to loses to a clear one
 --
 -- Print2 contract (one line per tick for the verdict, one per event):
 --   BUILDER_POOL t=.. owner=.. elig=..      the per-tick verdict + counts
@@ -61,6 +63,12 @@ local M = {}
 -- Deterministic type ordering for tie-breaks (and the claim wire format).
 local TYPE_RANK = { rebuild = 1, topup = 2, farm = 3 }
 M.TYPE_RANK = TYPE_RANK
+
+-- Farm wedges (BUILDER_POOL_FARM_SECTORS = 4). Fixed indices, because the
+-- emission order of the rows is these indices and the pool's tie-breaks have
+-- to be reproducible from a log line: N, E, S, W, always.
+local WEDGE_N, WEDGE_E, WEDGE_S, WEDGE_W = 1, 2, 3, 4
+local WEDGE_NAME = { "N", "E", "S", "W" }
 
 -- -------------------------------------------------------------------------
 -- repair_leash: how far a REBUILD/TOPUP target may sit from the tank.
@@ -124,31 +132,283 @@ function M.front_distance(state, mx, my)
   memo.v[key] = found
   return found
 end
+-- -------------------------------------------------------------------------
+-- route_forecast: WHERE THE TANK WILL BE, walked along its own planned route.
+--
+-- Not a straight line from heading and speed. A tank on a goal is following a
+-- route the navigator has already computed and steering is already driving --
+-- state.pf.path_chain, the committed chain from cpf.trace_path /
+-- cpf.dijkstra_trace_path (steering.lua ~line 614), a FLAT array
+-- {x1,y1,x2,y2,...} from the search source to the destination. steer.steer
+-- runs at init.lua:6685 and builder_pool.update at init.lua:7650, SAME tick,
+-- so the chain read here is this tick's. Nothing is recomputed: no A*, no
+-- Dijkstra, no second trace.
+--
+-- Walked once per tick and memoised on `state`, as a cumulative TIME profile:
+-- t[i] = brain ticks to reach waypoint i from the tank. Every row then reads
+-- its own horizon off the same profile instead of re-walking the chain.
+--
+-- MEMO KEY: the tick AND the chain table itself. lgm_trip is also asked from
+-- goals.lua (builder_can_repair) and from the repair feeder, and the GOAL POOL
+-- RUNS BEFORE STEERING (init.lua: goals, then steer.steer at 6685, then
+-- bpool.update at 7650). Keying on the tick alone would let the first caller
+-- of the tick freeze LAST tick's route into the memo and hand it to the pool
+-- after steering had already replaced it. steering assigns a fresh table on
+-- every completed search (cpf.trace_path returns a new one), so comparing the
+-- table identity rebuilds exactly when the route really changed and at no
+-- other time -- every caller still sees one answer per route, and it is
+-- always the freshest route that caller could have seen.
+--
+-- SPEED, from the engine and not guessed:
+--   * bolo_map.h:71-83 MAP_SPEED_T* is the tank's per-terrain speed CAP
+--     (road 16, grass 12, forest 6, swamp/crater/rubble/river 3, refbase and
+--     boat 16, building/halfbuilding/pillbox 0). C.MAP_SPEED mirrors it.
+--   * tank.c:2028 displace = mapGetSpeed(...) and the tank's `speed` field
+--     converges on it (TANK_ACCELERATE_RATE up, TANK_TERRAIN_DECEL_RATE down).
+--   * tank.c:1614-1621 each tankUpdate does residualSpeed += speed and moves
+--     utilCalcDistance(angle, residualSpeed) WORLD UNITS -- so `speed` is WU
+--     per tankUpdate.
+--   * server_sim_tick.c:319 tankUpdate runs on the keys half-tick and :766
+--     lgmUpdate on the game half-tick, one of each per 20 ms frame, and
+--     server_lifecycle.c:583 / luabrainshandler.c:1216 run ONE brain think per
+--     frame. So one brain tick = one tankUpdate = one LGM walk-sim tick, and
+--     C.MAP_SPEED is already WU per BRAIN tick. No conversion.
+-- A tile step is 256 WU orthogonally and 256 x sqrt(2) diagonally, so the
+-- cost of entering tile i is (step WU) / MAP_SPEED[terrain of tile i].
+--
+-- Returns the memo, or nil when there is no usable route:
+--   { n, x[], y[], t[] }          -- t[1] = 0, at the tank's own tile
+-- "Usable" means the chain has at least two waypoints AND one of them is
+-- within BUILDER_POOL_RETURN_PREDICT_ROUTE_SNAP tiles of the tank. A chain
+-- left over from a goal the tank has since abandoned is not a plan, and
+-- predicting along it would be worse than not predicting at all.
+-- -------------------------------------------------------------------------
+local function route_forecast(state, info)
+  local now = state.tick or 0
+  local chain = state.pf and state.pf.path_chain
+  local memo = state._bp_route
+  if memo and memo.tick == now and memo.chain == chain then
+    return memo.ok and memo or nil
+  end
+  memo = { tick = now, chain = chain, ok = false }
+  state._bp_route = memo
+
+  local nwp = chain and math.floor(#chain / 2) or 0
+  if nwp < 2 then memo.why = "no_route"; return nil end
+
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  -- Snap to the chain: its own first point is where the SEARCH started, which
+  -- the tank has since driven away from. Nearest waypoint by squared tile
+  -- distance, the same walk steering.lua does when A* restarts (~line 626).
+  -- Deterministic: strictly-less keeps the FIRST (lowest index) of any tie, so
+  -- the forecast never depends on scan order.
+  local best_i, best_d = nil, math.huge
+  for i = 1, nwp do
+    local dx = chain[2 * i - 1] - tmx
+    local dy = chain[2 * i] - tmy
+    local d = dx * dx + dy * dy
+    if d < best_d then best_d, best_i = d, i end
+  end
+  local snap = C.BUILDER_POOL_RETURN_PREDICT_ROUTE_SNAP or 2
+  if best_d > snap * snap then
+    memo.why = "route_stale"
+    return nil
+  end
+  if best_i >= nwp then memo.why = "route_ended"; return nil end
+
+  -- Walk forward, accumulating brain ticks, until the horizon cap is reached
+  -- or the route runs out. Entry 1 of the profile is the tank's own tile at
+  -- t = 0, so a horizon of 0 predicts "here" and every fallback is the same
+  -- answer as a zero-length walk.
+  local cap = C.BUILDER_POOL_RETURN_PREDICT_MAX_TICKS or 400
+  local xs, ys, ts = { tmx }, { tmy }, { 0 }
+  local n = 1
+  local acc = 0
+  local px, py = tmx, tmy
+  for i = best_i + 1, nwp do
+    local nx, ny = chain[2 * i - 1], chain[2 * i]
+    local dx, dy = nx - px, ny - py
+    if dx ~= 0 or dy ~= 0 then
+      local spd = C.MAP_SPEED[U.ttype(nx, ny)] or 12
+      if spd <= 0 then break end                 -- route into a wall: stop
+      local wu = 256 * math.sqrt(dx * dx + dy * dy)
+      acc = acc + wu / spd
+      if acc > cap then break end
+      n = n + 1
+      xs[n], ys[n], ts[n] = nx, ny, acc
+      px, py = nx, ny
+    end
+  end
+  if n < 2 then memo.why = "route_no_progress"; return nil end
+  memo.ok, memo.n, memo.x, memo.y, memo.t = true, n, xs, ys, ts
+  memo.why = "route"
+  return memo
+end
+M.route_forecast = route_forecast
+
+-- The forecast as a printable "(x,y)@ticks,..." list, for BP_PRED. Called only
+-- from inside a print2 argument, so lua_strip removes every call and opt/
+-- never runs it.
+local function route_str(fc)
+  if not (fc and fc.ok) then return "none" end
+  local wp = {}
+  for i = 1, fc.n do
+    wp[i] = string.format("(%d,%d)@%.0f", fc.x[i], fc.y[i], fc.t[i])
+  end
+  return table.concat(wp, ",")
+end
 
 -- -------------------------------------------------------------------------
 -- lgm_trip: outbound walk ticks (real sim), round trip, and reachability.
 --
--- The wall-shield / repair dispatch walk-time math, unchanged: the C
--- tick-by-tick LGM sim with the DESTINATION blessed, so a live pill or base AT
--- the target does not self-block (the man works ON that square). Pills and
--- bases in the PATH still block -- a friendly pill between us and the spot
--- really does stop him.
+-- The wall-shield / repair dispatch walk-time math: the C tick-by-tick LGM sim
+-- with the DESTINATION blessed, so a live pill or base AT the target does not
+-- self-block (the man works ON that square). Pills and bases in the PATH still
+-- block -- a friendly pill between us and the spot really does stop him.
 --
--- Round trip = 2 x outbound + LGM_BUILD_TIME. Returns nil when unreachable.
+-- Round trip = outbound + LGM_BUILD_TIME + return. Returns nil when the
+-- OUTBOUND leg is unreachable (a job the man cannot get to is not a job).
+--
+-- THE RETURN LEG (BUILDER_POOL_RETURN_PREDICT, 2026-09-06).
+--
+-- The old return leg was `out` again: a mirror image of the walk out, which is
+-- the walk home only if the tank waits on the spot. It does not. By the time
+-- the man has walked out and spent LGM_BUILD_TIME on the tile, a tank that is
+-- driving has moved -- and the mirrored leg hides exactly the fact that
+-- matters, that a forest AHEAD of the tank is a shorter errand than an equally
+-- distant one BEHIND it.
+--
+-- So: walk the tank forward along ITS OWN PLANNED ROUTE (route_forecast, above
+-- -- state.pf.path_chain, at the per-terrain speeds the engine caps it to) for
+-- out + LGM_BUILD_TIME brain ticks, capped at
+-- BUILDER_POOL_RETURN_PREDICT_MAX_TICKS, and walk the man BACK to the tile it
+-- lands on. A straight line from heading and speed is deliberately NOT used:
+-- the tank turns, and the route is the turn it has already committed to.
+--
+-- The blessed square for the return leg is the TARGET tile -- the man starts
+-- standing on it, and for a rebuild/topup row that tile is a pillbox, whose
+-- man-speed is 0 (brain_pathfinder.c lgm_man_speed[12]); without the bless the
+-- sim would refuse to move him on tick 1 and every repair row in the pool
+-- would read `unreachable`. lgmTravelTicksCore clears the bless the moment he
+-- steps off it, so nothing else in the walk is softened.
+--
+-- FALLBACKS, in order, each naming itself on the row:
+--   no usable route (an idle or stationary tank, or a chain left over from an
+--     abandoned goal)                                   -> the tank's own tile
+--   the predicted tile is off the map, or the man cannot stand on it (water,
+--     building, live pill -- the walk sim's own speed table)
+--                                                       -> the tank's own tile
+--   the return walk sim reports stuck / unreachable     -> the tank's own tile
+-- Falling back to the tank's tile makes the return leg the outbound leg
+-- mirrored, i.e. exactly the old number -- so a fallback is never a refusal,
+-- only a loss of information, and the row still competes.
+--
+-- Returns out_ticks, trip, det -- det carrying every number the chips print:
+--   { build, back, pred_mx, pred_my, src = "route"/"same"/"off", horizon,
+--     route_i, route_n, route_t, fallback = <why> or nil }
+-- With the flag off, det.back == out_ticks and det.pred_mx is nil, so
+-- trip is exactly 2 x out + LGM_BUILD_TIME, as it always was.
 -- -------------------------------------------------------------------------
-function M.lgm_trip(info, mx, my)
+
+-- Man-walkable terrain, mirroring brain_pathfinder.c lgm_man_speed[] > 0:
+-- building(0), river(1), halfbuilding(8), deepsea(10) and pillbox(12) are the
+-- five the man cannot stand on. Kept as a table rather than a speed lookup
+-- because the only question here is walkable / not.
+local MAN_WALKABLE = {
+  [C.T_SWAMP] = true, [C.T_CRATER] = true, [C.T_ROAD] = true,
+  [C.T_FOREST] = true, [C.T_RUBBLE] = true, [C.T_GRASS] = true,
+  [C.T_BOAT] = true, [C.T_REFBASE] = true, [C.T_UNKNOWN] = true,
+}
+
+function M.lgm_trip(state, info, mx, my)
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
+  local build_t = C.LGM_BUILD_TIME or 20
+  local near = C.BUILDER_POOL_GRASS_TICKS_PER_TILE or 16
+  local out
   if math.abs(mx - tmx) + math.abs(my - tmy) <= 1 then
-    local out = C.BUILDER_POOL_GRASS_TICKS_PER_TILE or 16
-    return out, 2 * out + (C.LGM_BUILD_TIME or 20)
+    out = near
+  else
+    out = cpf_lgm_travel_ticks_map(tmx, tmy, mx, my, mx, my,
+                                   C.BUILDER_POOL_LGM_MAX_TICKS or 2000,
+                                   C.BUILDER_POOL_LGM_STUCK_TICKS or 150)
+    if out == nil or out < 0 then return nil end
+    if out == 0 then out = near end
   end
-  local out = cpf_lgm_travel_ticks_map(tmx, tmy, mx, my, mx, my,
-                                       C.BUILDER_POOL_LGM_MAX_TICKS or 2000,
-                                       C.BUILDER_POOL_LGM_STUCK_TICKS or 150)
-  if out == nil or out < 0 then return nil end
-  if out == 0 then out = C.BUILDER_POOL_GRASS_TICKS_PER_TILE or 16 end
-  return out, 2 * out + (C.LGM_BUILD_TIME or 20)
+
+  if not C.BUILDER_POOL_RETURN_PREDICT then
+    return out, 2 * out + build_t,
+           { build = build_t, back = out, src = "off" }
+  end
+
+  local horizon = out + build_t
+  local hmax = C.BUILDER_POOL_RETURN_PREDICT_MAX_TICKS or 400
+  if horizon > hmax then horizon = hmax end
+  local det = { build = build_t, back = out, src = "same", horizon = horizon }
+
+  local pmx, pmy = tmx, tmy
+  local fc = route_forecast(state, info)
+  if not fc then
+    det.fallback = (state._bp_route and state._bp_route.why) or "no_route"
+  else
+    -- The furthest waypoint reachable inside the horizon. The profile rises
+    -- monotonically in t, so a forward scan is exact; it is at most
+    -- MAX_TICKS / (256/16) ~ 25 entries long by construction.
+    local k = 1
+    for i = 2, fc.n do
+      if fc.t[i] <= horizon then k = i else break end
+    end
+    det.route_i, det.route_n, det.route_t = k, fc.n, fc.t[k]
+    local cx, cy = fc.x[k], fc.y[k]
+    -- The walkability tests run in the SAME ORDER on every path through here,
+    -- k == 1 included. U.ttype is a terrain DETECTOR (it primes terrain_prev
+    -- and can push a tile into changes.terrain), so skipping the call on a
+    -- branch would give that branch a different brain state -- the 2026-09-06
+    -- identity bug in miniature.
+    local walkable = U.in_map(cx, cy) and MAN_WALKABLE[U.ttype(cx, cy)]
+    if not walkable then
+      det.fallback = U.in_map(cx, cy) and "unwalkable" or "off_map"
+    elseif k == 1 then
+      -- The route exists, but the tank cannot clear its own tile inside the
+      -- horizon (slow ground, or a very short errand). The same answer as no
+      -- prediction, and worth naming rather than reading back as "no route".
+      det.fallback = "horizon_too_short"
+    else
+      pmx, pmy, det.src = cx, cy, "route"
+    end
+  end
+
+  if pmx == tmx and pmy == tmy then
+    -- The tank is predicted to still be on its own tile (or we fell back to
+    -- it): the return leg IS the outbound leg reversed, which is the old
+    -- number, and there is no second walk sim to pay for.
+    det.src = "same"
+    det.back = out
+    return out, out + build_t + out, det
+  end
+
+  local back
+  if math.abs(mx - pmx) + math.abs(my - pmy) <= 1 then
+    back = near
+  else
+    back = cpf_lgm_travel_ticks_map(mx, my, pmx, pmy, mx, my,
+                                    C.BUILDER_POOL_LGM_MAX_TICKS or 2000,
+                                    C.BUILDER_POOL_LGM_STUCK_TICKS or 150)
+    if back == nil or back < 0 then
+      -- He cannot get from the job to where the tank is heading. That is not
+      -- a reason to refuse the job -- the outbound leg is the one that has to
+      -- be real -- so fall back to the mirrored leg and say so.
+      det.fallback = "back_unreachable"
+      det.src = "same"
+      det.back = out
+      return out, out + build_t + out, det
+    end
+    if back == 0 then back = near end
+  end
+  det.back = back
+  det.pred_mx, det.pred_my = pmx, pmy
+  return out, out + build_t + back, det
 end
 
 -- -------------------------------------------------------------------------
@@ -468,8 +728,10 @@ end
 -- -------------------------------------------------------------------------
 -- Discovery.
 --
--- Dead and damaged friendly OR ALLIED pills within the leash, plus one
--- opportunistic farm tile. The dead-pill test mirrors filter_repair_pill's
+-- Dead and damaged friendly OR ALLIED pills within the leash, plus up to FOUR
+-- opportunistic farm tiles -- the nearest forest in each 90-degree wedge
+-- (BUILDER_POOL_FARM_SECTORS; see the block at the bottom of this function).
+-- The dead-pill test mirrors filter_repair_pill's
 -- REPAIR_DEAD_FILTER discovery -- 0 HP, on the ground, not blocked, not the
 -- tile we are capturing / repositioning -- because the two must agree about
 -- which corpses are worth wood. It differs on ONE point, deliberately:
@@ -557,29 +819,65 @@ function M.discover(state, world, info)
       end
     end
   end
-  -- One farm row: the nearest forest inside the leash. Opportunistic wood has
-  -- no clock, so one candidate is enough -- it exists to give the man
-  -- something to do on a genuinely quiet tick, not to be optimised.
+  -- FARM ROWS: the nearest forest in each of four 90-degree wedges centred on
+  -- N, E, S and W (BUILDER_POOL_FARM_SECTORS = 4), so up to four rows. They
+  -- compete on the ordinary farm score -- no new term -- and the point is the
+  -- TRIP: the engine's LGM does not pathfind, it walks a straight line and
+  -- gets stuck, so the nearest forest is regularly one the man cannot reach
+  -- (or scrapes to slowly) while a clear one a tile further out in another
+  -- direction was never offered at all. Four directions, and let the trip cost
+  -- decide.
+  --
+  -- WEDGE BOUNDARIES are the 45-degree diagonals: |dx| > |dy| is E or W,
+  -- |dy| > |dx| is N or S. The diagonal itself (|dx| == |dy|, the tank's own
+  -- tile included) goes to the VERTICAL wedge -- S when dy > 0, N otherwise --
+  -- which is arbitrary but fixed, and fixed is the whole requirement: the same
+  -- tile must land in the same wedge on every tick of every run.
+  --
+  -- BUILDER_POOL_FARM_SECTORS = 1 is the pre-2026-09-06 single row, and is
+  -- byte-identical to it on purpose: the scan order (dy outer, dx inner, both
+  -- ascending), the U.ttype call on every tile of the square (which is a
+  -- terrain-change DETECTOR, so the set of tiles it touches is part of the
+  -- brain's state), the distance metric and the tile-key tie-break are all
+  -- untouched -- with one bucket every tile lands in it and the same forest
+  -- wins.
+  --
+  -- Still gated on TREE_OPPORTUNISTIC_MAX: at 20 trees or more there are no
+  -- farm rows at all, four wedges or one.
   if (info.trees or 0) < (C.TREE_OPPORTUNISTIC_MAX or 20) then
-    local best_d, best_x, best_y = math.huge, nil, nil
+    local nw = (C.BUILDER_POOL_FARM_SECTORS == 4) and 4 or 1
+    local best_d = { math.huge, math.huge, math.huge, math.huge }
+    local best_x = { nil, nil, nil, nil }
+    local best_y = { nil, nil, nil, nil }
     for dy = -leash, leash do
       for dx = -leash, leash do
         local fx, fy = tmx + dx, tmy + dy
         if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST then
           local d = U.mdist(tmx, tmy, fx, fy)
+          local w = 1
+          if nw > 1 then
+            local ax = dx < 0 and -dx or dx
+            local ay = dy < 0 and -dy or dy
+            if ax > ay then       w = (dx > 0) and WEDGE_E or WEDGE_W
+            else                  w = (dy > 0) and WEDGE_S or WEDGE_N end
+          end
           -- Deterministic: nearest wins, ties by tile key.
-          if d < best_d or (d == best_d and best_y
-                            and (fy * 256 + fx) < (best_y * 256 + best_x)) then
-            best_d, best_x, best_y = d, fx, fy
+          if d < best_d[w] or (d == best_d[w] and best_y[w]
+                               and (fy * 256 + fx)
+                                   < (best_y[w] * 256 + best_x[w])) then
+            best_d[w], best_x[w], best_y[w] = d, fx, fy
           end
         end
       end
     end
-    if best_x then
-      out[#out + 1] = { type = "farm", id = -(best_y * 256 + best_x),
-                        mx = best_x, my = best_y, dist = best_d,
-                        leash = leash,
-                        trees_need = C.BUILDER_POOL_TREES_FARM or 0 }
+    for w = 1, nw do
+      if best_x[w] then
+        out[#out + 1] = { type = "farm", id = -(best_y[w] * 256 + best_x[w]),
+                          mx = best_x[w], my = best_y[w], dist = best_d[w],
+                          leash = leash,
+                          wedge = (nw > 1) and WEDGE_NAME[w] or "all",
+                          trees_need = C.BUILDER_POOL_TREES_FARM or 0 }
+      end
     end
   end
   return out
@@ -613,6 +911,31 @@ end
 -- assembles them into the short||long pair on the panel's cold path, so every
 -- number on the row stays reproducible from the chips on that row.
 -- -------------------------------------------------------------------------
+-- The three legs of the trip, onto the row, so out{} / build{} / back{} /
+-- pred{} are readable straight back off it by score_terms, row_formula and the
+-- BP_* print lines without any of them re-deriving anything. One copy, called
+-- from both formula branches, because a leg that appeared on one and not the
+-- other would make half the pool's rows un-hand-checkable.
+function M.set_trip_legs(row, out_ticks, det)
+  if not det then
+    row.build_ticks, row.back_ticks = nil, nil
+    row.pred_mx, row.pred_my, row.pred_src = nil, nil, nil
+    row.pred_why, row.pred_horizon = nil, nil
+    row.pred_route_i, row.pred_route_n, row.pred_route_t = nil, nil, nil
+    return
+  end
+  row.build_ticks  = det.build
+  row.back_ticks   = det.back
+  row.pred_mx      = det.pred_mx
+  row.pred_my      = det.pred_my
+  row.pred_src     = det.src
+  row.pred_why     = det.fallback
+  row.pred_horizon = det.horizon
+  row.pred_route_i = det.route_i
+  row.pred_route_n = det.route_n
+  row.pred_route_t = det.route_t
+end
+
 function M.score_row(state, world, info, now, row, ctx)
   local FMAX = C.BUILDER_POOL_FRONT_MAX_TILES or 12
   -- front_dist is still MEASURED for every row: BP_DISPATCH prints it and the
@@ -632,8 +955,9 @@ function M.score_row(state, world, info, now, row, ctx)
     row.value  = hp_w * missing
     row.v_base, row.v_hp, row.v_front = 0, row.value, 0
 
-    local out_ticks, trip = M.lgm_trip(info, row.mx, row.my)
+    local out_ticks, trip, det = M.lgm_trip(state, info, row.mx, row.my)
     row.out_ticks, row.trip = out_ticks, trip
+    M.set_trip_legs(row, out_ticks, det)
     -- threat.at is still SAMPLED (the panel prints it, and a reader asking
     -- "was it dangerous?" should be able to see) but it is not in the score.
     row.danger = threat.at(row.mx, row.my) or 0
@@ -672,8 +996,9 @@ function M.score_row(state, world, info, now, row, ctx)
   row.value = base + hp_term + front_term
   row.v_base, row.v_hp, row.v_front = base, hp_term, front_term
 
-  local out_ticks, trip = M.lgm_trip(info, row.mx, row.my)
+  local out_ticks, trip, det = M.lgm_trip(state, info, row.mx, row.my)
   row.out_ticks, row.trip = out_ticks, trip
+  M.set_trip_legs(row, out_ticks, det)
   local dgr = threat.at(row.mx, row.my) or 0
   row.danger = dgr
   if trip then
@@ -773,6 +1098,11 @@ function M.gate_row(state, world, info, now, row, ctx)
   -- can be rebuilt later from the row alone.
   row.f_trees   = info.trees or 0
   row.f_reserve = ctx.reserve
+  -- Where the tank stood when this row's legs were measured. On the row for
+  -- the same reason as the two above: pred{} is only hand-checkable if the
+  -- START of the extrapolation is on the row beside its heading and speed.
+  row.f_tankx   = info.tankx
+  row.f_tanky   = info.tanky
   return row
 end
 
@@ -789,6 +1119,32 @@ end
 -- Used by BP_DISPATCH, BP_DENY's neighbours and the panel row, so all three
 -- print the SAME arithmetic.
 -- -------------------------------------------------------------------------
+-- The trip's three legs as chips, appended to BOTH formulas so the printed
+-- trip{} is never a number the reader has to take on trust: out{} + build{} +
+-- back{} adds up to it, pred{} says where the return leg was walked TO, and on
+-- a farm row wedge{} says which quarter of the leash square offered the tile.
+--
+-- Appended at the END, after tripcost{}, on purpose: tests/repair_priority_test
+-- .py anchors LINEAR_RE at the start of this string, so anything inserted
+-- ahead of tripcost{} breaks it. No "||" is ever produced here (the chip
+-- parser splits the display half off at the first one) and no chip value
+-- reaches 32 characters, which is the popup's limit.
+local function leg_chips(row)
+  local pred
+  if row.pred_mx then
+    pred = string.format("pred{%d,%d}", row.pred_mx, row.pred_my)
+  else
+    pred = "pred{same}"
+  end
+  local wedge = row.wedge and string.format(" wedge{%s}", row.wedge) or ""
+  return string.format(
+    " [legs out{%s} + build{%s} + back{%s} %s predsrc{%s}%s]",
+    tostring(row.out_ticks or "-"),
+    tostring(row.build_ticks or (C.LGM_BUILD_TIME or 20)),
+    tostring(row.back_ticks or "-"), pred,
+    tostring(row.pred_src or "-"), wedge)
+end
+
 function M.score_terms(row)
   -- Every chip is word{value}: BrainTest's pool-grid detail popup parses
   -- exactly that shape (pool_grid.cpp) into its term table, so the same
@@ -798,21 +1154,22 @@ function M.score_terms(row)
   if row.linear then
     return string.format(
       "bp_score{%s} = hp_w{%d} x missing{%d} = value{%.0f}"
-      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}",
+      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}%s",
       score_str, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
       row.missing or 0, row.value or 0,
       C.BUILDER_POOL_REPAIR_TRIP_W or 0.25, tostring(row.trip or "-"),
-      row.c_trip or 0)
+      row.c_trip or 0, leg_chips(row))
   end
   local urg_name = (row.type == "farm") and "urg" or "topup_hp"
   return string.format(
     "bp_score{%s} = bp_base{%.0f} + %s{%.0f} + front{%.0f} = value{%.0f}"
     .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}"
-    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}",
+    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}%s",
     score_str, row.v_base or 0, urg_name, row.v_hp or 0, row.v_front or 0,
     row.value or 0,
     C.BUILDER_POOL_TRIP_W or 0.5, tostring(row.trip or "-"), row.c_trip or 0,
-    C.BUILDER_POOL_DANGER_W or 1.5, row.danger or 0, row.c_danger or 0)
+    C.BUILDER_POOL_DANGER_W or 1.5, row.danger or 0, row.c_danger or 0,
+    leg_chips(row))
 end
 
 -- -------------------------------------------------------------------------
@@ -849,6 +1206,84 @@ function M.row_formula(row)
   local chain = score_str
   local short = string.format("%s %s%s", label, M.score_terms(row),
                               reject and (" REJECT " .. reject) or "")
+  local trip_seg = string.format(
+    "trip:out(%s) + build(%s) + back(%s) = %s brain ticks for the man"
+    .. " to walk out, build and walk back",
+    tostring(out_ticks or "-"),
+    tostring(row.build_ticks or (C.LGM_BUILD_TIME or 20)),
+    tostring(row.back_ticks or "-"), tostring(trip or "-"))
+  -- The legs, one segment per chip. Written once and spliced into both
+  -- formulas' segment lists, so a repair row and a farm row explain the walk
+  -- with the same words.
+  local out_seg = string.format(
+    "out:cpf_lgm_travel_ticks_map(tank -> (%d,%d), that tile BLESSED so a pill"
+    .. "/base on it does not self-block) = %s brain ticks. The straight-line"
+    .. " engine walk sim (brain_pathfinder.c lgmTravelTicksCore), not a path"
+    .. "finder -- a wall in the way reads STUCK and the row goes unreachable."
+    .. " A target 1 tile away or less skips the sim and is charged"
+    .. " BUILDER_POOL_GRASS_TICKS_PER_TILE(%d).",
+    row.mx, row.my, tostring(out_ticks or "-"),
+    C.BUILDER_POOL_GRASS_TICKS_PER_TILE or 16)
+  local build_seg = string.format(
+    "build:LGM_BUILD_TIME(%d) = brain ticks the man stands on the tile"
+    .. " building / repairing / chopping (lgm.h:84)",
+    C.LGM_BUILD_TIME or 20)
+  local back_seg, pred_seg, predsrc_seg
+  if not C.BUILDER_POOL_RETURN_PREDICT then
+    back_seg = string.format(
+      "back:BUILDER_POOL_RETURN_PREDICT is OFF, so the return leg is the"
+      .. " outbound leg mirrored -- out(%s) again, i.e. the tank is assumed to"
+      .. " wait on the spot.", tostring(out_ticks or "-"))
+    pred_seg = "pred:no prediction (BUILDER_POOL_RETURN_PREDICT off) -- the"
+      .. " walk home is measured back to the tank's CURRENT tile."
+  elseif row.pred_mx then
+    back_seg = string.format(
+      "back:cpf_lgm_travel_ticks_map((%d,%d) -> the PREDICTED tank tile"
+      .. " (%d,%d), the job tile BLESSED because he starts standing on it)"
+      .. " = %s brain ticks.",
+      row.mx, row.my, row.pred_mx, row.pred_my, tostring(row.back_ticks or "-"))
+    pred_seg = string.format(
+      "pred:tank(%d,%d) walked %s brain ticks forward along its OWN ROUTE"
+      .. " (state.pf.path_chain, waypoint %s of %s, reached at t=%s) at the"
+      .. " engine's per-terrain speed caps (C.MAP_SPEED, bolo_map.h"
+      .. " MAP_SPEED_T*; 256 WU a tile, 362 diagonally) -> tile (%d,%d)."
+      .. " Horizon = min(out + build, BUILDER_POOL_RETURN_PREDICT_MAX_TICKS(%d)).",
+      bit.rshift((row.f_tankx or 0), 8), bit.rshift((row.f_tanky or 0), 8),
+      tostring(row.pred_horizon or "-"), tostring(row.pred_route_i or "-"),
+      tostring(row.pred_route_n or "-"),
+      row.pred_route_t and string.format("%.0f", row.pred_route_t) or "-",
+      row.pred_mx, row.pred_my,
+      C.BUILDER_POOL_RETURN_PREDICT_MAX_TICKS or 400)
+  else
+    back_seg = string.format(
+      "back:the prediction FELL BACK to the tank's current tile (%s), so the"
+      .. " return leg is the outbound leg mirrored -- out(%s).",
+      tostring(row.pred_why or "-"), tostring(out_ticks or "-"))
+    pred_seg = string.format(
+      "pred:same tile as the tank -- fallback reason '%s'. no_route / "
+      .. "route_stale / route_ended / route_no_progress = the tank has no"
+      .. " committed route to walk (idle, or the chain belongs to a goal it has"
+      .. " left); horizon_too_short = it has one but cannot clear its own tile"
+      .. " inside out+build; off_map / unwalkable = the predicted tile is"
+      .. " water, a building or a live pill; back_unreachable = the walk sim"
+      .. " could not get the man from the job to it. Horizon was %s ticks.",
+      tostring(row.pred_why or "-"), tostring(row.pred_horizon or "-"))
+  end
+  predsrc_seg = string.format(
+    "predsrc:where pred{} came from. route = walked along state.pf.path_chain,"
+    .. " the route the navigator computed and steering is already driving"
+    .. " (nothing is re-searched here). same = a fallback landed on the tank's"
+    .. " own tile, which makes back == out, the pre-2026-09-06 number."
+    .. " off = BUILDER_POOL_RETURN_PREDICT is disabled. This row: %s.",
+    tostring(row.pred_src or "-"))
+  local wedge_seg = row.wedge and string.format(
+    "wedge:the 90-degree quarter of the BUILDER_POOL_LEASH(%d) square this"
+    .. " forest was the nearest in -- N/E/S/W, boundaries on the 45-degree"
+    .. " diagonals (abs(dx) > abs(dy) is E/W, otherwise N/S; the diagonal"
+    .. " itself goes to the vertical wedge). One row per wedge, so a nearer forest the"
+    .. " man cannot straight-line to loses to a clear one elsewhere."
+    .. " 'all' = BUILDER_POOL_FARM_SECTORS is 1 (one row, nearest anywhere).",
+    C.BUILDER_POOL_LEASH or 8) or nil
   local tail = string.format(
     " Fires only if score >= BUILDER_POOL_MIN_SCORE(%d) and no gate rejects."
     .. " trees need %d, have %d, reserved %d. leash %d, dist %d, front_dist %d.%s",
@@ -873,6 +1308,8 @@ function M.row_formula(row)
         C.PILLS_MAX_HEALTH or 15, row.hp or 0, row.missing or 0),
       string.format("value:hp_w(%d) x missing(%d) = %.0f",
         hp_w, row.missing or 0, row.value or 0),
+      trip_seg,
+      out_seg, build_seg, back_seg, pred_seg, predsrc_seg,
       string.format("trip_w:BUILDER_POOL_REPAIR_TRIP_W(%.2f) = points per round-trip tick", tw),
       string.format("tripcost:trip_w(%.2f) x trip(%s) = %.0f",
         tw, tostring(trip or "-"), row.c_trip or 0),
@@ -907,6 +1344,8 @@ function M.row_formula(row)
       string.format("value:base(%.0f) + %s(%.0f) + front(%.0f) = %.0f",
         row.v_base or 0, (row.type == "farm") and "urg" or "topup_hp",
         row.v_hp or 0, row.v_front or 0, row.value or 0),
+      trip_seg,
+      out_seg, build_seg, back_seg, pred_seg, predsrc_seg,
       string.format("trip_w:BUILDER_POOL_TRIP_W(%.2f) = points per round-trip tick", tw),
       string.format("tripcost:trip_w(%.2f) x trip(%s) = %.0f",
         tw, tostring(trip or "-"), row.c_trip or 0),
@@ -917,6 +1356,7 @@ function M.row_formula(row)
         dw, dgr, row.c_danger or 0),
     }
   end
+  if wedge_seg then segs[#segs + 1] = wedge_seg end
   return short .. "||" .. table.concat(segs, "|")
 end
 
@@ -1168,7 +1608,7 @@ function M.repair_feeder(state, world, info, now)
   end
   local _hold = enemy_hold or under_fire_hold
   local ticks = (in_range and has_trees and not _hold)
-    and M.lgm_trip(info, px, py) or nil
+    and M.lgm_trip(state, info, px, py) or nil
   local can_dispatch = in_range and has_trees and not _hold and ticks ~= nil
 
   if BRAIN_DEBUG_MODE then
@@ -1227,7 +1667,7 @@ function M.builder_can_repair(state, world, info, p)
   local need = (hp <= 0) and (C.BUILDER_POOL_TREES_REBUILD or 4)
                or math.ceil((maxhp - hp) / (C.PILL_REPAIR_AMOUNT or 4))
   if (info.trees or 0) < need then return nil end
-  local out = M.lgm_trip(info, p.mx, p.my)
+  local out = M.lgm_trip(state, info, p.mx, p.my)
   if not out then return nil end
   return out
 end
@@ -1476,13 +1916,30 @@ function M.update(state, world, info, now)
       -- deny line whenever any row also has a local problem, and "why is
       -- nothing happening during this take" is exactly the question the line
       -- exists to answer. Both, so the line is self-contained.
+      -- trip is printed with its three legs beside it: a denial that turns on
+      -- the walk (below_min_score, reserve, unreachable) is unreadable if the
+      -- only number on the line is the total. pred= is where the return leg
+      -- was walked to, or the tank's own tile.
+      --
+      -- The legs go on the END, after res=. The field ORDER up to there is
+      -- fixed by tests/builder_pool_test.py's DENY_RE, which reads through to
+      -- `res=(\d+)` -- inserting them between trip= and trees= stopped that
+      -- regex matching at all, which read back as "the pool never denied
+      -- anything" and failed variant C on a claim it had nothing to do with.
       print2(string.format(
-        "BP_DENY t=%d job=%s target=(%d,%d) reason=%s elig=%s score=%.0f trip=%s trees=%d/%d res=%d",
+        "BP_DENY t=%d job=%s target=(%d,%d) reason=%s elig=%s score=%.0f trip=%s"
+        .. " trees=%d/%d res=%d out=%s build=%s back=%s pred=%s%s",
         now, top.type, top.mx, top.my,
         tostring(top.reject or (can_send and "none" or "no_man")),
         ok and "yes" or tostring(reason),
         top.score or 0, tostring(top.trip or "-"),
-        info.trees or 0, top.trees_need or 0, reserve))
+        info.trees or 0, top.trees_need or 0, reserve,
+        tostring(top.out_ticks or "-"), tostring(top.build_ticks or "-"),
+        tostring(top.back_ticks or "-"),
+        top.pred_mx and string.format("(%d,%d)/%s", top.pred_mx, top.pred_my,
+                                      tostring(top.pred_src or "-"))
+                    or ("same/" .. tostring(top.pred_why or "-")),
+        top.wedge and (" wedge=" .. top.wedge) or ""))
     end
   elseif winner then
     state._bp_deny_key = nil
@@ -1530,15 +1987,44 @@ function M.rung(state, world, info, now)
       (state.goal and state.goal.kind) or "?",
       seed.uf_age and tostring(seed.uf_age) or "-"))
   end
+  -- The chips inside the (...) already carry out{}/build{}/back{}/pred{} (and
+  -- wedge{} on a farm row) -- M.score_terms is the one place that string is
+  -- built. The legs are repeated in plain key=value form after front= as well,
+  -- because that half of the line is what the arena tests and a grep read, and
+  -- the field ORDER up to front= is fixed by tests/repair_priority_test.py's
+  -- DISP_RE -- so this goes on the end and nothing moves.
   print2(string.format(
     "BP_DISPATCH t=%d job=%s target=(%d,%d)%s score=%.0f (%s)%s"
-    .. " eta=%s trip=%s trees=%d-%d front=%d owner=%s/%s claim=%d",
+    .. " eta=%s trip=%s trees=%d-%d front=%d owner=%s/%s claim=%d"
+    .. " out=%s build=%s back=%s pred=%s%s",
     now, row.type, row.mx, row.my,
     row.seeded and (" seeded_by=" .. tostring(row.seeded)) or "",
     row.score or 0, M.score_terms(row), row.linear and " [linear]" or "",
     tostring(row.out_ticks or "-"), tostring(row.trip or "-"),
     info.trees or 0, row.trees_need or 0, row.front_dist or -1,
-    bp.owner_kind, bp.owner_mode, now))
+    bp.owner_kind, bp.owner_mode, now,
+    tostring(row.out_ticks or "-"), tostring(row.build_ticks or "-"),
+    tostring(row.back_ticks or "-"),
+    row.pred_mx and string.format("(%d,%d)/%s", row.pred_mx, row.pred_my,
+                                  tostring(row.pred_src or "-"))
+                or ("same/" .. tostring(row.pred_why or "-")),
+    row.wedge and (" wedge=" .. row.wedge) or ""))
+  -- BP_PRED: the ROUTE the return leg was priced against, tile by tile, on the
+  -- one tick it actually decided something. The trip on the dispatch line is
+  -- only hand-checkable if the reader can see the path pred{} was read off --
+  -- "the tank will be at (129,126)" means nothing without "because it is
+  -- driving 123 -> 124 -> ... -> 131 and that tile is 71 ticks along it".
+  -- One line per dispatch, never per tick, and built INSIDE the print2 call so
+  -- lua_strip takes the whole thing (route_str included) out of opt/.
+  print2(string.format(
+    "BP_PRED t=%d job=%s target=(%d,%d) src=%s horizon=%s pred=%s wp=%s/%s"
+    .. " route=%s",
+    now, row.type, row.mx, row.my, tostring(row.pred_src or "-"),
+    tostring(row.pred_horizon or "-"),
+    row.pred_mx and string.format("(%d,%d)", row.pred_mx, row.pred_my)
+                or ("same/" .. tostring(row.pred_why or "-")),
+    tostring(row.pred_route_i or 0), tostring(row.pred_route_n or 0),
+    route_str(state._bp_route)))
   return { x = row.mx, y = row.my, action = action }
 end
 

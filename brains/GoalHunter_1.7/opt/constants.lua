@@ -3059,6 +3059,51 @@ M.BUILDER_POOL_GRASS_TICKS_PER_TILE = 16   -- = REPAIR_DEAD_GRASS_TICKS_PER_TILE
 M.BUILDER_POOL_LGM_MAX_TICKS   = 2000      -- walk-sim budget (matches every other caller)
 M.BUILDER_POOL_LGM_STUCK_TICKS = 150
 
+-- ── The RETURN leg: where the tank will BE, not where it is (2026-09-06) ──
+-- M.lgm_trip used to charge `2 x outbound`: the man walks out, and the walk
+-- home is a mirror image of the walk out, as if the tank had waited on the
+-- spot. It does not wait. It is a tank with a goal, and by the time the man
+-- has finished building it can be a dozen tiles away -- so the mirrored return
+-- leg is the wrong number in the one direction that matters: a forest AHEAD of
+-- the tank and a forest BEHIND it price identically, and the pool picks the
+-- one the tank is driving away from as often as not.
+--
+-- With this on, the return leg is walked to where the tank is predicted to be
+-- after (outbound + LGM_BUILD_TIME) ticks, and
+--     trip = outbound + LGM_BUILD_TIME + back
+-- replaces 2 x outbound + LGM_BUILD_TIME.
+--
+-- ALONG THE ROUTE, NOT ALONG A STRAIGHT LINE (Andrew, 2026-09-06). The first
+-- version extrapolated heading x speed, which is wrong for the case the change
+-- exists to fix: a tank that is going somewhere TURNS, and a straight line off
+-- its instantaneous heading walks it into the scenery. The bot already has the
+-- answer -- state.pf.path_chain, the committed route steering is driving this
+-- very tick -- so the prediction walks THAT, at the engine's per-terrain speed
+-- caps, and stops at the horizon or at the route's end. Nothing is re-searched:
+-- no A*, no Dijkstra, no second trace. See builder_pool.route_forecast for the
+-- engine citations (bolo_map.h MAP_SPEED_T*, tank.c:2028 and :1614-1621,
+-- server_sim_tick.c:319/766, luabrainshandler.c:1216) that establish
+-- C.MAP_SPEED as world units per BRAIN tick, needing no conversion.
+--
+-- Fallbacks all land on the tank's CURRENT tile, which makes back == out --
+-- the old number -- so a fallback costs information and never a candidate:
+-- no usable route, a predicted tile the man cannot stand on, or a return walk
+-- the sim cannot complete. The row prints which one happened (predsrc{} and
+-- the pred computation segment).
+--
+-- HORIZON: 400 brain ticks, 8 s at the engine's 50 ticks/s. Approved by
+-- Andrew 2026-09-06. It binds rarely by design -- an 11-tile repair round trip
+-- is ~370 ticks -- so its job is to stop a very long errand extrapolating a
+-- route the tank will have replanned twice over, not to trim ordinary ones.
+M.BUILDER_POOL_RETURN_PREDICT = true
+M.BUILDER_POOL_RETURN_PREDICT_MAX_TICKS = 400
+-- How far the tank may be from the nearest point of state.pf.path_chain before
+-- the chain is treated as somebody else's plan and the prediction falls back.
+-- The chain's own first point is where the SEARCH started, which the tank has
+-- since driven away from, so a snap is needed; 2 tiles is tight enough that a
+-- chain left over from an abandoned goal cannot be mistaken for a live one.
+M.BUILDER_POOL_RETURN_PREDICT_ROUTE_SNAP = 2
+
 -- ── Value: the front-distance clock ──────────────────────────────────────
 -- A dead pill AT the contact line is ticking -- the enemy is right there and
 -- will drive over it. One deep in our own rear can wait all game. The
@@ -3094,6 +3139,28 @@ M.BUILDER_POOL_VALUE_FARM      = 15   -- opportunistic wood, at a full woodpile.
 -- strictly better at that job: it picks forest the TANK is going to drive past.
 M.BUILDER_POOL_FARM_LOW_TREES  = 12
 M.BUILDER_POOL_FARM_URGENCY    = 12
+-- ── Four-wedge farm discovery (2026-09-06) ───────────────────────────────
+-- Discovery used to offer exactly ONE farm row: the nearest forest tile in the
+-- whole (2 x LEASH + 1)^2 square. The engine's LGM does not pathfind -- the
+-- walk sim (brain_pathfinder.c lgmTravelTicksCore) replays a STRAIGHT LINE
+-- with a crude slide and reports "stuck" when it cannot get through -- so the
+-- nearest forest is routinely the WRONG one: put a building or a strip of
+-- water between the tank and it and the single row reads `unreachable`, or
+-- walks a slow scraping path, while a clear forest one tile further out in
+-- another direction is never a candidate at all.
+--
+-- So the scan is split into FOUR 90-degree wedges centred on N, E, S and W
+-- (boundaries on the 45-degree diagonals) and the nearest forest in EACH wedge
+-- becomes its own row. Up to four rows, competing on the EXISTING farm score
+-- -- no new term, no new weight: the trip cost the rows already pay is what
+-- prices a blocked walk out of the running, and now there is something for it
+-- to lose to.
+--
+-- 4 = four wedges. 1 = the pre-2026-09-06 single nearest tile, byte for byte
+-- (the scan order, the distance metric and the tile-key tie-break are all
+-- unchanged; with one bucket every tile lands in it and the same tile wins).
+-- Any other value is read as 1.
+M.BUILDER_POOL_FARM_SECTORS    = 4
 M.BUILDER_POOL_TOPUP_PER_HP    = 6    -- + this per point of missing armour on a top-up, so
                                       -- a 4/15 pill outbids a 14/15 one
 M.BUILDER_POOL_TOPUP_MIN_MISSING = 4  -- don't walk out for less than one tree's worth
@@ -3349,8 +3416,13 @@ M.BUILDER_POOL_ABORT_GRACE   = 30    -- ticks after dispatch before an abort may
 -- Section 15 in the pool_grid JSON. NOT a new pool: the 1..10 grid numbering
 -- and the 11..14 strips are untouched, so old recordings still load.
 M.BUILDER_POOL_PANEL_IDX  = 15
-M.BUILDER_POOL_PANEL_ROWS = 8    -- cap on side-quest rows rendered (always-show rule
+M.BUILDER_POOL_PANEL_ROWS = 12   -- cap on side-quest rows rendered (always-show rule
                                  -- keeps rejects visible; this only bounds a huge map)
+                                 -- 2026-09-06: 8 -> 12. BUILDER_POOL_FARM_SECTORS
+                                 -- can now put FOUR farm rows in the pool beside the
+                                 -- repair rows, and at 8 the tail was silently dropped
+                                 -- from the panel. DISPLAY ONLY -- no decision reads
+                                 -- this, so it gets no keel entry.
 
 -- =========================================================================
 -- Lua garbage collector
@@ -3459,6 +3531,19 @@ M.PRESETS = {
     -- 2026-09-06: SHELLS_LOW 20 -> 19 (Andrew: "SHELLS_LOW=19 is really what I
     -- want"). KEEL treats exactly 20 shells as low; the new default does not.
     SHELLS_LOW = 20,
+    -- 2026-09-06: farm discovery now splits the leash square into four
+    -- 90-degree wedges (N/E/S/W) and offers the nearest forest in EACH as its
+    -- own row, so a nearer forest the LGM cannot straight-line to loses to a
+    -- clear one in another direction. KEEL offered exactly ONE farm row, the
+    -- nearest forest anywhere in the square, take it or leave it.
+    BUILDER_POOL_FARM_SECTORS = 1,
+    -- 2026-09-06: the LGM's return leg is now walked to where the TANK is
+    -- predicted to be after outbound + LGM_BUILD_TIME ticks, marched along its
+    -- own committed route (state.pf.path_chain) at the engine's per-terrain
+    -- speed caps, so trip = out + build + back. KEEL charged 2 x out: the walk
+    -- home mirrored the walk out, as if the tank had stood still, which priced
+    -- a forest ahead of a moving tank exactly like one behind it.
+    BUILDER_POOL_RETURN_PREDICT = false,
     -- 2026-09-06: the pool-1 mine-hoard staying-cost is now WAIVED while the
     -- tank is still below a target and the base under it still holds
     -- REFUEL_MIN_STOCK of that supply. KEEL charges it whenever the tank is
