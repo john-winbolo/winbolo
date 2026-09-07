@@ -1011,7 +1011,7 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->experiment = (uint8_t)overviewFogExperimentGet();
   in->sightMode = (uint8_t)overviewFogSightGet();
 
-  /* A player with no tank in their slot has no window and no facing to report:
+  /* A player with no tank in their slot has no window and no heading to report:
    * those fields keep the zeroes the defaults gave them, and viewValid says so.
    */
   if (MY_TANK((ClientSim *)cs) == NULL) {
@@ -1028,12 +1028,11 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->manualHold = sc->autoScrollOverRide;
   in->viewSubX = sc->subPosX;
   in->viewSubY = sc->subPosY;
-  /* tankGetTravelAngel reads as a direction number but hands back BRADIANS,
-   * already snapped to the nearest sixteenth. Dividing by the step between two
-   * of those sixteenths gives the 0-15 index this field holds - the rounding is
-   * already done, so there is none left to do here. */
-  in->facing =
-      (BYTE)(tankGetTravelAngel(&MY_TANK((ClientSim *)cs)) / BRADIANS_GAP);
+  /* The angle the tank is actually on, in BRADIANS, straight across. The
+   * sixteen-step direction the sprite is drawn from would snap this to the
+   * nearest sixteenth and make the beam jump as the tank turns; the angle is
+   * also where the shots go, so it is the one the beam should follow. */
+  in->heading = tankGetAngle(&MY_TANK((ClientSim *)cs));
   /* Those readings only say where the player is looking while a live tank is
    * being followed: an item view has taken the camera off the tank, and a dead
    * one leaves the offsets wherever the view stopped. */

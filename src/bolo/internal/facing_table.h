@@ -27,10 +27,8 @@
 
 /* Facing unit vectors (sin/cos × 256), 16-step BRADIANS index.
  * Used for the autoscroll forward-bias term and the parked-rear hemisphere
- * test in scroll.c, and by the overview's Headlights beam, which holds live
- * the squares that lie within a fixed angle of the way the tank is pointing.
- * Callers scale by the distance they want and divide by 256 to come back to
- * whole squares. */
+ * test in scroll.c. Callers scale by the distance they want and divide by 256
+ * to come back to whole squares. */
 static const int kForwardX[16] = {
      0,   98,  181,  237,  256,  237,  181,   98,
      0,  -98, -181, -237, -256, -237, -181,  -98

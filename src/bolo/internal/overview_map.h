@@ -92,19 +92,6 @@ void          overviewFogShowRegionsSet(bool on);
 #define OVERVIEW_AFTERIMAGE_SECS 3  /* seconds a square takes to fade back to
                                        fog after the block leaves it */
 
-/* Whether a square inside one of the Headlights blocks is one the player sees:
- * (dx, dy) squares from the tank, with the tank pointing down a 0-15 facing.
- * The near squares are seen whichever way it points and the rest of the block
- * only inside the beam, so the picture is a small patch round the tank with a
- * wedge out of it along the facing.
- *
- * The shape itself is overviewBeamLights in public/overview_types.h, which the
- * fog mask asks at points inside a square as well; this is the whole-square
- * question the map memory puts to it, with the facing turned into the vector
- * the beam carries. OVERVIEW_HEADLIGHT_NEAR and the cosine constants live
- * there with it. */
-bool overviewHeadlightSees(int dx, int dy, BYTE facing);
-
 /* Whether this experiment places the block round the tank from the classic
  * view rather than round the tank itself. The block builder and the camera the
  * frontend follows both ask here, so the two cannot disagree about what the
@@ -131,7 +118,7 @@ bool overviewFogBlockFollowsView(FogExperiment e);
  * The rest is the fog experiment and the state the narrower blocks are placed
  * from: the classic view is still scrolling under the full screen map, so its
  * first visible square and the sub-square part of its position say where the
- * window the player is driving actually is, and the tank's facing is what
+ * window the player is driving actually is, and the tank's heading is what
  * points the Headlights beam. viewValid is false when there is no live tank or
  * the player is watching an item, which is when the view readings mean
  * nothing. */
@@ -152,7 +139,12 @@ typedef struct OverviewViewInputs {
     BYTE            viewLeft, viewTop;  /* first visible square of that view */
     bool            manualHold;    /* the player is holding the view off autoscroll */
     int16_t         viewSubX, viewSubY; /* sub-square part of the view position */
-    BYTE            facing;        /* the tank's travel direction, 0-15 */
+    TURNTYPE        heading;       /* where the tank points, in BRADIANS over
+                                      BRADIANS_MAX - the angle itself, not a
+                                      frame number. The sprite is drawn from
+                                      sixteen frames and that is a separate
+                                      thing: the beam follows the angle shots
+                                      go down, whichever frame is on screen */
 } OverviewViewInputs;
 
 /* The rules a server ships with: pillboxes always, bases off, allied tanks

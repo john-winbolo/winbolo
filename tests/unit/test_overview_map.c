@@ -14,8 +14,8 @@
  * view to read and holding the view a dying tank last had. The two Headlights
  * centre their block on the tank whatever the classic view is doing - the
  * 29x29 for one and the 15x15 for the other - and light the squares within two
- * of the tank plus a wedge along the facing, leaving the rest of the block
- * hidden.
+ * of the tank plus a wedge along the heading the tank is really on, leaving the
+ * rest of the block hidden.
  * overviewMapDeathBlackout is where the overview goes black inside a
  * death wait: from the tick the classic view cuts to static through to the
  * respawn, never dropping once it is up, and a drowning given longer to watch
@@ -365,7 +365,7 @@ int run_overview_regions(void) {
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
         fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-        fog.facing = 4; /* east */
+        fog.heading = BRADIANS_EAST;
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
@@ -378,7 +378,7 @@ int run_overview_regions(void) {
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
         fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
-        fog.facing = 4; /* east */
+        fog.heading = BRADIANS_EAST;
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
@@ -393,39 +393,39 @@ int run_overview_regions(void) {
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
         fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
-        fog.facing = 4; /* east, into the right-hand edge */
+        fog.heading = BRADIANS_EAST; /* into the right-hand edge */
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 250, 100);
         ASSERT_RECT(om->live[0], 243, 93, 255, 107);
 
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
         fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-        fog.facing = 0; /* north, into the top-left corner */
+        fog.heading = BRADIANS_NORTH; /* into the top-left corner */
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 250);
         ASSERT_RECT(om->live[0], 0, 236, 17, 255);
 
         /* And the shape inside the block, read off the flags: the squares
          * within two of the tank are live whichever way it points, and past
-         * that only the beam along the facing is - everything else in the rect
+         * that only the beam along the heading is - everything else in the rect
          * is hidden, so it keeps the tile it last showed and nothing moving on
          * it is drawn.
          *
-         * The squares are written out rather than worked back out of the facing
-         * table, so the case says which ones should be lit instead of restating
-         * how the code works them out. Four facings: two axes, a diagonal, and
-         * one of the sixteenths between them, which is where a beam that was
-         * not the same width on every facing would show. */
+         * The squares are written out rather than worked back out of the
+         * heading, so the case says which ones should be lit instead of
+         * restating how the code works them out. Four headings: two axes, a
+         * diagonal, and one of the sixteenths between them, which is where a
+         * beam that was not the same width on every heading would show. */
         {
             static const struct {
-                BYTE facing;           /* Which way the tank points */
-                int  aheadX, aheadY;   /* Well along the facing */
+                TURNTYPE heading;      /* Which way the tank points */
+                int  aheadX, aheadY;   /* Well along the heading */
                 int  behindX, behindY; /* The same distance the other way */
                 int  sideX, sideY;     /* And the same square to it */
             } kBeams[] = {
-                { 0,  0, -8,   0,  8,   8,  0}, /* north */
-                { 4,  8,  0,  -8,  0,   0,  8}, /* east */
-                { 2,  6, -6,  -6,  6,   6,  6}, /* north-east */
-                { 1,  3, -7,  -3,  7,   7,  3}  /* north-north-east */
+                {BRADIANS_NORTH,   0, -8,   0,  8,   8,  0},
+                {BRADIANS_EAST,    8,  0,  -8,  0,   0,  8},
+                {BRADIANS_NEAST,   6, -6,  -6,  6,   6,  6},
+                {BRADIANS_NNEAST,  3, -7,  -3,  7,   7,  3}
             };
             const int kBeamCount = (int)(sizeof(kBeams) / sizeof(kBeams[0]));
             int b;  /* Looping variable */
@@ -435,14 +435,15 @@ int run_overview_regions(void) {
             int mx; /* Looping variable */
             int my; /* Looping variable */
 
-            /* The near squares first, under every one of the sixteen facings:
-             * the tank's own square is in there, so the reticle is never
-             * dropped, and so is every square of the 5x5 round it. */
+            /* The near squares first, on each of the sixteen headings the
+             * sprite has a frame for: the tank's own square is in there, so the
+             * reticle is never dropped, and so is every square of the 5x5 round
+             * it. */
             for (f = 0; f < 16; f++) {
                 overviewMapReset(om);
                 overviewViewInputsDefaults(&fog);
                 fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-                fog.facing = (BYTE)f;
+                fog.heading = (TURNTYPE)(f * BRADIANS_GAP);
                 overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
                 for (dx = -OVERVIEW_HEADLIGHT_NEAR;
                      dx <= OVERVIEW_HEADLIGHT_NEAR; dx++) {
@@ -452,26 +453,27 @@ int run_overview_regions(void) {
 
                         UT_ASSERT_MSG((flags & OVERVIEW_F_LIVE) != 0 &&
                                           (flags & OVERVIEW_F_HIDDEN) == 0,
-                                      "facing %d, square %d,%d from the tank "
+                                      "heading %d, square %d,%d from the tank "
                                       "carries flags 0x%02X, expected it live "
                                       "whichever way the tank points",
-                                      f, dx, dy, (unsigned)flags);
+                                      f * BRADIANS_GAP, dx, dy,
+                                      (unsigned)flags);
                     }
                 }
             }
 
             /* Then the beam itself. Ahead is lit out to eight squares, behind
              * is not, and neither is the square-on direction: the beam is a
-             * wedge along the facing rather than a ring or a half. */
+             * wedge along the heading rather than a ring or a half. */
             for (b = 0; b < kBeamCount; b++) {
-                BYTE ahead;  /* Flags well along the facing */
+                BYTE ahead;  /* Flags well along the heading */
                 BYTE behind; /* and behind */
                 BYTE side;   /* and square to it */
 
                 overviewMapReset(om);
                 overviewViewInputsDefaults(&fog);
                 fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-                fog.facing = kBeams[b].facing;
+                fog.heading = kBeams[b].heading;
                 overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
 
                 ahead = om->flags[100 + kBeams[b].aheadX]
@@ -484,24 +486,83 @@ int run_overview_regions(void) {
                 UT_ASSERT_MSG((ahead & (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
                                       (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT) &&
                                   (ahead & OVERVIEW_F_HIDDEN) == 0,
-                              "facing %u, the square %d,%d along it carries "
+                              "heading %d, the square %d,%d along it carries "
                               "flags 0x%02X, expected it lit by the beam",
-                              (unsigned)kBeams[b].facing, kBeams[b].aheadX,
+                              (int)kBeams[b].heading, kBeams[b].aheadX,
                               kBeams[b].aheadY, (unsigned)ahead);
                 UT_ASSERT_MSG((behind & OVERVIEW_F_HIDDEN) != 0 &&
                                   (behind &
                                    (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
-                              "facing %u, the square %d,%d behind it carries "
+                              "heading %d, the square %d,%d behind it carries "
                               "flags 0x%02X, expected it hidden",
-                              (unsigned)kBeams[b].facing, kBeams[b].behindX,
+                              (int)kBeams[b].heading, kBeams[b].behindX,
                               kBeams[b].behindY, (unsigned)behind);
                 UT_ASSERT_MSG((side & OVERVIEW_F_HIDDEN) != 0 &&
                                   (side &
                                    (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
-                              "facing %u, the square %d,%d square to it carries "
+                              "heading %d, the square %d,%d square to it carries "
                               "flags 0x%02X, expected it hidden",
-                              (unsigned)kBeams[b].facing, kBeams[b].sideX,
+                              (int)kBeams[b].heading, kBeams[b].sideX,
                               kBeams[b].sideY, (unsigned)side);
+            }
+
+            /* And a heading between two of those sixteenths, which is the whole
+             * of what the beam following the tank's own angle is for.
+             *
+             * It takes two squares to tell such a heading from both of the
+             * sixteenths either side of it. The beam is thirty degrees wide and
+             * the sixteenths are twenty-two and a half degrees apart, so an
+             * in-between wedge always lies inside the two neighbouring wedges
+             * put together and always covers the part they share: no one square
+             * is lit by the in-between heading alone, and none is dark under it
+             * alone. A pair does it. Both are eleven squares up from the tank -
+             * one of them four across, which is about twenty degrees round from
+             * north, and the other straight up. North lights the straight one
+             * and not the one across; north-north-east lights the one across
+             * and not the straight one; half a step between them lights both,
+             * which neither sixteenth does. A beam snapped back to either
+             * neighbour fails one of the two. */
+            {
+                static const struct {
+                    TURNTYPE heading;  /* Which way the tank points */
+                    bool     across;   /* Is the square four across lit */
+                    bool     straight; /* Is the one straight up lit */
+                } kBetween[] = {
+                    {BRADIANS_NORTH,               FALSE, TRUE },
+                    {(TURNTYPE)(BRADIANS_GAP / 2), TRUE,  TRUE },
+                    {BRADIANS_NNEAST,              TRUE,  FALSE}
+                };
+                const int kBetweenCount =
+                    (int)(sizeof(kBetween) / sizeof(kBetween[0]));
+                BYTE across;   /* Flags on the square four across */
+                BYTE straight; /* and on the one straight up */
+                int  h;        /* Looping variable */
+
+                for (h = 0; h < kBetweenCount; h++) {
+                    overviewMapReset(om);
+                    overviewViewInputsDefaults(&fog);
+                    fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
+                    fog.heading = kBetween[h].heading;
+                    overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+
+                    across = om->flags[100 + 4][100 - 11];
+                    straight = om->flags[100][100 - 11];
+
+                    UT_ASSERT_MSG(((across & OVERVIEW_F_LIVE) != 0) ==
+                                      kBetween[h].across,
+                                  "heading %d, the square 4,-11 from the tank "
+                                  "carries flags 0x%02X, expected it %s",
+                                  (int)kBetween[h].heading, (unsigned)across,
+                                  kBetween[h].across == TRUE ? "lit"
+                                                             : "hidden");
+                    UT_ASSERT_MSG(((straight & OVERVIEW_F_LIVE) != 0) ==
+                                      kBetween[h].straight,
+                                  "heading %d, the square 0,-11 from the tank "
+                                  "carries flags 0x%02X, expected it %s",
+                                  (int)kBetween[h].heading, (unsigned)straight,
+                                  kBetween[h].straight == TRUE ? "lit"
+                                                               : "hidden");
+                }
             }
 
             /* The near squares end where they say they do: one square further
@@ -510,7 +571,7 @@ int run_overview_regions(void) {
             overviewMapReset(om);
             overviewViewInputsDefaults(&fog);
             fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-            fog.facing = 0; /* north */
+            fog.heading = BRADIANS_NORTH;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
             UT_ASSERT_MSG(
                 (om->flags[100 + OVERVIEW_HEADLIGHT_NEAR + 1][100] &
@@ -527,7 +588,7 @@ int run_overview_regions(void) {
             overviewMapReset(om);
             overviewViewInputsDefaults(&fog);
             fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
-            fog.facing = 4; /* east */
+            fog.heading = BRADIANS_EAST;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
             UT_ASSERT_MSG((om->flags[107][100] &
                            (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
@@ -973,7 +1034,7 @@ int run_overview_regions(void) {
             overviewViewInputsDefaults(&fog);
             fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
             fog.sightMode = (uint8_t)fogSightBuildings;
-            fog.facing = 4; /* east, down the line the building sits on */
+            fog.heading = BRADIANS_EAST; /* down the line the building sits on */
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
             UT_ASSERT_MSG(om->hiddenActive == TRUE,
                           "the map hid nothing with the beam and sight both "
@@ -989,7 +1050,7 @@ int run_overview_regions(void) {
                           "0x%02X, expected the beam cut short by it",
                           (unsigned)om->flags[106][100]);
             UT_ASSERT_MSG((om->flags[100][94] & OVERVIEW_F_HIDDEN) != 0,
-                          "the square square-on to the facing carries flags "
+                          "the square square-on to the heading carries flags "
                           "0x%02X, expected it outside the beam whatever the "
                           "line to it is like",
                           (unsigned)om->flags[100][94]);
@@ -1267,11 +1328,12 @@ int run_overview_reveal(void) {
     const OverviewMap *om = clientSimGetOverviewMap(f.cs);
     UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
 
-    /* Point the tank east before the inputs are read. The facing field is a
-     * 0-15 index and the beam reads it as one, so this is where the units are
-     * checked: the same heading is 64 in BRADIANS and 4 as an index, and north
-     * is the one heading the two agree on. The angle is set on the tank the
-     * fill reads, position untouched, so nothing else in the case moves. */
+    /* Point the tank east before the inputs are read. The heading field is the
+     * tank's angle in BRADIANS and the beam reads it as one, so this is where
+     * the units are checked: east is 64 there, where a sixteen-step index or a
+     * frame number would make it 4, and north is the one heading all three
+     * agree on. The angle is set on the tank the fill reads, position
+     * untouched, so nothing else in the case moves. */
     WORLD tankWX = 0;
     WORLD tankWY = 0;
     tankGetWorld(&f.gs->tanks[f.me], &tankWX, &tankWY);
@@ -1281,12 +1343,10 @@ int run_overview_reveal(void) {
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
     OverviewViewInputs in;
     clientSimFillOverviewViewInputs(f.cs, &in);
-    UT_ASSERT_MSG(in.facing <= 15,
-                  "facing came back as %u, outside the 0-15 index the field "
-                  "holds", (unsigned)in.facing);
-    UT_ASSERT_MSG(in.facing == 4,
-                  "a tank pointing east filled facing %u, expected the index 4",
-                  (unsigned)in.facing);
+    UT_ASSERT_MSG(in.heading == (TURNTYPE)BRADIANS_EAST,
+                  "a tank pointing east filled heading %d, expected "
+                  "BRADIANS_EAST - a snapped or scaled reading would be "
+                  "somewhere else", (int)in.heading);
     OverviewRect tankBlock = overviewTestBlock(f.tankMX, f.tankMY,
                                                OVERVIEW_TANK_HALF);
     int n = overviewMapBuildRegions(f.gs, f.me, &in, NULL, &tankBlock, expect,

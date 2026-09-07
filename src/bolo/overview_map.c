@@ -69,10 +69,11 @@
  *  changes on ground the player cannot see stay invisible.
  *********************************************************/
 
+#include <math.h>
+
 #include "global.h"
 #include "overview_map.h"
 #include "bases.h"
-#include "facing_table.h" /* kForwardX / kForwardY — where the tank points */
 #include "game_sim.h"
 #include "pillbox.h"
 #include "players.h"
@@ -182,27 +183,36 @@ bool overviewFogBlockFollowsView(FogExperiment e) {
          e == fogExperimentAfterimage;
 }
 
-/* The beam a facing points, with no block and no origin - which is everything
- * overviewBeamLights reads. Shared by the whole-square question below and by
- * the record overviewMapUpdate leaves on the map, so the two cannot point
- * different ways. */
-static OverviewBeam overviewBeamFromFacing(BYTE facing) {
+/* How long the beam vector is: 256ths of a square, which is the scale the
+ * facing table holds its directions at and the one overviewBeamLights and the
+ * fog builder are written against. */
+#define OVERVIEW_BEAM_SCALE 256.0
+
+/* The beam a heading points, with no block and no origin - which is everything
+ * overviewBeamLights reads. Shared by the mask below and by the record
+ * overviewMapUpdate leaves on the map for the frontend, so the squares the map
+ * holds live and the beam the fog is drawn from cannot point different ways.
+ *
+ * The heading is the tank's own angle rather than one of the sixteen frames its
+ * sprite is drawn from, so the beam sweeps with the tank instead of stepping a
+ * sixteenth of a turn at a time. x is the sine of the angle and y its negative
+ * cosine, because the angle runs clockwise from north: at 0 that is (0, -256)
+ * and at BRADIANS_EAST (256, 0), the same two the facing table gives.
+ *
+ * The vector is rounded to whole 256ths, which leaves the direction good to
+ * about a quarter of a degree against a beam thirty degrees wide. That is what
+ * lets the frontend compare the beam byte for byte and skip rebuilding a fog
+ * mask for a turn too small to see. */
+static OverviewBeam overviewBeamFromHeading(TURNTYPE heading) {
   OverviewBeam b; /* Beam to return */
-  int idx;        /* The facing, brought inside the table */
+  double rad;     /* The heading in radians, clockwise from north */
 
   memset(&b, 0, sizeof(b));
-  idx = (int)(facing & 15);
+  rad = (double)heading * (RADIANS_MAX / BRADIANS_MAX);
   b.active = TRUE;
-  b.dirX = kForwardX[idx];
-  b.dirY = kForwardY[idx];
+  b.dirX = (int)lround(sin(rad) * OVERVIEW_BEAM_SCALE);
+  b.dirY = (int)lround(-cos(rad) * OVERVIEW_BEAM_SCALE);
   return b;
-}
-
-bool overviewHeadlightSees(int dx, int dy, BYTE facing) {
-  OverviewBeam beam; /* The shape the facing gives */
-
-  beam = overviewBeamFromFacing(facing);
-  return overviewBeamLights(&beam, (float)dx, (float)dy) ? TRUE : FALSE;
 }
 
 /* Zeroes every square of the rect the Headlights blocks do not hold live,
@@ -211,18 +221,24 @@ bool overviewHeadlightSees(int dx, int dy, BYTE facing) {
  * be in the beam and have a clear line to it to come through both.
  *
  * The origin is the square the block was placed from, which is its centre; the
- * mask is indexed over the rect the way sight.h describes. */
-static void overviewHeadlightMask(BYTE facing, BYTE tankMX, BYTE tankMY,
+ * mask is indexed over the rect the way sight.h describes.
+ *
+ * The heading is turned into its vector once rather than per square: the walk
+ * covers the whole block every tick a Headlights experiment is on, and the
+ * vector is the same for all of it. */
+static void overviewHeadlightMask(TURNTYPE heading, BYTE tankMX, BYTE tankMY,
                                   const OverviewRect *r, BYTE *vis) {
+  OverviewBeam beam; /* The shape the heading gives */
   int stride; /* Squares across the rect, which is the mask's row length */
   int x;      /* Looping variable */
   int y;      /* Looping variable */
 
+  beam = overviewBeamFromHeading(heading);
   stride = r->right - r->left + 1;
   for (x = r->left; x <= r->right; x++) {
     for (y = r->top; y <= r->bottom; y++) {
-      if (overviewHeadlightSees(x - (int)tankMX, y - (int)tankMY, facing) ==
-          FALSE) {
+      if (overviewBeamLights(&beam, (float)(x - (int)tankMX),
+                             (float)(y - (int)tankMY)) == FALSE) {
         vis[(y - r->top) * stride + (x - r->left)] = 0;
       }
     }
@@ -405,7 +421,7 @@ static const BYTE *overviewFarewellMask(const OverviewMap *om,
   memset(vis, 1, SIGHT_MASK_BYTES);
   sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, mode, r, vis);
   if (overviewIsHeadlights(in->experiment) == TRUE) {
-    overviewHeadlightMask(in->facing, om->lastTankMX, om->lastTankMY, r, vis);
+    overviewHeadlightMask(in->heading, om->lastTankMX, om->lastTankMY, r, vis);
   }
   return vis;
 }
@@ -1108,7 +1124,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * moved. */
   memset(&om->beam, 0, sizeof(om->beam));
   if (ownBlocks > 0 && overviewIsHeadlights(in->experiment) == TRUE) {
-    om->beam = overviewBeamFromFacing(in->facing);
+    om->beam = overviewBeamFromHeading(in->heading);
     om->beam.originX = useMX;
     om->beam.originY = useMY;
     om->beam.block = om->live[ownBlocks - 1];
@@ -1128,7 +1144,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
         sightBuildMask(&sim->mp, useMX, useMY, sightRule, &om->live[i], vis);
       }
       if (overviewIsHeadlights(in->experiment) == TRUE) {
-        overviewHeadlightMask(in->facing, useMX, useMY, &om->live[i], vis);
+        overviewHeadlightMask(in->heading, useMX, useMY, &om->live[i], vis);
       }
       visPtr = vis;
     }
