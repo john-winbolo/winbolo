@@ -383,6 +383,7 @@ void lobbySendTeamClear(ClientSim *cs, uint8_t teamId);
 void lobbySendTeamPool(ClientSim *cs,
                        uint8_t teamId, uint8_t namingPool,
                        const char *teamName);
+void lobbySendTeamSide(ClientSim *cs, uint8_t teamId, uint8_t startSide);
 void lobbySendSetting(ClientSim *cs,
                       uint8_t settingType,
                       const uint8_t *value, uint8_t valueLen);

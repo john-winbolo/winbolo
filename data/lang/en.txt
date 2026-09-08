@@ -1522,6 +1522,22 @@ STR_DLGBROWSER_VIEWS_LBL=Views:
 STR_DLGBROWSER_VIEWS_CLASSIC=Classic
 STR_DLGBROWSER_VIEWS_ALLYTREES=Allies in trees
 
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Start:
+STR_DLGLOBBY_SIDE_ANY=Any
+STR_DLGLOBBY_SIDE_N=North
+STR_DLGLOBBY_SIDE_E=East
+STR_DLGLOBBY_SIDE_S=South
+STR_DLGLOBBY_SIDE_W=West
+STR_DLGLOBBY_START_SEA=Sea
+STR_DLGLOBBY_START_TEAM_SIDE=Team side
+STR_DLGLOBBY_START_AUTO=Auto
+STR_DLGLOBBY_START_UNASSIGN=Unassign
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(off-side)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} starts for {number2} players — {number3} will start at sea.\nChanging a side re-picks every player's start.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player.
+
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller
 STR_GP_REBIND_PROMPT=Press a button or pull a trigger...

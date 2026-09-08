@@ -625,6 +625,35 @@ void lobbySendTeamPool(ClientSim *cs,
     }
 }
 
+/* Update a team's start side. The team-meta packet carries every field,
+ * so the current colour, naming pool and name are read back from the
+ * client mirror and sent unchanged beside the new side — the read-back
+ * lobbySendTeamPool does for colour and side, widened to the pool and
+ * the name. A team the mirror has not marked in use gets the same
+ * per-teamId default colour and "Team N" name the header row shows for
+ * it. SP-host and MP both land on the wire wrapper (its local-transport
+ * branch applies the fields under the threads mutex); SP only adds the
+ * guard lobbySendTeamPool applies before its send. */
+void lobbySendTeamSide(ClientSim *cs, uint8_t teamId, uint8_t startSide) {
+    if (cs && clientSimIsSinglePlayer(cs)) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+    }
+    uint8_t     color      = clientSimGetLobbyTeamColor(cs, (BYTE)(teamId));
+    uint8_t     namingPool = clientSimGetLobbyTeamPool(cs, (BYTE)(teamId));
+    const char *teamName   = clientSimGetLobbyTeamName(cs, (BYTE)(teamId));
+    char        defaultName[16];
+    if (!clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))) {
+        MessageArgs args = {};
+        args.number = teamId;
+        SDL_snprintf(defaultName, sizeof(defaultName), "%s",
+                     langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
+        color    = (uint8_t)((teamId - 1) & 7);
+        teamName = defaultName;
+    }
+    clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
+}
+
 /* Game-settings dispatcher. settingType is one of LST_* (wire_limits.h);
  * payload is 1 to 3 bytes per server-side parser. Forwards to the
  * client_net wrapper, whose local-transport branch shares

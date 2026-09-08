@@ -1435,6 +1435,26 @@ static const LangEntry langTable[] = {
     {2027, "Views:"},
     {2028, "Classic"},
     {2029, "Allies in trees"},
+
+    /* Lobby team start side: the header's Start: selector, the row cell's
+     * sea state and the start dropdown's two actions. 2041: {string1} =
+     * side name, {number} = starts the side offers, {number2} = team
+     * members, {number3} = members left to start at sea. 2043: {string1}
+     * = side name. */
+    {2030, "Start:"},
+    {2031, "Any"},
+    {2032, "North"},
+    {2033, "East"},
+    {2034, "South"},
+    {2035, "West"},
+    {2036, "Sea"},
+    {2037, "Team side"},
+    {2038, "Auto"},
+    {2039, "Unassign"},
+    {2040, "(off-side)"},
+    {2041, "{string1}: {number} starts for {number2} players \xE2\x80\x94 {number3} will start at sea.\nChanging a side re-picks every player's start."},
+    {2042, "Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start."},
+    {2043, "Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player."},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
