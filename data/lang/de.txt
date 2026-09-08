@@ -1492,6 +1492,8 @@ STR_STARTPICK_YOU=Sie
 STR_STARTPICK_SWAP_WITH=Diesen Startpunkt tauschen mit:
 STR_STARTPICK_ASSIGN_TO=Startpunkt zuweisen an:
 STR_STARTPICK_SLOT_FALLBACK=(Slot)
+STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nNicht auf Ihrer Teamseite
+STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nAbseits für {string1}
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=KI-Spieler
 STR_PLATFORM_WINDOWS=Windows
@@ -2003,3 +2005,19 @@ STR_ITEMVIEW_ALLY_NAMED=Ansicht verbündeter Panzer — {player}
 STR_DLGBROWSER_VIEWS_LBL=Ansichten:
 STR_DLGBROWSER_VIEWS_CLASSIC=Klassisch
 STR_DLGBROWSER_VIEWS_ALLYTREES=Verbündete im Wald
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Start:
+STR_DLGLOBBY_SIDE_ANY=Beliebig
+STR_DLGLOBBY_SIDE_N=Norden
+STR_DLGLOBBY_SIDE_E=Osten
+STR_DLGLOBBY_SIDE_S=Süden
+STR_DLGLOBBY_SIDE_W=Westen
+STR_DLGLOBBY_START_SEA=See
+STR_DLGLOBBY_START_TEAM_SIDE=Teamseite
+STR_DLGLOBBY_START_AUTO=Automatisch
+STR_DLGLOBBY_START_UNASSIGN=Freigeben
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(Abseits)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} Startpunkte für {number2} Spieler — {number3} starten auf See.\nEin Seitenwechsel weist jedem Spieler einen neuen Start zu.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Alle Startpunkte, die dieses Team nutzen kann, sind belegt, daher\nstartet dieser Spieler auf See neben dem Start eines Teamkollegen.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Abseits: Dieser Start liegt nicht auf {string1}, der Teamseite.\nDer Gastgeber hat ihn für diesen Spieler ausgewählt.

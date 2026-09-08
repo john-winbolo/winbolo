@@ -1492,6 +1492,8 @@ STR_STARTPICK_YOU=vous
 STR_STARTPICK_SWAP_WITH=Échanger ce départ avec :
 STR_STARTPICK_ASSIGN_TO=Assigner le départ à :
 STR_STARTPICK_SLOT_FALLBACK=(place)
+STR_STARTPICK_TIP_OFFSIDE=Départ #{number}\nPas sur le côté de votre équipe
+STR_STARTPICK_TIP_OFFSIDE_HOST=Départ #{number}\nHors zone pour {string1}
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=Joueur IA
 STR_PLATFORM_WINDOWS=Windows
@@ -2003,3 +2005,19 @@ STR_ITEMVIEW_ALLY_NAMED=Vue tanks alliés — {player}
 STR_DLGBROWSER_VIEWS_LBL=Vues :
 STR_DLGBROWSER_VIEWS_CLASSIC=Classique
 STR_DLGBROWSER_VIEWS_ALLYTREES=Alliés dans les arbres
+
+# Lobby — côté de départ d'équipe : sélecteur d'en-tête, cellule de départ de ligne et actions du menu déroulant
+STR_DLGLOBBY_TEAM_SIDE=Départ :
+STR_DLGLOBBY_SIDE_ANY=Indifférent
+STR_DLGLOBBY_SIDE_N=Nord
+STR_DLGLOBBY_SIDE_E=Est
+STR_DLGLOBBY_SIDE_S=Sud
+STR_DLGLOBBY_SIDE_W=Ouest
+STR_DLGLOBBY_START_SEA=Mer
+STR_DLGLOBBY_START_TEAM_SIDE=Côté d'équipe
+STR_DLGLOBBY_START_AUTO=Auto
+STR_DLGLOBBY_START_UNASSIGN=Libérer
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(hors zone)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1} : {number} départs pour {number2} joueurs — {number3} commenceront en mer.\nChanger de côté réattribue le départ de chaque joueur.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Tous les départs que cette équipe peut utiliser sont pris, donc ce joueur\ncommencera en mer à côté du départ d'un coéquipier.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Hors zone : ce départ n'est pas sur {string1}, le côté de l'équipe.\nL'hôte l'a choisi pour ce joueur.
