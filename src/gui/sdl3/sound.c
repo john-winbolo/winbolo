@@ -149,7 +149,8 @@ static const char *soundFiles[NUM_SOUNDS] = {
 *  dstSize     - Pointer to receive converted size
 *
 *RETURNS:
-*  true if successful, false otherwise
+*  true if the conversion produced audio.  false leaves
+*  *dstData NULL and *dstSize 0, with nothing to free.
 *********************************************************/
 static bool convertAudioData(const Uint8 *srcData, Uint32 srcSize,
                              const SDL_AudioSpec *srcSpec,
@@ -159,8 +160,17 @@ static bool convertAudioData(const Uint8 *srcData, Uint32 srcSize,
                                   &deviceSpec, dstData, &dstLen)) {
         return false;
     }
+    if (dstLen <= 0) {
+        /* A conversion that succeeds with nothing in it still hands back a
+         * buffer to free.  The caller reads false as "no audio came out" and
+         * allocates its own, so this one has to go here or it is lost. */
+        SDL_free(*dstData);
+        *dstData = NULL;
+        *dstSize = 0;
+        return false;
+    }
     *dstSize = (Uint32)dstLen;
-    return dstLen > 0;
+    return true;
 }
 
 /*********************************************************
@@ -209,7 +219,9 @@ static bool loadWavFromSkin(SkinSource *src, const char *relName,
 *  wavLength - Byte count
 *
 *RETURNS:
-*  true unless the fallback allocation failed
+*  true if the member holds audio.  false if the fallback
+*  allocation failed, or if there is no audio to keep, and
+*  then sound->data is NULL and sound->size 0
 *********************************************************/
 static bool storeSoundData(SoundData *sound, const SDL_AudioSpec *spec,
                            Uint8 *wavData, Uint32 wavLength) {
@@ -229,6 +241,16 @@ static bool storeSoundData(SoundData *sound, const SDL_AudioSpec *spec,
     }
 
     SDL_free(wavData);
+
+    /* Nothing came out of the conversion and the WAV was empty too.  Kept,
+     * this member would take a position in the pool and give the sound a
+     * silent trigger every time the pick landed on it. */
+    if (sound->size == 0) {
+        SDL_free(sound->data);
+        sound->data = NULL;
+        return false;
+    }
+
     return true;
 }
 
