@@ -212,6 +212,21 @@ static bool mutedPlayers[MAX_TANKS];
 static uint32_t talkingUntilMs[MAX_TANKS];
 static bool talkingStamped[MAX_TANKS];
 
+/* The most recent decoded frame's RMS amplitude per remote talker, and the
+ * held peak over it.  The peak is kept in drawn-height units rather than
+ * amplitude, the way the local meter's is: voiceMeterScale is applied before
+ * it sees a reading, so the hold and the decay run in the same space as the
+ * bar they are drawn in.  Cleared wherever the talking stamps are. */
+static float playerLevel[MAX_TANKS];
+static VoicePeak playerPeak[MAX_TANKS];
+
+/* How loud each remote talker is played here, 1.0 for unity.  Session-scoped
+ * by design: it lasts until that player leaves, which is where it goes back
+ * to unity, and it is never written to the preferences.  Zero-initialised
+ * statics would mean silent, so voiceInit fills every slot with unity before
+ * anything can read one. */
+static float perPlayerVolume[MAX_TANKS];
+
 /* An encoder producing frames too large for one voice segment is a
  * configuration problem, not a per-frame event: say so once. */
 static bool warnedFrameTooLarge = false;
@@ -377,8 +392,21 @@ static void micTestEnd(bool discardPlayback) {
 *  (none)
 *********************************************************/
 bool voiceInit(void) {
+    int i;
+
     if (isInitialised) {
         return true;
+    }
+
+    /* Every slot at unity before anything reads one: a zero would play that
+     * player silent, which is not what "never turned down" means.  Above the
+     * backend rather than at the end of this function, because the players
+     * panel asks voiceGetPlayerVolume for every row without first asking
+     * whether voice came up at all - so on a machine whose audio device will
+     * not open, a zeroed array would draw every slider hard left and read as
+     * though everybody had been silenced. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        perPlayerVolume[i] = 1.0f;
     }
 
     if (!voiceBackendInit()) {
@@ -475,8 +503,8 @@ static void releaseSpeaker(int player) {
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  Drops everything held about one player: their decoder and
-*  playback, their talking indicator, and the local mute on
-*  them.
+*  playback, their talking indicator and level, and the local
+*  mute and volume on them.
 *
 *  The mute goes with them because slots are recycled.  A
 *  mute is on the player who was in the slot, not on the
@@ -485,6 +513,10 @@ static void releaseSpeaker(int player) {
 *  bit, chat as well - with nothing to show for it but a
 *  "muted by you" icon on a player this client never muted.
 *  The server drops its half in serverDisconnectClient.
+*
+*  The volume goes back to unity here for the same reason,
+*  and this is the only place it does: it is set on a player,
+*  so it lasts as long as they are in the game and no longer.
 *
 *ARGUMENTS:
 *  player - the player number to forget
@@ -497,6 +529,9 @@ void voiceForgetPlayer(int player) {
     mutedPlayers[player] = false;
     talkingUntilMs[player] = 0;
     talkingStamped[player] = false;
+    playerLevel[player] = 0.0f;
+    memset(&playerPeak[player], 0, sizeof(playerPeak[player]));
+    perPlayerVolume[player] = 1.0f;
 }
 
 /*********************************************************
@@ -659,12 +694,16 @@ void voiceSetEnabled(bool on) {
 
     /* Drop every remote talker along with what they had buffered, so the
      * ones mid-sentence stop where they are rather than finishing.  The
-     * talking stamps go with them: nothing of theirs is audible any more,
-     * so nothing of theirs may still be shown as talking. */
+     * talking stamps and the levels go with them: nothing of theirs is
+     * audible any more, so nothing of theirs may still be shown as talking
+     * or as loud.  The per-player volumes stay - switching voice off and on
+     * is not the player leaving. */
     for (i = 0; i < MAX_TANKS; i++) {
         releaseSpeaker(i);
         talkingUntilMs[i] = 0;
         talkingStamped[i] = false;
+        playerLevel[i] = 0.0f;
+        memset(&playerPeak[i], 0, sizeof(playerPeak[i]));
     }
 }
 
@@ -911,26 +950,31 @@ float voiceGetOutputVolume(void) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Scales one decoded frame by the voice output volume, in
-*  place.  Done here rather than in the backend so the
-*  device contract stays the same on every platform.
+*  Scales one decoded frame by the voice output volume and
+*  by that talker's own volume, in place.  Done here rather
+*  than in the backend so the device contract stays the same
+*  on every platform.
 *
 *ARGUMENTS:
-*  pcm - VOICE_FRAME_SAMPLES mono S16 samples, scaled in
-*        place
+*  pcm    - VOICE_FRAME_SAMPLES mono S16 samples, scaled in
+*           place
+*  player - the player the frame came from, whose own volume
+*           multiplies the output one
 *********************************************************/
-static void applyOutputVolume(int16_t *pcm) {
+static void applyOutputVolume(int16_t *pcm, int player) {
     int i;
     float sample;
+    float gain = outputVolume * perPlayerVolume[player];
 
-    /* Unity is the common case and every sample would survive it
-     * unchanged. */
-    if (outputVolume == 1.0f) {
+    /* Unity is the common case and every sample would survive it unchanged.
+     * Tested against the two together: either one alone can be off unity
+     * while the product is not. */
+    if (gain == 1.0f) {
         return;
     }
 
     for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
-        sample = (float)pcm[i] * outputVolume;
+        sample = (float)pcm[i] * gain;
         if (sample > 32767.0f) {
             sample = 32767.0f;
         } else if (sample < -32768.0f) {
@@ -1263,6 +1307,81 @@ bool voiceIsPlayerMuted(int player) {
 }
 
 /*********************************************************
+*NAME:          voiceSetPlayerVolume
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Sets how loud one player is played here.  Local playback
+*  only: nothing is sent, and the player being turned down
+*  has no way of knowing.  Lasts until they leave, and is
+*  never persisted.
+*
+*ARGUMENTS:
+*  player - the player number to set
+*  gain   - 1.0f is unity, clamped to
+*           0..VOICE_PLAYER_VOLUME_MAX
+*********************************************************/
+void voiceSetPlayerVolume(int player, float gain) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return;
+    }
+    if (gain < 0.0f) {
+        gain = 0.0f;
+    } else if (gain > VOICE_PLAYER_VOLUME_MAX) {
+        gain = VOICE_PLAYER_VOLUME_MAX;
+    }
+    perPlayerVolume[player] = gain;
+}
+
+/*********************************************************
+*NAME:          voiceGetPlayerVolume
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns how loud one player is played here, 1.0f for a
+*  player who has not been turned up or down.
+*
+*ARGUMENTS:
+*  player - the player number to ask about
+*********************************************************/
+float voiceGetPlayerVolume(int player) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return 1.0f;
+    }
+    return perPlayerVolume[player];
+}
+
+/*********************************************************
+*NAME:          playerIsTalking
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether one player's talking stamp is still live
+*  at nowMs.  The one test of it: the talking bitmap and the
+*  per-player level both ask this rather than each keeping a
+*  copy of the comparison, which could disagree with the
+*  other.
+*
+*  Reports on the stamp without touching it.  Dropping an
+*  expired one belongs to the caller that walks every slot.
+*
+*ARGUMENTS:
+*  player - the player number to ask about
+*  nowMs  - the clock reading to test the stamp against
+*********************************************************/
+static bool playerIsTalking(int player, uint32_t nowMs) {
+    if (!talkingStamped[player]) {
+        return false;
+    }
+    /* Signed difference: the clock wraps every 49 days or so, and now <
+     * until would read a wrapped stamp as one far in the future. */
+    return (int32_t)(nowMs - talkingUntilMs[player]) < 0;
+}
+
+/*********************************************************
 *NAME:          voiceGetTalkingMap
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -1287,14 +1406,11 @@ PlayerBitMap voiceGetTalkingMap(void) {
 
     now = voiceBackendNowMs();
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!talkingStamped[i]) {
-            continue;
-        }
-        /* Signed difference: the clock wraps every 49 days or so, and now <
-         * until would read a wrapped stamp as one far in the future. */
-        if ((int32_t)(now - talkingUntilMs[i]) >= 0) {
-            /* Expired.  Dropped here rather than left to sit, so a stamp
-             * cannot come back round as live a wrap later. */
+        if (!playerIsTalking(i, now)) {
+            /* An expired stamp is dropped here rather than left to sit, so
+             * it cannot come back round as live a wrap later.  This is the
+             * one loop over every slot, so this is where that happens;
+             * clearing a slot that was never stamped costs nothing. */
             talkingStamped[i] = false;
             continue;
         }
@@ -1302,6 +1418,45 @@ PlayerBitMap voiceGetTalkingMap(void) {
     }
 
     return talking;
+}
+
+/*********************************************************
+*NAME:          voiceGetPlayerLevel
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the 0..1 height a meter draws one remote talker's
+*  loudness at - meter heights, like voiceGetInputMeter and
+*  voiceGetInputPeak, not a raw amplitude - held and decaying
+*  the way the local meter's peak is.
+*
+*  Zero for a player who is not talking, was never heard, is
+*  muted here, or is out of range.
+*
+*ARGUMENTS:
+*  player - the player number to ask about
+*********************************************************/
+float voiceGetPlayerLevel(int player) {
+    uint32_t now;
+    float live;
+
+    if (player < 0 || player >= MAX_TANKS) {
+        return 0.0f;
+    }
+
+    now = voiceBackendNowMs();
+    /* Fed zero rather than left alone once they stop, so a talker fades over
+     * the peak's own fall time instead of snapping off, and a player who has
+     * never been heard reads a flat zero from the first call. */
+    live = playerIsTalking(player, now)
+               ? voiceMeterScale(playerLevel[player])
+               : 0.0f;
+    /* A getter that advances the state, for the reason voiceGetInputPeak
+     * gives: the decay runs against the clock, and between decoded frames
+     * nothing else feeds this, so the peak would otherwise stand wherever
+     * the last frame left it. */
+    return voicePeakUpdate(&playerPeak[player], live, now);
 }
 
 /*********************************************************
@@ -1385,7 +1540,13 @@ static void voicePlayRemote(struct ClientSim *cs) {
              * audio rather than this listener's volume setting. */
             voiceDebugTap(VOICE_TAP_REMOTE, i, pcm);
 #endif
-            applyOutputVolume(pcm);
+            applyOutputVolume(pcm, i);
+            /* Read after both volumes rather than before them: the bar this
+             * feeds sits beside the slider that scales this talker, so it
+             * has to show that moving the slider did something.  The local
+             * input meter is taken after the microphone gain for the same
+             * reason. */
+            playerLevel[i] = voiceFrameRms(pcm, VOICE_FRAME_SAMPLES);
 #if defined(WINBOLO_VOICE_AEC)
             /* Taken after the output gain, so the reference is at the level
              * the loudspeakers will carry, and before the hand-over, since
@@ -1540,38 +1701,6 @@ static void micTestPlayTick(void) {
         voiceBackendLoopbackPlay(pcm);
     }
 }
-
-#if defined(WINBOLO_VOICE_AEC)
-/*********************************************************
-*NAME:          voiceFrameRms
-*AUTHOR:        John Morrison
-*CREATION DATE: 2026
-*LAST MODIFIED: 2026
-*PURPOSE:
-*  Returns the 0..1 RMS of one frame, clamped at 1.0f.  For
-*  a frame whatever gain it gets has already been applied to
-*  in place - the capture loop takes its own reading as part
-*  of applying that gain, and this is the second reading of
-*  the same frame afterwards.
-*
-*ARGUMENTS:
-*  pcm - VOICE_FRAME_SAMPLES mono S16 samples
-*********************************************************/
-static float voiceFrameRms(const int16_t *pcm) {
-    float sumSquares = 0.0f;
-    float level;
-    int i;
-
-    for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
-        sumSquares += (float)pcm[i] * (float)pcm[i];
-    }
-    level = sqrtf(sumSquares / (float)VOICE_FRAME_SAMPLES) / 32768.0f;
-    if (level > 1.0f) {
-        level = 1.0f;
-    }
-    return level;
-}
-#endif
 
 /*********************************************************
 *NAME:          voiceTick
@@ -1744,7 +1873,7 @@ void voiceTick(struct ClientSim *cs) {
 
         /* The gate's own reading, taken off the frame the canceller has just
          * cleaned rather than off the meter's. */
-        gateLevel = voiceFrameRms(pcm);
+        gateLevel = voiceFrameRms(pcm, VOICE_FRAME_SAMPLES);
 #endif
 
 #if defined(WB_VOICEDEBUG)

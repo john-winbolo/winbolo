@@ -381,6 +381,11 @@ static const ImVec4 MIC_TINT_NORMAL  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 static const ImVec4 MIC_TINT_TALKING = ImVec4(0.30f, 1.00f, 0.40f, 1.00f);
 static const ImVec4 MIC_TINT_MUTED   = ImVec4(1.00f, 0.35f, 0.35f, 1.00f);
 static const ImVec4 MIC_TINT_DIM     = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
+/* The loudness bar under the speaker in a players-panel row: as wide as the
+ * icon and this many pixels tall. Fixed rather than scaled, like the icon
+ * above it. The strip is taken out of every row whether or not a bar is drawn
+ * in it, so rows do not change height as people start and stop talking. */
+#define MIC_LEVEL_BAR_H 3.0f
 /* What sdl3ImguiCreateMicIconSurface will rasterize at. Below the floor the
  * glyph is unreadable whatever we do; the ceiling is well past the largest
  * size the game view asks for and stops a degenerate layout turning into a
@@ -2365,8 +2370,17 @@ static void renderPlayersContent(ClientSim *cs) {
          * already does for the checkbox. */
         float micWidth = (float)WBN_ICON_SIZE;
         float micColumn = micWidth + spacing;
+        /* Room the per-player volume slider takes, slider plus its trailing
+         * spacing. Reserved separately from the mic rather than folded into
+         * it: they are two cells with two widths, and the subtraction below
+         * reads as the list of things in front of the name. Reserved on the
+         * local player's row too, which draws a blank there, or the name
+         * would start at a different x on that one row. */
+        float volWidth  = ImGui::GetFrameHeight() * 3.0f;
+        float volColumn = volWidth + spacing;
 #else
         const float micColumn = 0.0f;
+        const float volColumn = 0.0f;
 #endif
         /* Room the counter columns take out of the row, block plus the gap
          * that separates it from the name — reserved the same way the ping
@@ -2392,6 +2406,32 @@ static void renderPlayersContent(ClientSim *cs) {
         renderPlayerMicCell(cs, i, s_playerFlags[i], talkingMap,
                             i == self, micWidth, false);
         ImGui::SameLine();
+
+        /* How loud that player is played here, beside their speaker. Local
+         * playback only: nothing is sent, and it lasts until they leave. */
+        if (i == self) {
+            /* Nothing to set for yourself, but the width is held all the
+             * same so every name starts at the same x. */
+            ImGui::Dummy(ImVec2(volWidth, ImGui::GetTextLineHeight()));
+        } else {
+            char volLabel[64];
+            snprintf(volLabel, sizeof(volLabel), "##vol%d", i);
+            float gain = voiceGetPlayerVolume(i);
+            ImGui::SetNextItemWidth(volWidth);
+            /* Zero FramePadding for the reason the mic button has it: the
+             * default padding would make this taller than the Selectable
+             * beside it and leave a dead strip down the row. No value
+             * printed in it either — at this width it would be unreadable,
+             * and the grab says where the volume is. */
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+            if (ImGui::SliderFloat(volLabel, &gain, 0.0f,
+                                   VOICE_PLAYER_VOLUME_MAX, "")) {
+                voiceSetPlayerVolume(i, gain);
+            }
+            ImGui::PopStyleVar();
+            imguiHelpTooltip(langGetText(STR_PLAYER_TIP_VOICE_VOLUME));
+        }
+        ImGui::SameLine();
 #endif
 
         char selectLabel[64];
@@ -2399,6 +2439,7 @@ static void renderPlayersContent(ClientSim *cs) {
         if (ImGui::Selectable(selectLabel, s_playerChecked[i],
                               ImGuiSelectableFlags_DontClosePopups,
                               ImVec2(fullWidth - pingReserve - spacing - statBlock - micColumn -
+                                     volColumn -
                                      (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
             if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
@@ -2501,7 +2542,16 @@ static void renderPlayersContent(ClientSim *cs) {
             if (panelRowBlank[r]) {
                 /* Slot whose player left mid-round: an empty line the height
                  * of a row, so the lines below it stay where they were. */
-                ImGui::Dummy(ImVec2(1.0f, ImGui::GetFrameHeight()));
+                float blankH = ImGui::GetFrameHeight();
+#if defined(WINBOLO_VOICE)
+                /* The mic cell is the icon over the loudness strip, which at
+                 * a small font is taller than a frame. Whichever of the two
+                 * makes the row is what the placeholder has to match. */
+                float micCellH = (float)WBN_ICON_SIZE + sty.ItemSpacing.y +
+                                 MIC_LEVEL_BAR_H;
+                if (micCellH > blankH) blankH = micCellH;
+#endif
+                ImGui::Dummy(ImVec2(1.0f, blankH));
             } else {
                 renderPlayerRow(panelRows[r]);
             }
@@ -6765,11 +6815,54 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 }
 
 #if defined(WINBOLO_VOICE)
+/* Closes the mic cell: takes the strip under the icon and fills it to how
+ * loud that player is right now. The height is taken whether or not anything
+ * is drawn in it, so a row keeps its height as people start and stop talking,
+ * and the fill itself is a draw-list rectangle, which costs no layout on top
+ * of the strip already reserved.
+ *
+ * Nothing is drawn for a player who is silent, muted here, or never heard —
+ * voiceGetPlayerLevel is zero for all three — nor on the local player's own
+ * row, which is about this client's capture rather than about audio arriving.
+ *
+ * The lobby table has neither the bar nor the strip: its rows are the table's
+ * to lay out, not this cell's to make taller. It opened no group either, so
+ * this ends where it began. */
+static void micCellEnd(int playerNum, float width, bool isSelf, bool inLobby) {
+    if (inLobby) {
+        return;
+    }
+
+    ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, MIC_LEVEL_BAR_H));
+
+    float level = isSelf ? 0.0f : voiceGetPlayerLevel(playerNum);
+    if (level > 0.0f) {
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        /* A faint full-width track under the fill, so a short bar reads as a
+         * fraction of the whole rather than as a stub of nothing. */
+        dl->AddRectFilled(at, ImVec2(at.x + width, at.y + MIC_LEVEL_BAR_H),
+                          ImGui::GetColorU32(ImGuiCol_FrameBg));
+        dl->AddRectFilled(at,
+                          ImVec2(at.x + width * level, at.y + MIC_LEVEL_BAR_H),
+                          ImGui::GetColorU32(MIC_TINT_TALKING));
+    }
+
+    ImGui::EndGroup();
+}
+
 void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
                          PlayerBitMap talkingMap, bool isSelf, float size,
                          bool inLobby) {
     ensureWbnIconsLoaded();
     const int iconSlot = activeIconSlot();
+
+    /* The loudness bar goes under the icon, so the cell is a group: without
+     * one the second line would start at the row's left edge rather than
+     * under the icon. Closed by micCellEnd, on every path out of here. */
+    if (!inLobby) {
+        ImGui::BeginGroup();
+    }
 
     /* Resolved in precedence order: muting someone is this client's own
      * doing, so it outranks whatever their microphone is doing — you have to
@@ -6793,6 +6886,7 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
          * between rows. Muted by this client is checked first and still
          * draws, so a player you muted stays visible and clickable. */
         ImGui::Dummy(ImVec2(size, size));
+        micCellEnd(playerNum, size, isSelf, inLobby);
         return;
     }
 
@@ -6878,6 +6972,8 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
             }
         }
     }
+
+    micCellEnd(playerNum, size, isSelf, inLobby);
 }
 #endif
 

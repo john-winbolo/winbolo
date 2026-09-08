@@ -198,6 +198,12 @@ float voicePeakUpdate(VoicePeak *p, float level, uint32_t nowMs);
  * scale returns 1. */
 float voiceMeterScale(float level);
 
+/* The 0..1 RMS amplitude of one frame of mono S16 samples, clamped at 1.  A
+ * NULL buffer or a count of zero or less reads as silence rather than making
+ * every caller test for it first.  This is the measurement, not the height a
+ * meter draws it at - voiceMeterScale above is that. */
+float voiceFrameRms(const int16_t *pcm, int count);
+
 #ifdef __cplusplus
 }
 #endif

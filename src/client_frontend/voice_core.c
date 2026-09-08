@@ -526,3 +526,29 @@ float voiceMeterScale(float level) {
 
     return scaled;
 }
+
+/* How loud one frame is, as the root mean square of its samples.  The largest
+ * sample in the frame would answer a different question - a single click
+ * reaches as high as a shout - so a level meter reads the mean square, which
+ * is what the ear follows.  Divided by 32768 rather than 32767 because full
+ * scale negative is -32768, so that is the range the samples arrive in. */
+float voiceFrameRms(const int16_t *pcm, int count) {
+    float sumSquares = 0.0f;
+    float level;
+    int i;
+
+    if (pcm == NULL || count <= 0) {
+        return 0.0f;
+    }
+
+    for (i = 0; i < count; i++) {
+        sumSquares += (float)pcm[i] * (float)pcm[i];
+    }
+
+    level = sqrtf(sumSquares / (float)count) / 32768.0f;
+    if (level > 1.0f) {
+        level = 1.0f;
+    }
+
+    return level;
+}

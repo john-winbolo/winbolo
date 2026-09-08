@@ -1636,6 +1636,9 @@ STR_PLAYER_TIP_VOICE_SELF=Your microphone — click to mute
 STR_PLAYER_TIP_VOICE_SELF_NOMIC=You have no microphone
 STR_PLAYER_TIP_VOICE_SELF_MUTED=Your microphone is off — click to unmute
 
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=How loud this player is played here
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

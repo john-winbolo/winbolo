@@ -1710,6 +1710,9 @@
 #define STR_PLAYER_TIP_VOICE_SELF_NOMIC         2050
 #define STR_PLAYER_TIP_VOICE_SELF_MUTED         2051
 
+/* Players panel — per-player playback volume slider */
+#define STR_PLAYER_TIP_VOICE_VOLUME             2090
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

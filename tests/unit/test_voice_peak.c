@@ -9,7 +9,8 @@
  *
  * voiceMeterScale, which turns the captured amplitude into the height the same
  * meter draws it at, is covered here too: the two are the two halves of one
- * reading and both are pure arithmetic over a float.
+ * reading and both are pure arithmetic over a float.  So is voiceFrameRms,
+ * which is where the reading they are fed comes from.
  */
 #include <math.h>
 #include <string.h>
@@ -19,6 +20,11 @@
 
 /* Decayed floats are not exact, so everything is compared with a tolerance. */
 #define PEAK_EPS 0.001f
+
+/* Samples in the frames the RMS cases below build.  Shorter than a real
+ * VOICE_FRAME_SAMPLES frame on purpose: the count is an argument, so nothing
+ * here depends on the frame size the codec happens to run at. */
+#define RMS_FRAME 64
 
 static int peakNear(float a, float b) {
     float d = a - b;
@@ -52,6 +58,7 @@ int run_voice_peak(void) {
     float expected;
     float previous;
     int step;
+    int16_t frame[RMS_FRAME];
 
     memset(&p, 0, sizeof(p));
 
@@ -152,6 +159,43 @@ int run_voice_peak(void) {
         UT_ASSERT(scaled >= previous);
         previous = scaled;
     }
+
+    /* The reading the two above are fed from: one frame's RMS. */
+    for (step = 0; step < RMS_FRAME; step++) {
+        frame[step] = 0;
+    }
+    UT_ASSERT(peakNear(voiceFrameRms(frame, RMS_FRAME), 0.0f));
+
+    /* A full-scale square wave is the loudest a frame can be, and every
+     * sample is at the extreme, so the mean square is the extreme too.  Not
+     * exactly 1: the samples are +32767 against the 32768 the scale is
+     * defined on. */
+    for (step = 0; step < RMS_FRAME; step++) {
+        frame[step] = (step & 1) ? 32767 : -32767;
+    }
+    UT_ASSERT(voiceFrameRms(frame, RMS_FRAME) > 0.999f);
+    UT_ASSERT(voiceFrameRms(frame, RMS_FRAME) <= 1.0f);
+
+    /* Half the amplitude is half the reading - the measurement is linear in
+     * amplitude, which is why voiceMeterScale exists to draw it. */
+    for (step = 0; step < RMS_FRAME; step++) {
+        frame[step] = (step & 1) ? 16384 : -16384;
+    }
+    UT_ASSERT(fabsf(voiceFrameRms(frame, RMS_FRAME) - 0.5f) < 0.01f);
+
+    /* Full scale negative on every sample, one count further out than the
+     * positive extreme, is exactly the value the scale is defined on and so
+     * reads exactly full - the top of the range, not over it. */
+    for (step = 0; step < RMS_FRAME; step++) {
+        frame[step] = -32768;
+    }
+    UT_ASSERT(peakNear(voiceFrameRms(frame, RMS_FRAME), 1.0f));
+
+    /* No frame, and a frame of nothing, are silence rather than a crash or a
+     * division by zero. */
+    UT_ASSERT(peakNear(voiceFrameRms(NULL, RMS_FRAME), 0.0f));
+    UT_ASSERT(peakNear(voiceFrameRms(frame, 0), 0.0f));
+    UT_ASSERT(peakNear(voiceFrameRms(frame, -1), 0.0f));
 
     return 0;
 }

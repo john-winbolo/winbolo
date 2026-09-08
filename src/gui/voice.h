@@ -294,6 +294,46 @@ void voiceSetPlayerMuted(int player, bool muted);
 *********************************************************/
 bool voiceIsPlayerMuted(int player);
 
+/* Loudest one player may be turned up to, and the top of the slider that sets
+ * it. The same range the voice volume in the settings dialog uses, so turning
+ * one player up goes as far as turning everyone up does. */
+#define VOICE_PLAYER_VOLUME_MAX 2.0f
+
+/*********************************************************
+*NAME:          voiceSetPlayerVolume
+*PURPOSE:
+*  Sets how loud one player is played here, 1.0f for unity,
+*  clamped to 0..VOICE_PLAYER_VOLUME_MAX. Multiplies the
+*  voice output volume rather than replacing it. Local
+*  playback only — nothing is sent, and the player being
+*  turned down cannot tell.
+*
+*  Session-scoped and never persisted: it lasts until that
+*  player leaves, and voiceForgetPlayer puts the slot back to
+*  unity, because the setting is on the player rather than on
+*  the slot they happened to occupy. Switching voice off and
+*  on leaves it alone. An out-of-range player number does
+*  nothing.
+*
+*ARGUMENTS:
+*  player - the player number to set
+*  gain   - 1.0f is unity
+*********************************************************/
+void voiceSetPlayerVolume(int player, float gain);
+
+/*********************************************************
+*NAME:          voiceGetPlayerVolume
+*PURPOSE:
+*  Returns how loud one player is played here. 1.0f for a
+*  player who has not been turned up or down, and for an
+*  out-of-range player number. Session-scoped and never
+*  persisted.
+*
+*ARGUMENTS:
+*  player - the player number to ask about
+*********************************************************/
+float voiceGetPlayerVolume(int player);
+
 /*********************************************************
 *NAME:          voiceGetTalkingMap
 *PURPOSE:
@@ -394,6 +434,28 @@ float voiceGetInputMeter(void);
 *  (none)
 *********************************************************/
 float voiceGetInputPeak(void);
+
+/*********************************************************
+*NAME:          voiceGetPlayerLevel
+*PURPOSE:
+*  Returns the 0..1 height a meter draws one remote talker's
+*  loudness at — the same space voiceGetInputMeter and
+*  voiceGetInputPeak are in, not a raw amplitude. Held and
+*  decaying like the local meter, so a syllable stays
+*  readable and a talker who stops fades rather than snapping
+*  off.
+*
+*  Measured after both the voice output volume and that
+*  player's own, so it shows what the speakers carry rather
+*  than what arrived.
+*
+*  Zero for a player who is not talking, was never heard, is
+*  muted here, or is out of range.
+*
+*ARGUMENTS:
+*  player - the player number to ask about
+*********************************************************/
+float voiceGetPlayerLevel(int player);
 
 /*********************************************************
 *NAME:          voiceRecordingDeviceCount
