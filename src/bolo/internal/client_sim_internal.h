@@ -313,6 +313,12 @@ struct ClientSim {
                                          * set TRUE by CTRL_LOBBY_SYNC_COMPLETE.
                                          * Lobby event sounds play only when set,
                                          * so the roster replay burst is silent. */
+    /* Who the server says is producing voice right now, one bit per slot
+     * (CTRL_VOICE_TALKING). Lobby and countdown only — the server stops
+     * sending it once a round starts, and sends one empty set on the way
+     * out, so this is 0 in a running game. Raw: the local mute list is not
+     * folded in here. */
+    PlayerBitMap     voiceTalkingMap;
     char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
     char             lobbyTeamChatHistory[4096]; /* Team-only lobby chat buffer */
 

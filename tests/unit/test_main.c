@@ -457,6 +457,7 @@ static const UnitTestEntry s_tests[] = {
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "voice_flags_snapshot_masking",            run_voice_flags_snapshot_masking            },
+    { "voice_talking_codec",                     run_voice_talking_codec                     },
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
     { "view_rects_default_baseline",             run_view_rects_default_baseline             },
     { "view_rects_always_base_ally",             run_view_rects_always_base_ally             },

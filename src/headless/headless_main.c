@@ -318,6 +318,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ROUND_STATS:           return "CTRL_ROUND_STATS";
     case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
     case CTRL_STATS_SEED:            return "CTRL_STATS_SEED";
+    case CTRL_VOICE_TALKING:         return "CTRL_VOICE_TALKING";
     default:                         return NULL;
   }
 }
@@ -599,6 +600,11 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
     case CTRL_STATS_SEED:
       fprintf(f, ",\"playerCount\":%u",
               (unsigned)evt->u.statsSeed.playerCount);
+      break;
+
+    case CTRL_VOICE_TALKING:
+      fprintf(f, ",\"talking\":%u",
+              (unsigned)evt->u.voiceTalking.talking);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

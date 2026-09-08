@@ -583,6 +583,10 @@ static struct {
      * cleared on disconnect so a recycled slot starts silent. */
     uint32_t voiceLastFrameTick[MAX_TANKS];
     uint32_t voiceOnsetTick[MAX_TANKS];
+    /* The talking set last sent as CTRL_VOICE_TALKING. Held so the event
+     * goes out only when the set changes: a quiet lobby then costs nothing,
+     * rather than one event per tick per client. */
+    PlayerBitMap voiceTalkingPublished;
 } udpServer;
 
 /* The registered round-log source. Held outside udpServer so a transport
@@ -1165,6 +1169,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     case CTRL_VIEW_TARGET:      return "VIEW_TARGET";
+    case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
     default:                    return "<unknown>";
     }
 }
@@ -4024,6 +4029,11 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * would hand a new joiner talker priority they did not earn. */
     udpServer.voiceLastFrameTick[idx] = 0;
     udpServer.voiceOnsetTick[idx] = 0;
+    /* The published set still names this slot, and clearing the tick above
+     * is what would otherwise stop the next pass noticing the difference.
+     * Zeroing it makes that pass rebuild and re-send the set without the
+     * leaver, rather than leaving them talking on every other client. */
+    udpServer.voiceTalkingPublished = 0;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
     /* Drop any owed PLAYER_JOIN — the player left before it resolved, so
@@ -7218,6 +7228,48 @@ static void serverPumpVoice(ServerSim *sim) {
         while (channelReceiveBestEffort(&udpServer.spectators[s].channelMux,
                                         CHANNEL_VOICE, segBuf, &segLen)) {
             /* discarded */
+        }
+    }
+
+    /* ── Tell everyone who is talking ───────────────────────────────────
+     *
+     * A player you have muted is culled above, so nothing of theirs ever
+     * reaches you and nothing local can show that they are speaking. This
+     * set is what lets a client show it; each client intersects it with
+     * its own mute list.
+     *
+     * Lobby and countdown only. There voice is all-talk, so the set says
+     * nothing a listener could not already hear. In a running game voice
+     * follows the alliance, and broadcasting the set would tell a player
+     * that an enemy is speaking — so outside those two states the set is
+     * empty rather than unsent, which sends one final empty set as the
+     * game starts and leaves nobody stuck talking for the round.
+     *
+     * "Talking" is the same utterance the forwarding cap works in: a frame
+     * within VOICE_ONSET_GAP_TICKS of now. Reads the bookkeeping pass 1
+     * has already done this tick, and keeps no clock of its own. */
+    {
+        ServerState state = serverSimGetState(sim);
+        PlayerBitMap talking = 0;
+
+        if (state == serverStateLobby || state == serverStateCountdown) {
+            int slot;
+            for (slot = 0; slot < MAX_TANKS; slot++) {
+                if (udpServer.voiceLastFrameTick[slot] != 0 &&
+                    tick - udpServer.voiceLastFrameTick[slot] <=
+                        VOICE_ONSET_GAP_TICKS) {
+                    talking |= (PlayerBitMap)1u << slot;
+                }
+            }
+        }
+
+        if (talking != udpServer.voiceTalkingPublished) {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_VOICE_TALKING;
+            evt.u.voiceTalking.talking = talking;
+            serverSimPublishControl(sim, &evt);
+            udpServer.voiceTalkingPublished = talking;
         }
     }
 }

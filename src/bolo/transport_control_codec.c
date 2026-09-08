@@ -1149,6 +1149,34 @@ static bool decodeViewTargetBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_VOICE_TALKING body wire format (fixed length):
+ *   [talking 4]   PlayerBitMap, big-endian
+ * One bitmap over the player slots, so the size does not move with the
+ * number of talkers. Delivered body-only on CHANNEL_CONTROL; there is no
+ * full-packet wrapper or PACKET_* type for this event. */
+#define VOICE_TALKING_BODY_PAYLOAD 4
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeVoiceTalkingBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    (void)recipient;
+    if (bufCap < VOICE_TALKING_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.voiceTalking.talking);
+    *outLen = VOICE_TALKING_BODY_PAYLOAD;
+    return ENCODE_OK;
+}
+
+static bool decodeVoiceTalkingBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    if (len < VOICE_TALKING_BODY_PAYLOAD) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_VOICE_TALKING;
+    outEvt->u.voiceTalking.talking = unpackU32(buf);
+    return true;
+}
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -2330,6 +2358,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_RATING_POSTED]   = encodeRoundRatingPostedBody,
     [CTRL_VIEW_TARGET]           = encodeViewTargetBody,
     [CTRL_STATS_SEED]            = encodeStatsSeedBody,
+    [CTRL_VOICE_TALKING]         = encodeVoiceTalkingBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2371,6 +2400,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_RATING_POSTED]   = decodeRoundRatingPostedBody,
     [CTRL_VIEW_TARGET]           = decodeViewTargetBody,
     [CTRL_STATS_SEED]            = decodeStatsSeedBody,
+    [CTRL_VOICE_TALKING]         = decodeVoiceTalkingBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

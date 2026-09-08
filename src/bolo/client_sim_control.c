@@ -762,6 +762,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyChatHistory[0] = '\0';
         cs->lobbyTeamChatHistory[0] = '\0';
         cs->lobbyHostSlotKnown = false;
+        /* The talking set belongs to the lobby we just left. The server
+         * sends an empty one as it leaves too, but this does not depend on
+         * that event to stop a talker showing for the whole round. */
+        cs->voiceTalkingMap = 0;
         /* Wipe per-game client state that a ClientSim surviving the lobby
          * cycle would otherwise carry into the new game. None of this is
          * refreshed wholesale by the snapshot apply, so without an explicit
@@ -1067,6 +1071,17 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
     }
+
+    case CTRL_VOICE_TALKING:
+        /* Raw mirror of the server's set, kept as it arrived. Which of
+         * those slots we have muted is the reader's business, not this
+         * dispatcher's — the mute list lives in the voice client, and
+         * folding it in here would leave no way to tell a talker we can
+         * hear from one we cannot. The server sends this in the lobby and
+         * the countdown only, and sends one empty set on the way out of
+         * them, so nothing is needed here to age it out. */
+        cs->voiceTalkingMap = evt->u.voiceTalking.talking;
+        break;
 
     case CTRL_SHELL_DEATH: {
         /* Server closure for one of our predicted shells: cull the ghost so

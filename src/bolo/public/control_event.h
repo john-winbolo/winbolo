@@ -145,6 +145,15 @@ typedef enum {
      * real numbers. Carries the same RoundPlayerSummary rows CTRL_ROUND_STATS
      * ships, without the awards, highlights and log key. */
     CTRL_STATS_SEED,
+    /* CTRL_VOICE_TALKING — who is producing voice right now, as one
+     * bitmap over the player slots. Broadcast in the lobby and the
+     * countdown only, where voice is all-talk and the set says nothing a
+     * listener could not already hear. Deliberately not sent in a running
+     * game: voice there is alliance-only, and broadcasting the set would
+     * tell a player that an enemy is speaking. The client intersects it
+     * with its own mute list — a muted player sends nothing that reaches
+     * you, so this is the only way to show that they are talking. */
+    CTRL_VOICE_TALKING,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -480,6 +489,12 @@ typedef struct ControlEvent {
             uint8_t            playerCount;             /* present slots, <= MAX_TANKS */
             RoundPlayerSummary players[MAX_TANKS];
         } statsSeed;
+
+        /* CTRL_VOICE_TALKING — bit N set means slot N is producing voice
+         * right now. */
+        struct {
+            PlayerBitMap talking;
+        } voiceTalking;
     } u;
 } ControlEvent;
 

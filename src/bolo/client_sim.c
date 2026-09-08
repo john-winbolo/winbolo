@@ -343,6 +343,7 @@ bool clientSimCreate(ClientSim *cs) {
 
   /* Lobby state defaults (memset already zeroed, but be explicit) */
   memset(cs->lobbySlots, 0, sizeof(cs->lobbySlots));
+  cs->voiceTalkingMap = 0;
   cs->countdownSeconds = 0;
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
@@ -1964,6 +1965,11 @@ BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
     if (cs->lobbySlots[i].connected) count++;
   }
   return count;
+}
+
+PlayerBitMap clientSimGetVoiceTalkingMap(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return cs->voiceTalkingMap;
 }
 
 bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {

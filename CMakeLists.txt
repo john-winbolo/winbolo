@@ -3293,6 +3293,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_voice_flags.c
+    tests/unit/test_voice_talking_codec.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
@@ -4061,6 +4062,7 @@ set(_unit_test_names
     base_armour_fog_of_war
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
+    voice_talking_codec
     fx_viewport_cull
     view_rects_default_baseline
     view_rects_always_base_ally

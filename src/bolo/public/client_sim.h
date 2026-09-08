@@ -622,6 +622,31 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
 /* Count of currently-connected lobby slots (humans + bots).
  * Matches what the lobby UI's player table renders. */
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
+/*********************************************************
+ *NAME:          clientSimGetVoiceTalkingMap
+ *PURPOSE:
+ *  Who the server says is producing voice right now, one
+ *  bit per player slot.
+ *
+ *  Meaningful in the lobby and the countdown only. There
+ *  voice is all-talk, so the set says nothing a listener
+ *  could not already hear. In a running game voice follows
+ *  the alliance and the server does not send the set at
+ *  all, so this reads empty — by design, not because the
+ *  events were missed. The server sends one empty set as
+ *  the round starts, so nobody is left showing as talking.
+ *
+ *  The set is raw: it names everyone talking, including
+ *  players this client has muted. That is the point of it —
+ *  a muted player's voice never arrives, so this is the
+ *  only thing that says they are speaking. Intersecting it
+ *  with the local mute list is the caller's job.
+ *
+ *ARGUMENTS:
+ *  cs - The ClientSim to read
+ *********************************************************/
+PlayerBitMap clientSimGetVoiceTalkingMap(const ClientSim *cs);
+
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
 

@@ -1017,6 +1017,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
+    case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
     default:                    return "<unknown>";
     }
 }

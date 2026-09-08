@@ -826,6 +826,11 @@ int run_edge_send_predicate(void);
  * inside one — and masks nothing but PLAYER_VOICE_FLAG_MASK. */
 int run_voice_flags_snapshot_masking(void);
 
+/* CTRL_VOICE_TALKING body-codec round-trip (test_voice_talking_codec.c):
+ * the talking bitmap encodes/decodes through the body tables — empty, one
+ * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
+int run_voice_talking_codec(void);
+
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
