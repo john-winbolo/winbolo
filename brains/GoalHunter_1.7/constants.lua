@@ -1880,6 +1880,113 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
                              -- (engage trigger still fires at SHOOT_RANGE; only the
                              -- "where to drive to" target gets pulled in)
 
+-- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
+-- A hostile LGM standing on or beside the dead pill we are driving to grab is
+-- a builder rebuilding the corpse out from under us: the moment his repair
+-- lands, the free pill becomes a live enemy pillbox and the capture is gone.
+-- So while the goal is capture_pill the bot SWEEPS the target tile: it keeps
+-- driving at the pill (the throttle is still 100% navigation's, never braked
+-- for the LGM) but hands the TURN keys to the kill_lgm aim solution whenever
+-- that aim is close enough to where navigation wanted to point anyway.  The
+-- goal never changes -- there is no kill_lgm substate, no goal churn, and the
+-- capture logic is untouched; this is a steering blend only.
+--
+-- Firing needs no new gate: init.lua's kill-LGM block already fires at ANY
+-- hostile LGM in KILL_LGM_SHOOT_RANGE whatever the goal is.  What it does NOT
+-- do under capture_pill is drive the gunsight (that driver is gated on goal ==
+-- kill_lgm), so the crosshair sat wherever the last goal left it and the
+-- impact-point gate almost never opened.  The hunt drives the gunsight too.
+M.CAPTURE_LGM_HUNT               = true  -- master switch (KEEL: false)
+M.CAPTURE_LGM_HUNT_RADIUS        = 2     -- tiles, CHEBYSHEV, measured FROM THE
+                                         -- TARGET PILL (goal.mx/my), not from
+                                         -- the tank: a 5x5 box around the
+                                         -- corpse.  A builder further out than
+                                         -- that is not working on THIS pill.
+-- Heading tolerance: how far the aim may pull the nose off the navigation
+-- heading before we give the turn back to navigation.  The engine's direction
+-- unit is 256 per full turn ("brads"), so 26 ~= 36 deg ~= 20% of a half turn,
+-- which is the error budget Andrew set.  Inside CAPTURE_LGM_HUNT_NEAR_TILES of
+-- the pill the budget widens: we are about to arrive, a wide swing costs
+-- almost no ground, and that is exactly where the builder is.
+M.CAPTURE_LGM_HUNT_TOL_BRADS      = 26
+M.CAPTURE_LGM_HUNT_TOL_NEAR_BRADS = 45
+M.CAPTURE_LGM_HUNT_NEAR_TILES     = 4    -- Manhattan tank->pill distance below
+                                         -- which TOL_NEAR_BRADS applies
+-- Second trigger: the man can be invisible (perception drops tree-hidden LGMs
+-- more than 3 tiles out) while his repair is plainly visible as the TARGET
+-- pill's armour going UP.  When that happens there is nobody to aim at, so the
+-- hunt aims at the pill tile itself and shells it -- knocking the armour back
+-- down is the point, and a dead pill cannot be hurt by our own shells.
+M.CAPTURE_LGM_HUNT_ARMOUR_TRIGGER = true
+M.CAPTURE_LGM_HUNT_ARMOUR_TICKS   = 100  -- how long one armour rise keeps the
+                                         -- trigger hot (~2 s @ 50 Hz)
+-- Andrew (2026-09-08): the box shrinks as we close in -- the radius is capped
+-- at OUR OWN Chebyshev distance to the pill, so we only turn for a man who is
+-- at least as close to the corpse as we are.  A builder on the far side of a
+-- pill we are one tile from grabbing is not worth a 63-degree swing away from
+-- it; on the pill itself the radius is 0 and the drive-over capture ends the
+-- goal that tick anyway.
+-- Benched 2026-09-08 (Mutatis 4v4, 10 seeds vs stock): uncapped +4.6, capped
+-- +4.1, 7 of 10 games tick-identical (the cap never engaged) -- Andrew:
+-- "sweep, uncapped it is!".  Off by default; kept as the option.
+M.CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = false
+
+-- ── Capture-target LGM PRIORITY (2026-09-08) ─────────────────────────────
+-- Andrew's alternative to the sweep above, and an INDEPENDENT knob so the two
+-- can be benched against each other and against KEEL.  Same problem -- an
+-- enemy builder rebuilding the corpse we are driving at -- and the opposite
+-- answer: instead of blending the turret onto him while the goal stays
+-- capture_pill, this leaves steering alone entirely and changes WHICH GOAL
+-- WINS.  Any hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles of the
+-- CAPTURE TARGET PILL gets his kill_lgm pool row (pool 13) CAPPED at
+-- CAPTURE_LGM_PRIORITY_MAX_COST, one under the imminent-capture floor, so
+-- kill_lgm takes the goal, we shoot him, and then ordinary pool competition
+-- resumes -- capture_pill may or may not win back, priced exactly as before.
+-- NOTHING else moves: capture_pill's own pricing, kill_lgm's execution and
+-- the hysteresis rules are all untouched.  (kill_lgm is already in
+-- HYST_EXEMPT in goals.lua, so it pays no cross-type switch penalty to
+-- displace an incumbent -- that is pre-existing and is not changed here; the
+-- pool-grid chip prints the pre-multiply total next to the multiplied one so
+-- the whole number is still hand-computable.)
+--
+-- THE MEMORY.  The discount has to survive the goal switch it causes, or it
+-- flip-flops: it is only visible while we are on capture_pill, so the tick
+-- kill_lgm wins, the discount would vanish and capture_pill would win back.
+-- goals.lua's refresh_kill_lgm therefore keeps state.cap_prio -- stamped from
+-- the goal while the goal is capture_pill, HELD while the goal is kill_lgm,
+-- dropped on any other goal or as soon as the tile stops being capturable.
+--
+-- WITH THE SWEEP.  The two are independent and when both are on both act:
+-- the sweep only steers while the goal IS capture_pill, and this option is
+-- what decides whether it still is.  In practice the priority takes the goal
+-- first and the sweep then has nothing to do until capture_pill wins back.
+-- Benched 2026-09-08 (same seeds, same opponent): priority -1.8 mean, 5-5, one
+-- outright loss (13 drownings on seed 19), more tank deaths -- chasing a man
+-- up to 8 tiles out pulls the tank off its line more than the sweep's
+-- turret-only turn.  Andrew chose the uncapped sweep; this stays as an
+-- off-by-default option.
+M.CAPTURE_LGM_PRIORITY        = false -- master switch (KEEL: false)
+M.CAPTURE_LGM_PRIORITY_RADIUS = 8     -- tiles, CHEBYSHEV, measured FROM THE
+                                      -- CAPTURE TARGET PILL (not the tank) --
+                                      -- deliberately the same box metric as
+                                      -- CAPTURE_LGM_HUNT_RADIUS so the two
+                                      -- radii mean the same shape and can be
+                                      -- read against each other: a 17x17 box
+                                      -- around the corpse against the sweep's
+                                      -- 5x5.
+-- Andrew (2026-09-08): "abandon 0.333 and properly just cap it".  A multiplier
+-- could not take priority: a capture of a dead pill within
+-- IMMINENT_CAPTURE_PATH_COST is floored at a flat IMMINENT_CAPTURE_FLOOR (5),
+-- and a third of the cheapest kill_lgm row (LOS base 5 + 3 per tile) only got
+-- under 5 with the man within ~3 tiles of the tank; the standoff branch (base
+-- 20) never did.  So inside the radius the man's kill_lgm row is instead
+-- CAPPED at this cost, applied LAST (after the repair-futile penalty): one
+-- under the capture floor, so it wins the pool wherever he stands in the box.
+M.CAPTURE_LGM_PRIORITY_MAX_COST = 4
+M.CAPTURE_LGM_PRIORITY_LOG_TICKS = 50 -- brain ticks between CAPTURE_LGM_PRIO
+                                      -- heartbeat lines; the start/stop
+                                      -- transitions always print.
+
 M.TANK_COMBAT_LOS_EXTRA_RANGE       = 3    -- tiles beyond ENGAGE_RANGE that qualify for LOS fast-engage
 M.TANK_COMBAT_LOS_BASE_COST         = 5    -- very cheap base cost when enemy is in-range with clear LOS
 M.TANK_COMBAT_LOS_COST_PER_TILE     = 3    -- added cost per tile of separation in LOS engage
@@ -3739,6 +3846,134 @@ M.GC_PAUSE   = 200
 M.GC_STEPMUL = 400
 
 -- ══════════════════════════════════════════════════════════════════════════
+-- LOADED, BUILDER-LESS — the state, and what the brain does about it
+-- ══════════════════════════════════════════════════════════════════════════
+-- THE INCIDENT (4v4, 2026-09): a bot carrying five pillboxes whose LGM had
+-- been killed picked attack_tank, drove in, and died. Everything it was
+-- holding fell on the ground as corpses for whoever was still alive nearby.
+--
+-- WHY THAT IS A LOSING TRADE, in engine terms:
+--   * a killed LGM is choppered back from a RANDOM start tile at 3 world
+--     units per engine tick (~85 brain ticks a tile) to where the tank stood
+--     when he died, and then WALKS.  A tank death does NOT bring him back:
+--     lgm.c lgmTankDied only clears nextAction.  So "the builder will be
+--     along shortly" can be a minute of map, and dying does not shorten it.
+--   * with no builder the pills aboard cannot be placed at all.  They are
+--     not a resource while he is away, they are cargo.
+--   * a shell is DAMAGE 5 against TANK_FULL_ARMOUR 40, so eight clean hits
+--     end the tank and hand the whole stack to the enemy.
+--
+-- THE STATE is recomputed EVERY TICK from engine truth and never latched:
+--   loaded_no_lgm = carried_pills >= LOADED_NO_LGM_MIN_PILLS
+--                   and (man is DEAD
+--                        or (man is OUT WALKING and his return ETA, from the
+--                            same walk sim the builder pool prices trips
+--                            with, is > LOADED_NO_LGM_ETA_TICKS))
+-- A walk sim that cannot complete the return at all (STUCK -- the stranded
+-- case) counts as "longer than any threshold".
+--
+-- Everything below is what changes while it holds.  Each is its own knob and
+-- each has a PRESETS.keel entry that restores the pre-change behaviour.
+M.LOADED_NO_LGM_MIN_PILLS = 3     -- pills aboard before the state can hold
+M.LOADED_NO_LGM_ETA_TICKS = 1000  -- 20 s: a walk home longer than this is "away"
+-- The walk sim is budgeted (cpf_lgm_travel_ticks), so the ETA half of the
+-- test is re-run on this cadence and cached between, exactly like the
+-- stranded check in goal_selection.  The DEAD half is free and is read every
+-- tick regardless.
+M.LOADED_NO_LGM_ETA_RECHECK_TICKS = 50
+
+-- 1. ATTACKING.  While the state holds, the FINAL competed cost of every
+-- attack_tank / attack_pill / attack_base / defend_pill row is multiplied by
+-- this.  A MULTIPLIER, not a reject: with an empty pool the bot must still be
+-- able to shoot back at something.  Applied after hysteresis and after the
+-- influence x0.5/x2 rule, at the same choke point as the suicider surcharge,
+-- and printed as its own `nobuild{}` chip so the row still adds up.
+M.ATTACK_NO_BUILDER_MULT = 10     -- keel 1 (no such multiplier)
+
+-- 2. ESCAPING.  While the state holds, flee_to_base and a take_cover row that
+-- fired on its haul / panic trigger enter the competition with NO hysteresis
+-- at all -- no type-switch flat, no commitment, and no multiplicative
+-- stickiness bar.  ASYMMETRIC on purpose: once one of them IS the incumbent,
+-- every other row pays the normal switch cost to get off it, so the tank does
+-- not bounce straight back out of cover.
+M.ESCAPE_NO_BUILDER_SKIP_HYST = true   -- keel false
+
+-- 3. CAPTURING.  A corpse is only worth picking up if we live to place it,
+-- and with no builder we cannot place anything at all -- so a capture in the
+-- state is priced as pure risk with none of the usual sweeteners.
+--   danger multiplier   replaces the cautious-mode x5 on the danger term
+--   free-pill bonus     scaled by ..._FREE_BONUS_MULT (0 = no bonus at all)
+--   cluster discount    off: "three corpses in one trip" is not a discount
+--                       when the trip is the thing that kills us.  The
+--                       hostile-territory GUARD multiplier still applies.
+--   route probe strict  capture_route_probe rejects on ANY wsim damage (not
+--                       just a predicted kill) and uses the danger-weighted
+--                       A* rather than the direct one.
+-- capture_base gets the danger multiplier and nothing else.
+-- KEEL NOTE: the state requires >= 3 pills aboard, so state.cautious_mode
+-- (any carried pill) is ALWAYS true inside it -- which makes CAUTIOUS_MODE_MULT
+-- (5) the exact pre-change value of the danger multiplier, and 1.0 the exact
+-- pre-change value of the free-bonus scale.
+M.CAPTURE_NO_LGM_DANGER_MULT      = 20     -- keel 5 (= CAUTIOUS_MODE_MULT)
+M.CAPTURE_NO_LGM_FREE_BONUS_MULT  = 0      -- keel 1 (full CAPTURE_FREE_PILL_VALUE ramp)
+M.CAPTURE_NO_LGM_CLUSTER_DISCOUNT = false  -- keel true
+M.CAPTURE_NO_LGM_ROUTE_STRICT     = true   -- keel false
+-- capture_base gets the danger multiplier and NOTHING else.  Pool 3 has no
+-- danger term at all today -- it is priced on travel and staleness -- so this
+-- knob is the multiplier on a term that does not otherwise exist, and its KEEL
+-- value is therefore 0 ("no such term"), not CAUTIOUS_MODE_MULT.  Charged as
+--     threat.at(base tile) x CAPTURE_PILL_DANGER_SCALE x this
+-- so it reads in the same units as the capture_pill danger term beside it.
+M.CAPTURE_BASE_NO_LGM_DANGER_MULT = 20     -- keel 0 (term absent)
+
+-- 4. "KILL ME" -- handing the stack to a team-mate who can still build.
+--
+-- Allied shells DO hurt allied tanks (tank.c tankIsTankHit only ignores the
+-- shooter's OWN shells), and the corpses a killed tank drops keep the dead
+-- player's ownership -- which capture_pill already scoops, because an
+-- ally-owned corpse is a legal capture target.  So the team can move a stack
+-- off a builder-less tank deliberately instead of losing it to the enemy.
+--
+-- INITIATOR: while the state holds and no escape trigger is firing, bid a
+-- `kill_me_wait` row.  It drives to a cover tile from the take_cover picker,
+-- parks, and advertises a token on the periodic /info extra slate carrying
+-- that tile and our armour.  The token is dropped on the next heartbeat when
+-- the state clears (man back, tank died, respawn) or an enemy tank comes
+-- within KILL_ME_CANCEL_ENEMY_TILES, and the goal goes with it.
+-- RESPONDER: each advertising ally becomes an extra pool-9 row of kind
+-- attack_tank whose target is that ALLY.  Rejected (priced INF, row still
+-- shown with its reason) when our own man is not in the tank, or when we do
+-- not carry enough shells to finish the job.  Priced RESPONDER_BASE + the
+-- Dijkstra travel cost to the ally's tile, and deliberately exempt from BOTH
+-- the influence x0.5/x2 rule and ATTACK_NO_BUILDER_MULT -- it is a delivery,
+-- not an attack.
+M.KILL_ME_ENABLED = true          -- master; keel false (nothing below is read)
+M.KILL_ME_WAIT_COST = 15          -- initiator row: beats routine goals, loses
+                                  -- to a real escape (flee ~40, take_cover ~48)
+M.KILL_ME_CANCEL_ENEMY_TILES = 10 -- an enemy tank this close cancels the request
+M.KILL_ME_RESPONDER_BASE = 20     -- responder row: base + dijkstra travel
+-- Shells the responder must hold: ceil(ally_armour / TANK_SHELL_DAMAGE) plus
+-- this margin, and never below TANK_COMBAT_MIN_SHELLS.  Under-gunned help is
+-- worse than none -- it wakes the ally's armour up and leaves it standing.
+M.KILL_ME_SHELL_MARGIN = 2
+M.TANK_SHELL_DAMAGE = 5           -- tank.c DAMAGE per shell (armour is out of 40)
+-- Cooldown starts on an ACTUAL kill, never on a cancelled request, so a
+-- request that fizzles can be re-made immediately.
+M.KILL_ME_COOLDOWN_TICKS = 3000
+-- COMMIT TO DIE. Once an ally has claimed our request and its tank is within
+-- this many tiles of us, its shells are the plan -- so the armour they take
+-- off must not read as danger. While that holds (state.km.executing) the
+-- haul ladder's armour trigger, the critical-armour flee injection and the
+-- kill_me_wait row's own armour floor are all waived. An enemy tank inside
+-- KILL_ME_CANCEL_ENEMY_TILES still cancels everything: that shell could be
+-- anybody's.
+M.KILL_ME_EXECUTE_TILES = 12
+-- Claim band for the kill_me row, in the ALLY_CLAIMED_STEAL_FRAC_* family: a
+-- challenger has to be 10% cheaper than the ally already claiming the request
+-- before it takes the job over.
+M.ALLY_CLAIMED_STEAL_FRAC_KILLME = 0.10
+
+-- ══════════════════════════════════════════════════════════════════════════
 -- PRESETS — named bundles of constant overrides, applied per bot
 -- ══════════════════════════════════════════════════════════════════════════
 -- A bot given the BRAIN_INIT_ARG token "preset=NAME" has every entry of
@@ -3767,6 +4002,42 @@ M.GC_STEPMUL = 400
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
+    -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
+    -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of
+    -- where navigation wanted to go (throttle stays navigation's, always), and
+    -- the gunsight driver runs so the existing opportunistic LGM shot can
+    -- actually open.  KEEL drives straight past a repairing man: it never turns
+    -- for him and never moves the crosshair under capture_pill, so the shot
+    -- gate (impact point within 64 wu of the lead point) essentially never
+    -- opened and the pill came back to life under the bot's nose.
+    -- This one flag restores all of that; the five knobs below are unread while
+    -- it is false and are pinned here only so a later tweak to one of their
+    -- DEFAULTS cannot leak into the baseline.
+    CAPTURE_LGM_HUNT              = false,
+    CAPTURE_LGM_HUNT_RADIUS       = 2,
+    CAPTURE_LGM_HUNT_TOL_BRADS    = 26,
+    CAPTURE_LGM_HUNT_TOL_NEAR_BRADS = 45,
+    CAPTURE_LGM_HUNT_NEAR_TILES   = 4,
+    CAPTURE_LGM_HUNT_ARMOUR_TRIGGER = true,
+    CAPTURE_LGM_HUNT_ARMOUR_TICKS = 100,
+    CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = true,  -- 2026-09-08: pinned (feature is keel-off)
+    -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
+    -- (Chebyshev) of the pill the capture flow is driving at now gets his
+    -- kill_lgm pool row capped at CAPTURE_LGM_PRIORITY_MAX_COST, so kill_lgm
+    -- outbids capture_pill, the builder is shot, and the pool then runs
+    -- normally.  KEEL prices every kill_lgm row the same wherever the man is
+    -- standing, so the builder rebuilt the corpse out from under the bot and
+    -- the free pill became a live enemy pillbox.  This is the ALTERNATIVE to
+    -- CAPTURE_LGM_HUNT above (steering blend, goal never changes) and the two
+    -- knobs are independent so they can be benched against each other.
+    -- The three knobs below are unread while the master is false and are
+    -- pinned only so a later tweak to one of their DEFAULTS cannot leak into
+    -- the baseline.
+    CAPTURE_LGM_PRIORITY          = false,
+    CAPTURE_LGM_PRIORITY_RADIUS   = 8,
+    CAPTURE_LGM_PRIORITY_MAX_COST = 4,      -- 2026-09-08: cap replaced the 0.333 multiplier
+    CAPTURE_LGM_PRIORITY_LOG_TICKS = 50,
     -- 2026-09-06: while on attack_tank, the bot now interrupts the fight to
     -- put the exact number of shells needed into a FRIENDLY pill that sits
     -- closer to the enemy tank than we do (in gun range, clear LOS, >= 5 HP,
@@ -3895,6 +4166,46 @@ M.PRESETS = {
     -- KEEL has no such bonus -- under KEEL that pill was first by seeding
     -- instead, so 1.0 is the value that reproduces it.
     BUILDER_POOL_GOAL_PILL_BONUS = 1.0,
+    -- 2026-09-08: the "loaded, builder-less" state (>= 3 pills aboard and the
+    -- man dead or more than 20 s of walking away).  Six knobs, one per thing
+    -- that changes inside it; every one of these values is what the brain did
+    -- before the state existed.
+    --   attack rows (attack_tank / attack_pill / attack_base / defend_pill)
+    --   were not multiplied at all --
+    ATTACK_NO_BUILDER_MULT        = 1,
+    --   flee_to_base and a triggered take_cover paid the ordinary switch +
+    --   commitment penalty and the multiplicative stickiness bar --
+    ESCAPE_NO_BUILDER_SKIP_HYST   = false,
+    --   capture_pill's danger term carried the cautious-mode x5 (the state
+    --   implies a carried pill, so cautious_mode was always on inside it),
+    --   the free-pill bonus ran its full ramp, the cluster discount applied
+    --   and capture_route_probe only refused a route the wsim said was
+    --   LETHAL, on the danger-free direct A* --
+    CAPTURE_NO_LGM_DANGER_MULT      = 5,
+    CAPTURE_NO_LGM_FREE_BONUS_MULT  = 1,
+    CAPTURE_NO_LGM_CLUSTER_DISCOUNT = true,
+    CAPTURE_NO_LGM_ROUTE_STRICT     = false,
+    --   and capture_base had no danger term at all --
+    CAPTURE_BASE_NO_LGM_DANGER_MULT = 0,
+    --   and there was no "kill me" tactic: no kill_me_wait row, no token on
+    --   the slate, no ally-targeted pool-9 row, no target override in the
+    --   fight loop.  This one flag turns the whole feature off; every other
+    --   KILL_ME_* knob is unread while it is false.
+    KILL_ME_ENABLED               = false,
+  },
+  -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
+  -- (2026-09-08) -- every knob that work added, at its pre-change value, and
+  -- nothing else. The "stock RUDDER" side of that feature's isolation bench
+  -- (the eight cfg= tokens it replaces do not fit the 128-byte init arg).
+  nolgm_off = {
+    ATTACK_NO_BUILDER_MULT          = 1,
+    ESCAPE_NO_BUILDER_SKIP_HYST     = false,
+    CAPTURE_NO_LGM_DANGER_MULT      = 5,
+    CAPTURE_NO_LGM_FREE_BONUS_MULT  = 1,
+    CAPTURE_NO_LGM_CLUSTER_DISCOUNT = true,
+    CAPTURE_NO_LGM_ROUTE_STRICT     = false,
+    CAPTURE_BASE_NO_LGM_DANGER_MULT = 0,
+    KILL_ME_ENABLED                 = false,
   },
 }
 
