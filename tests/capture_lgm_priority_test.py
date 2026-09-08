@@ -131,7 +131,11 @@ COMMON = ("cfg=TANK_COMBAT_ENABLED=false"
 TOKENS = {
     # Sweep pinned off explicitly even though it is inert here, so P1 cannot
     # be blamed on it.
-    "P1": "cfg=CAPTURE_LGM_HUNT=false;cfg=CAPTURE_LGM_PRIORITY=true;" + COMMON,
+    # The sweep stays at its default here: the arena's man never comes inside
+    # its 2-tile box and never repairs the pill, and the test asserts zero
+    # CAPTURE_LGM_HUNT lines to prove it (a second cfg= would push the token
+    # past the 127-byte BRAIN_INIT_ARG limit).
+    "P1": "cfg=CAPTURE_LGM_PRIORITY=true;" + COMMON,
     "P0": "cfg=CAPTURE_LGM_PRIORITY=false;" + COMMON,
     "PK": "preset=keel;" + COMMON,
 }
