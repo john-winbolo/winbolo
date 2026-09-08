@@ -1670,7 +1670,8 @@ void voiceTick(struct ClientSim *cs) {
             /* Recorded before the frame is dropped: a frame that would not
              * encode is one a hole in the audio is found in. */
             voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
-                                 clipped, gateOpen, sending, 0, false);
+                                 clipped, gateOpen, sending, 0, false,
+                                 selfMuteRequested, connectionCarriesVoice);
 #endif
             continue;
         }
@@ -1699,7 +1700,8 @@ void voiceTick(struct ClientSim *cs) {
 #if defined(WB_VOICEDEBUG)
         voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
                              clipped, gateOpen, sending, encodedLen,
-                             encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES);
+                             encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES,
+                             selfMuteRequested, connectionCarriesVoice);
 #endif
 
         /* Kept at the same size a frame may be on the wire, so the test hears

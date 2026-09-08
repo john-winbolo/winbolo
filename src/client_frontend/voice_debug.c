@@ -447,7 +447,8 @@ bool voiceDebugStart(const char *dir) {
 
     framesCsv = csvOpen("frames.csv",
                         "frame,ms,inputLevel,rmsPostAec,clipped,micOpen,"
-                        "sending,encodedLen,overWireLimit,bandwidth");
+                        "sending,encodedLen,overWireLimit,bandwidth,"
+                        "selfMuted,carriesVoice");
     speakersCsv = csvOpen("speakers.csv",
                           "ms,player,played,concealed,lateDropped,evicted,"
                           "queued");
@@ -578,11 +579,15 @@ void voiceDebugTap(VoiceTap tap, int player, const int16_t *pcm) {
 *  frame, including a frame that was never encoded, which is
 *  the one a hole in the audio is found in.
 *
-*  The last column is the bandwidth Opus chose for the frame,
+*  The bandwidth column is the one Opus chose for the frame,
 *  in kHz: 4 narrowband, 6 mediumband, 8 wideband, 12
 *  superwideband, 20 fullband, and 0 for a frame that was
 *  never encoded.  voiceDebugRoundtrip read it off the packet
 *  just before this call, and this row clears it.
+*
+*  The two columns after it are why sending is 0 when it is:
+*  the player's own mute, or a connection that carries no
+*  voice.
 *
 *ARGUMENTS:
 *  nowMs         - the backend clock, wall clock rather than
@@ -594,17 +599,22 @@ void voiceDebugTap(VoiceTap tap, int player, const int16_t *pcm) {
 *  sending       - whether the frame was being transmitted
 *  encodedLen    - encoded bytes, 0 when it was not encoded
 *  overWireLimit - encodedLen is past what one segment holds
+*  selfMuted     - the player muted their own microphone
+*  carriesVoice  - the connection this client is on carries
+*                  voice at all
 *********************************************************/
 void voiceDebugFrameStats(uint32_t nowMs, float inputLevel, float rmsPostAec,
                           int clipped, bool micOpen, bool sending,
-                          int encodedLen, bool overWireLimit) {
+                          int encodedLen, bool overWireLimit, bool selfMuted,
+                          bool carriesVoice) {
     if (!recording || framesCsv == NULL) {
         return;
     }
-    fprintf(framesCsv, "%u,%u,%.6f,%.6f,%d,%d,%d,%d,%d,%d\n", framesCaptured,
-            nowMs, (double)inputLevel, (double)rmsPostAec, clipped,
-            micOpen ? 1 : 0, sending ? 1 : 0, encodedLen,
-            overWireLimit ? 1 : 0, frameBandwidthKhz);
+    fprintf(framesCsv, "%u,%u,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%d\n",
+            framesCaptured, nowMs, (double)inputLevel, (double)rmsPostAec,
+            clipped, micOpen ? 1 : 0, sending ? 1 : 0, encodedLen,
+            overWireLimit ? 1 : 0, frameBandwidthKhz, selfMuted ? 1 : 0,
+            carriesVoice ? 1 : 0);
     frameBandwidthKhz = 0;
     framesCaptured++;
     if (encodedLen > 0) {

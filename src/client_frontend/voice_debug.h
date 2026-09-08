@@ -51,6 +51,13 @@
  *   that was never encoded, or one the packet could not be
  *   read from. Nothing asks the encoder for a bandwidth, so
  *   this is what it picked from the bitrate.
+ *
+ *   The selfMuted and carriesVoice columns say why sending
+ *   is 0 when it is: the player muted their own microphone,
+ *   or the connection this client is on does not carry voice
+ *   at all. Without them a run that never sends a frame
+ *   reads the same either way, and the two want different
+ *   fixes.
  *********************************************************/
 
 #ifndef VOICE_DEBUG_H
@@ -91,7 +98,8 @@ void voiceDebugTap(VoiceTap tap, int player, const int16_t *pcm);
 /* One frames.csv row per captured frame. */
 void voiceDebugFrameStats(uint32_t nowMs, float inputLevel, float rmsPostAec,
                           int clipped, bool micOpen, bool sending,
-                          int encodedLen, bool overWireLimit);
+                          int encodedLen, bool overWireLimit, bool selfMuted,
+                          bool carriesVoice);
 
 /* Decodes the frame just encoded through the recorder's own decoder and
  * writes it to VOICE_TAP_ROUNDTRIP. */
