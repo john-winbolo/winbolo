@@ -433,13 +433,16 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
         char bmpPath[1024];
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
+        textureTanks = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
+                                              TILE_SIZE_X, TILE_SIZE_Y);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
+        textureBoats = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
+                                              TILE_SIZE_X, TILE_SIZE_Y);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
+        textureItems = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
+                                              TILE_SIZE_X, TILE_SIZE_Y);
     }
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
@@ -556,13 +559,16 @@ BYTE lv_drawSetup(void) {
         char bmpPath[1024];
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
+        textureTanks = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
+                                              TILE_SIZE_X, TILE_SIZE_Y);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
+        textureBoats = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
+                                              TILE_SIZE_X, TILE_SIZE_Y);
 
         SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = sdlLoadBmpAsTexture(sdlRenderer, bmpPath, true);
+        textureItems = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
+                                              TILE_SIZE_X, TILE_SIZE_Y);
     }
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
@@ -686,7 +692,7 @@ void lv_drawSplashForImGui(void) {
         if (!basePath) basePath = "./";
         char splashPath[1024];
         SDL_snprintf(splashPath, sizeof(splashPath), "%sdata/splash.bmp", basePath);
-        textureSplash = sdlLoadBmpAsTexture(sdlRenderer, splashPath, false);
+        textureSplash = sdlLoadBmpAsTexture(sdlRenderer, splashPath);
     }
     
     if (textureSplash) {

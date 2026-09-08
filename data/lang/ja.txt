@@ -1490,6 +1490,8 @@ STR_STARTPICK_YOU=あなた
 STR_STARTPICK_SWAP_WITH=このスタートを交換する相手：
 STR_STARTPICK_ASSIGN_TO=スタートを割り当てる相手：
 STR_STARTPICK_SLOT_FALLBACK=（スロット）
+STR_STARTPICK_TIP_OFFSIDE=スタート #{number}\nあなたのチーム側ではありません
+STR_STARTPICK_TIP_OFFSIDE_HOST=スタート #{number}\n{string1}に対してオフサイド
 
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=AIプレイヤー
@@ -2003,3 +2005,21 @@ STR_ITEMVIEW_ALLY_NAMED=味方戦車視点 — {player}
 STR_DLGBROWSER_VIEWS_LBL=表示:
 STR_DLGBROWSER_VIEWS_CLASSIC=クラシック
 STR_DLGBROWSER_VIEWS_ALLYTREES=森の中の味方
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=スタート:
+STR_DLGLOBBY_SIDE_ANY=任意
+STR_DLGLOBBY_SIDE_N=北
+STR_DLGLOBBY_SIDE_E=東
+STR_DLGLOBBY_SIDE_S=南
+STR_DLGLOBBY_SIDE_W=西
+STR_DLGLOBBY_START_SEA=海
+STR_DLGLOBBY_START_TEAM_SIDE=チーム側
+STR_DLGLOBBY_START_AUTO=自動
+STR_DLGLOBBY_START_UNASSIGN=割り当て解除
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(オフサイド)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: プレイヤー{number2}人に対しスタート{number}か所 — {number3}人が海からのスタートになります。\nこのチームの側を変更すると、全プレイヤーのスタートが再抽選されます。
+STR_DLGLOBBY_TOOLTIP_START_SEA=このチームが使えるスタートはすべて埋まっているため、このプレイヤーは\nチームメイトのスタートの隣の海からスタートします。
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=オフサイド: このスタートは{string1}（チーム側）にありません。\nホストがこのプレイヤーのために選びました。
+
+STR_SOUND_LOAD_FAILED=サウンドエフェクトの読み込みに失敗しました

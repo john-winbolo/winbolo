@@ -29,6 +29,7 @@
 #include "game_sim.h"
 #include "bolo_map.h"     /* mapSetPos */
 #include "starts.h"       /* startsPickIncremental */
+#include "start_sides.h"  /* START_SIDE_ANY */
 #include "server_sim.h"   /* ut_make_running_sim, serverSimGetGameSim */
 #include "test_harness.h"
 
@@ -70,7 +71,8 @@ int run_starts_pick_cluster_nearest_teammate(void) {
     bool taken[MAX_STARTS] = {false};
     taken[0] = true;                 /* teammate sits on start 0 */
     BYTE teammates[1] = {0};         /* 0-based teammate reservation */
-    BYTE picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1);
+    BYTE picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1,
+                                        START_SIDE_ANY, 0);
 
     UT_ASSERT_MSG(picked == 2,
                   "spread should pick start 2 (farthest unused region), got %u",
@@ -100,7 +102,8 @@ int run_starts_pick_farthest_when_solo(void) {
 
     bool taken[MAX_STARTS] = {false};
     taken[0] = true;                 /* only start 0 is taken */
-    BYTE picked = startsPickIncremental(gs, &gs->ss, taken, NULL, 0);
+    BYTE picked = startsPickIncremental(gs, &gs->ss, taken, NULL, 0,
+                                        START_SIDE_ANY, 0);
 
     UT_ASSERT_MSG(picked == 2,
                   "farthest-first should pick start 2 (max distance), got %u",
@@ -120,7 +123,8 @@ int run_starts_pick_none_when_all_taken(void) {
     bool taken[MAX_STARTS];
     int i;
     for (i = 0; i < MAX_STARTS; i++) taken[i] = true;
-    BYTE picked = startsPickIncremental(gs, &gs->ss, taken, NULL, 0);
+    BYTE picked = startsPickIncremental(gs, &gs->ss, taken, NULL, 0,
+                                        START_SIDE_ANY, 0);
 
     UT_ASSERT_MSG(picked == MAX_STARTS,
                   "all-taken should return MAX_STARTS (%u), got %u",

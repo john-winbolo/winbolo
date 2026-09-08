@@ -34,6 +34,7 @@
 #include "../scenario.h"   /* the scripted-scenario VM this TU drives */
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and serverLifecycleGet*Stats via server_lifecycle.h */
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
+#include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetAddEvent, WINBOLO_NET_EVENT_WIN */
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
@@ -1057,8 +1058,13 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
 static void serverSimRunStartBatch(ServerSim *sim) {
     BYTE batchTeam[MAX_TANKS];
     BYTE reserved0[MAX_TANKS];
+    BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
     BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
     BYTE i;
+    memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
+    for (i = 1; i < MAX_TANKS; i++) {
+        teamSide[i] = sim->teams[i].startSide;
+    }
     for (i = 0; i < MAX_TANKS; i++) {
         BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
         batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
@@ -1068,7 +1074,7 @@ static void serverSimRunStartBatch(ServerSim *sim) {
     }
     startsAssignBatch(&sim->sim, &sim->sim.ss,
                       sim->playerConnected, batchTeam,
-                      sim->sim.pendingStartIdx, reserved0);
+                      sim->sim.pendingStartIdx, reserved0, teamSide);
 }
 
 void serverSimReassignStarts(ServerSim *sim) {
@@ -1150,11 +1156,14 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
 
-    /* Pre-compute start indices for the whole batch (see
-     * serverSimRunStartBatch for the rationale). */
+    /* Pre-compute start indices for the whole batch so teammates land
+     * near each other and a team with a side keeps its side (see
+     * serverSimRunStartBatch, which wraps main's startsAssignBatch call). */
     serverSimRunStartBatch(sim);
 
-    /* Create tanks for all connected players */
+    /* Destroy every connected slot's tank and man before creating any, so
+     * a new tank's spawn search never sees the previous round's tanks
+     * still sitting at their old positions. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         if (sim->sim.tanks[i] != NULL) {
@@ -1165,6 +1174,11 @@ void serverSimStartGameInPlace(ServerSim *sim) {
             lgmDestroy(&sim->sim.lgmen[i]);
             sim->sim.lgmen[i] = NULL;
         }
+    }
+
+    /* Create tanks for all connected players */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
     }
@@ -1293,8 +1307,9 @@ void serverSimStartGame(ServerSim *sim) {
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
 
-    /* Pre-compute start indices for the whole batch (see
-     * serverSimRunStartBatch for the rationale). */
+    /* Pre-compute start indices for the whole batch so teammates land
+     * near each other and a team with a side keeps its side (see
+     * serverSimRunStartBatch, which wraps main's startsAssignBatch call). */
     serverSimRunStartBatch(sim);
 
     /* Create tanks for all connected players */

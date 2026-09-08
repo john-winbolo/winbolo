@@ -425,6 +425,12 @@ ios_game_start:
             clientRenderFrame(cs, redraw);
         }
         clientMutexRelease();
+        /* The in-window map overview draws from the snapshot the frame above
+           filled, now that the lock is off. Nothing on iOS turns that mode on
+           today — every path that does is compiled out here — but the call is
+           a no-op when no frame is waiting, and leaving it out is how the map
+           would silently stop drawing if one ever did. */
+        sdl3DrawFlushOverviewInWindow();
         dwSysFrame += (SDL_GetTicks() - tick);
 
         /* Touch overlay (skip in tablet mode — ImGui overlay handles it) */

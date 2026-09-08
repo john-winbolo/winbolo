@@ -573,13 +573,11 @@ static EncodeResult encodeLobbySettings(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* PACKET_LOBBY_TEAM_META_CHG wire format (ported verbatim from the
- * branch's deleted transportUdpServerBroadcastLobbyTeamMetaChg):
- *   [header 8] [teamId 1] [color 1] [namingPool 1] [nameLen 1]
- *   [name nameLen]
+/* PACKET_LOBBY_TEAM_META_CHG wire format:
+ *   [header 8] [teamId 1] [color 1] [namingPool 1] [startSide 1]
+ *   [nameLen 1] [name nameLen]
  * The `in_use` flag is not on the wire — the decoder reconstructs it
- * from (nameLen > 0 || color != 0 || pool != 0), matching the existing
- * PACKET_LOBBY_TEAM_META_CHG decoder in transport_udp_client.c. */
+ * from (nameLen > 0 || color != 0 || pool != 0 || startSide != 0). */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyTeamMetaBody(const ControlEvent *evt,
@@ -592,12 +590,13 @@ static EncodeResult encodeLobbyTeamMetaBody(const ControlEvent *evt,
         return ENCODE_SKIP;
     }
     size_t nameLen = strnlen(evt->u.lobbyTeamMeta.name, LOBBY_TEAM_NAME_LEN - 1);
-    const size_t needed = 4 + nameLen;
+    const size_t needed = 5 + nameLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.lobbyTeamMeta.teamId;
     buf[pos++] = evt->u.lobbyTeamMeta.color;
     buf[pos++] = evt->u.lobbyTeamMeta.namingPool;
+    buf[pos++] = evt->u.lobbyTeamMeta.startSide;
     buf[pos++] = (uint8_t)nameLen;
     if (nameLen > 0) {
         memcpy(buf + pos, evt->u.lobbyTeamMeta.name, nameLen);
@@ -1951,28 +1950,29 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
 static bool decodeLobbyTeamMetaBody(const uint8_t *buf, size_t len,
                                     ControlEvent *outEvt) {
     /* Layout matches encodeLobbyTeamMetaBody. */
-    if (len < 4) return false;
-    uint8_t teamId  = buf[0];
-    uint8_t color   = buf[1];
-    uint8_t pool    = buf[2];
-    uint8_t nameLen = buf[3];
+    if (len < 5) return false;
+    uint8_t teamId    = buf[0];
+    uint8_t color     = buf[1];
+    uint8_t pool      = buf[2];
+    uint8_t startSide = buf[3];
+    uint8_t nameLen   = buf[4];
     if (teamId == 0 || teamId >= MAX_TANKS) return false;
     if (nameLen > LOBBY_TEAM_NAME_LEN - 1) return false;
-    if (len < (size_t)(4 + nameLen)) return false;
+    if (len < (size_t)(5 + nameLen)) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_TEAM_META;
     outEvt->u.lobbyTeamMeta.teamId     = teamId;
     outEvt->u.lobbyTeamMeta.color      = color;
     outEvt->u.lobbyTeamMeta.namingPool = pool;
+    outEvt->u.lobbyTeamMeta.startSide  = startSide;
     if (nameLen > 0) {
-        memcpy(outEvt->u.lobbyTeamMeta.name, buf + 4, nameLen);
+        memcpy(outEvt->u.lobbyTeamMeta.name, buf + 5, nameLen);
     }
     outEvt->u.lobbyTeamMeta.name[nameLen] = '\0';
-    /* in_use is not on the wire — reconstruct it the same way the
-     * existing PACKET_LOBBY_TEAM_META_CHG decoder in
-     * transport_udp_client.c does. */
+    /* in_use is not on the wire — a team with any non-default field
+     * is in use. */
     outEvt->u.lobbyTeamMeta.in_use =
-        (nameLen > 0 || color != 0 || pool != 0) ? 1 : 0;
+        (nameLen > 0 || color != 0 || pool != 0 || startSide != 0) ? 1 : 0;
     return true;
 }
 

@@ -1110,9 +1110,10 @@ static void serverSimApplyMapChange(ServerSim *sim) {
     serverSimShadowSeedAll(sim);
 
     /* A reservation from the previous map can index past the new map's
-     * start list; drop those, then re-cluster every now-unassigned slot
-     * into the new map's free starts. Slots whose reservation is still
-     * valid keep it (reservations are not auto-moved otherwise). */
+     * start list, or sit on a side the slot's team may not use now the
+     * starts have moved; drop those, then re-cluster every now-unassigned
+     * slot into the new map's free starts. Slots whose reservation is
+     * still valid keep it (reservations are not auto-moved otherwise). */
     {
         BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
         BYTE before[MAX_TANKS];
@@ -1134,13 +1135,15 @@ static void serverSimApplyMapChange(ServerSim *sim) {
         }
         for (k = 0; k < MAX_TANKS; k++) {
             if (!sim->playerConnected[k]) continue;
-            if (sim->lobbyPlayers[k].startIdx == 0xFF) {
-                serverSimAssignLobbyStartOnJoin(sim, k);
-            }
+            serverSimReleaseIneligibleStart(sim, k);
         }
+        /* The backfill publishes every slot it hands a start to. A slot
+         * dropped above that it could not place is still 0xFF, so it is
+         * not among those; publish it here if it held a start before. */
+        serverSimBackfillLobbyStarts(sim);
         for (k = 0; k < MAX_TANKS; k++) {
             if (!sim->playerConnected[k]) continue;
-            if (sim->lobbyPlayers[k].startIdx != before[k]) {
+            if (sim->lobbyPlayers[k].startIdx == 0xFF && before[k] != 0xFF) {
                 serverSimPublishLobbySlot(sim, k);
             }
         }

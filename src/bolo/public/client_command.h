@@ -118,9 +118,14 @@ typedef struct {
 } CmdTeamSet;
 
 /* CMD_LOBBY_CLAIM_START — set a slot's reserved start. targetSlot ==
- * senderSlot is a self-claim (target start must be free or 0xFF release);
- * targetSlot != senderSlot is host-only (lobbyClientMayEdit) and swaps when
- * the target start is occupied. startIdx is 1-based (0xFF = release). */
+ * senderSlot is a self-claim (target start must be free and one the
+ * sender's team side accepts, or a sentinel below); targetSlot != senderSlot
+ * is host-only (lobbyClientMayEdit) and swaps when the target start is
+ * occupied. startIdx is 1-based; 0xFF releases the slot's start and leaves
+ * it empty until the next lobby event moves reservations, while
+ * START_CLAIM_TEAM_SIDE releases it and picks a fresh start on the slot's
+ * team side at once (0xFF when the side is full). */
+#define START_CLAIM_TEAM_SIDE 0xFE
 typedef struct {
     uint8_t targetSlot;
     uint8_t startIdx;
@@ -146,13 +151,14 @@ typedef struct {
     char    name[PACKET_MAX_PLAYER_NAME];
 } CmdLobbyBotConfig;
 
-/* CMD_LOBBY_TEAM_META — set color, naming pool, and optional name
- * for a team. nameLen == 0 means "no name set". teamId is 1..MAX_TANKS-1
- * (team 0 is unassigned). */
+/* CMD_LOBBY_TEAM_META — set color, naming pool, start side, and
+ * optional name for a team. nameLen == 0 means "no name set". teamId is
+ * 1..MAX_TANKS-1 (team 0 is unassigned). */
 typedef struct {
     uint8_t teamId;
     uint8_t color;
     uint8_t namingPool;
+    uint8_t startSide;   /* START_SIDE_* (start_sides.h) */
     uint8_t nameLen;
     char    name[LOBBY_TEAM_NAME_LEN];
 } CmdLobbyTeamMeta;

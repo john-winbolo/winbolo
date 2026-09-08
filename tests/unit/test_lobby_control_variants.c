@@ -221,11 +221,13 @@ int run_lobby_settings_codec_and_apply(void) {
 
 /* ================================================================
  * CTRL_LOBBY_TEAM_META — `in_use` is not on the wire; the decoder
- * reconstructs it from (nameLen>0 || color!=0 || pool!=0). Two
- * sub-cases exercise both sides of that branch.
+ * reconstructs it from (nameLen>0 || color!=0 || pool!=0 ||
+ * startSide!=0). Sub-cases exercise both sides of that branch, plus
+ * a team whose only non-default field is its start side.
  * ================================================================ */
 int run_lobby_team_meta_codec_and_apply(void) {
-    /* Populated team: name + color + pool all set → in_use reconstructs to 1 */
+    /* Populated team: name + color + pool + side all set → in_use
+     * reconstructs to 1 */
     ControlEvent in, out;
     memset(&in, 0, sizeof(in));
     in.type = CTRL_LOBBY_TEAM_META;
@@ -233,6 +235,7 @@ int run_lobby_team_meta_codec_and_apply(void) {
     in.u.lobbyTeamMeta.in_use     = 1;
     in.u.lobbyTeamMeta.color      = 5;
     in.u.lobbyTeamMeta.namingPool = 2;
+    in.u.lobbyTeamMeta.startSide  = 3;
     strncpy(in.u.lobbyTeamMeta.name, "Phoenix",
             sizeof(in.u.lobbyTeamMeta.name) - 1);
 
@@ -243,10 +246,11 @@ int run_lobby_team_meta_codec_and_apply(void) {
     UT_ASSERT(out.u.lobbyTeamMeta.in_use     == 1);
     UT_ASSERT(out.u.lobbyTeamMeta.color      == 5);
     UT_ASSERT(out.u.lobbyTeamMeta.namingPool == 2);
+    UT_ASSERT(out.u.lobbyTeamMeta.startSide  == 3);
     UT_ASSERT(strcmp(out.u.lobbyTeamMeta.name, "Phoenix") == 0);
 
-    /* Empty team: name="", color=0, pool=0 → in_use reconstructs to 0
-     * even if the caller had set in_use=1 (it's recomputed). */
+    /* Empty team: name="", color=0, pool=0, side=0 → in_use reconstructs
+     * to 0 even if the caller had set in_use=1 (it's recomputed). */
     ControlEvent empty_in, empty_out;
     memset(&empty_in, 0, sizeof(empty_in));
     empty_in.type = CTRL_LOBBY_TEAM_META;
@@ -257,9 +261,30 @@ int run_lobby_team_meta_codec_and_apply(void) {
                   "codec_roundtrip failed (empty)");
     UT_ASSERT(empty_out.u.lobbyTeamMeta.teamId == 4);
     UT_ASSERT_MSG(empty_out.u.lobbyTeamMeta.in_use == 0,
-                  "decoder should clear in_use when name/color/pool are zero, got %u",
+                  "decoder should clear in_use when name/color/pool/side are zero, got %u",
                   (unsigned)empty_out.u.lobbyTeamMeta.in_use);
     UT_ASSERT(empty_out.u.lobbyTeamMeta.name[0] == '\0');
+    UT_ASSERT(empty_out.u.lobbyTeamMeta.startSide == 0);
+
+    /* Side-only team: name="", color=0, pool=0 but a start side set →
+     * in_use reconstructs to 1, so a team whose only choice is its side
+     * is not dropped back to defaults on the client. */
+    ControlEvent side_in, side_out;
+    memset(&side_in, 0, sizeof(side_in));
+    side_in.type = CTRL_LOBBY_TEAM_META;
+    side_in.u.lobbyTeamMeta.teamId    = 5;
+    side_in.u.lobbyTeamMeta.startSide = 2;
+    UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_TEAM_META,
+                                  &side_in, &side_out) == 0,
+                  "codec_roundtrip failed (side only)");
+    UT_ASSERT(side_out.u.lobbyTeamMeta.teamId    == 5);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.startSide == 2);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.color     == 0);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.namingPool == 0);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.name[0]   == '\0');
+    UT_ASSERT_MSG(side_out.u.lobbyTeamMeta.in_use == 1,
+                  "decoder should set in_use when only startSide is non-zero, got %u",
+                  (unsigned)side_out.u.lobbyTeamMeta.in_use);
 
     /* Apply: the populated event should land on cs->lobbyTeam* arrays. */
     ClientSim *cs = fresh_client_sim();
@@ -268,9 +293,12 @@ int run_lobby_team_meta_codec_and_apply(void) {
     UT_ASSERT(cs->lobbyTeamInUse[3] == 1);
     UT_ASSERT(cs->lobbyTeamColor[3] == 5);
     UT_ASSERT(cs->lobbyTeamPool[3]  == 2);
+    UT_ASSERT(cs->lobbyTeamStartSide[3] == 3);
+    UT_ASSERT(clientSimGetLobbyTeamStartSide(cs, 3) == 3);
     UT_ASSERT(strcmp(cs->lobbyTeamName[3], "Phoenix") == 0);
     /* Untouched neighbour stays zero. */
     UT_ASSERT(cs->lobbyTeamInUse[4] == 0);
+    UT_ASSERT(cs->lobbyTeamStartSide[4] == 0);
     UT_ASSERT(cs->lobbyTeamName[4][0] == '\0');
     clientSimDestroy(cs);
     return 0;

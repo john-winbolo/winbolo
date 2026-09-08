@@ -5363,7 +5363,8 @@ static void appRender(BrainTestApp *app) {
             patched = true;
         }
 
-        MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
+        MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1,
+                           (float)app->zoomFactor };
         mapViewRenderCentered(&ctx, app->sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);

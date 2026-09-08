@@ -256,12 +256,14 @@ void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, ControlE
         evt->u.lobbyTeamMeta.in_use     = 0;
         evt->u.lobbyTeamMeta.color      = 0;
         evt->u.lobbyTeamMeta.namingPool = 0;
+        evt->u.lobbyTeamMeta.startSide  = 0;
         evt->u.lobbyTeamMeta.name[0]    = '\0';
         return;
     }
     evt->u.lobbyTeamMeta.in_use     = sim->teams[teamId].in_use;
     evt->u.lobbyTeamMeta.color      = sim->teams[teamId].color;
     evt->u.lobbyTeamMeta.namingPool = sim->teams[teamId].namingPool;
+    evt->u.lobbyTeamMeta.startSide  = sim->teams[teamId].startSide;
     memset(evt->u.lobbyTeamMeta.name, 0, LOBBY_TEAM_NAME_LEN);
     strncpy(evt->u.lobbyTeamMeta.name, sim->teams[teamId].name,
             LOBBY_TEAM_NAME_LEN - 1);

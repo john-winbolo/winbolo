@@ -36,7 +36,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links three leaf `src/gui/sdl3` geometry files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources". |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links four leaf `src/gui/sdl3` geometry files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources". |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -1970,35 +1970,42 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Three `src/gui/sdl3` files —
-`overview_camera.cpp`, `overview_fog.cpp` and
-`overview_hud_layout.cpp` — are compiled *into* `WinBoloUnitTests`,
-the only files from a renderer directory that are. They hold the map
-overview's camera maths, its fog mask and its in-window HUD geometry,
-and `test_overview_camera.cpp`, `test_overview_fog.cpp` and
-`test_overview_hud_layout.cpp` call them directly.
+same target, and it is not a T2 grant. Nine `src/gui/sdl3` files are
+compiled *into* `WinBoloUnitTests`, the only files from a renderer
+directory that are: `skin_source.c`, `tileloader.c`, `sdl_bmp.c`,
+`sound_variants.c`, `overview_camera.cpp`, `overview_fog.cpp`,
+`overview_hud_layout.cpp`, `sprite_positions.c` and
+`gfx_settings.c`. Between them they hold skin lookup, the tile sheet
+builder, the BMP sheet reader, the sound variant naming, the map
+overview's camera maths, its fog mask, its in-window HUD geometry
+and the sprite placement arithmetic behind `mapview.c`'s drawers.
+The first eight are each called directly by a test beside them;
+`gfx_settings.c` is here because `tileloader.c` calls it, and is the
+one file on the list no test drives on its own.
 
 They do not borrow the target's T2 access. They keep the `gui`
-profile's public-only rule: between them they include `types.h` and
-`overview_types.h` from `public/`, two GUI-local geometry headers,
-and the C++ standard library — nothing else. That is the rule which
-qualifies a file for this list: **arithmetic over plain structs, with
-no ImGui, no `SDL_Renderer`, and no window or device state — geometry
-a test can call with no display attached.** The drawing half of the
-overview (`overview_view.cpp`) does not qualify and stays out.
+profile's public-only rule. That is the rule which qualifies a file
+for this list: **a leaf a test can call with no display attached —
+no ImGui, and no window, renderer or audio device of its own.**
+Nothing here creates or holds one. `sdl_bmp.c` marks where the
+boundary runs: its upload calls take an `SDL_Renderer *` they are
+handed, and the surface-level half the tests use needs none, so the
+file goes in while a file that opened a renderer would not. The
+drawing half of the overview (`overview_view.cpp`) does not qualify
+and stays out.
 
-The alternative was moving the maths into `src/bolo/`, which would
-put pixel, zoom and panel-layout concerns onto the sim purely to buy
-testability. Keeping them in the renderer and linking three leaf
-files is the smaller distortion of the two.
+The alternative, for the geometry files, was moving the maths into
+`src/bolo/`, which would put pixel, zoom and panel-layout concerns
+onto the sim purely to buy testability. Keeping them in the renderer
+and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the three still meeting that rule, so it is
+**Rests on** each of the nine still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
-or renderer include has left the category, and the answer is to
-split the geometry back out — the link break is the signal, not a
-build problem to route around by widening the test binary. A fourth
-file joins only on the same test: leaf geometry, or it does not go
-in.
+include, or that opens a renderer or a device of its own, has left
+the category, and the answer is to split the leaf back out — the
+link break is the signal, not a build problem to route around by
+widening the test binary. A tenth file joins only on the same test:
+callable with no display attached, or it does not go in.
 
 ### Adding a new exception
 

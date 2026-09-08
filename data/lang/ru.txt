@@ -1488,6 +1488,8 @@ STR_STARTPICK_YOU=вы
 STR_STARTPICK_SWAP_WITH=Поменять этот старт с:
 STR_STARTPICK_ASSIGN_TO=Назначить старт игроку:
 STR_STARTPICK_SLOT_FALLBACK=(слот)
+STR_STARTPICK_TIP_OFFSIDE=Старт #{number}\nНе на стороне вашей команды
+STR_STARTPICK_TIP_OFFSIDE_HOST=Старт #{number}\nВне стороны для {string1}
 
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=ИИ-игрок
@@ -2001,3 +2003,21 @@ STR_ITEMVIEW_ALLY_NAMED=Вид союзных танков — {player}
 STR_DLGBROWSER_VIEWS_LBL=Виды:
 STR_DLGBROWSER_VIEWS_CLASSIC=Классический
 STR_DLGBROWSER_VIEWS_ALLYTREES=Союзники в лесу
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Старт:
+STR_DLGLOBBY_SIDE_ANY=Любая
+STR_DLGLOBBY_SIDE_N=Север
+STR_DLGLOBBY_SIDE_E=Восток
+STR_DLGLOBBY_SIDE_S=Юг
+STR_DLGLOBBY_SIDE_W=Запад
+STR_DLGLOBBY_START_SEA=Море
+STR_DLGLOBBY_START_TEAM_SIDE=Сторона команды
+STR_DLGLOBBY_START_AUTO=Авто
+STR_DLGLOBBY_START_UNASSIGN=Отказаться
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(вне стороны)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} стартов для {number2} игроков — {number3} из них начнёт в море.\nСмена стороны переназначает старт каждому игроку.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Все старты, доступные этой команде, заняты, поэтому этот игрок\nначнёт в море рядом со стартом товарища по команде.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Вне стороны: этот старт не относится к {string1}, стороне команды.\nХост выбрал его для этого игрока.
+
+STR_SOUND_LOAD_FAILED=Ошибка загрузки звуковых эффектов

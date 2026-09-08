@@ -15,19 +15,24 @@
 /*********************************************************
  * Name:          sprite_positions.c
  * Purpose:
- *   Definitions for mapViewPosX/Y and mapViewInit().
- *   Split out of mapview.c so modules that only need the
- *   tile-number-to-atlas lookup (e.g. the log viewer) can
- *   link this small file alone, without dragging in
+ *   Definitions for mapViewPosX/Y and mapViewInit(), and
+ *   the sprite placement arithmetic mapview.c's drawers
+ *   call. Split out of mapview.c so modules that only need
+ *   the tile-number-to-atlas lookup (e.g. the log viewer)
+ *   can link this small file alone, without dragging in
  *   mapview's draw helpers and their bolo screen.c
- *   dependencies.
+ *   dependencies. Nothing here touches SDL: the placement
+ *   functions are plain arithmetic over their arguments,
+ *   which is what lets the unit tests link this file.
  *********************************************************/
 
 #include "sprite_positions.h"
 #include "../tiles.h"
 #include "global.h"   /* SWAMP, FOREST, GRASS, RUBBLE, CRATER, HALFBUILDING */
 #include "tilenum.h"
+#include "gfx_settings.h"   /* the GfxAnimSmoothness values `mode` carries */
 
+#include <math.h>
 #include <string.h>
 
 /* Tile-number -> atlas-coordinate lookup tables */
@@ -394,4 +399,141 @@ void mapViewInit(void) {
   mapViewPosY[BOAT_6] = BOAT6_Y;
   mapViewPosX[BOAT_7] = BOAT7_X;
   mapViewPosY[BOAT_7] = BOAT7_Y;
+}
+
+/*********************************************************
+ * Sprite placement. Where a sprite lands on screen from
+ * its map square, game-pixel offset and world offset, at
+ * a float screen-pixels-per-game-pixel scale. The classic
+ * view calls these at a whole-number zoom and the map
+ * overview at its fractional rungs; both get the same
+ * arithmetic.
+ *********************************************************/
+
+float spritePositionOffset(int mode, float scale, int sheetScale,
+                           int square, int pixelOff, int worldOff) {
+  if (mode == GFX_ANIM_SMOOTH || mode == GFX_ANIM_MATCH_PIXELATION) {
+    /* 256 world units to a square, 16 to a game pixel. When
+       worldOff == pixelOff << 4 this works out to the same value Classic
+       gives, so a sprite carrying nothing finer than its game pixel does
+       not move differently here. */
+    float smooth = ((float)(square * 256 + worldOff) / 16.0f) * scale;
+    if (mode == GFX_ANIM_SMOOTH) {
+      return smooth;
+    }
+    /* Match pixelation: snap to the size of one sheet texel on screen, which
+       covers scale / sheetScale screen pixels. With the sheet built at
+       sheetScale == scale that is a whole screen pixel, a step between
+       Classic's whole game pixels and Smooth's continuous motion. */
+    {
+      int ss = sheetScale < 1 ? 1 : sheetScale;
+      float step = scale / (float)ss;
+      return floorf(smooth / step + 0.5f) * step;
+    }
+  }
+  /* Classic, and anything unrecognised. Whole game pixels, worked out in
+     integers and scaled once, so at a whole-number scale the result is the
+     position the game drew before this setting existed. */
+  return (float)(square * TILE_SIZE_X + pixelOff) * scale;
+}
+
+/* Anchor-pixel positioning: place the sprite so its leading pixel lands
+ * exactly on the shell's world position (the collision point).
+ *
+ * Each entry is the (col, row) of the tip pixel within that direction's
+ * sprite, read directly from the sprite shapes in tile.bmp.  We subtract
+ * these from the top-left position so the tip — not the top-left corner —
+ * sits at the shell coordinate.
+ *
+ * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
+ *                                   S, SSW, SW, WSW, W, WNW, NW, NNW).
+ *
+ * Symmetric diamond, matching brains/GoalHunter/init.lua's
+ * draw_shell_hitbox_viz mirror. Game-pixel offsets in 0..4
+ * range (4 = right/bottom edge of the 4-px sprite). Float so
+ * sub-pixel anchoring works at a scale above 1. */
+static const float kTipCol[16] = {
+  1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
+  4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
+  1.5f, 0.0f, 0.0f, 0.0f,    /* S   SSW  SW   WSW  */
+  0.0f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
+};
+static const float kTipRow[16] = {
+  0.0f, 0.0f, 0.0f, 0.0f,    /* N   NNE  NE   ENE  */
+  1.5f, 3.0f, 4.0f, 4.0f,    /* E   ESE  SE   SSE  */
+  4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
+  1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
+};
+
+void spritePositionShell(float baseX, float baseY, int mode, float scale,
+                         int sheetScale, int mx, int my, int px, int py,
+                         int wx, int wy, int frame,
+                         float *outX, float *outY) {
+  float sx = baseX + spritePositionOffset(mode, scale, sheetScale, mx, px, wx);
+  float sy = baseY + spritePositionOffset(mode, scale, sheetScale, my, py, wy);
+
+  if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+    int dir = frame - SHELL_DIR0;
+    sx -= kTipCol[dir] * scale;
+    sy -= kTipRow[dir] * scale;
+  }
+
+  *outX = sx;
+  *outY = sy;
+}
+
+void spritePositionLgm(float baseX, float baseY, int mode, float scale,
+                       int sheetScale, int mx, int my, int px, int py,
+                       int wx, int wy, int frame,
+                       float *outX, float *outY) {
+  float sx = baseX + spritePositionOffset(mode, scale, sheetScale, mx, px, wx);
+  float sy = baseY + spritePositionOffset(mode, scale, sheetScale, my, py, wy);
+
+  /* Centre the LGM sprite on its authoritative hit pixel. LGM_WIDTH=3,
+   * LGM_HEIGHT=4, so the precise sub-pixel centre is (1.5, 2.0) game
+   * pixels — kept as the internal model (the sim's hit position stays
+   * sub-pixel precise). But 1.5*scale is a half pixel at 1x / odd zoom,
+   * which renders the sprite off the game-pixel grid every other sprite
+   * sits on. So compute the precise centre, then snap only the DISPLAYED
+   * position to the nearest whole game pixel — rounded relative to the
+   * scroll origin so the LGM stays in lockstep with smoothly-scrolling
+   * sprites instead of snapping to an absolute grid.
+   *
+   * Smooth drops the snap: motion finer than a game pixel is the whole
+   * point of that mode, and the grid it lines up with is the one Smooth
+   * has already left. Classic and Match pixelation keep it. The (1.5, 2.0)
+   * centre applies in all three. */
+  if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
+    sx -= 1.5f * scale;   /* precise sub-pixel centre */
+    sy -= 2.0f * scale;
+    if (mode != GFX_ANIM_SMOOTH) {
+      sx = baseX + floorf((sx - baseX) / scale + 0.5f) * scale;  /* display snaps to a pixel */
+      sy = baseY + floorf((sy - baseY) / scale + 0.5f) * scale;
+    }
+  }
+
+  *outX = sx;
+  *outY = sy;
+}
+
+float spritePositionSquare(float base, float scale, int square) {
+  return base + (float)(square * TILE_SIZE_X) * scale;
+}
+
+float spritePositionGunsight(float base, float scale, int square, int pixelOff) {
+  return base + (float)(square * TILE_SIZE_X + pixelOff) * scale;
+}
+
+void spritePositionTankLabel(float baseX, float baseY, float scale,
+                             int mx, int my, int px, int py, float clipLeft,
+                             float *outX, float *outY) {
+  float sx = baseX + (float)(mx * TILE_SIZE_X + px + TILE_SIZE_X) * scale;
+  float sy = baseY + (float)(my * TILE_SIZE_Y + py) * scale;
+  if (sx < clipLeft) sx = clipLeft;
+  *outX = sx;
+  *outY = sy;
+}
+
+bool spritePositionItemLabelShown(float scale, float minScale) {
+  return scale >= minScale;
 }

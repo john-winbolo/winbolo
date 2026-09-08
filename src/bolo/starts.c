@@ -41,24 +41,25 @@
 #include "bolo_map.h"
 #include "util.h"
 #include "gametype.h"
+#include "start_sides.h"
 
 /* Distance thresholds in map squares */
 #define START_TANK_RANGE 1
 #define START_PILL_RANGE 9
 #define START_BASE_RANGE 9
-/* Two starts belong to the same region when they sit within this many map
- * squares of each other, chained transitively. Map authors bunch their starts
- * — DH-Oil Rig has four pairs, two squares apart, one pair per corner, and
- * thirty squares between pairs — so a chain is exactly the "own quadrant" a
- * player should get to himself. Deriving regions from the start geometry
- * rather than cutting the map into fixed quadrants keeps this working on maps
- * that bunch their starts some other way. 9 is the same "near" radius the
- * per-position rules already use for pills and bases. */
-#define START_REGION_RADIUS 9
+/* Minimum distance a scattered spawn keeps from another live tank */
+#define START_SPAWN_SEPARATION 2
 /* Maximum spiral search steps */
 #define START_SCATTER_MAX 1000
 /* Fraction of neutral bases before we treat neutral same as own */
 #define START_NEUTRAL_THRESHOLD_PCT 20
+/* Batch placement score penalties for a team with a chosen side. Both are
+ * larger than the hostile-near penalty (MAP_ARRAY_SIZE * 2), so a start on
+ * the team's own side always outranks one it shares with another team's
+ * side, and both outrank a centre start. Set either to zero and those
+ * starts rank by plain distance like any other. */
+#define START_SIDE_SHARED_PENALTY (MAP_ARRAY_SIZE * 4)
+#define START_SIDE_CENTRE_PENALTY (MAP_ARRAY_SIZE * 8)
 
 /*********************************************************
 *NAME:          startsCreate
@@ -226,38 +227,89 @@ static bool startsIsValidSquare(GameSim *sim, BYTE mx, BYTE my) {
   return (mapGetPos(&sim->mp, mx, my) == DEEP_SEA && mapIsMine(&sim->mp, mx, my) == FALSE);
 }
 
+static int startsMapDistance(int x1, int y1, int x2, int y2);
+
+/*********************************************************
+*NAME:          startsIsClearOfTanks
+*AUTHOR:        John Morrison
+*CREATION DATE: 8/9/26
+*LAST MODIFIED: 8/9/26
+*PURPOSE:
+*  Returns whether a map square is at least
+*  START_SPAWN_SEPARATION squares from every live tank
+*  other than the one being placed.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game simulation
+*  mx        - Map X coordinate
+*  my        - Map Y coordinate
+*  playerNum - Slot being placed, whose own tank is
+*              skipped; MAX_TANKS if there is none
+*********************************************************/
+static bool startsIsClearOfTanks(GameSim *sim, BYTE mx, BYTE my, BYTE playerNum) {
+  BYTE count;
+  WORLD wx;
+  WORLD wy;
+
+  for (count = 0; count < MAX_TANKS; count++) {
+    if (count == playerNum || sim->tanks[count] == NULL) {
+      continue;
+    }
+    tankGetWorld(&sim->tanks[count], &wx, &wy);
+    if (startsMapDistance(mx, my, wx >> M_W_SHIFT_SIZE, wy >> M_W_SHIFT_SIZE) < START_SPAWN_SEPARATION) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
 /*********************************************************
 *NAME:          startsScatterFind
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/4/26
-*LAST MODIFIED: 24/4/26
+*LAST MODIFIED: 8/9/26
 *PURPOSE:
 *  Spiral-searches outward from a centre position to find
-*  a valid deep-sea square with no mine.
+*  a valid deep-sea square with no mine. Two passes over
+*  the same spiral: the first also requires the square to
+*  be at least START_SPAWN_SEPARATION squares from every
+*  other live tank; if nothing within START_SCATTER_MAX
+*  steps satisfies that, the second pass drops the
+*  separation rule so a crowded map still places the tank.
+*  Falls back to the centre itself if both passes fail.
 *
 *ARGUMENTS:
-*  sim    - Pointer to the game simulation
-*  centreX - Centre map X coordinate
-*  centreY - Centre map Y coordinate
-*  outX   - Pointer to receive result X
-*  outY   - Pointer to receive result Y
+*  sim       - Pointer to the game simulation
+*  centreX   - Centre map X coordinate
+*  centreY   - Centre map Y coordinate
+*  outX      - Pointer to receive result X
+*  outY      - Pointer to receive result Y
+*  playerNum - Slot being placed, whose own tank is
+*              ignored by the separation test; MAX_TANKS
+*              if there is no tank to skip
 *********************************************************/
-static void startsScatterFind(GameSim *sim, BYTE centreX, BYTE centreY, BYTE *outX, BYTE *outY) {
+static void startsScatterFind(GameSim *sim, BYTE centreX, BYTE centreY, BYTE *outX, BYTE *outY, BYTE playerNum) {
+  int pass;
   int step;
   int dx;
   int dy;
   int sx;
   int sy;
+  bool keepClear;
 
-  for (step = 0; step < START_SCATTER_MAX; step++) {
-    utilSpiralOffset(step, &dx, &dy);
-    sx = (int)centreX + dx;
-    sy = (int)centreY + dy;
-    if (sx > 0 && sx < MAP_ARRAY_SIZE && sy > 0 && sy < MAP_ARRAY_SIZE) {
-      if (startsIsValidSquare(sim, (BYTE)sx, (BYTE)sy)) {
-        *outX = (BYTE)sx;
-        *outY = (BYTE)sy;
-        return;
+  for (pass = 0; pass < 2; pass++) {
+    keepClear = (pass == 0);
+    for (step = 0; step < START_SCATTER_MAX; step++) {
+      utilSpiralOffset(step, &dx, &dy);
+      sx = (int)centreX + dx;
+      sy = (int)centreY + dy;
+      if (sx > 0 && sx < MAP_ARRAY_SIZE && sy > 0 && sy < MAP_ARRAY_SIZE) {
+        if (startsIsValidSquare(sim, (BYTE)sx, (BYTE)sy) &&
+            (keepClear == FALSE || startsIsClearOfTanks(sim, (BYTE)sx, (BYTE)sy, playerNum))) {
+          *outX = (BYTE)sx;
+          *outY = (BYTE)sy;
+          return;
+        }
       }
     }
   }
@@ -405,7 +457,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
 
     /* Ideal: no tanks nearby and no enemy/neutral pills (friendly pills ok) */
     if (anyTankNearby == FALSE && nonFriendlyPillNearby == FALSE) {
-      startsScatterFind(sim, sx, sy, x, y);
+      startsScatterFind(sim, sx, sy, x, y, playerNum);
       bt = startsConvertDir((*value)->item[idx].dir);
       *dir = (TURNTYPE)(bt * START_TIMES_16);
       return;
@@ -434,7 +486,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
   else chosen = 0;
 
   /* Phase 3: scatter search around chosen position */
-  startsScatterFind(sim, (*value)->item[chosen].x, (*value)->item[chosen].y, x, y);
+  startsScatterFind(sim, (*value)->item[chosen].x, (*value)->item[chosen].y, x, y, playerNum);
   bt = startsConvertDir((*value)->item[chosen].dir);
   *dir = (TURNTYPE)(bt * START_TIMES_16);
 }
@@ -613,7 +665,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   }
 
   WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] chose start %d (%d,%d)", idx, (*value)->item[idx].x, (*value)->item[idx].y);
-  startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, x, y);
+  startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, x, y, playerNum);
   bt = startsConvertDir((*value)->item[idx].dir);
   *dir = (TURNTYPE)(bt * START_TIMES_16);
 }
@@ -687,108 +739,36 @@ static void startsBatchSortBySize(int *order, int n, const StartsBatchGroup *gro
   }
 }
 
-/*********************************************************
-*NAME:          startsBuildRegions
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/8/26
-*LAST MODIFIED: 27/8/26
-*PURPOSE:
-*  Labels every start with a region number. A region is a
-*  maximal chain of starts each within START_REGION_RADIUS
-*  of the next, so DH-Oil Rig's four corner pairs come out
-*  as four regions and a map whose starts are spread evenly
-*  comes out as one region per start. Returns the number of
-*  regions found.
-*
-*ARGUMENTS:
-*  value       - Pointer to the starts structure
-*  numStarts   - Number of starts to label
-*  startRegion - [numStarts] receives the region number
-*********************************************************/
-static int startsBuildRegions(starts *value, BYTE numStarts, BYTE *startRegion) {
-  int numRegions = 0;
+/* Side mask of every start, classified against the bounding box of all
+ * the starts (see start_sides.h). sideMask holds numStarts entries. */
+static void startsSideMasks(starts *value, BYTE *sideMask) {
+  int leftPos;
+  int rightPos;
+  int topPos;
+  int bottomPos;
   BYTE i;
-
-  for (i = 0; i < numStarts; i++) {
-    startRegion[i] = 0xFF;
+  startsGetMaxs(value, &leftPos, &rightPos, &topPos, &bottomPos);
+  for (i = 0; i < (*value)->numStarts; i++) {
+    sideMask[i] = startSideMaskFor((*value)->item[i].x, (*value)->item[i].y,
+                                   leftPos, topPos, rightPos, bottomPos);
   }
-  for (i = 0; i < numStarts; i++) {
-    BYTE queue[MAX_STARTS];
-    int head = 0;
-    int tail = 0;
-    if (startRegion[i] != 0xFF) continue;
-    startRegion[i] = (BYTE)numRegions;
-    queue[tail++] = i;
-    while (head < tail) {
-      BYTE cur = queue[head++];
-      BYTE j;
-      for (j = 0; j < numStarts; j++) {
-        if (startRegion[j] != 0xFF) continue;
-        if (startsMapDistance((*value)->item[cur].x, (*value)->item[cur].y,
-                              (*value)->item[j].x, (*value)->item[j].y)
-            > START_REGION_RADIUS) {
-          continue;
-        }
-        startRegion[j] = (BYTE)numRegions;
-        queue[tail++] = j;
-      }
-    }
-    numRegions++;
-  }
-  return numRegions;
 }
 
-/* Which claimed starts a distance query should look at. */
-#define STARTS_CLAIM_ANY   0
-#define STARTS_CLAIM_MATE  1
-#define STARTS_CLAIM_RIVAL 2
-
-/*********************************************************
-*NAME:          startsBatchNearestClaim
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/8/26
-*LAST MODIFIED: 27/8/26
-*PURPOSE:
-*  Returns the distance from start idx to the nearest start
-*  already claimed in this batch, restricted to the claims
-*  `which` selects (any / same team / other team). A solo
-*  slot (team 0) is nobody's teammate, so for a solo every
-*  claim counts as a rival. INT_MAX when no such claim
-*  exists yet.
-*
-*ARGUMENTS:
-*  value         - Pointer to the starts structure
-*  numStarts     - Number of starts
-*  startClaimed  - [numStarts] which starts are taken
-*  startToPlayer - [numStarts] slot holding each taken start
-*  teamNumber    - [MAX_TANKS] team per slot (0 = solo)
-*  idx           - Start being scored
-*  team          - Team of the player being placed
-*  which         - STARTS_CLAIM_ANY / _MATE / _RIVAL
-*********************************************************/
-static int startsBatchNearestClaim(starts *value, BYTE numStarts,
-                                   const bool *startClaimed,
-                                   const BYTE *startToPlayer,
-                                   const BYTE *teamNumber,
-                                   BYTE idx, BYTE team, int which) {
-  int best = INT_MAX;
+/* Distance from start idx to the nearest claimed start, or MAP_ARRAY_SIZE
+ * when nothing is claimed so that every start ties. */
+static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
+                                       const bool *startClaimed, BYTE idx) {
+  int minD = INT_MAX;
   BYTE j;
-
   for (j = 0; j < numStarts; j++) {
-    BYTE pl;
-    bool sameTeam;
     int d;
     if (!startClaimed[j]) continue;
-    pl = startToPlayer[j];
-    if (pl >= MAX_TANKS) continue;
-    sameTeam = (team != 0 && teamNumber[pl] == team);
-    if (which == STARTS_CLAIM_MATE && !sameTeam) continue;
-    if (which == STARTS_CLAIM_RIVAL && sameTeam) continue;
     d = startsMapDistance((*value)->item[idx].x, (*value)->item[idx].y,
                           (*value)->item[j].x, (*value)->item[j].y);
-    if (d < best) best = d;
+    if (d < minD) minD = d;
   }
-  return best;
+  if (minD == INT_MAX) minD = MAP_ARRAY_SIZE;
+  return minD;
 }
 
 /*********************************************************
@@ -802,34 +782,30 @@ static int startsBatchNearestClaim(starts *value, BYTE numStarts,
 *  per-player algorithm cannot see siblings being created in
 *  the same batch.
 *
-*  Placement runs one player at a time, round-robin across
-*  the teams, in a fixed priority order:
-*
-*    1. Spread. While a region (a bunch of starts close
-*       together — see startsBuildRegions) is still unused
-*       and holds a free start, the player takes it. One
-*       player per region, whatever team he is on, so on a
-*       four-corner map a 2v2 gets a corner each and two
-*       rivals can never end up sharing one.
-*    2. Cluster. Once every region is spoken for, the
-*       player joins his own side: the free start nearest a
-*       teammate's, and never one that leaves a rival
-*       nearer than the teammate he is joining. This is the
-*       case the clustering was written for — a big team on
-*       a map with only a couple of start bunches.
-*
-*  Inside step 1 a team that has an anchor takes the unused
-*  region nearest it, so map-encoded base ownership and the
-*  stripe cell still steer where a side ends up. Teams
-*  without map-encoded base ownership are assigned a stripe
-*  along the map's long axis (so 2 teams split top/bottom
-*  or left/right rather than corner-vs-corner). Solo players
-*  (teamNumber == 0) have no anchor and take the unused
-*  region farthest from everything already claimed.
+*  Players sharing a non-zero teamNumber are grouped and
+*  placed near each other; teams without map-encoded base
+*  ownership are assigned a stripe along the map's long
+*  axis (so 2 teams split top/bottom or left/right rather
+*  than corner-vs-corner). Solo players (teamNumber == 0)
+*  are slotted in afterwards via farthest-first to maximise
+*  spacing from teams and other solos.
 *
 *  Existing per-position rules (avoid hostile pills/bases,
 *  scatter to a valid deep-sea square) are layered on top
 *  of the team assignment.
+*
+*  A team with a chosen side (teamStartSide) is anchored on
+*  that side and takes only starts its side accepts: its own
+*  side first, then starts shared with another team's side,
+*  then the centre. A chosen side is closed to every team
+*  that did not choose it, and to solos. A side with no valid
+*  start falls back to no side for the pass.
+*
+*  Every connected slot the placement leaves without a start
+*  of its own rides one that is already taken — a teammate's
+*  where it has one — so two slots may share an index. The
+*  tank-aware scatter in startsGetStart spreads the riders
+*  out when their tanks are created.
 *
 *ARGUMENTS:
 *  sim          - Game simulation
@@ -837,21 +813,27 @@ static int startsBatchNearestClaim(starts *value, BYTE numStarts,
 *  connected    - [MAX_TANKS] which player slots are joining
 *  teamNumber   - [MAX_TANKS] team for each slot (0 = solo)
 *  outStartIdx  - [MAX_TANKS] receives the chosen start index
-*                 per slot (0..MAX_STARTS-1) or MAX_STARTS if
-*                 the slot was not placed (caller should fall
-*                 back to the per-player algorithm). Scatter
-*                 and direction conversion happen later, when
-*                 startsGetStart consumes the slot.
+*                 per slot (0..MAX_STARTS-1), or MAX_STARTS
+*                 only when no start is valid at all (caller
+*                 should fall back to the per-player
+*                 algorithm). Scatter and direction conversion
+*                 happen later, when startsGetStart consumes
+*                 the slot.
 *  reservedStartIdx0 - [MAX_TANKS] optional pre-reserved start
 *                 per slot, 0-based (MAX_STARTS = none), or NULL
 *                 for no reservations. A reserved slot locks its
 *                 exact start and is excluded from placement.
+*  teamStartSide - [MAX_TANKS + 1] START_SIDE_* per team number
+*                 (entry 0 unused), or NULL for no sides anywhere;
+*                 a NULL table treats every team as START_SIDE_ANY.
 *********************************************************/
 void startsAssignBatch(GameSim *sim, starts *value,
                        const bool *connected, const BYTE *teamNumber,
-                       BYTE *outStartIdx, const BYTE *reservedStartIdx0) {
+                       BYTE *outStartIdx, const BYTE *reservedStartIdx0,
+                       const BYTE *teamStartSide) {
   StartsBatchGroup groups[MAX_TANKS];
   int teamToGroup[MAX_TANKS + 1]; /* teamNumber 1..16 -> group index, -1 if unseen */
+  int slotGroup[MAX_TANKS];       /* slot -> group index, -1 if reserved or absent */
   int unanchored[MAX_TANKS];
   int teamOrder[MAX_TANKS];
   int stripeCentX[MAX_TANKS];
@@ -860,21 +842,16 @@ void startsAssignBatch(GameSim *sim, starts *value,
   bool stripeUsed[MAX_TANKS];
   bool startClaimed[MAX_STARTS];
   BYTE startToPlayer[MAX_STARTS];
-  BYTE startRegion[MAX_STARTS];     /* region number per start */
-  bool regionUsed[MAX_STARTS];      /* region already holds a claimed start */
-  int  groupOrder[MAX_TANKS];       /* every group, largest first */
-  int  claim[MAX_TANKS];            /* starts each group may take */
-  BYTE placeOrder[MAX_TANKS];       /* slots to place, round-robin across groups */
-  int  placeGroup[MAX_TANKS];       /* group each placeOrder entry belongs to */
-  int  numOrder;
-  int  numPlace;
-  int  maxClaim;
-  int  round;
+  int riders[MAX_STARTS];           /* slots riding a start on top of its claimant */
   bool slotReserved[MAX_TANKS];     /* slot holds an honored reservation */
   bool reservedLocked[MAX_STARTS];  /* 0-based start already locked by a reservation */
   int reservedSumX[MAX_TANKS];      /* per-group reserved-start centroid accumulator */
   int reservedSumY[MAX_TANKS];
   int reservedCnt[MAX_TANKS];
+  BYTE sideMask[MAX_STARTS];        /* side bits per start */
+  BYTE groupSide[MAX_TANKS];        /* per-group START_SIDE_*, after the no-valid-start fallback */
+  BYTE groupOtherMask[MAX_TANKS];   /* per-group union of the other teams' chosen sides */
+  BYTE closedMask;                  /* union of every present team's chosen side */
   int leftPos;
   int rightPos;
   int topPos;
@@ -884,7 +861,6 @@ void startsAssignBatch(GameSim *sim, starts *value,
   int numGroups;
   int numUnanchored;
   int numTeams;
-  int numRegions;
   BYTE numStarts;
   BYTE numBases;
   BYTE i;
@@ -923,10 +899,24 @@ void startsAssignBatch(GameSim *sim, starts *value,
     }
   }
 
+  /* Step 0: the side of every start, and the sides the teams in this batch
+   * chose. A team closes its side only when it has a connected member. */
+  startsSideMasks(value, sideMask);
+  closedMask = 0;
+  if (teamStartSide != NULL) {
+    for (i = 0; i < MAX_TANKS; i++) {
+      BYTE tn;
+      if (!connected[i]) continue;
+      tn = teamNumber[i];
+      if (tn > 0 && tn <= MAX_TANKS) closedMask |= startSideBits(teamStartSide[tn]);
+    }
+  }
+
   /* Step 1: build groups (reserved slots are placed by the lock below, not
    * by the cluster passes, so they stay out of the groups). */
   numGroups = 0;
   for (i = 0; i <= MAX_TANKS; i++) teamToGroup[i] = -1;
+  for (i = 0; i < MAX_TANKS; i++) slotGroup[i] = -1;
   for (i = 0; i < MAX_TANKS; i++) {
     BYTE tn;
     if (!connected[i]) continue;
@@ -941,9 +931,57 @@ void startsAssignBatch(GameSim *sim, starts *value,
       groups[g].isSolo = (tn == 0);
       groups[g].anchorX = 0;
       groups[g].anchorY = 0;
-      if (tn > 0 && tn <= MAX_TANKS) teamToGroup[tn] = g;
+      groupSide[g] = START_SIDE_ANY;
+      if (tn > 0 && tn <= MAX_TANKS) {
+        teamToGroup[tn] = g;
+        if (teamStartSide != NULL && startSideBits(teamStartSide[tn]) != 0) {
+          groupSide[g] = teamStartSide[tn];
+        }
+      }
     }
     groups[g].players[groups[g].size++] = i;
+    slotGroup[i] = g;
+  }
+
+  /* Per-group side rules. A team keeps its own side open and is closed off
+   * the sides the other teams chose; a team with no side, and a solo, is
+   * closed off every chosen side. Two fallbacks keep a team from being left
+   * with nothing: a side that accepts no valid start drops the team to no
+   * side for this pass, and a team with no side that is closed off every
+   * unclaimed valid start has its closed set cleared instead. */
+  for (g = 0; g < numGroups; g++) {
+    bool found;
+    groupOtherMask[g] = (BYTE)(closedMask & ~startSideBits(groupSide[g]));
+    if (groups[g].isSolo) continue;
+    if (groupSide[g] != START_SIDE_ANY) {
+      found = FALSE;
+      for (i = 0; i < numStarts && !found; i++) {
+        if (startSideAccepts(sideMask[i], groupSide[g]) &&
+            startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y)) {
+          found = TRUE;
+        }
+      }
+      if (!found) {
+        WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] team %d: side %d has no valid start, placing it on any side",
+                     teamNumber[groups[g].players[0]], groupSide[g]);
+        groupSide[g] = START_SIDE_ANY;
+      }
+    }
+    if (groupSide[g] == START_SIDE_ANY && groupOtherMask[g] != 0) {
+      found = FALSE;
+      for (i = 0; i < numStarts && !found; i++) {
+        if (reservedLocked[i]) continue;
+        if (startSideEligible(sideMask[i], START_SIDE_ANY, groupOtherMask[g]) &&
+            startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y)) {
+          found = TRUE;
+        }
+      }
+      if (!found) {
+        WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] team %d: every unclaimed start is on a chosen side, opening them all",
+                     teamNumber[groups[g].players[0]]);
+        groupOtherMask[g] = 0;
+      }
+    }
   }
 
   /* Accumulate each team group's reserved-start centroid so the anchor
@@ -990,13 +1028,49 @@ void startsAssignBatch(GameSim *sim, starts *value,
     }
   }
 
-  /* Step 3: stripe-place unanchored teams along the map's long axis */
+  /* Step 2b: a team with a side is anchored at the centroid of that side's
+   * valid starts, over any base anchor. When only centre starts accept the
+   * side, their centroid is used instead. */
+  for (g = 0; g < numGroups; g++) {
+    BYTE bits;
+    int centreSumX = 0;
+    int centreSumY = 0;
+    int centreCnt = 0;
+    if (groups[g].isSolo || groupSide[g] == START_SIDE_ANY) continue;
+    bits = startSideBits(groupSide[g]);
+    sumX = 0; sumY = 0; cnt = 0;
+    for (i = 0; i < numStarts; i++) {
+      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      if ((sideMask[i] & bits) != 0) {
+        sumX += (*value)->item[i].x;
+        sumY += (*value)->item[i].y;
+        cnt++;
+      } else if (startSideIsCentre(sideMask[i])) {
+        centreSumX += (*value)->item[i].x;
+        centreSumY += (*value)->item[i].y;
+        centreCnt++;
+      }
+    }
+    if (cnt == 0) {
+      sumX = centreSumX;
+      sumY = centreSumY;
+      cnt = centreCnt;
+    }
+    if (cnt > 0) {
+      groups[g].anchored = TRUE;
+      groups[g].anchorX = sumX / cnt;
+      groups[g].anchorY = sumY / cnt;
+    }
+  }
+
+  /* Step 3: stripe-place unanchored teams along the map's long axis. A team
+   * with a side was anchored on it above and never takes a stripe. */
   startsGetMaxs(value, &leftPos, &rightPos, &topPos, &bottomPos);
   spanX = rightPos - leftPos;
   spanY = bottomPos - topPos;
   numUnanchored = 0;
   for (g = 0; g < numGroups; g++) {
-    if (!groups[g].isSolo && !groups[g].anchored) {
+    if (!groups[g].isSolo && !groups[g].anchored && groupSide[g] == START_SIDE_ANY) {
       unanchored[numUnanchored++] = g;
     }
   }
@@ -1105,55 +1179,69 @@ void startsAssignBatch(GameSim *sim, starts *value,
   }
 
   /* Anchor override: a team with locked reservations seeds its group anchor
-   * from the centroid of those reserved starts, so its unreserved members
-   * stay in the same part of the map as their already-placed teammates. */
+   * from the centroid of those reserved starts, so its last unreserved member
+   * clusters with its already-placed teammates instead of scattering. A team
+   * with a side keeps its side anchor, so one member's off-side reservation
+   * does not pull the rest of the team after it. */
   for (g = 0; g < numGroups; g++) {
     if (groups[g].isSolo || reservedCnt[g] == 0) continue;
+    if (groupSide[g] != START_SIDE_ANY) continue;
     groups[g].anchored = TRUE;
     groups[g].anchorX = reservedSumX[g] / reservedCnt[g];
     groups[g].anchorY = reservedSumY[g] / reservedCnt[g];
   }
 
-  /* Step 4: how many starts each team may claim, largest first.
+  /* Step 4: assign starts to teams, largest first.
    * When starts are scarce (sum of team sizes > valid starts), apportion
    * via Hamilton's method: floor each team's quota and distribute leftover
    * starts by largest fractional remainder, ties broken by team size.
    * Without this, a greedy "largest team takes its full size first" would
-   * starve smaller teams entirely (e.g. 8 starts vs two 8-player teams). */
+   * starve smaller teams entirely (e.g. 8 starts vs two 8-player teams).
+   * Each quota is then capped at the starts the team's side rules let it
+   * take, and what the cap frees goes to the teams still short; otherwise
+   * a large team on a small side would hold starts it can never use. */
   {
     int totalTeamPlayers = 0;
-    int validStartCount = 0;
+    int validStartCount = 0;   /* valid starts no reservation has locked */
+    int totalDesired = 0;
     int teamClaim[MAX_TANKS];
+    int eligible[MAX_TANKS];   /* unclaimed valid starts the team may take */
+    int desired[MAX_TANKS];    /* min(team size, eligible) */
     for (g = 0; g < numGroups; g++) {
       teamClaim[g] = 0;
+      eligible[g] = 0;
+      desired[g] = 0;
       if (!groups[g].isSolo) totalTeamPlayers += groups[g].size;
-    }
-    for (i = 0; i < numStarts; i++) {
-      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y)) {
-        validStartCount++;
-      }
     }
 
     for (i = 0; i < MAX_STARTS; i++) {
       startClaimed[i] = FALSE;
       startToPlayer[i] = MAX_TANKS;
     }
-    /* Label the regions and mark them all unused, then lock the honored
-     * reservations: pre-claim each reserved start for its slot so the
-     * placement pass below skips it, and mark its region used so the spread
-     * pass treats a reserved corner as taken. Step 6 emits the slot's
+    /* Lock honored reservations: pre-claim each reserved start for its slot
+     * so the placement passes below skip it; Step 6 emits the slot's
      * outStartIdx from startToPlayer for free. */
-    numRegions = startsBuildRegions(value, numStarts, startRegion);
-    for (s = 0; s < numRegions; s++) {
-      regionUsed[s] = FALSE;
-    }
     for (i = 0; i < MAX_TANKS; i++) {
       BYTE r;
       if (!connected[i] || !slotReserved[i]) continue;
       r = reservedStartIdx0[i];
       startClaimed[r] = TRUE;
       startToPlayer[r] = i;
-      regionUsed[startRegion[r]] = TRUE;
+    }
+    /* Count what is left to hand out, in total and per team. */
+    for (i = 0; i < numStarts; i++) {
+      if (startClaimed[i]) continue;
+      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      validStartCount++;
+      for (g = 0; g < numGroups; g++) {
+        if (groups[g].isSolo) continue;
+        if (startSideEligible(sideMask[i], groupSide[g], groupOtherMask[g])) eligible[g]++;
+      }
+    }
+    for (g = 0; g < numGroups; g++) {
+      if (groups[g].isSolo) continue;
+      desired[g] = (groups[g].size < eligible[g]) ? groups[g].size : eligible[g];
+      totalDesired += desired[g];
     }
     numTeams = 0;
     for (g = 0; g < numGroups; g++) {
@@ -1161,10 +1249,10 @@ void startsAssignBatch(GameSim *sim, starts *value,
     }
     startsBatchSortBySize(teamOrder, numTeams, groups);
 
-    if (validStartCount >= totalTeamPlayers || totalTeamPlayers == 0) {
-      /* Plenty of starts — every team claims its full size */
+    if (validStartCount >= totalDesired || totalDesired == 0) {
+      /* Plenty of starts — every team claims all it may take */
       for (t = 0; t < numTeams; t++) {
-        teamClaim[teamOrder[t]] = groups[teamOrder[t]].size;
+        teamClaim[teamOrder[t]] = desired[teamOrder[t]];
       }
     } else {
       /* Scarce: Hamilton apportionment.
@@ -1205,129 +1293,112 @@ void startsAssignBatch(GameSim *sim, starts *value,
         rems[bestG] = -1; /* don't pick the same team for the next leftover */
         leftover--;
       }
-    }
 
-    /* Build the placement order: every group, largest first, taken one member
-     * at a time round-robin. Round-robin is what makes the spread pass fair —
-     * placing a whole team before the next team picks would let the first
-     * team take every region and force the second to double up. A team's
-     * quota is its Hamilton claim above; every solo is a group of one. */
-    numOrder = 0;
-    for (g = 0; g < numGroups; g++) {
-      claim[g] = groups[g].isSolo ? 1 : teamClaim[g];
-      groupOrder[numOrder++] = g;
-    }
-    startsBatchSortBySize(groupOrder, numOrder, groups);
-    maxClaim = 0;
-    for (g = 0; g < numGroups; g++) {
-      if (claim[g] > maxClaim) maxClaim = claim[g];
-    }
-    numPlace = 0;
-    for (round = 0; round < maxClaim; round++) {
-      for (t = 0; t < numOrder; t++) {
-        g = groupOrder[t];
-        if (round >= claim[g]) continue;
-        placeGroup[numPlace] = g;
-        placeOrder[numPlace] = groups[g].players[round];
-        numPlace++;
-      }
-    }
-
-    /* Step 5: place them, spread first and cluster only on the overflow.
-     *
-     * Spread (a region nobody has claimed still has a free start): an
-     * anchored team takes the unused region nearest its anchor — owned bases,
-     * its stripe cell, or its locked reservations — so a side still ends up
-     * where the map or the lobby put it, while its members land in separate
-     * regions. A solo has no anchor and takes the unused region farthest from
-     * everything already claimed. Farthest-first is a chain: each pick is
-     * measured against what's already claimed, so picks 2..N follow from the
-     * first. Every candidate tied for the best distance is kept and one is
-     * chosen at random, which (a) breaks the degenerate "nothing claimed yet"
-     * case where all valid starts tie at MAP_ARRAY_SIZE — that is the
-     * single-player game, which otherwise always picked the lowest-index
-     * start — and (b) varies the seed so the whole spread differs between
-     * games while staying maximal.
-     *
-     * Cluster (every region is spoken for): the free start nearest a
-     * teammate's, so the overflow doubles up with its own side. A candidate
-     * that would leave a rival nearer than that teammate is pushed below
-     * every other option — sharing a region with a rival is the last resort,
-     * taken only when no teammate pairing is left. A player whose team has
-     * nobody placed yet has no teammate to join, so he falls back to
-     * farthest-first. */
-    for (t = 0; t < numPlace; t++) {
-      BYTE pl = placeOrder[t];
-      BYTE team = teamNumber[pl];
-      BYTE cands[MAX_STARTS];
-      int numCands = 0;
-      int bestScore = 0;
-      bool spreading = FALSE;
-      bool haveMate = FALSE;
-      g = placeGroup[t];
-
-      for (i = 0; i < numStarts; i++) {
-        if (startClaimed[i]) continue;
-        if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
-        if (regionUsed[startRegion[i]]) continue;
-        spreading = TRUE;
-        break;
-      }
-      /* Has anyone from this player's side been placed yet? Solos (team 0)
-       * never have a teammate, so they always answer no. */
-      for (i = 0; i < numStarts && team != 0; i++) {
-        if (!startClaimed[i]) continue;
-        if (startToPlayer[i] >= MAX_TANKS) continue;
-        if (teamNumber[startToPlayer[i]] != team) continue;
-        haveMate = TRUE;
-        break;
-      }
-
-      for (i = 0; i < numStarts; i++) {
-        int score;
-        int hostile;
-        if (startClaimed[i]) continue;
-        if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
-        if (spreading && regionUsed[startRegion[i]]) continue;
-        hostile = startsHasHostileNearAtStart(sim, value, i, pl)
-                  ? MAP_ARRAY_SIZE * 2 : 0;
-        if (spreading && groups[g].anchored) {
-          score = MAP_ARRAY_SIZE * 4
-                  - startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
-                                      groups[g].anchorX, groups[g].anchorY);
-        } else if (spreading || !haveMate) {
-          int d = startsBatchNearestClaim(value, numStarts, startClaimed,
-                                          startToPlayer, teamNumber, i, team,
-                                          STARTS_CLAIM_ANY);
-          if (d == INT_MAX) d = MAP_ARRAY_SIZE; /* nothing claimed — any start is "infinitely far" */
-          score = d;
-        } else {
-          int mine = startsBatchNearestClaim(value, numStarts, startClaimed,
-                                             startToPlayer, teamNumber, i, team,
-                                             STARTS_CLAIM_MATE);
-          int theirs = startsBatchNearestClaim(value, numStarts, startClaimed,
-                                               startToPlayer, teamNumber, i, team,
-                                               STARTS_CLAIM_RIVAL);
-          score = MAP_ARRAY_SIZE * 4 - mine;
-          if (theirs < mine) {
-            score -= MAP_ARRAY_SIZE * 4; /* rival closer than the mate we're joining */
+      /* Cap each quota at what the team may take, then hand the freed
+       * starts one at a time to the teams still short, largest first,
+       * until nothing is freed or nobody can take more. */
+      {
+        int freed = 0;
+        bool gave = TRUE;
+        for (t = 0; t < numTeams; t++) {
+          int idx = teamOrder[t];
+          if (teamClaim[idx] > desired[idx]) {
+            freed += teamClaim[idx] - desired[idx];
+            teamClaim[idx] = desired[idx];
           }
         }
-        score -= hostile;
-        if (numCands == 0 || score > bestScore) {
-          bestScore = score;
-          numCands = 0;
-          cands[numCands++] = i;
-        } else if (score == bestScore) {
-          cands[numCands++] = i;
+        while (freed > 0 && gave) {
+          gave = FALSE;
+          for (t = 0; t < numTeams && freed > 0; t++) {
+            int idx = teamOrder[t];
+            if (teamClaim[idx] >= desired[idx]) continue;
+            teamClaim[idx]++;
+            freed--;
+            gave = TRUE;
+          }
         }
       }
-      if (numCands > 0) {
-        BYTE bestStart = cands[bolo_rand_below((uint32_t)numCands)];
-        startClaimed[bestStart] = TRUE;
-        startToPlayer[bestStart] = pl;
-        regionUsed[startRegion[bestStart]] = TRUE;
+    }
+
+    for (t = 0; t < numTeams; t++) {
+      g = teamOrder[t];
+      for (p = 0; p < teamClaim[g]; p++) {
+      int bestStart = -1;
+      int bestScore = -1;
+      BYTE rep = groups[g].players[0];
+      for (i = 0; i < numStarts; i++) {
+        int dist;
+        int score;
+        if (startClaimed[i]) continue;
+        if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+        if (!startSideEligible(sideMask[i], groupSide[g], groupOtherMask[g])) continue;
+        dist = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                                 groups[g].anchorX, groups[g].anchorY);
+        score = dist;
+        if (startsHasHostileNearAtStart(sim, value, i, rep)) {
+          /* Push hostile-near candidates well below distance ranking */
+          score += MAP_ARRAY_SIZE * 2;
+        }
+        if (groupSide[g] != START_SIDE_ANY) {
+          /* A side team takes its own side's starts first, then starts
+           * another team's side also covers, then the centre. */
+          if ((sideMask[i] & groupOtherMask[g]) != 0) score += START_SIDE_SHARED_PENALTY;
+          if (startSideIsCentre(sideMask[i])) score += START_SIDE_CENTRE_PENALTY;
+        }
+        if (bestStart < 0 || score < bestScore) {
+          bestStart = i;
+          bestScore = score;
+        }
       }
+      if (bestStart >= 0) {
+        startClaimed[bestStart] = TRUE;
+        startToPlayer[bestStart] = groups[g].players[p];
+      }
+      }
+    }
+  }
+
+  /* Step 5: solos via farthest-first from already-claimed starts.
+   * Farthest-first is a chain: each pick is measured against what's already
+   * claimed, so picks 2..N follow deterministically from the first. We keep
+   * every candidate tied for the best min-distance and choose randomly among
+   * them, which (a) breaks the degenerate "nothing claimed yet" case where
+   * all valid starts tie at MAP_ARRAY_SIZE — that is the single-player game,
+   * which otherwise always picked the lowest-index start — and (b) varies the
+   * seed so the whole spread differs between games while staying maximal. */
+  for (g = 0; g < numGroups; g++) {
+    int bestMinDist = -1;
+    BYTE bestCandidates[MAX_STARTS];
+    BYTE numBest = 0;
+    BYTE soloPlayer;
+    if (!groups[g].isSolo) continue;
+    soloPlayer = groups[g].players[0];
+    for (i = 0; i < numStarts; i++) {
+      int minD = INT_MAX;
+      BYTE j;
+      if (startClaimed[i]) continue;
+      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      if (!startSideEligible(sideMask[i], START_SIDE_ANY, closedMask)) continue;
+      for (j = 0; j < numStarts; j++) {
+        int d;
+        if (!startClaimed[j]) continue;
+        d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                              (*value)->item[j].x, (*value)->item[j].y);
+        if (d < minD) minD = d;
+      }
+      if (minD == INT_MAX) minD = MAP_ARRAY_SIZE; /* no claims yet — any start is "infinitely far" */
+      if (numBest == 0 || minD > bestMinDist) {
+        bestMinDist = minD;
+        numBest = 0;
+        bestCandidates[numBest++] = i;
+      } else if (minD == bestMinDist) {
+        bestCandidates[numBest++] = i;
+      }
+    }
+    if (numBest > 0) {
+      BYTE bestStart = bestCandidates[bolo_rand_below((uint32_t)numBest)];
+      startClaimed[bestStart] = TRUE;
+      startToPlayer[bestStart] = soloPlayer;
     }
   }
 
@@ -1340,11 +1411,103 @@ void startsAssignBatch(GameSim *sim, starts *value,
     pl = startToPlayer[i];
     if (pl >= MAX_TANKS) continue;
     outStartIdx[pl] = i;
-    WB_LOG_DEBUG(WB_LOG_CAT_SIM,
-                 "[starts] batch: player %d (team %d) -> start %d (%d,%d) region %d",
-                 (int)pl, (int)teamNumber[pl], (int)i,
-                 (int)(*value)->item[i].x, (int)(*value)->item[i].y,
-                 (int)startRegion[i]);
+  }
+
+  /* Step 7: every connected slot still without a start rides one. Free
+   * starts go first: a slot with a free valid start its side rules allow
+   * claims it outright, so nobody shares a start while one sits free. A
+   * solo reaching this point has none (Step 5 looked already), so only
+   * team members claim here, nearest their team anchor. */
+  for (i = 0; i < MAX_TANKS; i++) {
+    int best = -1;
+    int bestDist = 0;
+    if (!connected[i] || outStartIdx[i] != MAX_STARTS) continue;
+    g = slotGroup[i];
+    if (g < 0 || groups[g].isSolo) continue;
+    for (s = 0; s < numStarts; s++) {
+      int d;
+      if (startClaimed[s]) continue;
+      if (startsIsValidSquare(sim, (*value)->item[s].x, (*value)->item[s].y) == FALSE) continue;
+      if (!startSideEligible(sideMask[s], groupSide[g], groupOtherMask[g])) continue;
+      d = startsMapDistance((*value)->item[s].x, (*value)->item[s].y,
+                            groups[g].anchorX, groups[g].anchorY);
+      if (best < 0 || d < bestDist) {
+        best = s;
+        bestDist = d;
+      }
+    }
+    if (best >= 0) {
+      startClaimed[best] = TRUE;
+      startToPlayer[best] = i;
+      outStartIdx[i] = (BYTE)best;
+    }
+  }
+
+  /* Then the riders. A team member rides the least-ridden of its team's
+   * claimed starts, nearest the team anchor on a tie; a member of a team
+   * that claimed nothing rides the start its side rules allow nearest the
+   * team anchor. Anyone else — a solo, or a member with no start its rules
+   * allow — rides the least-ridden valid start, farthest from the claimed
+   * starts on a tie, staying off the chosen sides while any start outside
+   * them exists. Riders spread out when their tanks are created. */
+  for (i = 0; i < MAX_STARTS; i++) riders[i] = 0;
+  for (i = 0; i < MAX_TANKS; i++) {
+    int host = -1;
+    int hostRiders = 0;
+    int hostTie = 0;
+    if (!connected[i] || outStartIdx[i] != MAX_STARTS) continue;
+    g = slotGroup[i];
+    if (g < 0) continue;
+    if (!groups[g].isSolo) {
+      for (s = 0; s < numStarts; s++) {
+        int d;
+        if (!startClaimed[s] || startToPlayer[s] >= MAX_TANKS) continue;
+        if (teamNumber[startToPlayer[s]] != teamNumber[i]) continue;
+        d = startsMapDistance((*value)->item[s].x, (*value)->item[s].y,
+                              groups[g].anchorX, groups[g].anchorY);
+        if (host < 0 || riders[s] < hostRiders ||
+            (riders[s] == hostRiders && d < hostTie)) {
+          host = s;
+          hostRiders = riders[s];
+          hostTie = d;
+        }
+      }
+      if (host < 0) {
+        for (s = 0; s < numStarts; s++) {
+          int d;
+          if (startsIsValidSquare(sim, (*value)->item[s].x, (*value)->item[s].y) == FALSE) continue;
+          if (!startSideEligible(sideMask[s], groupSide[g], groupOtherMask[g])) continue;
+          d = startsMapDistance((*value)->item[s].x, (*value)->item[s].y,
+                                groups[g].anchorX, groups[g].anchorY);
+          if (host < 0 || d < hostTie) {
+            host = s;
+            hostTie = d;
+          }
+        }
+      }
+    }
+    if (host < 0) {
+      int pass;
+      for (pass = 0; pass < 2 && host < 0; pass++) {
+        bool onlyAllowed = (pass == 0);
+        for (s = 0; s < numStarts; s++) {
+          int d;
+          if (startsIsValidSquare(sim, (*value)->item[s].x, (*value)->item[s].y) == FALSE) continue;
+          if (onlyAllowed && !startSideEligible(sideMask[s], groupSide[g], groupOtherMask[g])) continue;
+          d = startsBatchMinDistToClaimed(value, numStarts, startClaimed, (BYTE)s);
+          if (host < 0 || riders[s] < hostRiders ||
+              (riders[s] == hostRiders && d > hostTie)) {
+            host = s;
+            hostRiders = riders[s];
+            hostTie = d;
+          }
+        }
+      }
+    }
+    if (host >= 0) {
+      riders[host]++;
+      outStartIdx[i] = (BYTE)host;
+    }
   }
 }
 
@@ -1355,19 +1518,26 @@ void startsAssignBatch(GameSim *sim, starts *value,
 *LAST MODIFIED: 24/4/26
 *PURPOSE:
 *  Picks one free start for a single joiner, sharing the
-*  distance, region and validity logic with startsAssignBatch.
+*  distance and validity logic with startsAssignBatch.
 *  taken[] is 0-based per start (TRUE = already reserved).
 *  teammateStarts0[] lists the 0-based start indices reserved
 *  by the joiner's teammates (teammateCount may be 0).
 *
-*  Same priority order as the batch pass: while a region
-*  nobody has reserved still holds a free valid start, the
-*  joiner takes the one there maximising the min distance to
-*  every taken start (farthest-first, so lobby slots fill one
-*  region at a time). Only once every region is spoken for
-*  does he cluster onto the free valid start nearest a
-*  teammate's reservation. Returns MAX_STARTS when no free
-*  valid start exists.
+*  Only starts the joiner's side rules allow are candidates
+*  (see startSideEligible): a team with a side takes what
+*  its side accepts, a team with no side stays off every
+*  side in closedMask. Candidates are ranked in three tiers
+*  — starts on the joiner's side alone, starts on its side
+*  that another team's side also covers, then the centre —
+*  and the first tier holding a free start wins. With no
+*  side every candidate is in the first tier.
+*
+*  Within a tier: with teammate reservations the side
+*  accepts, returns the free valid start with the smallest
+*  distance to the nearest of them (cluster); otherwise
+*  returns the free valid start maximising the min distance
+*  to every taken start (farthest-first). Returns MAX_STARTS
+*  when no free valid start the rules allow exists.
 *
 *ARGUMENTS:
 *  sim             - Pointer to the game simulation
@@ -1375,83 +1545,95 @@ void startsAssignBatch(GameSim *sim, starts *value,
 *  taken           - [numStarts] reservation flags, 0-based
 *  teammateStarts0 - 0-based teammate reservation indices
 *  teammateCount   - Number of entries in teammateStarts0
+*  side            - The joiner's team side (START_SIDE_*)
+*  closedMask      - Union of the side bits the other teams
+*                    chose (START_SIDE_BIT_*)
 *********************************************************/
 BYTE startsPickIncremental(struct GameSim *sim, starts *value,
                            const bool *taken,
-                           const BYTE *teammateStarts0, int teammateCount) {
+                           const BYTE *teammateStarts0, int teammateCount,
+                           BYTE side, BYTE closedMask) {
   BYTE numStarts;
+  BYTE sideMask[MAX_STARTS];
+  BYTE startTier[MAX_STARTS]; /* 1 own side only, 2 shared with another side, 3 centre; 0 not a candidate */
+  BYTE ownBits;
+  int usableRefs;
+  int tier;
+  int j;
   BYTE i;
   int bestStart = -1;
-  BYTE startRegion[MAX_STARTS];
-  bool regionUsed[MAX_STARTS];
-  int numRegions;
-  int r;
-  bool spreading = FALSE;
 
   if (value == NULL || *value == NULL || (*value)->numStarts == 0) {
     return MAX_STARTS;
   }
   numStarts = (*value)->numStarts;
+  startsSideMasks(value, sideMask);
+  ownBits = startSideBits(side);
 
-  /* Spread first: a region with nothing reserved in it beats clustering. */
-  numRegions = startsBuildRegions(value, numStarts, startRegion);
-  for (r = 0; r < numRegions; r++) {
-    regionUsed[r] = FALSE;
-  }
+  /* Tier every free valid start the side rules allow. */
   for (i = 0; i < numStarts; i++) {
-    if (taken[i]) regionUsed[startRegion[i]] = TRUE;
-  }
-  for (i = 0; i < numStarts; i++) {
+    startTier[i] = 0;
     if (taken[i]) continue;
-    if (regionUsed[startRegion[i]]) continue;
     if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
-    spreading = TRUE;
-    break;
+    if (!startSideEligible(sideMask[i], side, closedMask)) continue;
+    if (ownBits == 0) {
+      startTier[i] = 1;
+    } else if (startSideIsCentre(sideMask[i])) {
+      startTier[i] = 3;
+    } else if ((sideMask[i] & closedMask & (BYTE)~ownBits) != 0) {
+      startTier[i] = 2;
+    } else {
+      startTier[i] = 1;
+    }
   }
 
-  if (teammateCount > 0 && !spreading) {
-    /* Cluster: smallest distance to the nearest teammate reservation. */
-    int bestDist = INT_MAX;
-    for (i = 0; i < numStarts; i++) {
-      int minD = INT_MAX;
-      int j;
-      if (taken[i]) continue;
-      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
-      for (j = 0; j < teammateCount; j++) {
-        BYTE t0 = teammateStarts0[j];
-        int d;
-        if (t0 >= numStarts) continue;
-        d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
-                              (*value)->item[t0].x, (*value)->item[t0].y);
-        if (d < minD) minD = d;
+  /* Only teammate reservations the side accepts pull the pick toward
+   * them; an off-side reservation is ignored as a reference. */
+  usableRefs = 0;
+  for (j = 0; j < teammateCount; j++) {
+    BYTE t0 = teammateStarts0[j];
+    if (t0 < numStarts && startSideAccepts(sideMask[t0], side)) usableRefs++;
+  }
+
+  for (tier = 1; tier <= 3 && bestStart < 0; tier++) {
+    if (usableRefs > 0) {
+      /* Cluster: smallest distance to the nearest teammate reservation. */
+      int bestDist = INT_MAX;
+      for (i = 0; i < numStarts; i++) {
+        int minD = INT_MAX;
+        if (startTier[i] != tier) continue;
+        for (j = 0; j < teammateCount; j++) {
+          BYTE t0 = teammateStarts0[j];
+          int d;
+          if (t0 >= numStarts) continue;
+          if (!startSideAccepts(sideMask[t0], side)) continue;
+          d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                                (*value)->item[t0].x, (*value)->item[t0].y);
+          if (d < minD) minD = d;
+        }
+        if (bestStart < 0 || minD < bestDist) {
+          bestDist = minD;
+          bestStart = i;
+        }
       }
-      if (minD == INT_MAX) continue; /* no usable teammate reference */
-      if (bestStart < 0 || minD < bestDist) {
-        bestDist = minD;
-        bestStart = i;
-      }
-    }
-  } else {
-    /* Farthest-first: maximise the min distance to all taken starts,
-     * restricted to still-unused regions while any of those remain. */
-    int bestMinDist = -1;
-    for (i = 0; i < numStarts; i++) {
-      int minD = INT_MAX;
-      BYTE j;
-      if (taken[i]) continue;
-      if (spreading && regionUsed[startRegion[i]]) continue;
-      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
-      for (j = 0; j < numStarts; j++) {
-        int d;
-        if (!taken[j]) continue;
-        d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
-                              (*value)->item[j].x, (*value)->item[j].y);
-        if (d < minD) minD = d;
-      }
-      if (minD == INT_MAX) minD = MAP_ARRAY_SIZE; /* nothing taken — any start qualifies */
-      if (minD > bestMinDist) {
-        bestMinDist = minD;
-        bestStart = i;
+    } else {
+      /* Farthest-first: maximise the min distance to all taken starts. */
+      int bestMinDist = -1;
+      for (i = 0; i < numStarts; i++) {
+        int minD = INT_MAX;
+        if (startTier[i] != tier) continue;
+        for (j = 0; j < numStarts; j++) {
+          int d;
+          if (!taken[j]) continue;
+          d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                                (*value)->item[j].x, (*value)->item[j].y);
+          if (d < minD) minD = d;
+        }
+        if (minD == INT_MAX) minD = MAP_ARRAY_SIZE; /* nothing taken — any start qualifies */
+        if (minD > bestMinDist) {
+          bestMinDist = minD;
+          bestStart = i;
+        }
       }
     }
   }
@@ -1494,7 +1676,7 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     BYTE ry;
     BYTE bt;
     if (idx >= (*value)->numStarts) idx = 0;   /* clamp to a valid start */
-    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
     bt = startsConvertDir((*value)->item[idx].dir);
     *x = rx;
     *y = ry;
@@ -1513,7 +1695,7 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
       BYTE rx;
       BYTE ry;
       BYTE bt;
-      startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+      startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
       bt = startsConvertDir((*value)->item[idx].dir);
       *x = rx;
       *y = ry;
@@ -1528,13 +1710,11 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     BYTE ry;
     BYTE bt;
     sim->pendingStartIdx[playerNum] = MAX_STARTS;
-    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
     bt = startsConvertDir((*value)->item[idx].dir);
     *x = rx;
     *y = ry;
     *dir = (TURNTYPE)(bt * START_TIMES_16);
-    WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] player %d takes batch start %d -> (%d,%d)",
-                 (int)playerNum, (int)idx, (int)rx, (int)ry);
     return;
   }
 
@@ -1543,8 +1723,6 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
   } else {
     startsGetStartTournament(sim, value, x, y, dir, playerNum);
   }
-  WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] player %d had no batch start -> (%d,%d)",
-               (int)playerNum, (int)*x, (int)*y);
 }
 
 /*********************************************************

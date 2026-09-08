@@ -441,6 +441,7 @@ struct ClientSim {
     uint8_t  lobbyTeamInUse[16];
     uint8_t  lobbyTeamColor[16];
     uint8_t  lobbyTeamPool[16];
+    uint8_t  lobbyTeamStartSide[16];    /* START_SIDE_* (start_sides.h) */
     char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
 
     uint8_t  lobbyBotDifficulty[16];
@@ -835,6 +836,17 @@ void clientErrSmoothDecay(float *errX, float *errY, float *errAngle, float dtMs)
  * this for prediction, brains, or collision reintroduces the
  * asymmetric-state bug the offset exists to avoid. */
 void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle);
+
+/* Build the visible shell list: other players' shells from the projected
+ * layer (or, for a bot, the server snapshots its brain perceives) plus the
+ * local player's own predictions. Squares outside [left,rightExcl) x
+ * [top,bottomExcl) are skipped, and originX/originY are subtracted from the
+ * square written out — pass the viewport and its scroll offset for the
+ * classic 17x17 list, or the whole map and 0,0 for absolute squares. */
+void clientSimBuildShellList(ClientSim *cs, screenBullets *sb,
+                             int left, int rightExcl,
+                             int top, int bottomExcl,
+                             int originX, int originY);
 
 /* Decompress `buf`/`len` into the ClientSim's map/pills/bases/starts,
  * stash the map name, and prime the mine-visibility/render state.

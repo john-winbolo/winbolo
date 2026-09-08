@@ -1490,6 +1490,8 @@ STR_STARTPICK_YOU=나
 STR_STARTPICK_SWAP_WITH=이 시작점을 교환할 대상:
 STR_STARTPICK_ASSIGN_TO=시작점을 배정할 대상:
 STR_STARTPICK_SLOT_FALLBACK=(슬롯)
+STR_STARTPICK_TIP_OFFSIDE=시작점 #{number}\n팀 진영이 아니에요
+STR_STARTPICK_TIP_OFFSIDE_HOST=시작점 #{number}\n{string1} 기준 오프사이드
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=AI 플레이어
 STR_PLATFORM_WINDOWS=Windows
@@ -2001,3 +2003,21 @@ STR_ITEMVIEW_ALLY_NAMED=아군 탱크 뷰 — {player}
 STR_DLGBROWSER_VIEWS_LBL=표시:
 STR_DLGBROWSER_VIEWS_CLASSIC=클래식
 STR_DLGBROWSER_VIEWS_ALLYTREES=숲 속 아군
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=시작점:
+STR_DLGLOBBY_SIDE_ANY=무관
+STR_DLGLOBBY_SIDE_N=북
+STR_DLGLOBBY_SIDE_E=동
+STR_DLGLOBBY_SIDE_S=남
+STR_DLGLOBBY_SIDE_W=서
+STR_DLGLOBBY_START_SEA=바다
+STR_DLGLOBBY_START_TEAM_SIDE=팀 진영
+STR_DLGLOBBY_START_AUTO=자동
+STR_DLGLOBBY_START_UNASSIGN=배정 해제
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(오프사이드)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: 플레이어 {number2}명에 시작점 {number}개 — {number3}명은 바다에서 시작해요.\n이 팀 진영을 변경하면 모든 플레이어의 시작점이 다시 정해져요.
+STR_DLGLOBBY_TOOLTIP_START_SEA=이 팀이 사용할 수 있는 시작점이 모두 찼기 때문에, 이 플레이어는\n팀원의 시작점 옆 바다에서 시작해요.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=오프사이드: 이 시작점은 팀 진영인 {string1}에 없어요.\n호스트가 이 플레이어를 위해 선택했어요.
+
+STR_SOUND_LOAD_FAILED=음향 효과를 불러오는 데 실패했습니다

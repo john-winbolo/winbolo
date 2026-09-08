@@ -508,6 +508,8 @@
 #define STR_STARTPICK_SWAP_WITH             1517
 #define STR_STARTPICK_ASSIGN_TO             1518
 #define STR_STARTPICK_SLOT_FALLBACK         1519
+#define STR_STARTPICK_TIP_OFFSIDE           2044
+#define STR_STARTPICK_TIP_OFFSIDE_HOST      2045
 
 /* Player-row badge tooltips */
 #define STR_PLAYER_TIP_AI                   1520
@@ -1593,6 +1595,21 @@
 #define STR_DLGBROWSER_VIEWS_LBL            2027
 #define STR_DLGBROWSER_VIEWS_CLASSIC        2028
 #define STR_DLGBROWSER_VIEWS_ALLYTREES      2029
+/* Lobby team start side: header selector, row start cell and dropdown actions */
+#define STR_DLGLOBBY_TEAM_SIDE              2030
+#define STR_DLGLOBBY_SIDE_ANY               2031
+#define STR_DLGLOBBY_SIDE_N                 2032
+#define STR_DLGLOBBY_SIDE_E                 2033
+#define STR_DLGLOBBY_SIDE_S                 2034
+#define STR_DLGLOBBY_SIDE_W                 2035
+#define STR_DLGLOBBY_START_SEA              2036
+#define STR_DLGLOBBY_START_TEAM_SIDE        2037
+#define STR_DLGLOBBY_START_AUTO             2038
+#define STR_DLGLOBBY_START_UNASSIGN         2039
+#define STR_DLGLOBBY_START_OFFSIDE_SUFFIX   2040
+#define STR_DLGLOBBY_TOOLTIP_TEAM_SIDE      2041
+#define STR_DLGLOBBY_TOOLTIP_START_SEA      2042
+#define STR_DLGLOBBY_TOOLTIP_START_OFFSIDE  2043
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468
@@ -2115,6 +2132,9 @@
 /* 1874..1920 are already taken by blocks defined elsewhere in this
  * file (e.g. STR_DLGLOBBY_LASTROUND_*) — IDs are not sequential here. */
 #define STR_DLGGAMESETUP_RADIO4             1987
+
+/* Sound setup: message box when no sound effect at all could be loaded */
+#define STR_SOUND_LOAD_FAILED               2046
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
