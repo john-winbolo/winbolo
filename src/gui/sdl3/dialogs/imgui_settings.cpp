@@ -712,16 +712,18 @@ static int voiceFillDeviceNames(bool recording,
 #endif
 
 /* -------------------------------------------------------
- * Display & Sound tab — the display and sound controls shared by
- * the pre-game dialog and the in-game overlay.  Frame rate,
- * letterbox, Skin and Sound apply in both; window size and UI scale
- * only apply in-game (ctx->inGame), and their results are returned
- * via ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
- * to apply after the frame.  A skin pick applies at once but needs
- * the tile sheet and sound set rebuilt, which the shell does after
- * the frame off ctx->wantSkinReload.  The Sound section renders last.
+ * Display tab — the display controls shared by the pre-game dialog
+ * and the in-game overlay: frame rate, window size, UI scale, full
+ * screen, letterbox, the map HUD panels and Skin.  Frame rate,
+ * letterbox and Skin apply in both; window size and UI scale only
+ * apply in-game (ctx->inGame), and their results are returned via
+ * ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell to
+ * apply after the frame, the full screen pick likewise via
+ * ctx->pendingFullScreen.  A skin pick applies at once but needs the
+ * tile sheet and sound set rebuilt, which the shell does after the
+ * frame off ctx->wantSkinReload.
  * ------------------------------------------------------- */
-extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
+extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     /* ---- Frame rate ---- */
     if (!uiModeIsTablet()) {
         const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
@@ -1474,7 +1476,18 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             imguiHelpTooltip(langGetText(STR_DLGSKIN_TEXFILTER_TIP));
         }
     }
+}
 
+/* -------------------------------------------------------
+ * Sound tab — the audio controls shared by the pre-game dialog and
+ * the in-game overlay: the sound effect, background sound and
+ * keepalive toggles, the volume slider, and the voice section
+ * (mode, the push to talk key, devices, microphone gain and test,
+ * echo cancelling and playback volume).  Each control applies
+ * through its own setter as it is changed, so nothing here is
+ * returned to the shell on ctx.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     /* ---- Sound ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
     {
@@ -2257,12 +2270,13 @@ extern "C" void imguiSettingsShow(void) {
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
            tabs, skipping any that aren't present and wrapping at the ends. */
-        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
         static int s_pgActiveTab = STAB_GENERAL;
         static int s_pgForceTab  = -1;
         bool present[STAB_COUNT];
         present[STAB_GENERAL] = true;
         present[STAB_DISPLAY] = true;
+        present[STAB_SOUND]   = true;
         present[STAB_GAMEHUD] = true;
         /* Mobile can host too; a browser tab can't listen for connections. */
 #if defined(__EMSCRIPTEN__)
@@ -2325,11 +2339,19 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_DISPLAYSOUND), nullptr,
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_DISPLAY), nullptr,
                     s_pgForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_DISPLAY;
                 ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
-                imguiSettingsRenderDisplaySoundTab(&ctx);
+                imguiSettingsRenderDisplayTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_SOUND), nullptr,
+                    s_pgForceTab == STAB_SOUND ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_SOUND;
+                ImGui::BeginChild("##soundPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsRenderSoundTab(&ctx);
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }

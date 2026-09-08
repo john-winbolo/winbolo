@@ -3525,12 +3525,13 @@ static void renderSettingsPanel(ClientSim *cs) {
        where the pad is hidden from SDL) step through the tabs, wrapping at the
        ends.  Every in-game tab is present except Hosting in the web build,
        where a browser tab can't listen for connections. */
-    enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+    enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
     static int s_igActiveTab = STAB_GENERAL;
     static int s_igForceTab  = -1;
     bool present[STAB_COUNT];
     present[STAB_GENERAL]  = true;
     present[STAB_DISPLAY]  = true;
+    present[STAB_SOUND]    = true;
     present[STAB_CONTROLS] = true;
     present[STAB_GAMEHUD]  = true;
 #if defined(__EMSCRIPTEN__)
@@ -3570,11 +3571,19 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_DISPLAYSOUND), nullptr,
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_DISPLAY), nullptr,
                 s_igForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_DISPLAY;
             ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
-            imguiSettingsRenderDisplaySoundTab(&ctx);
+            imguiSettingsRenderDisplayTab(&ctx);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_SOUND), nullptr,
+                s_igForceTab == STAB_SOUND ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_SOUND;
+            ImGui::BeginChild("##soundPanelIG", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+            imguiSettingsRenderSoundTab(&ctx);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
