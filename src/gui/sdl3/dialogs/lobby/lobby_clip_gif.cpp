@@ -26,7 +26,6 @@
  *********************************************************/
 
 #include <cstdio>   /* snprintf / FILENAME_MAX — the file's base name and the save paths */
-#include <cstring>  /* memset — the save dialog's answer struct */
 
 #include <SDL3/SDL.h>
 
@@ -385,17 +384,39 @@ static bool lobbyClipGifCaptureFrame(void) {
     return ok;
 }
 
-/* Native save dialog's answer. */
-typedef struct {
-    char path[FILENAME_MAX];
-    int  ok;
-    int  done;
-} ClipGifSaveState;
+/* One request's slot for the native save dialog's answer. Heap-allocated and
+ * refcounted because SDL cannot cancel a dialog that is already up, so the
+ * slot has to be able to outlive the lobby that asked for it.
+ *
+ * Two holders: the lobby and the dialog callback. The callback drops its
+ * reference last, after writing path and ok, so refs falling to 1 is what
+ * publishes the answer — and once it has, the lobby is the sole owner and can
+ * read and free without further synchronisation. SDL runs the callback on a
+ * worker thread on Windows and on the Linux zenity backend. */
+typedef struct ClipGifSaveRequest {
+    SDL_AtomicInt refs;
+    char          path[FILENAME_MAX];
+    int           ok;
+} ClipGifSaveRequest;
+
+/* The finished clip and the picker it is waiting on. The encoder's bytes are
+ * owned here from lobbyClipGifSave on, and this is the only thing that frees
+ * them: every exit — written, write failed, cancelled, lobby closed — goes
+ * through the poll or the abandon below, and msf_gif_free is safe on a zeroed
+ * result, so "free then zero" needs no special cases. Kept apart from
+ * ClipGifCapture so a reel teardown mid-session can't drop a clip the player
+ * is still choosing a name for. */
+typedef struct ClipGifPendingSave {
+    ClipGifSaveRequest *req   = nullptr;
+    MsfGifResult        bytes = {};
+} ClipGifPendingSave;
+
+static ClipGifPendingSave s_clipGifSave = {};
 
 static void SDLCALL lobbyClipGifSaveCallback(void *userdata,
                                              const char *const *filelist,
                                              int filter) {
-    ClipGifSaveState *st = (ClipGifSaveState *)userdata;
+    ClipGifSaveRequest *st = (ClipGifSaveRequest *)userdata;
     (void)filter;
     if (filelist && filelist[0]) {
         SDL_strlcpy(st->path, filelist[0], sizeof(st->path));
@@ -412,7 +433,11 @@ static void SDLCALL lobbyClipGifSaveCallback(void *userdata,
         }
         st->ok = 1;
     }
-    st->done = 1;
+    /* Dropped last: this is what publishes path and ok to the poll, and the
+     * slot must not be touched again after it. */
+    if (SDL_AtomicDecRef(&st->refs)) {
+        SDL_free(st);
+    }
 }
 
 static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
@@ -429,11 +454,15 @@ static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
  * under a controller, so that path names the file itself under the pref dir and
  * reports where it went; the desktop path asks. The report is the path — the
  * box's title is the format name and its icon carries the rest, so neither
- * outcome needs a sentence. */
-static void lobbyClipGifSave(const MsfGifResult *res) {
+ * outcome needs a sentence.
+ *
+ * Takes the encoder's result by value and owns it from here: the desktop path
+ * outlives this call, so the caller cannot free the bytes behind it. */
+static void lobbyClipGifSave(MsfGifResult res) {
     if (uiShouldUseControllerMode()) {
         char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
         if (prefDir == NULL) {
+            msf_gif_free(res);
             return;
         }
         char clipsDir[FILENAME_MAX];
@@ -445,31 +474,83 @@ static void lobbyClipGifSave(const MsfGifResult *res) {
                  s_clipGif.name);
         SDL_free(prefDir);
 
-        bool ok = lobbyClipGifWriteFile(fullPath, res);
+        bool ok = lobbyClipGifWriteFile(fullPath, &res);
+        msf_gif_free(res);
         imguiMessageBoxEx(CLIP_GIF_TITLE, fullPath,
                           ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
                           IMGUI_MSG_OK);
         return;
     }
 
-    ClipGifSaveState state;
+    /* The picker is shown and returned from immediately. Waiting here would
+     * stop the lobby's event loop, and that loop is what ticks the client
+     * transport (imguiLobbyShow), so a player choosing a folder was dropped by
+     * the server. lobbyClipGifSavePoll picks the answer up on a later frame.
+     *
+     * A second export while one is outstanding is not reachable through the UI
+     * — the picker owns the window — but if it ever were, the newer clip is
+     * released rather than overwriting the record that owns the older one. */
+    if (s_clipGifSave.req != NULL) {
+        msf_gif_free(res);
+        return;
+    }
+
+    ClipGifSaveRequest *req =
+        (ClipGifSaveRequest *)SDL_calloc(1, sizeof(*req));
+    if (req == NULL) {
+        msf_gif_free(res);
+        return;
+    }
+    SDL_SetAtomicInt(&req->refs, 2);  /* the lobby's and the callback's */
+
+    s_clipGifSave.req   = req;
+    s_clipGifSave.bytes = res;
+
     SDL_DialogFileFilter filters[] = {
         { "GIF Images", "gif" },
     };
-
-    memset(&state, 0, sizeof(state));
-
-    SDL_ShowSaveFileDialog(lobbyClipGifSaveCallback, &state,
+    SDL_ShowSaveFileDialog(lobbyClipGifSaveCallback, req,
                            sdl3DrawGetWindow(), filters, 1, NULL);
-    while (!state.done) {
-        SDL_Event e;
-        SDL_WaitEventTimeout(&e, 100);
+}
+
+/* Write out a clip whose picker has been answered. Called once per frame from
+ * the lobby's event loop, above whichever view is on screen, so navigating
+ * away from the recap with the picker open still lands the file. */
+void lobbyClipGifSavePoll(void) {
+    ClipGifSaveRequest *req = s_clipGifSave.req;
+    if (req == NULL || SDL_GetAtomicInt(&req->refs) != 1) {
+        return;
     }
-    if (state.ok && !lobbyClipGifWriteFile(state.path, res)) {
+
+    /* Sole owner now, so the slot reads without further synchronisation. */
+    bool ok = (req->ok != 0);
+    char path[FILENAME_MAX];
+    SDL_strlcpy(path, req->path, sizeof(path));
+    MsfGifResult bytes = s_clipGifSave.bytes;
+
+    s_clipGifSave = ClipGifPendingSave{};
+    SDL_free(req);
+
+    if (ok && !lobbyClipGifWriteFile(path, &bytes)) {
         /* The player picked the place, so silence would be the only cue that
          * nothing landed there. */
-        imguiMessageBoxEx(CLIP_GIF_TITLE, state.path, IMGUI_MSG_ERROR,
+        imguiMessageBoxEx(CLIP_GIF_TITLE, path, IMGUI_MSG_ERROR,
                           IMGUI_MSG_OK);
+    }
+    msf_gif_free(bytes);
+}
+
+/* Leaving the lobby cancels a save the player has not answered: there is no
+ * loop left to poll it, and a multi-megabyte clip cannot sit in a static
+ * waiting for a picker whose window has gone. The bytes go back to the
+ * allocator and the lobby drops its reference to the request slot, which the
+ * dialog callback then frees if it has yet to answer. */
+void lobbyClipGifSaveAbandon(void) {
+    ClipGifSaveRequest *req = s_clipGifSave.req;
+    msf_gif_free(s_clipGifSave.bytes);
+    s_clipGifSave = ClipGifPendingSave{};
+    if (req != NULL && SDL_AtomicDecRef(&req->refs)) {
+        SDL_free(req);
     }
 }
 
@@ -535,13 +616,16 @@ void lobbyClipGifRender(float s) {
         ImGui::EndPopup();
     }
 
-    /* Saving runs its own dialog loop, so it waits until the popup is off the
-     * stack. The bytes are ours from msf_gif_end on either way. */
+    /* The bytes are ours from msf_gif_end on, and saving takes them: the
+     * desktop picker outlives this frame, so ownership passes rather than the
+     * buffer being freed underneath it. A capture that produced nothing has
+     * nothing to hand over. */
     if (haveFinished) {
         if (finished.data != NULL) {
-            lobbyClipGifSave(&finished);
+            lobbyClipGifSave(finished);
+        } else {
+            msf_gif_free(finished);
         }
-        msf_gif_free(finished);
     }
 }
 #endif /* BOLO_RECAP_CLIP_GIF */
