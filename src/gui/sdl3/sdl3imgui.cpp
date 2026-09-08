@@ -291,6 +291,9 @@ static bool s_showNetInfo  = false;
 static bool s_showGameInfo = false;
 static bool s_showSendMsg  = false;
 static bool s_showPlayersPanel = false;
+/* Width one players-panel row needs, measured from the rows drawn last frame
+   and used as the panel's resize minimum. 0 until the panel has drawn once. */
+static float s_playersPanelNeedW = 0.0f;
 
 /* Deferred zoom change — the reconfigure mutates the live renderer, so it must
    not run mid-frame; store the requested value and apply it after the frame
@@ -2329,6 +2332,33 @@ static void renderPlayersContent(ClientSim *cs) {
                sty.CellPadding.x - w;
     };
 
+    /* An absolute SameLine offset behind the cursor moves the cursor
+     * backwards, and the cell is drawn over the one before it. Every column
+     * here is placed that way, so a long name, a large font or a narrow
+     * panel puts the counters and the ping on top of the name. Push right
+     * instead and let the window clip: a column that will not fit is better
+     * cut off than printed over its neighbour. */
+    auto sameLineNoBack = [&](float x) {
+        /* Corrected in screen coordinates after the fact rather than by
+         * converting x first: a SameLine offset is measured from the window's
+         * left edge plus the current group and column offsets, and neither of
+         * those is readable through the public API. Placing the cursor with
+         * SameLine and then pushing it forward is right inside the table the
+         * tablet list draws into as well as in the plain window the desktop
+         * list uses. */
+        float after = ImGui::GetItemRectMax().x + sty.ItemSpacing.x;
+        ImGui::SameLine(x);
+        ImVec2 at = ImGui::GetCursorScreenPos();
+        if (at.x < after) ImGui::SetCursorScreenPos(ImVec2(after, at.y));
+    };
+
+    /* Widest row drawn this frame, for the panel's minimum width: the x the
+     * name starts at, and the width of the name itself. Everything in front
+     * of the name is a fixed width, so those two are the whole measurement.
+     * Declared out here so renderPlayerRow can add to them. */
+    float widestNameX = 0.0f;
+    float widestNameW = 0.0f;
+
     /* Render a single player row */
     auto renderPlayerRow = [&](int i) {
         /* Alliance indicator */
@@ -2449,11 +2479,28 @@ static void renderPlayersContent(ClientSim *cs) {
 
         char selectLabel[64];
         snprintf(selectLabel, sizeof(selectLabel), "%s##psel%d", label, i);
+        float nameW = fullWidth - pingReserve - spacing - statBlock - micColumn -
+                      volColumn -
+                      (i != self ? ImGui::GetFrameHeight() + spacing : 0);
+        /* A Selectable given zero or less collapses and the row loses its
+         * name. Four characters is enough to tell two players apart; the
+         * columns after it are pushed right by the clamp above rather than
+         * drawn over it. */
+        float nameMin = ImGui::CalcTextSize("MMMM").x;
+        if (nameW < nameMin) nameW = nameMin;
+
+        /* What this row wants, for the panel's minimum width. The cursor is
+         * at the name now, so its x carries the alliance mark, the flag, the
+         * icons, the checkbox, the voice cell and the volume slider — and
+         * the window's left padding with them. */
+        float nameStartX = ImGui::GetCursorPosX();
+        float nameTextW  = ImGui::CalcTextSize(label).x;
+        if (nameStartX > widestNameX) widestNameX = nameStartX;
+        if (nameTextW  > widestNameW) widestNameW = nameTextW;
+
         if (ImGui::Selectable(selectLabel, s_playerChecked[i],
                               ImGuiSelectableFlags_DontClosePopups,
-                              ImVec2(fullWidth - pingReserve - spacing - statBlock - micColumn -
-                                     volColumn -
-                                     (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
+                              ImVec2(nameW, 0))) {
             if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
         imguiHandOnHover();
@@ -2464,7 +2511,7 @@ static void renderPlayersContent(ClientSim *cs) {
             for (int c = 0; c < 6; c++) {
                 char numBuf[16];
                 SDL_snprintf(numBuf, sizeof(numBuf), "%u", slotStatValue(i, c));
-                ImGui::SameLine(statContentX(c, ImGui::CalcTextSize(numBuf).x));
+                sameLineNoBack(statContentX(c, ImGui::CalcTextSize(numBuf).x));
                 ImGui::TextUnformatted(numBuf);
             }
         }
@@ -2473,7 +2520,7 @@ static void renderPlayersContent(ClientSim *cs) {
          * window-relative right edge so the ping does not shift row to row
          * with the width of the icons in front of the name — the counter
          * columns beside it would shift with it. */
-        ImGui::SameLine((showStats ? rowRightX : fullWidth) - pingWidth);
+        sameLineNoBack((showStats ? rowRightX : fullWidth) - pingWidth);
         ImVec4 pingColor = imguiPingBandColor(
             cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
                : pingBandClassify(s_playerPing[i]));
@@ -2497,7 +2544,7 @@ static void renderPlayersContent(ClientSim *cs) {
         ImGui::Dummy(ImVec2(1.0f, iconH));
         for (int c = 0; c < 6; c++) {
             const char *label = langGetText(statColStr[c]);
-            ImGui::SameLine(statContentX(c, statIconW[c]));
+            sameLineNoBack(statContentX(c, statIconW[c]));
             if (headerAsText) {
                 ImGui::TextUnformatted(label);
                 imguiHelpTooltip(label);
@@ -2560,6 +2607,22 @@ static void renderPlayersContent(ClientSim *cs) {
                 renderPlayerRow(panelRows[r]);
             }
         }
+    }
+
+    /* What one row actually needs, measured rather than guessed: everything
+     * in front of the name is a fixed width, so the widest name start plus
+     * the widest name, the counter block, the ping and the window's own
+     * padding is the width below which the row starts colliding.
+     * renderPlayersPanel reads it on the next frame. Not published while
+     * drawing into a pop-out, whose width has nothing to say about the
+     * docked panel's. */
+    if (!s_popOutRenderer) {
+        /* The left padding is already inside the recorded cursor x, so only
+         * the right one is added here — plus the scrollbar, so a list long
+         * enough to scroll does not lose a column to the bar. */
+        s_playersPanelNeedW = widestNameX + widestNameW + sty.ItemSpacing.x +
+                              (showStats ? statTotal + sty.ItemSpacing.x : 0.0f) +
+                              pingColW + sty.WindowPadding.x + sty.ScrollbarSize;
     }
 
     /* Alliance actions */
@@ -2739,7 +2802,18 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::SetNextWindowSize(ImVec2(SDL_min(760 * s_uiScale, maxW * 0.9f),
                                         SDL_min(560 * s_uiScale, maxH * 0.9f)),
                                  ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSizeConstraints(ImVec2(420 * s_uiScale, 200 * s_uiScale),
+        /* Floor the width at what a row measured last frame, so the panel
+         * cannot be dragged down to where the columns start running into the
+         * name. The measurement is applied here rather than to the size
+         * above because ImGuiCond_FirstUseEver applies on the frame the
+         * window is created, before any row has been drawn, so a floor under
+         * the opening size would never see it; constraints are applied every
+         * frame. Capped at the work area so it can never pin the panel wider
+         * than the screen. */
+        float minW = 420 * s_uiScale;
+        if (s_playersPanelNeedW > minW) minW = s_playersPanelNeedW;
+        if (minW > maxW) minW = maxW;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(minW, 200 * s_uiScale),
                                             ImVec2(maxW, maxH));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
