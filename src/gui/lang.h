@@ -508,6 +508,8 @@
 #define STR_STARTPICK_SWAP_WITH             1517
 #define STR_STARTPICK_ASSIGN_TO             1518
 #define STR_STARTPICK_SLOT_FALLBACK         1519
+#define STR_STARTPICK_TIP_OFFSIDE           2044
+#define STR_STARTPICK_TIP_OFFSIDE_HOST      2045
 
 /* Player-row badge tooltips */
 #define STR_PLAYER_TIP_AI                   1520

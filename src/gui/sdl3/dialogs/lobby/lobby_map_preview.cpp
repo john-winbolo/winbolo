@@ -38,12 +38,12 @@
 
 #include "imgui.h"
 #include "lobby_internal.h"
-#include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot / Classify, compass helpers */
+#include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot / Classify, compass helpers, side rules, off-side tooltip */
 #include "start_sides.h"  /* startSideMaskFor — side mask behind the compass label */
 extern "C" {
 #include "client_sim.h"  /* ClientSim + lobby getters; ClientLobbySlot */
 #include "client_net.h"  /* clientSimGetConnectState, clientSimNetSendLobbyClaimStart */
-#include "../../minimap_render.h"  /* minimapFromCompressedOwned / MinimapBounds */
+#include "../../minimap_render.h"  /* minimapFromCompressedOwned / MinimapBounds / MINIMAP_OWNER_OFFSIDE */
 #include "../../../../bolo/public/client_mappreview.h"  /* MapPreview + start accessors */
 #include "../../../lang.h"  /* langGetText / STR_COMPASS_* / STR_DLGLOBBY_* */
 }
@@ -131,6 +131,16 @@ void lobbyRebuildStartCompassCache(const BYTE *data, int len) {
     clientMapPreviewDestroy(mp);
 }
 
+/* Side mask of 1-based start k from the cache above; 0 (centre) when k is
+ * off the cached list. The player list's start cell and dropdown and the
+ * inline overlay all read the one cache through this. */
+BYTE lobbyStartSideMask(int k) {
+    if (k < 1 || k > (int)s_mapPreview.startCount) return 0;
+    return startSideMaskFor(s_mapPreview.startMapX[k], s_mapPreview.startMapY[k],
+                            s_mapPreview.startBboxMinX, s_mapPreview.startBboxMinY,
+                            s_mapPreview.startBboxMaxX, s_mapPreview.startBboxMaxY);
+}
+
 /* Caption + bar fraction for the map-transfer line the preview panel shows
  * while the map is not yet in hand. Both places that draw it call this so
  * they cannot drift apart.
@@ -161,18 +171,26 @@ const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress) {
 }
 
 /* Per-start ownership codes (0-based, start index i+1) for the minimap
- * colouring: 0=unclaimed, 1=self, 2=ally, 3=enemy. Also returns an FNV-1a
- * signature so the caller can detect when a recolour rebuild is needed
- * (claims/team changes don't trigger a map re-download). Returns the count. */
+ * colouring: 0=unclaimed, 1=self, 2=ally, 3=enemy, with
+ * MINIMAP_OWNER_OFFSIDE set on a start the viewer's own team side rejects
+ * so the dot is drawn dimmed. Also returns an FNV-1a signature so the
+ * caller can detect when a recolour rebuild is needed (claims, team and
+ * side changes don't trigger a map re-download); the off-side bit is
+ * hashed with the code, so a side change moves the signature too.
+ * Returns the count. */
 int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
                                    uint8_t *owners, int maxN, uint32_t *outSig) {
     int n = (int)clientSimGetLobbyStartCount(cs);
     if (n > maxN) n = maxN;
     if (n < 0)    n = 0;
+    int myTeam = lobbySlotTeam(cs, myPlayerNum);
     uint32_t sig = 2166136261u;
     for (int i = 1; i <= n; i++) {
         uint8_t o = (uint8_t)lobbyStartClassify(cs, lobbyStartHolderSlot(cs, i),
                                                 myPlayerNum);
+        if (lobbyStartOffSide(cs, myTeam, lobbyStartSideMask(i))) {
+            o |= MINIMAP_OWNER_OFFSIDE;
+        }
         owners[i - 1] = o;
         sig = (sig ^ o) * 16777619u;
     }
@@ -219,6 +237,9 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
     float spanX = (float)((bx1 + 1) - bx0);
     float spanY = (float)((by1 + 1) - by0);
     if (spanX <= 0.0f || spanY <= 0.0f) return;
+    /* The viewer's team, whose side decides which starts draw dimmed. A
+     * spectator has none, so nothing is off-side for it. */
+    const int myTeam = spectator ? 0 : lobbySlotTeam(cs, myPlayerNum);
 
     /* Pass 1: holder slot + a compact name list for disambiguation. */
     const char *holderNames[MAX_STARTS + 1] = {0};
@@ -292,16 +313,21 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
             tp = ImVec2(cxp - ts.x * 0.5f, cyp - ts.y * 0.5f);
         /* Colour the whole label by ownership: you/allies a bright mint green
          * (distinct from the grass/forest greens so it stands out), enemies
-         * red, unclaimed white. */
+         * red, unclaimed white. A start the viewer's own team side rejects
+         * drops to half alpha, matching its dimmed dot in the texture. */
         ImU32 txtCol = IM_COL32(255, 255, 255, 255);
+        ImU32 shadow = IM_COL32(0, 0, 0, 205);
         if (nameListIdx[i] >= 0) {
             LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i],
                                                    spectator ? -1 : myPlayerNum);
             if (o == LSO_ENEMY) txtCol = IM_COL32(235, 90, 90, 255);
             else                txtCol = IM_COL32(80, 255, 170, 255);
         }
-        dl->AddText(font, fsz, ImVec2(tp.x + 1.0f, tp.y + 1.0f),
-                    IM_COL32(0, 0, 0, 205), buf);
+        if (lobbyStartOffSide(cs, myTeam, lobbyStartSideMask(i))) {
+            txtCol = lobbyStartDimColor(txtCol);
+            shadow = lobbyStartDimColor(shadow);
+        }
+        dl->AddText(font, fsz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), shadow, buf);
         dl->AddText(font, fsz, tp, txtCol, buf);
     }
 
@@ -329,6 +355,10 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
  * still works). No invisible button — that grabbed nav focus and drew a
  * light-blue focus outline. Clicking a FREE start moves you there; pressing a
  * movable claimed start and dragging reassigns its player (a manual drag).
+ * A start the viewer's own team side rejects takes neither a click nor a
+ * drop from a player who is not the host — the server would refuse the
+ * claim — and shows the arrow cursor and a tooltip saying so; the host
+ * keeps every action and is told which team the start is off-side for.
  * Returns true if it consumed the click so the caller skips the zoom popup. */
 bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                                  ImVec2 imgMin, float innerSize,
@@ -341,6 +371,19 @@ bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 mp = ImGui::GetMousePos();
     bool hov = ImGui::IsItemHovered();   /* the map Image (last item) */
+    /* The start under the cursor — the click target and the drop target
+     * alike — and whether the viewer's own team side rejects it. Only the
+     * host may put anyone on such a start. */
+    int  st          = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
+                                                 mp, 25.0f);
+    bool offSide     = st >= 1 && lobbyStartOffSide(cs, lobbySlotTeam(cs, myPlayerNum),
+                                                    lobbyStartSideMask(st));
+    bool dropBlocked = offSide && !effHostMap;
+    auto offSideTooltip = [&]() {
+        char tip[192];
+        lobbyStartOffSideTip(cs, myPlayerNum, effHostMap, st, tip, sizeof(tip));
+        ImGui::SetTooltip("%s", tip);
+    };
 
     if (s_miniDragHolder >= 0) {
         consumed = true;
@@ -348,7 +391,9 @@ bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
             s_miniDragHolder = -1;
             return consumed;
         }
-        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        ImGui::SetMouseCursor(dropBlocked ? ImGuiMouseCursor_Arrow
+                                          : ImGuiMouseCursor_ResizeAll);
+        if (offSide) offSideTooltip();
         const ClientLobbySlot *ds = clientSimGetLobbySlot(cs, (BYTE)s_miniDragHolder);
         if (ds && ds->playerName[0]) {
             ImVec2 ts = ImGui::CalcTextSize(ds->playerName);
@@ -359,9 +404,7 @@ bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
             dl->AddText(p, IM_COL32(255, 255, 255, 255), ds->playerName);
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-            int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
-                                               mp, 25.0f);
-            if (st >= 1)
+            if (st >= 1 && !dropBlocked)
                 clientSimNetSendLobbyClaimStart(cs, (BYTE)s_miniDragHolder, (BYTE)st);
             s_miniDragHolder = -1;
         }
@@ -369,15 +412,20 @@ bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
     }
 
     if (!hov) return consumed;
-    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    int holder = (st >= 1) ? lobbyStartHolderSlot(cs, st) : -1;
+    /* Nothing to do on an off-side start unless you are the host or already
+     * hold it — your own claim can still be dragged away. */
+    bool blocked = dropBlocked && holder != myPlayerNum;
+    ImGui::SetMouseCursor(blocked ? ImGuiMouseCursor_Arrow : ImGuiMouseCursor_Hand);
+    if (offSide) offSideTooltip();
     /* On press: a free start under the cursor → claim it for yourself; a
      * movable claimed start → begin a manual drag-to-move. Both consume the
-     * click so the zoom popup doesn't open. */
+     * click so the zoom popup doesn't open, as does a press on a start you
+     * cannot take, so that it does nothing at all. */
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
-                                           mp, 25.0f);
-        int holder = (st >= 1) ? lobbyStartHolderSlot(cs, st) : -1;
-        if (st >= 1 && holder < 0 && myPlayerNum >= 0) {
+        if (blocked) {
+            consumed = true;
+        } else if (st >= 1 && holder < 0 && myPlayerNum >= 0) {
             clientSimNetSendLobbyClaimStart(cs, (BYTE)myPlayerNum, (BYTE)st);
             consumed = true;
         } else if (holder >= 0 && (effHostMap || holder == myPlayerNum)) {

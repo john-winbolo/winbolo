@@ -46,9 +46,9 @@ extern "C" {
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
 #include "lobby_bot_pools.h" /* lobbyBotPoolCount / Label / Pick */
-#include "start_sides.h"     /* START_SIDE_* / startSideMaskFor / Accepts / Eligible — team start sides */
+#include "start_sides.h"     /* START_SIDE_* / startSideBits / Accepts / Eligible / IsCentre — team start sides */
 #include "client_command.h"  /* START_CLAIM_TEAM_SIDE — the start dropdown's Team side action */
-#include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot — which slot holds a start */
+#include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot; lobbyTeamSide, lobbySideNameId / CompassId, lobbyClosedMaskForTeam */
 #include "../../../../bolo/public/wire_limits.h"  /* LOBBY_LOCK_* / LST_* */
 #include "../../../lang.h"   /* langGetText / MessageArgs / STR_*; PLAYER_FLAG_* */
 #include "../../../gamefront.h"  /* gameFrontSetChosenBotBrain */
@@ -155,62 +155,13 @@ bool lobbyIsHost(ClientSim *cs, int myPlayerNum) {
  * answers, with one gap: the client cannot see which start squares are
  * deep sea, so "valid" here means on the map's start list and not held
  * by a connected slot. What the cell shows is a forecast; the server's
- * answer is the reservation that lands in CTRL_LOBBY_SLOT. */
-
-/* Side mask of 1-based start k from the preview cache; 0 (centre) when
- * k is off the cached list. */
-static BYTE lobbyStartSideMask(int k) {
-    const LobbyMapPreviewState *mp = lobbyMapPreview();
-    if (k < 1 || k > (int)mp->startCount) return 0;
-    return startSideMaskFor(mp->startMapX[k], mp->startMapY[k],
-                            mp->startBboxMinX, mp->startBboxMinY,
-                            mp->startBboxMaxX, mp->startBboxMaxY);
-}
-
-/* A team's START_SIDE_* choice; team 0 (no team) has no side. */
-static BYTE lobbyTeamSide(ClientSim *cs, int teamId) {
-    if (teamId <= 0 || teamId >= MAX_TANKS) return START_SIDE_ANY;
-    return clientSimGetLobbyTeamStartSide(cs, (BYTE)teamId);
-}
-
-/* Lang id of a side's full name — the selector's entries. */
-static int lobbySideNameId(BYTE side) {
-    switch (side) {
-        case START_SIDE_N: return STR_DLGLOBBY_SIDE_N;
-        case START_SIDE_E: return STR_DLGLOBBY_SIDE_E;
-        case START_SIDE_S: return STR_DLGLOBBY_SIDE_S;
-        case START_SIDE_W: return STR_DLGLOBBY_SIDE_W;
-        default:           return STR_DLGLOBBY_SIDE_ANY;
-    }
-}
-
-/* Lang id of a side's compass letter, for "Sea · N" and "Team side · N".
- * 0 for a team with no side. */
-static int lobbySideCompassId(BYTE side) {
-    switch (side) {
-        case START_SIDE_N: return STR_COMPASS_N;
-        case START_SIDE_E: return STR_COMPASS_E;
-        case START_SIDE_S: return STR_COMPASS_S;
-        case START_SIDE_W: return STR_COMPASS_W;
-        default:           return 0;
-    }
-}
-
-/* Union of the START_SIDE_BIT_* chosen by every team other than teamId
- * that has at least one connected member — the "teams present" rule the
- * server's lobby start pick applies, so a team with a side and no
- * players closes nothing. */
-static BYTE lobbyClosedMaskForTeam(ClientSim *cs, int teamId) {
-    BYTE closedMask = 0;
-    for (int k = 0; k < MAX_TANKS; k++) {
-        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
-        if (!sl->connected) continue;
-        int t = sl->teamNumber;
-        if (t == 0 || t >= MAX_TANKS || t == teamId) continue;
-        closedMask |= startSideBits(clientSimGetLobbyTeamStartSide(cs, (BYTE)t));
-    }
-    return closedMask;
-}
+ * answer is the reservation that lands in CTRL_LOBBY_SLOT.
+ *
+ * The side rules themselves — lobbyTeamSide, lobbyClosedMaskForTeam and
+ * the side name and letter ids — are the shared helpers in
+ * lobby_start_markers.h, so the map previews read the same ones; the
+ * cache accessor lobbyStartSideMask lives with the cache in
+ * lobby_map_preview.cpp. */
 
 /* Starts a side would offer a team: for a side, every start it accepts
  * (its own side plus the centre band); for Any, every start outside the

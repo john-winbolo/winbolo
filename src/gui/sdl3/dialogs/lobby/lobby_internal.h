@@ -415,6 +415,9 @@ void lobbyWbnMapsTick(MapChooserState *state, SDL_Renderer *renderer,
 /* mappreview */
 void lobbyMapPreviewReset(void);
 void lobbyRebuildStartCompassCache(const BYTE *data, int len);
+/* Side mask of 1-based start k from the per-start cache; 0 (centre) when k
+ * is off the cached list. */
+BYTE lobbyStartSideMask(int k);
 const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress);
 int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
                             uint8_t *owners, int maxN, uint32_t *outSig);

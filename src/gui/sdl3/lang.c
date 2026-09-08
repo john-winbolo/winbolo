@@ -1455,6 +1455,12 @@ static const LangEntry langTable[] = {
     {2041, "{string1}: {number} starts for {number2} players \xE2\x80\x94 {number3} will start at sea.\nChanging a side re-picks every player's start."},
     {2042, "Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start."},
     {2043, "Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player."},
+    /* Map-preview start-picker tooltips over a start the viewer's own
+     * team side rejects: 2044 for a player who cannot take it, 2045 for
+     * the host, who still can. {number} = start; 2045: {string1} = the
+     * host's team. */
+    {2044, "Start #{number}\nNot on your team's side"},
+    {2045, "Start #{number}\nOff-side for {string1}"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the

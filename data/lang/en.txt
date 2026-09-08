@@ -466,6 +466,8 @@ STR_STARTPICK_YOU=you
 STR_STARTPICK_SWAP_WITH=Swap this start with:
 STR_STARTPICK_ASSIGN_TO=Assign start to:
 STR_STARTPICK_SLOT_FALLBACK=(slot)
+STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nNot on your team's side
+STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nOff-side for {string1}
 
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=AI player
