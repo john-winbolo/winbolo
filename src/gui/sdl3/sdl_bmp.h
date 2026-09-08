@@ -22,40 +22,57 @@
 extern "C" {
 #endif
 
-/* Load a BMP from disk and create an SDL texture.
+/* Load an opaque BMP from disk and create an SDL texture. No key colour and
+ * no blend mode change - for images that cover what they are drawn over, such
+ * as the background or the splash screen.
  *
- * If useColorKey is true, the BMP is converted to ARGB8888, green
- * (0,255,0) is set as the transparent color key, and the texture's
- * blend mode is set to SDL_BLENDMODE_BLEND. This is what every sprite
- * sheet in data/ uses for transparency.
- *
- * If useColorKey is false, the BMP is loaded as-is (no conversion,
- * no blend mode change) — suitable for opaque images like the
- * background or splash screen.
- *
- * Returns NULL on any failure (file missing, conversion failed,
- * texture creation failed). Caller owns the returned texture and
- * must SDL_DestroyTexture it.
+ * Returns NULL on any failure (file missing, texture creation failed). Caller
+ * owns the returned texture and must SDL_DestroyTexture it.
  */
-SDL_Texture *sdlLoadBmpAsTexture(SDL_Renderer *renderer,
-                                 const char *path,
-                                 bool useColorKey);
+SDL_Texture *sdlLoadBmpAsTexture(SDL_Renderer *renderer, const char *path);
 
-/* Load a BMP from an already-open SDL_IOStream and create an SDL
- * texture. Same conversion, color-key and blend-mode behaviour as
- * sdlLoadBmpAsTexture — this is the entry point for bytes that did not
- * come from a plain file, such as a BMP read out of a skin archive.
+/* The same from an already-open SDL_IOStream, for bytes that did not come
+ * from a plain file.
  *
- * If closeio is true the stream is closed whether the load succeeds or
- * fails. A stream wrapping caller-owned memory (SDL_IOFromMem) closes
- * the stream only; the caller still frees the bytes.
- *
- * Returns NULL on any failure. Caller owns the returned texture and
- * must SDL_DestroyTexture it.
+ * If closeio is true the stream is closed whether the load succeeds or fails.
+ * A stream wrapping caller-owned memory (SDL_IOFromMem) closes the stream
+ * only; the caller still frees the bytes.
  */
 SDL_Texture *sdlLoadBmpStreamAsTexture(SDL_Renderer *renderer,
-                                       SDL_IOStream *src, bool closeio,
-                                       bool useColorKey);
+                                       SDL_IOStream *src, bool closeio);
+
+/* Read a BMP sprite sheet into the RGBA32 surface the sheet is drawn from:
+ * the key colour turned into transparency, and the colour underneath that
+ * transparency replaced with the sprite's own by tileLoaderBleedEdges.
+ *
+ * `cellW` x `cellH` is the grid the sheet is packed on - 16x16 for the log
+ * viewer's tanks, boats and items. The bleed runs per cell, because the cells
+ * touch: one pass over the whole surface would spread each sprite into the
+ * one packed beside it. A cell size of 0 or less bleeds the surface as a
+ * single image.
+ *
+ * Doing the key here rather than through SDL_SetSurfaceColorKey is what makes
+ * the bleed possible at all. SDL's own conversion
+ * (SDL_ConvertColorkeyToAlpha) clears the alpha bits and leaves the RGB, so a
+ * texture built that way keeps the key colour under its transparency and
+ * fringes green wherever a sampler blends across a sprite's edge - the same
+ * defect the tile atlas had.
+ *
+ * Returns NULL on any failure. Caller owns the surface and must
+ * SDL_DestroySurface it. Split out from the texture call below so the result
+ * can be inspected without a renderer.
+ */
+SDL_Surface *sdlLoadBmpSheetSurface(const char *path, int cellW, int cellH);
+
+/* sdlLoadBmpSheetSurface uploaded, with alpha blending on and point sampling
+ * set explicitly - SDL3 defaults a new texture to linear, which is what would
+ * make the fringe visible on any blit that is not 1:1.
+ *
+ * Returns NULL on any failure. Caller owns the returned texture and must
+ * SDL_DestroyTexture it.
+ */
+SDL_Texture *sdlLoadBmpSheetAsTexture(SDL_Renderer *renderer, const char *path,
+                                      int cellW, int cellH);
 
 #ifdef __cplusplus
 }
