@@ -446,26 +446,11 @@ float voiceGetInputLevel(void);
 float voiceGetInputMeter(void);
 
 /*********************************************************
-*NAME:          voiceGetInputPeak
-*PURPOSE:
-*  Returns the recent peak of the captured level, held and then
-*  decayed so a transient stays readable instead of passing by
-*  in one frame. Falls back to the live level once nothing
-*  louder is held. In meter heights, like voiceGetInputMeter,
-*  so it can be drawn against the same bar.
-*
-*ARGUMENTS:
-*  (none)
-*********************************************************/
-float voiceGetInputPeak(void);
-
-/*********************************************************
 *NAME:          voiceGetPlayerLevel
 *PURPOSE:
 *  Returns the 0..1 height a meter draws one remote talker's
-*  loudness at — the same space voiceGetInputMeter and
-*  voiceGetInputPeak are in, not a raw amplitude. Held and
-*  decaying like the local meter, so a syllable stays
+*  loudness at — the same space voiceGetInputMeter is in, not a
+*  raw amplitude. Held and then decayed, so a syllable stays
 *  readable and a talker who stops fades rather than snapping
 *  off.
 *

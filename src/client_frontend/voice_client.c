@@ -134,14 +134,6 @@ static float outputVolume = 1.0f;
 static float masterVolume = 1.0f;
 static float inputLevel = 0.0f;
 
-/* The held peak for the meter that draws inputLevel.  Kept in drawn-height
- * units rather than amplitude - voiceMeterScale is applied before the peak
- * sees a reading, so the hold and the decay run in the same space as the fill
- * and the band lines up with it.  Fed from the capture loop so it sees every
- * frame's level rather than the ones a draw happens to land on, and cleared
- * wherever inputLevel is. */
-static VoicePeak inputPeak;
-
 /* The recording and playback devices the player chose, by display name, ""
  * for the system default.  Kept verbatim whether or not the device is present:
  * gameFrontPutPrefs reads them back out at save time, and a headset that is
@@ -215,9 +207,9 @@ static bool talkingStamped[MAX_TANKS];
 
 /* The most recent decoded frame's RMS amplitude per remote talker, and the
  * held peak over it.  The peak is kept in drawn-height units rather than
- * amplitude, the way the local meter's is: voiceMeterScale is applied before
- * it sees a reading, so the hold and the decay run in the same space as the
- * bar they are drawn in.  Cleared wherever the talking stamps are. */
+ * amplitude: voiceMeterScale is applied before it sees a reading, so the hold
+ * and the decay run in the same space as the bar they are drawn in.  Cleared
+ * wherever the talking stamps are. */
 static float playerLevel[MAX_TANKS];
 static VoicePeak playerPeak[MAX_TANKS];
 
@@ -301,7 +293,6 @@ static void stopCaptureIfIdle(void) {
      * burst of audio recorded before it was switched off. */
     voiceBackendCaptureStop();
     inputLevel = 0.0f;
-    memset(&inputPeak, 0, sizeof(inputPeak));
     gateOpen = false;
     gateHangover = 0;
 #if defined(WINBOLO_VOICE_AEC)
@@ -477,7 +468,6 @@ void voiceCleanup(void) {
     outputVolume = 1.0f;
     masterVolume = 1.0f;
     inputLevel = 0.0f;
-    memset(&inputPeak, 0, sizeof(inputPeak));
     warnedFrameTooLarge = false;
     isInitialised = false;
 }
@@ -1060,29 +1050,6 @@ float voiceGetInputMeter(void) {
 }
 
 /*********************************************************
-*NAME:          voiceGetInputPeak
-*AUTHOR:        John Morrison
-*CREATION DATE: 2026
-*LAST MODIFIED: 2026
-*PURPOSE:
-*  Returns the held peak over the captured level as a 0..1
-*  meter height, the same space voiceGetInputMeter is in
-*  rather than a raw amplitude.
-*
-*ARGUMENTS:
-*  (none)
-*********************************************************/
-float voiceGetInputPeak(void) {
-    /* A getter that advances the state, which is worth a sentence: the decay
-     * is measured against the clock, and with the microphone shut or between
-     * captured frames nothing else feeds it, so the peak would stay frozen
-     * wherever the last frame left it.  Feeding the live level from here
-     * keeps it falling for as long as anyone is drawing it. */
-    return voicePeakUpdate(&inputPeak, voiceMeterScale(inputLevel),
-                           voiceBackendNowMs());
-}
-
-/*********************************************************
 *NAME:          copyDeviceName
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -1469,9 +1436,9 @@ PlayerBitMap voiceGetTalkingMap(void) {
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  Returns the 0..1 height a meter draws one remote talker's
-*  loudness at - meter heights, like voiceGetInputMeter and
-*  voiceGetInputPeak, not a raw amplitude - held and decaying
-*  the way the local meter's peak is.
+*  loudness at - meter heights, like voiceGetInputMeter, not a
+*  raw amplitude - held and then decaying, so a syllable stays
+*  readable rather than passing by in one frame.
 *
 *  Zero for a player who is not talking, was never heard, is
 *  muted here, or is out of range.
@@ -1494,10 +1461,10 @@ float voiceGetPlayerLevel(int player) {
     live = playerIsTalking(player, now)
                ? voiceMeterScale(playerLevel[player])
                : 0.0f;
-    /* A getter that advances the state, for the reason voiceGetInputPeak
-     * gives: the decay runs against the clock, and between decoded frames
-     * nothing else feeds this, so the peak would otherwise stand wherever
-     * the last frame left it. */
+    /* A getter that advances the state, which is worth a sentence: the decay
+     * runs against the clock, and between decoded frames nothing else feeds
+     * this, so the peak would otherwise stand wherever the last frame left
+     * it. */
     return voicePeakUpdate(&playerPeak[player], live, now);
 }
 
@@ -1892,13 +1859,6 @@ void voiceTick(struct ClientSim *cs) {
         if (inputLevel > 1.0f) {
             inputLevel = 1.0f;
         }
-        /* Every captured frame, not only the ones a draw asks about: the
-         * loudest frame of a syllable is what the peak is for, and at 50
-         * frames a second most of them go by between two draws.  Scaled on
-         * the way in, so the peak holds and decays in the units it is drawn
-         * in. */
-        voicePeakUpdate(&inputPeak, voiceMeterScale(inputLevel),
-                        voiceBackendNowMs());
 
 #if defined(WB_VOICEDEBUG)
         voiceDebugTap(VOICE_TAP_GAINED, 0, pcm);

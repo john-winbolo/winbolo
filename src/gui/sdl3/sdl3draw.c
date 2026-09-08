@@ -209,7 +209,6 @@ static bool               gOverviewPrepVoiceWanted       = FALSE;
 static bool               gOverviewPrepVoiceMuted        = FALSE;
 static bool               gOverviewPrepVoiceTransmitting = FALSE;
 static float              gOverviewPrepVoiceLevel        = 0.0f;
-static float              gOverviewPrepVoicePeak         = 0.0f;
 
 #if defined(WINBOLO_VOICE)
 /* The microphone indicator's two icons, textured on this window's renderer at
@@ -251,13 +250,12 @@ static SDL_Texture *micIndicatorTex(bool muted, int px) {
 }
 
 /* Everything one draw of the indicator says, in one place so neither call site
-   grows a row of loose booleans. level and peak are the microphone's own, 0..1;
-   they are ignored while muted. */
+   grows a row of loose booleans. level is the microphone's own, 0..1; it is
+   ignored while muted. */
 typedef struct {
   bool  muted;
   bool  transmitting;
   float level;   /* 0..1, the live capture level */
-  float peak;    /* 0..1, the held peak          */
 } MicIndicatorState;
 
 /* The indicator itself, in the players panel's vocabulary: muted is the barred
@@ -268,10 +266,9 @@ typedef struct {
    number unless the rasterizer clamped it — either way nothing is resampled.
 
    Live, the same glyph is drawn again over itself filling from the bottom with
-   the capture level, and once more as a band at the peak's height. Source rows
-   and destination rows are cut together off a texture that is already at the
-   drawn size, so the fill takes the microphone's own shape rather than sitting
-   over it as a rectangle.
+   the capture level. Source rows and destination rows are cut together off a
+   texture that is already at the drawn size, so the fill takes the
+   microphone's own shape rather than sitting over it as a rectangle.
 
    Muted fills nothing. The red barred microphone is the whole message there,
    and a level climbing up it says the opposite at the same time. */
@@ -303,11 +300,8 @@ static void micIndicatorDraw(float x, float y, int px,
     }
 
     float level = st->level;
-    float peak  = st->peak;
     if (level < 0.0f) level = 0.0f;
     if (level > 1.0f) level = 1.0f;
-    if (peak < 0.0f) peak = 0.0f;
-    if (peak > 1.0f) peak = 1.0f;
 
     SDL_SetTextureColorMod(tex, fillR, fillG, fillB);
     /* Full opacity relative to the panel, not absolute. The base glyph above is
@@ -321,24 +315,6 @@ static void micIndicatorDraw(float x, float y, int px,
     if (fillH >= 1.0f) {
       SDL_FRect src = { 0.0f, texH - fillH, texW, fillH };
       SDL_FRect box = { x, y + texH - fillH, texW, fillH };
-      SDL_RenderTexture(gRenderer, tex, &src, &box);
-    }
-
-    if (peak > 0.0f) {
-      /* A band rather than a line: a single row disappears at the sizes the
-         classic view draws this at. Its top edge sits at the peak's height and
-         it extends downward, so a peak that has caught up with the live level
-         disappears into the top of the fill rather than standing a band above
-         it, and a peak still above the level floats clear of the fill with a
-         gap between them. Held inside the icon at both ends: a peak of 1.0 does
-         not read off the top, and one near zero does not hang off the bottom. */
-      float bandH = roundf(texH / 16.0f);
-      if (bandH < 1.0f) bandH = 1.0f;
-      float bandY = texH - roundf(texH * peak);
-      if (bandY < 0.0f) bandY = 0.0f;
-      if (bandY > texH - bandH) bandY = texH - bandH;
-      SDL_FRect src = { 0.0f, bandY, texW, bandH };
-      SDL_FRect box = { x, y + bandY, texW, bandH };
       SDL_RenderTexture(gRenderer, tex, &src, &box);
     }
   }
@@ -2184,13 +2160,11 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   bool  voiceMuted        = voiceIsSelfMuted();
   bool  voiceTransmitting = voiceIsTransmitting();
   float voiceLevel        = voiceGetInputMeter();
-  float voicePeak         = voiceGetInputPeak();
 #else
   bool  voiceWanted       = FALSE;
   bool  voiceMuted        = FALSE;
   bool  voiceTransmitting = FALSE;
   float voiceLevel        = 0.0f;
-  float voicePeak         = 0.0f;
 #endif
 
   /* What the panels cover, before the draw that has to work around it: a tank
@@ -2236,7 +2210,6 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   gOverviewPrepVoiceMuted        = voiceMuted;
   gOverviewPrepVoiceTransmitting = voiceTransmitting;
   gOverviewPrepVoiceLevel        = voiceLevel;
-  gOverviewPrepVoicePeak         = voicePeak;
 
   gOverviewPrepW       = w;
   gOverviewPrepH       = h;
@@ -2490,7 +2463,6 @@ void sdl3DrawFlushOverviewInWindow(void) {
         mic.muted        = gOverviewPrepVoiceMuted;
         mic.transmitting = gOverviewPrepVoiceTransmitting;
         mic.level        = gOverviewPrepVoiceLevel;
-        mic.peak         = gOverviewPrepVoicePeak;
         micIndicatorDraw(roundf(x), roundf(y), px, &mic, colAlpha);
       }
     }
@@ -3019,7 +2991,6 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       mic.muted        = voiceIsSelfMuted();
       mic.transmitting = voiceIsTransmitting();
       mic.level        = voiceGetInputMeter();
-      mic.peak         = voiceGetInputPeak();
       micIndicatorDraw((float)(micSrcX * gZoomFactor),
                        (float)(micSrcY * gZoomFactor),
                        micSrcSize * gZoomFactor, &mic, 255);
