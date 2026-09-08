@@ -237,15 +237,17 @@ static inline void lobbyTeamLabel(ClientSim *cs, int teamId,
     SDL_strlcpy(buf, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), bufLen);
 }
 
-/* Tooltip for a start the viewer's own team side rejects. A player who is
- * not the host cannot take it, so the text says only that; the host can
- * still assign it and is told which team it is off-side for. */
-static inline void lobbyStartOffSideTip(ClientSim *cs, int mySlot, bool host,
+/* Tooltip for a start that the team side of the player being placed
+ * rejects. subjectSlot is that player: the slot being dragged during a
+ * drag, the viewer otherwise. A player who is not the host cannot take
+ * such a start, so the text says only that; the host can still assign it
+ * and is told which team it is off-side for — the subject's team. */
+static inline void lobbyStartOffSideTip(ClientSim *cs, int subjectSlot, bool host,
                                         int startIdx1, char *buf, size_t bufLen) {
     MessageArgs args = {};
     args.number = startIdx1;
     if (host) {
-        lobbyTeamLabel(cs, lobbySlotTeam(cs, mySlot),
+        lobbyTeamLabel(cs, lobbySlotTeam(cs, subjectSlot),
                        args.string1, sizeof(args.string1));
         SDL_strlcpy(buf, langGetTextFmt(STR_STARTPICK_TIP_OFFSIDE_HOST, &args), bufLen);
     } else {

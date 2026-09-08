@@ -355,10 +355,11 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
  * still works). No invisible button — that grabbed nav focus and drew a
  * light-blue focus outline. Clicking a FREE start moves you there; pressing a
  * movable claimed start and dragging reassigns its player (a manual drag).
- * A start the viewer's own team side rejects takes neither a click nor a
- * drop from a player who is not the host — the server would refuse the
- * claim — and shows the arrow cursor and a tooltip saying so; the host
- * keeps every action and is told which team the start is off-side for.
+ * A start that the placed player's team side rejects — the dragged player
+ * during a drag, the viewer otherwise — takes neither a click nor a drop
+ * from a player who is not the host — the server would refuse the claim —
+ * and shows the arrow cursor and a tooltip saying so; the host keeps every
+ * action and is told which team the start is off-side for.
  * Returns true if it consumed the click so the caller skips the zoom popup. */
 bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                                  ImVec2 imgMin, float innerSize,
@@ -372,16 +373,18 @@ bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
     ImVec2 mp = ImGui::GetMousePos();
     bool hov = ImGui::IsItemHovered();   /* the map Image (last item) */
     /* The start under the cursor — the click target and the drop target
-     * alike — and whether the viewer's own team side rejects it. Only the
+     * alike — and whether the team side of the player being placed rejects
+     * it: the dragged player during a drag, the viewer otherwise. Only the
      * host may put anyone on such a start. */
     int  st          = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
                                                  mp, 25.0f);
-    bool offSide     = st >= 1 && lobbyStartOffSide(cs, lobbySlotTeam(cs, myPlayerNum),
+    int  subject     = (s_miniDragHolder >= 0) ? s_miniDragHolder : myPlayerNum;
+    bool offSide     = st >= 1 && lobbyStartOffSide(cs, lobbySlotTeam(cs, subject),
                                                     lobbyStartSideMask(st));
     bool dropBlocked = offSide && !effHostMap;
     auto offSideTooltip = [&]() {
         char tip[192];
-        lobbyStartOffSideTip(cs, myPlayerNum, effHostMap, st, tip, sizeof(tip));
+        lobbyStartOffSideTip(cs, subject, effHostMap, st, tip, sizeof(tip));
         ImGui::SetTooltip("%s", tip);
     };
 

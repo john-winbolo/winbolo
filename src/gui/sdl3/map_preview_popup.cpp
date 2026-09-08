@@ -320,9 +320,12 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
     BYTE masks[MAX_STARTS + 1] = {0};
     int  maskCount = startPickerSideMasks(masks);
     int  myTeam    = lobbySlotTeam(cs, g_startPickerMySlot);
-    auto offSideAt = [&](int st) {
-        return st >= 1 && st <= maskCount && lobbyStartOffSide(cs, myTeam, masks[st]);
+    /* Off-side for a given team; the overlay judges by the viewer's team,
+     * a drag by the dragged player's. */
+    auto offSideFor = [&](int st, int teamId) {
+        return st >= 1 && st <= maskCount && lobbyStartOffSide(cs, teamId, masks[st]);
     };
+    auto offSideAt = [&](int st) { return offSideFor(st, myTeam); };
 
     bool  shown[MAX_STARTS + 1] = {false};
     float scrX[MAX_STARTS + 1], scrY[MAX_STARTS + 1];
@@ -381,10 +384,11 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
      * Left-click a start = choose it for yourself. Drag a movable claimed
      * start = move that player to another start. Right-click (with edit
      * permission, or on a start you hold) = the assign / holder menu. A
-     * start the viewer's own team side rejects takes neither a click nor a
-     * drop from a player who is not the host — the server would refuse the
-     * claim — and its tooltip says so; the host keeps every action and is
-     * told which team the start is off-side for. */
+     * start that the placed player's team side rejects — the dragged
+     * player during a drag, the viewer otherwise — takes neither a click
+     * nor a drop from a player who is not the host — the server would
+     * refuse the claim — and its tooltip says so; the host keeps every
+     * action and is told which team the start is off-side for. */
     ImVec2 mp     = ImGui::GetMousePos();
     bool   host   = g_startPickerEffectiveHost;
     int    mySlot = g_startPickerMySlot;
@@ -407,8 +411,11 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
         }
         ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
         bool moved = (dd.x * dd.x + dd.y * dd.y >= 16.0f);
-        /* Only the host may drop anyone on an off-side start. */
-        bool dropBlocked = offSideAt(hover) && !host;
+        /* The drop target is judged against the dragged player's team, not
+         * the viewer's: the host may be moving someone on another team.
+         * Only the host may drop anyone on an off-side start. */
+        bool dropOffSide = offSideFor(hover, lobbySlotTeam(cs, g_startDragSlot));
+        bool dropBlocked = dropOffSide && !host;
         /* While actually dragging, carry the player's NAME on the cursor
          * (the start boats are static). */
         if (moved) {
@@ -424,9 +431,9 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
             }
             ImGui::SetMouseCursor(dropBlocked ? ImGuiMouseCursor_Arrow
                                               : ImGuiMouseCursor_ResizeAll);
-            if (offSideAt(hover)) {
+            if (dropOffSide) {
                 char tip[192];
-                lobbyStartOffSideTip(cs, mySlot, host, hover, tip, sizeof(tip));
+                lobbyStartOffSideTip(cs, g_startDragSlot, host, hover, tip, sizeof(tip));
                 translucentTooltip(tip);
             }
         }
