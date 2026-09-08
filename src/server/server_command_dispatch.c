@@ -181,6 +181,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         serverSimSetTeamMeta(sim, p->teamId, p->color, p->namingPool,
+                             p->startSide,
                              (const uint8_t *)p->name, p->nameLen);
         return CMD_OK;
     }

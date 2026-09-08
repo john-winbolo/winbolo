@@ -528,14 +528,15 @@ void lobbySendTeamPool(ClientSim *cs,
         /* Route the team-meta write through the wire wrapper. The
          * local-transport branch in client_net.c applies the same
          * fields (and pool-uniqueness rewrite) under the threads
-         * mutex. Read the current color so the wrapper's required
-         * color arg doesn't clobber it — fresh teams fall back to a
-         * per-teamId default, same as the MP branch below. */
+         * mutex. Read the current color and start side so the wrapper's
+         * required args don't clobber them — fresh teams fall back to a
+         * per-teamId default color, same as the MP branch below. */
         uint8_t color = clientSimGetLobbyTeamColor(cs, (BYTE)(teamId));
         if (!clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))) {
             color = (uint8_t)((teamId - 1) & 7);
         }
-        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, teamName);
+        uint8_t startSide = clientSimGetLobbyTeamStartSide(cs, (BYTE)(teamId));
+        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
 
         /* Rename bots on this team whose names weren't overridden by
          * the host. We pick names sequentially from the new pool,
@@ -586,7 +587,10 @@ void lobbySendTeamPool(ClientSim *cs,
         if (!clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))) {
             color = (uint8_t)((teamId - 1) & 7);
         }
-        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, teamName);
+        /* Same read-back for the start side: the packet carries every
+         * field, so send the current side rather than resetting it. */
+        uint8_t startSide = clientSimGetLobbyTeamStartSide(cs, (BYTE)(teamId));
+        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, startSide, teamName);
 
         /* The server can't rename existing bots when the pool changes
          * because the per-pool name table lives only on the client

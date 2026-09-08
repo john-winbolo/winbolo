@@ -46,6 +46,7 @@ extern "C" {
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
 #include "lobby_bot_pools.h" /* lobbyBotPoolCount / Label / Pick */
+#include "start_sides.h"     /* START_SIDE_ANY — a new team's start side */
 #include "../../../../bolo/public/wire_limits.h"  /* LOBBY_LOCK_* / LST_* */
 #include "../../../lang.h"   /* langGetText / MessageArgs / STR_*; PLAYER_FLAG_* */
 #include "../../../gamefront.h"  /* gameFrontSetChosenBotBrain */
@@ -1924,7 +1925,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                     uint8_t color = (uint8_t)((t - 1) & 7);
                     clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
-                        color, 0 /*pool=classic*/, defaultName);
+                        color, 0 /*pool=classic*/, START_SIDE_ANY, defaultName);
                     break;
                 }
             }

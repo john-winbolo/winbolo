@@ -146,13 +146,14 @@ typedef struct {
     char    name[PACKET_MAX_PLAYER_NAME];
 } CmdLobbyBotConfig;
 
-/* CMD_LOBBY_TEAM_META — set color, naming pool, and optional name
- * for a team. nameLen == 0 means "no name set". teamId is 1..MAX_TANKS-1
- * (team 0 is unassigned). */
+/* CMD_LOBBY_TEAM_META — set color, naming pool, start side, and
+ * optional name for a team. nameLen == 0 means "no name set". teamId is
+ * 1..MAX_TANKS-1 (team 0 is unassigned). */
 typedef struct {
     uint8_t teamId;
     uint8_t color;
     uint8_t namingPool;
+    uint8_t startSide;   /* START_SIDE_* (start_sides.h) */
     uint8_t nameLen;
     char    name[LOBBY_TEAM_NAME_LEN];
 } CmdLobbyTeamMeta;
