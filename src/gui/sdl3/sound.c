@@ -67,8 +67,8 @@ static SDL_AudioSpec deviceSpec;
  * go through applyStreamGain, so neither can be applied without the other.
  * Seeded with the same defaults the frontend globals carry, for the case where
  * the device opens before the preferences have been read. */
-static int masterVolumePct = 50;
-static int effectsVolumePct = 100;
+static int masterVolumePct = 100;
+static int effectsVolumePct = 50;
 
 static void applyStreamGain(void) {
     if (audioStream) {
@@ -1048,7 +1048,7 @@ bool soundIsMuted(void) {
     return s_muted;
 }
 
-void soundSetVolume(int pct) {
+void soundSetMasterVolume(int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     masterVolumePct = pct;

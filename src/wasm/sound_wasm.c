@@ -84,8 +84,8 @@ static double s_currentGain = 0.5;
 
 /* The two settings the gain is made of. The one place it is worked out from
  * them is applyStreamGain, below the JS helpers it calls. */
-static int s_masterVolumePct = 50;
-static int s_effectsVolumePct = 100;
+static int s_masterVolumePct = 100;
+static int s_effectsVolumePct = 50;
 
 /* -------------------------------------------------------
  * JS-side helpers, defined inline via EM_JS.
@@ -279,7 +279,7 @@ void soundSetMuted(bool mute) {
   wb_audio_set_muted(mute ? 1 : 0);
 }
 
-void soundSetVolume(int pct) {
+void soundSetMasterVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   s_masterVolumePct = pct;

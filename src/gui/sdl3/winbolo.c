@@ -121,12 +121,13 @@ bool soundEffects = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
-/* Master volume (0-100); scales the sound effects and voice alike */
+/* Sound effects volume (0-100), the MENU / Sound Volume preference; scales the
+ * master volume for the mixer, and does not reach voice */
 int soundVolume = 50;
 
-/* Sound effects volume (0-100); scales the master volume for the mixer, and
- * does not reach voice */
-int effectsVolume = 100;
+/* Master volume (0-100), the MENU / Master Volume preference; scales the sound
+ * effects and voice alike */
+int windowMasterVolume = 100;
 
 /* Is Sound Keepalive enabled */
 bool useSoundKeepalive = TRUE;
@@ -1683,21 +1684,23 @@ void windowSoundKeepalive(void) {
   }
 }
 
-/* Master reaches the mixer and the voice module separately: voice has its own
- * streams and its own gain, and nothing downstream of here covers both. */
+/* The in-game menu, the macOS menu bar and the settings dialog all come here
+ * for the game sounds. */
 void windowSetSoundVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   soundVolume = pct;
-  soundSetVolume(pct);
-  voiceSetMasterVolume((float)pct / 100.0f);
+  soundSetEffectsVolume(pct);
 }
 
-void windowSetEffectsVolume(int pct) {
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * streams and its own gain, and nothing downstream of here covers both. */
+void windowSetMasterVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
-  effectsVolume = pct;
-  soundSetEffectsVolume(pct);
+  windowMasterVolume = pct;
+  soundSetMasterVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
 }
 
 /* -------------------------------------------------------

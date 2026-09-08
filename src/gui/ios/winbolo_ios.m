@@ -75,8 +75,8 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 bool backgroundSound = FALSE;
 bool useSoundKeepalive = FALSE;
-int  soundVolume = 50;
-int  effectsVolume = 100;
+int  soundVolume = 50;         /* MENU / Sound Volume — the game sounds */
+int  windowMasterVolume = 100; /* MENU / Master Volume — sounds and voice */
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -629,13 +629,13 @@ void windowSetSoundVolume(int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     soundVolume = pct;
-    soundSetVolume(pct);
+    soundSetEffectsVolume(pct);
 }
-void windowSetEffectsVolume(int pct) {
+void windowSetMasterVolume(int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
-    effectsVolume = pct;
-    soundSetEffectsVolume(pct);
+    windowMasterVolume = pct;
+    soundSetMasterVolume(pct);
 }
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
     autoScrollingEnabled = !autoScrollingEnabled;

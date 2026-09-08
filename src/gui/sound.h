@@ -124,16 +124,17 @@ void soundSetMuted(bool mute);
 bool soundIsMuted(void);
 
 /*********************************************************
-*NAME:          soundSetVolume
+*NAME:          soundSetMasterVolume
 *PURPOSE:
 *  Sets the master volume. The gain the stream runs at is
 *  this scaled by the effects volume below; both are held
-*  here so the two cannot disagree.
+*  here so the two cannot disagree. Voice is scaled by the
+*  master as well, but by the frontend, not from here.
 *
 *ARGUMENTS:
 *  pct - volume percentage in [0, 100]
 *********************************************************/
-void soundSetVolume(int pct);
+void soundSetMasterVolume(int pct);
 
 /*********************************************************
 *NAME:          soundSetEffectsVolume

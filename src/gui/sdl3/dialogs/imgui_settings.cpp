@@ -97,7 +97,7 @@ extern "C" {
   extern bool backgroundSound;
   extern bool useSoundKeepalive;
   extern int  soundVolume;
-  extern int  effectsVolume;
+  extern int  windowMasterVolume;
   extern bool showNewswireMessages;
   extern bool showAssistantMessages;
   extern bool showAIMessages;
@@ -115,7 +115,7 @@ extern "C" {
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
   void windowSetSoundVolume(int pct);
-  void windowSetEffectsVolume(int pct);
+  void windowSetMasterVolume(int pct);
 #if defined(WINBOLO_VOICE)
   /* Voice apply/persist helpers — winbolo.c on the desktop, main_wasm.c in
      the browser build, both beside windowSetSoundVolume. */
@@ -1507,14 +1507,14 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     }
 #endif
     {
-        int vol = soundVolume;
+        int vol = windowMasterVolume;
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_MASTER_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_MASTER_VOLUME), &vol, 0, 100, "%d%%")) windowSetMasterVolume(vol);
     }
     {
-        int vol = effectsVolume;
+        int vol = soundVolume;
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME), &vol, 0, 100, "%d%%")) windowSetEffectsVolume(vol);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
     }
 #if defined(WINBOLO_VOICE)
     /* The third of the three, drawn here rather than down in the voice

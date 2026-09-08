@@ -608,7 +608,7 @@ extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
 extern int  soundVolume;
-extern int  effectsVolume;
+extern int  windowMasterVolume;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
 extern bool showAIMessages;
@@ -629,7 +629,7 @@ extern labelLen labelTank;
    for the same reason the voice ones are: they live in the per-platform
    frontend, not in winbolo.h. */
 void windowSetSoundVolume(int pct);
-void windowSetEffectsVolume(int pct);
+void windowSetMasterVolume(int pct);
 
 /* Helper: itoa replacement for portability */
 static void intToStr(int val, char *buf, int bufSize) {
@@ -3417,12 +3417,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   useSoundKeepalive = YESNO_TO_TRUEFALSE(buff[0]);
   /* Through the setters, not into the globals: master has to reach the voice
      module as well as the mixer, and a value that only landed in the global
-     would leave voice at full until the slider was touched.  Both setters
-     clamp to 0-100, so a hand-edited file cannot get past them. */
+     would leave voice at the wrong gain until the slider was touched.  Both
+     setters clamp to 0-100, so a hand-edited file cannot get past them. */
   prefsGetString("MENU", "Sound Volume", "50", buff, FILENAME_MAX);
   windowSetSoundVolume(atoi(buff));
-  prefsGetString("MENU", "Effects Volume", "100", buff, FILENAME_MAX);
-  windowSetEffectsVolume(atoi(buff));
+  prefsGetString("MENU", "Master Volume", "100", buff, FILENAME_MAX);
+  windowSetMasterVolume(atoi(buff));
   prefsGetString("MENU", "Show Newswire Messages", "Yes", buff, FILENAME_MAX);
   showNewswireMessages = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Assistant Messages", "Yes", buff, FILENAME_MAX);
@@ -3840,8 +3840,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive));
   intToStr(soundVolume, buff, sizeof(buff));
   prefsSetString("MENU", "Sound Volume", buff);
-  intToStr(effectsVolume, buff, sizeof(buff));
-  prefsSetString("MENU", "Effects Volume", buff);
+  intToStr(windowMasterVolume, buff, sizeof(buff));
+  prefsSetString("MENU", "Master Volume", buff);
   prefsSetString("MENU", "Show Newswire Messages", TRUEFALSE_TO_STR(showNewswireMessages));
   prefsSetString("MENU", "Show Assistant Messages", TRUEFALSE_TO_STR(showAssistantMessages));
   prefsSetString("MENU", "Show AI Messages", TRUEFALSE_TO_STR(showAIMessages));
