@@ -381,7 +381,7 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
 #define PACKET_LOBBY_SET_SETTING    199  /* { settingType 1, valueLen 1, value N } */
 #define PACKET_LOBBY_OPEN_HOST      161  /* { bool 1 } */
 #define PACKET_LOBBY_TEAM_META      162  /* { teamId 1, color 1, namingPool 1,
-                                          *   nameLen 1, name N } */
+                                          *   startSide 1, nameLen 1, name N } */
 #define PACKET_LOBBY_TEAM_CLEAR     163  /* { teamId 1 } */
 #define PACKET_LOBBY_BOT_CONFIG     164  /* { slot 1, difficulty 1,
                                           *   personality 1, nameLen 1,

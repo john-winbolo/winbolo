@@ -75,10 +75,21 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
                                    MinimapBounds *bounds,
                                    int *outPills, int *outBases, int *outStarts);
 
+/* Off-side bit of a start owner byte, layered on the ownership codes below.
+ * Set when the viewer's team side rejects the start: the dot is drawn dimmed
+ * — blended half into the terrain under it — in the colour the low bits give,
+ * so ownership still reads. MINIMAP_OWNER_CODE_MASK strips the bit before the
+ * code is read. A byte with the bit clear keeps its meaning, so a caller that
+ * never sets it (the map editor's plain code 0) is unaffected. */
+#define MINIMAP_OWNER_OFFSIDE   0x80
+#define MINIMAP_OWNER_CODE_MASK 0x7F
+
 /* Like minimapFromCompressed but colours each start dot by ownership.
- * startOwners is 0-based, parallel to start order (start index i+1): codes
- * 0=unclaimed (default yellow), 1=self (green + gray border ring), 2=ally
- * (green), 3=enemy (red). Pass startOwners=NULL for the default behaviour. */
+ * startOwners is 0-based, parallel to start order (start index i+1): the low
+ * bits are the code, 0=unclaimed (default yellow), 1=self (green + gray
+ * border ring), 2=ally (green), 3=enemy (red), and MINIMAP_OWNER_OFFSIDE may
+ * be set on top of any of them. Pass startOwners=NULL for the default
+ * behaviour. */
 SDL_Texture *minimapFromCompressedOwned(SDL_Renderer *renderer,
                                         const BYTE *compressedData, int dataLen,
                                         MinimapBounds *bounds,

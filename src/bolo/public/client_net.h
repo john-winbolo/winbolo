@@ -250,6 +250,7 @@ void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       const char md5Hex[32]);
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
+                                   uint8_t startSide,
                                    const char *name);
 void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId);
 void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,

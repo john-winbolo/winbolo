@@ -1490,6 +1490,8 @@ STR_STARTPICK_YOU=sen
 STR_STARTPICK_SWAP_WITH=Bu başlangıcı şununla değiştir:
 STR_STARTPICK_ASSIGN_TO=Başlangıcı şuna ata:
 STR_STARTPICK_SLOT_FALLBACK=(slot)
+STR_STARTPICK_TIP_OFFSIDE=Başlangıç #{number}\nTakımınızın tarafında değil
+STR_STARTPICK_TIP_OFFSIDE_HOST=Başlangıç #{number}\n{string1} için taraf dışı
 
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=Yapay zeka oyuncu
@@ -2003,3 +2005,21 @@ STR_ITEMVIEW_ALLY_NAMED=Müttefik Tank Görünümü — {player}
 STR_DLGBROWSER_VIEWS_LBL=Görünümler:
 STR_DLGBROWSER_VIEWS_CLASSIC=Klasik
 STR_DLGBROWSER_VIEWS_ALLYTREES=Ağaçlardaki Müttefikler
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Başlangıç:
+STR_DLGLOBBY_SIDE_ANY=Herhangi
+STR_DLGLOBBY_SIDE_N=Kuzey
+STR_DLGLOBBY_SIDE_E=Doğu
+STR_DLGLOBBY_SIDE_S=Güney
+STR_DLGLOBBY_SIDE_W=Batı
+STR_DLGLOBBY_START_SEA=Deniz
+STR_DLGLOBBY_START_TEAM_SIDE=Takım Tarafı
+STR_DLGLOBBY_START_AUTO=Otomatik
+STR_DLGLOBBY_START_UNASSIGN=Vazgeç
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(taraf dışı)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number2} oyuncu için {number} başlangıç var — {number3} oyuncu denizde başlayacak.\nTarafı değiştirmek her oyuncunun başlangıcını yeniden seçer.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Bu takımın kullanabileceği tüm başlangıçlar dolu, bu yüzden bu oyuncu\ntakım arkadaşının başlangıcının yanında, denizde başlayacak.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Taraf dışı: bu başlangıç takımın {string1} tarafında değil.\nSunucu sahibi bunu bu oyuncu için seçti.
+
+STR_SOUND_LOAD_FAILED=Ses efektleri yüklenirken hata oluştu

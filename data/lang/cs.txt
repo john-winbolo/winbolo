@@ -1007,6 +1007,8 @@ STR_STARTPICK_YOU=ty
 STR_STARTPICK_SWAP_WITH=Vyměnit tento start s:
 STR_STARTPICK_ASSIGN_TO=Přiřadit start hráči:
 STR_STARTPICK_SLOT_FALLBACK=(slot)
+STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nNení na straně tvého týmu
+STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nOfsajd pro {string1}
 STR_LV_VOTE_PASSED=Hlasování prošlo.
 STR_LV_VOTE_FAILED=Hlasování neprošlo.
 
@@ -2001,3 +2003,21 @@ STR_ITEMVIEW_ALLY_NAMED=Pohled na spojenecké tanky — {player}
 STR_DLGBROWSER_VIEWS_LBL=Pohledy:
 STR_DLGBROWSER_VIEWS_CLASSIC=Klasický
 STR_DLGBROWSER_VIEWS_ALLYTREES=Spojenci v lese
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Start:
+STR_DLGLOBBY_SIDE_ANY=Libovolná
+STR_DLGLOBBY_SIDE_N=Sever
+STR_DLGLOBBY_SIDE_E=Východ
+STR_DLGLOBBY_SIDE_S=Jih
+STR_DLGLOBBY_SIDE_W=Západ
+STR_DLGLOBBY_START_SEA=Moře
+STR_DLGLOBBY_START_TEAM_SIDE=Strana týmu
+STR_DLGLOBBY_START_AUTO=Automaticky
+STR_DLGLOBBY_START_UNASSIGN=Uvolnit
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(ofsajd)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startů pro {number2} hráčů — {number3} z nich začne na moři.\nZměna strany znovu přiřadí start každému hráči.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Všechny starty, které tento tým může použít, jsou obsazené, takže\ntento hráč začne na moři vedle startu spoluhráče.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Ofsajd: tento start neleží na {string1}, straně týmu.\nHostitel ho vybral pro tohoto hráče.
+
+STR_SOUND_LOAD_FAILED=Chyba při načítání zvukových efektů

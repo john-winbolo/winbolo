@@ -2408,6 +2408,10 @@ uint8_t clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId) {
   if (teamId >= 16) return 0;
   return cs->lobbyTeamPool[teamId];
 }
+uint8_t clientSimGetLobbyTeamStartSide(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return 0;
+  return cs->lobbyTeamStartSide[teamId];
+}
 const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId) {
   if (teamId >= 16) return "";
   return cs->lobbyTeamName[teamId];

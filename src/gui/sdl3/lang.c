@@ -1435,6 +1435,32 @@ static const LangEntry langTable[] = {
     {2027, "Views:"},
     {2028, "Classic"},
     {2029, "Allies in trees"},
+
+    /* Lobby team start side: the header's Start: selector, the row cell's
+     * sea state and the start dropdown's two actions. 2113: {string1} =
+     * side name, {number} = starts the side offers, {number2} = team
+     * members, {number3} = members left to start at sea. 2115: {string1}
+     * = side name. */
+    {2102, "Start:"},
+    {2103, "Any"},
+    {2104, "North"},
+    {2105, "East"},
+    {2106, "South"},
+    {2107, "West"},
+    {2108, "Sea"},
+    {2109, "Team side"},
+    {2110, "Auto"},
+    {2111, "Unassign"},
+    {2112, "(off-side)"},
+    {2113, "{string1}: {number} starts for {number2} players \xE2\x80\x94 {number3} will start at sea.\nChanging a side re-picks every player's start."},
+    {2114, "Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start."},
+    {2115, "Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player."},
+    /* Map-preview start-picker tooltips over a start the viewer's own
+     * team side rejects: 2116 for a player who cannot take it, 2117 for
+     * the host, who still can. {number} = start; 2117: {string1} = the
+     * host's team. */
+    {2116, "Start #{number}\nNot on your team's side"},
+    {2117, "Start #{number}\nOff-side for {string1}"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
@@ -1890,6 +1916,9 @@ static const LangEntry langTable[] = {
     {1871, "Could not reach the server to get a join code."},
     {1872, "Could not connect to the server."},
     {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
+
+    /* soundSetup: none of the sound effects could be loaded. */
+    {2118, "Error loading sound effects"},
 
     /* Log viewer Options item: present the round on a game-relative clock. */
     {1921, "Hide Lobby"},

@@ -140,7 +140,11 @@ bool mapPreviewViewIsReady(const MapPreviewView *v);
 /* Set per-start ownership for marker colouring. owners is 0-based, parallel
  * to start order (start index i+1): 0=unclaimed, 1=self, 2=ally, 3=enemy.
  * Selects the boat sprite at sprite zoom and the dot colour at minimap zoom.
- * Pass owners=NULL / count=0 to clear (everything renders as the default). */
+ * MINIMAP_OWNER_OFFSIDE (minimap_render.h) may be set on top of a code: the
+ * boat then draws at half its alpha and the dot half-blended into the
+ * terrain, keeping the code's colour, for a start the viewer's team side
+ * rejects. Pass owners=NULL / count=0 to clear (everything renders as the
+ * default). */
 void mapPreviewViewSetStartOwners(MapPreviewView *v,
                                   const uint8_t *owners, int count);
 

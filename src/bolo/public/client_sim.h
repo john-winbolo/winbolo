@@ -911,6 +911,9 @@ bool        clientSimGetAlliesInTrees(const ClientSim *cs);
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
+/* The team's START_SIDE_* choice as last broadcast; START_SIDE_ANY (0)
+ * until the first team-meta event for that team arrives. */
+uint8_t     clientSimGetLobbyTeamStartSide(const ClientSim *cs, BYTE teamId);
 const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);

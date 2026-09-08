@@ -222,9 +222,11 @@ struct MapPreviewView {
     WORLD  startsCenterY;
 
     /* Per-start ownership for colouring (0-based, start index i+1):
-     * 0=unclaimed, 1=self, 2=ally, 3=enemy. Set per-frame by the lobby via
-     * mapPreviewViewSetStartOwners; selects the boat sprite (sprite zoom)
-     * and the dot colour (minimap zoom). */
+     * 0=unclaimed, 1=self, 2=ally, 3=enemy, with MINIMAP_OWNER_OFFSIDE
+     * possibly set on top for a start the viewer's team side rejects. Set
+     * per-frame by the lobby via mapPreviewViewSetStartOwners; selects the
+     * boat sprite (sprite zoom) and the dot colour (minimap zoom), and the
+     * off-side bit dims either. */
     uint8_t startOwners[16];   /* MAX_STARTS */
     int     startOwnerCount;
 };
@@ -232,7 +234,8 @@ struct MapPreviewView {
 /* Ownership code (0-based start index) -> boat atlas table + alpha. Self uses
  * the normal (black) self boat; ally the green boat; enemy the red boat;
  * an unclaimed start uses the self boat at 50% alpha so it reads as "not yet
- * taken". When there's no ownership info (e.g. the map chooser), everything
+ * taken". An off-side start halves that again, so it keeps its boat but
+ * fades. When there's no ownership info (e.g. the map chooser), everything
  * is the opaque self boat. */
 static void boatStyleForOwner(const MapPreviewView *v, int startIdx1,
                               const int **outX, const int **outY, Uint8 *outA) {
@@ -240,11 +243,14 @@ static void boatStyleForOwner(const MapPreviewView *v, int startIdx1,
     *outA = 255;
     int k = startIdx1 - 1;
     if (k < 0 || k >= v->startOwnerCount) return;   /* no info -> opaque self */
-    switch (v->startOwners[k]) {
+    switch (v->startOwners[k] & MINIMAP_OWNER_CODE_MASK) {
         case 1: break;                                                  /* self  black */
         case 2: *outX = kGoodBoatAtlasX; *outY = kGoodBoatAtlasY; break; /* ally  green */
         case 3: *outX = kEvilBoatAtlasX; *outY = kEvilBoatAtlasY; break; /* enemy red */
         default: *outA = 128; break;                  /* unclaimed -> 50% transparent */
+    }
+    if (v->startOwners[k] & MINIMAP_OWNER_OFFSIDE) {
+        *outA = (Uint8)(*outA / 2);                   /* off-side -> half again */
     }
 }
 
@@ -545,16 +551,28 @@ static void viewRenderMinimapToOffscreen(MapPreviewView *v,
         float dy = (float)sy * tilePxF - camPyF;
         SDL_FRect dot = { dx, dy, (float)dotSize, (float)dotSize };
         /* Colour the dot by ownership (matches the minimap preview): self
-         * black, ally green, enemy red, unclaimed yellow. */
+         * black, ally green, enemy red, unclaimed yellow. An off-side start
+         * blends the dot half into the terrain under it, as the lobby
+         * minimap does, so it dims without losing its colour. */
         Uint8 r = 255, g = 255, b = 0;
+        bool  dim = false;
         int k = (int)i - 1;
         if (k >= 0 && k < v->startOwnerCount) {
-            switch (v->startOwners[k]) {
+            switch (v->startOwners[k] & MINIMAP_OWNER_CODE_MASK) {
                 case 1: r = 0;   g = 110; b = 0;   break; /* self  dark green */
                 case 2: r = 0;   g = 210; b = 0;   break; /* ally  green */
                 case 3: r = 230; g = 50;  b = 50;  break; /* enemy red */
                 default: break;                            /* free  yellow */
             }
+            dim = (v->startOwners[k] & MINIMAP_OWNER_OFFSIDE) != 0;
+        }
+        if (dim) {
+            uint8_t tr, tg, tb;
+            minimapTerrainColor(clientMapPreviewGetTerrain(v->preview, sx, sy),
+                                &tr, &tg, &tb);
+            r = (Uint8)((r + tr) / 2);
+            g = (Uint8)((g + tg) / 2);
+            b = (Uint8)((b + tb) / 2);
         }
         SDL_SetRenderDrawColor(renderer, r, g, b, 255);
         SDL_RenderFillRect(renderer, &dot);

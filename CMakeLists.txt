@@ -823,6 +823,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
+    src/gui/sdl3/sound_variants.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
@@ -1475,7 +1476,7 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/client_frontend/voice_core.c
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
@@ -3288,6 +3289,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
+    tests/unit/test_start_sides.c
+    tests/unit/test_starts_scatter_separation.c
+    tests/unit/test_starts_team_side.c
+    tests/unit/test_lobby_team_side_dispatch.c
+    tests/unit/test_starts_side_integration.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -3500,6 +3506,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Needs the tile loader itself, which no other unit test pulls in.
     tests/unit/test_skin_density.c
     src/gui/sdl3/tileloader.c
+    # The colour left under the built sheet's transparency, and the bleed
+    # that takes it out. Runs on the real data/svg art beside the binary.
+    tests/unit/test_sheet_bleed.c
+    src/gui/sdl3/sdl_bmp.c
+    # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
+    # and the compaction that leaves the members which decoded contiguous.
+    # Name arithmetic only: no audio device, and it opens no file.
+    tests/unit/test_sound_variants.c
+    src/gui/sdl3/sound_variants.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -3516,12 +3531,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
     # The overview's camera maths, its fog mask, the in-window HUD geometry
-    # and the sprite placement arithmetic behind mapview.c's drawers. The
-    # only src/gui/sdl3 files in this target: all four are arithmetic over
-    # plain values with no ImGui and no SDL_Renderer include, so they link
-    # into a binary that has neither, and test_overview_camera.cpp /
-    # test_overview_fog.cpp / test_overview_hud_layout.cpp /
-    # test_mapview_sprite_scale.c exercise them directly. The drawing halves
+    # and the sprite placement arithmetic behind mapview.c's drawers, with
+    # test_overview_camera.cpp / test_overview_fog.cpp /
+    # test_overview_hud_layout.cpp / test_mapview_sprite_scale.c exercising
+    # them directly. Like the other src/gui/sdl3 files in this target they
+    # are leaves a test can call with no display attached: no ImGui, and no
+    # window, renderer or device of their own. The drawing halves
     # (overview_view.cpp, mapview.c) stay out. They keep the gui profile's
     # public-only access rather than borrowing this target's T2;
     # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
@@ -4056,6 +4071,26 @@ set(_unit_test_names
     starts_batch_teams_cluster_and_separate
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
+    start_side_mask_sectors
+    start_side_mask_degenerate_bbox
+    start_side_eligible_closed_mask
+    starts_scatter_avoids_existing_tanks
+    starts_scatter_falls_back_when_crowded
+    starts_side_team_stays_on_its_side
+    starts_side_overflow_rides_own_side
+    starts_side_never_crosses_when_opposite_free
+    starts_side_any_matches_legacy
+    starts_side_reservation_beats_side
+    starts_side_empty_side_falls_back
+    starts_side_quota_capped_by_eligible
+    starts_side_any_team_kept_off_chosen_side
+    lobby_team_side_clamps_and_rejects_non_host
+    lobby_side_change_repicks_everyone
+    lobby_unassign_and_team_side_claims
+    lobby_map_change_releases_off_side
+    lobby_non_host_off_side_claim_rejected
+    lobby_any_team_claim_kept_off_chosen_side
+    starts_side_end_to_end_four_v_twelve
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
@@ -4347,6 +4382,11 @@ set(_unit_test_names
     skin_active_vs_requested
     skin_workshop_id_roundtrip
     skin_density_scan
+    sheet_bleed_edges
+    sheet_no_key_under_alpha
+    bmp_sheet_no_key_under_alpha
+    sound_variant_pool_names
+    sound_variant_load_compaction
     pascal_string_lengths
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip

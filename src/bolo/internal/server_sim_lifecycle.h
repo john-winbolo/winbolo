@@ -149,12 +149,14 @@ void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
 
 /* Apply a team-metadata change atomically — write color, naming pool
  * (with the in-use-pool rewrite when another team owns the requested
- * pool), and name, publish CTRL_LOBBY_TEAM_META, and clear humans'
- * ready state. Callers (UDP PACKET_LOBBY_TEAM_META handler, SP-host
- * clientSimNetSendLobbyTeamMeta) just hand over the validated payload.
- * nameLen 0 leaves the team's name empty. */
+ * pool), start side (a value outside the START_SIDE_* range is stored
+ * as START_SIDE_ANY), and name, publish CTRL_LOBBY_TEAM_META, and clear
+ * humans' ready state. Callers (UDP PACKET_LOBBY_TEAM_META handler,
+ * SP-host clientSimNetSendLobbyTeamMeta) just hand over the validated
+ * payload. nameLen 0 leaves the team's name empty. */
 void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t color, uint8_t namingPool,
+                           uint8_t startSide,
                            const uint8_t *name, uint8_t nameLen);
 
 /* Clear a team's metadata back to zero (in_use=0, color=0, pool=0,

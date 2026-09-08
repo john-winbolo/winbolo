@@ -120,6 +120,35 @@ int tileLoaderSheetDensityFromBmp(const void *buf, size_t len);
 bool tileLoaderIsSheetKeyColor(Uint8 r, Uint8 g, Uint8 b);
 
 /*********************************************************
+ * NAME:          tileLoaderBleedEdges
+ * PURPOSE:
+ *   Takes the colour out from under the transparency of an
+ *   RGBA32 surface: every fully transparent texel in `clip`
+ *   gives up whatever RGB its source left there and takes
+ *   the average of the neighbours that do carry colour.
+ *   Alpha is not touched, so nothing about what the sprite
+ *   covers changes - only what a sampler finds when it
+ *   blends across the sprite's edge.
+ *
+ *   Needed because transparent does not mean colourless.
+ *   The PNGs under data/svg store the key colour under
+ *   alpha 0 and the BMP path leaves black behind, so a
+ *   bilinear sample
+ *   straddling a sprite's edge comes out part sprite, part
+ *   green (or part black).  Bleeding the sprite's own
+ *   colour outward is what makes the edge blend to itself.
+ *
+ *   `clip` NULL covers the whole surface.  Pass a slot rect
+ *   for a packed atlas: the sheet's sprites sit edge to
+ *   edge, so a whole-sheet pass would bleed each one into
+ *   its neighbours.
+ *
+ *   Silently does nothing for a surface that is not RGBA32,
+ *   which is the same guard reduceSheetSprite uses.
+ *********************************************************/
+void tileLoaderBleedEdges(SDL_Surface *rgba, const SDL_Rect *clip);
+
+/*********************************************************
  * NAME:          tileLoaderScanDensity
  * PURPOSE:
  *   Records which densities a skin can serve, per density

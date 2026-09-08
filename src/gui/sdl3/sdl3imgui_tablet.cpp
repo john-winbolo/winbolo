@@ -690,6 +690,10 @@ static void renderFireMineButtons(void) {
     ImVec2 tUv0((float)TANK_SELF_4_X / TILESHEET_W, (float)TANK_SELF_4_Y / TILESHEET_H);
     ImVec2 tUv1((float)(TANK_SELF_4_X + TILE_SIZE_X) / TILESHEET_W,
                 (float)(TANK_SELF_4_Y + TILE_SIZE_Y) / TILESHEET_H);
+    /* The live sheet, drawn through ImGui, so the bracket both point-samples
+       this pixel art and keeps the backend from leaving the map's own
+       drawing on the sampler it bound with. */
+    imguiPushNearestSamplingOn(dl);
     dl->AddImage((ImTextureID)fireTilesTex, tMin, tMax, tUv0, tUv1, tint);
 
     /* Two shells to the right of the tank */
@@ -709,6 +713,7 @@ static void renderFireMineButtons(void) {
                  ImVec2(shellX + shellW * 0.5f, cy - shellH * 0.5f + shellH * 0.4f),
                  ImVec2(shellX + shellW * 1.5f, cy + shellH * 0.5f + shellH * 0.4f),
                  sUv0, sUv1, tint);
+    imguiPopNearestSamplingOn(dl);
   }
 
   /* Mine button */
@@ -726,7 +731,9 @@ static void renderFireMineButtons(void) {
     ImVec2 uv1((float)(MINE_X + TILE_SIZE_X) / TILESHEET_W,
                 (float)(MINE_Y + TILE_SIZE_Y) / TILESHEET_H);
     ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), mineAlpha);
+    imguiPushNearestSamplingOn(dl);
     dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+    imguiPopNearestSamplingOn(dl);
   }
 }
 
@@ -828,7 +835,9 @@ static void renderViewButtons(ClientSim *cs) {
       ImVec2 uv1((float)(b.tileX + TILE_SIZE_X) / TILESHEET_W,
                   (float)(b.tileY + TILE_SIZE_Y) / TILESHEET_H);
       ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+      imguiPushNearestSamplingOn(dl);
       dl->AddImage((ImTextureID)tilesTex, pMin, pMax, uv0, uv1, tint);
+      imguiPopNearestSamplingOn(dl);
     }
   }
 }
@@ -894,10 +903,12 @@ static void renderBuildSelectBar(ClientSim *cs) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 0.8f));
       }
 
+      imguiPushNearestSampling();
       if (ImGui::ImageButton(ids[i], (ImTextureID)tilesTex,
                               ImVec2(iconSize, iconSize), uv0, uv1)) {
         clientSimSetCurrentBuildSelect(cs, values[i]);
       }
+      imguiPopNearestSampling();
       imguiHandOnHover();
 
       /* Touch tap fallback — ImGui buttons may not register finger events on iOS */

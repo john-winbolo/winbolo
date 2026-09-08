@@ -1490,6 +1490,8 @@ STR_STARTPICK_YOU=du
 STR_STARTPICK_SWAP_WITH=Byt den här startplatsen med:
 STR_STARTPICK_ASSIGN_TO=Tilldela startplats till:
 STR_STARTPICK_SLOT_FALLBACK=(plats)
+STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nInte på ditt lags sida
+STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nOffside för {string1}
 
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=AI-spelare
@@ -2003,3 +2005,21 @@ STR_ITEMVIEW_ALLY_NAMED=Vy för allierade tanks — {player}
 STR_DLGBROWSER_VIEWS_LBL=Vyer:
 STR_DLGBROWSER_VIEWS_CLASSIC=Klassiskt
 STR_DLGBROWSER_VIEWS_ALLYTREES=Allierade i skogen
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Start:
+STR_DLGLOBBY_SIDE_ANY=Valfri
+STR_DLGLOBBY_SIDE_N=Norr
+STR_DLGLOBBY_SIDE_E=Öster
+STR_DLGLOBBY_SIDE_S=Söder
+STR_DLGLOBBY_SIDE_W=Väster
+STR_DLGLOBBY_START_SEA=Hav
+STR_DLGLOBBY_START_TEAM_SIDE=Lagsida
+STR_DLGLOBBY_START_AUTO=Automatisk
+STR_DLGLOBBY_START_UNASSIGN=Släpp
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(offside)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startplatser för {number2} spelare — {number3} börjar till havs.\nAtt byta sida tilldelar varje spelare en ny start.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Alla starter det här laget kan använda är upptagna, så den här\nspelaren börjar till havs bredvid en lagkamrats start.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Offside: den här starten ligger inte på {string1}, lagets sida.\nVärden valde den åt den här spelaren.
+
+STR_SOUND_LOAD_FAILED=Fel vid inläsning av ljudeffekter

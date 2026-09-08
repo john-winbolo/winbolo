@@ -1486,6 +1486,8 @@ STR_STARTPICK_YOU=ty
 STR_STARTPICK_SWAP_WITH=Zamień ten start z:
 STR_STARTPICK_ASSIGN_TO=Przypisz start do:
 STR_STARTPICK_SLOT_FALLBACK=(slot)
+STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nNie na stronie twojej drużyny
+STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nPoza stroną dla {string1}
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=Gracz AI
 STR_PLATFORM_WINDOWS=Windows
@@ -1997,3 +1999,21 @@ STR_ITEMVIEW_ALLY_NAMED=Widok sojuszniczych czołgów — {player}
 STR_DLGBROWSER_VIEWS_LBL=Widoki:
 STR_DLGBROWSER_VIEWS_CLASSIC=Klasyczny
 STR_DLGBROWSER_VIEWS_ALLYTREES=Sojusznicy w lesie
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Start:
+STR_DLGLOBBY_SIDE_ANY=Dowolna
+STR_DLGLOBBY_SIDE_N=Północ
+STR_DLGLOBBY_SIDE_E=Wschód
+STR_DLGLOBBY_SIDE_S=Południe
+STR_DLGLOBBY_SIDE_W=Zachód
+STR_DLGLOBBY_START_SEA=Morze
+STR_DLGLOBBY_START_TEAM_SIDE=Strona drużyny
+STR_DLGLOBBY_START_AUTO=Auto
+STR_DLGLOBBY_START_UNASSIGN=Zrezygnuj
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(poza stroną)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startów dla {number2} graczy — {number3} z nich zacznie w morzu.\nZmiana strony przydziela na nowo start każdego gracza.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Wszystkie starty dostępne dla tej drużyny są zajęte, więc ten gracz\nzacznie w morzu obok startu kolegi z drużyny.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Poza stroną: ten start nie znajduje się na {string1}, stronie drużyny.\nGospodarz wybrał go dla tego gracza.
+
+STR_SOUND_LOAD_FAILED=Błąd ładowania efektów dźwiękowych

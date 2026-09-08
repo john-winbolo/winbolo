@@ -29,9 +29,11 @@
 
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* ServerInstanceConfig, the settings mutators, serverSimGetTeamMetaMut / serverSimGetBotConfigMut */
+#include "server_sim_join.h"        /* serverSimRepickAllLobbyStarts — the start re-pick when a team's side changes */
 #include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
 #include "wire_limits.h"            /* the LST_* selectors carried in PACKET_LOBBY_SET_SETTING */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolCount — the per-team naming-pool uniqueness pass */
+#include "start_sides.h"            /* START_SIDE_ANY / START_SIDE_COUNT — the team start-side range */
 
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
   sim->sim.viewPlayer = cfg->viewPlayer;
@@ -203,12 +205,17 @@ void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
 
 void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t color, uint8_t namingPool,
+                           uint8_t startSide,
                            const uint8_t *name, uint8_t nameLen) {
     if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
     TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
     if (t == NULL) return;
+    uint8_t prevSide = t->startSide;
     t->in_use = 1;
     t->color = color;
+    /* A side outside the START_SIDE_* range means no side. */
+    if (startSide >= START_SIDE_COUNT) startSide = START_SIDE_ANY;
+    t->startSide = startSide;
     /* Per-team uniqueness on namingPool: if another in_use team
      * already owns this pool, pick the lowest pool index not
      * used by any other team. Falls back to the requested value
@@ -245,16 +252,27 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
         memcpy(t->name, name, nameLen);
     }
     serverSimPublishLobbyTeamMeta(sim, teamId);
+    /* A side change moves every reservation, picks included, so the lobby
+     * ends up as if everyone had joined after the sides were set. */
+    if (prevSide != startSide) {
+        serverSimRepickAllLobbyStarts(sim);
+    }
     lobbyAutoUnreadyOnChange(sim);
 }
 
 void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId) {
     if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
     TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+    bool hadSide = false;
     if (t != NULL) {
+        hadSide = (t->startSide != START_SIDE_ANY);
         memset(t, 0, sizeof(TeamMetadata));
     }
     serverSimPublishLobbyTeamMeta(sim, teamId);
+    /* Zeroing the struct drops the side too; that is a side change. */
+    if (hadSide) {
+        serverSimRepickAllLobbyStarts(sim);
+    }
     lobbyAutoUnreadyOnChange(sim);
 }
 

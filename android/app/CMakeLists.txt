@@ -253,6 +253,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c
     ${PROJ_ROOT}/src/gui/sdl3/sound.c
+    ${PROJ_ROOT}/src/gui/sdl3/sound_variants.c
 
     # Shared map-gen controls used by the map chooser dialog (not the
     # full map editor — this file matches what the iOS build pulls in).
