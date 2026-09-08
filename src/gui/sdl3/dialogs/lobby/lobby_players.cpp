@@ -1702,6 +1702,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     uint8_t sIdx = cslot->startIdx;
                     const BYTE teamSide   = lobbyTeamSide(cs, teamId);
                     const bool hasSide    = startSideBits(teamSide) != 0;
+                    const BYTE closedMask = lobbyClosedMaskForTeam(cs, teamId);
                     const bool holdsStart = cslot->connected && sIdx != 0xFF &&
                                             sIdx <= MAX_STARTS &&
                                             lobbyMapPreview()->startCompassId[sIdx] != 0;
@@ -1804,25 +1805,26 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                         if (!startOpen) {
                             startCellTooltip();
                         } else {
-                            /* Starts in three groups: the team's own side,
-                             * then the centre band, then — host only, after
-                             * a separator — the starts the side rejects, each
+                            /* Starts in three groups: the starts the team may
+                             * hold on its own side, then the centre band,
+                             * then — host only, after a separator — the
+                             * starts the side rules keep the team off, each
                              * marked off-side. A player picking for
                              * themselves never sees that last group: the
                              * server rejects such a claim with
-                             * CMD_REJECT_INVALID. An Any team has no side, so
-                             * every start is in the first group. */
+                             * CMD_REJECT_INVALID. An Any team has no side of
+                             * its own, so its first group is every start off
+                             * the sides the other teams chose and the centre
+                             * group is empty. */
                             bool offSideSep = false;
                             for (int group = 0; group < 3; group++) {
-                                if (group == 2 && !(effectiveHost && hasSide)) break;
+                                if (group == 2 && !effectiveHost) break;
                                 for (int k = 1; k <= MAX_STARTS; k++) {
                                     if (lobbyMapPreview()->startCompassId[k] == 0) continue;
+                                    BYTE mask = lobbyStartSideMask(k);
                                     int kGroup = 0;
-                                    if (hasSide) {
-                                        BYTE mask = lobbyStartSideMask(k);
-                                        if (startSideIsCentre(mask))                kGroup = 1;
-                                        else if (!startSideAccepts(mask, teamSide)) kGroup = 2;
-                                    }
+                                    if (lobbyStartOffSideMasked(mask, teamSide, closedMask)) kGroup = 2;
+                                    else if (hasSide && startSideIsCentre(mask))          kGroup = 1;
                                     if (kGroup != group) continue;
                                     /* Connected holder of start k, if any. */
                                     int holder = lobbyStartHolderSlot(cs, k);

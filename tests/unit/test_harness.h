@@ -695,6 +695,7 @@ int run_lobby_side_change_repicks_everyone(void);
 int run_lobby_unassign_and_team_side_claims(void);
 int run_lobby_map_change_releases_off_side(void);
 int run_lobby_non_host_off_side_claim_rejected(void);
+int run_lobby_any_team_claim_kept_off_chosen_side(void);
 
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north

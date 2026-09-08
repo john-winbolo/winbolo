@@ -27,9 +27,9 @@
 #include "playername_validate.h"      /* playerNameValidate, playerNameCompare */
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
-#include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask */
+#include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
-#include "start_sides.h"              /* startSideAccepts — the claim command's side check */
+#include "start_sides.h"              /* startSideEligible — the claim command's side check */
 #include "threads.h"
 #include "../common/wb_log.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
@@ -49,6 +49,17 @@ static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
     BYTE t = lp ? lp->teamNumber : 0;
     if (t == 0 || t >= MAX_TANKS) return START_SIDE_ANY;
     return sim->teams[t].startSide;
+}
+
+/* Whether a slot may hold a 1-based start under the side rules: the same
+ * question the lobby pick, the map-change release and the batch placement
+ * ask, so a claim can never land a slot on a start the next lobby event
+ * would take away again. A side team takes what its side accepts; a slot
+ * with no side stays off the sides the other teams present chose. */
+static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
+    return startSideEligible(serverSimLobbyStartSideMask(sim, idx1),
+                             lobbySlotStartSide(sim, slot),
+                             serverSimLobbyClosedMaskFor(sim, slot));
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
@@ -95,11 +106,10 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if ((int)target != senderSlot && !isHost) {
             return CMD_REJECT_NOT_HOST;
         }
-        /* A player picking for themselves may take only a start their
-         * team's side accepts; the host may hand anyone any start. */
+        /* A player picking for themselves may take only a start the side
+         * rules let their slot hold; the host may hand anyone any start. */
         if (!isHost && idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
-            !startSideAccepts(serverSimLobbyStartSideMask(sim, idx),
-                              lobbySlotStartSide(sim, target))) {
+            !lobbySlotMayHoldStart(sim, target, idx)) {
             return CMD_REJECT_INVALID;
         }
         if (idx == START_CLAIM_TEAM_SIDE) {
@@ -128,11 +138,9 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             serverSimSetLobbyStartIdx(sim, target, idx);
             serverSimSetLobbyStartIdx(sim, holder, oldTarget);
             /* The displaced holder inherits the assignee's old start. When
-             * that is none, or one the holder's side rejects, pick the
+             * that is none, or one the holder's side rules reject, pick the
              * holder a fresh start now instead. */
-            if (oldTarget == 0xFF ||
-                !startSideAccepts(serverSimLobbyStartSideMask(sim, oldTarget),
-                                  lobbySlotStartSide(sim, holder))) {
+            if (oldTarget == 0xFF || !lobbySlotMayHoldStart(sim, holder, oldTarget)) {
                 serverSimAssignLobbyStartOnJoin(sim, holder);
             }
             serverSimPublishLobbySlot(sim, target);

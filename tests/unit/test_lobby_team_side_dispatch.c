@@ -576,3 +576,73 @@ int run_lobby_non_host_off_side_claim_rejected(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* (21) Team 1 side N with the host on it; a non-host on team 2 with no
+ *      side. The side rules keep a no-side team off the sides other teams
+ *      chose, so the non-host's own claim of a free north start is
+ *      INVALID — the same rule the lobby pick, the map-change release and
+ *      the batch apply, so a claim never lands a slot on a start the next
+ *      lobby event would drop. A free south start is fine. The host may
+ *      still put the non-host north; a host swap that would hand the
+ *      non-host a north start re-picks it south instead. */
+int run_lobby_any_team_claim_kept_off_chosen_side(void) {
+    ServerSim *sim = make_lobby();
+    UT_ASSERT(sim != NULL);
+    begin_layout(sim);
+    add_starts(sim, k_col_north, 4, true);   /* 1-based 1..4 */
+    add_starts(sim, k_col_south, 4, true);   /* 1-based 5..8 */
+
+    add_human(sim, 0, 1);
+    add_human(sim, 1, 2);
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+
+    BYTE n0 = start_of(sim, 0);
+    BYTE s1 = start_of(sim, 1);
+    UT_ASSERT_MSG(is_north(sim, n0), "host on the north team should hold a north start, holds %u",
+                  (unsigned)n0);
+    UT_ASSERT_MSG(is_south(sim, s1), "a no-side slot should be picked off the chosen north side, holds %u",
+                  (unsigned)s1);
+
+    BYTE freeNorth = 0;
+    BYTE freeSouth = 0;
+    {
+        BYTE i;
+        for (i = 1; i <= 4; i++) {
+            if (i != n0) { freeNorth = i; break; }
+        }
+        for (i = 5; i <= 8; i++) {
+            if (i != s1) { freeSouth = i; break; }
+        }
+    }
+    UT_ASSERT(freeNorth != 0 && freeSouth != 0);
+
+    /* Non-host self-claim of a free north start: rejected, nothing moves. */
+    UT_ASSERT_MSG(apply_claim(sim, 1, 1, freeNorth) == CMD_REJECT_INVALID,
+                  "a no-side slot must not take a start on the north team's side");
+    UT_ASSERT(start_of(sim, 1) == s1);
+
+    /* Non-host self-claim of a free south start: fine. */
+    UT_ASSERT(apply_claim(sim, 1, 1, freeSouth) == CMD_OK);
+    UT_ASSERT(start_of(sim, 1) == freeSouth);
+    s1 = freeSouth;
+
+    /* The host may hand the non-host the north start. */
+    UT_ASSERT(apply_claim(sim, 0, 1, freeNorth) == CMD_OK);
+    UT_ASSERT(start_of(sim, 1) == freeNorth);
+
+    /* Host swap: the host takes that north start back; the displaced
+     * no-side holder would inherit the host's other north start, which
+     * its rules reject, so it is re-picked onto a south start instead. */
+    UT_ASSERT(apply_claim(sim, 0, 0, freeNorth) == CMD_OK);
+    UT_ASSERT(start_of(sim, 0) == freeNorth);
+    {
+        BYTE r = start_of(sim, 1);
+        UT_ASSERT_MSG(r != n0,
+                      "displaced no-side holder was left on north start %u", (unsigned)n0);
+        UT_ASSERT_MSG(is_south(sim, r),
+                      "displaced no-side holder should be re-picked south, holds %u", (unsigned)r);
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}

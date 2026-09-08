@@ -177,11 +177,39 @@ static inline int lobbySlotTeam(ClientSim *cs, int slot) {
     return sl ? sl->teamNumber : 0;
 }
 
-/* True when teamId's side rejects a start with this mask — the claim the
- * server refuses when a member of that team picks it for themselves. A
- * team with no side rejects nothing, and a centre start is open to all. */
+/* Union of the START_SIDE_BIT_* chosen by every team other than teamId
+ * that has at least one connected member — the "teams present" rule the
+ * server's lobby start pick applies, so a team with a side and no
+ * players closes nothing. */
+static inline BYTE lobbyClosedMaskForTeam(ClientSim *cs, int teamId) {
+    BYTE closedMask = 0;
+    for (int k = 0; k < MAX_TANKS; k++) {
+        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+        if (!sl->connected) continue;
+        int t = sl->teamNumber;
+        if (t == 0 || t >= MAX_TANKS || t == teamId) continue;
+        closedMask |= startSideBits(clientSimGetLobbyTeamStartSide(cs, (BYTE)t));
+    }
+    return closedMask;
+}
+
+/* True when the side rules keep a team off a start with this mask — the
+ * claim the server refuses when a member of that team picks it for
+ * themselves, and the reservation it drops at the next side or map
+ * change. A side team is kept off the starts its side does not accept; a
+ * team with no side is kept off every side another team present chose; a
+ * centre start is open to all. side and closedMask are the team's
+ * lobbyTeamSide and lobbyClosedMaskForTeam, passed in so a loop over the
+ * starts computes them once. */
+static inline bool lobbyStartOffSideMasked(BYTE mask, BYTE side, BYTE closedMask) {
+    return !startSideEligible(mask, side, closedMask);
+}
+
+/* The same test for one start, looking the team's side and closed mask
+ * up. */
 static inline bool lobbyStartOffSide(ClientSim *cs, int teamId, BYTE mask) {
-    return !startSideAccepts(mask, lobbyTeamSide(cs, teamId));
+    return lobbyStartOffSideMasked(mask, lobbyTeamSide(cs, teamId),
+                                   lobbyClosedMaskForTeam(cs, teamId));
 }
 
 /* Lang id of a side's full name — the selector's entries. */
@@ -205,22 +233,6 @@ static inline int lobbySideCompassId(BYTE side) {
         case START_SIDE_W: return STR_COMPASS_W;
         default:           return 0;
     }
-}
-
-/* Union of the START_SIDE_BIT_* chosen by every team other than teamId
- * that has at least one connected member — the "teams present" rule the
- * server's lobby start pick applies, so a team with a side and no
- * players closes nothing. */
-static inline BYTE lobbyClosedMaskForTeam(ClientSim *cs, int teamId) {
-    BYTE closedMask = 0;
-    for (int k = 0; k < MAX_TANKS; k++) {
-        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
-        if (!sl->connected) continue;
-        int t = sl->teamNumber;
-        if (t == 0 || t >= MAX_TANKS || t == teamId) continue;
-        closedMask |= startSideBits(clientSimGetLobbyTeamStartSide(cs, (BYTE)t));
-    }
-    return closedMask;
 }
 
 /* A team's name as the player list's header shows it: the team's own name

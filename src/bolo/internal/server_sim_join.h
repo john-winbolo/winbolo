@@ -43,6 +43,14 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot);
  * The one lookup the claim command and the release below share. */
 BYTE serverSimLobbyStartSideMask(ServerSim *sim, BYTE idx1);
 
+/* Union of the START_SIDE_BIT_* every team other than the slot's own has
+ * chosen, counting only teams with at least one connected member — a team
+ * with a side and no players closes nothing, the same "teams present" rule
+ * startsAssignBatch applies. With the side mask above and the slot's team
+ * side, startSideEligible answers whether the slot may hold a start; the
+ * lobby pick, the release below and the claim command all ask it. */
+BYTE serverSimLobbyClosedMaskFor(const ServerSim *sim, BYTE slot);
+
 /* Drops the slot's reservation (to 0xFF) when the start it holds is not
  * one its team side allows under the sides the other teams present chose,
  * or when the index is off the current start list. Returns whether the

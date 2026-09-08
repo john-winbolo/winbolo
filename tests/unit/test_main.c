@@ -463,6 +463,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_unassign_and_team_side_claims",     run_lobby_unassign_and_team_side_claims     },
     { "lobby_map_change_releases_off_side",      run_lobby_map_change_releases_off_side      },
     { "lobby_non_host_off_side_claim_rejected",  run_lobby_non_host_off_side_claim_rejected  },
+    { "lobby_any_team_claim_kept_off_chosen_side", run_lobby_any_team_claim_kept_off_chosen_side },
     { "starts_side_end_to_end_four_v_twelve",    run_starts_side_end_to_end_four_v_twelve    },
     { "input_redundancy",                        run_input_redundancy                        },
     { "edge_send_predicate",                     run_edge_send_predicate                     },

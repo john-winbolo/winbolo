@@ -717,14 +717,12 @@ static BYTE lobbySlotSide(const ServerSim *sim, BYTE slot) {
     return sim->teams[t].startSide;
 }
 
-/* Union of the START_SIDE_BIT_* every team other than the slot's own has
- * chosen, counting only teams with at least one connected member — a team
- * with a side and no players closes nothing, the same "teams present" rule
- * startsAssignBatch applies. */
-static BYTE lobbyClosedMaskFor(const ServerSim *sim, BYTE slot) {
-    BYTE myTeam = sim->lobbyPlayers[slot].teamNumber;
+BYTE serverSimLobbyClosedMaskFor(const ServerSim *sim, BYTE slot) {
+    BYTE myTeam;
     BYTE closedMask = 0;
     BYTE k;
+    if (sim == NULL || slot >= MAX_TANKS) return 0;
+    myTeam = sim->lobbyPlayers[slot].teamNumber;
     for (k = 0; k < MAX_TANKS; k++) {
         BYTE t;
         if (k == slot) continue;
@@ -804,7 +802,7 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
     picked = startsPickIncremental(&sim->sim, &sim->sim.ss, taken,
                                    teammateStarts0, teammateCount,
                                    lobbySlotSide(sim, slot),
-                                   lobbyClosedMaskFor(sim, slot));
+                                   serverSimLobbyClosedMaskFor(sim, slot));
     if (picked >= numStarts) {
         sim->lobbyPlayers[slot].startIdx = 0xFF;
     } else {
@@ -824,7 +822,7 @@ bool serverSimReleaseIneligibleStart(ServerSim *sim, BYTE slot) {
     if (r >= 1 && r <= numStarts &&
         startSideEligible(serverSimLobbyStartSideMask(sim, r),
                           lobbySlotSide(sim, slot),
-                          lobbyClosedMaskFor(sim, slot))) {
+                          serverSimLobbyClosedMaskFor(sim, slot))) {
         return false;
     }
     sim->lobbyPlayers[slot].startIdx = 0xFF;
