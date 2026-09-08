@@ -358,13 +358,42 @@ float voiceGetOutputVolume(void);
 /*********************************************************
 *NAME:          voiceGetInputLevel
 *PURPOSE:
-*  Returns the 0..1 RMS of the most recently captured frame,
-*  for the input level meter.
+*  Returns the raw 0..1 RMS amplitude of the most recently
+*  captured frame. This is the measurement itself: speech sits
+*  in the bottom tenth of the range, so it is the wrong number
+*  to draw a meter from. voiceGetInputMeter is that one.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
 float voiceGetInputLevel(void);
+
+/*********************************************************
+*NAME:          voiceGetInputMeter
+*PURPOSE:
+*  Returns the captured level as the 0..1 height a meter draws
+*  it at - the amplitude above spread over the bar in dB, with
+*  anything at or under VOICE_METER_FLOOR_DB reading empty.
+*  Every meter of the local microphone uses this.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetInputMeter(void);
+
+/*********************************************************
+*NAME:          voiceGetInputPeak
+*PURPOSE:
+*  Returns the recent peak of the captured level, held and then
+*  decayed so a transient stays readable instead of passing by
+*  in one frame. Falls back to the live level once nothing
+*  louder is held. In meter heights, like voiceGetInputMeter,
+*  so it can be drawn against the same bar.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetInputPeak(void);
 
 /*********************************************************
 *NAME:          voiceRecordingDeviceCount

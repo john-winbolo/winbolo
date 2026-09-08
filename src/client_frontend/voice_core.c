@@ -25,6 +25,7 @@
 #include "voice_core.h"
 
 #include <opus.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -442,4 +443,86 @@ int voiceDeviceResolveName(const char *saved, const char *const *names,
     }
 
     return -1;
+}
+
+/* The level meter's peak.  A single frame's RMS is only true for the 20 ms it
+ * was measured over, so the drawn value holds the loudest reading for a while
+ * and then falls back to what is live now.  The clock arrives as an argument
+ * rather than being read here: the caller already has one, and the test drives
+ * this with no clock at all. */
+float voicePeakUpdate(VoicePeak *p, float level, uint32_t nowMs) {
+    float elapsedSec;
+
+    if (p == NULL) {
+        return 0.0f;
+    }
+
+    /* Clamped before it reaches the state, so one reading from outside the
+     * range cannot leave a peak that never comes back down. */
+    if (level < 0.0f) {
+        level = 0.0f;
+    } else if (level > 1.0f) {
+        level = 1.0f;
+    }
+
+    if (level >= p->peak) {
+        /* Louder than what is held, so this becomes the peak and the hold
+         * starts again from here.  A zeroed struct takes this branch on its
+         * first call, which is what sets lastMs before any decay reads it. */
+        p->peak = level;
+        p->holdSinceMs = nowMs;
+    } else {
+        /* Unsigned subtraction, so the hold is measured correctly across the
+         * clock's 32-bit wrap. */
+        if ((uint32_t)(nowMs - p->holdSinceMs) >= VOICE_PEAK_HOLD_MS) {
+            elapsedSec = (float)(uint32_t)(nowMs - p->lastMs) / 1000.0f;
+            p->peak -= VOICE_PEAK_DECAY_PER_SEC * elapsedSec;
+            /* It falls to the live level and no further: below that it would
+             * read as the peak dropping through the bar it sits over. */
+            if (p->peak < level) {
+                p->peak = level;
+            }
+            if (p->peak < 0.0f) {
+                p->peak = 0.0f;
+            }
+        }
+    }
+
+    p->lastMs = nowMs;
+    return p->peak;
+}
+
+/* Amplitude to the height it is drawn at.  A meter fed the amplitude straight
+ * spends nine tenths of its travel on levels nobody speaks at, so the bottom
+ * of it does all the work and normal speech barely lifts off the floor.  The
+ * conversion is done in dB instead, which is how a level meter is read: the
+ * quiet end gets the room it needs and full scale still reads full. */
+float voiceMeterScale(float level) {
+    float db;
+    float scaled;
+
+    if (level < 0.0f) {
+        level = 0.0f;
+    } else if (level > 1.0f) {
+        level = 1.0f;
+    }
+
+    /* Ahead of the logarithm, which has no answer for zero. */
+    if (level <= 0.0f) {
+        return 0.0f;
+    }
+
+    db = 20.0f * log10f(level);
+    if (db <= VOICE_METER_FLOOR_DB) {
+        return 0.0f;
+    }
+
+    scaled = (db - VOICE_METER_FLOOR_DB) / (0.0f - VOICE_METER_FLOOR_DB);
+    if (scaled < 0.0f) {
+        scaled = 0.0f;
+    } else if (scaled > 1.0f) {
+        scaled = 1.0f;
+    }
+
+    return scaled;
 }

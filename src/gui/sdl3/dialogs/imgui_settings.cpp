@@ -1618,7 +1618,7 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     {
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
         ImGui::SameLine();
-        ImGui::ProgressBar(voiceGetInputLevel(), ImVec2(200.0f, 0.0f));
+        ImGui::ProgressBar(voiceGetInputMeter(), ImVec2(200.0f, 0.0f));
         ImGui::SameLine();
         /* Spelt out both ways rather than a colour that only means something
            to players who can tell the two greens apart. */

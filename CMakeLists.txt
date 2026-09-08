@@ -3663,6 +3663,7 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/client_frontend/voice_core.c
     tests/unit/test_voice_core.c
     tests/unit/test_voice_device.c
+    tests/unit/test_voice_peak.c
     tests/unit/test_voice_jitter.c
     tests/unit/test_voice_jitter_loss.c
     tests/unit/test_voice_flood_cap.c
@@ -4329,6 +4330,7 @@ set(_unit_test_names
     bot_pool_wire_chunk_transport
     voice_core_roundtrip
     voice_device_resolve
+    voice_peak
     voice_segment_roundtrip
     voice_segment_rejects_malformed
     voice_jitter_ordering_and_plc

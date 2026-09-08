@@ -78,7 +78,7 @@
 #include "macos_pinch.h"
 #include "../lang.h"
 #if defined(WINBOLO_VOICE)
-#include "../voice.h"        /* own mute state for the microphone indicator */
+#include "../voice.h"        /* own mute state and level for the mic indicator */
 #endif
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
@@ -205,8 +205,11 @@ static char               gOverviewPrepLabel[128];
 static bool               gOverviewPrepHaveLabel = FALSE;
 /* Whether the microphone indicator belongs on this frame and what it should
    say, read from the voice module by the first half for the same reason. */
-static bool               gOverviewPrepVoiceWanted = FALSE;
-static bool               gOverviewPrepVoiceMuted  = FALSE;
+static bool               gOverviewPrepVoiceWanted       = FALSE;
+static bool               gOverviewPrepVoiceMuted        = FALSE;
+static bool               gOverviewPrepVoiceTransmitting = FALSE;
+static float              gOverviewPrepVoiceLevel        = 0.0f;
+static float              gOverviewPrepVoicePeak         = 0.0f;
 
 #if defined(WINBOLO_VOICE)
 /* The microphone indicator's two icons, textured on this window's renderer at
@@ -246,20 +249,39 @@ static SDL_Texture *micIndicatorTex(bool muted, int px) {
   return *slot;
 }
 
+/* Everything one draw of the indicator says, in one place so neither call site
+   grows a row of loose booleans. level and peak are the microphone's own, 0..1;
+   they are ignored while muted. */
+typedef struct {
+  bool  muted;
+  bool  transmitting;
+  float level;   /* 0..1, the live capture level */
+  float peak;    /* 0..1, the held peak          */
+} MicIndicatorState;
+
 /* The indicator itself, in the players panel's vocabulary: muted is the barred
    microphone in the panel's red, live is the plain one held back so the player
    learns where it is before they need it. opacity carries whatever the
    panel around it is drawn at, so the icon fades with it. Drawn at (x, y) at
    the texture's own size rather than the size asked for, which are the same
-   number unless the rasterizer clamped it — either way nothing is resampled. */
-static void micIndicatorDraw(float x, float y, int px, bool muted,
-                             Uint8 opacity) {
-  SDL_Texture *tex = micIndicatorTex(muted, px);
+   number unless the rasterizer clamped it — either way nothing is resampled.
+
+   Live, the same glyph is drawn again over itself filling from the bottom with
+   the capture level, and once more as a band at the peak's height. Source rows
+   and destination rows are cut together off a texture that is already at the
+   drawn size, so the fill takes the microphone's own shape rather than sitting
+   over it as a rectangle.
+
+   Muted fills nothing. The red barred microphone is the whole message there,
+   and a level climbing up it says the opposite at the same time. */
+static void micIndicatorDraw(float x, float y, int px,
+                             const MicIndicatorState *st, Uint8 opacity) {
+  SDL_Texture *tex = micIndicatorTex(st->muted, px);
   if (!tex) return;
   float texW = (float)px, texH = (float)px;
   SDL_GetTextureSize(tex, &texW, &texH);
   SDL_FRect dst = { x, y, texW, texH };
-  if (muted) {
+  if (st->muted) {
     SDL_SetTextureColorMod(tex, 255, 89, 89);
     SDL_SetTextureAlphaMod(tex, opacity);
   } else {
@@ -267,6 +289,59 @@ static void micIndicatorDraw(float x, float y, int px, bool muted,
     SDL_SetTextureAlphaMod(tex, (Uint8)(((int)opacity * 102) / 255));
   }
   SDL_RenderTexture(gRenderer, tex, NULL, &dst);
+
+  if (!st->muted) {
+    /* The players panel's talking green while the frame is actually going out,
+       white while it is only being measured — so how loud you are and whether
+       anyone can hear it both come off the one icon. */
+    Uint8 fillR = 255, fillG = 255, fillB = 255;
+    if (st->transmitting) {
+      fillR = 77;
+      fillG = 255;
+      fillB = 102;
+    }
+
+    float level = st->level;
+    float peak  = st->peak;
+    if (level < 0.0f) level = 0.0f;
+    if (level > 1.0f) level = 1.0f;
+    if (peak < 0.0f) peak = 0.0f;
+    if (peak > 1.0f) peak = 1.0f;
+
+    SDL_SetTextureColorMod(tex, fillR, fillG, fillB);
+    /* Full opacity relative to the panel, not absolute. The base glyph above is
+       held back to opacity * 102 / 255, so the fill still reads as the brighter
+       part at every setting, while a status panel the player has made
+       translucent fades the level with it instead of leaving it solid over a
+       faded microphone. */
+    SDL_SetTextureAlphaMod(tex, opacity);
+
+    float fillH = roundf(texH * level);
+    if (fillH >= 1.0f) {
+      SDL_FRect src = { 0.0f, texH - fillH, texW, fillH };
+      SDL_FRect box = { x, y + texH - fillH, texW, fillH };
+      SDL_RenderTexture(gRenderer, tex, &src, &box);
+    }
+
+    if (peak > 0.0f) {
+      /* A band rather than a line: a single row disappears at the sizes the
+         classic view draws this at. Its top edge sits at the peak's height and
+         it extends downward, so a peak that has caught up with the live level
+         disappears into the top of the fill rather than standing a band above
+         it, and a peak still above the level floats clear of the fill with a
+         gap between them. Held inside the icon at both ends: a peak of 1.0 does
+         not read off the top, and one near zero does not hang off the bottom. */
+      float bandH = roundf(texH / 16.0f);
+      if (bandH < 1.0f) bandH = 1.0f;
+      float bandY = texH - roundf(texH * peak);
+      if (bandY < 0.0f) bandY = 0.0f;
+      if (bandY > texH - bandH) bandY = texH - bandH;
+      SDL_FRect src = { 0.0f, bandY, texW, bandH };
+      SDL_FRect box = { x, y + bandY, texW, bandH };
+      SDL_RenderTexture(gRenderer, tex, &src, &box);
+    }
+  }
+
   SDL_SetTextureColorMod(tex, 255, 255, 255);
   SDL_SetTextureAlphaMod(tex, 255);
 }
@@ -2104,11 +2179,17 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      voice: on any other an indicator says nothing, and the column comes out a
      row shorter rather than carrying a gap where one would have gone. */
 #if defined(WINBOLO_VOICE)
-  bool voiceWanted = voiceIsEnabled() && voiceConnectionCarriesVoice();
-  bool voiceMuted  = voiceIsSelfMuted();
+  bool  voiceWanted       = voiceIsEnabled() && voiceConnectionCarriesVoice();
+  bool  voiceMuted        = voiceIsSelfMuted();
+  bool  voiceTransmitting = voiceIsTransmitting();
+  float voiceLevel        = voiceGetInputMeter();
+  float voicePeak         = voiceGetInputPeak();
 #else
-  bool voiceWanted = FALSE;
-  bool voiceMuted  = FALSE;
+  bool  voiceWanted       = FALSE;
+  bool  voiceMuted        = FALSE;
+  bool  voiceTransmitting = FALSE;
+  float voiceLevel        = 0.0f;
+  float voicePeak         = 0.0f;
 #endif
 
   /* What the panels cover, before the draw that has to work around it: a tank
@@ -2150,8 +2231,11 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
       sdl3DrawGetItemViewLabel(cs, gOverviewPrepLabel,
                                sizeof(gOverviewPrepLabel));
 
-  gOverviewPrepVoiceWanted = voiceWanted;
-  gOverviewPrepVoiceMuted  = voiceMuted;
+  gOverviewPrepVoiceWanted       = voiceWanted;
+  gOverviewPrepVoiceMuted        = voiceMuted;
+  gOverviewPrepVoiceTransmitting = voiceTransmitting;
+  gOverviewPrepVoiceLevel        = voiceLevel;
+  gOverviewPrepVoicePeak         = voicePeak;
 
   gOverviewPrepW       = w;
   gOverviewPrepH       = h;
@@ -2384,8 +2468,9 @@ void sdl3DrawFlushOverviewInWindow(void) {
     }
 
 #if defined(WINBOLO_VOICE)
-    /* Whether your own microphone is muted. Full screen has no menu bar, so
-       this is the only place the mute key has anything to show for itself.
+    /* Whether your own microphone is muted, and how loud you are into it.
+       Full screen has no menu bar, so this is the only place the mute key has
+       anything to show for itself.
 
        The layout works in floats, as it must to keep the column's one scale
        across every row. The icon is rasterized at a whole number of pixels
@@ -2398,8 +2483,14 @@ void sdl3DrawFlushOverviewInWindow(void) {
       if (px > 0) {
         float x = originX + e->dstX + (e->dstW - (float)px) * 0.5f;
         float y = originY + e->dstY + (e->dstH - (float)px) * 0.5f;
-        micIndicatorDraw(roundf(x), roundf(y), px,
-                         gOverviewPrepVoiceMuted, colAlpha);
+        /* Read off what the first half stashed. This half asks the voice
+           module nothing. */
+        MicIndicatorState mic;
+        mic.muted        = gOverviewPrepVoiceMuted;
+        mic.transmitting = gOverviewPrepVoiceTransmitting;
+        mic.level        = gOverviewPrepVoiceLevel;
+        mic.peak         = gOverviewPrepVoicePeak;
+        micIndicatorDraw(roundf(x), roundf(y), px, &mic, colAlpha);
       }
     }
 #endif
@@ -2909,23 +3000,28 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     sdl3RenderCachedText();
 
 #if defined(WINBOLO_VOICE)
-    /* Whether your own microphone is muted, in the flat grey band down the
-       right edge of the background art. Measured off background.bmp: x 497
-       to 514 inclusive is a solid 107,107,107 for the whole 325-line height,
-       the panel well's light bevel ends at 496 and nothing in positions.h
-       places anything past x 493, so the band is free. The icon takes 16 of
-       its 18 columns, a pixel clear either side, and is centred on the LGM
-       circle (MAN_STATUS_Y, MAN_STATUS_HEIGHT) so it reads as that row's
-       right-hand neighbour. Source pixels times an integer zoom, so the
-       position and the size are already whole numbers and nothing needs
+    /* Whether your own microphone is muted, and how loud you are into it, in
+       the flat grey band down the right edge of the background art. Measured
+       off background.bmp: x 497 to 514 inclusive is a solid 107,107,107 for
+       the whole 325-line height, the panel well's light bevel ends at 496 and
+       nothing in positions.h places anything past x 493, so the band is free.
+       The icon takes 16 of its 18 columns, a pixel clear either side, and is
+       centred on the LGM circle (MAN_STATUS_Y, MAN_STATUS_HEIGHT) so it reads
+       as that row's right-hand neighbour. Source pixels times an integer zoom,
+       so the position and the size are already whole numbers and nothing needs
        snapping. */
     if (voiceIsEnabled() && voiceConnectionCarriesVoice()) {
       const int micSrcX = 498;
       const int micSrcSize = 16;
       const int micSrcY = MAN_STATUS_Y + (MAN_STATUS_HEIGHT - micSrcSize) / 2;
+      MicIndicatorState mic;
+      mic.muted        = voiceIsSelfMuted();
+      mic.transmitting = voiceIsTransmitting();
+      mic.level        = voiceGetInputMeter();
+      mic.peak         = voiceGetInputPeak();
       micIndicatorDraw((float)(micSrcX * gZoomFactor),
                        (float)(micSrcY * gZoomFactor),
-                       micSrcSize * gZoomFactor, voiceIsSelfMuted(), 255);
+                       micSrcSize * gZoomFactor, &mic, 255);
     }
 #endif
   }

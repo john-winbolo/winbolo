@@ -1472,6 +1472,13 @@ int run_voice_core_roundtrip(void);
  * default. A hole in the list is stepped over. */
 int run_voice_device_resolve(void);
 
+/* Level meter peak (test_voice_peak.c): a spike sets the peak, it stands for
+ * the hold with the clock driven straight through the argument, then falls
+ * until it reaches the live level and follows it rather than dropping through
+ * it. A louder reading mid-fall replaces the peak and re-arms the hold, and a
+ * level from outside 0..1 is clamped before it reaches the state. */
+int run_voice_peak(void);
+
 /* Voice segment framing (test_voice_segment.c): fields survive both
  * directions with the payload left pointing into the caller's buffer, and
  * every short, oversized, or out-of-range segment is refused. */

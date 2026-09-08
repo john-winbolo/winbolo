@@ -133,6 +133,14 @@ static float micGain = 1.0f;
 static float outputVolume = 1.0f;
 static float inputLevel = 0.0f;
 
+/* The held peak for the meter that draws inputLevel.  Kept in drawn-height
+ * units rather than amplitude - voiceMeterScale is applied before the peak
+ * sees a reading, so the hold and the decay run in the same space as the fill
+ * and the band lines up with it.  Fed from the capture loop so it sees every
+ * frame's level rather than the ones a draw happens to land on, and cleared
+ * wherever inputLevel is. */
+static VoicePeak inputPeak;
+
 /* The recording and playback devices the player chose, by display name, ""
  * for the system default.  Kept verbatim whether or not the device is present:
  * gameFrontPutPrefs reads them back out at save time, and a headset that is
@@ -277,6 +285,7 @@ static void stopCaptureIfIdle(void) {
      * burst of audio recorded before it was switched off. */
     voiceBackendCaptureStop();
     inputLevel = 0.0f;
+    memset(&inputPeak, 0, sizeof(inputPeak));
     gateOpen = false;
     gateHangover = 0;
 #if defined(WINBOLO_VOICE_AEC)
@@ -434,6 +443,7 @@ void voiceCleanup(void) {
     micGain = 1.0f;
     outputVolume = 1.0f;
     inputLevel = 0.0f;
+    memset(&inputPeak, 0, sizeof(inputPeak));
     warnedFrameTooLarge = false;
     isInitialised = false;
 }
@@ -936,13 +946,54 @@ static void applyOutputVolume(int16_t *pcm) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Returns the 0..1 RMS of the most recent captured frame.
+*  Returns the 0..1 RMS amplitude of the most recent
+*  captured frame. This is the measurement, not the height a
+*  meter draws it at - see voiceGetInputMeter for that.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
 float voiceGetInputLevel(void) {
     return inputLevel;
+}
+
+/*********************************************************
+*NAME:          voiceGetInputMeter
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the captured level as the 0..1 height a meter
+*  draws it at, which is the amplitude mapped into dB.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetInputMeter(void) {
+    return voiceMeterScale(inputLevel);
+}
+
+/*********************************************************
+*NAME:          voiceGetInputPeak
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the held peak over the captured level as a 0..1
+*  meter height, the same space voiceGetInputMeter is in
+*  rather than a raw amplitude.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetInputPeak(void) {
+    /* A getter that advances the state, which is worth a sentence: the decay
+     * is measured against the clock, and with the microphone shut or between
+     * captured frames nothing else feeds it, so the peak would stay frozen
+     * wherever the last frame left it.  Feeding the live level from here
+     * keeps it falling for as long as anyone is drawing it. */
+    return voicePeakUpdate(&inputPeak, voiceMeterScale(inputLevel),
+                           voiceBackendNowMs());
 }
 
 /*********************************************************
@@ -1670,6 +1721,13 @@ void voiceTick(struct ClientSim *cs) {
         if (inputLevel > 1.0f) {
             inputLevel = 1.0f;
         }
+        /* Every captured frame, not only the ones a draw asks about: the
+         * loudest frame of a syllable is what the peak is for, and at 50
+         * frames a second most of them go by between two draws.  Scaled on
+         * the way in, so the peak holds and decays in the units it is drawn
+         * in. */
+        voicePeakUpdate(&inputPeak, voiceMeterScale(inputLevel),
+                        voiceBackendNowMs());
 
 #if defined(WB_VOICEDEBUG)
         voiceDebugTap(VOICE_TAP_GAINED, 0, pcm);

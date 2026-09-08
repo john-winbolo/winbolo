@@ -149,6 +149,55 @@ void voiceSpeakerGetStats(const VoiceSpeaker *sp, VoiceSpeakerStats *out);
 int voiceDeviceResolveName(const char *saved, const char *const *names,
                            int count);
 
+#define VOICE_PEAK_HOLD_MS 600  /* how long a new maximum stands before it
+                                 * starts falling.  Capture runs at 50 frames
+                                 * a second, so without a hold the loudest
+                                 * frame of a syllable is on screen for 20 ms
+                                 * and nobody reads it.  600 ms carries the
+                                 * peak across a word and the gap after it,
+                                 * and is short enough that it still answers
+                                 * "how loud am I" rather than "how loud was
+                                 * I a moment ago"                          */
+#define VOICE_PEAK_DECAY_PER_SEC 1.2f /* how fast it falls once the hold is
+                                       * over, in level units per second.
+                                       * Full scale to silence takes a little
+                                       * over 800 ms - slow enough to follow
+                                       * by eye, quick enough that the peak
+                                       * has caught up with the live level
+                                       * before the next word starts      */
+
+/* A meter reading that holds its maximum and then falls back to the live
+ * level, so a transient stays readable at a glance instead of flickering past
+ * at the capture rate.  Zero-initialise it; the first update sets the peak. */
+typedef struct {
+    float    peak;         /* 0..1, held then decaying to the live level */
+    uint32_t holdSinceMs;  /* when the current peak was set             */
+    uint32_t lastMs;       /* the previous update, for the decay step    */
+} VoicePeak;
+
+/* Feed one level reading and return the peak to draw.  A new maximum replaces
+ * the peak and re-arms the hold; after the hold it falls linearly until it
+ * reaches the live level and then follows it.  nowMs is an argument so the
+ * caller owns the clock and this can be tested without one. */
+float voicePeakUpdate(VoicePeak *p, float level, uint32_t nowMs);
+
+/* Quietest level the meter shows, in dB relative to full scale.  Anything at
+ * or below it draws empty.  Chosen against what this project measures at 2.1x
+ * microphone gain: room noise reaches 0.0100 amplitude and the open-mic
+ * threshold is 0.013, which come out at 0.11 and 0.16 of the bar - low enough
+ * that a quiet room reads as very nearly empty, high enough that the threshold
+ * is visibly off the bottom.  Ordinary speech, 0.03 to 0.15, lands between a
+ * third and two thirds.  This is the one number to move if the meter still
+ * reads low, or sits too full in a silent room. */
+#define VOICE_METER_FLOOR_DB (-45.0f)
+
+/* Map a 0..1 RMS amplitude to the 0..1 height a meter draws it at.  Speech RMS
+ * sits in the bottom tenth of the amplitude range, so a bar fed the amplitude
+ * directly barely moves; this spreads it over the bar in dB, the way a level
+ * meter is read.  Silence and anything at or under the floor return 0, full
+ * scale returns 1. */
+float voiceMeterScale(float level);
+
 #ifdef __cplusplus
 }
 #endif

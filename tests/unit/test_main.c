@@ -636,6 +636,7 @@ static const UnitTestEntry s_tests[] = {
     { "addrparse_empty",                         run_addrparse_empty                         },
     { "voice_core_roundtrip",                    run_voice_core_roundtrip                    },
     { "voice_device_resolve",                    run_voice_device_resolve                    },
+    { "voice_peak",                              run_voice_peak                              },
     { "voice_segment_roundtrip",                 run_voice_segment_roundtrip                 },
     { "voice_segment_rejects_malformed",         run_voice_segment_rejects_malformed         },
     { "voice_jitter_ordering_and_plc",           run_voice_jitter_ordering_and_plc           },
