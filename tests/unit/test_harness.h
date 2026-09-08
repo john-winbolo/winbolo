@@ -864,6 +864,16 @@ int run_two_clients_full_sync_independent(void);
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
 
+/* Sound events (test_sound_delivery.c): the three sound events round-trip
+ * through packGameEvent / unpackGameEvent with their four-byte
+ * [soundId, mx, my, sourcePlayer] payload intact and nothing past it, and
+ * serverSimBuildSnapshot's sound block culls by distance at SDIST_NONE, skips
+ * a recipient's own shot, sends bubbles only to the player losing the ammo,
+ * sends a tank hit to the player hit at any range, and delivers
+ * manLayingMineNear along the listener's row out to SDIST_NONE. */
+int run_sound_event_codec(void);
+int run_sound_delivery_builder(void);
+
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
  * bases and tanks each grant a screen under always, nothing under off (and
@@ -1373,6 +1383,13 @@ int run_pill_shadow_withheld_crc_matches(void);
  * resync while the client is behind: the blob is its copy, not the live map. */
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
+
+/* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
+ * recipient whose only viewport rect is its own tank screen, the drain's
+ * rect-based cull drops a sound 30 squares away that the in-process builder
+ * delivers, passes one 10 squares away, and passes a tank hit on the recipient
+ * from 60 squares out. */
+int run_sound_delivery_wire_cull(void);
 
 /* Ally view over the loopback transport (test_view_ally_loopback.c): under
  * viewPolicyKey, with an allied in-process player parked outside every rect
