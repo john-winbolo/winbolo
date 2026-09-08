@@ -87,7 +87,7 @@
 #define ALLY_SEED 0xA11EEDu
 
 /* How far off the watcher's tank the ally is parked, in map squares. Well past
- * the 27-square half-width of a viewport rect. */
+ * the 19-square half-width of a viewport rect. */
 #define ALLY_FAR_MIN 40
 
 /* And how far off any pillbox. A neutral pill shoots anything within

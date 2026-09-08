@@ -864,6 +864,12 @@ int run_two_clients_full_sync_independent(void);
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
 
+/* Viewport extent (test_fx_viewport_cull.c): a recipient's own tank rect
+ * reaches SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN squares on every
+ * side and corner, covers the block the overview reveals round a tank, and
+ * stops one square past the extent. */
+int run_viewport_floor(void);
+
 /* Sound events (test_sound_delivery.c): the three sound events round-trip
  * through packGameEvent / unpackGameEvent with their four-byte payload intact
  * and nothing past it; serverSimBuildSnapshot's sound block culls by distance

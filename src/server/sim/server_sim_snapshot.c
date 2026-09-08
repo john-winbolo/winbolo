@@ -32,9 +32,28 @@
 #include "server_sim_internal.h"
 #include "../../common/wb_log.h"   /* WB_LOG_DEBUG — the one-shot clientFlags trace */
 
-/* Viewport culling — margin in map squares beyond the visible 15×15 screen */
+/* Viewport culling — margin in map squares beyond the visible 15×15 screen.
+ * Every rect reaches SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN
+ * squares from its centre, so the margin below puts the half-extent at 19 and
+ * each rect covers 39x39 squares.
+ *
+ * 19 is the overview's tank reveal block plus room for travel. The reveal block
+ * is OVERVIEW_TANK_HALF, which is 14 (overview_types.h): a client cannot draw
+ * ground it was never sent, so the cull can never be tighter than what the
+ * overview reveals. The main screen's own edge only reaches 13 squares from the
+ * tank under full autoscroll lead, so it is the reveal that sets the floor, not
+ * the screen.
+ *
+ * The five squares on top cover travel and interpolation slack. A tank's top
+ * speed is 3.125 map squares a second (MAP_SPEED_TROAD is 16 world units a
+ * move, at 50 moves a second, with 256 units to a square), so a 400 ms round
+ * trip is 1.25 squares — a tank driving at an edge was sent the ground ahead of
+ * it well before it gets there.
+ *
+ * 14 + 5 = 19, written as a margin on the screen half because that is the shape
+ * the rect builder wants: 19 - 7 = 12. */
 #define SNAPSHOT_SCREEN_SIZE 15
-#define SNAPSHOT_VIEWPORT_MARGIN 20
+#define SNAPSHOT_VIEWPORT_MARGIN 12
 
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
     int i;

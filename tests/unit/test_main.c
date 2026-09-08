@@ -472,6 +472,7 @@ static const UnitTestEntry s_tests[] = {
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
+    { "viewport_floor",                          run_viewport_floor                          },
     { "sound_event_codec",                       run_sound_event_codec                       },
     { "sound_delivery_builder",                  run_sound_delivery_builder                  },
     { "sound_payload_shape",                     run_sound_payload_shape                     },

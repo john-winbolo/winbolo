@@ -4000,6 +4000,7 @@ set(_unit_test_names
     base_armour_fog_of_war
     two_clients_full_sync_independent
     fx_viewport_cull
+    viewport_floor
     sound_event_codec
     sound_delivery_builder
     sound_payload_shape
