@@ -28,10 +28,13 @@
 #endif
 
 #if defined(WINBOLO_VOICE)
-/* Alpha the label's icons are drawn at, so they sit beside the name rather
- * than competing with it. The panel's tints carry their own opacity on top of
- * this one. */
-#define TANK_LABEL_ICON_ALPHA 170
+/* Alpha the voice glyphs are drawn at. They are drawn over their own shadow,
+ * like the name, so they are set at full strength rather than the flag's 170:
+ * the shadow is what makes them read over pale terrain, and dimming on top of
+ * it only takes the contrast back off. Self-muted sits a little below talking
+ * so the two are told apart by weight as well as by shape. */
+#define TANK_LABEL_VOICE_ALPHA      255
+#define TANK_LABEL_VOICE_ALPHA_DIM  200
 
 /* What a player's voice state puts beside their tank, or nothing. */
 typedef enum {
@@ -111,17 +114,16 @@ static SDL_Texture *voiceTexFor(TankLabelCache *c, SDL_Renderer *r,
     if (!*slot) return NULL;
 
     SDL_SetTextureBlendMode(*slot, SDL_BLENDMODE_BLEND);
-    /* The panel's colour, so dim means the same thing in both places. Talking
-     * keeps the plain glyph the label has always drawn: the panel dims that
-     * one only because it draws the level fill over it, and there is no fill
-     * here. */
+    /* The label's own alphas, not the players panel's tints: the panel's were
+     * picked against its dark background, and over the map the glyph has to
+     * carry itself. Talking is drawn at full strength, self-muted a step below
+     * it. */
     switch (which) {
         case TANK_VOICE_SELF_MUTED:
-            /* MIC_TINT_DIM: white at 40%, over the label's own alpha. */
-            SDL_SetTextureAlphaMod(*slot, (Uint8)(TANK_LABEL_ICON_ALPHA * 2 / 5));
+            SDL_SetTextureAlphaMod(*slot, TANK_LABEL_VOICE_ALPHA_DIM);
             break;
         default:
-            SDL_SetTextureAlphaMod(*slot, TANK_LABEL_ICON_ALPHA);
+            SDL_SetTextureAlphaMod(*slot, TANK_LABEL_VOICE_ALPHA);
             break;
     }
     return *slot;
@@ -276,7 +278,16 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
             if (voiceTex) {
                 float vw = 0.0f, vh = 0.0f;
                 SDL_GetTextureSize(voiceTex, &vw, &vh);
-                SDL_FRect sd = { iconX, y + (h - vh) * 0.5f, vw, vh };
+                /* Over the same black shadow the name uses, at the same
+                 * offset, so the glyph reads over sea and over road alike.
+                 * The colour mod goes back to white afterwards: the texture
+                 * is cached across frames and players, and a black one left
+                 * behind would draw the glyph black from the next label on. */
+                SDL_FRect sd  = { iconX, y + (h - vh) * 0.5f, vw, vh };
+                SDL_FRect vsh = { sd.x + shOff, sd.y + shOff, vw, vh };
+                SDL_SetTextureColorMod(voiceTex, 0, 0, 0);
+                SDL_RenderTexture(r, voiceTex, NULL, &vsh);
+                SDL_SetTextureColorMod(voiceTex, 255, 255, 255);
                 SDL_RenderTexture(r, voiceTex, NULL, &sd);
             }
         }
