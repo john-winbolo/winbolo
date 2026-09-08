@@ -115,6 +115,7 @@
 #include "pillbox.h"
 #include "bases.h"
 #include "tank.h"
+#include "lgm.h"                    /* l_kill_lgm: lgmDeathCheckAtPosition */
 #include "players.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"
@@ -856,6 +857,48 @@ static int l_show_pill(lua_State *L) {
  * neither is "on the map" and armour means nothing there. Exists so a
  * scenario test can keep a pill WORN across the window it is testing
  * (builder_pool variant A) without a hostile tank having to oblige. */
+/* game.kill_lgm(p) -> bool. Kills player p's builder through the engine's
+ * own death path (lgm.c lgmDeathCheckAtPosition, the code a shell landing
+ * on him runs): he drops whatever he carries, is choppered in from a random
+ * start tile and walks home. A man still inside the tank is put out on the
+ * tank's tile first so the same path applies. The bot's client sim learns of
+ * it from the next tank snapshot (client_snapshot.c sets MY_LGM isDead from
+ * the helicopter frame), so no extra push is needed. False when the player
+ * is absent or the man is already dead. Test seam for the "kill me" arenas. */
+static int l_kill_lgm(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    ServerSim *sim = st->sim;
+    GameSim *gs = serverSimGetGameSim(sim);
+    int p = (int)luaL_checkinteger(L, 1);          /* 0-based player slot */
+    if (p < 0 || p >= MAX_TANKS || !serverSimIsPlayerConnected(sim, (BYTE)p)
+        || gs->tanks[p] == NULL || gs->lgmen[p] == NULL) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    {
+        lgm *lgman = &gs->lgmen[p];
+        tank *t = &gs->tanks[p];
+        if ((*lgman)->isDead) {
+            lua_pushboolean(L, FALSE);
+            return 1;
+        }
+        if ((*lgman)->inTank) {
+            WORLD wx, wy;
+            tankGetWorld(t, &wx, &wy);
+            (*lgman)->inTank = FALSE;
+            (*lgman)->x = wx;
+            (*lgman)->y = wy;
+            (*lgman)->state = LGM_STATE_RETURN;
+        }
+        lgmDeathCheckAtPosition(gs, lgman, (*lgman)->x, (*lgman)->y,
+                                (*lgman)->x, (*lgman)->y, NEUTRAL, t);
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "scenario: kill_lgm(%d) -> %s", p, (*lgman)->isDead ? "dead" : "alive");
+        lua_pushboolean(L, (*lgman)->isDead ? TRUE : FALSE);
+        return 1;
+    }
+}
+
 static int l_set_pill_armour(lua_State *L) {
     ScenarioState *st = scUp(L);
     GameSim *gs = serverSimGetGameSim(st->sim);
@@ -1042,6 +1085,7 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "hide_pill",      l_hide_pill);
     scRegister(L, st, "show_pill",      l_show_pill);
     scRegister(L, st, "set_pill_armour", l_set_pill_armour);
+    scRegister(L, st, "kill_lgm",       l_kill_lgm);
     scRegister(L, st, "enemy_team_size", l_enemy_team_size);
     scRegister(L, st, "lobby_slot",     l_lobby_slot);
     scRegister(L, st, "lobby_add_bot",  l_lobby_add_bot);
