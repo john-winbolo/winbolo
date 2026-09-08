@@ -212,6 +212,12 @@ static bool s_deckPaused = FALSE;
  * windowTutorialPause. */
 static bool s_tutorialPaused = FALSE;
 
+/* Set while the native save-map dialog is up during a solo game.  Same freeze
+ * as s_overlayPaused, driven by windowSaveMap / windowSaveMapPoll.
+ * Multiplayer keeps running — not blocking the main loop on that dialog is the
+ * whole point of the poll.  See windowSaveDialogPause. */
+static bool s_saveDialogPaused = FALSE;
+
 /* Mute state captured when each pause path engaged, restored verbatim when it
  * releases.  A pause must hand audio back to whatever it found — not force it
  * unmuted — so it doesn't clobber a user mute or another still-active pause's
@@ -221,6 +227,7 @@ static bool s_overlayPrevMuted        = FALSE;
 static bool s_controllerLostPrevMuted = FALSE;
 static bool s_deckPrevMuted           = FALSE;
 static bool s_tutorialPrevMuted       = FALSE;
+static bool s_saveDialogPrevMuted     = FALSE;
 
 /* Tick counters */
 static DWORD oldTick = 0;
@@ -251,6 +258,8 @@ static void windowRunGameTick(ClientSim *cs);
 static void tutorialRespawnPoll(void);
 static void windowUpdateServerPause(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
+static void windowSaveDialogPause(ClientSim *cs, bool active);
+static void windowSaveMapPoll(ClientSim *cs);
 int winboloCC(void);
 
 /* -------------------------------------------------------
@@ -718,6 +727,10 @@ int main(int argc, char *argv[]) {
         }
         frontEndTutorialNotePresentedFrame();
         tutorialRespawnPoll();
+        /* Pick up a native save-map dialog the player has answered. The
+           dialog is asynchronous precisely so this loop — which is what
+           pumps the client transport — keeps running while it is open. */
+        windowSaveMapPoll(cs);
 
         /* Cap to configured frame rate */
         {
@@ -845,13 +858,14 @@ static void windowRunGameTick(ClientSim *cs) {
   bool brainRunning;
 
   /* App is backgrounded (Deck home button / sleep), the Steam overlay is
-     open, the controller-disconnected dialog is up, or the controller pause
-     menu is open in a solo game — skip all tick work.  The matching resume
-     (windowResumeForeground / windowSteamOverlayActivated /
-     windowControllerLostPause / windowDeckPause) resets the wallclock baseline
+     open, the controller-disconnected dialog is up, the controller pause
+     menu is open, or the native save-map picker is up in a solo game — skip
+     all tick work.  The matching resume (windowResumeForeground /
+     windowSteamOverlayActivated / windowControllerLostPause /
+     windowDeckPause / windowSaveDialogPause) resets the wallclock baseline
      so we don't fast-forward the paused interval. */
   if (s_suspended || s_overlayPaused || s_controllerLostPaused ||
-      s_deckPaused || s_tutorialPaused)
+      s_deckPaused || s_tutorialPaused || s_saveDialogPaused)
     return;
 
   brainRunning = brainHandlerIsBrainRunning();
@@ -987,7 +1001,7 @@ static void windowUpdateServerPause(ClientSim *cs) {
   gameFrontSetServerPaused(windowIsSoloSession(cs) &&
                            (s_suspended || s_overlayPaused ||
                             s_controllerLostPaused || s_deckPaused ||
-                            s_tutorialPaused));
+                            s_tutorialPaused || s_saveDialogPaused));
 }
 
 void windowSuspendBackground(ClientSim *cs) {
@@ -1128,6 +1142,31 @@ void windowTutorialPause(ClientSim *cs, bool active) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
     soundSetMuted(s_tutorialPrevMuted);
+  }
+}
+
+/* Native save-map dialog opened/closed.  Solo sessions only (single-player or
+   tutorial): freeze the client and server sim while the picker is up and
+   rebase the catch-up wallclock on close, mirroring windowTutorialPause.
+   Multiplayer is a no-op — a networked game must keep running underneath the
+   picker, which is exactly what the poll below makes possible. */
+static void windowSaveDialogPause(ClientSim *cs, bool active) {
+  if (active) {
+    if (!windowIsSoloSession(cs)) return;
+    if (s_saveDialogPaused) return;          /* idempotent */
+    s_saveDialogPaused = TRUE;
+    windowUpdateServerPause(cs);
+    s_saveDialogPrevMuted = soundIsMuted();
+    soundSetMuted(TRUE);
+  } else {
+    /* Always clear on close — even if the session changed while the picker
+       was up — so a stale pause can't freeze a later game. */
+    if (!s_saveDialogPaused) return;
+    s_saveDialogPaused = FALSE;
+    windowUpdateServerPause(cs);
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+    soundSetMuted(s_saveDialogPrevMuted);
   }
 }
 
@@ -1712,12 +1751,26 @@ void windowRedrawAll(ClientSim *cs) {
   clientMutexRelease();
 }
 
-/* Save-map dialog callback state */
+/* Save-map dialog state.  File scope because the dialog is asynchronous: the
+   callback publishes a result that windowSaveMapPoll picks up on a later
+   frame, so the state has to outlive windowSaveMap.  One native save dialog at
+   a time.
+
+   SDL runs the callback on a worker thread on Windows and on the Linux zenity
+   backend, so `done` is the publication point — path and ok are written first
+   and the atomic store releases them to the poll. */
 typedef struct {
   char path[FILENAME_MAX];
-  int done;   /* 0 = waiting, 1 = got result */
-  int ok;     /* 1 = user picked a file */
+  int ok;                  /* 1 = user picked a file (callback side) */
+  SDL_AtomicInt done;      /* 0 = waiting, 1 = path/ok published */
+  bool pending;            /* main thread: a dialog is outstanding */
+  /* The ClientSim the save was asked for.  Compared, never dereferenced: a
+     lost connection tears the sim down and gameFrontStart builds a new one,
+     and a result that lands after that belongs to a game that is gone. */
+  const ClientSim *owner;
 } SaveMapState;
+
+static SaveMapState saveMapState;
 
 static void SDLCALL saveMapCallback(void *userdata,
                                      const char * const *filelist,
@@ -1729,7 +1782,33 @@ static void SDLCALL saveMapCallback(void *userdata,
     st->path[FILENAME_MAX - 1] = '\0';
     st->ok = 1;
   }
-  st->done = 1;
+  /* Published last; the poll reads path and ok only after seeing this. */
+  SDL_SetAtomicInt(&st->done, 1);
+}
+
+/* -------------------------------------------------------
+ * windowSaveMapPoll — pick up an answered save-map dialog
+ *
+ * Called once per frame from the main loop.  The write and its error box run
+ * here rather than in the callback because both touch the sim and ImGui, and
+ * the callback is not guaranteed to be on the main thread.
+ * ------------------------------------------------------- */
+static void windowSaveMapPoll(ClientSim *cs) {
+  if (!saveMapState.pending || !SDL_GetAtomicInt(&saveMapState.done)) {
+    return;
+  }
+  saveMapState.pending = FALSE;
+  windowSaveDialogPause(cs, FALSE);
+
+  /* A result for a sim that has since gone is dropped rather than written
+     against whatever replaced it. */
+  if (saveMapState.owner != cs) {
+    return;
+  }
+  if (saveMapState.ok && clientSaveMap(cs, saveMapState.path) == FALSE) {
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+  }
 }
 
 void windowSaveMap(ClientSim *cs) {
@@ -1780,26 +1859,33 @@ void windowSaveMap(ClientSim *cs) {
     return;
   }
 
-  /* Desktop/mouse path: native save-file dialog. */
-  SaveMapState state;
+  /* Desktop/mouse path: native save-file dialog, shown and returned from
+     immediately.  Waiting here would stop the main loop, and the main loop is
+     what pumps the client transport (clientFrontRunTickStep), so a player
+     browsing for a folder is dropped by the server after
+     CLIENT_TIMEOUT_TICKS — ten seconds.  windowSaveMapPoll picks the answer
+     up on a later frame instead.
+
+     One dialog at a time: the four menu entries that reach here (three in
+     sdl3imgui.cpp, plus File > Save Map on the macOS native bar) stay enabled
+     and simply do nothing while one is open. */
+  if (saveMapState.pending) {
+    return;
+  }
+
   SDL_DialogFileFilter filters[] = {
     { "Map Files", "map" },
   };
 
-  memset(&state, 0, sizeof(state));
+  saveMapState.path[0] = '\0';
+  saveMapState.ok = 0;
+  saveMapState.owner = cs;
+  saveMapState.pending = TRUE;
+  SDL_SetAtomicInt(&saveMapState.done, 0);
 
-  SDL_ShowSaveFileDialog(saveMapCallback, &state, sdl3DrawGetWindow(),
+  windowSaveDialogPause(cs, TRUE);
+  SDL_ShowSaveFileDialog(saveMapCallback, &saveMapState, sdl3DrawGetWindow(),
                          filters, 1, NULL);
-  while (!state.done) {
-    SDL_Event e;
-    SDL_WaitEventTimeout(&e, 100);
-  }
-  if (state.ok) {
-    if (clientSaveMap(cs, state.path) == FALSE) {
-      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
-                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-    }
-  }
 }
 
 void windowButtonAdd(int keyCode) {
