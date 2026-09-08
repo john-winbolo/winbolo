@@ -32,6 +32,7 @@
 #include "client_enums.h"  /* sndEffects */
 #include "../sound.h"
 #include "skin_source.h"
+#include "../../common/wb_log.h"
 
 #define NUM_SOUNDS 31
 #define MAX_SOUND_SLOTS 16  /* Maximum simultaneous sounds */
@@ -407,21 +408,32 @@ bool soundSetup(void) {
         SDL_SetAudioStreamGain(audioStream, (float)soundVolume / 100.0f);
     }
 
-    /* Load all sound effects from data/sounds/ relative to the executable */
+    /* Load all sound effects from data/sounds/ relative to the executable.
+     * A file that will not load leaves its entry NULL and is simply silent —
+     * playSound skips an entry with no data — so one unreadable WAV costs one
+     * effect rather than the whole sound system.  An empty set is different:
+     * that is data/sounds/ missing or unreadable as a whole, and it takes the
+     * failure path below. */
     {
         const char *basePath = SDL_GetBasePath();
+        int loadedCount = 0;
         if (!basePath) basePath = "./";
 
         SDL_zero(sounds);
 
         for (i = 0; i < NUM_SOUNDS; i++) {
-            if (!loadSoundFromFile(basePath, soundFiles[i], &sounds[i])) {
-                fprintf(stderr, "Sound error: %sdata/sounds/%s: %s\n",
-                    basePath, soundFiles[i], SDL_GetError());
-                fflush(stderr);
-                returnValue = FALSE;
-                break;
+            if (loadSoundFromFile(basePath, soundFiles[i], &sounds[i])) {
+                loadedCount++;
+            } else {
+                WB_LOG_WARN(WB_LOG_CAT_AUDIO, "soundSetup: %sdata/sounds/%s: %s",
+                            basePath, soundFiles[i], SDL_GetError());
             }
+        }
+
+        if (loadedCount == 0) {
+            imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error loading sound effects",
+                              IMGUI_MSG_WARNING, IMGUI_MSG_OK);
+            returnValue = FALSE;
         }
     }
 
