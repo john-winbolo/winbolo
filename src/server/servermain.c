@@ -1845,10 +1845,13 @@ int main(int argc, char **argv) {
     /* LAN mDNS advertising is opt-in for dedicated servers (the memset
      * above leaves it false by default); -mdns turns it on. */
     instCfg.mdnsAdvertise = (argExist(argc, argv, "mdns") == TRUE);
-    /* Voice is forwarded by default; -no-voice (either dash form) turns it
-     * off for the whole server. */
-    instCfg.disableVoice  = (argExist(argc, argv, "no-voice") == TRUE)
-                         || (argExist(argc, argv, "-no-voice") == TRUE);
+    /* Voice is forwarded by default (the memset above leaves the mode
+     * serverVoiceOn); -no-voice (either dash form) turns it off for the
+     * whole server. */
+    if (argExist(argc, argv, "no-voice") == TRUE ||
+        argExist(argc, argv, "-no-voice") == TRUE) {
+      instCfg.voiceMode = serverVoiceOff;
+    }
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       serverSimDestroy(serverSim);

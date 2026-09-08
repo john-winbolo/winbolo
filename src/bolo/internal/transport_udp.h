@@ -743,8 +743,8 @@ PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot);
 /* Turn voice forwarding on or off for the whole server. Off still drains
  * every client's voice ring — a client that sends anyway must not fill its
  * ring and stall — but forwards nothing and accepts nothing. Set once at
- * startup from ServerInstanceConfig.disableVoice; a server that never calls
- * this forwards voice. */
+ * startup from ServerInstanceConfig.voiceMode, which turns it off only for
+ * serverVoiceOff; a server that never calls this forwards voice. */
 void transportUdpServerSetVoiceEnabled(bool enabled);
 
 /* Read the cumulative voice segment counts: forwarded, dropped by the

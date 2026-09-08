@@ -29,6 +29,7 @@
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "view_policy.h"    /* ViewPolicy / ViewCategory — broadcast in lobby-settings event */
+#include "server_voice_mode.h" /* ServerVoiceMode — the voiceMode field below */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
@@ -159,6 +160,9 @@ struct ServerSim {
                                     * to their allies instead of being
                                     * withheld; off is the classic
                                     * behaviour. */
+    ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
+                                    * startup, read by the advertisement
+                                    * paths. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */

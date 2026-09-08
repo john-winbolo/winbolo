@@ -57,6 +57,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   serverSimSetRanked(sim, cfg->ranked);
   serverSimSetOpenHost(sim, cfg->openHost);
   serverSimSetServerLocks(sim, cfg->serverLocks);
+  serverSimSetVoiceMode(sim, cfg->voiceMode);
 
   /* lobbyEnabled and skipLobby drive state transitions. If neither is
    * set, the sim stays in whatever state serverSimCreate* left it
