@@ -167,6 +167,8 @@ struct VoiceSpeaker {
     bool            primed;         /* playing; nextSeq is meaningful  */
     uint8_t         nextSeq;        /* sequence number due next        */
     int             count;          /* frames currently buffered       */
+    bool            waiting;        /* holding for nextSeq to arrive   */
+    uint32_t        waitingSince;   /* clock reading the wait began at */
     int             consecutivePlc; /* concealed frames since the last
                                      * real one                        */
     VoiceSpeakerStats stats;        /* cumulative; survives un-priming */
@@ -188,6 +190,7 @@ static void voiceSpeakerUnprime(VoiceSpeaker *sp) {
     }
     sp->count = 0;
     sp->primed = false;
+    sp->waiting = false;
     sp->consecutivePlc = 0;
 }
 
@@ -304,7 +307,7 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
     }
 }
 
-bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
+bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm, uint32_t nowMs) {
     int i;
     int found = -1;
     uint8_t flags;
@@ -322,9 +325,25 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
     }
 
     if (found < 0) {
-        /* Nothing for this slot in the sequence - conceal it and move on.
-         * A run of these means the talker has gone away, so stop rather
-         * than conceal forever. */
+        /* Nothing for this slot in the sequence yet.  Concealing here and
+         * stepping over it would spend a sequence number the sender did
+         * fill, so the frame is dropped as late when it does turn up and
+         * the cushion is one frame smaller from then on - which is how a
+         * receiver ends up permanently ahead of its talker.  Wait for it
+         * instead, and give up only once it is overdue. */
+        if (!sp->waiting) {
+            sp->waiting = true;
+            sp->waitingSince = nowMs;
+            return false;
+        }
+        /* Unsigned subtraction, so the wait is still measured correctly
+         * across the clock's 32-bit wrap. */
+        if ((uint32_t)(nowMs - sp->waitingSince) < VOICE_JITTER_LATE_MS) {
+            return false;
+        }
+        /* Overdue - conceal it and move on.  A run of these means the
+         * talker has gone away, so stop rather than conceal forever. */
+        sp->waiting = false;
         voiceSpeakerConceal(sp, pcm);
         sp->nextSeq++;
         sp->consecutivePlc++;
@@ -333,6 +352,8 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
         }
         return true;
     }
+
+    sp->waiting = false;
 
     decoded = (voiceDecoderDecode(sp->dec, sp->slots[found].data,
                                   sp->slots[found].len, pcm) ==

@@ -5,9 +5,13 @@
  * This one drives the same buffer with a generated arrival pattern — loss,
  * reorder, and a burst outage — and measures what comes out.
  *
- * voiceSpeakerPush / voiceSpeakerPop have no notion of time: jitter shows up
- * purely as how many pushes happen between pops. So a tick here is "push
- * whatever landed, then pop once", which is what the playback caller does.
+ * Arrival is expressed in ticks rather than in milliseconds: jitter shows up
+ * as how many pushes happen between pops. So a tick here is "push whatever
+ * landed, then pop once", which is what the playback caller does. A tick is
+ * one frame time, and it waits the playout deadline out before accepting
+ * that there is nothing to play — nothing can land inside that wait, because
+ * arrivals only happen on tick boundaries. The deadline itself is covered by
+ * the hand-placed cases at the end of this file.
  *
  * Real Opus frames are used, cycled from a small pool, so decode genuinely
  * succeeds and a concealed frame is distinguishable from a played one. The
@@ -40,6 +44,8 @@
 #define JL_MAX_FRAMES     800
 /* Ticks run on past the last arrival so the buffer plays out what it holds. */
 #define JL_DRAIN_TICKS    24
+/* A tick is one frame of playout. */
+#define JL_TICK_MS        20
 
 typedef struct {
     uint8_t data[VOICE_MAX_PACKET];
@@ -144,6 +150,7 @@ static void jlRun(const JlEncoded *pool, JlResult *r, uint64_t seed,
     int  consecConceal = 0;
     int  lastTick;
     int  t, s;
+    uint32_t nowMs = 0;
 
     memset(r, 0, sizeof(*r));
     r->frames = frames;
@@ -204,9 +211,17 @@ static void jlRun(const JlEncoded *pool, JlResult *r, uint64_t seed,
             prev = now;
         }
 
-        if (!voiceSpeakerPop(sp, pcm)) {
-            r->falsePops++;
-            continue;
+        /* The tick's own frame time, then the wait for a frame that is not
+         * there: a missing one is only concealed once it is overdue, and
+         * nothing more lands until the next tick, so waiting the deadline
+         * out here is what the buffer would see. */
+        nowMs += JL_TICK_MS;
+        if (!voiceSpeakerPop(sp, pcm, nowMs)) {
+            nowMs += VOICE_JITTER_LATE_MS;
+            if (!voiceSpeakerPop(sp, pcm, nowMs)) {
+                r->falsePops++;
+                continue;
+            }
         }
         voiceSpeakerGetStats(sp, &now);
         r->pops++;
@@ -353,9 +368,9 @@ int run_voice_jitter_under_loss(void) {
      * The steady-state cushion is VOICE_JITTER_TARGET - 1 frames, not
      * VOICE_JITTER_TARGET: priming triggers when the count reaches the
      * target, and the pop in that same tick immediately spends one. At the
-     * as-built target of 2 that leaves one frame of slack, which absorbs
-     * depth 1 exactly. Depth 2 is measured and reported below rather than
-     * asserted — the rate is the tuning input, not a pass/fail. */
+     * as-built target of 3 that leaves two frames of slack, so depth 1 is
+     * absorbed with a frame to spare. Depth 2 is measured and reported below
+     * rather than asserted — the rate is the tuning input, not a pass/fail. */
     jlRun(pool, &r, JL_SEED + 2, 400, 0, 1, -1, 0);
     JL_CHECK_ACCOUNTING(r, "reorder depth 1");
     UT_ASSERT_MSG(r.concealedInRange == 0,
@@ -375,7 +390,7 @@ int run_voice_jitter_under_loss(void) {
             "  voice_jitter_under_loss: reorder depth 2 at "
             "VOICE_JITTER_TARGET=%d cost %d concealed / %d pops, %u arrived "
             "too late, playback restarted %d times. The steady-state cushion "
-            "is TARGET-1 = %d frame(s); absorbing depth 2 needs TARGET >= 3.\n",
+            "is TARGET-1 = %d frame(s), so depth 2 sits inside it.\n",
             VOICE_JITTER_TARGET, r.concealedInRange, r.pops,
             r.st.lateDropped, r.primeRuns, VOICE_JITTER_TARGET - 1);
 
@@ -447,6 +462,100 @@ int run_voice_jitter_under_loss(void) {
                       "property 6: %d of %d frames played after a %d frame "
                       "outage, expected %d", r.playedFrames, r.frames,
                       blackoutLen, r.frames - blackoutLen);
+    }
+
+    /* ---- Property 7: the playout deadline ----
+     *
+     * Hand-placed rather than generated: the scenarios above move in whole
+     * ticks and this one turns on what the buffer does inside one. A frame
+     * that has not arrived is waited for rather than concealed on the spot,
+     * so a frame that is merely late still plays. Concealing it immediately
+     * spent a sequence number the sender had filled, and the frame was then
+     * dropped as late when it turned up, leaving the receiver one frame
+     * ahead of its talker with one frame less cushion for the rest of the
+     * utterance. */
+    {
+        VoiceSpeaker *sp;
+        int16_t pcm[VOICE_FRAME_SAMPLES];
+        VoiceSpeakerStats st;
+        uint32_t nowMs = 0;
+
+        sp = voiceSpeakerCreate();
+        UT_ASSERT(sp != NULL);
+
+        /* Seq 0, 1 and 2 are the VOICE_JITTER_TARGET frames priming takes. */
+        voiceSpeakerPush(sp, 0, 0, pool[0].data, pool[0].len);
+        voiceSpeakerPush(sp, 1, 0, pool[1].data, pool[1].len);
+        voiceSpeakerPush(sp, 2, 0, pool[2].data, pool[2].len);
+        for (i = 0; i < 3; i++) {
+            UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm, nowMs),
+                          "property 7: no audio for priming frame %d", i);
+        }
+
+        /* --- a frame that has not arrived: nothing plays, nothing is
+         *     concealed, and the sequence number is not spent --- */
+        UT_ASSERT_MSG(!voiceSpeakerPop(sp, pcm, nowMs),
+                      "property 7: seq 3 has not arrived, so there is nothing "
+                      "to play yet");
+        nowMs += VOICE_JITTER_LATE_MS - JL_TICK_MS;
+        UT_ASSERT_MSG(!voiceSpeakerPop(sp, pcm, nowMs),
+                      "property 7: seq 3 is late but not yet overdue");
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.concealed == 0,
+                      "property 7: concealed %u inside the deadline, expected "
+                      "none", st.concealed);
+
+        /* --- the same frame, arriving before the deadline: it plays --- */
+        voiceSpeakerPush(sp, 3, 0, pool[3].data, pool[3].len);
+        UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm, nowMs),
+                      "property 7: seq 3 has arrived, so it should play");
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.played == 4 && st.concealed == 0 &&
+                          st.lateDropped == 0,
+                      "property 7: played %u concealed %u late %u after a "
+                      "frame delivered inside the deadline, expected 4, 0 "
+                      "and 0", st.played, st.concealed, st.lateDropped);
+
+        /* --- a frame that never arrives: concealed once it is overdue --- */
+        UT_ASSERT(!voiceSpeakerPop(sp, pcm, nowMs));
+        nowMs += VOICE_JITTER_LATE_MS;
+        UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm, nowMs),
+                      "property 7: seq 4 is overdue, so its slot is "
+                      "concealed");
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.played == 4 && st.concealed == 1,
+                      "property 7: played %u concealed %u once the deadline "
+                      "passed, expected 4 and 1", st.played, st.concealed);
+
+        /* The concealed slot took its sequence number with it, so seq 5 is
+         * what plays next rather than being held behind seq 4. */
+        voiceSpeakerPush(sp, 5, 0, pool[5].data, pool[5].len);
+        UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm, nowMs),
+                      "property 7: seq 5 should play once 4 was given up on");
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.played == 5 && st.concealed == 1 &&
+                          st.lateDropped == 0,
+                      "property 7: played %u concealed %u late %u for the "
+                      "frame after a concealed one, expected 5, 1 and 0",
+                      st.played, st.concealed, st.lateDropped);
+
+        /* --- the case the deadline is for: seq 6 is delivered late but
+         *     inside it, so it plays instead of being concealed and then
+         *     counted as a late arrival --- */
+        UT_ASSERT(!voiceSpeakerPop(sp, pcm, nowMs));
+        nowMs += VOICE_JITTER_LATE_MS - JL_TICK_MS;
+        voiceSpeakerPush(sp, 6, 0, pool[6].data, pool[6].len);
+        UT_ASSERT(voiceSpeakerPop(sp, pcm, nowMs));
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.lateDropped == 0,
+                      "property 7: %u frames counted late — a frame delivered "
+                      "inside the deadline must not be concealed and then "
+                      "dropped when it lands", st.lateDropped);
+        UT_ASSERT_MSG(st.played == 6 && st.concealed == 1,
+                      "property 7: played %u concealed %u, expected 6 and 1",
+                      st.played, st.concealed);
+
+        voiceSpeakerDestroy(sp);
     }
 
     /* ---- Characterisation at the as-built VOICE_JITTER_TARGET ---- */

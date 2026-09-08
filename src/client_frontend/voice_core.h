@@ -80,7 +80,25 @@ int voiceDecoderDecode(VoiceDecoder *dec, const uint8_t *data, int len,
 #define VOICE_FLAG_END_OF_UTTERANCE 0x01
 
 #define VOICE_JITTER_SLOTS   8
-#define VOICE_JITTER_TARGET  2   /* frames buffered before playback starts */
+#define VOICE_JITTER_TARGET  3   /* frames buffered before playback starts.
+                                  * 60 ms of cushion, chosen against a sender
+                                  * measured at 18 ms between frames in the
+                                  * median and 37 ms at the 99th percentile,
+                                  * so ordinary jitter never reaches the
+                                  * deadline below                          */
+#define VOICE_JITTER_LATE_MS 60  /* three frame times.  How long the speaker
+                                  * waits for a frame that has not arrived
+                                  * before giving up on it and concealing:
+                                  * long enough to cover the sender's own
+                                  * emission jitter, short enough that a
+                                  * frame which really was lost does not
+                                  * stall the talker audibly.  The wait is
+                                  * added to that talker's delay and is never
+                                  * given back, so a run of late frames walks
+                                  * the delay up.  It stops at the buffer's
+                                  * VOICE_JITTER_SLOTS frames, about 160 ms,
+                                  * where voiceSpeakerPush starts dropping
+                                  * the oldest and counts it in evicted     */
 #define VOICE_JITTER_MAX_PLC 5   /* 100 ms of concealment with nothing
                                   * arriving ends the utterance            */
 
@@ -95,8 +113,16 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
 
 /* Produce the next 20 ms. Returns true and fills pcm with
  * VOICE_FRAME_SAMPLES mono S16 when audio was produced (decoded or
- * concealed); false when this speaker has nothing to play. */
-bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm);
+ * concealed).
+ *
+ * False means one of two things: this speaker is not playing, or the frame
+ * due next has not arrived and is not yet overdue by VOICE_JITTER_LATE_MS.
+ * The caller does not have to tell them apart — it tries again on its next
+ * call either way, and the frame plays if it turns up in the meantime.
+ *
+ * nowMs is a free-running millisecond clock. Only differences between
+ * readings are used, so it may wrap. */
+bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm, uint32_t nowMs);
 
 /* Cumulative counters, for measuring what an arrival pattern costs. Playback
  * does not read them: they exist so a caller can tell a decoded frame from a

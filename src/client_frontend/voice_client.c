@@ -1258,9 +1258,15 @@ static void voicePlayRemote(struct ClientSim *cs) {
     }
 
     for (i = 0; i < MAX_TANKS; i++) {
+        uint32_t popNowMs;
+
         if (speakers[i] == NULL) {
             continue;
         }
+        /* Read once rather than per pop: the buffer only measures how long
+         * it has been waiting for a frame, and the pops below all happen at
+         * what is the same instant as far as that is concerned. */
+        popNowMs = voiceBackendNowMs();
         /* The queued depth is in whole 20 ms frames, so it compares directly
          * against the target. */
         for (pops = 0; pops < VOICE_PLAYBACK_MAX_POPS_PER_CALL; pops++) {
@@ -1271,7 +1277,7 @@ static void voicePlayRemote(struct ClientSim *cs) {
             /* Nothing left to play - the jitter buffer is waiting on a frame
              * that has not arrived yet, and asking again will not change
              * that until the next call. */
-            if (!voiceSpeakerPop(speakers[i], pcm)) {
+            if (!voiceSpeakerPop(speakers[i], pcm, popNowMs)) {
                 break;
             }
 #if defined(WB_VOICEDEBUG)
