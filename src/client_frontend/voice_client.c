@@ -66,11 +66,20 @@
  * arbitrarily deep backlog in one go. */
 #define VOICE_PLAYBACK_MAX_POPS_PER_CALL 4
 
-/* Open mic: the 0..1 frame RMS, measured after mic gain, at which the gate
- * counts what it hears as speech.  0.02 is around -34 dBFS - clear of room
- * tone, a fan or a keyboard on a typical desktop microphone, and well under
- * where someone talking at it sits. */
-#define VOICE_OPEN_MIC_RMS_THRESHOLD 0.02f
+/* Open mic: the 0..1 frame RMS, measured after mic gain, at which the
+ * open-mic decision counts what it hears as speech.  0.013, about -38 dBFS,
+ * was measured rather than picked: onsets were being lost at 0.0131, and
+ * room noise in the same recording topped out at 0.0100 across 431 quiet
+ * frames.
+ *
+ * It costs open-microphone time.  At 0.02 the microphone was open for 34%
+ * of that recording; at 0.013 it is open for 54%, because every low-level
+ * frame that clears the threshold also re-arms the hangover below.
+ * Shortening that hangover to claw the time back was measured and
+ * rejected: it trims the open time only by opening more often - eight
+ * separate openings instead of three - and each opening is one more
+ * utterance boundary. */
+#define VOICE_OPEN_MIC_RMS_THRESHOLD 0.013f
 
 /* Open mic: how many captured frames the gate stays open for after the level
  * falls back under the threshold.  Frames are 20 ms, so 15 is 300 ms - long
