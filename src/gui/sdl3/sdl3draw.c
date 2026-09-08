@@ -603,7 +603,7 @@ static SDL_Texture *sdl3LoadSkinBmpTexture(SkinSource *skin, const char *name) {
   SDL_IOStream *io = SDL_IOFromMem(buf, len);
   if (io != NULL) {
     /* closeio closes the stream, not the bytes behind it. */
-    tex = sdlLoadBmpStreamAsTexture(gRenderer, io, true, false);
+    tex = sdlLoadBmpStreamAsTexture(gRenderer, io, true);
   }
   SDL_free(buf);
   return tex;
@@ -634,7 +634,7 @@ static bool sdl3LoadBackground(void) {
     if (!basePath) basePath = "";
     char pathBuf[512];
     SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/background.bmp", basePath);
-    gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, pathBuf, false);
+    gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, pathBuf);
   }
 
   if (gBackgroundTex == NULL) {

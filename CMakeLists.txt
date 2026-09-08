@@ -3423,6 +3423,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The colour left under the built sheet's transparency, and the bleed
     # that takes it out. Runs on the real data/svg art beside the binary.
     tests/unit/test_sheet_bleed.c
+    src/gui/sdl3/sdl_bmp.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -4238,6 +4239,7 @@ set(_unit_test_names
     skin_density_scan
     sheet_bleed_edges
     sheet_no_key_under_alpha
+    bmp_sheet_no_key_under_alpha
     pascal_string_lengths
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip

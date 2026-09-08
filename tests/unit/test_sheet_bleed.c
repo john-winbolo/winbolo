@@ -30,6 +30,7 @@
 
 #include <SDL3/SDL.h>
 
+#include "sdl_bmp.h"
 #include "tileloader.h"
 #include "tilemap.h"
 #include "test_harness.h"
@@ -243,9 +244,49 @@ static int checkBuiltSheetHasNoKeyUnderAlpha(void) {
     return 0;
 }
 
+/* The log viewer's tanks, boats and items come from their own BMPs rather
+ * than the tile atlas, through sdlLoadBmpSheetSurface, and carry the same key
+ * colour. Same invariant, second loader — and this is the one the lobby's
+ * replay draws from. */
+static int checkBmpSheetHasNoKeyUnderAlpha(const char *name) {
+    char        path[512];
+    const char *base = SDL_GetBasePath();
+    SDL_snprintf(path, sizeof(path), "%sdata/%s.bmp", base ? base : "", name);
+
+    SDL_Surface *s = sdlLoadBmpSheetSurface(path, TILE_SIZE_X, TILE_SIZE_Y);
+    if (s == NULL) UT_FAIL("sdlLoadBmpSheetSurface failed for %s", path);
+    if (s->format != SDL_PIXELFORMAT_RGBA32) {
+        SDL_DestroySurface(s);
+        UT_FAIL("%s did not come back as RGBA32", name);
+    }
+
+    int keyUnderAlpha = 0, transparent = 0;
+    for (int y = 0; y < s->h; y++) {
+        const unsigned char *row = (const unsigned char *)s->pixels +
+                                   (size_t)y * (size_t)s->pitch;
+        for (int x = 0; x < s->w; x++) {
+            const unsigned char *p = row + (size_t)x * 4;
+            if (p[3] != 0) continue;
+            transparent++;
+            if (tileLoaderIsSheetKeyColor(p[0], p[1], p[2])) keyUnderAlpha++;
+        }
+    }
+    SDL_DestroySurface(s);
+
+    UT_ASSERT_MSG(keyUnderAlpha == 0,
+                  "%s.bmp holds %d transparent texels still carrying the key "
+                  "colour", name, keyUnderAlpha);
+    /* The key is how these sheets store their transparency, so one with none
+       of it did not load the art this is meant to be checking. */
+    UT_ASSERT_MSG(transparent > 0,
+                  "%s.bmp came back fully opaque; the key colour was never "
+                  "turned into transparency", name);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 
-/* test_main.c owns the SDL runtime for the whole binary, so neither of these
+/* test_main.c owns the SDL runtime for the whole binary, so none of these
    inits or quits it — an SDL_Quit() here would take the runtime out from
    under every test that runs after. */
 
@@ -257,4 +298,11 @@ int run_sheet_bleed_edges(void) {
 
 int run_sheet_no_key_under_alpha(void) {
     return checkBuiltSheetHasNoKeyUnderAlpha();
+}
+
+int run_bmp_sheet_no_key_under_alpha(void) {
+    /* items.bmp carries no key colour at all, so it is not one of these. */
+    int rc = checkBmpSheetHasNoKeyUnderAlpha("tanks");
+    if (rc == 0) rc = checkBmpSheetHasNoKeyUnderAlpha("boats");
+    return rc;
 }
