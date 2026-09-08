@@ -1094,7 +1094,9 @@ void serverSimStartGameInPlace(ServerSim *sim) {
                           sim->sim.pendingStartIdx, reserved0);
     }
 
-    /* Create tanks for all connected players */
+    /* Destroy every connected slot's tank and man before creating any, so
+     * a new tank's spawn search never sees the previous round's tanks
+     * still sitting at their old positions. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         if (sim->sim.tanks[i] != NULL) {
@@ -1105,6 +1107,11 @@ void serverSimStartGameInPlace(ServerSim *sim) {
             lgmDestroy(&sim->sim.lgmen[i]);
             sim->sim.lgmen[i] = NULL;
         }
+    }
+
+    /* Create tanks for all connected players */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
     }

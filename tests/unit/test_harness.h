@@ -665,6 +665,13 @@ int run_start_side_mask_sectors(void);
 int run_start_side_mask_degenerate_bbox(void);
 int run_start_side_eligible_closed_mask(void);
 
+/* Spawn scatter separation (test_starts_scatter_separation.c). The
+ * spiral in startsScatterFind keeps a new tank START_SPAWN_SEPARATION
+ * squares from every other live tank, and drops that rule on a second
+ * pass when no square within reach can satisfy it. */
+int run_starts_scatter_avoids_existing_tanks(void);
+int run_starts_scatter_falls_back_when_crowded(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */

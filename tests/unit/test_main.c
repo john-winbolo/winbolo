@@ -445,6 +445,8 @@ static const UnitTestEntry s_tests[] = {
     { "start_side_mask_sectors",                 run_start_side_mask_sectors                 },
     { "start_side_mask_degenerate_bbox",         run_start_side_mask_degenerate_bbox         },
     { "start_side_eligible_closed_mask",         run_start_side_eligible_closed_mask         },
+    { "starts_scatter_avoids_existing_tanks",    run_starts_scatter_avoids_existing_tanks    },
+    { "starts_scatter_falls_back_when_crowded",  run_starts_scatter_falls_back_when_crowded  },
     { "input_redundancy",                        run_input_redundancy                        },
     { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "bases_closest_for_player",                run_bases_closest_for_player                },

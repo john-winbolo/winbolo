@@ -46,6 +46,8 @@
 #define START_TANK_RANGE 1
 #define START_PILL_RANGE 9
 #define START_BASE_RANGE 9
+/* Minimum distance a scattered spawn keeps from another live tank */
+#define START_SPAWN_SEPARATION 2
 /* Maximum spiral search steps */
 #define START_SCATTER_MAX 1000
 /* Fraction of neutral bases before we treat neutral same as own */
@@ -217,38 +219,89 @@ static bool startsIsValidSquare(GameSim *sim, BYTE mx, BYTE my) {
   return (mapGetPos(&sim->mp, mx, my) == DEEP_SEA && mapIsMine(&sim->mp, mx, my) == FALSE);
 }
 
+static int startsMapDistance(int x1, int y1, int x2, int y2);
+
+/*********************************************************
+*NAME:          startsIsClearOfTanks
+*AUTHOR:        John Morrison
+*CREATION DATE: 8/9/26
+*LAST MODIFIED: 8/9/26
+*PURPOSE:
+*  Returns whether a map square is at least
+*  START_SPAWN_SEPARATION squares from every live tank
+*  other than the one being placed.
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game simulation
+*  mx        - Map X coordinate
+*  my        - Map Y coordinate
+*  playerNum - Slot being placed, whose own tank is
+*              skipped; MAX_TANKS if there is none
+*********************************************************/
+static bool startsIsClearOfTanks(GameSim *sim, BYTE mx, BYTE my, BYTE playerNum) {
+  BYTE count;
+  WORLD wx;
+  WORLD wy;
+
+  for (count = 0; count < MAX_TANKS; count++) {
+    if (count == playerNum || sim->tanks[count] == NULL) {
+      continue;
+    }
+    tankGetWorld(&sim->tanks[count], &wx, &wy);
+    if (startsMapDistance(mx, my, wx >> M_W_SHIFT_SIZE, wy >> M_W_SHIFT_SIZE) < START_SPAWN_SEPARATION) {
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
 /*********************************************************
 *NAME:          startsScatterFind
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/4/26
-*LAST MODIFIED: 24/4/26
+*LAST MODIFIED: 8/9/26
 *PURPOSE:
 *  Spiral-searches outward from a centre position to find
-*  a valid deep-sea square with no mine.
+*  a valid deep-sea square with no mine. Two passes over
+*  the same spiral: the first also requires the square to
+*  be at least START_SPAWN_SEPARATION squares from every
+*  other live tank; if nothing within START_SCATTER_MAX
+*  steps satisfies that, the second pass drops the
+*  separation rule so a crowded map still places the tank.
+*  Falls back to the centre itself if both passes fail.
 *
 *ARGUMENTS:
-*  sim    - Pointer to the game simulation
-*  centreX - Centre map X coordinate
-*  centreY - Centre map Y coordinate
-*  outX   - Pointer to receive result X
-*  outY   - Pointer to receive result Y
+*  sim       - Pointer to the game simulation
+*  centreX   - Centre map X coordinate
+*  centreY   - Centre map Y coordinate
+*  outX      - Pointer to receive result X
+*  outY      - Pointer to receive result Y
+*  playerNum - Slot being placed, whose own tank is
+*              ignored by the separation test; MAX_TANKS
+*              if there is no tank to skip
 *********************************************************/
-static void startsScatterFind(GameSim *sim, BYTE centreX, BYTE centreY, BYTE *outX, BYTE *outY) {
+static void startsScatterFind(GameSim *sim, BYTE centreX, BYTE centreY, BYTE *outX, BYTE *outY, BYTE playerNum) {
+  int pass;
   int step;
   int dx;
   int dy;
   int sx;
   int sy;
+  bool keepClear;
 
-  for (step = 0; step < START_SCATTER_MAX; step++) {
-    utilSpiralOffset(step, &dx, &dy);
-    sx = (int)centreX + dx;
-    sy = (int)centreY + dy;
-    if (sx > 0 && sx < MAP_ARRAY_SIZE && sy > 0 && sy < MAP_ARRAY_SIZE) {
-      if (startsIsValidSquare(sim, (BYTE)sx, (BYTE)sy)) {
-        *outX = (BYTE)sx;
-        *outY = (BYTE)sy;
-        return;
+  for (pass = 0; pass < 2; pass++) {
+    keepClear = (pass == 0);
+    for (step = 0; step < START_SCATTER_MAX; step++) {
+      utilSpiralOffset(step, &dx, &dy);
+      sx = (int)centreX + dx;
+      sy = (int)centreY + dy;
+      if (sx > 0 && sx < MAP_ARRAY_SIZE && sy > 0 && sy < MAP_ARRAY_SIZE) {
+        if (startsIsValidSquare(sim, (BYTE)sx, (BYTE)sy) &&
+            (keepClear == FALSE || startsIsClearOfTanks(sim, (BYTE)sx, (BYTE)sy, playerNum))) {
+          *outX = (BYTE)sx;
+          *outY = (BYTE)sy;
+          return;
+        }
       }
     }
   }
@@ -396,7 +449,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
 
     /* Ideal: no tanks nearby and no enemy/neutral pills (friendly pills ok) */
     if (anyTankNearby == FALSE && nonFriendlyPillNearby == FALSE) {
-      startsScatterFind(sim, sx, sy, x, y);
+      startsScatterFind(sim, sx, sy, x, y, playerNum);
       bt = startsConvertDir((*value)->item[idx].dir);
       *dir = (TURNTYPE)(bt * START_TIMES_16);
       return;
@@ -425,7 +478,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
   else chosen = 0;
 
   /* Phase 3: scatter search around chosen position */
-  startsScatterFind(sim, (*value)->item[chosen].x, (*value)->item[chosen].y, x, y);
+  startsScatterFind(sim, (*value)->item[chosen].x, (*value)->item[chosen].y, x, y, playerNum);
   bt = startsConvertDir((*value)->item[chosen].dir);
   *dir = (TURNTYPE)(bt * START_TIMES_16);
 }
@@ -604,7 +657,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   }
 
   WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] chose start %d (%d,%d)", idx, (*value)->item[idx].x, (*value)->item[idx].y);
-  startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, x, y);
+  startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, x, y, playerNum);
   bt = startsConvertDir((*value)->item[idx].dir);
   *dir = (TURNTYPE)(bt * START_TIMES_16);
 }
@@ -1264,7 +1317,7 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     BYTE ry;
     BYTE bt;
     if (idx >= (*value)->numStarts) idx = 0;   /* clamp to a valid start */
-    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
     bt = startsConvertDir((*value)->item[idx].dir);
     *x = rx;
     *y = ry;
@@ -1278,7 +1331,7 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     BYTE ry;
     BYTE bt;
     sim->pendingStartIdx[playerNum] = MAX_STARTS;
-    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
     bt = startsConvertDir((*value)->item[idx].dir);
     *x = rx;
     *y = ry;
