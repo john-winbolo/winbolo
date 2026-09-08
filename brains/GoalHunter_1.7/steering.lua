@@ -13,6 +13,7 @@ local bpc = require("bpc")
 local viz = require("viz")
 local opt = require("optimize")
 local threat = require("threat")
+local bpool = require("builder_pool")   -- capture_lgm_hunt: ally claim on the pill tile
 local print2 = require("print2")
 -- attack.lua owns the attack_tank heat-pill decision (selection, shots_needed
 -- from the engine's speed-halving ladder, volley termination). Required LAZILY
@@ -75,7 +76,11 @@ local nav_turn_speed = U.nav_turn_speed
 -- require_reach: when true, a shell that runs out of range before reaching the
 --   target tile counts as NOT clear (otherwise an out-of-range shot with no
 --   blocker in the lane reads as "clear" because nothing stopped it).
-local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls, src_wx, src_wy, require_reach)
+-- allow_ally_pn: ONE allied player number whose tank does NOT block the shot.
+--   Used by the "kill me" delivery, where hitting that ally is the whole
+--   point. Every other allied tank still blocks, so a delivery shot is still
+--   refused when a DIFFERENT team-mate wanders into the lane.
+local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls, src_wx, src_wy, require_reach, allow_ally_pn)
   max_walls = max_walls or 0
   local ox = src_wx or info.tankx
   local oy = src_wy or info.tanky
@@ -127,6 +132,10 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
         if tp.player_num == st.hit_id then hit_tank = tp; break end
       end
       local hit_ally = hit_tank and hit_tank.allied
+      -- The one ally we are deliberately shooting is not a blocker.
+      if hit_ally and allow_ally_pn ~= nil and st.hit_id == allow_ally_pn then
+        hit_ally = false
+      end
       if do_viz and hit_tank then
         local tcx = hit_tank.wx / 256.0
         local tcy = hit_tank.wy / 256.0
@@ -366,6 +375,9 @@ local function intentionally_stationary(goal, info)
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
   if goal.kind == "attack_tank" and _at_stationary[s] then return true end
   if goal.kind == "rescue_lgm" or goal.kind == "none" then return true end
+  -- kill_me_wait: parked on the advertised tile ON PURPOSE, waiting to be
+  -- shot. Standing still is the goal, not a wedge.
+  if goal.kind == "kill_me_wait" then return true end
   -- SEA-PILL HARVEST: while the LGM is out laying the mine or building the
   -- boat, and while we are shooting the mine, the tank is parked ON PURPOSE.
   -- Without this the stuck detector escalates and clears the goal — leaving a
@@ -1364,6 +1376,182 @@ end
 -- the mine tile center before the trigger is pulled.
 -- =========================================================================
 local KL = require("kill_lgm")
+
+-- =========================================================================
+-- Capture-pill LGM hunt (C.CAPTURE_LGM_HUNT).
+--
+-- A hostile LGM standing on or beside the dead pill we are driving at is a
+-- builder rebuilding the corpse out from under us; the moment his repair
+-- lands the free pill is a live enemy pillbox and the capture is gone.  So
+-- while the goal is capture_pill the bot SWEEPS the target tile on its way
+-- through it.
+--
+-- This function does the DETECTION half and hands back one record on
+-- state._clh.  The steering blend that consumes it lives in the normal
+-- navigation block below and touches ONE thing -- `turn_corr`, the value the
+-- turn keys are derived from.  `correction` (the navigation heading error the
+-- whole throttle ladder is built on) is deliberately left alone, which is what
+-- makes "throttle always comes from navigation, never brake for the LGM" a
+-- structural property rather than a promise.  init.lua then drives the gunsight
+-- off the same record (its kill-LGM gunsight driver is gated on goal ==
+-- kill_lgm, so under capture_pill the crosshair would otherwise sit wherever
+-- the last goal left it and the shot gate would never open).
+--
+-- TWO TRIGGERS:
+--   lgm     -- a hostile LGM within CAPTURE_LGM_HUNT_RADIUS tiles (Chebyshev)
+--              of the TARGET PILL TILE.  Radius is measured from the pill, not
+--              from us: a builder further out than that is not working on THIS
+--              pill.  perception.enemy_lgms is hostile-only, so friendly and
+--              allied builders are excluded for free.  Aim = the same
+--              lead-predicted point kill_lgm/perception already computed.
+--   armour  -- the man is invisible (perception drops tree-hidden LGMs more
+--              than 3 tiles out) but his repair is not: the target pill's
+--              armour went UP.  Nobody to aim at, so we aim at the pill tile
+--              and shell it.  Knocking the armour back down is the point, and
+--              our own shells cannot hurt a dead pill.
+--
+-- The goal is NOT touched: no substate, no target_id, no cost -- capture_pill
+-- stays exactly what it was and the capture logic never sees this happen.
+-- Returns the record (also stashed on state._clh, stamped with the tick so a
+-- consumer can tell a live record from last tick's leftovers), or nil.
+-- =========================================================================
+local function capture_lgm_hunt(state, world, info, goal)
+  if not C.CAPTURE_LGM_HUNT or goal == nil
+     or goal.kind ~= "capture_pill" or info.inboat then
+    state._clh = nil
+    return nil
+  end
+  local now  = state.tick or 0
+  local pmx, pmy = goal.mx, goal.my
+  if pmx == nil or pmy == nil then state._clh = nil; return nil end
+
+  -- ── Armour trigger ────────────────────────────────────────────────────
+  -- Read straight off world.lua's repair tell (p._repair_tick, stamped on any
+  -- pill whose armour goes UP).  It has to come from there and not from a
+  -- watcher of our own, and the reason took a run to find: the goal pool drops
+  -- capture_pill on the VERY TICK the corpse comes back to life, so a sampler
+  -- that only runs while the goal is capture_pill never sees the rise it
+  -- exists to catch.  Measured in arena H2 -- the brain first read armour=2 at
+  -- t=107 and the goal was already `none` on that same tick.
+  --
+  -- Reading the stamp instead also makes the window mean the right thing: the
+  -- trigger stays hot for CAPTURE_LGM_HUNT_ARMOUR_TICKS after the REPAIR, so
+  -- it is still hot when the pill is shelled back to 0 and capture_pill wins
+  -- the pool again.  That is the moment this feature is for -- we arrive on a
+  -- tile where somebody's man was working seconds ago.
+  local armour_hot = false
+  local armour_veto = nil
+  if C.CAPTURE_LGM_HUNT_ARMOUR_TRIGGER then
+    local plist = world.pill_at and world.pill_at[pmy * 256 + pmx]
+    if plist then
+      for i = 1, #plist do
+        local pe = plist[i]
+        local rt = pe.pill and pe.pill._repair_tick
+        if rt and (now - rt) <= (C.CAPTURE_LGM_HUNT_ARMOUR_TICKS or 100) then
+          armour_hot = true
+          break
+        end
+      end
+    end
+    -- A rise is not proof of an ENEMY: any builder can repair any pill and
+    -- the pill keeps its owner (lgm.c LGM_PILL_REQUEST -> pillsRepairPos, no
+    -- owner test), and the corpses we scoop are often an ally's. So the
+    -- armour trigger stands down when the rise has a friendly explanation:
+    -- an ally's builder-pool claim on the tile (the rebuild job advertises
+    -- itself on the /info slate), or a friendly / allied builder object seen
+    -- within the hunt radius of the pill -- ours included, since our own man
+    -- repairing it is not a hunt either. Shelling that tile would hit their
+    -- fresh pill and the man standing on it.
+    if armour_hot then
+      if bpool.ally_claim_on(state, info, pmx, pmy, now, now) then
+        armour_hot = false
+        armour_veto = "ally_claim"
+      else
+        for _, ob in ipairs(info.objects or {}) do
+          if ob.type == OBJECT_BUILDMAN
+             and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then
+            local dx = bit.rshift(ob.x, 8) - pmx; if dx < 0 then dx = -dx end
+            local dy = bit.rshift(ob.y, 8) - pmy; if dy < 0 then dy = -dy end
+            if ((dx > dy) and dx or dy) <= (C.CAPTURE_LGM_HUNT_RADIUS or 2) then
+              armour_hot = false
+              armour_veto = "friendly_builder"
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- ── Nearest hostile LGM to the PILL ───────────────────────────────────
+  local R = C.CAPTURE_LGM_HUNT_RADIUS or 2
+  -- Cap the box at our own distance to the pill (Chebyshev, the box's own
+  -- metric): only a man at least as close to the corpse as we are is worth a
+  -- turn. See CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST.
+  local tdx = bit.rshift(info.tankx, 8) - pmx; if tdx < 0 then tdx = -tdx end
+  local tdy = bit.rshift(info.tanky, 8) - pmy; if tdy < 0 then tdy = -tdy end
+  local tank_cheb = (tdx > tdy) and tdx or tdy
+  if C.CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST and tank_cheb < R then R = tank_cheb end
+  local best, best_d = nil, nil
+  local lgms = state.perc and state.perc.enemy_lgms
+  if lgms then
+    for i = 1, #lgms do
+      local e = lgms[i]
+      local dx = e.mx - pmx; if dx < 0 then dx = -dx end
+      local dy = e.my - pmy; if dy < 0 then dy = -dy end
+      local d = (dx > dy) and dx or dy       -- Chebyshev: a (2R+1)^2 box
+      if d <= R and (best_d == nil or d < best_d) then best, best_d = e, d end
+    end
+  end
+  if best == nil and not armour_hot then state._clh = nil; return nil end
+
+  local aim_wx, aim_wy, src
+  if best then
+    aim_wx = best.predicted_wx or best.wx
+    aim_wy = best.predicted_wy or best.wy
+    src    = "lgm"
+  else
+    aim_wx, aim_wy = U.m2w(pmx), U.m2w(pmy)
+    src    = "armour"
+  end
+
+  -- Tolerance widens once we are nearly on top of the pill: a wide swing
+  -- there costs almost no ground, and that is exactly where the builder is.
+  local tank_pill_d = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+                              pmx, pmy)
+  local tol = (tank_pill_d <= (C.CAPTURE_LGM_HUNT_NEAR_TILES or 4))
+              and (C.CAPTURE_LGM_HUNT_TOL_NEAR_BRADS or 45)
+              or  (C.CAPTURE_LGM_HUNT_TOL_BRADS or 26)
+
+  local r = state._clh
+  if r == nil then r = {}; state._clh = r end
+  r.tick      = now
+  r.pmx, r.pmy = pmx, pmy
+  r.src       = src
+  r.aim_wx, r.aim_wy = aim_wx, aim_wy
+  r.aim_dir   = U.aim_at(info.tankx, info.tanky, aim_wx, aim_wy)
+  r.lgm_mx    = best and best.mx or nil
+  r.lgm_my    = best and best.my or nil
+  r.lgm_id    = best and best.idnum or nil
+  r.target_sl = best and best.target_sightLen or nil
+  r.pill_d    = best_d
+  r.radius    = R          -- effective box radius this tick (after the distance cap)
+  r.dist_wu   = U.wdist(info.tankx, info.tanky, aim_wx, aim_wy)
+  r.tol       = tol
+  r.armour_veto = armour_veto
+  r.nav_dir   = nil
+  r.err       = nil
+  r.thr       = nil
+  -- `steer` is what the BLEND did with the turn keys this tick; `verdict` is
+  -- the loudest thing that happened (a shot outranks a turn).  They are not
+  -- the same question and conflating them reads as a bug: init.lua's kill-LGM
+  -- block fires at any man in range whatever we are steering, so a tick can
+  -- legitimately be steer=nav (aim outside tolerance, or a U-turn latched)
+  -- and verdict=fire at the same time.
+  r.steer     = "nav"
+  r.verdict   = "nav"
+  return r
+end
 
 local function demine_steer(state, world, info, goal)
   local keys, taps = 0, 0
@@ -2483,7 +2671,57 @@ local function tank_combat_steer(state, world, info, goal)
   local target = nil
   local target_dist = math.huge
 
+  -- ── "KILL ME" TARGET OVERRIDE ────────────────────────────────────────
+  -- Everything below this block hunts ENEMY tanks: perception's enemy_tanks
+  -- and ghost lists contain no allies at all, so without an explicit override
+  -- the fight loop simply cannot aim at a team-mate. When the goal names an
+  -- ally who has asked to be killed for its cargo, the target comes straight
+  -- from the object list instead.
+  --
+  -- Identification is exact, not positional: brain_data hands every TANK
+  -- object an `idnum` that IS the player number (players.c
+  -- playersGetBrainTanksInRect), and OBJECT_HOSTILE is clear for a friendly.
+  -- So there is no way to mistake another tank for the one that asked.
+  local km_pn = goal.km_ally_pn
+  if km_pn then
+    for _, ob in ipairs(info.objects or {}) do
+      if ob.type == OBJECT_TANK and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
+         and ob.idnum == km_pn then
+        local omx, omy = bit.rshift(ob.x, 8), bit.rshift(ob.y, 8)
+        target = { mx = omx, my = omy, wx = ob.x, wy = ob.y,
+                   dist = U.mdist(tmx, tmy, omx, omy),
+                   speed = ob.speed or 0,
+                   vx = 0, vy = 0, svx = 0, svy = 0,
+                   id = km_pn, obj = ob, km_ally = true }
+        target_dist = target.dist
+        break
+      end
+    end
+    if not target then
+      -- Out of sight: drive to the advertised tile and look again there.
+      -- The goal-validity check ends the errand if the request itself stops.
+      local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
+      if nx then
+        local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
+        local corr = U.adiff(info.direction, move_dir)
+        local k, t = nav_turn_speed(corr, info.speed)
+        keys = bit.bor(keys, k)
+        taps = bit.bor(taps, t)
+      elseif info.speed > 0 then
+        keys = bit.bor(keys, KEY_SLOWER)
+      end
+      if BRAIN_DEBUG_MODE then print2(string.format(
+        "KILL_ME_STEER t=%d ally p%d not in view — driving to advertised tile (%d,%d)",
+        now, km_pn, goal.mx, goal.my)) end
+      return keys, taps
+    end
+    if BRAIN_DEBUG_MODE then print2(string.format(
+      "KILL_ME_STEER t=%d target=ally p%d @(%d,%d) dist=%.1f shells=%d",
+      now, km_pn, target.mx, target.my, target.dist, info.shells or -1)) end
+  end
+
   -- Match by proximity to goal position (tank may have moved since goal was set)
+  if not target then
   for _, et in ipairs(cand_tanks) do
     local d = U.mdist(et.mx, et.my, goal.mx, goal.my)
     if d < target_dist then
@@ -2491,9 +2729,13 @@ local function tank_combat_steer(state, world, info, goal)
       target = et
     end
   end
+  end
 
-  -- If we can't see any enemy tank near the goal, find nearest visible one
-  if not target or target_dist > 8 then
+  -- If we can't see any enemy tank near the goal, find nearest visible one.
+  -- NEVER on a kill_me delivery: the subject is a named ally and re-acquiring
+  -- "the nearest enemy instead" would silently turn the errand into an
+  -- ordinary fight with a team-mate's stack still sitting undelivered.
+  if not km_pn and (not target or target_dist > 8) then
     local best_d = math.huge
     for _, et in ipairs(cand_tanks) do
       if et.dist < best_d then
@@ -2996,7 +3238,8 @@ local function tank_combat_steer(state, world, info, goal)
   if _aim_ok and _shells_ok and _steady_ok then
     local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
                                    bit.rshift(math.floor(pred_wx), 8),
-                                   bit.rshift(math.floor(pred_wy), 8))
+                                   bit.rshift(math.floor(pred_wy), 8),
+                                   nil, nil, nil, nil, km_pn)
     if _clear then
       keys = bit.bor(keys, KEY_SHOOT)
       if BRAIN_DEBUG_MODE then print2(string.format("TANK_FIRE t=%d id=%s ghost=%s @(%d,%d) dist=%.1f aim_corr=%.0f", now, tostring(target.id), tostring(target.ghost or false), target.mx, target.my, dist_tiles, aim_corr)) end
@@ -3558,7 +3801,11 @@ local function steer_core(state, world, info, goal)
   -- attack_pill: plan_position just visualizes, no steering needed.
   -- Falls through to general navigation for position substate.
 
-  elseif (goal.kind == "wait_for_lgm" or goal.kind == "take_cover")
+  elseif (goal.kind == "wait_for_lgm" or goal.kind == "take_cover"
+          -- kill_me_wait: the tile was advertised to the whole team as where
+          -- we will be standing, so once we are on it we STAY on it. Same
+          -- park as take_cover, for the same reason.
+          or goal.kind == "kill_me_wait")
          and goal.mx == (bit.rshift(info.tankx, 8)) and goal.my == (bit.rshift(info.tanky, 8)) then
     -- ON the wait/cover spot: stand still. For wait_for_lgm, let the LGM
     -- finish whatever he's doing (farming, opportunistic build) before
@@ -4482,6 +4729,53 @@ local function steer_core(state, world, info, goal)
       state._uturn = ut
     end
 
+    -- ── Capture-pill LGM hunt: the TURN keys only ────────────────────────
+    -- capture_pill keeps the throttle (we never brake for a builder -- the
+    -- capture is a race and driving over the corpse IS the grab); the aim
+    -- solution gets the heading, but only while it points within `tol` of
+    -- where navigation wanted to go.  Outside that the turn goes straight
+    -- back to navigation, so the sweep can never walk the tank off its route.
+    --
+    -- `correction` is NOT touched: every throttle branch below (turn-sharpness
+    -- cap, facing_away, orbit, approach brake) reads it, and they must all keep
+    -- seeing navigation's own error.  Only `turn_corr` moves.
+    --
+    -- Skipped while a U-turn is latched (state._uturn): that latch exists to
+    -- stop waypoint jitter flipping the turn side every few ticks, and letting
+    -- the aim fight it would reintroduce exactly that oscillation.
+    do
+      local _clh = capture_lgm_hunt(state, world, info, goal)
+      if _clh then
+        _clh.nav_dir = move_dir
+        _clh.err = U.adiff(move_dir, _clh.aim_dir)
+        _clh.uturn = (state._uturn ~= nil) or nil
+      end
+      if _clh and state._uturn == nil then
+        local herr = _clh.err
+        if math.abs(herr) <= _clh.tol then
+          turn_corr = U.adiff(info.direction, _clh.aim_dir)
+          _clh.steer   = "turn"
+          _clh.verdict = "turn"
+        end
+      end
+      if BRAIN_DEBUG_MODE and _clh then
+        local _twx, _twy = info.tankx / 256.0, info.tanky / 256.0
+        local _on = (_clh.steer == "turn")
+        local _r, _g, _b = _on and 255 or 150, _on and 90 or 150, _on and 200 or 150
+        -- The hunt box around the TARGET PILL -- the exact Chebyshev radius
+        -- the LGM scan measures, so the overlay matches the test in the code.
+        local _R = _clh.radius or C.CAPTURE_LGM_HUNT_RADIUS or 2   -- the box actually scanned this tick
+        viz.rect("kill_lgm_status", _clh.pmx - _R, _clh.pmy - _R,
+                 _clh.pmx + _R + 1, _clh.pmy + _R + 1, _r, _g, _b, 170, false)
+        viz.line("kill_lgm_status", _twx, _twy,
+                 _clh.aim_wx / 256.0, _clh.aim_wy / 256.0, _r, _g, _b, 220)
+        viz.text("kill_lgm_status", _twx, _twy - 1.4,
+                 string.format("HUNT[%s] %s err=%d tol=%d",
+                               _clh.src, _clh.steer, _clh.err or 0, _clh.tol),
+                 "center", _r, _g, _b, 240, 0.45)
+      end
+    end
+
     if     turn_corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
     elseif turn_corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
     elseif turn_corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
@@ -4993,6 +5287,17 @@ local function steer_core(state, world, info, goal)
       elseif info.speed < turn_max_speed then
         keys = bit.bor(keys, KEY_FASTER)
       end
+    end
+
+    -- Which throttle branch actually drove the tank this tick, handed to the
+    -- capture-pill LGM hunt's decision line (init.lua).  The hunt's whole
+    -- contract is "the throttle is still navigation's", and the branch NAME is
+    -- the proof: it must always be one of navigation's own, never a brake the
+    -- aim could have caused.  Stamped on the live record only, and only in a
+    -- debug build -- lua_strip takes the whole block out of the opt/ copy.
+    if BRAIN_DEBUG_MODE then
+      local _r = state._clh
+      if _r and _r.tick == state.tick then _r.thr = _throttle_branch end
     end
 
     -- Fast-approach branch tracer: which throttle branch is actually driving

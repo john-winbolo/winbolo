@@ -822,6 +822,20 @@ local function goal_group(kind)
   return GOAL_GROUPS[kind] or kind
 end
 
+-- Rows the LOADED, BUILDER-LESS state multiplies by C.ATTACK_NO_BUILDER_MULT.
+-- The four "drive at a fight" kinds: three attacks and the defend_pill ALARM
+-- row (which is itself "a hostile tank is on our pill, go and meet it").
+-- kill_lgm is deliberately NOT here -- it is a one-shot on a walking man, not
+-- a tank duel, and it already prices itself very low for that reason.
+-- KM: the whole "loaded, builder-less" toolbox in ONE chunk-level local.
+-- goals.lua sits right on Lua's 200-locals-per-chunk ceiling, so a feature
+-- that needs five helpers has to spend one name, not five.
+local KM = {}
+KM.ATTACK_KINDS = {
+  attack_tank = true, attack_pill = true,
+  attack_base = true, defend_pill = true,
+}
+
 -- =========================================================================
 -- Pillbox-suicider goal-cost shaping (see C.PILL_SUICIDER_* in constants).
 -- A suicider is only willing to do two things: kill pills, and keep itself
@@ -2223,6 +2237,108 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     ::continue_tanks::
   end
 
+  -- ── "KILL ME" RESPONDER ROWS ──────────────────────────────────────────
+  -- Every ally advertising a kill_me token becomes an extra pool-9 candidate
+  -- whose SUBJECT IS THAT ALLY. It rides pool 9 because it is the same
+  -- errand mechanically -- drive into gun range of a tank and shoot it until
+  -- it dies -- and because that is where the fight loop already lives.
+  --
+  -- Priced KILL_ME_RESPONDER_BASE + the Dijkstra travel cost to the ally's
+  -- tile, and NOTHING else: no aim bonus, no crossfire term, no
+  -- low-shells ramp. A delivery is a delivery.
+  --
+  -- Two REJECTS, both priced INF with the row still shown so the panel says
+  -- why we are not answering:
+  --   no_lgm      our OWN man is not in the tank. Killing an ally for pills
+  --               we also cannot place moves the problem, it does not solve
+  --               it.
+  --   low_shells  ceil(ally armour / TANK_SHELL_DAMAGE) + KILL_ME_SHELL_MARGIN,
+  --               and never below TANK_COMBAT_MIN_SHELLS. Under-gunned help
+  --               is worse than none: it wakes the ally's armour up and
+  --               leaves it standing in the open with a stack aboard.
+  --   ally_claimed  another ally already claimed this request and beat our
+  --               bid by more than ALLY_CLAIMED_STEAL_FRAC_KILLME.
+  --
+  -- These rows are exempt from the influence x0.5/x2 rule and from
+  -- ATTACK_NO_BUILDER_MULT (both keyed off goal.km_ally_pn in
+  -- goal_competition) -- our own builder is aboard by construction, and the
+  -- errand is the cure for the state, not an instance of it.
+  do
+    local reqs = M.kill_me_requests(state, info, state.tick or 0)
+    if #reqs > 0 then
+      local km = state.km
+      if not km then km = {}; state.km = km end
+      local best_claim = nil
+      for _, rq in ipairs(reqs) do
+        local reject, why = nil, nil
+        if info.man_status ~= C.LGM_INTANK then
+          reject = "no_lgm"
+          why = string.format("our own man is %s -- we could not place the pills either",
+            (info.man_status == C.LGM_DEAD) and "DEAD" or "OUT")
+        end
+        local need = math.ceil(rq.armour / (C.TANK_SHELL_DAMAGE or 5))
+                     + (C.KILL_ME_SHELL_MARGIN or 2)
+        if need < (C.TANK_COMBAT_MIN_SHELLS or 10) then
+          need = C.TANK_COMBAT_MIN_SHELLS or 10
+        end
+        if not reject and (info.shells or 0) < need then
+          reject = "low_shells"
+          why = string.format("%d shells, need ceil(%d armour / %d) + margin %d = %d (floor TANK_COMBAT_MIN_SHELLS %d)",
+            info.shells or 0, rq.armour, C.TANK_SHELL_DAMAGE or 5,
+            C.KILL_ME_SHELL_MARGIN or 2, need, C.TANK_COMBAT_MIN_SHELLS or 10)
+        end
+        local travel = smart_cost(KIND_NORMAL, tmx, tmy, rq.mx, rq.my,
+                                  info.inboat and 1 or 0, info.shells or 32,
+                                  info.trees or 0, info.mines or 0,
+                                  info.armour or 40)
+        if (not travel) or travel >= 1e8 then
+          if not reject then
+            reject = "unreachable"
+            why = string.format("no route from (%d,%d) to the ally's tile (%d,%d)",
+                                tmx, tmy, rq.mx, rq.my)
+          end
+          travel = 0
+        end
+        local cost = (C.KILL_ME_RESPONDER_BASE or 20) + travel
+        if not reject then
+          local ac = KM.ally_claim(state, info, rq.pn, cost, state.tick or 0)
+          if ac then
+            reject = "ally_claimed"
+            why = string.format("p%d already claimed p%d's request at %.0f; ours is %.0f and the steal band is %.0f%%",
+              ac.pn, rq.pn, ac.cost or -1, cost,
+              100 * (C.ALLY_CLAIMED_STEAL_FRAC_KILLME or 0.10))
+          end
+        end
+        breakdown[#breakdown + 1] = {
+          id = rq.pn, mx = rq.mx, my = rq.my,
+          dist = U.mdist(tmx, tmy, rq.mx, rq.my), speed = 0,
+          path_cost = travel, base = C.KILL_ME_RESPONDER_BASE or 20,
+          aim_bonus = 0, aim_diff = 0, crossfire = 0, wall_penalty = 0,
+          low_shells_penalty = 0, tank_shells = info.shells,
+          shells_on_arrival = 0,
+          cost = reject and 1e30 or cost,
+          skipped = reject, kill_me_why = why,
+          kill_me = true, km_ally_pn = rq.pn, km_ally_armour = rq.armour,
+          km_need_shells = need,
+          player_name = "ally p" .. tostring(rq.pn),
+        }
+        if not reject and cost < best_cost then
+          best_cost = cost
+          best_tank = { mx = rq.mx, my = rq.my, dist = U.mdist(tmx, tmy, rq.mx, rq.my),
+                        id = rq.pn, speed = 0, km_ally_pn = rq.pn }
+          best_claim = { pn = rq.pn, cost = cost }
+        end
+        -- One line per request per eval: the row, its price and its verdict.
+        -- The pool grid shows the same thing, but a headless run has no panel.
+      end
+      -- What we advertise as OUR claim this tick. Read by every ally's
+      -- KM.ally_claim, and by the INITIATOR so it knows whom not to shoot.
+      km.claim = best_claim
+    else
+      if state.km then state.km.claim = nil end
+    end
+  end
+
   -- Add inactive rows for enemy player slots whose tank is not currently
   -- visible. We know the player exists, but not its tank position, so these
   -- rows explain why the tank is not an actionable attack_tank candidate.
@@ -2286,6 +2402,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   -- penalties would push the cost back over the lock floor.
   local engage_break_lock = false
   if state.goal and state.goal.kind == "attack_pill"
+     and not best_tank.km_ally_pn
      and LOCK_SUBS[state.goal.substate or ""]
      and best_tank.dist <= C.TANK_COMBAT_ENGAGE_RANGE then
     local tank_to_pill = U.mdist(best_tank.mx, best_tank.my,
@@ -2305,12 +2422,21 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
              target_id = best_tank.id,
              target_obj = best_tank.obj,
              substate = "close",
+             -- "KILL ME" delivery: the subject of this attack_tank goal is an
+             -- ALLY who asked to be killed for its cargo. The flag is what
+             -- makes goal_competition skip the influence scale and
+             -- ATTACK_NO_BUILDER_MULT, what makes init.lua's goal-validity
+             -- check stop demanding a visible ENEMY, and what makes
+             -- steering's fight loop target a friendly tank at all.
+             km_ally_pn = best_tank.km_ally_pn,
              tank_scan_spots = win_entry and win_entry.scan_spots or nil,
              tank_standoff_deg = win_entry and win_entry.standoff_deg or nil,
              tank_standoff_mx = win_entry and win_entry.standoff_mx or nil,
              tank_standoff_my = win_entry and win_entry.standoff_my or nil, },
-    desc = BRAIN_POOL_VIZ and string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f%s",
+    desc = BRAIN_POOL_VIZ and string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f%s%s",
            best_tank.mx, best_tank.my, best_cost, best_tank.dist, best_tank.speed,
+           best_tank.km_ally_pn
+             and string.format(" subject=ally p%d [KILL_ME]", best_tank.km_ally_pn) or "",
            engage_break_lock and " [engage-break]" or "") or "",
   }
 end
@@ -5872,6 +5998,10 @@ local POOL_NAMES = {
   [12] = "wait_for_lgm",
   [13] = "kill_lgm",
   [14] = "take_cover",
+  -- 15 = kill_me_wait: the INITIATOR half of the "kill me" hand-off. Like
+  -- 12/13/14 it is written straight into pool_cache by its own evaluator and
+  -- renders as a WINNERS strip row, not a main-grid cell.
+  [15] = "kill_me_wait",
 }
 
 -- Reverse map: actual goal.kind → pool index, for looking up cost_cache
@@ -5884,7 +6014,7 @@ local KIND_TO_POOL = {
   refuel_at_base = 1, defend_pill = 2, capture_base = 3, capture_pill = 4,
   repair_pill = 5, attack_pill = 6, attack_base = 7,
   place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
-  kill_lgm = 13, take_cover = 14,
+  kill_lgm = 13, take_cover = 14, kill_me_wait = 15,
 }
 
 -- Pool DISPLAY name → goal.kind, for the two labels that differ (see the
@@ -6159,6 +6289,84 @@ end
 -- WINNERS strip still renders the row.
 local TAKE_COVER_REJECT_COST = C.TAKE_COVER_REJECT_COST or 1e8
 
+-- =========================================================================
+-- LOADED, BUILDER-LESS  (state.loaded_no_lgm)
+--
+-- ONE definition, recomputed EVERY TICK from engine truth and never latched.
+-- init.lua calls this from its per-tick prelude (beside cautious_mode) and
+-- stashes the answer on state; every consumer reads the FIELD, so there is
+-- exactly one place the question is asked.
+--
+--   loaded_no_lgm = carried_pills >= C.LOADED_NO_LGM_MIN_PILLS
+--                   and ( man_status == LGM_DEAD
+--                         or ( man out walking
+--                              and his return ETA > C.LOADED_NO_LGM_ETA_TICKS ) )
+--
+-- The ETA is the SAME walk sim the builder pool prices its trips with
+-- (cpf_lgm_travel_ticks, the engine's straight-line lgmReturn walk with a
+-- per-axis slide), and it is BUDGETED -- so like the stranded check in
+-- goal_selection it is only re-run every LOADED_NO_LGM_ETA_RECHECK_TICKS and
+-- cached in between.  A sim that returns -1 (STUCK: the stranded man) is not
+-- "unknown", it is "he is not walking home at all", so it counts as longer
+-- than any threshold.
+--
+-- The DEAD half costs nothing and is therefore read fresh every tick: a man
+-- who dies flips the state on that tick, not up to 50 ticks later.  Factors
+-- are stashed for the HUD / pool breakdowns; nothing reads them for logic.
+function M.loaded_no_lgm_eval(state, info, now)
+  local f = state._loaded_no_lgm_factors
+  if not f then f = {}; state._loaded_no_lgm_factors = f end
+  local carry = (info and info.carried_pills) or 0
+  local man   = (info and info.man_status) or C.LGM_INTANK
+  f.carry     = carry
+  f.min_pills = C.LOADED_NO_LGM_MIN_PILLS or 3
+  f.man       = man
+  f.eta_thresh = C.LOADED_NO_LGM_ETA_TICKS or 1000
+  if carry < f.min_pills then
+    f.why = "carry"
+    f.eta = nil
+    return false
+  end
+  if man == C.LGM_DEAD then
+    f.why = "dead"
+    f.eta = nil
+    return true
+  end
+  if man ~= C.LGM_MOVING then
+    f.why = "intank"
+    f.eta = nil
+    return false
+  end
+  -- Man is out walking: how long until he is back? Budgeted sim, so cache.
+  local recheck = C.LOADED_NO_LGM_ETA_RECHECK_TICKS or 50
+  if not f.eta_tick or (now - f.eta_tick) >= recheck then
+    f.eta_tick = now
+    local ticks = cpf_lgm_travel_ticks(
+      info.man_x or 0, info.man_y or 0, info.tankx or 0, info.tanky or 0,
+      0, 0, 2000, 150)
+    f.eta_raw = ticks
+    -- -1 == STUCK: he is not coming home on this ground at all.
+    f.eta = (ticks == -1) and math.huge or ticks
+  end
+  f.why = (f.eta or 0) > f.eta_thresh and "eta" or "eta_soon"
+  return (f.eta or 0) > f.eta_thresh
+end
+
+-- Human-readable one-liner for the HUD / breakdown chips.
+function M.loaded_no_lgm_label(state)
+  local f = state and state._loaded_no_lgm_factors
+  if not f then return "loaded_no_lgm{unknown}" end
+  local eta
+  if f.eta == nil then eta = "n/a"
+  elseif f.eta == math.huge then eta = "STUCK"
+  else eta = string.format("%.0ft", f.eta) end
+  return string.format("loaded_no_lgm{carry %d>=%d, man=%s, eta %s>%d, %s}",
+    f.carry or 0, f.min_pills or 0,
+    (f.man == C.LGM_DEAD) and "DEAD"
+      or (f.man == C.LGM_MOVING) and "OUT" or "INTANK",
+    eta, f.eta_thresh or 0, tostring(f.why))
+end
+
 -- Haul-protection trigger, SHARED by goal_selection's critical-flee injection
 -- and eval_take_cover.  Two copies of this ladder would drift instantly, and
 -- then "the flee fired but take_cover didn't" would be unexplainable from the
@@ -6197,6 +6405,14 @@ local function haul_flee_eval(state, info, tmx, tmy)
     h.pill_shooting = (h.level >= 1.0 and h.pill_at > 0) or false
     h.arm_thresh = C.ARMOUR_LOW * h.level
     h.arm_low = (info.armour or 0) <= h.arm_thresh
+    -- "KILL ME" in progress: the ally we asked is shooting us on purpose, so
+    -- the armour coming off is the plan, not a reason to run. Waived only
+    -- while state.km.executing holds (claimant within KILL_ME_EXECUTE_TILES,
+    -- no enemy tank inside the cancel radius -- see init.lua).
+    if h.arm_low and state.km and state.km.executing then
+      h.arm_low = false
+      h.km_exec = true
+    end
     h.triggered = h.tank_engaging or h.pill_shooting or h.arm_low
   end
   return h
@@ -6764,6 +6980,185 @@ local function eval_take_cover(state, world, info, tmx, tmy, boat, ammo)
   return { cost = cost, goal = goal, desc = desc, cands = rows }
 end
 
+-- =========================================================================
+-- "KILL ME" — handing a stack off a builder-less tank
+--
+-- Engine facts this is built on:
+--   * ALLIED shells damage allied tanks. tank.c tankIsTankHit only ignores
+--     the SHOOTER's own shells, so a team-mate can kill us on purpose.
+--   * a killed tank's carried pills fall on the ground as corpses that keep
+--     the DEAD PLAYER's ownership -- and capture_pill already scoops an
+--     ally-owned corpse, so the responder pockets the stack by driving over
+--     it, with no new pickup code at all.
+--   * a killed LGM is choppered in from a RANDOM start tile at 3 wu/engine
+--     tick and then walks; dying does NOT bring him back (lgm.c lgmTankDied
+--     only clears nextAction). So "wait for the builder" is not a plan.
+--
+-- INITIATOR side is this file (eval_kill_me_wait, pool 15) plus the token on
+-- the /info extra slate in init.lua. RESPONDER side is an extra candidate in
+-- eval_attack_tank (pool 9) and the target override in steering.lua.
+-- =========================================================================
+
+-- Every ally currently advertising a kill_me request, sorted by player number
+-- so two bots reading the same slate see the same list in the same order.
+--   km  = "XXYYAA"  (hex: request tile x, tile y, the requester's armour)
+--   kmc = "PPCCCC"  (hex: the initiator this ally is answering, and the cost
+--                    it bid) -- the CLAIM, read by claim_on_kill_me below.
+function KM.parse(s)
+  if not s or s == "-" or #s < 6 then return nil end
+  local mx = tonumber(string.sub(s, 1, 2), 16)
+  local my = tonumber(string.sub(s, 3, 4), 16)
+  local ar = tonumber(string.sub(s, 5, 6), 16)
+  if not (mx and my and ar) then return nil end
+  return mx, my, ar
+end
+
+function KM.parse_claim(s)
+  if not s or s == "-" or #s < 6 then return nil end
+  local pn = tonumber(string.sub(s, 1, 2), 16)
+  local ct = tonumber(string.sub(s, 3, 6), 16)
+  if not (pn and ct) then return nil end
+  return pn, ct
+end
+
+function M.kill_me_requests(state, info, now)
+  local out = {}
+  if not C.KILL_ME_ENABLED then return out end
+  local self_pn = info and info.player_number or -1
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn then
+      local h = slot.info
+      local mx, my, ar = KM.parse(h and h.km)
+      if mx then
+        -- A slot whose tank we have SEEN die since its last slate is stale:
+        -- the request died with it. Same guard the blitz commander uses.
+        local dead = state.tank_dead_at and state.tank_dead_at[pn]
+                     and state.tank_dead_at[pn] > (slot.last_tick or 0)
+        if not dead then
+          out[#out + 1] = { pn = pn, mx = mx, my = my, armour = ar }
+        end
+      end
+    end
+  end
+  table.sort(out, function(a, b) return a.pn < b.pn end)
+  return out
+end
+
+-- Is another ALLY already claiming this initiator, and does their claim beat
+-- ours? Same shape as builder_pool.ally_claim_on: a cheaper bid wins, but only
+-- if it is cheaper by ALLY_CLAIMED_STEAL_FRAC_KILLME; a tie breaks to the
+-- LOWER player number, the rule every other claim in the brain uses.
+-- Returns nil when the request is ours to take, else { pn, cost }.
+function KM.ally_claim(state, info, target_pn, our_cost, now)
+  local self_pn = info and info.player_number or -1
+  local frac = C.ALLY_CLAIMED_STEAL_FRAC_KILLME or 0.10
+  local best = nil
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn and pn ~= target_pn then
+      local cpn, ccost = KM.parse_claim(slot.info and slot.info.kmc)
+      if cpn == target_pn then
+        local theirs_wins
+        if our_cost == nil then
+          theirs_wins = true
+        elseif math.abs(ccost - our_cost) < 0.5 then
+          theirs_wins = pn < self_pn                       -- tie: lower pn
+        else
+          theirs_wins = not (our_cost < ccost * (1 - frac))  -- steal band
+        end
+        if theirs_wins and (not best or pn < best.pn) then
+          best = { pn = pn, cost = ccost }
+        end
+      end
+    end
+  end
+  return best
+end
+
+-- eval_kill_me_wait — pool 15, the INITIATOR row.
+--
+-- Bids only while the tank is loaded and builder-less AND nothing is actually
+-- happening: the escape rows own the situation the moment they trigger, and
+-- an enemy tank inside KILL_ME_CANCEL_ENEMY_TILES cancels the request
+-- outright (a hand-off in front of the enemy just gives them the corpses).
+-- Priced at KILL_ME_WAIT_COST -- above nothing, below every escape.
+function KM.eval_wait(state, world, info, tmx, tmy)
+  if not C.KILL_ME_ENABLED then return nil end
+  if not state.loaded_no_lgm then return nil end
+  if info.dead or info.inboat then return nil end
+  local now = state.tick or 0
+  local km = state.km
+  if not km then km = {}; state.km = km end
+  if km.cooldown_until and now < km.cooldown_until then return nil end
+  -- The escape rows are in charge whenever they fire. haul_flee_eval is the
+  -- SHARED ladder (flee injection + take_cover both read it), so asking it
+  -- here is asking the same question they answer, not a third copy.
+  local haul = haul_flee_eval(state, info, tmx, tmy)
+  if haul.triggered then return nil end
+  -- Our armour floor is waived while the claimant is executing: those last
+  -- points ARE the hand-off. (The haul ladder above already waived its own
+  -- armour trigger for the same reason.)
+  if not km.executing
+     and (info.armour or 0) <= (C.ARMOUR_CRITICAL or 8) then return nil end
+  -- An enemy tank in sight of the meeting point cancels the whole idea.
+  local nh = state.perc and state.perc.nearest_hostile_tank
+  local enemy_d = nh and nh.dist or nil
+  if enemy_d and enemy_d <= (C.KILL_ME_CANCEL_ENEMY_TILES or 10) then
+    return nil
+  end
+  -- Somebody has to be able to answer.
+  local n_allies = 0
+  for pn in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= (info.player_number or -1) then n_allies = n_allies + 1 end
+  end
+  if n_allies == 0 then return nil end
+  -- Park somewhere the enemy is least likely to interrupt: the take_cover
+  -- picker already answers "where is it safer than here", so use it rather
+  -- than inventing a second notion of cover.
+  local _here, best = M.find_cover_tile(state, world, info, tmx, tmy)
+  local wmx, wmy = tmx, tmy
+  local where = "here"
+  if best and best.mx then
+    wmx, wmy = best.mx, best.my
+    where = "cover"
+  end
+  local cost = C.KILL_ME_WAIT_COST or 15
+  local claimed = km.claimed_by
+  local desc = BRAIN_POOL_VIZ and string.format(
+    "kill_me_wait@(%d,%d) cost=%.0f [%s] %s claim=%s",
+    wmx, wmy, cost, where, M.loaded_no_lgm_label(state),
+    claimed and ("p" .. tostring(claimed)) or "none") or ""
+  if BRAIN_POOL_VIZ then
+    if not state.cost_cache then state.cost_cache = {} end
+    state.cost_cache["15:-1"] = {
+      cost = cost, raw = 0, tick = now, _p = 15, _mx = wmx, _my = wmy,
+      formula = string.format(
+        "kill_me_wait{%.0f}@(%d,%d)||kill_me:%s. Park on the %s tile and advertise a kill_me token"
+        .. " (tile + armour %d) on the /info extra slate so an ally with its builder aboard can"
+        .. " shoot us and pocket the %d pill(s) we cannot place. Priced KILL_ME_WAIT_COST{%.0f}:"
+        .. " above routine work, below flee_to_base (~40) and take_cover (~%d), so a real escape"
+        .. " always wins|cancel:the row disappears the moment an enemy tank comes within"
+        .. " KILL_ME_CANCEL_ENEMY_TILES{%d} (nearest right now: %s), the escape triggers fire,"
+        .. " armour drops to ARMOUR_CRITICAL{%d}, or the builder is back|claim:%s",
+        cost, wmx, wmy, M.loaded_no_lgm_label(state), where,
+        info.armour or 0, info.carried_pills or 0, cost,
+        C.TAKE_COVER_BASE_COST or 60, C.KILL_ME_CANCEL_ENEMY_TILES or 10,
+        enemy_d and string.format("%d tiles", enemy_d) or "none visible",
+        C.ARMOUR_CRITICAL or 8,
+        claimed and string.format("p%d has claimed the request -- we stop targeting THAT ally"
+                                  .. " (enemies are still fair game) until it lands",
+                                  claimed)
+                or "nobody has claimed it yet"),
+    }
+  end
+  return {
+    cost = cost,
+    goal = { kind = "kill_me_wait", mx = wmx, my = wmy,
+             wx = U.m2w(wmx), wy = U.m2w(wmy), target_id = -1,
+             km_claimed_by = claimed },
+    desc = desc,
+  }
+end
+
 -- Map overlay for the take_cover scan (viz id "take_cover_viz", default OFF).
 -- Candidate tiles tinted by safety (green = safer than here, red = worse),
 -- rejects greyed with their reason, the PICK ringed, hostile-pill range rings
@@ -7188,7 +7583,15 @@ local function capture_route_probe(state, world, info, pill, pid, tmx, tmy)
   ent = { id = pid, tick = now, tmx = tmx, tmy = tmy,
           direct_cost = cost, killed = killed, damage = damage,
           npath = __idiv(#path, 2) }
-  if killed then
+  -- LOADED, BUILDER-LESS: the bar for "the direct route is fine" moves from
+  -- "the sim says we SURVIVE it" to "the sim says nothing touches us". With a
+  -- stack aboard and nobody to place it, armour is the only thing standing
+  -- between the enemy and five free pillboxes, so ANY predicted damage sends
+  -- the decision to the danger-weighted A* instead of the danger-free one.
+  local _strict = state.loaded_no_lgm and C.CAPTURE_NO_LGM_ROUTE_STRICT or false
+  local _refuse = _strict and (killed or damage > 0) or killed
+  ent.strict = _strict or nil
+  if _refuse then
     -- Lethal direct run: hand the decision to the danger-weighted A* next tick.
     ent.mode = "pending_danger"
   else
@@ -7486,6 +7889,18 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- runs through hostile territory costs more when we're in cautious
   -- mode (e.g. LGM dead + carrying pills).
   local _lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
+  -- LOADED, BUILDER-LESS: the cautious-mode x5 is replaced by
+  -- CAPTURE_NO_LGM_DANGER_MULT. A corpse is only worth a trip if we live to
+  -- PLACE it, and with no builder we cannot place anything at all -- so the
+  -- danger on the way is the whole story and it is priced like it.
+  -- (The state requires >= LOADED_NO_LGM_MIN_PILLS aboard, so cautious_mode
+  -- is always true inside it; the keel value of the knob is CAUTIOUS_MODE_MULT
+  -- and swapping it in reproduces today's number exactly.)
+  local _lgm_mult_src = state.cautious_mode and "cautious" or "none"
+  if state.loaded_no_lgm and C.CAPTURE_NO_LGM_DANGER_MULT then
+    _lgm_mult = C.CAPTURE_NO_LGM_DANGER_MULT
+    _lgm_mult_src = "no_builder"
+  end
   -- Intercept: an enemy tank close enough to beat us to the pill
   -- (Manhattan dist ratio scaled by safety margin) bumps the cost.
   -- our_dist computed above (shared with the DIRECT-ROUTE range check).
@@ -7519,7 +7934,16 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   local dist_bad   = math.min(1, math.max(0, our_dist - grab_range) / C.CAPTURE_FREE_PILL_DIST_FALLOFF)
   local danger_bad = math.min(1, danger_val / C.CAPTURE_FREE_PILL_DANGER_FALLOFF)
   local badness    = math.max(dist_bad, danger_bad)
-  local free_bonus = C.CAPTURE_FREE_PILL_VALUE * (1 - badness)
+  -- LOADED, BUILDER-LESS: the "free pill" bonus is what makes a grab
+  -- outrank routine goals, and it is the wrong incentive here -- the pill is
+  -- not free, it costs a drive we may not survive, and it cannot be placed
+  -- when we get there. CAPTURE_NO_LGM_FREE_BONUS_MULT scales the whole ramp
+  -- (0 = no bonus at all; keel 1 = the full CAPTURE_FREE_PILL_VALUE curve).
+  local _free_mult = 1
+  if state.loaded_no_lgm and C.CAPTURE_NO_LGM_FREE_BONUS_MULT then
+    _free_mult = C.CAPTURE_NO_LGM_FREE_BONUS_MULT
+  end
+  local free_bonus = C.CAPTURE_FREE_PILL_VALUE * (1 - badness) * _free_mult
   if free_bonus > 0 then
     c = math.max(C.CAPTURE_FREE_PILL_MIN_COST, c - free_bonus)
   end
@@ -7527,6 +7951,13 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- Dead pills only, and never deep-sea ones (capture_cluster_refresh drops
   -- those — the sea plan already splits their cost by cluster size).
   local _cl_n, _cl_div, _cl_guard_n, _cl_guard_m, _cl_ids = 1, 1, 0, 1.0, nil
+  -- LOADED, BUILDER-LESS: the cluster DISCOUNT is off. "Three corpses in one
+  -- trip" is only a bargain if the trip is the cheap part, and here the trip
+  -- is the thing that kills us -- so a pile of bodies must not divide the
+  -- price of walking into it. The hostile-territory GUARD multiplier is a
+  -- SURCHARGE and stays on. _cl_off records the suppression for the chip.
+  local _cl_off = state.loaded_no_lgm
+                  and (C.CAPTURE_NO_LGM_CLUSTER_DISCOUNT == false) or false
   if (obj.health or 0) == 0 and not obj.in_tank and not obj.carrier
      and not obj._synth_carry then
     local cl = capture_cluster_at(state, world, state.tick or 0, obj.mx, obj.my)
@@ -7534,14 +7965,25 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
       _cl_n, _cl_div = cl.n, cl.div
       _cl_guard_n, _cl_guard_m = cl.guard_n, cl.guard_m
       _cl_ids = cl.guard_ids
-      c = c / _cl_div
-      local floor_c = C.CAPTURE_CLUSTER_MIN_COST or 5
-      if c < floor_c then c = floor_c end
+      if _cl_off then
+        _cl_div = 1
+      else
+        c = c / _cl_div
+        local floor_c = C.CAPTURE_CLUSTER_MIN_COST or 5
+        if c < floor_c then c = floor_c end
+      end
       c = c * _cl_guard_m
     end
   end
+  -- One line per TICK (not per candidate) while the state holds, so a headless
+  -- run can see all four capture changes without the pool panel. The four
+  -- numbers are exactly the four knobs, in the order the formula applies them.
+  if state.loaded_no_lgm and state._cap_nb_log ~= (state.tick or 0) then
+    state._cap_nb_log = state.tick or 0
+  end
   return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method, free_bonus, _route_dmg, _route_far,
-         _cl_n, _cl_div, _cl_guard_n, _cl_guard_m, _cl_ids
+         _cl_n, _cl_div, _cl_guard_n, _cl_guard_m, _cl_ids,
+         _lgm_mult_src, _free_mult, _cl_off
 end
 
 -- Public: the capture_pill (pool 4) score for a SPECIFIC pill, used by the
@@ -10882,16 +11324,40 @@ local function get_formula_inner(e)
       local intcpt_det = _intcpt > 0
         and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt)
         or  "|intcpt:0 (no enemy tank within INTERCEPT_MAX_RANGE that can beat us)"
+      -- LOADED, BUILDER-LESS: which rule produced the danger multiplier.
+      -- "no_builder" means CAPTURE_NO_LGM_DANGER_MULT replaced the ordinary
+      -- cautious-mode CAUTIOUS_MODE_MULT for the duration of the state.
+      local _mult_src = e._mult_src or (_lgm_mult_c ~= 1 and "cautious" or "none")
       local _lgm_mult_str = (_lgm_mult_c ~= 1)
-        and string.format(" × %d (cautious mode)", _lgm_mult_c) or ""
-      local _lgm_mult_det = ""
+        and string.format(" × %d (%s)", _lgm_mult_c,
+              (_mult_src == "no_builder") and "no_builder{loaded, builder-less}"
+              or "cautious mode") or ""
+      local _lgm_mult_det = (_mult_src == "no_builder")
+        and string.format(
+          "|no_builder:LOADED, BUILDER-LESS — the danger multiplier is CAPTURE_NO_LGM_DANGER_MULT{%d}, NOT the cautious-mode CAUTIOUS_MODE_MULT{%d} it replaces. A corpse is only worth the trip if we live to place it, and with no builder we cannot place anything at all",
+          C.CAPTURE_NO_LGM_DANGER_MULT or 0, C.CAUTIOUS_MODE_MULT or 0)
+        or ""
       local _dm_str = e._dist_method or "dij"
       local _fd = e._free or 0
+      local _fm = e._free_mult or 1
       local _free_mult = (_fd > 0.001) and (" − %.1f[FREE]"):format(_fd) or ""
-      local _free_det = (_fd > 0.001)
-        and string.format("|free:close/safe grab (≤ %.1f tiles, danger %.1f) → −%.1f (0=none .. %.1f=best, floor %.1f)",
-              C.TANK_COMBAT_ENGAGE_RANGE * C.CAPTURE_FREE_PILL_RANGE_MULT, e._dv or 0, _fd, C.CAPTURE_FREE_PILL_VALUE, C.CAPTURE_FREE_PILL_MIN_COST)
-        or  "|free:none (too far or too dangerous)"
+      local _free_det
+      if _fm == 0 then
+        -- The bonus was computed and then scaled to nothing: say so, or the
+        -- row looks like it merely failed the distance/danger ramp.
+        local _fd_raw = C.CAPTURE_FREE_PILL_VALUE
+                        * (1 - math.min(1, (e._dv or 0) / C.CAPTURE_FREE_PILL_DANGER_FALLOFF))
+        _free_det = string.format(
+          "|free:0 — freebonus{x%.0f} — LOADED, BUILDER-LESS. The ramp would have paid up to −%.1f, and CAPTURE_NO_LGM_FREE_BONUS_MULT{%d} scales the whole thing to zero: a pill we cannot place is not free, it costs a drive we may not survive",
+          _fm, _fd_raw, _fm)
+      elseif _fd > 0.001 then
+        _free_det = string.format("|free:close/safe grab (≤ %.1f tiles, danger %.1f) → −%.1f (0=none .. %.1f=best, floor %.1f)%s",
+              C.TANK_COMBAT_ENGAGE_RANGE * C.CAPTURE_FREE_PILL_RANGE_MULT, e._dv or 0, _fd, C.CAPTURE_FREE_PILL_VALUE, C.CAPTURE_FREE_PILL_MIN_COST,
+              (_fm ~= 1) and string.format(" × freebonus{%.2f}", _fm) or "")
+      else
+        _free_det = "|free:none (too far or too dangerous)"
+      end
+      if _fm == 0 then _free_mult = " freebonus{x0}" end
       -- DIRECT-ROUTE probe verdict (capture_route_probe). Only the focus pill
       -- carries one; every other row is still a plain slate/A* distance. The
       -- "too far" case gets its own line so it can't be misread as "the direct
@@ -10902,9 +11368,12 @@ local function get_formula_inner(e)
           "|route:DIRECT A* — danger_scale=0, the straight run at the body. The wsim drove it and we LIVE (%d dmg), so this route and its cost are what the pool ranks on",
           e._route_dmg or 0)
       elseif _dm_str == "astar_danger" then
+        local _strict_now = (_mult_src == "no_builder")
+                            and C.CAPTURE_NO_LGM_ROUTE_STRICT
         _route_det = string.format(
-          "|route:DANGER A* — the direct (danger_scale=0) run KILLED us in the wsim (%d dmg), so we re-priced on the danger-weighted A* route instead",
-          e._route_dmg or 0)
+          "|route:DANGER A* — the direct (danger_scale=0) run %s in the wsim (%d dmg), so we re-priced on the danger-weighted A* route instead%s",
+          _strict_now and "took DAMAGE" or "KILLED us", e._route_dmg or 0,
+          _strict_now and " |routestrict:LOADED, BUILDER-LESS — CAPTURE_NO_LGM_ROUTE_STRICT moves the bar from \"the sim says we survive it\" to \"the sim says nothing touches us\": ANY predicted damage refuses the direct run" or "")
       elseif e._route_far then
         _route_det = string.format(
           "|route:NOT PROBED — pill is %d tiles away, past CAPTURE_ROUTE_MAX_TILES (%d). No direct-route A* and no wsim were run for it; the dist above is the plain Dijkstra/A* slate cost",
@@ -10919,7 +11388,22 @@ local function get_formula_inner(e)
       local _cl_gn = e._cl_guard_n or 0
       local _cl_gm = e._cl_guard_m or 1.0
       local _cluster_mult, _cluster_det = "", ""
-      if _cl_n > 1 then
+      if _cl_n > 1 and e._cl_off then
+        -- LOADED, BUILDER-LESS: the ÷n discount is OFF. The guard SURCHARGE
+        -- (below) still applies; only the discount is suppressed.
+        _cluster_mult = string.format(" nocluster{%d pills, /1}", _cl_n)
+        _cluster_det = string.format(
+          "|nocluster:%d dead pills within %d tiles of each other, and the ÷%d cluster discount is SUPPRESSED — CAPTURE_NO_LGM_CLUSTER_DISCOUNT is false while the tank is loaded and builder-less. \"Three corpses in one trip\" is only a bargain when the trip is the cheap part; here the trip is the thing that kills us",
+          _cl_n, C.CAPTURE_CLUSTER_RADIUS or 3,
+          math.min(_cl_n, C.CAPTURE_CLUSTER_DIVISOR_MAX or 6))
+        if _cl_gn > 0 then
+          _cluster_mult = _cluster_mult ..
+            string.format(" guard{%d pills, x%.2f}", _cl_gn, _cl_gm)
+          _cluster_det = _cluster_det .. string.format(
+            "|guard:%d live hostile/neutral pill(s) can put a shell on a cluster tile → x%.2f. The guard is a SURCHARGE and is never suppressed",
+            _cl_gn, _cl_gm)
+        end
+      elseif _cl_n > 1 then
         _cluster_mult = string.format(" cluster{%d} /%dX", _cl_n, _cl_dv)
         _cluster_det = string.format(
           "|cluster:%d dead pills within %d tiles of each other — ONE errand, so each member pays its share:"
@@ -10957,9 +11441,19 @@ local function get_formula_inner(e)
     -- while. Note: BASE_PILL_COVER_PEN is applied only on the finalize path
     -- (eval_capture_base), NOT this rolling cost, so it's not part of this total.
     local _cb_dv = threat.at(e._mx or 0, e._my or 0)
+    -- LOADED, BUILDER-LESS surcharge: the one danger term pool 3 otherwise
+    -- does not have. Absent (and its chip absent) at the keel value 0.
+    local _cb_nb_chip, _cb_nb_det = "", ""
+    if e._p3_mult then
+      _cb_nb_chip = string.format(" + nobuild_danger{%.1f}", e._p3_dang or 0)
+      _cb_nb_det = string.format(
+        "|nobuild_danger:LOADED, BUILDER-LESS — threat.at(base)%.1f × DANGER_SCALE{%.3f} × CAPTURE_BASE_NO_LGM_DANGER_MULT{%d} = %.1f, ADDED. A base is a tile you have to sit on, and sitting on a covered one with an unplaceable stack aboard loses the whole load. At the keel value 0 this term does not exist, which is what pool 3 did before",
+        e._p3_dv or 0, C.CAPTURE_PILL_DANGER_SCALE, e._p3_mult, e._p3_dang or 0)
+    end
     f = string.format(
-      "A*{%.0f}@(%d,%d) + stale{%.0f}||A*:danger-weighted dijkstra travel to base; danger at base tile=%.1f is BAKED INTO the path cost (not a separate term) — that's why a near dangerous base can cost more than a far safe one|stale:%s",
-      raw, e._mx or 0, e._my or 0, e._stale or 0, _cb_dv, fmt_stale_detail(e._age, e._stale))
+      "A*{%.0f}@(%d,%d) + stale{%.0f}%s||A*:danger-weighted dijkstra travel to base; danger at base tile=%.1f is BAKED INTO the path cost (not a separate term) — that's why a near dangerous base can cost more than a far safe one|stale:%s%s",
+      raw, e._mx or 0, e._my or 0, e._stale or 0, _cb_nb_chip, _cb_dv,
+      fmt_stale_detail(e._age, e._stale), _cb_nb_det)
   else
     f = string.format("A*{%.0f}@(%d,%d) + stale{%.0f}||stale:%s",
       raw, e._mx or 0, e._my or 0, e._stale, fmt_stale_detail(e._age, e._stale))
@@ -12157,9 +12651,14 @@ function M.step_eval_queue(state, world, info)
       local _cpill_route_far = nil -- set = beyond CAPTURE_ROUTE_MAX_TILES, never probed
       local _cpill_sea = nil
       local _cpill_cl_n, _cpill_cl_div, _cpill_cl_gn, _cpill_cl_gm, _cpill_cl_gids = 1, 1, 0, 1.0, nil
+      -- LOADED, BUILDER-LESS bookkeeping for the capture row's breakdown:
+      -- which rule set the danger multiplier, what the free-pill bonus was
+      -- scaled by, and whether the cluster discount was suppressed.
+      local _cpill_mult_src, _cpill_free_mult, _cpill_cl_off = "none", 1, false
       if pool_idx == 4 then
         c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method, _cpill_free_disc, _cpill_route_dmg, _cpill_route_far,
-        _cpill_cl_n, _cpill_cl_div, _cpill_cl_gn, _cpill_cl_gm, _cpill_cl_gids =
+        _cpill_cl_n, _cpill_cl_div, _cpill_cl_gn, _cpill_cl_gm, _cpill_cl_gids,
+        _cpill_mult_src, _cpill_free_mult, _cpill_cl_off =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
         -- Pool 4 skipped the smart_cost block (see above), so backfill
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
@@ -12178,6 +12677,24 @@ function M.step_eval_queue(state, world, info)
             raw_cost = scl.gross
           end
         end
+      end
+
+      -- ── capture_base (pool 3) in the LOADED, BUILDER-LESS state ─────────
+      -- Driving onto a neutral/beaten base is normally priced on travel and
+      -- staleness alone: there is no danger term at all. With a stack aboard
+      -- and nobody to place it that omission is the problem -- the base is a
+      -- tile you have to sit on, and sitting on a covered one loses the whole
+      -- load. So the state adds the one term the row was missing, and nothing
+      -- else. CAPTURE_BASE_NO_LGM_DANGER_MULT is the multiplier on it;
+      -- its keel value is 0, i.e. the term does not exist, which is exactly
+      -- what pool 3 did before.
+      local _p3_dv, _p3_dang, _p3_mult = 0, 0, 0
+      if pool_idx == 3 and state.loaded_no_lgm
+         and (C.CAPTURE_BASE_NO_LGM_DANGER_MULT or 0) > 0 then
+        _p3_mult = C.CAPTURE_BASE_NO_LGM_DANGER_MULT
+        _p3_dv   = threat.at(obj.mx, obj.my)
+        _p3_dang = _p3_dv * C.CAPTURE_PILL_DANGER_SCALE * _p3_mult
+        c = c + _p3_dang
       end
 
       -- Pool 5 (repair_pill): the UNIFIED repair formula, per candidate.
@@ -12501,6 +13018,18 @@ function M.step_eval_queue(state, world, info)
         entry._cl_n=_cpill_cl_n; entry._cl_div=_cpill_cl_div
         entry._cl_guard_n=_cpill_cl_gn; entry._cl_guard_m=_cpill_cl_gm
         entry._cl_guard_ids=_cpill_cl_gids
+        -- LOADED, BUILDER-LESS: which rule produced the danger multiplier,
+        -- what scaled the free-pill bonus, and whether the cluster discount
+        -- was suppressed. All three appear as chips on the row.
+        entry._mult_src=_cpill_mult_src
+        entry._free_mult=_cpill_free_mult
+        entry._cl_off=_cpill_cl_off or nil
+      elseif pool_idx == 3 then
+        entry._stale=stale_cost; entry._age=_gen_age
+        -- LOADED, BUILDER-LESS danger surcharge (0 / absent otherwise).
+        entry._p3_dv=(_p3_mult > 0) and _p3_dv or nil
+        entry._p3_dang=(_p3_mult > 0) and _p3_dang or nil
+        entry._p3_mult=(_p3_mult > 0) and _p3_mult or nil
       elseif pool_idx == 5 then
         entry._stale=stale_cost; entry._age=_gen_age
         entry._dmg=_rp_dmg
@@ -14332,6 +14861,8 @@ function M.finalize_pools(state, world, info)
   -- take_cover: pool 14. ALWAYS produces an entry (rejected ones carry
   -- _reject + TAKE_COVER_REJECT_COST) so its score is visible every replan.
   state.pool_cache[14] = eval_take_cover(state, world, info, tmx, tmy, boat, ammo)
+  -- Pool 15: the kill_me_wait INITIATOR row (see eval_kill_me_wait).
+  state.pool_cache[15] = KM.eval_wait(state, world, info, tmx, tmy)
   -- kill_lgm: pool 13 was just wiped by `state.pool_cache = {}` above.
   -- Re-inject so an LGM-sighting urgent_replan doesn't miss it and
   -- pick_goal can see kill_lgm as a candidate this tick.
@@ -14403,6 +14934,65 @@ end
 -- =========================================================================
 function M.refresh_kill_lgm(state, info, world)
   if not state.pool_cache then return end
+  -- ── CAPTURE-TARGET LGM PRIORITY (C.CAPTURE_LGM_PRIORITY, 2026-09-08) ────
+  -- Remember which pill the capture flow is driving at, so the discount below
+  -- survives the goal switch it causes.  Without the memory the whole thing
+  -- flip-flops: the discount is only visible while the goal is capture_pill,
+  -- so the tick kill_lgm wins the pool the discount vanishes, kill_lgm's cost
+  -- jumps back to full and capture_pill wins straight back.
+  --
+  -- WHICH MEMORY.  state.capture_objective is the OPERATOR's `cp` command and
+  -- nothing else -- it is nil in an ordinary game -- so it cannot be the only
+  -- source.  The source that matters is the CURRENT GOAL while it is
+  -- capture_pill (goal.mx/my is the target pill tile, the same pair
+  -- CAPTURE_LGM_HUNT reads in steering.lua).  The rule:
+  --   goal == capture_pill  -> (re)stamp the memory from the goal
+  --   goal == kill_lgm      -> HOLD it (this is the switch we caused)
+  --   anything else         -> drop it (the capture intent is gone)
+  -- plus: a live `cp` objective always overrides, and the memory is dropped
+  -- as soon as the tile stops being capturable (nothing there any more, or a
+  -- live FRIENDLY pill = somebody already took it / rebuilt it).
+  -- The man dying needs no clause: with no LGM in the box nothing is
+  -- discounted, kill_lgm leaves the pool, the goal moves and the rule above
+  -- drops the memory on the next tick.
+  local cap_mx, cap_my = nil, nil
+  if C.CAPTURE_LGM_PRIORITY then
+    local _cg = state.goal
+    if _cg and _cg.kind == "capture_pill" and _cg.mx and _cg.my then
+      state.cap_prio = { mx = _cg.mx, my = _cg.my }
+    elseif not (_cg and _cg.kind == "kill_lgm") then
+      state.cap_prio = nil
+    end
+    if state.capture_objective and state.capture_objective.mx then
+      state.cap_prio = { mx = state.capture_objective.mx,
+                         my = state.capture_objective.my }
+    end
+    local _cp = state.cap_prio
+    if _cp then
+      -- Still a capture target?  pill_at() only returns LIVE pills and a
+      -- corpse is health 0, so read the raw per-tile list instead.
+      local _pl = world.pill_at and world.pill_at[_cp.my * 256 + _cp.mx]
+      local _ok = false
+      if _pl then
+        for i = 1, #_pl do
+          local _pp = _pl[i].pill
+          if _pp and not _pp.in_tank
+             and not (_pp.owner == "friendly" and (_pp.health or 0) > 0) then
+            _ok = true
+            break
+          end
+        end
+      end
+      if _ok then
+        cap_mx, cap_my = _cp.mx, _cp.my
+      else
+        state.cap_prio = nil
+      end
+    end
+  else
+    state.cap_prio = nil
+  end
+  local _cp_hit = nil   -- cheapest discounted row this tick, for the log line
   local elgms = state.perc and state.perc.enemy_lgms
   if elgms and #elgms > 0 and (info.shells or 0) > 0 then
     -- Cost model mirrors eval_attack_tank: per-target evaluation with
@@ -14657,6 +15247,50 @@ function M.refresh_kill_lgm(state, info, world)
       end
 
 
+      -- ── Capture-target priority discount (C.CAPTURE_LGM_PRIORITY) ───────
+      -- A hostile man standing within CAPTURE_LGM_PRIORITY_RADIUS tiles
+      -- (CHEBYSHEV -- the same box metric CAPTURE_LGM_HUNT uses, so the two
+      -- radii mean the same shape and can be compared directly) of the pill
+      -- the capture flow is driving at is rebuilding that corpse out from
+      -- under us.  Multiply the FINAL competed cost of HIS row so kill_lgm
+      -- outbids capture_pill, shoot him, then let the pool run normally --
+      -- capture_pill is priced exactly as before and simply wins back.
+      -- Applied LAST, after the repair-futile penalty, so it scales the whole
+      -- number the chips add up to.
+      if cap_mx then
+        local cdx = lgm.mx - cap_mx; if cdx < 0 then cdx = -cdx end
+        local cdy = lgm.my - cap_my; if cdy < 0 then cdy = -cdy end
+        local cdist = (cdx > cdy) and cdx or cdy
+        if cdist <= (C.CAPTURE_LGM_PRIORITY_RADIUS or 8) then
+          -- A CAP, not a multiplier (Andrew 2026-09-08): min(cost, MAX_COST),
+          -- one under IMMINENT_CAPTURE_FLOOR, so the row wins the pool
+          -- wherever in the box the man stands.
+          local ccap = C.CAPTURE_LGM_PRIORITY_MAX_COST or 4
+          local cbefore = cost
+          if cost > ccap then cost = ccap end
+          -- Chip goes in the DISPLAY half (before "||") so the pool-grid term
+          -- table sees it and the total stays hand-computable; the pill tile,
+          -- the man's distance to it and the pre-cap total go in the DETAIL
+          -- half.  pre_cap is printed because REPAIR_FUTILE, when it fires,
+          -- is added after the display half's "= N" was formatted.
+          local _dsp, _det = formula_str:match("^(.-)||(.*)$")
+          if _dsp then
+            formula_str = string.format(
+              "min(%s, cap_prio{%.0f}) = %.0f||%s; cap_prio_pill=(%d,%d); "..
+              "cap_prio_d=%d (cheb, radius %d); cap_prio_pre_cap=%.0f",
+              _dsp, ccap, cost, _det, cap_mx, cap_my, cdist,
+              C.CAPTURE_LGM_PRIORITY_RADIUS or 8, cbefore)
+          else
+            formula_str = string.format(
+              "min(%s, cap_prio{%.0f}) = %.0f", formula_str, ccap, cost)
+          end
+          if (not _cp_hit) or cost < _cp_hit.after then
+            _cp_hit = { lgm = lgm, d = cdist, cap = ccap,
+                        before = cbefore, after = cost }
+          end
+        end
+      end
+
       cand_rows[#cand_rows + 1] = {
         id = lgm.idnum or 0, mx = lgm.mx, my = lgm.my,
         cost = cost, own = "hostile", hp = 0, stale = 0,
@@ -14711,6 +15345,27 @@ function M.refresh_kill_lgm(state, info, world)
       end
     end
   end
+  -- ── CAPTURE_LGM_PRIORITY decision line ─────────────────────────────────
+  -- One line when the discount starts applying, one when it stops, and a
+  -- heartbeat every CAPTURE_LGM_PRIORITY_LOG_TICKS brain ticks in between.
+  -- refresh_kill_lgm runs twice per tick (rolling refresh + finalize), and
+  -- the rate limit keys off state.tick, so the second call is silent.
+  if C.CAPTURE_LGM_PRIORITY then
+    local _now = state.tick or 0
+    if _cp_hit then
+      if (not state.cap_prio_on)
+         or (_now - (state.cap_prio_log_t or -1e9))
+            >= (C.CAPTURE_LGM_PRIORITY_LOG_TICKS or 50) then
+        state.cap_prio_log_t = _now
+      end
+      state.cap_prio_on = true
+    elseif state.cap_prio_on then
+      state.cap_prio_on   = false
+      state.cap_prio_log_t = _now
+    end
+  elseif state.cap_prio_on then
+    state.cap_prio_on = false
+  end
 end
 
 -- =========================================================================
@@ -14728,6 +15383,8 @@ function M.fill_pool_cache(state, world, info)
   end
   state.pool_cache[12] = eval_wait_for_lgm(state, info)
   state.pool_cache[14] = eval_take_cover(state, world, info, tmx, tmy, boat, ammo)
+  -- Pool 15: the kill_me_wait INITIATOR row (see eval_kill_me_wait).
+  state.pool_cache[15] = KM.eval_wait(state, world, info, tmx, tmy)
 end
 
 -- =========================================================================
@@ -15046,12 +15703,17 @@ local function goal_selection(state, world, info, quiet)
   local _flee_mode = C.CRITICAL_FLEE_ENABLED
   local _do_flee = false
   local _haul = haul_flee_eval(state, info, tmx, tmy)
+  -- "KILL ME" in progress: the claimant's shells are taking the armour off on
+  -- purpose, so critical armour must not inject a flee that drives us away
+  -- from our own executioner. (An enemy inside the cancel radius clears
+  -- state.km.executing on the same tick, so real danger still flees.)
+  local _km_exec = (state.km and state.km.executing) or false
   if _flee_mode == "no_builder_and_carrying_only" then
     if _haul.level > 0 then
-      _do_flee = _haul.triggered or critical
+      _do_flee = (_haul.triggered or critical) and not _km_exec
     end
   elseif _flee_mode then
-    _do_flee = critical
+    _do_flee = critical and not _km_exec
   end
   if _do_flee then
     if critical and info.base then
@@ -15643,8 +16305,16 @@ local function goal_selection(state, world, info, quiet)
       -- that tile, and doubling a fixed 25 would silently move it out of the
       -- band PLACE_FOLLOW_THROUGH_COST is documented against.
       for _, c in ipairs(pool) do
+        -- km_ally_pn: the "kill me" DELIVERY row (a pool-9 attack_tank whose
+        -- target is an ALLY who asked to be killed for its cargo). It is not
+        -- an attack on enemy ground -- the tile is our own team-mate's -- so
+        -- halving/doubling it by whose half of the map he happens to be
+        -- standing in prices the errand on something it has nothing to do
+        -- with. Exempt by FLAG, not by kind: ordinary attack_tank rows are
+        -- still scaled.
         if c.goal and c.goal.mx and c.goal.my
            and not INF_EXEMPT[c.goal.kind] and not c.goal.follow_through
+           and not c.goal.km_ally_pn
            and not c._reject_sentinel then
           local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
           if inf < -50 then
@@ -15736,6 +16406,29 @@ local function goal_selection(state, world, info, quiet)
         HYST_EXEMPT.capture_base = true
       end
     end
+    -- ── ESCAPE_NO_BUILDER_SKIP_HYST ──────────────────────────────────────
+    -- LOADED, BUILDER-LESS: getting out pays NOTHING to enter. flee_to_base
+    -- and a take_cover row that actually fired on its haul / panic trigger
+    -- skip the type-switch flat, the commitment stack AND the same-group
+    -- target penalty -- a full zero, not the ordinary HYST_EXEMPT tier
+    -- (which still charges GOAL_TARGET_SWITCH_PENALTY within a group).
+    --
+    -- ASYMMETRIC, exactly like the rest of the pool: the waiver is on the
+    -- row ENTERING. Once one of them is the incumbent, nothing about it is
+    -- special -- every other row pays its normal switch + commitment to
+    -- displace it, because those penalties are charged to the CHALLENGER
+    -- and the challenger is not on this list. That is what stops the tank
+    -- bouncing straight back out of cover.
+    --
+    -- Auditable: the rows carry hysteresis = "none:no_lgm" with switch_flat
+    -- and commit_val pinned to 0, so FINAL_SCORES prints
+    -- `hyst=none:no_lgm sw=0.0 cmt=0.0` and the breakdown says why.
+    -- "none:no_lgm" is deliberately NOT "type"/"target", so the
+    -- multiplicative stickiness bar below does not fire on it either.
+    local ESCAPE_NO_HYST = nil
+    if C.ESCAPE_NO_BUILDER_SKIP_HYST and state.loaded_no_lgm then
+      ESCAPE_NO_HYST = { flee_to_base = true }
+    end
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
     local commitment = math.min(ticks_on_goal * C.GOAL_COMMITMENT_PER_TICK, C.GOAL_COMMITMENT_CAP)
@@ -15778,6 +16471,29 @@ local function goal_selection(state, world, info, quiet)
         if ATK_SHOOTING_SUBS[cur_sub] then _defend_tier = "full"
         elseif ATK_BUILD_SUBS[cur_sub] then _defend_tier = "moderate"
         else _defend_tier = "free" end
+      end
+      -- ESCAPE_NO_BUILDER_SKIP_HYST: a FULL zero for the escape rows while
+      -- the tank is loaded and builder-less. Checked BEFORE the ordinary
+      -- exempt branch because that branch still charges the same-group
+      -- target penalty, and "no penalty to enter" means none.
+      if ESCAPE_NO_HYST then
+        local _esc = ESCAPE_NO_HYST[c.goal.kind]
+        if not _esc and c.goal.kind == "take_cover" then
+          -- Only a take_cover that actually FIRED on its haul / panic
+          -- trigger is an escape. The calm / bad_ground / released rows are
+          -- ordinary pool business and keep their hysteresis.
+          -- (_tc_trigger picks up a "_holding" suffix while standing on the
+          -- pick, so match on the prefix.)
+          local _t = c.goal._tc_trigger or ""
+          _esc = (_t:sub(1, 4) == "haul") or (_t:sub(1, 14) == "panic_no_build")
+        end
+        if _esc then
+          c.hysteresis  = "none:no_lgm"
+          c.switch_flat = 0
+          c.commit_val  = 0
+          c._escape_no_hyst = true
+          goto continue_hyst
+        end
       end
       -- Engage-break: an attack_tank goal that detected a mid-take
       -- threat (tank in range, further from pill than us) is exempt
@@ -15934,6 +16650,42 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── ATTACK_NO_BUILDER_MULT ───────────────────────────────────────────
+    -- LOADED, BUILDER-LESS: picking a fight while holding a stack we cannot
+    -- place is the trade that lost five pillboxes in one drive (see the block
+    -- in constants.lua). Every OFFENSIVE row -- attack_tank, attack_pill,
+    -- attack_base, and the defend_pill alarm, which is also "drive at a fight"
+    -- -- has its cost multiplied here.
+    --
+    -- WHERE: the FINAL competed number. After the influence x0.5/x2 scale,
+    -- after the suicider/refuel shaping, after hysteresis and after the
+    -- oscillation history penalty -- so the multiplier is the last word and
+    -- nothing downstream can add a flat that dilutes it.
+    --
+    -- A MULTIPLIER, NOT A REJECT, on purpose: with an empty pool (nothing to
+    -- capture, nowhere to hide, no base to reach) the bot must still be able
+    -- to shoot back at the tank in front of it. x10 loses to any real
+    -- alternative and wins when there is none.
+    --
+    -- The kill_me DELIVERY row is exempt by flag: its target is an ALLY who
+    -- asked for it, and the whole point of the errand is to get the stack off
+    -- a builder-less tank. Multiplying it by 10 would price the cure like the
+    -- disease.
+    if C.ATTACK_NO_BUILDER_MULT and C.ATTACK_NO_BUILDER_MULT ~= 1
+       and state.loaded_no_lgm then
+      local nbm = C.ATTACK_NO_BUILDER_MULT
+      for _, c in ipairs(pool) do
+        if c.goal and KM.ATTACK_KINDS[c.goal.kind]
+           and not c.goal.km_ally_pn
+           and c.cost and c.cost > 0 and not c._reject_sentinel then
+          c.cost = c.cost * nbm
+          c._nobuild_mult = nbm
+        end
+      end
+      if not quiet and BRAIN_DEBUG_MODE then
+      end
+    end
+
     if not quiet and BRAIN_DEBUG_MODE then
     end
     -- A NORMAL place_pill_strategic must never out-rank an attack_tank WHILE A
@@ -16069,7 +16821,7 @@ local function goal_selection(state, world, info, quiet)
         if _declined_complete and not cur_entry and BRAIN_DEBUG_MODE then
         end
         if not cur_entry and not _declined_complete and state.pool_cache then
-          for pi = 0, 12 do
+          for pi = 0, 15 do
             local pce = state.pool_cache[pi]
             if pce and pce.goal and pce.cost
                and pce.goal.kind == state.goal.kind
@@ -16362,6 +17114,12 @@ local function goal_selection(state, world, info, quiet)
       for i, c in ipairs(pool) do
         local base = c._base_cost or c.cost
         local penalty = (c.cost or 0) - base
+        -- inf{} and nobuild{} are MULTIPLIERS on the whole row, so they are
+        -- printed as their own fields: without them `total` cannot be
+        -- reconstructed from base + pen at all.
+        --   inf     — the territory-influence x0.5/x2 scale
+        --   nobuild — ATTACK_NO_BUILDER_MULT, the LOADED, BUILDER-LESS
+        --             surcharge on the four "drive at a fight" kinds
       end
       end -- REPLAN_LOG_MIN_TIER
 
@@ -17168,6 +17926,43 @@ function M.get_pool_breakdown_json(state)
   end
 
   local function attack_tank_formula(b)
+    -- "KILL ME" delivery row: the subject is an ALLY, and its price is
+    -- base + travel and nothing else. Its own formula, so the row can never
+    -- be read as an ordinary attack_tank standoff calculation.
+    if b.kill_me then
+      local head = string.format("subject=ally p%d @(%d,%d)", b.km_ally_pn or -1,
+                                 b.mx or 0, b.my or 0)
+      if b.skipped then
+        return string.format(
+          "REJECT %s %s||reject:%s -- %s|kill_me:p%d is loaded and builder-less and has asked to be killed for its cargo."
+          .. " Allied shells DO damage allied tanks (tank.c tankIsTankHit ignores only the shooter's own shells) and the"
+          .. " corpses keep the dead player's ownership, which capture_pill already scoops."
+          .. " The row is priced INF but still shown so the reason is visible|need:ceil(%d armour / %d[TANK_SHELL_DAMAGE])"
+          .. " + %d[KILL_ME_SHELL_MARGIN], floored at %d[TANK_COMBAT_MIN_SHELLS] = %d shells; we hold %d",
+          b.skipped, head, b.skipped, tostring(b.kill_me_why),
+          b.km_ally_pn or -1, b.km_ally_armour or 0, C.TANK_SHELL_DAMAGE or 5,
+          C.KILL_ME_SHELL_MARGIN or 2, C.TANK_COMBAT_MIN_SHELLS or 10,
+          b.km_need_shells or 0, b.tank_shells or 0)
+      end
+      return string.format(
+        "KILL_ME %s (base{%.0f} + travel{%.0f}) = %.0f"
+        .. "||kill_me:p%d is loaded and builder-less and has asked to be killed for its cargo. Drive into gun range and"
+        .. " fire until it dies; the corpses it drops keep p%d's ownership and capture_pill takes them"
+        .. "|base:KILL_ME_RESPONDER_BASE{%.0f}|travel:Dijkstra/A* cost from (%d,%d) to the ally's advertised tile (%d,%d)"
+        .. "|terms:NOTHING else is charged -- no aim bonus, no crossfire, no low-shells ramp, no influence x0.5/x2 and no"
+        .. " ATTACK_NO_BUILDER_MULT. A delivery is a delivery"
+        .. "|need:ceil(%d armour / %d[TANK_SHELL_DAMAGE]) + %d[KILL_ME_SHELL_MARGIN], floored at %d[TANK_COMBAT_MIN_SHELLS]"
+        .. " = %d shells; we hold %d",
+        head, b.base or 0, b.path_cost or 0, b.cost or 0,
+        b.km_ally_pn or -1, b.km_ally_pn or -1,
+        b.base or 0,
+        state._last_info and bit.rshift(state._last_info.tankx or 0, 8) or -1,
+        state._last_info and bit.rshift(state._last_info.tanky or 0, 8) or -1,
+        b.mx or 0, b.my or 0,
+        b.km_ally_armour or 0, C.TANK_SHELL_DAMAGE or 5,
+        C.KILL_ME_SHELL_MARGIN or 2, C.TANK_COMBAT_MIN_SHELLS or 10,
+        b.km_need_shells or 0, b.tank_shells or 0)
+    end
     local reason = b.skipped
     if reason then
       local who = b.player_name and (" player=" .. b.player_name) or ""
@@ -17512,6 +18307,38 @@ function M.get_pool_breakdown_json(state)
         base_cost, w.cost or 0, pw,
         state.phase or "unknown")
 
+      -- Territory-influence scale (x0.5 in our half, x2 in theirs), applied at
+      -- selection right before the suicider surcharge. It was stashed on the
+      -- competition record but never rendered, which left every row in scaled
+      -- territory unable to reproduce its own total from the chips.
+      local inf_mult_d = (gc and gc.inf_mult) or 1.0
+      if inf_mult_d ~= 1.0 then
+        detail_formula = string.format("%s * inf{x%.1f}", detail_formula, inf_mult_d)
+        detail_map[#detail_map + 1] = string.format(
+          "inf:territory influence at the GOAL TILE (%d,%d) is %s -> x%.1f. cpf.influence_at < -50 (their half) doubles the bid, > 50 (our half) halves it, in between is x1. Skipped in the opening phase and for refuel_at_base / defend_pill / take_cover / repair_pill (with the repair fix on), for the place follow-through row, and for the kill_me delivery row.",
+          w.mx or -1, w.my or -1,
+          (inf_mult_d > 1) and "hostile" or "friendly", inf_mult_d)
+      end
+
+      -- LOADED, BUILDER-LESS surcharge. The LAST multiplier applied to the
+      -- row -- after influence, after the suicider/refuel shaping, after
+      -- hysteresis and the history penalty -- so it multiplies the total the
+      -- other chips add up to, and the row reads
+      --   (base x pw x inf x suicider x refuelmult + penalties) x nobuild.
+      local nobuild_mult = (gc and gc.nobuild_mult) or 1.0
+      if nobuild_mult ~= 1.0 then
+        detail_formula = string.format("%s * nobuild{x%.0f}", detail_formula, nobuild_mult)
+        detail_map[#detail_map + 1] = string.format(
+          "nobuild:LOADED, BUILDER-LESS -- %s. ATTACK_NO_BUILDER_MULT multiplies the FINAL competed cost of attack_tank / attack_pill / attack_base / defend_pill by %.0f while the state holds, so a fight has to be the ONLY thing on offer before a tank carrying an unplaceable stack takes it. Not a reject: with an empty pool the bot can still shoot back. The kill_me delivery row is exempt.",
+          M.loaded_no_lgm_label(state), nobuild_mult)
+      end
+
+      if gc and gc.escape_no_hyst then
+        detail_map[#detail_map + 1] = string.format(
+          "hyst:none:no_lgm -- ESCAPE_NO_BUILDER_SKIP_HYST. %s, so this escape row (flee_to_base, or a take_cover that fired on its haul / panic trigger) pays switch(0) + commit(0) to ENTER and skips the multiplicative stickiness bar. Asymmetric: once it IS the goal, every other row pays the normal switch + commitment to displace it.",
+          M.loaded_no_lgm_label(state))
+      end
+
       -- Pillbox-suicider surcharge, applied at selection alongside the phase
       -- weight / influence scale. Rendered whenever it isn't 1.0 so the row's
       -- numbers still reconcile (base x pw x inf x suicider + penalties = total).
@@ -17696,7 +18523,7 @@ function M.get_pool_breakdown_json(state)
   -- summary as main pools so the WINNERS column is uniformly readable.
   -- Their detail formula comes from cost_cache (richer breakdown) when
   -- available, falling back to sw.desc (the short tagline).
-  for _, idx in ipairs({10, 11, 12, 13, 14}) do
+  for _, idx in ipairs({10, 11, 12, 13, 14, 15}) do
     local sw = pc[idx]
     if sw and sw.goal and sw.cost and sw.cost >= 0 and sw.cost < 1e29 then
       local synthetic_id = bit.bor((bit.lshift(idx, 16)), (sw.goal.target_id or 0))

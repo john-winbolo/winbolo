@@ -283,6 +283,16 @@ function M.update(world, info, tick)
         -- last bump's tick. Resetting anger_tick on every bump keeps the
         -- decay consistent — the next decay step measures from "now",
         -- not from the first hit hours ago.
+        -- REPAIR TELL.  A pill's armour going UP means a man is standing on
+        -- it right now, and that is visible even when he is not: perception
+        -- drops a tree-hidden LGM more than 3 tiles out.  capture_pill's LGM
+        -- hunt (C.CAPTURE_LGM_HUNT_ARMOUR_TRIGGER) reads this stamp, and it
+        -- has to live HERE rather than in the hunt itself, because the goal
+        -- drops capture_pill on the very tick the corpse comes back to life
+        -- -- so a watcher that only samples while the goal is capture_pill
+        -- would never see the rise it exists to catch. Nothing else reads it,
+        -- so a bot with the hunt off behaves exactly as before.
+        if new_health > old_health then p._repair_tick = tick end
         if new_health < old_health and new_health > 0 then
           p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
           p.anger_tick = tick
@@ -477,6 +487,8 @@ function M.process_events(world, info, state)
           local new_mx      = d[2] or old_mx
           local new_my      = d[3] or old_my
 
+          -- REPAIR TELL -- see the note on the other update path above.
+          if new_health > old_health then p._repair_tick = tick end
           if new_health < old_health and new_health > 0 then
             p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
             p.anger_tick = tick

@@ -445,7 +445,11 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     tostring(info.inboat), info.armour, info.shells, info.mines, info.trees,
     info.carried_pills,
     info.man_status, info.man_x, info.man_y,
-    goal.kind, goal.substate or "-", goal.mx, goal.my,
+    -- A goal table without coordinates (init.lua's bare `{ kind = "none" }`
+    -- after a kill) used to crash this format with "bad argument #20" and
+    -- freeze the recorded bot for the rest of the session (crash logs from
+    -- 2026-09-07 carrier_seed7 / everard, 2026-09-08 nolgm1_diag2).
+    goal.kind, goal.substate or "-", goal.mx or -1, goal.my or -1,
     pf.status, pf.next_mx, pf.next_my,
     state._steer_lx or -1, state._steer_ly or -1,
     pf.age or 0, pf_open_size, pf_closed_size,

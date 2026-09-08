@@ -96,6 +96,7 @@ MAP_ALIASES = {
     "oilrig":    "data/maps/DH-Oil Rig.map",
     "easter":    "data/maps/Easter Island III.map",
     "slugfest7": "data/maps/Slugfest VII.map",
+    "mutatis":   "data/maps/Mutatis Mutandis.map",
 }
 DEFAULT_MAP = "easter"
 DEFAULT_PER_SIDE = 6

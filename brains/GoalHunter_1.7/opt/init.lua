@@ -1692,6 +1692,131 @@ function Brain.think(info)
   -- (opt.set_tick already fired at the top of think; just emit the
   -- BEGIN marker here.)
   opt("BEGIN tick=", now, " goal=", state.goal.kind, " sub=", tostring(state.goal.substate))
+
+  -- NOTE ON PLACEMENT: this sits AFTER print2.set_tick (which clears the
+  -- per-tick buffer) on purpose. It used to live beside cautious_mode, ~330
+  -- lines up, and every line it printed was silently thrown away with the
+  -- previous tick's buffer. Nothing downstream reads these fields before
+  -- here -- goal selection, the pools and the slate builder are all further
+  -- down the tick -- so the answer is just as fresh and the log survives.
+  -- LOADED, BUILDER-LESS: the one place the question is asked (goals.lua
+  -- M.loaded_no_lgm_eval carries the definition and the note on why it is
+  -- never latched).  Per-tick, beside cautious_mode, so every consumer --
+  -- the attack multiplier, the escape hysteresis exemption, capture pricing,
+  -- the kill_me row -- reads ONE field that cannot disagree with itself
+  -- across a tick.  No new chunk-level local: init.lua is close to Lua's
+  -- 60-upvalue limit and this lives on `state`.
+  do
+    local _lnl_prev = state.loaded_no_lgm
+    state.loaded_no_lgm = goals.loaded_no_lgm_eval(state, info, now)
+    -- Print on the EDGE only: a state that holds for 80k ticks should say so
+    -- once, not 80k times.
+    if _lnl_prev ~= state.loaded_no_lgm then
+    end
+  end
+
+  -- STRANDED-FLAG LIFECYCLE (bug fix, un-gated).  state.lgm_stranded was set
+  -- and cleared ONLY inside goal_selection -- i.e. only on replan ticks --
+  -- and cleared only when the man was back INTANK.  A man who was flagged
+  -- stranded and then KILLED left the flag set for the rest of his next life:
+  -- the HUD kept saying "LGM STRANDED", eval_wait_for_lgm kept refusing to
+  -- bid, and attack.lua's ATTACK_PP_HOLD_SKIP_STRANDED kept skipping the
+  -- plan_position hold, all off a fact that had stopped being true.  The flag
+  -- describes a man who is OUT WALKING and cannot get home, so it is cleared
+  -- here, every tick, whenever he is not out walking -- INTANK or DEAD alike.
+  -- The check tick and the viz factors go with it so the next walk re-earns
+  -- the flag from a fresh pathfind instead of inheriting the old verdict.
+  if info.man_status ~= C.LGM_MOVING then
+    state.lgm_stranded = nil
+    state.lgm_stranded_check_tick = nil
+    state._lgm_stranded_factors = nil
+  end
+
+  -- ── "KILL ME" bookkeeping (per tick, one table on `state`) ─────────────
+  -- state.km.claimed_by   who has claimed OUR request (read off allies' kmc
+  --                       tokens). The initiator uses it to stop targeting
+  --                       that ONE ally -- enemies stay fair game.
+  -- state.km.claim        what WE advertise as responder; written by
+  --                       eval_attack_tank, read by the slate builder.
+  -- state.km.cooldown_until  set on an ACTUAL kill, never on a cancelled
+  --                       request (see the death watch below).
+  if C.KILL_ME_ENABLED then
+    local km = state.km
+    if not km then km = {}; state.km = km end
+    local _self_pn = info.player_number or -1
+    local _claimed_by = nil
+    if state.goal and state.goal.kind == "kill_me_wait" then
+      for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+        if pn ~= _self_pn then
+          local kmc = slot.info and slot.info.kmc
+          if kmc and kmc ~= "-" and #kmc >= 6 then
+            local cpn = tonumber(string.sub(kmc, 1, 2), 16)
+            -- Lowest player number wins a double claim, the same tie-break
+            -- every other claim in the brain uses.
+            if cpn == _self_pn and (not _claimed_by or pn < _claimed_by) then
+              _claimed_by = pn
+            end
+          end
+        end
+      end
+    end
+    if km.claimed_by ~= _claimed_by then
+    end
+    km.claimed_by = _claimed_by
+    -- EXECUTING: the claimant's tank is in view within KILL_ME_EXECUTE_TILES
+    -- and no enemy tank is inside the cancel radius, so the shells landing
+    -- on us are its delivery and the armour they take off is not danger.
+    -- Read by haul_flee_eval (armour trigger), the critical flee injection
+    -- and kill_me_wait's own armour floor. Derived every tick, never latched.
+    local _exec = false
+    if _claimed_by then
+      local nh = state.perc and state.perc.nearest_hostile_tank
+      local enemy_near = nh and (nh.dist or 1e9) <= (C.KILL_ME_CANCEL_ENEMY_TILES or 10)
+      if not enemy_near then
+        local tmx0, tmy0 = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+        for _, ob in ipairs(info.objects or {}) do
+          if ob.type == OBJECT_TANK and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
+             and ob.idnum == _claimed_by then
+            local d = U.mdist(tmx0, tmy0, bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))
+            if d <= (C.KILL_ME_EXECUTE_TILES or 12) then _exec = true end
+            break
+          end
+        end
+      end
+    end
+    if km.executing ~= _exec then
+    end
+    km.executing = _exec
+    -- DEATH WATCH -> team cooldown. The cooldown exists so a successful
+    -- hand-off is not immediately followed by another one; it must therefore
+    -- start on a KILL and not on a request that merely fizzled.
+    --   responder: the ally we were driving at is now dead.
+    --   initiator: we died while advertising -- the hand-off landed on us.
+    if state.goal and state.goal.kind == "attack_tank" and state.goal.km_ally_pn then
+      -- ARM the watch when the delivery is adopted (or re-targeted): the
+      -- death that counts is one AFTER we set out. Comparing against -1 let
+      -- any earlier death of that ally on record fire KILL_ME_DONE on the
+      -- first tick of the errand and lock the team out for a cooldown for
+      -- nothing (recorded 1-pill replay 2026-09-08: 15 of 17 DONE lines had
+      -- no matching death within 60 ticks).
+      if km.watch_pn ~= state.goal.km_ally_pn then
+        km.watch_pn = state.goal.km_ally_pn
+        km.watch_from = now
+      end
+      local _d = state.tank_dead_at and state.tank_dead_at[state.goal.km_ally_pn]
+      if _d and _d > km.watch_from then
+        km.cooldown_until = now + (C.KILL_ME_COOLDOWN_TICKS or 3000)
+        km.watch_from = _d
+      end
+    end
+    if km.was_advertising and info.newtank then
+      km.cooldown_until = now + (C.KILL_ME_COOLDOWN_TICKS or 3000)
+    end
+    km.was_advertising = (state.goal and state.goal.kind == "kill_me_wait") or false
+    if not (state.goal and state.goal.kind == "attack_tank" and state.goal.km_ally_pn) then
+      km.watch_pn = nil   -- errand over: the next one re-arms from its own start
+    end
+  end
   -- t_tick_start is the real top-of-think clock (set above, near
   -- opt.set_tick). t_early is its alias used by the early-viz/HUD timer
   -- so the first section measures from the actual tick start.
@@ -3390,6 +3515,9 @@ function Brain.think(info)
     -- goal is "stand here instead of there", so stuck detection must not read
     -- the hold as a wedged tank and fire flee_pill.
     or state.goal.kind == "take_cover"
+    -- kill_me_wait parks for the same reason: standing still on an advertised
+    -- tile IS the goal, so the stuck detector must not read it as wedged.
+    or state.goal.kind == "kill_me_wait"
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.
@@ -3681,7 +3809,7 @@ function Brain.think(info)
 
     -- Clear escape_water goal once on dry land and trigger immediate replan
     if state.goal.kind == "escape_water" then
-      state.goal = { kind = "none" }
+      state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
     end
 
     -- Build road under self when on slow terrain (swamp/rubble/crater).
@@ -4127,6 +4255,51 @@ function Brain.think(info)
         state._cover_spot = nil
         state._cover_scan = nil
       end
+    elseif gk == "attack_tank" and state.goal.km_ally_pn then
+      -- "KILL ME" DELIVERY: the subject is an ALLY, so every test below (a
+      -- visible ENEMY tank, the crossfire disengage, the outgunned bail) asks
+      -- the wrong question. The goal is valid for exactly as long as that ally
+      -- is still asking: its token is still on the slate, and it is still
+      -- alive. Both are read straight off the slate/perception, so the goal
+      -- ends on the tick the request does.
+      local _pn = state.goal.km_ally_pn
+      local _still = false
+      for _, rq in ipairs(goals.kill_me_requests(state, info, now)) do
+        if rq.pn == _pn then
+          _still = true
+          -- Track the ally as it moves: the parked tile is a promise, not a
+          -- guarantee, and the fight loop steers at goal.mx/my.
+          state.goal.mx, state.goal.my = rq.mx, rq.my
+          state.goal.wx, state.goal.wy = U.m2w(rq.mx), U.m2w(rq.my)
+          break
+        end
+      end
+      if not _still then
+        goal_valid = false
+        if state.pool_cache then state.pool_cache[9] = nil end
+      end
+      -- Our own man leaving the tank ends it too: the pills we are about to
+      -- create would be as unplaceable for us as they are for the ally.
+      if info.man_status ~= C.LGM_INTANK then
+        goal_valid = false
+        if state.pool_cache then state.pool_cache[9] = nil end
+      end
+    elseif gk == "kill_me_wait" then
+      -- INITIATOR hold. The whole goal is "stand here and advertise", so the
+      -- only things that can end it are the things that make the advert
+      -- wrong: the state clearing (builder back, or the stack gone), an enemy
+      -- tank arriving inside KILL_ME_CANCEL_ENEMY_TILES, or the master knob
+      -- being off. The token rides the goal, so dropping it here is what takes
+      -- the request off every ally's slate on the next heartbeat.
+      if not C.KILL_ME_ENABLED or not state.loaded_no_lgm then
+        goal_valid = false
+      else
+        local nh = state.perc and state.perc.nearest_hostile_tank
+        if nh and (nh.dist or 1e9) <= (C.KILL_ME_CANCEL_ENEMY_TILES or 10) then
+          goal_valid = false
+        end
+      end
+      if not goal_valid and state.pool_cache then state.pool_cache[15] = nil end
     elseif gk == "attack_tank" then
       -- Invalid if no enemy tanks visible (target escaped) or we're too weak.
       -- A GHOST of our specific target keeps the goal alive so we hunt it to
@@ -5178,7 +5351,7 @@ function Brain.think(info)
       local _replan_log = BRAIN_DEBUG_MODE
         and (state._capacity_tier or 10) >= (C.REPLAN_LOG_MIN_TIER or 3)
       if _replan_log and state.pool_cache then
-        for pi = 0, 14 do
+        for pi = 0, 15 do
           local pce = state.pool_cache[pi]
           if pce and pce.goal then
             -- cost= is the RAW cached pool cost: pre phase-weight, pre
@@ -6205,6 +6378,103 @@ function Brain.think(info)
     state._kill_lgm_crosshair_drive = nil
   else
     state._kill_lgm_crosshair_drive = nil
+  end
+
+  -- ── Capture-pill LGM hunt: gunsight + the armour-rise shot ─────────
+  -- steering.lua's capture_lgm_hunt already did the detection and gave the
+  -- TURN keys to the aim solution (see C.CAPTURE_LGM_HUNT).  Two things are
+  -- left, and both live here because this is where the gun is driven:
+  --
+  --   1. THE GUNSIGHT.  The kill-LGM fire block above fires at any hostile
+  --      LGM in range whatever the goal is, but its gate is the real
+  --      explosion point (tank + 128*gunrange wu along the heading) landing
+  --      within 64 wu of the lead point -- and the only thing that MOVES the
+  --      crosshair is the 27-candidate search, which is gated on goal ==
+  --      kill_lgm.  Under capture_pill the crosshair sat wherever the last
+  --      goal left it, so that gate essentially never opened.  Driving the
+  --      gunsight to the LGM's own target_sightLen is the whole fix; the
+  --      existing block then pulls the trigger on its own.
+  --
+  --   2. THE ARMOUR-RISE SHOT.  On the `armour` trigger there is no visible
+  --      LGM at all, so the block above has nothing to fire at.  We aim at
+  --      the pill tile and shell it ourselves: knocking a half-finished
+  --      repair back to 0 is exactly the outcome we want, and a dead pill
+  --      cannot be hurt by our own shells.
+  --
+  -- Throttle is never touched here -- the whole point of the feature is that
+  -- the capture keeps its speed.
+  do
+    local clh = state._clh
+    if clh and clh.tick == now and not info.inboat then
+      if clh.src == "lgm" then
+        if clh.target_sl then
+          keys = bit.bor(keys, kill_lgm.gunrange_key(info.gunrange or 14, clh.target_sl))
+        end
+        -- _already_fired is set ONLY by the kill-LGM block above, so it is a
+        -- true "we shot at a man this tick" and not the opportunistic tank shot.
+        if _already_fired then clh.verdict = "fire" end
+      else
+        local tsl = kill_lgm.sightlen_for(clh.dist_wu)
+        keys = bit.bor(keys, kill_lgm.gunrange_key(info.gunrange or 14, tsl))
+        -- LANE CHECK for the pill-tile shot: no friendly / allied tank or
+        -- builder within a tile of the shell's path or of the tile itself.
+        -- The tile is a corpse (our shells cannot hurt it) but the shell
+        -- explodes on whatever it meets first, and a team-mate scooping the
+        -- same pile is exactly who tends to be standing there.
+        local lane_ok = true
+        do
+          local sx, sy = info.tankx, info.tanky
+          local ex, ey = clh.aim_wx, clh.aim_wy
+          local vx, vy = ex - sx, ey - sy
+          local vlen2 = vx * vx + vy * vy
+          for _, ob in ipairs(info.objects or {}) do
+            if (ob.type == OBJECT_TANK or ob.type == OBJECT_BUILDMAN)
+               and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
+               and not (ob.type == OBJECT_TANK and ob.idnum == (info.player_number or -1)) then
+              local t = 0
+              if vlen2 > 0 then
+                t = ((ob.x - sx) * vx + (ob.y - sy) * vy) / vlen2
+                if t < 0 then t = 0 elseif t > 1 then t = 1 end
+              end
+              local px, py = sx + vx * t - ob.x, sy + vy * t - ob.y
+              if px * px + py * py <= 256 * 256 then
+                lane_ok = false
+                clh.lane_block = ob.type == OBJECT_TANK and "ally_tank" or "friendly_builder"
+                break
+              end
+            end
+          end
+        end
+        if not _no_shells and not _shoot_busy and not _already_fired
+           and (bit.band(taps, KEY_SHOOT)) == 0
+           and lane_ok
+           and clh.dist_wu <= C.KILL_LGM_SHOOT_RANGE * 256 then
+          -- Same impact-point gate the kill-LGM block uses: half a tile.
+          local cur_sl = info.gunrange or 14
+          local rad    = (info.direction or 0) * C.TWO_PI / 256
+          local ex_wx  = info.tankx + math.sin(rad) * 128 * cur_sl
+          local ex_wy  = info.tanky - math.cos(rad) * 128 * cur_sl
+          local ddx    = ex_wx - clh.aim_wx
+          local ddy    = ex_wy - clh.aim_wy
+          if math.sqrt(ddx * ddx + ddy * ddy) <= 64 then
+            taps = bit.bor(taps, KEY_SHOOT)
+            _already_fired = true
+            clh.verdict = "fire"
+          end
+        end
+      end
+      -- Rate-limited decision line: one print per change of VERDICT or of the
+      -- kill-LGM fire gate, not per tick.  The gate is the per-LGM verdict the
+      -- block above wrote into _kill_lgm_eval (in range, LOS clear, crosshair
+      -- on / off, fired); without it "verdict=turn and never fires" is
+      -- unreadable, and that is the single most likely way this feature
+      -- silently does half its job.  The whole thing lives inside the
+      -- BRAIN_DEBUG_MODE guard so lua_strip takes the eval scan out of the
+      -- production copy with the print.
+    elseif state._clh_verdict ~= nil then
+      -- Hunt over: forget the last verdict so re-entry prints again.
+      state._clh_verdict = nil
+    end
   end
 
   -- Navigation debug -- verbose prints for command goals
@@ -7344,6 +7614,32 @@ function Brain.think(info)
     -- allies must not duplicate. Five bots must not all rebuild one corpse.
     -- Format and arbitration: builder_pool.claim_advert / ally_claim_on.
     bse.bpj = bpool.claim_advert(state, now)
+    -- ── "KILL ME" tokens ─────────────────────────────────────────────────
+    -- km  = "XXYYAA"  our request: the tile we are parked on and our armour,
+    --                 present ONLY while the kill_me_wait goal is held. The
+    --                 goal's own validity check drops it the moment the state
+    --                 clears (man back, tank died, respawn) or an enemy tank
+    --                 comes inside KILL_ME_CANCEL_ENEMY_TILES, so the token
+    --                 leaves on the next heartbeat with no separate lifetime.
+    -- kmc = "PPCCCC"  our CLAIM: which initiator we are answering and at what
+    --                 cost. Read by other responders (the steal band) AND by
+    --                 the initiator, which is how it learns whom not to shoot.
+    --
+    -- Both are OMITTED rather than sent as "-" when there is nothing to say:
+    -- merge_info evicts any /info extra key absent from the payload, so an
+    -- omission clears them on every receiver, and the 128-byte slate does not
+    -- pay for two dead fields on every heartbeat of every game.
+    if state.goal and state.goal.kind == "kill_me_wait" then
+      bse.km = string.format("%02X%02X%02X",
+                             bit.band(state.goal.mx or 0, 0xFF),
+                             bit.band(state.goal.my or 0, 0xFF),
+                             bit.band(info.armour or 0, 0xFF))
+    end
+    if state.km and state.km.claim then
+      bse.kmc = string.format("%02X%04X",
+                              bit.band(state.km.claim.pn or 0, 0xFF),
+                              bit.band(math.floor(math.min(state.km.claim.cost or 0, 65535)), 0xFFFF))
+    end
     -- Goal-selection cost (pool_cache winner matching our current goal).
     -- Drifts every tick as we close on the target, so it rides the extra
     -- channel on a ~1 Hz cadence (see cost_due below) rather than the
@@ -7352,7 +7648,7 @@ function Brain.think(info)
     -- read it only to break a contention tie (once-per-second is ample).
     if state.goal and state.goal.kind and state.goal.kind ~= "none"
        and state.pool_cache then
-      for pi = 0, 12 do
+      for pi = 0, 15 do
         local pce = state.pool_cache[pi]
         if pce and pce.goal
            and pce.goal.kind == state.goal.kind
