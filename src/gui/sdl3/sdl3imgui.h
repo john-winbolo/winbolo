@@ -296,28 +296,26 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void);
 SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
 
 #if defined(WINBOLO_VOICE)
-/*********************************************************
-*NAME:          sdl3ImguiGetSpeakerIconSurface
-*PURPOSE:
-*  Returns the rasterized speaker icon drawn beside a tank's
-*  on-map label while that player is heard, as a
-*  renderer-free surface the label caches texture per
-*  renderer. A speaker rather than a microphone because the
-*  label marks a player whose voice is coming out here.
-*  Loads the SVG lazily on first call. Owned by this module;
-*  do not destroy. Returns NULL if the SVG could not be
-*  loaded.
-*********************************************************/
-SDL_Surface *sdl3ImguiGetSpeakerIconSurface(void);
+/* Which voice glyph to rasterize. The shape says which end the state belongs
+   to, the same way it does in the players panel: a speaker for what is played
+   here, a microphone for what is captured at the other end. */
+typedef enum {
+    MIC_GLYPH_MIC,
+    MIC_GLYPH_MIC_MUTED,
+    MIC_GLYPH_SPEAKER,
+    MIC_GLYPH_SPEAKER_MUTED
+} MicIconGlyph;
 
 /*********************************************************
 *NAME:          sdl3ImguiCreateMicIconSurface
 *PURPOSE:
-*  Rasterizes the plain or muted microphone icon at exactly
-*  the pixel size asked for, for the game view's own mute
-*  indicator — the classic frame and the full screen HUD
-*  both draw it from C, at a size that follows the window,
-*  and want no scaling at draw time.
+*  Rasterizes one voice glyph at exactly the pixel size
+*  asked for, for the two places that draw these from C at a
+*  size that follows the window: the game view's own mute
+*  indicator and the on-map tank labels. Neither wants any
+*  scaling at draw time — the barred glyphs cut their slash
+*  with a gap about a unit wide in the SVG's 24-unit
+*  viewBox, and a downscale averages it away.
 *
 *  Unlike the …Get…Surface accessors above, the surface is
 *  the CALLER'S: destroy it with SDL_DestroySurface once it
@@ -325,11 +323,37 @@ SDL_Surface *sdl3ImguiGetSpeakerIconSurface(void);
 *  Returns NULL if the SVG could not be loaded.
 *
 *ARGUMENTS:
-*  muted - true for the barred microphone, false for the
-*          plain one
+*  glyph - which of the four to draw
 *  size  - wanted width and height in pixels
 *********************************************************/
-SDL_Surface *sdl3ImguiCreateMicIconSurface(bool muted, int size);
+SDL_Surface *sdl3ImguiCreateMicIconSurface(MicIconGlyph glyph, int size);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerFlags
+*PURPOSE:
+*  Returns the cached PLAYER_FLAG_* bits for a slot, as the
+*  server last published them, so a drawer outside this file
+*  can resolve a player's voice state the way the players
+*  panel does. Returns 0 for an out-of-range slot.
+*
+*ARGUMENTS:
+*  playerNum - slot to read
+*********************************************************/
+uint8_t sdl3ImguiPlayerFlags(unsigned char playerNum);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerIsSelf
+*PURPOSE:
+*  Returns true if the slot is the local player's. The slot
+*  is read once a frame in sdl3ImguiPumpAndRender, which is
+*  the only place with a ClientSim to ask; until the first
+*  read, and whenever that runs without one, the answer is
+*  false for every slot rather than for slot 0 by accident.
+*
+*ARGUMENTS:
+*  playerNum - slot to test
+*********************************************************/
+bool sdl3ImguiPlayerIsSelf(unsigned char playerNum);
 #endif
 
 /*********************************************************

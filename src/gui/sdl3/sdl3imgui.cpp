@@ -370,9 +370,13 @@ static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
 static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
 static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
-/* Tank-label rasterization of the talking speaker, a surface for the same
- * reason s_iconBrainSurf is one. */
-static SDL_Surface *s_iconSpeakerSurf = nullptr;
+/* The local player's slot, read once a frame in sdl3ImguiPumpAndRender — the
+ * only place here with a ClientSim to ask. PLAYER_SELF_UNKNOWN rather than 0
+ * until it has been read: a zero would make slot 0 the local player for a
+ * frame, and at join that is exactly the frame in which a real player sits
+ * there and would have their icon blanked. */
+#define PLAYER_SELF_UNKNOWN 0xFFu
+static unsigned char s_selfPlayerNum = PLAYER_SELF_UNKNOWN;
 /* Voice icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
  * further down the file because the players panel is rendered above them.
  * Talking is the only one that has to catch the eye mid-game; the rest sit
@@ -429,12 +433,6 @@ static void ensureWbnIconsLoaded(void) {
         s_iconBrainSurf = imguiLoadSvgIconWhiteSurface("data/ui/brain.svg",
                                                        WBN_ICON_TANK_LABEL_SIZE);
     }
-#if defined(WINBOLO_VOICE)
-    if (!s_iconSpeakerSurf) {
-        s_iconSpeakerSurf = imguiLoadSvgIconWhiteSurface("data/ui/speaker.svg",
-                                                         WBN_ICON_TANK_LABEL_SIZE);
-    }
-#endif
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] slot=%d steam=%p brain=%p brainSurf=%p renderer=%p s_renderer=%p drawRenderer=%p",
             slot, (void *)s_iconSteam[slot],
             (void *)s_iconBrain[slot], (void *)s_iconBrainSurf,
@@ -5568,6 +5566,15 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     s_classicMode = (cs != nullptr && !clientSimIsSpectator(cs) &&
                      clientSimGetClassicMode(cs));
 
+#if defined(WINBOLO_VOICE)
+    /* Which slot is ours, for the drawers that have no ClientSim of their own
+       — the tank labels. Back to not-known without one, so nothing outside a
+       game reads the last game's slot as still ours. */
+    s_selfPlayerNum = (cs != nullptr)
+                          ? (unsigned char)clientSimGetMyPlayerNum(cs)
+                          : (unsigned char)PLAYER_SELF_UNKNOWN;
+#endif
+
     /* Sync Steam Input action set to current gameplay context.  Must
        run before any consumer of action data (edge triggers below
        and the input wiring downstream). */
@@ -6681,27 +6688,38 @@ SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
 }
 
 #if defined(WINBOLO_VOICE)
-SDL_Surface *sdl3ImguiGetSpeakerIconSurface(void) {
-    /* Same arrangement as the brain icon: the tank-label drawer is the only
-     * consumer, so it gets the label-height rasterization rather than the
-     * 14-px players-panel texture, as a surface it textures per renderer.
-     * A speaker rather than a microphone because the label marks a player
-     * whose voice is coming out of this client's speakers. */
-    ensureWbnIconsLoaded();
-    return s_iconSpeakerSurf;
-}
-
-SDL_Surface *sdl3ImguiCreateMicIconSurface(bool muted, int size) {
+SDL_Surface *sdl3ImguiCreateMicIconSurface(MicIconGlyph glyph, int size) {
     /* Rasterized to order rather than cached: the game view's mute indicator
-     * draws at a size that follows the window and the HUD's scale, and an icon
-     * scaled at draw time loses the muted glyph's slash, whose gaps are about
-     * a unit wide in the SVG's 24-unit viewBox. The caller owns what comes
-     * back. */
+     * and the on-map tank labels both draw at a size that follows the window
+     * and the HUD's scale, and an icon scaled at draw time loses the barred
+     * glyphs' slash, whose gaps are about a unit wide in the SVG's 24-unit
+     * viewBox. The caller owns what comes back. */
+    const char *path;
+    switch (glyph) {
+        case MIC_GLYPH_MIC_MUTED:     path = "data/ui/mic-muted.svg";     break;
+        case MIC_GLYPH_SPEAKER:       path = "data/ui/speaker.svg";       break;
+        case MIC_GLYPH_SPEAKER_MUTED: path = "data/ui/speaker-muted.svg"; break;
+        case MIC_GLYPH_MIC:
+        default:                      path = "data/ui/mic.svg";           break;
+    }
     if (size < MIC_ICON_MIN_PX) size = MIC_ICON_MIN_PX;
     if (size > MIC_ICON_MAX_PX) size = MIC_ICON_MAX_PX;
-    return imguiLoadSvgIconWhiteSurface(muted ? "data/ui/mic-muted.svg"
-                                              : "data/ui/mic.svg",
-                                        size);
+    return imguiLoadSvgIconWhiteSurface(path, size);
+}
+
+/* The next two stay inside the voice test, and not because they are about
+ * voice: the log viewer compiles tank_label.c, their only caller, and answers
+ * its sdl3imgui calls with its own stubs in src/logviewer/bolo_shim.c. It
+ * defines no WINBOLO_VOICE, so a guarded accessor needs no stub there. Tidying
+ * the guard away would leave the log viewer without one. */
+uint8_t sdl3ImguiPlayerFlags(unsigned char playerNum) {
+    if (playerNum >= MAX_PLAYERS) return 0;
+    return s_playerFlags[playerNum];
+}
+
+bool sdl3ImguiPlayerIsSelf(unsigned char playerNum) {
+    if (s_selfPlayerNum == PLAYER_SELF_UNKNOWN) return false;
+    return playerNum == s_selfPlayerNum;
 }
 #endif
 
@@ -7076,9 +7094,6 @@ void sdl3ImguiCleanup(void) {
     destroyIconSlot(ICON_SLOT_MAIN);
     /* Renderer-free, so they outlive both slots and are freed once here. */
     if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
-#if defined(WINBOLO_VOICE)
-    if (s_iconSpeakerSurf) { SDL_DestroySurface(s_iconSpeakerSurf); s_iconSpeakerSurf = nullptr; }
-#endif
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;

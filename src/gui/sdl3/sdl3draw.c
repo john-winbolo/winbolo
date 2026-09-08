@@ -232,7 +232,8 @@ static SDL_Texture *micIndicatorTex(bool muted, int px) {
   if (*slot && *slotPx == px) return *slot;
   if (!gRenderer) return NULL;
 
-  SDL_Surface *surf = sdl3ImguiCreateMicIconSurface(muted, px);
+  SDL_Surface *surf = sdl3ImguiCreateMicIconSurface(
+      muted ? MIC_GLYPH_MIC_MUTED : MIC_GLYPH_MIC, px);
   if (!surf) return NULL;
   if (*slot) {
     SDL_DestroyTexture(*slot);
