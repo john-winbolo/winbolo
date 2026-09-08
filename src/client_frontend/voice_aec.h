@@ -28,6 +28,13 @@
  *   is already queued in front of it, and this module holds
  *   the frame in a delay line until the tick it belongs to.
  *
+ *   Also cleans up the captured frame on its own account -
+ *   noise suppression and automatic gain, so a microphone
+ *   left at its default settings still reaches the encoder
+ *   at a usable level.  That part runs on every platform,
+ *   including the ones whose OS cancels the echo for us and
+ *   where no canceller of ours is created at all.
+ *
  *   Desktop only.  The browser build gets echo cancellation
  *   from getUserMedia and never compiles this file, so every
  *   call site is behind WINBOLO_VOICE_AEC.
@@ -48,9 +55,11 @@ extern "C" {
 /*********************************************************
 *NAME:          voiceAecInit
 *PURPOSE:
-*  Creates the canceller.  Returns false if it could not be
-*  had, which is not fatal: every other entry point becomes
-*  a no-op and voice runs on uncancelled audio.
+*  Creates the preprocessor, and a canceller as well unless
+*  the platform is already cancelling.  Returns whether
+*  cancellation is usable - false if a canceller was wanted
+*  and could not be had, which is not fatal: voice runs on
+*  uncancelled audio, still cleaned by the preprocessor.
 *
 *ARGUMENTS:
 *  (none)
@@ -60,8 +69,9 @@ bool voiceAecInit(void);
 /*********************************************************
 *NAME:          voiceAecShutdown
 *PURPOSE:
-*  Releases the canceller.  Safe to call when init failed or
-*  never ran.  Leaves the on/off setting alone - that is the
+*  Releases the preprocessor and the canceller.  Safe to call
+*  when init failed or never ran, or when only one of the two
+*  was created.  Leaves the on/off setting alone - that is the
 *  player's, not the device's.
 *
 *ARGUMENTS:
@@ -72,9 +82,10 @@ void voiceAecShutdown(void);
 /*********************************************************
 *NAME:          voiceAecSetEnabled
 *PURPOSE:
-*  Switches cancellation on or off.  Switching it back on
-*  starts the filter over, since nothing was fed to it while
-*  it was off.
+*  Switches cancellation on or off, and only cancellation -
+*  the noise suppression and automatic gain go on running
+*  either way.  Starts the filter over in both directions,
+*  since nothing is fed to it while it is off.
 *
 *ARGUMENTS:
 *  on - whether captured audio is cancelled
@@ -116,11 +127,11 @@ bool voiceAecIsAvailable(void);
 *PURPOSE:
 *  Whether the cancellation voiceAecIsAvailable reports is the
 *  platform's own rather than this module's.  When it is, no
-*  Speex state was created at all: cancelling an already
+*  Speex canceller was created: cancelling an already
 *  cancelled signal damages the speech in it rather than
-*  cleaning it further.  False both when Speex is doing the
-*  work and when nothing is, so it answers "which", not
-*  "whether".
+*  cleaning it further.  The preprocessor still was.  False
+*  both when Speex is doing the cancelling and when nothing
+*  is, so it answers "which", not "whether".
 *
 *ARGUMENTS:
 *  (none)
@@ -161,11 +172,13 @@ void voiceAecAddReference(const int16_t *pcm, int playbackDelayFrames);
 /*********************************************************
 *NAME:          voiceAecProcess
 *PURPOSE:
-*  Runs one captured frame through the canceller and moves
-*  the delay line on a tick.  Call it on every captured
-*  frame, transmitted or not - the filter tracks the room
-*  continuously and a frame it never sees is a hole in that.
-*  With cancellation off the input is copied out unchanged.
+*  Cleans one captured frame and moves the delay line on a
+*  tick.  Call it on every captured frame, transmitted or not
+*  - the filter tracks the room continuously and a frame it
+*  never sees is a hole in that.  With cancellation off, or on
+*  a platform where none was created, the frame still goes
+*  through the noise suppression and the automatic gain, so
+*  what comes out is not what went in.
 *
 *ARGUMENTS:
 *  micIn - VOICE_FRAME_SAMPLES mono S16 samples
