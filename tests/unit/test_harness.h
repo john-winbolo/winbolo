@@ -672,6 +672,19 @@ int run_start_side_eligible_closed_mask(void);
 int run_starts_scatter_avoids_existing_tanks(void);
 int run_starts_scatter_falls_back_when_crowded(void);
 
+/* Team start sides in startsAssignBatch (test_starts_team_side.c). A team
+ * with a side stays on it, a team with none is kept off the chosen sides,
+ * a quota is capped at what the side can hold, and the slots left over
+ * ride a start beside their own side instead of going unplaced. */
+int run_starts_side_team_stays_on_its_side(void);
+int run_starts_side_overflow_rides_own_side(void);
+int run_starts_side_never_crosses_when_opposite_free(void);
+int run_starts_side_any_matches_legacy(void);
+int run_starts_side_reservation_beats_side(void);
+int run_starts_side_empty_side_falls_back(void);
+int run_starts_side_quota_capped_by_eligible(void);
+int run_starts_side_any_team_kept_off_chosen_side(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */

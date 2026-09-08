@@ -78,7 +78,7 @@ int run_starts_batch_reserved_lands_exact(void) {
     connected[0] = true;
     reserved[0] = 3;                 /* lock 0-based start 3 */
 
-    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved, NULL);
 
     UT_ASSERT_MSG(out[0] == 3,
                   "reserved slot should land on start 3, got %u",
@@ -105,7 +105,7 @@ int run_starts_batch_unreserved_avoids_reserved(void) {
     connected[1] = true;
     reserved[0] = 0;                 /* lock 0-based start 0 */
 
-    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved, NULL);
 
     UT_ASSERT_MSG(out[0] == 0,
                   "reserved slot should land on start 0, got %u",
@@ -134,7 +134,7 @@ int run_starts_batch_stale_reservation_falls_through(void) {
     connected[0] = true;
     reserved[0] = 7;                 /* >= numStarts: stale, treat as none */
 
-    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved, NULL);
 
     UT_ASSERT_MSG(out[0] != MAX_STARTS && out[0] < K_NUM_STARTS,
                   "stale reservation should fall through to placement, got %u",
@@ -162,7 +162,7 @@ int run_starts_batch_duplicate_honors_first(void) {
     reserved[0] = 3;                 /* both name start 3 */
     reserved[1] = 3;
 
-    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, reserved, NULL);
 
     UT_ASSERT_MSG(out[0] == 3,
                   "first slot should keep reserved start 3, got %u",
@@ -190,7 +190,7 @@ int run_starts_batch_null_reservations_place_normally(void) {
     reset_inputs(connected, team, reserved);
     connected[0] = true;
 
-    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, NULL);
 
     UT_ASSERT_MSG(out[0] != MAX_STARTS && out[0] < K_NUM_STARTS,
                   "NULL reservations should place the slot normally, got %u",
@@ -223,7 +223,7 @@ int run_starts_batch_solo_random_seed(void) {
     int s;
     for (s = 0; s < 64; s++) {
         bolo_srand((uint64_t)(s + 1));
-        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, NULL);
         UT_ASSERT_MSG(out[0] < K_NUM_STARTS,
                       "solo should be placed, got %u", (unsigned)out[0]);
         if (!seen[out[0]]) { seen[out[0]] = true; distinct++; }
@@ -276,7 +276,7 @@ int run_starts_batch_teams_cluster_and_separate(void) {
     team[2] = team[3] = 2;   /* team 2: slots 2,3 */
 
     bolo_srand(12345);
-    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, NULL);
 
     for (i = 0; i < 4; i++) {
         UT_ASSERT_MSG(out[i] < 6, "slot %d unplaced (%u)", i, (unsigned)out[i]);
@@ -326,7 +326,7 @@ int run_starts_batch_team_anchor_jitter_varies(void) {
         int j;
         int found = 0;
         bolo_srand((uint64_t)(s * 7 + 1));
-        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, NULL);
         lo = out[0] < out[1] ? out[0] : out[1];
         hi = out[0] < out[1] ? out[1] : out[0];
         key = lo * 100 + hi;

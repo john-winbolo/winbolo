@@ -3217,6 +3217,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_open_ideal.c
     tests/unit/test_start_sides.c
     tests/unit/test_starts_scatter_separation.c
+    tests/unit/test_starts_team_side.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -3964,6 +3965,14 @@ set(_unit_test_names
     start_side_eligible_closed_mask
     starts_scatter_avoids_existing_tanks
     starts_scatter_falls_back_when_crowded
+    starts_side_team_stays_on_its_side
+    starts_side_overflow_rides_own_side
+    starts_side_never_crosses_when_opposite_free
+    starts_side_any_matches_legacy
+    starts_side_reservation_beats_side
+    starts_side_empty_side_falls_back
+    starts_side_quota_capped_by_eligible
+    starts_side_any_team_kept_off_chosen_side
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

@@ -1091,7 +1091,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
                           sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0);
+                          sim->sim.pendingStartIdx, reserved0, NULL);
     }
 
     /* Destroy every connected slot's tank and man before creating any, so
@@ -1233,7 +1233,7 @@ void serverSimStartGame(ServerSim *sim) {
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
                           sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0);
+                          sim->sim.pendingStartIdx, reserved0, NULL);
     }
 
     /* Create tanks for all connected players */

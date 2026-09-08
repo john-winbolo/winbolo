@@ -35,6 +35,7 @@
 #include "playersrejoin.h"          /* playersRejoinAddPlayer, playersRejoinRequest — pill/base ownership across a rejoin */
 #include "log.h"                    /* logAddEvent — the .wbv join, leave and alliance records */
 #include "wire_limits.h"            /* PACKET_MAX_PLAYER_NAME — the rename event's name field */
+#include "start_sides.h"            /* START_SIDE_ANY — the lobby start pick's side argument */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetAddEvent — WBN join and alliance tracking */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the join and leave trace */
 
@@ -754,7 +755,8 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
     }
 
     picked = startsPickIncremental(&sim->sim, &sim->sim.ss, taken,
-                                   teammateStarts0, teammateCount);
+                                   teammateStarts0, teammateCount,
+                                   START_SIDE_ANY, 0);
     if (picked >= numStarts) {
         sim->lobbyPlayers[slot].startIdx = 0xFF;
     } else {
