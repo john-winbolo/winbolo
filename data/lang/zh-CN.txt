@@ -2020,4 +2020,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}：{number2}名玩家对应{number}个�
 STR_DLGLOBBY_TOOLTIP_START_SEA=该队伍可用的出生点已全部被占用，因此该玩家\n将在队友出生点旁的海上开始游戏。
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=越位：此出生点不在{string1}（队伍一侧）范围内。\n主机为该玩家选择了此出生点。
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=将两队设为 {string1}\n{player} 从 {string2} 出发，{other} 从 {string3} 出发
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=两队已设为 {string1}。点击可恢复自定义出生点。
+
 STR_SOUND_LOAD_FAILED=加载音效失败

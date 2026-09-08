@@ -2022,4 +2022,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number2} oyuncu için {number} başla
 STR_DLGLOBBY_TOOLTIP_START_SEA=Bu takımın kullanabileceği tüm başlangıçlar dolu, bu yüzden bu oyuncu\ntakım arkadaşının başlangıcının yanında, denizde başlayacak.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Taraf dışı: bu başlangıç takımın {string1} tarafında değil.\nSunucu sahibi bunu bu oyuncu için seçti.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=İki takımı da {string1} yap\n{player} {string2} başlar, {other} {string3} başlar
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Takımlar {string1} olarak ayarlandı. Özel başlangıçlara dönmek için tıklayın.
+
 STR_SOUND_LOAD_FAILED=Ses efektleri yüklenirken hata oluştu

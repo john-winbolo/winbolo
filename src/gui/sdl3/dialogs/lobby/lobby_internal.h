@@ -424,6 +424,18 @@ int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
 void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
                                   ImVec2 imgMin, float previewSize,
                                   int bx0, int by0, int bx1, int by1);
+/* The two-team N/S · E/W compass rose in the preview's bottom-left corner.
+ * Host only, map with starts, exactly two teams with members. Returns true
+ * when the cursor is on it, so the caller skips the start claim/drag layer
+ * and the zoom popup. Call it before lobbyPreviewInteract. */
+/* Hit test only, run BEFORE the start claim/drag layer so the rose keeps
+ * mouse priority: true while the cursor is within the rose's reach. */
+bool lobbyPreviewCompassHot(ClientSim *cs, bool effHostMap,
+                            ImVec2 imgMin, float innerSize, float gapPx, float s);
+/* Draw + tooltip + click, run AFTER the start overlay so the letters paint
+ * on top of any start label pushed into the corner. */
+bool lobbyDrawPreviewCompass(ClientSim *cs, bool effHostMap,
+                             ImVec2 imgMin, float innerSize, float gapPx, float s);
 bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                           ImVec2 imgMin, float innerSize,
                           int bx0, int by0, int bx1, int by1);

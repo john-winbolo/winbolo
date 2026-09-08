@@ -2024,4 +2024,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} partenze per {number2} giocat
 STR_DLGLOBBY_TOOLTIP_START_SEA=Tutte le partenze che questa squadra può usare sono occupate, quindi questo giocatore\ninizierà in mare accanto alla partenza di un compagno di squadra.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Fuori zona: questa partenza non è su {string1}, il lato della squadra.\nL'host l'ha scelta per questo giocatore.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Imposta le due squadre su {string1}\n{player} parte {string2}, {other} parte {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Squadre impostate su {string1}. Fai clic per tornare alle partenze personalizzate.
+
 STR_SOUND_LOAD_FAILED=Errore durante il caricamento degli effetti sonori

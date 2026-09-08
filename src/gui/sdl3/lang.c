@@ -1455,6 +1455,14 @@ static const LangEntry langTable[] = {
     {2041, "{string1}: {number} starts for {number2} players \xE2\x80\x94 {number3} will start at sea.\nChanging a side re-picks every player's start."},
     {2042, "Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start."},
     {2043, "Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player."},
+
+    /* Map-preview compass, shown to the host when exactly two teams have
+     * members. Hovering an axis of the rose offers to put both teams on
+     * it, or, when they are already on it, to clear both back to Any.
+     * {string1} = the axis, "N/S" or "E/W"; {player} / {other} = the two
+     * team names; {string2} / {string3} = the side each would take. */
+    {2047, "Set the two teams to {string1}\n{player} starts {string2}, {other} starts {string3}"},
+    {2048, "Teams set to {string1}. Click to go back to custom starts."},
     /* Map-preview start-picker tooltips over a start the viewer's own
      * team side rejects: 2044 for a player who cannot take it, 2045 for
      * the host, who still can. {number} = start; 2045: {string1} = the
