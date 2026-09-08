@@ -19,26 +19,27 @@
 
 #include "tank_label.h"
 #include "flags.h"           /* flagsGetSurface */
-#include "sdl3imgui.h"       /* sdl3ImguiPlayerIsBot, sdl3ImguiGetBrainIconSurface */
+#include "sdl3imgui.h"       /* sdl3ImguiPlayerIsBot, sdl3ImguiGetBrainIconSurface,
+                                sdl3ImguiGetSpeakerIconSurface */
 #include "sdl3draw_status.h" /* sdl3DrawOnRenderThread, the mic-icon setting */
 #if defined(WINBOLO_VOICE)
-#include "../voice.h"        /* talking map for the mic icon */
+#include "../voice.h"        /* talking map for the speaker icon */
 #endif
 
 #if defined(WINBOLO_VOICE)
 /* Textured per renderer beside the cached name and icon. Unlike those it is
  * not part of the per-label rebuild: who is talking changes from frame to
  * frame, while the cache is keyed on the label string. */
-static SDL_Texture *micTexFor(TankLabelCache *c, SDL_Renderer *r) {
-    if (c->micTex) return c->micTex;
-    SDL_Surface *surf = sdl3ImguiGetMicIconSurface();
+static SDL_Texture *speakerTexFor(TankLabelCache *c, SDL_Renderer *r) {
+    if (c->speakerTex) return c->speakerTex;
+    SDL_Surface *surf = sdl3ImguiGetSpeakerIconSurface();
     if (!surf) return NULL;
-    c->micTex = SDL_CreateTextureFromSurface(r, surf);
-    if (c->micTex) {
-        SDL_SetTextureBlendMode(c->micTex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureAlphaMod(c->micTex, 170);
+    c->speakerTex = SDL_CreateTextureFromSurface(r, surf);
+    if (c->speakerTex) {
+        SDL_SetTextureBlendMode(c->speakerTex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(c->speakerTex, 170);
     }
-    return c->micTex;
+    return c->speakerTex;
 }
 #endif
 
@@ -173,17 +174,20 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
     }
 
 #if defined(WINBOLO_VOICE)
-    /* Microphone while this player's voice is being heard here, after the
+    /* A speaker while this player's voice is coming out here, after the
      * flag/brain icon or straight after the name when there was none. The
-     * talking map is local — a player muted here never appears in it — so
-     * there is no muted state to draw. */
+     * talking map is local and holds only players heard from — the local
+     * player is never in it, and a player muted here never appears in it —
+     * so what the icon marks is this client's playback, and there is no
+     * muted state to draw. */
     if (sdl3DrawStatusGetShowMicIcons() &&
         (voiceGetTalkingMap() & ((PlayerBitMap)1u << playerNum)) != 0) {
-        SDL_Texture *mic = micTexFor(c, r);
-        if (mic) {
-            float micH = h * 0.75f;  /* the mic icon is square */
-            SDL_FRect md = { iconX, y + (h - micH) * 0.5f, micH, micH };
-            SDL_RenderTexture(r, mic, NULL, &md);
+        SDL_Texture *speaker = speakerTexFor(c, r);
+        if (speaker) {
+            float speakerH = h * 0.75f;  /* the speaker icon is square */
+            SDL_FRect sd = { iconX, y + (h - speakerH) * 0.5f,
+                             speakerH, speakerH };
+            SDL_RenderTexture(r, speaker, NULL, &sd);
         }
     }
 #endif
@@ -203,9 +207,9 @@ void tankLabelCacheFlush(TankLabelCache *c) {
         c->str[i][0] = '\0';
     }
 #if defined(WINBOLO_VOICE)
-    if (c->micTex) {
-        SDL_DestroyTexture(c->micTex);
-        c->micTex = NULL;
+    if (c->speakerTex) {
+        SDL_DestroyTexture(c->speakerTex);
+        c->speakerTex = NULL;
     }
 #endif
     c->renderer = NULL;

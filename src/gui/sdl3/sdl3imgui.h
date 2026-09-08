@@ -297,15 +297,18 @@ SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
 
 #if defined(WINBOLO_VOICE)
 /*********************************************************
-*NAME:          sdl3ImguiGetMicIconSurface
+*NAME:          sdl3ImguiGetSpeakerIconSurface
 *PURPOSE:
-*  Returns the rasterized talking-microphone icon drawn
-*  beside a tank's on-map label, as a renderer-free surface
-*  the label caches texture per renderer. Loads the SVG
-*  lazily on first call. Owned by this module; do not
-*  destroy. Returns NULL if the SVG could not be loaded.
+*  Returns the rasterized speaker icon drawn beside a tank's
+*  on-map label while that player is heard, as a
+*  renderer-free surface the label caches texture per
+*  renderer. A speaker rather than a microphone because the
+*  label marks a player whose voice is coming out here.
+*  Loads the SVG lazily on first call. Owned by this module;
+*  do not destroy. Returns NULL if the SVG could not be
+*  loaded.
 *********************************************************/
-SDL_Surface *sdl3ImguiGetMicIconSurface(void);
+SDL_Surface *sdl3ImguiGetSpeakerIconSurface(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiCreateMicIconSurface
@@ -382,14 +385,25 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 /*********************************************************
 *NAME:          renderPlayerMicCell
 *PURPOSE:
-*  Renders one player's microphone cell for a player row:
-*  a size x size icon whose shape and tint reflect the
+*  Renders one player's voice cell for a player row: a
+*  size x size icon whose shape and tint reflect the
 *  player's voice state, resolved in precedence order
 *  (muted by this client, no microphone, talking, muted
 *  their own microphone, idle), with a tooltip naming that
-*  state. On another player's row the icon is a button that
-*  toggles this client's mute of that player, locally and on
-*  the server; on the local player's own row it is a plain
+*  state.
+*
+*  The shape says which end the state belongs to. A speaker
+*  for the states about playback here — a remote player
+*  idle, talking, or muted by this client, which is what
+*  clicking the cell changes — and a microphone for the two
+*  about capture at the other end, no microphone and muted
+*  their own. Every state on the local player's own row is
+*  about this client's own capture, so that row is
+*  microphones throughout.
+*
+*  On another player's row the icon is a button that toggles
+*  this client's mute of that player, locally and on the
+*  server; on the local player's own row it is a plain
 *  image. If the icon texture failed to load a blank of the
 *  same size holds the column. Loads the icon textures on
 *  first use. Draws only — the caller owns layout
@@ -404,9 +418,19 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 *  talkingMap  - PlayerBitMap of players producing voice now
 *  isSelf      - true when playerNum is the local player
 *  size        - icon edge length in pixels
+*  inLobby     - true from the lobby table, false from the
+*                in-game players panel. Decides whether a
+*                remote player with no microphone is drawn
+*                at all: in game that icon is clutter, so
+*                the cell is left blank and only holds its
+*                width, while in the lobby knowing that
+*                someone cannot talk is the point. A player
+*                muted by this client is drawn either way —
+*                that state outranks it.
 *********************************************************/
 void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlags,
-                         PlayerBitMap talkingMap, bool isSelf, float size);
+                         PlayerBitMap talkingMap, bool isSelf, float size,
+                         bool inLobby);
 #endif
 
 /* Draws the country flag for an alpha-2 code and, on hover, a localized

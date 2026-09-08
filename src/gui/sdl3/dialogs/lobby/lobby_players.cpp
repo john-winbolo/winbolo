@@ -1415,14 +1415,18 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                          clientSimGetLobbySlot(cs, (BYTE)(i))->clientType,
                                          "", false);
 #if defined(WINBOLO_VOICE)
-                        /* Microphone state and the mute toggle. Lobby voice
+                        /* Voice state and the mute toggle. Lobby voice
                          * is all-talk, so this shows for every player. The
                          * slot's own flags, not pflags: the WBN masking
-                         * above has nothing to say about the microphone. */
+                         * above has nothing to say about the microphone.
+                         * The true is what marks this as the lobby: it is
+                         * the one place a player with no microphone is
+                         * drawn, since picking who to play with is when
+                         * knowing they cannot talk matters. */
                         renderPlayerMicCell(cs, i,
                                             clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags,
                                             talkingMap, isSelf,
-                                            (float)LOBBY_WBN_ICON_SIZE);
+                                            (float)LOBBY_WBN_ICON_SIZE, true);
 #endif
                     }
                 }

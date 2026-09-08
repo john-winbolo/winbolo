@@ -358,20 +358,25 @@ static SDL_Surface *s_iconBrainSurf = nullptr;
  * icon cache behind lobbyIcons(), which is lobby-internal. */
 static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
 #if defined(WINBOLO_VOICE)
-/* Microphone state icons for the players panel. Three assets cover four
- * states — "talking" and "idle" are the same microphone under different
- * tints, because the difference between them is momentary and a shape
- * change would read as flicker. */
-static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]      = {};
-static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT] = {};
-static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]   = {};
-/* Tank-label rasterization of the talking microphone, a surface for the same
+/* Voice state icons for the players panel. Which shape is drawn says which
+ * end the state belongs to: a speaker for the states about playback here —
+ * a remote player idle, talking, or muted by this client — and a microphone
+ * for the states about capture at the other end, no microphone or muted
+ * their own. Talking and idle share the speaker under different tints,
+ * because the difference between them is momentary and a shape change would
+ * read as flicker. */
+static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]          = {};
+static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
+static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
+static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
+static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
+/* Tank-label rasterization of the talking speaker, a surface for the same
  * reason s_iconBrainSurf is one. */
-static SDL_Surface *s_iconMicSurf = nullptr;
-/* Mic icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
+static SDL_Surface *s_iconSpeakerSurf = nullptr;
+/* Voice icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
  * further down the file because the players panel is rendered above them.
  * Talking is the only one that has to catch the eye mid-game; the rest sit
- * back so a panel full of idle microphones is not a wall of colour. */
+ * back so a panel full of idle rows is not a wall of colour. */
 static const ImVec4 MIC_TINT_NORMAL  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 static const ImVec4 MIC_TINT_TALKING = ImVec4(0.30f, 1.00f, 0.40f, 1.00f);
 static const ImVec4 MIC_TINT_MUTED   = ImVec4(1.00f, 0.35f, 0.35f, 1.00f);
@@ -398,9 +403,11 @@ static void ensureWbnIconsLoaded(void) {
      * not a voice feature and ship in -DWINBOLO_VOICE=OFF builds too. */
     s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
 #if defined(WINBOLO_VOICE)
-    s_iconMic[slot]      = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",       WBN_ICON_SIZE);
-    s_iconMicMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg", WBN_ICON_SIZE);
-    s_iconMicOff[slot]   = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",   WBN_ICON_SIZE);
+    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_SIZE);
+    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_SIZE);
+    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_SIZE);
+    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_SIZE);
+    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_SIZE);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
      * rasterized again per renderer. */
@@ -409,9 +416,9 @@ static void ensureWbnIconsLoaded(void) {
                                                        WBN_ICON_TANK_LABEL_SIZE);
     }
 #if defined(WINBOLO_VOICE)
-    if (!s_iconMicSurf) {
-        s_iconMicSurf = imguiLoadSvgIconWhiteSurface("data/ui/mic.svg",
-                                                     WBN_ICON_TANK_LABEL_SIZE);
+    if (!s_iconSpeakerSurf) {
+        s_iconSpeakerSurf = imguiLoadSvgIconWhiteSurface("data/ui/speaker.svg",
+                                                         WBN_ICON_TANK_LABEL_SIZE);
     }
 #endif
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] slot=%d steam=%p brain=%p brainSurf=%p renderer=%p s_renderer=%p drawRenderer=%p",
@@ -466,6 +473,8 @@ static void destroyIconSlot(int slot) {
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
     if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
+    if (s_iconSpeaker[slot]) { SDL_DestroyTexture(s_iconSpeaker[slot]); s_iconSpeaker[slot] = nullptr; }
+    if (s_iconSpeakerMuted[slot]) { SDL_DestroyTexture(s_iconSpeakerMuted[slot]); s_iconSpeakerMuted[slot] = nullptr; }
 #endif
     s_wbnIconsLoaded[slot] = false;
     for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
@@ -2379,9 +2388,9 @@ static void renderPlayersContent(ClientSim *cs) {
         }
 
 #if defined(WINBOLO_VOICE)
-        /* Microphone state, between the checkbox and the name. */
+        /* Voice state, between the checkbox and the name. */
         renderPlayerMicCell(cs, i, s_playerFlags[i], talkingMap,
-                            i == self, micWidth);
+                            i == self, micWidth, false);
         ImGui::SameLine();
 #endif
 
@@ -6613,12 +6622,14 @@ SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
 }
 
 #if defined(WINBOLO_VOICE)
-SDL_Surface *sdl3ImguiGetMicIconSurface(void) {
+SDL_Surface *sdl3ImguiGetSpeakerIconSurface(void) {
     /* Same arrangement as the brain icon: the tank-label drawer is the only
      * consumer, so it gets the label-height rasterization rather than the
-     * 14-px players-panel texture, as a surface it textures per renderer. */
+     * 14-px players-panel texture, as a surface it textures per renderer.
+     * A speaker rather than a microphone because the label marks a player
+     * whose voice is coming out of this client's speakers. */
     ensureWbnIconsLoaded();
-    return s_iconMicSurf;
+    return s_iconSpeakerSurf;
 }
 
 SDL_Surface *sdl3ImguiCreateMicIconSurface(bool muted, int size) {
@@ -6755,7 +6766,8 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 
 #if defined(WINBOLO_VOICE)
 void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
-                         PlayerBitMap talkingMap, bool isSelf, float size) {
+                         PlayerBitMap talkingMap, bool isSelf, float size,
+                         bool inLobby) {
     ensureWbnIconsLoaded();
     const int iconSlot = activeIconSlot();
 
@@ -6774,11 +6786,26 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
        voice. */
     if (isSelf) selfMuted = voiceIsSelfMuted();
 
+    if (!inLobby && !isSelf && !hasMic && !mutedByMe) {
+        /* In game, a remote player who has no microphone is not worth a
+         * glyph — the state never changes and the row is read at a glance.
+         * The cell still holds its width, or the name and ping shift
+         * between rows. Muted by this client is checked first and still
+         * draws, so a player you muted stays visible and clickable. */
+        ImGui::Dummy(ImVec2(size, size));
+        return;
+    }
+
+    /* The shape says which end the state belongs to. A speaker for the
+     * states about playback here — idle, talking, and muted by this client,
+     * which is what the click changes — and a microphone for the two about
+     * capture at the other end. Every state on the own row is about this
+     * client's own capture, so that row stays on microphones. */
     SDL_Texture *micTex;
     ImVec4       micTint;
     langid       micTip;
     if (mutedByMe) {
-        micTex  = s_iconMicMuted[iconSlot];
+        micTex  = s_iconSpeakerMuted[iconSlot];
         micTint = MIC_TINT_MUTED;
         micTip  = STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
     } else if (!hasMic) {
@@ -6787,21 +6814,20 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_NOMIC
                          : STR_PLAYER_TIP_VOICE_NOMIC;
     } else if (talking) {
-        micTex  = s_iconMic[iconSlot];
+        micTex  = s_iconSpeaker[iconSlot];
         micTint = MIC_TINT_TALKING;
         micTip  = STR_PLAYER_TIP_VOICE_TALKING;
     } else if (selfMuted) {
-        /* They have muted their own microphone. Folded into the idle
-         * icon as a dimmer tint and its own tooltip rather than a
-         * fourth asset — it is their doing, not ours, and it does not
-         * warrant a shape of its own. */
-        micTex  = s_iconMic[iconSlot];
+        /* The barred microphone, not the barred speaker: the far end
+         * stopped sending, which is theirs to undo, where the barred
+         * speaker means this client stopped listening. */
+        micTex  = s_iconMicMuted[iconSlot];
         micTint = MIC_TINT_DIM;
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
                          : STR_PLAYER_TIP_VOICE_SELFMUTED;
     } else {
-        micTex  = s_iconMic[iconSlot];
-        micTint = MIC_TINT_NORMAL;
+        micTex  = isSelf ? s_iconMic[iconSlot] : s_iconSpeaker[iconSlot];
+        micTint = isSelf ? MIC_TINT_NORMAL : MIC_TINT_DIM;
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
                          : STR_PLAYER_TIP_VOICE_IDLE;
     }
@@ -6909,7 +6935,7 @@ void sdl3ImguiCleanup(void) {
     /* Renderer-free, so they outlive both slots and are freed once here. */
     if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
 #if defined(WINBOLO_VOICE)
-    if (s_iconMicSurf) { SDL_DestroySurface(s_iconMicSurf); s_iconMicSurf = nullptr; }
+    if (s_iconSpeakerSurf) { SDL_DestroySurface(s_iconSpeakerSurf); s_iconSpeakerSurf = nullptr; }
 #endif
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
