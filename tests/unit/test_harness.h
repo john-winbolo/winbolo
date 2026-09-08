@@ -657,6 +657,14 @@ int run_starts_batch_teams_cluster_and_separate(void);
 int run_starts_batch_team_anchor_jitter_varies(void);
 int run_starts_open_ideal_friendly_pill_eligible(void);
 
+/* Start side classification (test_start_sides.c). The integer sector test
+ * in start_sides.h that puts a start on N/E/S/W (two bits for a diagonal,
+ * none for the centre band), and the eligibility rule that keeps a team
+ * with no side off the sides other teams chose. */
+int run_start_side_mask_sectors(void);
+int run_start_side_mask_degenerate_bbox(void);
+int run_start_side_eligible_closed_mask(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */

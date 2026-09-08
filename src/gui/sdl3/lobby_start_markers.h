@@ -31,11 +31,10 @@
 #define LOBBY_START_MARKERS_H
 
 #include <string.h>
-#include <stdlib.h>   /* abs */
-#include <math.h>     /* atan2, floor */
 #include "imgui.h"
 #include "client_sim.h"   /* ClientSim, ClientLobbySlot, clientSimGetLobbySlot */
 #include "global.h"       /* MAX_TANKS */
+#include "start_sides.h"  /* startSideMaskFor — side mask behind the compass direction */
 
 /* Ownership of a start relative to the local player. */
 enum LobbyStartOwner {
@@ -83,29 +82,24 @@ static inline ImU32 lobbyStartOwnerColor(LobbyStartOwner o) {
     }
 }
 
-/* Compass octant of start (sx,sy) within bbox [minX..maxX,minY..maxY].
- * Map Y grows downward; north = smaller y. Mirrors lobbyStartCompassStr
- * but returns the placement enum instead of a lang id. */
+/* Compass direction of start (sx,sy) within bbox [minX..maxX,minY..maxY],
+ * as the label-placement enum. Read off the same side mask that gives
+ * lobbyStartCompassStr its lang id: one bit is a cardinal, two bits a
+ * diagonal, no bits the centre band. */
 static inline LobbyCompassDir lobbyStartCompassDir(int sx, int sy,
                                                    int minX, int minY,
                                                    int maxX, int maxY) {
-    int cx = (minX + maxX) / 2;
-    int cy = (minY + maxY) / 2;
-    int dx = sx - cx;
-    int dy = sy - cy;
-    int tolX = (maxX - minX) / 8; if (tolX < 1) tolX = 1;
-    int tolY = (maxY - minY) / 8; if (tolY < 1) tolY = 1;
-    if (abs(dx) <= tolX && abs(dy) <= tolY) return LCD_C;
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-    double deg = atan2((double)(-dy), (double)dx) * 180.0 / M_PI;
-    int sector = (int)floor((deg + 22.5) / 45.0);
-    sector = ((sector % 8) + 8) % 8;
-    static const LobbyCompassDir kSectorDir[8] = {
-        LCD_E, LCD_NE, LCD_N, LCD_NW, LCD_W, LCD_SW, LCD_S, LCD_SE
-    };
-    return kSectorDir[sector];
+    switch (startSideMaskFor(sx, sy, minX, minY, maxX, maxY)) {
+        case START_SIDE_BIT_N:                    return LCD_N;
+        case START_SIDE_BIT_N | START_SIDE_BIT_E: return LCD_NE;
+        case START_SIDE_BIT_E:                    return LCD_E;
+        case START_SIDE_BIT_S | START_SIDE_BIT_E: return LCD_SE;
+        case START_SIDE_BIT_S:                    return LCD_S;
+        case START_SIDE_BIT_S | START_SIDE_BIT_W: return LCD_SW;
+        case START_SIDE_BIT_W:                    return LCD_W;
+        case START_SIDE_BIT_N | START_SIDE_BIT_W: return LCD_NW;
+        default:                                  return LCD_C;
+    }
 }
 
 /* Unit screen-space direction (y down) to push a start's label so it

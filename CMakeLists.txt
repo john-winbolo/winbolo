@@ -3215,6 +3215,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
+    tests/unit/test_start_sides.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -3957,6 +3958,9 @@ set(_unit_test_names
     starts_batch_teams_cluster_and_separate
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
+    start_side_mask_sectors
+    start_side_mask_degenerate_bbox
+    start_side_eligible_closed_mask
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

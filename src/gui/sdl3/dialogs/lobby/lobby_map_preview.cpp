@@ -31,9 +31,7 @@
  *                start or moves a claimed one.
  *********************************************************/
 
-#include <cstdlib>  /* abs — compass octant deltas */
 #include <cstring>  /* memset / memcpy — start caches, holder name prefix */
-#include <cmath>    /* atan2 / floor — start compass octant math */
 #include <cfloat>   /* FLT_MAX — unbounded wrap width for CalcTextSizeA */
 
 #include <SDL3/SDL.h>
@@ -41,6 +39,7 @@
 #include "imgui.h"
 #include "lobby_internal.h"
 #include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot / Classify, compass helpers */
+#include "start_sides.h"  /* startSideMaskFor — side mask behind the compass label */
 extern "C" {
 #include "client_sim.h"  /* ClientSim + lobby getters; ClientLobbySlot */
 #include "client_net.h"  /* clientSimGetConnectState, clientSimNetSendLobbyClaimStart */
@@ -66,37 +65,23 @@ void lobbyMapPreviewReset(void) {
     s_mapPreview = LobbyMapPreviewState{};
 }
 
-/* Compass octant of a start at (sx,sy) within the start bounding box
- * [minX..maxX, minY..maxY]. Map Y increases downward, so north = smaller
- * y. Returns a STR_* lang id for N/NE/E/SE/S/SW/W/NW, or C (centre) when
- * the start sits within ~1/8 of the bbox extent of the centre on both
- * axes. */
+/* Compass label of a start at (sx,sy) within the start bounding box
+ * [minX..maxX, minY..maxY], as a STR_* lang id. Read off the side mask
+ * startSideMaskFor computes: one bit is a cardinal label (N/E/S/W), two
+ * bits a diagonal (NE/SE/SW/NW), no bits the centre band (C). */
 static int lobbyStartCompassStr(int sx, int sy, int minX, int minY,
                                 int maxX, int maxY) {
-    int cx = (minX + maxX) / 2;
-    int cy = (minY + maxY) / 2;
-    int dx = sx - cx;
-    int dy = sy - cy;
-    int tolX = (maxX - minX) / 8; if (tolX < 1) tolX = 1;
-    int tolY = (maxY - minY) / 8; if (tolY < 1) tolY = 1;
-    if (abs(dx) <= tolX && abs(dy) <= tolY) {
-        return STR_COMPASS_C;
+    switch (startSideMaskFor(sx, sy, minX, minY, maxX, maxY)) {
+        case START_SIDE_BIT_N:                    return STR_COMPASS_N;
+        case START_SIDE_BIT_N | START_SIDE_BIT_E: return STR_COMPASS_NE;
+        case START_SIDE_BIT_E:                    return STR_COMPASS_E;
+        case START_SIDE_BIT_S | START_SIDE_BIT_E: return STR_COMPASS_SE;
+        case START_SIDE_BIT_S:                    return STR_COMPASS_S;
+        case START_SIDE_BIT_S | START_SIDE_BIT_W: return STR_COMPASS_SW;
+        case START_SIDE_BIT_W:                    return STR_COMPASS_W;
+        case START_SIDE_BIT_N | START_SIDE_BIT_W: return STR_COMPASS_NW;
+        default:                                  return STR_COMPASS_C;
     }
-    /* atan2 with -dy flips screen-down y back to math-up north. Result in
-     * (-180,180]: 0=E, 90=N, 180=W, -90=S. Snap into 8 sectors of 45deg
-     * each, biasing by half a sector so each label is centred on its
-     * cardinal/intercardinal direction. */
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-    double deg = atan2((double)(-dy), (double)dx) * 180.0 / M_PI;
-    int sector = (int)floor((deg + 22.5) / 45.0);
-    sector = ((sector % 8) + 8) % 8;
-    static const int kSectorStr[8] = {
-        STR_COMPASS_E,  STR_COMPASS_NE, STR_COMPASS_N,  STR_COMPASS_NW,
-        STR_COMPASS_W,  STR_COMPASS_SW, STR_COMPASS_S,  STR_COMPASS_SE,
-    };
-    return kSectorStr[sector];
 }
 
 /* Rebuild s_mapPreview.startCompassId from a runtime compressed map buffer.
