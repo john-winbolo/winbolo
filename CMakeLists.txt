@@ -3218,6 +3218,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_start_sides.c
     tests/unit/test_starts_scatter_separation.c
     tests/unit/test_starts_team_side.c
+    tests/unit/test_lobby_team_side_dispatch.c
+    tests/unit/test_starts_side_integration.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -3973,6 +3975,12 @@ set(_unit_test_names
     starts_side_empty_side_falls_back
     starts_side_quota_capped_by_eligible
     starts_side_any_team_kept_off_chosen_side
+    lobby_team_side_clamps_and_rejects_non_host
+    lobby_side_change_repicks_everyone
+    lobby_unassign_and_team_side_claims
+    lobby_map_change_releases_off_side
+    lobby_non_host_off_side_claim_rejected
+    starts_side_end_to_end_four_v_twelve
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

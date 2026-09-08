@@ -685,6 +685,23 @@ int run_starts_side_empty_side_falls_back(void);
 int run_starts_side_quota_capped_by_eligible(void);
 int run_starts_side_any_team_kept_off_chosen_side(void);
 
+/* Team start sides on the lobby server (test_lobby_team_side_dispatch.c).
+ * The team-meta side clamp and its client mirror, the re-pick of every
+ * reservation on a side change, the Unassign and Team side claims, the
+ * departure and map-change backfills, and the side check on a non-host's
+ * own claim. */
+int run_lobby_team_side_clamps_and_rejects_non_host(void);
+int run_lobby_side_change_repicks_everyone(void);
+int run_lobby_unassign_and_team_side_claims(void);
+int run_lobby_map_change_releases_off_side(void);
+int run_lobby_non_host_off_side_claim_rejected(void);
+
+/* Team start sides end to end (test_starts_side_integration.c): lobby
+ * reservations, the batch's side table and the spawn scatter put a north
+ * team's tanks north and a larger south team's tanks south, on distinct
+ * squares. */
+int run_starts_side_end_to_end_four_v_twelve(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */

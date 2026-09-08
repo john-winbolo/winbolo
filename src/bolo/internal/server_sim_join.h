@@ -32,11 +32,32 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE slot,
                                 uint8_t clientType, uint8_t clientFlags);
 void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
 
-/* Reserves a free lobby start for one slot, clustered near its teammates.
- * Called from the join path, the bot-add path, the team change and the
- * map-change reconcile, which do not share a translation unit. Defined in
- * server_sim_players.c. */
+/* Reserves a free lobby start for one slot, clustered near its teammates
+ * and kept to the slot's team side. Called from the join path, the bot-add
+ * path, the team change, the map-change reconcile and the claim command,
+ * which do not share a translation unit. Defined in server_sim_players.c. */
 void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot);
+
+/* START_SIDE_BIT_* mask of a 1-based lobby start under the current map's
+ * start bounding box; 0 for a centre start or an index off the start list.
+ * The one lookup the claim command and the release below share. */
+BYTE serverSimLobbyStartSideMask(ServerSim *sim, BYTE idx1);
+
+/* Drops the slot's reservation (to 0xFF) when the start it holds is not
+ * one its team side allows under the sides the other teams present chose,
+ * or when the index is off the current start list. Returns whether the
+ * reservation changed. Does not publish. */
+bool serverSimReleaseIneligibleStart(ServerSim *sim, BYTE slot);
+
+/* Re-picks every connected slot with no reservation, humans first and
+ * then bots, in slot order within each group, and publishes the slots
+ * whose reservation changed. Called after a departure and a map change. */
+void serverSimBackfillLobbyStarts(ServerSim *sim);
+
+/* Clears every connected slot's reservation and re-picks them all the way
+ * serverSimBackfillLobbyStarts does, publishing the slots whose reservation
+ * ended up different. Called when a team's start side changes. */
+void serverSimRepickAllLobbyStarts(ServerSim *sim);
 
 /* Synchronous local-join entry point. Picks a slot via serverSimFindFreeSlot,
  * resolves the country directly from fallbackCountry (no peer addr), runs

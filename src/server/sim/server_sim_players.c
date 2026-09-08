@@ -35,7 +35,7 @@
 #include "playersrejoin.h"          /* playersRejoinAddPlayer, playersRejoinRequest — pill/base ownership across a rejoin */
 #include "log.h"                    /* logAddEvent — the .wbv join, leave and alliance records */
 #include "wire_limits.h"            /* PACKET_MAX_PLAYER_NAME — the rename event's name field */
-#include "start_sides.h"            /* START_SIDE_ANY — the lobby start pick's side argument */
+#include "start_sides.h"            /* startSideBits, startSideEligible, startSideMaskFor — the lobby start pick's side rules */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetAddEvent — WBN join and alliance tracking */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the join and leave trace */
 
@@ -505,6 +505,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
     sim->mapSkipVotes[playerNum] = false;
 
+    /* The leaver's start is free again: re-pick every slot still without
+     * one, humans before bots, and publish the slots that move. No-op
+     * outside lobby state. */
+    serverSimBackfillLobbyStarts(sim);
+
     /* Check if disconnect pushes skip votes over threshold */
     if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
         int voteCount = 0;
@@ -705,17 +710,59 @@ void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
     serverSimPublishControl(sim, &evt);
 }
 
+/* The START_SIDE_* choice of a slot's team. A slot on team 0 has no side. */
+static BYTE lobbySlotSide(const ServerSim *sim, BYTE slot) {
+    BYTE t = sim->lobbyPlayers[slot].teamNumber;
+    if (t == 0 || t >= MAX_TANKS) return START_SIDE_ANY;
+    return sim->teams[t].startSide;
+}
+
+/* Union of the START_SIDE_BIT_* every team other than the slot's own has
+ * chosen, counting only teams with at least one connected member — a team
+ * with a side and no players closes nothing, the same "teams present" rule
+ * startsAssignBatch applies. */
+static BYTE lobbyClosedMaskFor(const ServerSim *sim, BYTE slot) {
+    BYTE myTeam = sim->lobbyPlayers[slot].teamNumber;
+    BYTE closedMask = 0;
+    BYTE k;
+    for (k = 0; k < MAX_TANKS; k++) {
+        BYTE t;
+        if (k == slot) continue;
+        if (!sim->playerConnected[k]) continue;
+        t = sim->lobbyPlayers[k].teamNumber;
+        if (t == 0 || t >= MAX_TANKS || t == myTeam) continue;
+        closedMask |= startSideBits(sim->teams[t].startSide);
+    }
+    return closedMask;
+}
+
+BYTE serverSimLobbyStartSideMask(ServerSim *sim, BYTE idx1) {
+    int leftPos;
+    int rightPos;
+    int topPos;
+    int bottomPos;
+    BYTE numStarts;
+    if (sim == NULL) return 0;
+    numStarts = startsGetNumStarts(&sim->sim.ss);
+    if (idx1 < 1 || idx1 > numStarts) return 0;
+    startsGetMaxs(&sim->sim.ss, &leftPos, &rightPos, &topPos, &bottomPos);
+    return startSideMaskFor(sim->sim.ss->item[idx1 - 1].x,
+                            sim->sim.ss->item[idx1 - 1].y,
+                            leftPos, topPos, rightPos, bottomPos);
+}
+
 /* Reserve a free lobby start for one slot, storing it in lobbyStartIdx.
  * No-op (leaves startIdx at 0xFF) outside lobby state, for an unconnected
  * slot, or when the lobby map has no starts. Builds the taken set from
  * every other connected slot's reservation and the teammate set from
  * same-team holders, then picks a clustered (or farthest-first when
- * teamless) start. The slot's own current reservation is ignored, so
- * this is safe to call to re-pick a slot that already holds one. Does
- * not publish — callers republish the slot (the join/team-set/add paths
- * already do, and the map-change reconcile publishes reassigned slots),
- * which keeps the reservation out of the add-time event stream. Runs for
- * humans and bots alike. */
+ * teamless) start among those the slot's team side allows, given the
+ * sides the other teams present have chosen. The slot's own current
+ * reservation is ignored, so this is safe to call to re-pick a slot that
+ * already holds one. Does not publish — callers republish the slot (the
+ * join/team-set/add paths already do, and the map-change reconcile
+ * publishes reassigned slots), which keeps the reservation out of the
+ * add-time event stream. Runs for humans and bots alike. */
 void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
     BYTE numStarts;
     bool taken[MAX_STARTS];
@@ -756,10 +803,91 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
 
     picked = startsPickIncremental(&sim->sim, &sim->sim.ss, taken,
                                    teammateStarts0, teammateCount,
-                                   START_SIDE_ANY, 0);
+                                   lobbySlotSide(sim, slot),
+                                   lobbyClosedMaskFor(sim, slot));
     if (picked >= numStarts) {
         sim->lobbyPlayers[slot].startIdx = 0xFF;
     } else {
         sim->lobbyPlayers[slot].startIdx = (BYTE)(picked + 1);
     }
+}
+
+bool serverSimReleaseIneligibleStart(ServerSim *sim, BYTE slot) {
+    BYTE r;
+    BYTE numStarts;
+    if (sim == NULL || slot >= MAX_TANKS) return false;
+    if (!sim->playerConnected[slot]) return false;
+    r = sim->lobbyPlayers[slot].startIdx;
+    if (r == 0xFF) return false;
+    numStarts = startsGetNumStarts(&sim->sim.ss);
+    /* An index off the start list can never be eligible, so it goes too. */
+    if (r >= 1 && r <= numStarts &&
+        startSideEligible(serverSimLobbyStartSideMask(sim, r),
+                          lobbySlotSide(sim, slot),
+                          lobbyClosedMaskFor(sim, slot))) {
+        return false;
+    }
+    sim->lobbyPlayers[slot].startIdx = 0xFF;
+    return true;
+}
+
+static void snapshotLobbyStarts(const ServerSim *sim, BYTE *before) {
+    BYTE k;
+    for (k = 0; k < MAX_TANKS; k++) {
+        before[k] = sim->lobbyPlayers[k].startIdx;
+    }
+}
+
+/* Publish every connected slot whose reservation differs from the
+ * snapshot in before[], and nothing else. */
+static void publishLobbyStartDiff(ServerSim *sim, const BYTE *before) {
+    BYTE k;
+    for (k = 0; k < MAX_TANKS; k++) {
+        if (!sim->playerConnected[k]) continue;
+        if (sim->lobbyPlayers[k].startIdx != before[k]) {
+            serverSimPublishLobbySlot(sim, k);
+        }
+    }
+}
+
+/* Re-pick every connected slot with no reservation: humans first, then
+ * bots, in slot order within each group, so the humans take the real
+ * starts when a side has fewer starts than players. */
+static void backfillLobbyStarts(ServerSim *sim) {
+    int pass;
+    BYTE k;
+    for (pass = 0; pass < 2; pass++) {
+        bool bots = (pass == 1);
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!sim->playerConnected[k]) continue;
+            if (sim->lobbyPlayers[k].isBot != bots) continue;
+            if (sim->lobbyPlayers[k].startIdx != 0xFF) continue;
+            serverSimAssignLobbyStartOnJoin(sim, k);
+        }
+    }
+}
+
+void serverSimBackfillLobbyStarts(ServerSim *sim) {
+    BYTE before[MAX_TANKS];
+    if (sim == NULL) return;
+    snapshotLobbyStarts(sim, before);
+    backfillLobbyStarts(sim);
+    publishLobbyStartDiff(sim, before);
+}
+
+void serverSimRepickAllLobbyStarts(ServerSim *sim) {
+    BYTE before[MAX_TANKS];
+    BYTE k;
+    if (sim == NULL) return;
+    /* The picker only runs in lobby state; clearing reservations it could
+     * not replace would leave every slot empty. */
+    if (sim->state != serverStateLobby) return;
+    snapshotLobbyStarts(sim, before);
+    for (k = 0; k < MAX_TANKS; k++) {
+        if (sim->playerConnected[k]) {
+            sim->lobbyPlayers[k].startIdx = 0xFF;
+        }
+    }
+    backfillLobbyStarts(sim);
+    publishLobbyStartDiff(sim, before);
 }

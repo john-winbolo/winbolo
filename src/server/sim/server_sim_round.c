@@ -33,6 +33,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and serverLifecycleGet*Stats via server_lifecycle.h */
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
+#include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetAddEvent, WINBOLO_NET_EVENT_WIN */
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
@@ -1081,7 +1082,12 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     {
         BYTE batchTeam[MAX_TANKS];
         BYTE reserved0[MAX_TANKS];
+        BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
         BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
+        memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
+        for (i = 1; i < MAX_TANKS; i++) {
+            teamSide[i] = sim->teams[i].startSide;
+        }
         for (i = 0; i < MAX_TANKS; i++) {
             BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
             batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
@@ -1091,7 +1097,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
                           sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0, NULL);
+                          sim->sim.pendingStartIdx, reserved0, teamSide);
     }
 
     /* Destroy every connected slot's tank and man before creating any, so
@@ -1223,7 +1229,12 @@ void serverSimStartGame(ServerSim *sim) {
     {
         BYTE batchTeam[MAX_TANKS];
         BYTE reserved0[MAX_TANKS];
+        BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
         BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
+        memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
+        for (i = 1; i < MAX_TANKS; i++) {
+            teamSide[i] = sim->teams[i].startSide;
+        }
         for (i = 0; i < MAX_TANKS; i++) {
             BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
             batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
@@ -1233,7 +1244,7 @@ void serverSimStartGame(ServerSim *sim) {
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
                           sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0, NULL);
+                          sim->sim.pendingStartIdx, reserved0, teamSide);
     }
 
     /* Create tanks for all connected players */
