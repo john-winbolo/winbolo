@@ -3451,12 +3451,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
     # The overview's camera maths, its fog mask, the in-window HUD geometry
-    # and the sprite placement arithmetic behind mapview.c's drawers. The
-    # only src/gui/sdl3 files in this target: all four are arithmetic over
-    # plain values with no ImGui and no SDL_Renderer include, so they link
-    # into a binary that has neither, and test_overview_camera.cpp /
-    # test_overview_fog.cpp / test_overview_hud_layout.cpp /
-    # test_mapview_sprite_scale.c exercise them directly. The drawing halves
+    # and the sprite placement arithmetic behind mapview.c's drawers, with
+    # test_overview_camera.cpp / test_overview_fog.cpp /
+    # test_overview_hud_layout.cpp / test_mapview_sprite_scale.c exercising
+    # them directly. Like the other src/gui/sdl3 files in this target they
+    # are leaves a test can call with no display attached: no ImGui, and no
+    # window, renderer or device of their own. The drawing halves
     # (overview_view.cpp, mapview.c) stay out. They keep the gui profile's
     # public-only access rather than borrowing this target's T2;
     # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
