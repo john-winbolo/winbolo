@@ -1,0 +1,110 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+#ifndef START_SIDES_H
+#define START_SIDES_H
+
+/* Which side of the map a start sits on, and whether a team may use it.
+ * Header-only (static inline, no structs) so the sim, the server and the
+ * lobby GUI all classify a start the same way: the lobby's compass label,
+ * the team's side choice and start placement read the one mask computed
+ * here. Integer arithmetic throughout, so every peer gets the same answer
+ * for the same start. */
+
+#include <stdbool.h>
+#include "platform_types.h"  /* BYTE */
+
+/* Team start-side choice — wire value, stored in TeamMetadata.startSide. */
+#define START_SIDE_ANY   0
+#define START_SIDE_N     1
+#define START_SIDE_E     2
+#define START_SIDE_S     3
+#define START_SIDE_W     4
+#define START_SIDE_COUNT 5
+
+/* Membership bits. A start may hold two (a NE start is N|E); zero means the
+ * start sits in the centre band and belongs to no side. */
+#define START_SIDE_BIT_N 0x01
+#define START_SIDE_BIT_E 0x02
+#define START_SIDE_BIT_S 0x04
+#define START_SIDE_BIT_W 0x08
+
+/* Side mask of the start at (sx,sy) within the start bounding box
+ * [minX..maxX, minY..maxY]. Map Y increases downward, so north is the
+ * smaller y. A start within an eighth of the box extent of the centre on
+ * both axes is in the centre band and returns 0. Otherwise the start falls
+ * in one of eight 45-degree sectors around the centre: a cardinal sector
+ * gives one bit, a diagonal sector gives both bits either side of it. The
+ * sector test compares |dy| : |dx| against 5 : 12, which approximates
+ * tan(22.5 degrees), so no floating point is needed. */
+static inline BYTE startSideMaskFor(int sx, int sy,
+                                    int minX, int minY, int maxX, int maxY) {
+    int cx = (minX + maxX) / 2;
+    int cy = (minY + maxY) / 2;
+    int dx = sx - cx;
+    int dy = sy - cy;
+    int tolX = (maxX - minX) / 8;
+    int tolY = (maxY - minY) / 8;
+    int ax = (dx < 0) ? -dx : dx;
+    int ay = (dy < 0) ? -dy : dy;
+    BYTE ns = (dy < 0) ? START_SIDE_BIT_N : START_SIDE_BIT_S;
+    BYTE ew = (dx >= 0) ? START_SIDE_BIT_E : START_SIDE_BIT_W;
+    if (tolX < 1) tolX = 1;
+    if (tolY < 1) tolY = 1;
+    if (ax <= tolX && ay <= tolY) {
+        return 0;
+    }
+    if (ay * 12 <= ax * 5) {
+        return ew;              /* flat enough to be east or west only */
+    }
+    if (ax * 12 <= ay * 5) {
+        return ns;              /* steep enough to be north or south only */
+    }
+    return (BYTE)(ns | ew);     /* diagonal: on both sides */
+}
+
+/* Membership bit for a team's chosen side. START_SIDE_ANY, and any value
+ * outside the START_SIDE_* range, has no bit. */
+static inline BYTE startSideBits(BYTE side) {
+    switch (side) {
+        case START_SIDE_N: return START_SIDE_BIT_N;
+        case START_SIDE_E: return START_SIDE_BIT_E;
+        case START_SIDE_S: return START_SIDE_BIT_S;
+        case START_SIDE_W: return START_SIDE_BIT_W;
+        default:           return 0;
+    }
+}
+
+/* A centre-band start belongs to no side. */
+static inline bool startSideIsCentre(BYTE mask) {
+    return mask == 0;
+}
+
+/* Whether a start with this mask is on a team's chosen side. A team with
+ * no side takes any start; a centre start is open to every team. */
+static inline bool startSideAccepts(BYTE mask, BYTE side) {
+    BYTE bits = startSideBits(side);
+    if (bits == 0) {
+        return true;
+    }
+    if (mask == 0) {
+        return true;
+    }
+    return (mask & bits) != 0;
+}
+
+/* Whether a team may be placed on a start with this mask. closedMask is
+ * the union of the sides other teams chose. A team with a side takes what
+ * its side accepts, sharing the side with any other team that chose it.
+ * A team with no side stays off every chosen side, so only starts with no
+ * bit in closedMask — centre starts included — remain open to it. */
+static inline bool startSideEligible(BYTE mask, BYTE side, BYTE closedMask) {
+    if (startSideBits(side) != 0) {
+        return startSideAccepts(mask, side);
+    }
+    return (mask & closedMask) == 0;
+}
+
+#endif /* START_SIDES_H */

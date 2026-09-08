@@ -138,6 +138,14 @@ void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
    when a zoom change reopens the fonts; the label caches treat that as a
    flush. */
 TTF_Font *sdl3DrawGetMessageFont(void);
+/* The classic view's tank-label cache, for the shared overlay pass. */
+struct TankLabelCache *sdl3DrawGetTankLabelCache(void);
+/* The faces the pill and base numbers are drawn in — the label font for
+   pills, the tiny font for bases — opened at the main window's zoom. The
+   overview reads them through here and scales what they render to its own
+   zoom. */
+TTF_Font *sdl3DrawGetLabelFont(void);
+TTF_Font *sdl3DrawGetTinyFont(void);
 /* When the newswire text last changed (SDL_GetTicks ms), 0 for never since
    the last reset. The full screen map uses it to slide its newswire strip
    on and off; the classic frame ignores it. */

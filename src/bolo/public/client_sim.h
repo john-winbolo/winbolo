@@ -871,6 +871,9 @@ bool        clientSimGetAlliesInTrees(const ClientSim *cs);
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
+/* The team's START_SIDE_* choice as last broadcast; START_SIDE_ANY (0)
+ * until the first team-meta event for that team arrives. */
+uint8_t     clientSimGetLobbyTeamStartSide(const ClientSim *cs, BYTE teamId);
 const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
@@ -1089,6 +1092,68 @@ bool         clientSimIsMyTankAlive(const ClientSim *cs);
    at 0,0. */
 void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
                                       screenLgm *lgms, screenBullets *sb);
+
+/* Everything the map overview's render reads from the sim, as plain data.
+   The host fills it with the client mutex held and draws from it after the
+   mutex is released, so the render's own time — most of it SDL flushing at
+   each render-target switch — is no longer spent inside the lock that a hosted
+   server's timer thread waits on.
+
+   The memory is copied only when the sim's generation counter has moved since
+   the last fill; the entity lists are rebuilt on every fill and have already
+   been through the live-square filter, so they hold exactly what is drawn.
+   Filled from a NULL sim, it reads as no map, nothing alive and no item view.
+   The handle is the host's to create and destroy. */
+typedef struct OverviewSnapshot OverviewSnapshot;
+
+/* One pill or base and the number the views draw on it, at its absolute map
+   square. The snapshot lists every one the sim has; whether a square shows
+   its number is the render's decision, made against the memory's tile and
+   live flag for that square. */
+typedef struct OverviewItemLabel {
+  BYTE mapX;
+  BYTE mapY;
+  BYTE number;   /* the value drawn, already decremented as the views do */
+  bool isBase;
+} OverviewItemLabel;
+
+OverviewSnapshot *overviewSnapshotCreate(void);
+void              overviewSnapshotDestroy(OverviewSnapshot *s);
+
+/* Fill from the live sim. Call with the client mutex held; render from the
+   result with it released. */
+void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s);
+
+/* Readers for the render. Each takes a NULL snapshot as nothing to draw. */
+const OverviewMap   *overviewSnapshotMap(const OverviewSnapshot *s);
+const screenTanks   *overviewSnapshotTanks(const OverviewSnapshot *s);
+const screenLgm     *overviewSnapshotLgms(const OverviewSnapshot *s);
+const screenBullets *overviewSnapshotBullets(const OverviewSnapshot *s);
+/* Whether the local player's own tank survived the filter — the reticle is
+   drawn only when the tank sprite was. */
+bool    overviewSnapshotSelfDrawn(const OverviewSnapshot *s);
+BYTE    overviewSnapshotMyPlayerNum(const OverviewSnapshot *s);
+/* The local tank, on the same terms as clientSimIsMyTankAlive and
+   clientSimGetMyTankMapPosF: dead and waiting to respawn reads as not alive,
+   and the position is written only for a living tank. */
+bool    overviewSnapshotTankAlive(const OverviewSnapshot *s);
+bool    overviewSnapshotTankPos(const OverviewSnapshot *s, float *mapX,
+                                float *mapY);
+bool    overviewSnapshotBlackout(const OverviewSnapshot *s);
+/* The gunsight as clientSimGetGunsightPos reported it: false, with nothing
+   written, when it declined. */
+bool    overviewSnapshotGunsight(const OverviewSnapshot *s, BYTE *mapX,
+                                 BYTE *mapY, BYTE *pixelX, BYTE *pixelY);
+bool    overviewSnapshotInItemView(const OverviewSnapshot *s);
+uint8_t overviewSnapshotViewKind(const OverviewSnapshot *s);
+BYTE    overviewSnapshotViewTarget(const OverviewSnapshot *s);
+/* The square an item view watches — clientSimGetPillViewX / Y at fill time. */
+void    overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
+                                       int *mapY);
+/* Every pill and base at its square, with the number the classic view puts
+   on it: the first the sim lists at that square, counted from 0. */
+int                      overviewSnapshotItemLabelCount(const OverviewSnapshot *s);
+const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);

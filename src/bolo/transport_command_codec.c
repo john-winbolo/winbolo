@@ -165,22 +165,23 @@ static bool commandDecodeLobbyBotConfig(const uint8_t *buf, size_t len,
 }
 
 /* CMD_LOBBY_TEAM_META — PACKET_LOBBY_TEAM_META
- * Wire: [header 8] [teamId 1] [color 1] [namingPool 1]
+ * Wire: [header 8] [teamId 1] [color 1] [namingPool 1] [startSide 1]
  *       [nameLen 1] [name N] */
 static bool commandEncodeLobbyTeamMeta(const ClientCommand *cmd,
                                        uint8_t *buf, size_t bufCap,
                                        size_t *outLen) {
     uint8_t nameLen = cmd->u.lobbyTeamMeta.nameLen;
     if (nameLen >= LOBBY_TEAM_NAME_LEN) nameLen = LOBBY_TEAM_NAME_LEN - 1;
-    const size_t needed = CMD_PACKET_BODY_OFFSET + 4 + nameLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 5 + nameLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_TEAM_META, 0);
     buf[CMD_PACKET_BODY_OFFSET + 0] = cmd->u.lobbyTeamMeta.teamId;
     buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.lobbyTeamMeta.color;
     buf[CMD_PACKET_BODY_OFFSET + 2] = cmd->u.lobbyTeamMeta.namingPool;
-    buf[CMD_PACKET_BODY_OFFSET + 3] = nameLen;
+    buf[CMD_PACKET_BODY_OFFSET + 3] = cmd->u.lobbyTeamMeta.startSide;
+    buf[CMD_PACKET_BODY_OFFSET + 4] = nameLen;
     if (nameLen > 0) {
-        memcpy(buf + CMD_PACKET_BODY_OFFSET + 4, cmd->u.lobbyTeamMeta.name, nameLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 5, cmd->u.lobbyTeamMeta.name, nameLen);
     }
     *outLen = needed;
     return true;
@@ -188,20 +189,21 @@ static bool commandEncodeLobbyTeamMeta(const ClientCommand *cmd,
 
 static bool commandDecodeLobbyTeamMeta(const uint8_t *buf, size_t len,
                                        ClientCommand *cmd) {
-    if (len < CMD_PACKET_BODY_OFFSET + 4) return false;
-    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 3];
+    if (len < CMD_PACKET_BODY_OFFSET + 5) return false;
+    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 4];
     if (nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
-        len < (size_t)CMD_PACKET_BODY_OFFSET + 4 + nameLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 5 + nameLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_TEAM_META;
     cmd->u.lobbyTeamMeta.teamId     = buf[CMD_PACKET_BODY_OFFSET + 0];
     cmd->u.lobbyTeamMeta.color      = buf[CMD_PACKET_BODY_OFFSET + 1];
     cmd->u.lobbyTeamMeta.namingPool = buf[CMD_PACKET_BODY_OFFSET + 2];
+    cmd->u.lobbyTeamMeta.startSide  = buf[CMD_PACKET_BODY_OFFSET + 3];
     cmd->u.lobbyTeamMeta.nameLen    = nameLen;
     if (nameLen > 0) {
         memcpy(cmd->u.lobbyTeamMeta.name,
-               buf + CMD_PACKET_BODY_OFFSET + 4, nameLen);
+               buf + CMD_PACKET_BODY_OFFSET + 5, nameLen);
     }
     return true;
 }

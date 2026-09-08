@@ -27,8 +27,9 @@
 #include "playername_validate.h"      /* playerNameValidate, playerNameCompare */
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
-#include "server_sim_join.h"          /* serverSimFindFreeSlot — honors player cap */
+#include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor; serverSimFindFreeSlot */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
+#include "start_sides.h"              /* startSideEligible — the claim command's side check */
 #include "threads.h"
 #include "../common/wb_log.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
@@ -41,6 +42,25 @@
  * lobby command handlers in transport_udp_server.c, where the function
  * is defined. */
 extern bool lobbyClientMayEdit(ServerSim *sim, int clientIdx);
+
+/* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
+static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
+    const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
+    BYTE t = lp ? lp->teamNumber : 0;
+    if (t == 0 || t >= MAX_TANKS) return START_SIDE_ANY;
+    return sim->teams[t].startSide;
+}
+
+/* Whether a slot may hold a 1-based start under the side rules: the same
+ * question the lobby pick, the map-change release and the batch placement
+ * ask, so a claim can never land a slot on a start the next lobby event
+ * would take away again. A side team takes what its side accepts; a slot
+ * with no side stays off the sides the other teams present chose. */
+static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
+    return startSideEligible(serverSimLobbyStartSideMask(sim, idx1),
+                             lobbySlotStartSide(sim, slot),
+                             serverSimLobbyClosedMaskFor(sim, slot));
+}
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                    const ClientCommand *cmd) {
@@ -78,12 +98,28 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (target >= MAX_TANKS || !serverSimIsPlayerConnected(sim, target)) {
             return CMD_REJECT_INVALID;
         }
-        if (idx != 0xFF && (idx < 1 || idx > numStarts)) {
+        if (idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
+            (idx < 1 || idx > numStarts)) {
             return CMD_REJECT_INVALID;
         }
         bool isHost = lobbyClientMayEdit(sim, senderSlot);
         if ((int)target != senderSlot && !isHost) {
             return CMD_REJECT_NOT_HOST;
+        }
+        /* A player picking for themselves may take only a start the side
+         * rules let their slot hold; the host may hand anyone any start. */
+        if (!isHost && idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
+            !lobbySlotMayHoldStart(sim, target, idx)) {
+            return CMD_REJECT_INVALID;
+        }
+        if (idx == START_CLAIM_TEAM_SIDE) {
+            /* Team side: drop the reservation and pick a fresh start on
+             * the slot's side at once; 0xFF when the side is full. */
+            serverSimSetLobbyStartIdx(sim, target, 0xFF);
+            serverSimAssignLobbyStartOnJoin(sim, target);
+            serverSimPublishLobbySlot(sim, target);
+            lobbyAutoUnreadyOnChange(sim);
+            return CMD_OK;
         }
         /* Connected slot currently holding idx (none when idx == 0xFF). */
         BYTE holder = 0xFF;
@@ -101,6 +137,12 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             BYTE oldTarget = tlp ? tlp->startIdx : 0xFF;
             serverSimSetLobbyStartIdx(sim, target, idx);
             serverSimSetLobbyStartIdx(sim, holder, oldTarget);
+            /* The displaced holder inherits the assignee's old start. When
+             * that is none, or one the holder's side rules reject, pick the
+             * holder a fresh start now instead. */
+            if (oldTarget == 0xFF || !lobbySlotMayHoldStart(sim, holder, oldTarget)) {
+                serverSimAssignLobbyStartOnJoin(sim, holder);
+            }
             serverSimPublishLobbySlot(sim, target);
             serverSimPublishLobbySlot(sim, holder);
         } else {
@@ -182,6 +224,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         serverSimSetTeamMeta(sim, p->teamId, p->color, p->namingPool,
+                             p->startSide,
                              (const uint8_t *)p->name, p->nameLen);
         return CMD_OK;
     }

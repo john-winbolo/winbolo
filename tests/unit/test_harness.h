@@ -676,6 +676,52 @@ int run_starts_batch_teams_cluster_and_separate(void);
 int run_starts_batch_team_anchor_jitter_varies(void);
 int run_starts_open_ideal_friendly_pill_eligible(void);
 
+/* Start side classification (test_start_sides.c). The integer sector test
+ * in start_sides.h that puts a start on N/E/S/W (two bits for a diagonal,
+ * none for the centre band), and the eligibility rule that keeps a team
+ * with no side off the sides other teams chose. */
+int run_start_side_mask_sectors(void);
+int run_start_side_mask_degenerate_bbox(void);
+int run_start_side_eligible_closed_mask(void);
+
+/* Spawn scatter separation (test_starts_scatter_separation.c). The
+ * spiral in startsScatterFind keeps a new tank START_SPAWN_SEPARATION
+ * squares from every other live tank, and drops that rule on a second
+ * pass when no square within reach can satisfy it. */
+int run_starts_scatter_avoids_existing_tanks(void);
+int run_starts_scatter_falls_back_when_crowded(void);
+
+/* Team start sides in startsAssignBatch (test_starts_team_side.c). A team
+ * with a side stays on it, a team with none is kept off the chosen sides,
+ * a quota is capped at what the side can hold, and the slots left over
+ * ride a start beside their own side instead of going unplaced. */
+int run_starts_side_team_stays_on_its_side(void);
+int run_starts_side_overflow_rides_own_side(void);
+int run_starts_side_never_crosses_when_opposite_free(void);
+int run_starts_side_any_matches_legacy(void);
+int run_starts_side_reservation_beats_side(void);
+int run_starts_side_empty_side_falls_back(void);
+int run_starts_side_quota_capped_by_eligible(void);
+int run_starts_side_any_team_kept_off_chosen_side(void);
+
+/* Team start sides on the lobby server (test_lobby_team_side_dispatch.c).
+ * The team-meta side clamp and its client mirror, the re-pick of every
+ * reservation on a side change, the Unassign and Team side claims, the
+ * departure and map-change backfills, and the side check on a non-host's
+ * own claim. */
+int run_lobby_team_side_clamps_and_rejects_non_host(void);
+int run_lobby_side_change_repicks_everyone(void);
+int run_lobby_unassign_and_team_side_claims(void);
+int run_lobby_map_change_releases_off_side(void);
+int run_lobby_non_host_off_side_claim_rejected(void);
+int run_lobby_any_team_claim_kept_off_chosen_side(void);
+
+/* Team start sides end to end (test_starts_side_integration.c): lobby
+ * reservations, the batch's side table and the spawn scatter put a north
+ * team's tanks north and a larger south team's tanks south, on distinct
+ * squares. */
+int run_starts_side_end_to_end_four_v_twelve(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */
@@ -1092,6 +1138,46 @@ int run_overview_gunsight(void);
  * leaves the caller's out-params alone when it fails. */
 int run_tank_pos_dead(void);
 
+/* Overview render snapshot (test_overview_snapshot.c): what
+ * clientSimFillOverviewSnapshot copies out of the sim under the client mutex
+ * for the render to draw from after it. The snapshot's map is byte for byte
+ * the live memory and every scalar matches the accessor it came from, across
+ * a living tank, a shown gunsight, an item view, a dead tank and a fill from
+ * no sim; a write to the live memory after a fill, direct or through a
+ * display tick, leaves the snapshot alone until the next fill; the entity
+ * lists match what the renderer's own filter produced from the whole-map
+ * lists, entry for entry; and a fill on an unchanged generation still hands
+ * out the live map without copying it again. */
+int run_overview_snapshot_mirror(void);
+int run_overview_snapshot_isolation(void);
+int run_overview_snapshot_filter(void);
+int run_overview_snapshot_generation(void);
+
+/* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
+ * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic
+ * view at a whole-number zoom and the overview at its 0.5x-4x ladder. At an
+ * integer scale it gives the classic formula's positions, spelled out; at
+ * every rung it matches what the overview's former sixteen-steps-per-pixel
+ * path drew, within a sixteenth of a pixel; a shell's direction frame comes
+ * back by its tip pixel times the scale and an explosion frame does not; and
+ * the LGM centring snaps to a whole game pixel from the base under Classic
+ * and Match pixelation while Smooth leaves it where the centring put it. */
+int run_mapview_sprite_classic(void);
+int run_mapview_sprite_ladder(void);
+int run_mapview_sprite_shell_tip(void);
+int run_mapview_sprite_lgm_snap(void);
+
+/* The entity overlay's placements (test_mapview_overlay.c): the gunsight's
+ * top-left is the classic view's formula at an integer scale and the
+ * overview's at every rung; a tank's name sits one square to the right of
+ * its sprite with no extra offset and is held at the clip's left edge; the
+ * build cursor lands on its square at every rung; and the pill and base
+ * numbers sit on their square and are withheld below the minimum scale. */
+int run_mapview_overlay_gunsight(void);
+int run_mapview_overlay_tank_label(void);
+int run_mapview_overlay_cursor(void);
+int run_mapview_overlay_item_labels(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
@@ -1112,6 +1198,14 @@ int run_catchup_ignores_redundant_duplicates(void);
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
+
+/* Shared shell list builder (test_screen_bullets_build.c): the classic
+ * viewport list with the scroll origin and the overview's whole-map list with
+ * origin 0 come out of clientSimBuildShellList entry for entry as each view
+ * used to build them; a shell outside the viewport is only on the whole-map
+ * list, an expired prediction on neither, and a bot's list reads the server
+ * snapshots instead of the projected layer. */
+int run_screen_bullets_build(void);
 
 /* Ping RTT smoothers (test_ping_smoother.c): the min-over-window and EWMA
  * primitives — window-minimum tracking as samples slide out, EWMA constant
@@ -1424,6 +1518,14 @@ int run_skin_workshop_id_roundtrip(void);
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */
 int run_skin_density_scan(void);
+int run_sheet_bleed_edges(void);
+int run_sheet_no_key_under_alpha(void);
+int run_bmp_sheet_no_key_under_alpha(void);
+
+/* Which <name>_N.wav members a source holds, and the compaction that
+   keeps a decoded pool contiguous (test_sound_variants.c). */
+int run_sound_variant_pool_names(void);
+int run_sound_variant_load_compaction(void);
 
 /* Bolo pascal-string reader, both copies of it (test_pascal_string.c). */
 int run_pascal_string_lengths(void);

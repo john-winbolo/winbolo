@@ -325,14 +325,15 @@ typedef struct ControlEvent {
             uint8_t  body[CHAT_BODY_MAX];
         } chat;
 
-        /* CTRL_LOBBY_TEAM_META — per-team presentation (name, color,
-         * naming pool, in_use). teamId 0 is the unassigned sentinel
-         * and is never carried by this event. */
+        /* CTRL_LOBBY_TEAM_META — per-team metadata (name, color,
+         * naming pool, start side, in_use). teamId 0 is the unassigned
+         * sentinel and is never carried by this event. */
         struct {
             uint8_t teamId;        /* 1..MAX_TANKS-1 */
             uint8_t in_use;
             uint8_t color;
             uint8_t namingPool;
+            uint8_t startSide;     /* START_SIDE_* (start_sides.h) */
             char    name[LOBBY_TEAM_NAME_LEN];
         } lobbyTeamMeta;
 

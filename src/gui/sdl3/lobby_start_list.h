@@ -26,6 +26,8 @@
 #ifndef LOBBY_START_LIST_H
 #define LOBBY_START_LIST_H
 
+#include "platform_types.h"   /* BYTE */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -40,9 +42,17 @@ struct ClientSim;
  * the mouse picker uses); re-activating a free start while already holding
  * one moves the claim. Rows for occupied starts are non-actionable here.
  *
+ * sideMasks, when given, is indexed by 1-based start (MAX_STARTS + 1
+ * entries) and holds each start's START_SIDE_BIT_* mask. A free start the
+ * side rules keep the local player's team off is then drawn dimmed with the
+ * off-side suffix, is not actionable — the server would refuse the claim
+ * and the mouse picker blocks it the same way — and says so when focused.
+ * NULL applies no side rule.
+ *
  * Returns the 1-based index of the currently focused start, or 0 when none
  * is focused — so the caller can highlight that start on the map preview. */
-int lobbyStartListRender(struct ClientSim *cs, int myPlayerNum, int startCount);
+int lobbyStartListRender(struct ClientSim *cs, int myPlayerNum, int startCount,
+                         const BYTE *sideMasks);
 
 #ifdef __cplusplus
 }

@@ -126,10 +126,10 @@ typedef struct {
 } LobbyPlayer;
 
 /* Per-team metadata — used by the Layout A lobby UI for color tinting,
- * editable team names, and per-team bot naming pools. The `in_use` flag
- * is 0 for any team number that has no metadata yet (renders with
- * default name "Team N" and a fallback color). Team membership lives
- * in LobbyPlayer.teamNumber; this struct carries presentation only. */
+ * editable team names, per-team bot naming pools and the team's start
+ * side. The `in_use` flag is 0 for any team number that has no metadata
+ * yet (renders with default name "Team N" and a fallback color). Team
+ * membership lives in LobbyPlayer.teamNumber. */
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
 #endif
@@ -137,6 +137,7 @@ typedef struct {
   uint8_t in_use;       /* 0 = defaults; 1 = customised */
   uint8_t color;        /* index into client-side kTeamColors[] */
   uint8_t namingPool;   /* index into client-side bot pool table */
+  uint8_t startSide;    /* START_SIDE_* choice (start_sides.h); START_SIDE_ANY = no side */
   char    name[LOBBY_TEAM_NAME_LEN];
 } TeamMetadata;
 

@@ -687,6 +687,18 @@ TTF_Font *sdl3DrawGetMessageFont(void) {
   return gFontMsg;
 }
 
+TankLabelCache *sdl3DrawGetTankLabelCache(void) {
+  return &gLabelCache;
+}
+
+TTF_Font *sdl3DrawGetLabelFont(void) {
+  return gFontLabel;
+}
+
+TTF_Font *sdl3DrawGetTinyFont(void) {
+  return gFontTiny;
+}
+
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
   (void)x; (void)y;
   /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
@@ -721,10 +733,9 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
   }
   int tileW   = TILE_SIZE_X   * gZoomFactor;
   int tileH   = TILE_SIZE_Y   * gZoomFactor;
-  int apx = (int)px + 2;
-  int apy = (int)py + 2;
-  int bbx = (int)mx * TILE_SIZE_X + apx;
-  int bby = (int)my * TILE_SIZE_Y + apy;
+  /* The sprite's own game pixel, as mapViewDrawTanks draws it. */
+  int bbx = (int)mx * TILE_SIZE_X + (int)px;
+  int bby = (int)my * TILE_SIZE_Y + (int)py;
   float sx = (float)(originX - tileW + bbx * gZoomFactor - gCurrentEdgeX);
   float sy = (float)(originY - tileH + bby * gZoomFactor - gCurrentEdgeY);
 

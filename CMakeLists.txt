@@ -812,12 +812,14 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
+    src/gui/sdl3/mapview_overlay.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
+    src/gui/sdl3/sound_variants.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
@@ -1454,14 +1456,14 @@ set(CLIENT_SOURCES
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
     # sits on the chooser + wbn_map_source stack the standalone MapEditor
@@ -3283,6 +3285,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
+    tests/unit/test_start_sides.c
+    tests/unit/test_starts_scatter_separation.c
+    tests/unit/test_starts_team_side.c
+    tests/unit/test_lobby_team_side_dispatch.c
+    tests/unit/test_starts_side_integration.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -3302,9 +3309,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_overview_snapshot.c
+    tests/unit/test_mapview_sprite_scale.c
+    tests/unit/test_mapview_overlay.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
     tests/unit/test_interp_render.c
@@ -3484,6 +3495,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Needs the tile loader itself, which no other unit test pulls in.
     tests/unit/test_skin_density.c
     src/gui/sdl3/tileloader.c
+    # The colour left under the built sheet's transparency, and the bleed
+    # that takes it out. Runs on the real data/svg art beside the binary.
+    tests/unit/test_sheet_bleed.c
+    src/gui/sdl3/sdl_bmp.c
+    # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
+    # and the compaction that leaves the members which decoded contiguous.
+    # Name arithmetic only: no audio device, and it opens no file.
+    tests/unit/test_sound_variants.c
+    src/gui/sdl3/sound_variants.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -3499,18 +3519,27 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
-    # The overview's camera maths, its fog mask and the in-window HUD
-    # geometry. The only src/gui/sdl3 files in this target: all three are
-    # arithmetic over plain structs with no ImGui and no SDL_Renderer include,
-    # so they link into a binary that has neither, and test_overview_camera.cpp
-    # / test_overview_fog.cpp / test_overview_hud_layout.cpp exercise them
-    # directly. The drawing half (overview_view.cpp) stays out. They keep the
-    # gui profile's public-only access rather than borrowing this target's T2;
+    # The overview's camera maths, its fog mask, the in-window HUD geometry
+    # and the sprite placement arithmetic behind mapview.c's drawers, with
+    # test_overview_camera.cpp / test_overview_fog.cpp /
+    # test_overview_hud_layout.cpp / test_mapview_sprite_scale.c exercising
+    # them directly. Like the other src/gui/sdl3 files in this target they
+    # are leaves a test can call with no display attached: no ImGui, and no
+    # window, renderer or device of their own. The drawing halves
+    # (overview_view.cpp, mapview.c) stay out. They keep the gui profile's
+    # public-only access rather than borrowing this target's T2;
     # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
     # meet to be added here, and when the exception lapses.
+    #
+    # sprite_positions.c qualifies on the same footing as the other three:
+    # its includes are the tile atlas coordinates, tilenum.h, global.h and the
+    # GfxAnimSmoothness enum, and its functions are float arithmetic over
+    # their arguments. It is the file the log viewer already links on its
+    # own for the atlas table.
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
+    src/gui/sdl3/sprite_positions.c
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4049,6 +4078,26 @@ set(_unit_test_names
     starts_batch_teams_cluster_and_separate
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
+    start_side_mask_sectors
+    start_side_mask_degenerate_bbox
+    start_side_eligible_closed_mask
+    starts_scatter_avoids_existing_tanks
+    starts_scatter_falls_back_when_crowded
+    starts_side_team_stays_on_its_side
+    starts_side_overflow_rides_own_side
+    starts_side_never_crosses_when_opposite_free
+    starts_side_any_matches_legacy
+    starts_side_reservation_beats_side
+    starts_side_empty_side_falls_back
+    starts_side_quota_capped_by_eligible
+    starts_side_any_team_kept_off_chosen_side
+    lobby_team_side_clamps_and_rejects_non_host
+    lobby_side_change_repicks_everyone
+    lobby_unassign_and_team_side_claims
+    lobby_map_change_releases_off_side
+    lobby_non_host_off_side_claim_rejected
+    lobby_any_team_claim_kept_off_chosen_side
+    starts_side_end_to_end_four_v_twelve
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
@@ -4114,6 +4163,18 @@ set(_unit_test_names
     overview_entities
     overview_gunsight
     tank_pos_dead
+    overview_snapshot_mirror
+    overview_snapshot_isolation
+    overview_snapshot_filter
+    overview_snapshot_generation
+    mapview_sprite_classic
+    mapview_sprite_ladder
+    mapview_sprite_shell_tip
+    mapview_sprite_lgm_snap
+    mapview_overlay_gunsight
+    mapview_overlay_tank_label
+    mapview_overlay_cursor
+    mapview_overlay_item_labels
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -4125,6 +4186,7 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     jitter_buffer_grow
     shell_projection
+    screen_bullets_build
     ping_smoother
     client_timing
     interp_render
@@ -4312,6 +4374,11 @@ set(_unit_test_names
     skin_active_vs_requested
     skin_workshop_id_roundtrip
     skin_density_scan
+    sheet_bleed_edges
+    sheet_no_key_under_alpha
+    bmp_sheet_no_key_under_alpha
+    sound_variant_pool_names
+    sound_variant_load_compaction
     pascal_string_lengths
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip
