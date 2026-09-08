@@ -209,33 +209,56 @@ static bool               gOverviewPrepVoiceWanted = FALSE;
 static bool               gOverviewPrepVoiceMuted  = FALSE;
 
 #if defined(WINBOLO_VOICE)
-/* The microphone indicator's two icons, textured on this window's renderer
-   from the surfaces sdl3imgui rasterizes. Cached here rather than rebuilt per
-   frame, and destroyed with the renderer's other textures. */
+/* The microphone indicator's two icons, textured on this window's renderer at
+   the size they are drawn at, with that size kept beside each so a change of
+   window size or HUD scale rebuilds them instead of resampling. Destroyed with
+   the renderer's other textures. */
 static SDL_Texture *gMicIconTex      = NULL;
 static SDL_Texture *gMicMutedIconTex = NULL;
+static int          gMicIconTexPx      = 0;
+static int          gMicMutedIconTexPx = 0;
 
-/* Texture one of them on first use, the way tank_label.c does. No alpha mod
+/* Texture one of them at px pixels square, reusing the cached one while the
+   size holds. The icon is rasterized to order rather than scaled from a fixed
+   size: the muted glyph's slash cuts gaps about a pixel wide at these sizes,
+   and a bilinear downscale averages them away into a smudge. No alpha mod
    here: the callers set the colour and the opacity per draw. */
-static SDL_Texture *micIndicatorTex(bool muted) {
-  SDL_Texture **slot = muted ? &gMicMutedIconTex : &gMicIconTex;
-  if (*slot) return *slot;
+static SDL_Texture *micIndicatorTex(bool muted, int px) {
+  SDL_Texture **slot   = muted ? &gMicMutedIconTex : &gMicIconTex;
+  int          *slotPx = muted ? &gMicMutedIconTexPx : &gMicIconTexPx;
+  if (*slot && *slotPx == px) return *slot;
   if (!gRenderer) return NULL;
-  SDL_Surface *surf = muted ? sdl3ImguiGetMicMutedIconSurface()
-                            : sdl3ImguiGetMicIconSurface();
+
+  SDL_Surface *surf = sdl3ImguiCreateMicIconSurface(muted, px);
   if (!surf) return NULL;
+  if (*slot) {
+    SDL_DestroyTexture(*slot);
+    *slot   = NULL;
+    *slotPx = 0;
+  }
   *slot = SDL_CreateTextureFromSurface(gRenderer, surf);
-  if (*slot) SDL_SetTextureBlendMode(*slot, SDL_BLENDMODE_BLEND);
+  /* Ours to free — sdl3ImguiCreateMicIconSurface hands the surface over
+     rather than keeping it. */
+  SDL_DestroySurface(surf);
+  if (!*slot) return NULL;
+  SDL_SetTextureBlendMode(*slot, SDL_BLENDMODE_BLEND);
+  *slotPx = px;
   return *slot;
 }
 
 /* The indicator itself, in the players panel's vocabulary: muted is the barred
    microphone in the panel's red, live is the plain one held back so the player
    learns where it is before they need it. opacity carries whatever the
-   panel around it is drawn at, so the icon fades with it. */
-static void micIndicatorDraw(const SDL_FRect *dst, bool muted, Uint8 opacity) {
-  SDL_Texture *tex = micIndicatorTex(muted);
+   panel around it is drawn at, so the icon fades with it. Drawn at (x, y) at
+   the texture's own size rather than the size asked for, which are the same
+   number unless the rasterizer clamped it — either way nothing is resampled. */
+static void micIndicatorDraw(float x, float y, int px, bool muted,
+                             Uint8 opacity) {
+  SDL_Texture *tex = micIndicatorTex(muted, px);
   if (!tex) return;
+  float texW = (float)px, texH = (float)px;
+  SDL_GetTextureSize(tex, &texW, &texH);
+  SDL_FRect dst = { x, y, texW, texH };
   if (muted) {
     SDL_SetTextureColorMod(tex, 255, 89, 89);
     SDL_SetTextureAlphaMod(tex, opacity);
@@ -243,7 +266,7 @@ static void micIndicatorDraw(const SDL_FRect *dst, bool muted, Uint8 opacity) {
     SDL_SetTextureColorMod(tex, 255, 255, 255);
     SDL_SetTextureAlphaMod(tex, (Uint8)(((int)opacity * 102) / 255));
   }
-  SDL_RenderTexture(gRenderer, tex, NULL, dst);
+  SDL_RenderTexture(gRenderer, tex, NULL, &dst);
   SDL_SetTextureColorMod(tex, 255, 255, 255);
   SDL_SetTextureAlphaMod(tex, 255);
 }
@@ -1665,6 +1688,8 @@ void sdl3DrawCleanup(void) {
 #if defined(WINBOLO_VOICE)
   if (gMicIconTex)      { SDL_DestroyTexture(gMicIconTex);      gMicIconTex      = NULL; }
   if (gMicMutedIconTex) { SDL_DestroyTexture(gMicMutedIconTex); gMicMutedIconTex = NULL; }
+  gMicIconTexPx      = 0;
+  gMicMutedIconTexPx = 0;
 #endif
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
@@ -1749,6 +1774,8 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
 #if defined(WINBOLO_VOICE)
   if (gMicIconTex)      { SDL_DestroyTexture(gMicIconTex);      gMicIconTex      = NULL; }
   if (gMicMutedIconTex) { SDL_DestroyTexture(gMicMutedIconTex); gMicMutedIconTex = NULL; }
+  gMicIconTexPx      = 0;
+  gMicMutedIconTexPx = 0;
 #endif
 
   /* Destroy font resources — sdl3draw_status owns the per-zoom label
@@ -2358,12 +2385,22 @@ void sdl3DrawFlushOverviewInWindow(void) {
 
 #if defined(WINBOLO_VOICE)
     /* Whether your own microphone is muted. Full screen has no menu bar, so
-       this is the only place the mute key has anything to show for itself. */
+       this is the only place the mute key has anything to show for itself.
+
+       The layout works in floats, as it must to keep the column's one scale
+       across every row. The icon is rasterized at a whole number of pixels
+       instead, so the size is rounded here and the square recentred in the
+       rect the layout produced — landing it on a half pixel would blur it
+       back exactly as much as scaling it would have. */
     if (voiceWanted) {
       const OverviewHudElement *e = &hud.el[OVERVIEW_HUD_VOICE];
-      SDL_FRect icon = { originX + e->dstX, originY + e->dstY,
-                         e->dstW, e->dstH };
-      micIndicatorDraw(&icon, gOverviewPrepVoiceMuted, colAlpha);
+      int px = (int)roundf(e->dstW);
+      if (px > 0) {
+        float x = originX + e->dstX + (e->dstW - (float)px) * 0.5f;
+        float y = originY + e->dstY + (e->dstH - (float)px) * 0.5f;
+        micIndicatorDraw(roundf(x), roundf(y), px,
+                         gOverviewPrepVoiceMuted, colAlpha);
+      }
     }
 #endif
 
@@ -2879,16 +2916,16 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
        places anything past x 493, so the band is free. The icon takes 16 of
        its 18 columns, a pixel clear either side, and is centred on the LGM
        circle (MAN_STATUS_Y, MAN_STATUS_HEIGHT) so it reads as that row's
-       right-hand neighbour. */
+       right-hand neighbour. Source pixels times an integer zoom, so the
+       position and the size are already whole numbers and nothing needs
+       snapping. */
     if (voiceIsEnabled() && voiceConnectionCarriesVoice()) {
       const int micSrcX = 498;
       const int micSrcSize = 16;
       const int micSrcY = MAN_STATUS_Y + (MAN_STATUS_HEIGHT - micSrcSize) / 2;
-      SDL_FRect icon = { (float)(micSrcX * gZoomFactor),
-                         (float)(micSrcY * gZoomFactor),
-                         (float)(micSrcSize * gZoomFactor),
-                         (float)(micSrcSize * gZoomFactor) };
-      micIndicatorDraw(&icon, voiceIsSelfMuted(), 255);
+      micIndicatorDraw((float)(micSrcX * gZoomFactor),
+                       (float)(micSrcY * gZoomFactor),
+                       micSrcSize * gZoomFactor, voiceIsSelfMuted(), 255);
     }
 #endif
   }

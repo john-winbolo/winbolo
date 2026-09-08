@@ -308,16 +308,25 @@ SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
 SDL_Surface *sdl3ImguiGetMicIconSurface(void);
 
 /*********************************************************
-*NAME:          sdl3ImguiGetMicMutedIconSurface
+*NAME:          sdl3ImguiCreateMicIconSurface
 *PURPOSE:
-*  Returns the rasterized muted-microphone icon as a
-*  renderer-free surface, for the game view's own mute
+*  Rasterizes the plain or muted microphone icon at exactly
+*  the pixel size asked for, for the game view's own mute
 *  indicator — the classic frame and the full screen HUD
-*  both draw it from C and texture it per renderer. Loads
-*  the SVG lazily on first call. Owned by this module; do
-*  not destroy. Returns NULL if the SVG could not be loaded.
+*  both draw it from C, at a size that follows the window,
+*  and want no scaling at draw time.
+*
+*  Unlike the …Get…Surface accessors above, the surface is
+*  the CALLER'S: destroy it with SDL_DestroySurface once it
+*  has been textured. size is clamped to a legible range.
+*  Returns NULL if the SVG could not be loaded.
+*
+*ARGUMENTS:
+*  muted - true for the barred microphone, false for the
+*          plain one
+*  size  - wanted width and height in pixels
 *********************************************************/
-SDL_Surface *sdl3ImguiGetMicMutedIconSurface(void);
+SDL_Surface *sdl3ImguiCreateMicIconSurface(bool muted, int size);
 #endif
 
 /*********************************************************

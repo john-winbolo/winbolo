@@ -366,11 +366,8 @@ static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT] = {};
 static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]   = {};
 /* Tank-label rasterization of the talking microphone, a surface for the same
- * reason s_iconBrainSurf is one. The muted one keeps it company: the game
- * view's own mute indicator is drawn by the C draw paths, which have no ImGui
- * texture to reach for. */
-static SDL_Surface *s_iconMicSurf      = nullptr;
-static SDL_Surface *s_iconMicMutedSurf = nullptr;
+ * reason s_iconBrainSurf is one. */
+static SDL_Surface *s_iconMicSurf = nullptr;
 /* Mic icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
  * further down the file because the players panel is rendered above them.
  * Talking is the only one that has to catch the eye mid-game; the rest sit
@@ -379,6 +376,12 @@ static const ImVec4 MIC_TINT_NORMAL  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 static const ImVec4 MIC_TINT_TALKING = ImVec4(0.30f, 1.00f, 0.40f, 1.00f);
 static const ImVec4 MIC_TINT_MUTED   = ImVec4(1.00f, 0.35f, 0.35f, 1.00f);
 static const ImVec4 MIC_TINT_DIM     = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
+/* What sdl3ImguiCreateMicIconSurface will rasterize at. Below the floor the
+ * glyph is unreadable whatever we do; the ceiling is well past the largest
+ * size the game view asks for and stops a degenerate layout turning into a
+ * huge allocation. */
+#define MIC_ICON_MIN_PX 8
+#define MIC_ICON_MAX_PX 256
 #endif
 static bool s_wbnIconsLoaded[ICON_SLOT_COUNT] = {};
 #define WBN_ICON_SIZE 14
@@ -409,11 +412,6 @@ static void ensureWbnIconsLoaded(void) {
     if (!s_iconMicSurf) {
         s_iconMicSurf = imguiLoadSvgIconWhiteSurface("data/ui/mic.svg",
                                                      WBN_ICON_TANK_LABEL_SIZE);
-    }
-    if (!s_iconMicMutedSurf) {
-        s_iconMicMutedSurf =
-            imguiLoadSvgIconWhiteSurface("data/ui/mic-muted.svg",
-                                         WBN_ICON_TANK_LABEL_SIZE);
     }
 #endif
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] slot=%d steam=%p brain=%p brainSurf=%p renderer=%p s_renderer=%p drawRenderer=%p",
@@ -6623,12 +6621,17 @@ SDL_Surface *sdl3ImguiGetMicIconSurface(void) {
     return s_iconMicSurf;
 }
 
-SDL_Surface *sdl3ImguiGetMicMutedIconSurface(void) {
-    /* The muted microphone at the same rasterization, for the game view's own
-     * mute indicator. Drawn by the C paths, which have no ImGui texture of
-     * their own to reach for. */
-    ensureWbnIconsLoaded();
-    return s_iconMicMutedSurf;
+SDL_Surface *sdl3ImguiCreateMicIconSurface(bool muted, int size) {
+    /* Rasterized to order rather than cached: the game view's mute indicator
+     * draws at a size that follows the window and the HUD's scale, and an icon
+     * scaled at draw time loses the muted glyph's slash, whose gaps are about
+     * a unit wide in the SVG's 24-unit viewBox. The caller owns what comes
+     * back. */
+    if (size < MIC_ICON_MIN_PX) size = MIC_ICON_MIN_PX;
+    if (size > MIC_ICON_MAX_PX) size = MIC_ICON_MAX_PX;
+    return imguiLoadSvgIconWhiteSurface(muted ? "data/ui/mic-muted.svg"
+                                              : "data/ui/mic.svg",
+                                        size);
 }
 #endif
 
@@ -6907,7 +6910,6 @@ void sdl3ImguiCleanup(void) {
     if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
 #if defined(WINBOLO_VOICE)
     if (s_iconMicSurf) { SDL_DestroySurface(s_iconMicSurf); s_iconMicSurf = nullptr; }
-    if (s_iconMicMutedSurf) { SDL_DestroySurface(s_iconMicMutedSurf); s_iconMicMutedSurf = nullptr; }
 #endif
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
