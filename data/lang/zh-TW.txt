@@ -2019,3 +2019,5 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=（越位）
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}：{number2}名玩家對應{number}個起始點——{number3}人將在海上開始遊戲。\n變更隊伍一側會為所有玩家重新分配起始點。
 STR_DLGLOBBY_TOOLTIP_START_SEA=該隊伍可用的起始點已全部被佔用，因此該玩家\n將在隊友起始點旁的海上開始遊戲。
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=越位：此起始點不在{string1}（隊伍一側）範圍內。\n主機為該玩家選擇了此起始點。
+
+STR_SOUND_LOAD_FAILED=音效效果載入失敗

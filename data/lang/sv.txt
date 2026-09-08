@@ -2021,3 +2021,5 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(offside)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startplatser för {number2} spelare — {number3} börjar till havs.\nAtt byta sida tilldelar varje spelare en ny start.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Alla starter det här laget kan använda är upptagna, så den här\nspelaren börjar till havs bredvid en lagkamrats start.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Offside: den här starten ligger inte på {string1}, lagets sida.\nVärden valde den åt den här spelaren.
+
+STR_SOUND_LOAD_FAILED=Fel vid inläsning av ljudeffekter

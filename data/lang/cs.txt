@@ -2019,3 +2019,5 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(ofsajd)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startů pro {number2} hráčů — {number3} z nich začne na moři.\nZměna strany znovu přiřadí start každému hráči.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Všechny starty, které tento tým může použít, jsou obsazené, takže\ntento hráč začne na moři vedle startu spoluhráče.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Ofsajd: tento start neleží na {string1}, straně týmu.\nHostitel ho vybral pro tohoto hráče.
+
+STR_SOUND_LOAD_FAILED=Chyba při načítání zvukových efektů

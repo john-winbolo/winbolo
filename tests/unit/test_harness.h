@@ -1503,6 +1503,11 @@ int run_sheet_bleed_edges(void);
 int run_sheet_no_key_under_alpha(void);
 int run_bmp_sheet_no_key_under_alpha(void);
 
+/* Which <name>_N.wav members a source holds, and the compaction that
+   keeps a decoded pool contiguous (test_sound_variants.c). */
+int run_sound_variant_pool_names(void);
+int run_sound_variant_load_compaction(void);
+
 /* Bolo pascal-string reader, both copies of it (test_pascal_string.c). */
 int run_pascal_string_lengths(void);
 int run_pascal_string_viewer_copy_agrees(void);

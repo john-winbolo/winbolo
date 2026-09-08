@@ -2021,3 +2021,5 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(hors zone)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1} : {number} départs pour {number2} joueurs — {number3} commenceront en mer.\nChanger de côté réattribue le départ de chaque joueur.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Tous les départs que cette équipe peut utiliser sont pris, donc ce joueur\ncommencera en mer à côté du départ d'un coéquipier.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Hors zone : ce départ n'est pas sur {string1}, le côté de l'équipe.\nL'hôte l'a choisi pour ce joueur.
+
+STR_SOUND_LOAD_FAILED=Erreur lors du chargement des effets sonores
