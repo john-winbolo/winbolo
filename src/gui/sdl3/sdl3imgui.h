@@ -390,8 +390,10 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 *  player's voice state, resolved in precedence order
 *  (muted by this client, no microphone, talking, muted
 *  their own microphone, idle), with a tooltip naming that
-*  state, and — in the players panel only — a thin bar under
-*  it filled to how loud that player is right now.
+*  state. A talking player's speaker is drawn dim and filled
+*  from the bottom, in the talking colour, to how loud they
+*  are right now — the glyph is the meter, so a filled cell
+*  is the same size as an empty one.
 *
 *  The shape says which end the state belongs to. A speaker
 *  for the states about playback here — a remote player
@@ -420,18 +422,14 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 *  isSelf      - true when playerNum is the local player
 *  size        - icon edge length in pixels
 *  inLobby     - true from the lobby table, false from the
-*                in-game players panel. Decides two things.
-*                Whether a remote player with no microphone
-*                is drawn at all: in game that icon is
-*                clutter, so the cell is left blank and only
-*                holds its width, while in the lobby knowing
-*                that someone cannot talk is the point. A
-*                player muted by this client is drawn either
-*                way — that state outranks it. And whether
-*                the cell carries the loudness bar under the
-*                icon: the panel takes the strip for it on
-*                every row, the lobby table neither draws it
-*                nor reserves for it.
+*                in-game players panel. Decides whether a
+*                remote player with no microphone is drawn at
+*                all: in game that icon is clutter, so the
+*                cell is left blank and only holds its width,
+*                while in the lobby knowing that someone
+*                cannot talk is the point. A player muted by
+*                this client is drawn either way — that state
+*                outranks it.
 *********************************************************/
 void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlags,
                          PlayerBitMap talkingMap, bool isSelf, float size,
