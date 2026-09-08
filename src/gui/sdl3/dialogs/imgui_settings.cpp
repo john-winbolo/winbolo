@@ -97,6 +97,7 @@ extern "C" {
   extern bool backgroundSound;
   extern bool useSoundKeepalive;
   extern int  soundVolume;
+  extern int  effectsVolume;
   extern bool showNewswireMessages;
   extern bool showAssistantMessages;
   extern bool showAIMessages;
@@ -114,6 +115,7 @@ extern "C" {
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
   void windowSetSoundVolume(int pct);
+  void windowSetEffectsVolume(int pct);
 #if defined(WINBOLO_VOICE)
   /* Voice apply/persist helpers — winbolo.c on the desktop, main_wasm.c in
      the browser build, both beside windowSetSoundVolume. */
@@ -1507,10 +1509,29 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     {
         int vol = soundVolume;
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_MASTER_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+    }
+    {
+        int vol = effectsVolume;
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME), &vol, 0, 100, "%d%%")) windowSetEffectsVolume(vol);
+    }
+#if defined(WINBOLO_VOICE)
+    /* The third of the three, drawn here rather than down in the voice
+       section so all of them read as one group.  Its own disable, since it is
+       outside the one that section puts around itself. */
+    {
+        bool voiceOnForVolume = voiceIsEnabled();
+        float vol = voiceGetOutputVolume();
+        if (!voiceOnForVolume) ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_VOLUME), &vol,
+                               0.0f, 2.0f, "%.2fx")) {
+            windowSetVoiceVolume(vol);
+        }
+        if (!voiceOnForVolume) ImGui::EndDisabled();
     }
 
-#if defined(WINBOLO_VOICE)
     /* ---- Voice ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
     /* Read the master switch once: the checkbox below writes it, and
@@ -1692,14 +1713,6 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         }
     }
 #endif
-    {
-        float vol = voiceGetOutputVolume();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_VOLUME), &vol,
-                               0.0f, 2.0f, "%.2fx")) {
-            windowSetVoiceVolume(vol);
-        }
-    }
     {
         bool micIcons = windowGetShowTankMicIcons();
         if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_TANKICONS), &micIcons)) {

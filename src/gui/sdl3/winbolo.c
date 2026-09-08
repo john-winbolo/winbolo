@@ -121,8 +121,12 @@ bool soundEffects = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
-/* Master volume (0-100); applied to the audio stream gain */
+/* Master volume (0-100); scales the sound effects and voice alike */
 int soundVolume = 50;
+
+/* Sound effects volume (0-100); scales the master volume for the mixer, and
+ * does not reach voice */
+int effectsVolume = 100;
 
 /* Is Sound Keepalive enabled */
 bool useSoundKeepalive = TRUE;
@@ -1679,11 +1683,21 @@ void windowSoundKeepalive(void) {
   }
 }
 
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * streams and its own gain, and nothing downstream of here covers both. */
 void windowSetSoundVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   soundVolume = pct;
   soundSetVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
+}
+
+void windowSetEffectsVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  effectsVolume = pct;
+  soundSetEffectsVolume(pct);
 }
 
 /* -------------------------------------------------------

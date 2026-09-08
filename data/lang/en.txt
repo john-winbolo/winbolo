@@ -1645,6 +1645,8 @@ STR_DLGLOBBY_VOICE_OFF=Voice is turned off
 
 # Players panel — a player muted here who is talking anyway
 STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Muted by you, and talking — click to unmute
+STR_DLGSETTINGS_MASTER_VOLUME=Master volume
+STR_DLGSETTINGS_EFFECTS_VOLUME=Effects volume
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

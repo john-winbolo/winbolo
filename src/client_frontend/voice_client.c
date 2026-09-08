@@ -131,6 +131,7 @@ static VoiceMode voiceMode = VOICE_MODE_PTT;
 static bool pushToTalkHeld = false;
 static float micGain = 1.0f;
 static float outputVolume = 1.0f;
+static float masterVolume = 1.0f;
 static float inputLevel = 0.0f;
 
 /* The held peak for the meter that draws inputLevel.  Kept in drawn-height
@@ -408,6 +409,10 @@ bool voiceInit(void) {
     for (i = 0; i < MAX_TANKS; i++) {
         perPlayerVolume[i] = 1.0f;
     }
+    /* Unity here too, and for the same reason: the frontend pushes the master
+     * volume down from its preferences after this, and a zero left behind by a
+     * backend that would not start plays every talker silent. */
+    masterVolume = 1.0f;
 
     if (!voiceBackendInit()) {
         return false;
@@ -470,6 +475,7 @@ void voiceCleanup(void) {
     gateHangover = 0;
     micGain = 1.0f;
     outputVolume = 1.0f;
+    masterVolume = 1.0f;
     inputLevel = 0.0f;
     memset(&inputPeak, 0, sizeof(inputPeak));
     warnedFrameTooLarge = false;
@@ -945,29 +951,65 @@ float voiceGetOutputVolume(void) {
 }
 
 /*********************************************************
+*NAME:          voiceSetMasterVolume
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Sets the master gain, which multiplies the voice output
+*  volume and the talker's own volume.  Voice has its own
+*  playback path and never reaches the sound mixer, so the
+*  frontend hands the master volume here as well as there.
+*
+*ARGUMENTS:
+*  gain - 1.0f is unity
+*********************************************************/
+void voiceSetMasterVolume(float gain) {
+    if (gain < 0.0f) {
+        gain = 0.0f;
+    }
+    masterVolume = gain;
+}
+
+/*********************************************************
+*NAME:          voiceGetMasterVolume
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the master gain applied to decoded remote audio.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetMasterVolume(void) {
+    return masterVolume;
+}
+
+/*********************************************************
 *NAME:          applyOutputVolume
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Scales one decoded frame by the voice output volume and
-*  by that talker's own volume, in place.  Done here rather
-*  than in the backend so the device contract stays the same
-*  on every platform.
+*  Scales one decoded frame by the master volume, the voice
+*  output volume and that talker's own volume, in place.
+*  Done here rather than in the backend so the device
+*  contract stays the same on every platform.
 *
 *ARGUMENTS:
 *  pcm    - VOICE_FRAME_SAMPLES mono S16 samples, scaled in
 *           place
 *  player - the player the frame came from, whose own volume
-*           multiplies the output one
+*           multiplies the other two
 *********************************************************/
 static void applyOutputVolume(int16_t *pcm, int player) {
     int i;
     float sample;
-    float gain = outputVolume * perPlayerVolume[player];
+    float gain = masterVolume * outputVolume * perPlayerVolume[player];
 
     /* Unity is the common case and every sample would survive it unchanged.
-     * Tested against the two together: either one alone can be off unity
+     * Tested against the three together: any one alone can be off unity
      * while the product is not. */
     if (gain == 1.0f) {
         return;

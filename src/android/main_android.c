@@ -59,6 +59,7 @@ bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
 int  soundVolume = 50;
+int  effectsVolume = 100;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;

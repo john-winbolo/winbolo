@@ -1999,6 +1999,10 @@ static const LangEntry langTable[] = {
 
     /* Players panel — a player muted here who is talking anyway */
     {2097, "Muted by you, and talking — click to unmute"},
+
+    /* Sound settings — the three volumes, of which "Voice volume" is 2042 */
+    {2100, "Master volume"},
+    {2101, "Effects volume"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

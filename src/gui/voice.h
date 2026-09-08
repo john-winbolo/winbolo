@@ -396,6 +396,30 @@ void voiceSetOutputVolume(float gain);
 float voiceGetOutputVolume(void);
 
 /*********************************************************
+*NAME:          voiceSetMasterVolume
+*PURPOSE:
+*  Sets the master gain, which multiplies the output volume
+*  and the talker's own volume. Voice does not go through
+*  the sound mixer, so the frontend hands the master volume
+*  here as well as to the mixer. Clamped at zero; 1.0f is
+*  unity.
+*
+*ARGUMENTS:
+*  gain - 1.0f is unity
+*********************************************************/
+void voiceSetMasterVolume(float gain);
+
+/*********************************************************
+*NAME:          voiceGetMasterVolume
+*PURPOSE:
+*  Returns the master gain applied to decoded remote audio.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetMasterVolume(void);
+
+/*********************************************************
 *NAME:          voiceGetInputLevel
 *PURPOSE:
 *  Returns the raw 0..1 RMS amplitude of the most recently

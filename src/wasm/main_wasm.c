@@ -70,6 +70,7 @@ bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
 int  soundVolume = 50;
+int  effectsVolume = 100;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -613,7 +614,8 @@ void windowApplyMenuChecks(ClientSim *cs) {
  * ------------------------------------------------------- */
 extern bool useAutoslow;   /* defined in gamefront_wasm.c */
 extern bool useAutohide;
-void windowSetSoundVolume(int pct);  /* defined below, after this function */
+void windowSetSoundVolume(int pct);    /* defined below, after this function */
+void windowSetEffectsVolume(int pct);  /* likewise */
 /* Likewise the voice settings, defined below with the rest of them. */
 void windowSetVoiceEnabled(bool on);
 void windowSetVoiceMode(int mode);
@@ -711,6 +713,10 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
     windowSetSoundVolume(vol);
+    vol = prefInt(m, "Effects Volume", effectsVolume);
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    windowSetEffectsVolume(vol);
   }
 
   cJSON *g = cJSON_GetObjectItemCaseSensitive(root, "GAME OPTIONS");
@@ -855,11 +861,22 @@ void windowSoundKeepalive(void) {
     soundKeepalive(useSoundKeepalive);
   }
 }
+
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * playback path and its own gain, and nothing downstream covers both. */
 void windowSetSoundVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   soundVolume = pct;
   soundSetVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
+}
+
+void windowSetEffectsVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  effectsVolume = pct;
+  soundSetEffectsVolume(pct);
 }
 
 /* -------------------------------------------------------

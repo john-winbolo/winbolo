@@ -1720,6 +1720,11 @@
 /* Players panel — a player muted here who is talking anyway */
 #define STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING 2097
 
+/* Sound settings — the three volumes, of which the third is
+   STR_DLGSETTINGS_VOICE_VOLUME above */
+#define STR_DLGSETTINGS_MASTER_VOLUME           2100
+#define STR_DLGSETTINGS_EFFECTS_VOLUME          2101
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

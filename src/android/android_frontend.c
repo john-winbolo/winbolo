@@ -47,6 +47,7 @@ extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
 extern int  soundVolume;
+extern int  effectsVolume;
 extern bool allowNewPlayers;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
@@ -196,6 +197,12 @@ void windowSetSoundVolume(int pct) {
   if (pct > 100) pct = 100;
   soundVolume = pct;
   soundSetVolume(pct);
+}
+void windowSetEffectsVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  effectsVolume = pct;
+  soundSetEffectsVolume(pct);
 }
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
