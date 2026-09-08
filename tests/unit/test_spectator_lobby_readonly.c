@@ -101,7 +101,7 @@ static void fireAllSpectatorCommands(ClientSim *cs) {
     (void)clientSimNetSendLobbyMapUpload(cs, "nonexistent.map");
     (void)clientSimNetSendLobbyMapUploadBytes(cs, blob, sizeof(blob), "foo");
     clientSimNetSendLobbyMapUseLocal(cs, sizeof(blob), "foo", "maps/foo.map", md5);
-    clientSimNetSendLobbyTeamMeta(cs, 1, 0, 0, "Team");
+    clientSimNetSendLobbyTeamMeta(cs, 1, 0, 0, 0, "Team");
     clientSimNetSendLobbyTeamClear(cs, 3);
     {
         uint8_t v = 1;

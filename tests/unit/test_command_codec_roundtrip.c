@@ -71,13 +71,14 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.u.lobbyBotConfig.nameLen     == 7);
     UT_ASSERT(memcmp(out.u.lobbyBotConfig.name, "BotName", 7) == 0);
 
-    /* CMD_LOBBY_TEAM_META — teamId/color/pool + variable name */
+    /* CMD_LOBBY_TEAM_META — teamId/color/pool/startSide + variable name */
     memset(&in, 0, sizeof(in));
     in.type = CMD_LOBBY_TEAM_META;
     in.cmdSeq = 4;
     in.u.lobbyTeamMeta.teamId     = 6;
     in.u.lobbyTeamMeta.color      = 3;
     in.u.lobbyTeamMeta.namingPool = 2;
+    in.u.lobbyTeamMeta.startSide  = 4;
     in.u.lobbyTeamMeta.nameLen    = 5;
     memcpy(in.u.lobbyTeamMeta.name, "Reds!", 5);
     memset(&out, 0, sizeof(out));
@@ -87,6 +88,7 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.u.lobbyTeamMeta.teamId     == 6);
     UT_ASSERT(out.u.lobbyTeamMeta.color      == 3);
     UT_ASSERT(out.u.lobbyTeamMeta.namingPool == 2);
+    UT_ASSERT(out.u.lobbyTeamMeta.startSide  == 4);
     UT_ASSERT(out.u.lobbyTeamMeta.nameLen    == 5);
     UT_ASSERT(memcmp(out.u.lobbyTeamMeta.name, "Reds!", 5) == 0);
 

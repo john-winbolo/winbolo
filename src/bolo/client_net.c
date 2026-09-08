@@ -710,6 +710,7 @@ void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
 
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
+                                   uint8_t startSide,
                                    const char *name) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
@@ -717,6 +718,7 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
   cmd.u.lobbyTeamMeta.teamId     = teamId;
   cmd.u.lobbyTeamMeta.color      = color;
   cmd.u.lobbyTeamMeta.namingPool = namingPool;
+  cmd.u.lobbyTeamMeta.startSide  = startSide;
   if (name != NULL) {
     size_t nl = strlen(name);
     if (nl > LOBBY_TEAM_NAME_LEN - 1) return;

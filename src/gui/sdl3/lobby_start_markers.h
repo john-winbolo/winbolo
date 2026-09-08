@@ -20,22 +20,26 @@
  *                the full-screen popup).
  *
  *                Pure helpers only — ownership colour,
- *                compass-direction label placement, and
- *                minimal-unique-prefix disambiguation — so
- *                both call sites render starts identically.
- *                Header-only (static inline) to avoid a
- *                separate translation unit.
+ *                compass-direction label placement,
+ *                minimal-unique-prefix disambiguation, and
+ *                the team start-side rules (which team a
+ *                start is off-side for, and the tooltip
+ *                that says so) — so both call sites and the
+ *                player list render and judge starts
+ *                identically. Header-only (static inline)
+ *                to avoid a separate translation unit.
  *********************************************************/
 
 #ifndef LOBBY_START_MARKERS_H
 #define LOBBY_START_MARKERS_H
 
 #include <string.h>
-#include <stdlib.h>   /* abs */
-#include <math.h>     /* atan2, floor */
+#include <SDL3/SDL.h>     /* SDL_strlcpy — team label and tooltip copies */
 #include "imgui.h"
-#include "client_sim.h"   /* ClientSim, ClientLobbySlot, clientSimGetLobbySlot */
+#include "client_sim.h"   /* ClientSim, ClientLobbySlot, clientSimGetLobbySlot, team side / name */
 #include "global.h"       /* MAX_TANKS */
+#include "start_sides.h"  /* startSideMaskFor / Accepts / Bits — side mask and the side rules */
+#include "../lang.h"      /* STR_DLGLOBBY_SIDE_* / STR_COMPASS_* / STR_STARTPICK_TIP_OFFSIDE* */
 
 /* Ownership of a start relative to the local player. */
 enum LobbyStartOwner {
@@ -83,29 +87,31 @@ static inline ImU32 lobbyStartOwnerColor(LobbyStartOwner o) {
     }
 }
 
-/* Compass octant of start (sx,sy) within bbox [minX..maxX,minY..maxY].
- * Map Y grows downward; north = smaller y. Mirrors lobbyStartCompassStr
- * but returns the placement enum instead of a lang id. */
+/* The same colour at half its alpha — how both previews dim the label of
+ * a start the viewer's team side rejects, so ownership still reads. */
+static inline ImU32 lobbyStartDimColor(ImU32 c) {
+    ImU32 a = (c >> IM_COL32_A_SHIFT) & 0xFFu;
+    return (c & ~(0xFFu << IM_COL32_A_SHIFT)) | ((a / 2u) << IM_COL32_A_SHIFT);
+}
+
+/* Compass direction of start (sx,sy) within bbox [minX..maxX,minY..maxY],
+ * as the label-placement enum. Read off the same side mask that gives
+ * lobbyStartCompassStr its lang id: one bit is a cardinal, two bits a
+ * diagonal, no bits the centre band. */
 static inline LobbyCompassDir lobbyStartCompassDir(int sx, int sy,
                                                    int minX, int minY,
                                                    int maxX, int maxY) {
-    int cx = (minX + maxX) / 2;
-    int cy = (minY + maxY) / 2;
-    int dx = sx - cx;
-    int dy = sy - cy;
-    int tolX = (maxX - minX) / 8; if (tolX < 1) tolX = 1;
-    int tolY = (maxY - minY) / 8; if (tolY < 1) tolY = 1;
-    if (abs(dx) <= tolX && abs(dy) <= tolY) return LCD_C;
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-    double deg = atan2((double)(-dy), (double)dx) * 180.0 / M_PI;
-    int sector = (int)floor((deg + 22.5) / 45.0);
-    sector = ((sector % 8) + 8) % 8;
-    static const LobbyCompassDir kSectorDir[8] = {
-        LCD_E, LCD_NE, LCD_N, LCD_NW, LCD_W, LCD_SW, LCD_S, LCD_SE
-    };
-    return kSectorDir[sector];
+    switch (startSideMaskFor(sx, sy, minX, minY, maxX, maxY)) {
+        case START_SIDE_BIT_N:                    return LCD_N;
+        case START_SIDE_BIT_N | START_SIDE_BIT_E: return LCD_NE;
+        case START_SIDE_BIT_E:                    return LCD_E;
+        case START_SIDE_BIT_S | START_SIDE_BIT_E: return LCD_SE;
+        case START_SIDE_BIT_S:                    return LCD_S;
+        case START_SIDE_BIT_S | START_SIDE_BIT_W: return LCD_SW;
+        case START_SIDE_BIT_W:                    return LCD_W;
+        case START_SIDE_BIT_N | START_SIDE_BIT_W: return LCD_NW;
+        default:                                  return LCD_C;
+    }
 }
 
 /* Unit screen-space direction (y down) to push a start's label so it
@@ -149,6 +155,116 @@ static inline int lobbyStartUniquePrefixLen(const char *const *names,
     if (need > la) need = la;
     if (need < 1) need = 1;
     return need;
+}
+
+/* ── Team start sides ─────────────────────────────────────────────
+ * The lobby mirror carries each team's START_SIDE_* choice; start_sides.h
+ * says which starts a side accepts. These are the one client-side reading
+ * of that, shared by the player list's start cell and dropdown and by both
+ * map previews, so every surface judges the same start off-side. */
+
+/* A team's START_SIDE_* choice; team 0 (no team) has no side. */
+static inline BYTE lobbyTeamSide(ClientSim *cs, int teamId) {
+    if (teamId <= 0 || teamId >= MAX_TANKS) return START_SIDE_ANY;
+    return clientSimGetLobbyTeamStartSide(cs, (BYTE)teamId);
+}
+
+/* Team of a lobby slot; 0 (no team, so no side) when there is none — a
+ * spectator passes -1. */
+static inline int lobbySlotTeam(ClientSim *cs, int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)slot);
+    return sl ? sl->teamNumber : 0;
+}
+
+/* Union of the START_SIDE_BIT_* chosen by every team other than teamId
+ * that has at least one connected member — the "teams present" rule the
+ * server's lobby start pick applies, so a team with a side and no
+ * players closes nothing. */
+static inline BYTE lobbyClosedMaskForTeam(ClientSim *cs, int teamId) {
+    BYTE closedMask = 0;
+    for (int k = 0; k < MAX_TANKS; k++) {
+        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+        if (!sl->connected) continue;
+        int t = sl->teamNumber;
+        if (t == 0 || t >= MAX_TANKS || t == teamId) continue;
+        closedMask |= startSideBits(clientSimGetLobbyTeamStartSide(cs, (BYTE)t));
+    }
+    return closedMask;
+}
+
+/* True when the side rules keep a team off a start with this mask — the
+ * claim the server refuses when a member of that team picks it for
+ * themselves, and the reservation it drops at the next side or map
+ * change. A side team is kept off the starts its side does not accept; a
+ * team with no side is kept off every side another team present chose; a
+ * centre start is open to all. side and closedMask are the team's
+ * lobbyTeamSide and lobbyClosedMaskForTeam, passed in so a loop over the
+ * starts computes them once. */
+static inline bool lobbyStartOffSideMasked(BYTE mask, BYTE side, BYTE closedMask) {
+    return !startSideEligible(mask, side, closedMask);
+}
+
+/* The same test for one start, looking the team's side and closed mask
+ * up. */
+static inline bool lobbyStartOffSide(ClientSim *cs, int teamId, BYTE mask) {
+    return lobbyStartOffSideMasked(mask, lobbyTeamSide(cs, teamId),
+                                   lobbyClosedMaskForTeam(cs, teamId));
+}
+
+/* Lang id of a side's full name — the selector's entries. */
+static inline int lobbySideNameId(BYTE side) {
+    switch (side) {
+        case START_SIDE_N: return STR_DLGLOBBY_SIDE_N;
+        case START_SIDE_E: return STR_DLGLOBBY_SIDE_E;
+        case START_SIDE_S: return STR_DLGLOBBY_SIDE_S;
+        case START_SIDE_W: return STR_DLGLOBBY_SIDE_W;
+        default:           return STR_DLGLOBBY_SIDE_ANY;
+    }
+}
+
+/* Lang id of a side's compass letter, for "Sea · N" and "Team side · N".
+ * 0 for a team with no side. */
+static inline int lobbySideCompassId(BYTE side) {
+    switch (side) {
+        case START_SIDE_N: return STR_COMPASS_N;
+        case START_SIDE_E: return STR_COMPASS_E;
+        case START_SIDE_S: return STR_COMPASS_S;
+        case START_SIDE_W: return STR_COMPASS_W;
+        default:           return 0;
+    }
+}
+
+/* A team's name as the player list's header shows it: the team's own name
+ * once the team is in use, the numbered default until then. */
+static inline void lobbyTeamLabel(ClientSim *cs, int teamId,
+                                  char *buf, size_t bufLen) {
+    if (teamId > 0 && teamId < MAX_TANKS &&
+        clientSimGetLobbyTeamInUse(cs, (BYTE)teamId)) {
+        SDL_strlcpy(buf, clientSimGetLobbyTeamName(cs, (BYTE)teamId), bufLen);
+        return;
+    }
+    MessageArgs args = {};
+    args.number = teamId;
+    SDL_strlcpy(buf, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), bufLen);
+}
+
+/* Tooltip for a start that the team side of the player being placed
+ * rejects. subjectSlot is that player: the slot being dragged during a
+ * drag, the viewer otherwise. A player who is not the host cannot take
+ * such a start, so the text says only that; the host can still assign it
+ * and is told which team it is off-side for — the subject's team. */
+static inline void lobbyStartOffSideTip(ClientSim *cs, int subjectSlot, bool host,
+                                        int startIdx1, char *buf, size_t bufLen) {
+    MessageArgs args = {};
+    args.number = startIdx1;
+    if (host) {
+        lobbyTeamLabel(cs, lobbySlotTeam(cs, subjectSlot),
+                       args.string1, sizeof(args.string1));
+        SDL_strlcpy(buf, langGetTextFmt(STR_STARTPICK_TIP_OFFSIDE_HOST, &args), bufLen);
+    } else {
+        SDL_strlcpy(buf, langGetTextFmt(STR_STARTPICK_TIP_OFFSIDE, &args), bufLen);
+    }
 }
 
 #endif /* LOBBY_START_MARKERS_H */

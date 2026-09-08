@@ -1490,6 +1490,8 @@ STR_STARTPICK_YOU=jij
 STR_STARTPICK_SWAP_WITH=Ruil deze start met:
 STR_STARTPICK_ASSIGN_TO=Start toewijzen aan:
 STR_STARTPICK_SLOT_FALLBACK=(positie)
+STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nNiet aan de kant van je team
+STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nBuitenspel voor {string1}
 
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=AI-speler
@@ -2003,3 +2005,19 @@ STR_ITEMVIEW_ALLY_NAMED=Weergave bondgenoottanks — {player}
 STR_DLGBROWSER_VIEWS_LBL=Weergaven:
 STR_DLGBROWSER_VIEWS_CLASSIC=Klassiek
 STR_DLGBROWSER_VIEWS_ALLYTREES=Bondgenoten in bomen
+
+# Lobby team start side: header selector, row start cell and dropdown actions
+STR_DLGLOBBY_TEAM_SIDE=Start:
+STR_DLGLOBBY_SIDE_ANY=Willekeurig
+STR_DLGLOBBY_SIDE_N=Noord
+STR_DLGLOBBY_SIDE_E=Oost
+STR_DLGLOBBY_SIDE_S=Zuid
+STR_DLGLOBBY_SIDE_W=West
+STR_DLGLOBBY_START_SEA=Zee
+STR_DLGLOBBY_START_TEAM_SIDE=Teamkant
+STR_DLGLOBBY_START_AUTO=Automatisch
+STR_DLGLOBBY_START_UNASSIGN=Vrijgeven
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(buitenspel)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startposities voor {number2} spelers — {number3} beginnen op zee.\nEen kant wijzigen wijst elke speler opnieuw een start toe.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Alle starts die dit team kan gebruiken zijn bezet, dus deze speler\nbegint op zee naast de start van een teamgenoot.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Buitenspel: deze start ligt niet aan {string1}, de kant van het team.\nDe host koos die voor deze speler.

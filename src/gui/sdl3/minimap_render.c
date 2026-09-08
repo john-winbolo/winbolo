@@ -122,16 +122,18 @@ void minimapRenderPixels(const MapPreview *view,
 }
 
 /* Optional per-start ownership colouring for the lobby preview. 0-based,
- * parallel to startsObj order: 0=unclaimed, 1=self, 2=ally, 3=enemy. Set
+ * parallel to startsObj order: 0=unclaimed, 1=self, 2=ally, 3=enemy, with
+ * MINIMAP_OWNER_OFFSIDE possibly set on top (the dot is then dimmed). Set
  * only for the duration of a minimapFromCompressedOwned call (single-thread
  * main-thread use); other callers leave it NULL and get the default colour. */
 static const uint8_t *s_startOwnerOverride      = NULL;
 static int            s_startOwnerOverrideCount = 0;
 
-/* Map an ownership code to a start-dot colour. Returns false for unclaimed
- * (0) so the caller keeps the default (yellow). Self and allies are both
- * green; the caller additionally draws a gray border ring under the self
- * dot so it reads apart from allies. Enemies are red. */
+/* Map an ownership code (off-side bit already stripped) to a start-dot
+ * colour. Returns false for unclaimed (0) so the caller keeps the default
+ * (yellow). Self and allies are both green; the caller additionally draws a
+ * gray border ring under the self dot so it reads apart from allies.
+ * Enemies are red. */
 static bool minimapOwnerColor(uint8_t owner, uint8_t out[3]) {
     switch (owner) {
         case 1: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* self  green (+gray border) */
@@ -139,6 +141,26 @@ static bool minimapOwnerColor(uint8_t owner, uint8_t out[3]) {
         case 3: out[0] = 230; out[1] = 50;  out[2] = 50;  return true; /* enemy red */
         default: return false;                                          /* free  yellow */
     }
+}
+
+/* Write one start-dot pixel. A dimmed pixel is blended half into what is
+ * already there — the terrain — so an off-side start keeps its ownership
+ * hue at half strength rather than vanishing or taking a new colour. */
+static void minimapPutStartPixel(uint8_t *pixels, int nx, int ny,
+                                 const uint8_t col[3], bool dim) {
+    int idx;
+    if (nx < 0 || nx >= MINIMAP_SIZE || ny < 0 || ny >= MINIMAP_SIZE) return;
+    idx = (ny * MINIMAP_SIZE + nx) * 4;
+    if (dim) {
+        pixels[idx]   = (uint8_t)((pixels[idx]   + col[0]) / 2);
+        pixels[idx+1] = (uint8_t)((pixels[idx+1] + col[1]) / 2);
+        pixels[idx+2] = (uint8_t)((pixels[idx+2] + col[2]) / 2);
+    } else {
+        pixels[idx]   = col[0];
+        pixels[idx+1] = col[1];
+        pixels[idx+2] = col[2];
+    }
+    pixels[idx+3] = 255;
 }
 
 void minimapDrawObjects(uint8_t *pixels,
@@ -194,9 +216,12 @@ void minimapDrawObjects(uint8_t *pixels,
             int sx = ss->item[i].x;
             int sy = ss->item[i].y;
             /* Colour by ownership when an override is in effect, else the
-             * caller's default (yellow). */
-            uint8_t owner = (s_startOwnerOverride && i < s_startOwnerOverrideCount)
-                                ? s_startOwnerOverride[i] : 0;
+             * caller's default (yellow). The off-side bit rides on top of
+             * the code and dims the dot rather than changing its colour. */
+            uint8_t ownerByte = (s_startOwnerOverride && i < s_startOwnerOverrideCount)
+                                    ? s_startOwnerOverride[i] : 0;
+            uint8_t owner = ownerByte & MINIMAP_OWNER_CODE_MASK;
+            bool    dim   = (ownerByte & MINIMAP_OWNER_OFFSIDE) != 0;
             const uint8_t *col = startColor;
             uint8_t ownerCol[3];
             if (minimapOwnerColor(owner, ownerCol)) {
@@ -205,29 +230,16 @@ void minimapDrawObjects(uint8_t *pixels,
             /* Your own start: a gray border ring (5x5) under the green so it
              * stands out from allies (same green, no border). */
             if (owner == 1) {
+                static const uint8_t ringCol[3] = { 105, 105, 105 };
                 for (dy = -2; dy <= 2; dy++) {
                     for (dx = -2; dx <= 2; dx++) {
-                        int nx = sx + dx, ny = sy + dy;
-                        if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
-                            int idx = (ny * MINIMAP_SIZE + nx) * 4;
-                            pixels[idx]   = 105;
-                            pixels[idx+1] = 105;
-                            pixels[idx+2] = 105;
-                            pixels[idx+3] = 255;
-                        }
+                        minimapPutStartPixel(pixels, sx + dx, sy + dy, ringCol, dim);
                     }
                 }
             }
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
-                    int nx = sx + dx, ny = sy + dy;
-                    if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
-                        int idx = (ny * MINIMAP_SIZE + nx) * 4;
-                        pixels[idx]   = col[0];
-                        pixels[idx+1] = col[1];
-                        pixels[idx+2] = col[2];
-                        pixels[idx+3] = 255;
-                    }
+                    minimapPutStartPixel(pixels, sx + dx, sy + dy, col, dim);
                 }
             }
         }

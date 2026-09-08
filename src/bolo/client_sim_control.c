@@ -435,6 +435,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyTeamInUse[t] = evt->u.lobbyTeamMeta.in_use;
         cs->lobbyTeamColor[t] = evt->u.lobbyTeamMeta.color;
         cs->lobbyTeamPool[t]  = evt->u.lobbyTeamMeta.namingPool;
+        cs->lobbyTeamStartSide[t] = evt->u.lobbyTeamMeta.startSide;
         strncpy(cs->lobbyTeamName[t], evt->u.lobbyTeamMeta.name,
                 sizeof(cs->lobbyTeamName[t]) - 1);
         cs->lobbyTeamName[t][sizeof(cs->lobbyTeamName[t]) - 1] = '\0';

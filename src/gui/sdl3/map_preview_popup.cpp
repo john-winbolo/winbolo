@@ -43,9 +43,12 @@ extern "C" {
 #include "../lang.h"
 #include "client_sim.h"   /* clientSimGetLobbySlot, ClientLobbySlot */
 #include "client_net.h"   /* clientSimNetSendLobbyClaimStart */
+#include "client_command.h"  /* START_CLAIM_TEAM_SIDE — the holder menu's Team side action */
+#include "start_sides.h"     /* startSideMaskFor / startSideBits — side masks over the parsed starts */
+#include "minimap_render.h"  /* MINIMAP_OWNER_OFFSIDE — dims an off-side start's boat and dot */
 #include "../ui_mode.h"   /* uiShouldUseControllerMode */
 }
-#include "lobby_start_markers.h"   /* shared start-ownership marker helpers */
+#include "lobby_start_markers.h"   /* shared start-ownership marker helpers and side rules */
 #include "lobby_start_list.h"      /* controller-mode non-spatial start list */
 
 /* Singleton popup state. */
@@ -239,17 +242,53 @@ static bool startPickerWantsDrag(ImVec2 imgMin, ImVec2 contentSize,
            (g_startPickerEffectiveHost || holder == g_startPickerMySlot);
 }
 
+/* Side mask of every start the popup has parsed — the same startSideMaskFor
+ * the server and the lobby's cache apply, over the bounding box of the
+ * parsed starts. masks[] is 1-based (MAX_STARTS + 1 entries); returns the
+ * start count, 0 when no map has parsed. */
+static int startPickerSideMasks(BYTE *masks) {
+    if (!g_popupView) return 0;
+    int n = mapPreviewViewGetStartCount(g_popupView);
+    if (n > MAX_STARTS) n = MAX_STARTS;
+    BYTE xs[MAX_STARTS + 1], ys[MAX_STARTS + 1];
+    bool have[MAX_STARTS + 1];
+    int minX = 255, minY = 255, maxX = 0, maxY = 0;
+    for (int i = 1; i <= n; i++) {
+        have[i] = mapPreviewViewGetStart(g_popupView, (BYTE)i, &xs[i], &ys[i]);
+        if (!have[i]) continue;
+        if (xs[i] < minX) minX = xs[i];
+        if (xs[i] > maxX) maxX = xs[i];
+        if (ys[i] < minY) minY = ys[i];
+        if (ys[i] > maxY) maxY = ys[i];
+    }
+    for (int i = 1; i <= n; i++) {
+        masks[i] = have[i] ? startSideMaskFor(xs[i], ys[i], minX, minY, maxX, maxY)
+                           : 0;
+    }
+    return n;
+}
+
 /* Fill owners[] (0-based, start index i+1) from the picker context so the map
- * render can colour each start: 0=unclaimed,1=self,2=ally,3=enemy. Returns
- * the count (0 when there's no lobby context, e.g. a non-lobby caller). */
+ * render can colour each start: 0=unclaimed,1=self,2=ally,3=enemy, with
+ * MINIMAP_OWNER_OFFSIDE set on a start the viewer's own team side rejects so
+ * the render dims it. The view redraws its offscreen from this array every
+ * frame, so a side change shows at once. Returns the count (0 when there's
+ * no lobby context, e.g. a non-lobby caller). */
 static int startPickerComputeOwners(uint8_t *owners, int maxN) {
     ClientSim *cs = g_startPickerCs;
     if (!cs || !g_popupView) return 0;
     int n = mapPreviewViewGetStartCount(g_popupView);
     if (n > maxN) n = maxN;
+    BYTE masks[MAX_STARTS + 1] = {0};
+    int  maskCount = startPickerSideMasks(masks);
+    int  myTeam    = lobbySlotTeam(cs, g_startPickerMySlot);
     for (int i = 1; i <= n; i++) {
         int holder = startHolderSlot(cs, (BYTE)i);
-        owners[i - 1] = (uint8_t)lobbyStartClassify(cs, holder, g_startPickerMySlot);
+        uint8_t o = (uint8_t)lobbyStartClassify(cs, holder, g_startPickerMySlot);
+        if (i <= maskCount && lobbyStartOffSide(cs, myTeam, masks[i])) {
+            o |= MINIMAP_OWNER_OFFSIDE;
+        }
+        owners[i - 1] = o;
     }
     return n;
 }
@@ -274,6 +313,19 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
      * not here — this overlay draws holder name labels and the hover ring,
      * and drives the pointer interaction. */
     int hover = startPickerHoverStart(imgMin, contentSize);
+
+    /* Side mask of every start, and whether the viewer's own team side
+     * rejects it: such a start draws dimmed, and a player who is not the
+     * host can neither click nor drop onto it. */
+    BYTE masks[MAX_STARTS + 1] = {0};
+    int  maskCount = startPickerSideMasks(masks);
+    int  myTeam    = lobbySlotTeam(cs, g_startPickerMySlot);
+    /* Off-side for a given team; the overlay judges by the viewer's team,
+     * a drag by the dragged player's. */
+    auto offSideFor = [&](int st, int teamId) {
+        return st >= 1 && st <= maskCount && lobbyStartOffSide(cs, teamId, masks[st]);
+    };
+    auto offSideAt = [&](int st) { return offSideFor(st, myTeam); };
 
     bool  shown[MAX_STARTS + 1] = {false};
     float scrX[MAX_STARTS + 1], scrY[MAX_STARTS + 1];
@@ -315,6 +367,12 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
             fg = hot ? IM_COL32(235, 235, 235, 215) : IM_COL32(220, 220, 220, 150);
             bg = hot ? IM_COL32(0, 0, 0, 130)       : IM_COL32(0, 0, 0, 90);
         }
+        /* Off-side for the viewer's team: half the label's alpha, matching
+         * the faded boat under it. */
+        if (offSideAt(i)) {
+            fg = lobbyStartDimColor(fg);
+            bg = lobbyStartDimColor(bg);
+        }
         ImVec2 ts = ImGui::CalcTextSize(label);
         ImVec2 p(sx - ts.x * 0.5f, sy - ts.y - 6.0f);  /* centred above boat */
         dl->AddRectFilled(ImVec2(p.x - 3, p.y - 1),
@@ -325,10 +383,24 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
     /* ---- Pointer interaction ----
      * Left-click a start = choose it for yourself. Drag a movable claimed
      * start = move that player to another start. Right-click (with edit
-     * permission) = assign-to-someone menu. */
+     * permission, or on a start you hold) = the assign / holder menu. A
+     * start that the placed player's team side rejects — the dragged
+     * player during a drag, the viewer otherwise — takes neither a click
+     * nor a drop from a player who is not the host — the server would
+     * refuse the claim — and its tooltip says so; the host keeps every
+     * action and is told which team the start is off-side for. */
     ImVec2 mp     = ImGui::GetMousePos();
     bool   host   = g_startPickerEffectiveHost;
     int    mySlot = g_startPickerMySlot;
+    /* Hover tooltip ~75% transparent so it doesn't block the map. */
+    auto translucentTooltip = [&](const char *text) {
+        ImVec4 pbg = ImGui::GetStyleColorVec4(ImGuiCol_PopupBg); pbg.w *= 0.25f;
+        ImVec4 pbd = ImGui::GetStyleColorVec4(ImGuiCol_Border);  pbd.w *= 0.25f;
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, pbg);
+        ImGui::PushStyleColor(ImGuiCol_Border, pbd);
+        ImGui::SetTooltip("%s", text);
+        ImGui::PopStyleColor(2);
+    };
 
     if (g_startDragSlot >= 0) {
         /* Esc cancels the drag without reassigning. */
@@ -339,6 +411,11 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
         }
         ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
         bool moved = (dd.x * dd.x + dd.y * dd.y >= 16.0f);
+        /* The drop target is judged against the dragged player's team, not
+         * the viewer's: the host may be moving someone on another team.
+         * Only the host may drop anyone on an off-side start. */
+        bool dropOffSide = offSideFor(hover, lobbySlotTeam(cs, g_startDragSlot));
+        bool dropBlocked = dropOffSide && !host;
         /* While actually dragging, carry the player's NAME on the cursor
          * (the start boats are static). */
         if (moved) {
@@ -352,13 +429,19 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
                                   IM_COL32(0, 0, 0, 200), 3.0f);
                 dl->AddText(p, IM_COL32(255, 255, 255, 255), nm);
             }
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            ImGui::SetMouseCursor(dropBlocked ? ImGuiMouseCursor_Arrow
+                                              : ImGuiMouseCursor_ResizeAll);
+            if (dropOffSide) {
+                char tip[192];
+                lobbyStartOffSideTip(cs, g_startDragSlot, host, hover, tip, sizeof(tip));
+                translucentTooltip(tip);
+            }
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             /* A real drag reassigns the dragged player to the target. A
              * no-move click on an occupied start does nothing (choosing a
              * start for yourself is only via clicking a FREE start). */
-            if (moved && hover >= 1)
+            if (moved && hover >= 1 && !dropBlocked)
                 clientSimNetSendLobbyClaimStart(cs, (BYTE)g_startDragSlot,
                                                 (BYTE)hover);
             g_startDragSlot = -1;
@@ -371,19 +454,26 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
         int  holder      = startHolderSlot(cs, (BYTE)hover);
         bool free        = (holder < 0);
         bool mine        = (holder == mySlot);
+        bool offSide     = offSideAt(hover);
+        /* Nothing to do on an off-side start unless you are the host or
+         * already hold it — your own claim can still be dragged away. */
+        bool blocked     = offSide && !host && !mine;
         bool canGrab     = (holder >= 0) && (host || mine);  /* drag to move */
-        bool canClick    = free && mySlot >= 0;              /* click to choose */
+        bool canClick    = free && mySlot >= 0 && !blocked;  /* click to choose */
 
         ImGui::SetMouseCursor(canGrab  ? ImGuiMouseCursor_ResizeAll
                             : canClick ? ImGuiMouseCursor_Hand
                                        : ImGuiMouseCursor_Arrow);
 
         /* Tooltip reflects what's actually possible: no "click to choose"
-         * for a start someone else holds (left-click does nothing there). */
+         * for a start someone else holds (left-click does nothing there),
+         * and an off-side start says so in place of the usual text. */
         char tip[192];
         MessageArgs targs = {};
         targs.number = hover;
-        if (free) {
+        if (offSide) {
+            lobbyStartOffSideTip(cs, mySlot, host, hover, tip, sizeof(tip));
+        } else if (free) {
             SDL_snprintf(tip, sizeof(tip), "%s",
                          langGetTextFmt(host ? STR_STARTPICK_TIP_FREE_HOST
                                              : STR_STARTPICK_TIP_FREE, &targs));
@@ -395,16 +485,12 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
                          langGetTextFmt(host ? STR_STARTPICK_TIP_HELD_HOST
                                              : STR_STARTPICK_TIP_HELD, &targs));
         }
-        /* Hover tooltip ~75% transparent so it doesn't block the map. */
-        ImVec4 pbg = ImGui::GetStyleColorVec4(ImGuiCol_PopupBg); pbg.w *= 0.25f;
-        ImVec4 pbd = ImGui::GetStyleColorVec4(ImGuiCol_Border);  pbd.w *= 0.25f;
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, pbg);
-        ImGui::PushStyleColor(ImGuiCol_Border, pbd);
-        ImGui::SetTooltip("%s", tip);
-        ImGui::PopStyleColor(2);
+        translucentTooltip(tip);
 
-        /* Right-click opens the assign menu (edit permission). */
-        if (host && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        /* Right-click opens the menu: the host on any start, a holder on
+         * the start they hold. */
+        if ((host || (holder >= 0 && mine)) &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
             g_assignMenuStart = hover;
             ImGui::OpenPopup("##assignStart");
         }
@@ -424,37 +510,75 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
         }
     }
 
-    /* Assign menu: every connected tank in game, grouped by team with a
-     * divider between teams; entries you can't assign are disabled. */
+    /* Menu on a start. A held start leads with two entries for its holder:
+     * Team side hands the start back and has the server re-pick on the
+     * holder's side at once (Auto for a team with no side); Unassign frees
+     * it and leaves the holder unplaced until the next lobby event. Then,
+     * for the host, a separator and the assign list — every connected tank,
+     * grouped by team with a divider between teams, a player whose side
+     * rejects this start suffixed "(off-side)" but still assignable. A
+     * holder who is not the host sees only the two entries; on a free start
+     * only the host's list appears. */
     if (ImGui::BeginPopup("##assignStart")) {
-        int st = g_assignMenuStart;
-        bool occupied = (st >= 1 && startHolderSlot(cs, (BYTE)st) >= 0);
-        ImGui::TextDisabled("%s", langGetText(occupied ? STR_STARTPICK_SWAP_WITH
-                                                       : STR_STARTPICK_ASSIGN_TO));
-        ImGui::Separator();
-        bool firstGroup = true;
-        for (int team = 0; team <= 15; team++) {
-            bool groupOpened = false;
-            for (int k = 0; k < MAX_TANKS; k++) {
-                const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
-                if (!sl || !sl->connected) continue;
-                if ((int)sl->teamNumber != team) continue;
-                if (!groupOpened) {
-                    if (!firstGroup) ImGui::Separator();  /* HR between teams */
-                    firstGroup  = false;
-                    groupOpened = true;
+        int  st       = g_assignMenuStart;
+        int  holder   = (st >= 1) ? startHolderSlot(cs, (BYTE)st) : -1;
+        bool occupied = (holder >= 0);
+        if (occupied) {
+            BYTE holderSide = lobbyTeamSide(cs, lobbySlotTeam(cs, holder));
+            char actLbl[64];
+            if (startSideBits(holderSide) != 0) {
+                SDL_snprintf(actLbl, sizeof(actLbl), "%s \xC2\xB7 %s##teamSide",
+                             langGetText(STR_DLGLOBBY_START_TEAM_SIDE),
+                             langGetText(lobbySideCompassId(holderSide)));
+            } else {
+                SDL_snprintf(actLbl, sizeof(actLbl), "%s##teamSide",
+                             langGetText(STR_DLGLOBBY_START_AUTO));
+            }
+            if (ImGui::Selectable(actLbl)) {
+                clientSimNetSendLobbyClaimStart(cs, (BYTE)holder, START_CLAIM_TEAM_SIDE);
+                ImGui::CloseCurrentPopup();
+            }
+            SDL_snprintf(actLbl, sizeof(actLbl), "%s##unassign",
+                         langGetText(STR_DLGLOBBY_START_UNASSIGN));
+            if (ImGui::Selectable(actLbl)) {
+                clientSimNetSendLobbyClaimStart(cs, (BYTE)holder, 0xFF);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        if (host) {
+            if (occupied) ImGui::Separator();
+            ImGui::TextDisabled("%s", langGetText(occupied ? STR_STARTPICK_SWAP_WITH
+                                                           : STR_STARTPICK_ASSIGN_TO));
+            ImGui::Separator();
+            bool firstGroup = true;
+            for (int team = 0; team <= 15; team++) {
+                bool groupOpened = false;
+                for (int k = 0; k < MAX_TANKS; k++) {
+                    const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+                    if (!sl || !sl->connected) continue;
+                    if ((int)sl->teamNumber != team) continue;
+                    if (!groupOpened) {
+                        if (!firstGroup) ImGui::Separator();  /* HR between teams */
+                        firstGroup  = false;
+                        groupOpened = true;
+                    }
+                    /* The host may still hand out an off-side start; the
+                     * suffix says this player's side rejects it. */
+                    bool offSideFor = st >= 1 && st <= maskCount &&
+                                      lobbyStartOffSide(cs, team, masks[st]);
+                    char lbl[128];
+                    SDL_snprintf(lbl, sizeof(lbl), "%s%s%s##assign%d",
+                                 sl->playerName[0] ? sl->playerName
+                                     : langGetText(STR_STARTPICK_SLOT_FALLBACK),
+                                 offSideFor ? " " : "",
+                                 offSideFor ? langGetText(STR_DLGLOBBY_START_OFFSIDE_SUFFIX)
+                                            : "",
+                                 k);
+                    if (ImGui::Selectable(lbl) && st >= 1) {
+                        clientSimNetSendLobbyClaimStart(cs, (BYTE)k, (BYTE)st);
+                        ImGui::CloseCurrentPopup();
+                    }
                 }
-                bool allowed = host || k == mySlot;
-                char lbl[80];
-                SDL_snprintf(lbl, sizeof(lbl), "%s##assign%d",
-                             sl->playerName[0] ? sl->playerName
-                                 : langGetText(STR_STARTPICK_SLOT_FALLBACK), k);
-                if (!allowed) ImGui::BeginDisabled();
-                if (ImGui::Selectable(lbl) && st >= 1) {
-                    clientSimNetSendLobbyClaimStart(cs, (BYTE)k, (BYTE)st);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (!allowed) ImGui::EndDisabled();
             }
         }
         ImGui::EndPopup();
@@ -555,6 +679,11 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                  * activates a free start to claim. The map on the right is
                  * highlight-only — no wheel/drag/zoom input is fed. */
                 int startCount = mapPreviewViewGetStartCount(g_popupView);
+                /* The list applies the same side rules as the marker
+                 * overlay, so a start the pad cannot take reads off-side
+                 * in both places. */
+                BYTE listMasks[MAX_STARTS + 1] = {0};
+                startPickerSideMasks(listMasks);
                 /* NavFlattened so the list's rows live in the popup window's
                  * focus scope — the pad navigates straight into them and
                  * B/Escape still closes the popup in one press (no extra
@@ -563,7 +692,7 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                                   ImGuiChildFlags_NavFlattened);
                 int focusedStart = lobbyStartListRender(g_startPickerCs,
                                                         g_startPickerMySlot,
-                                                        startCount);
+                                                        startCount, listMasks);
                 ImGui::EndChild();
                 ImGui::SameLine();
                 ImVec2 imgMin = ImGui::GetCursorScreenPos();

@@ -424,6 +424,7 @@ struct ClientSim {
     uint8_t  lobbyTeamInUse[16];
     uint8_t  lobbyTeamColor[16];
     uint8_t  lobbyTeamPool[16];
+    uint8_t  lobbyTeamStartSide[16];    /* START_SIDE_* (start_sides.h) */
     char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
 
     uint8_t  lobbyBotDifficulty[16];
