@@ -810,6 +810,25 @@ bool voiceIsTransmitting(void) {
 }
 
 /*********************************************************
+*NAME:          voiceConnectionCarriesVoice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether the connection we are on carries this
+*  client's voice at all.  voiceTick settles it once a tick
+*  and this hands it back unchanged, so the game view's mute
+*  indicator can stay off a connection that would never have
+*  carried anything.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceConnectionCarriesVoice(void) {
+    return connectionCarriesVoice;
+}
+
+/*********************************************************
 *NAME:          voiceSetMicGain
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026

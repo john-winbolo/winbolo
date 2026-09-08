@@ -306,6 +306,18 @@ SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
 *  destroy. Returns NULL if the SVG could not be loaded.
 *********************************************************/
 SDL_Surface *sdl3ImguiGetMicIconSurface(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiGetMicMutedIconSurface
+*PURPOSE:
+*  Returns the rasterized muted-microphone icon as a
+*  renderer-free surface, for the game view's own mute
+*  indicator — the classic frame and the full screen HUD
+*  both draw it from C and texture it per renderer. Loads
+*  the SVG lazily on first call. Owned by this module; do
+*  not destroy. Returns NULL if the SVG could not be loaded.
+*********************************************************/
+SDL_Surface *sdl3ImguiGetMicMutedIconSurface(void);
 #endif
 
 /*********************************************************

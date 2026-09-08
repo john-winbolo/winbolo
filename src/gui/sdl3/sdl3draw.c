@@ -77,6 +77,9 @@
 #include "client_render.h"
 #include "macos_pinch.h"
 #include "../lang.h"
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"        /* own mute state for the microphone indicator */
+#endif
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
 #ifndef NO_SELECT
@@ -200,6 +203,51 @@ static bool               gOverviewPrepDrawHud  = FALSE;
    has nothing left to ask it. */
 static char               gOverviewPrepLabel[128];
 static bool               gOverviewPrepHaveLabel = FALSE;
+/* Whether the microphone indicator belongs on this frame and what it should
+   say, read from the voice module by the first half for the same reason. */
+static bool               gOverviewPrepVoiceWanted = FALSE;
+static bool               gOverviewPrepVoiceMuted  = FALSE;
+
+#if defined(WINBOLO_VOICE)
+/* The microphone indicator's two icons, textured on this window's renderer
+   from the surfaces sdl3imgui rasterizes. Cached here rather than rebuilt per
+   frame, and destroyed with the renderer's other textures. */
+static SDL_Texture *gMicIconTex      = NULL;
+static SDL_Texture *gMicMutedIconTex = NULL;
+
+/* Texture one of them on first use, the way tank_label.c does. No alpha mod
+   here: the callers set the colour and the opacity per draw. */
+static SDL_Texture *micIndicatorTex(bool muted) {
+  SDL_Texture **slot = muted ? &gMicMutedIconTex : &gMicIconTex;
+  if (*slot) return *slot;
+  if (!gRenderer) return NULL;
+  SDL_Surface *surf = muted ? sdl3ImguiGetMicMutedIconSurface()
+                            : sdl3ImguiGetMicIconSurface();
+  if (!surf) return NULL;
+  *slot = SDL_CreateTextureFromSurface(gRenderer, surf);
+  if (*slot) SDL_SetTextureBlendMode(*slot, SDL_BLENDMODE_BLEND);
+  return *slot;
+}
+
+/* The indicator itself, in the players panel's vocabulary: muted is the barred
+   microphone in the panel's red, live is the plain one held back so the player
+   learns where it is before they need it. opacity carries whatever the
+   panel around it is drawn at, so the icon fades with it. */
+static void micIndicatorDraw(const SDL_FRect *dst, bool muted, Uint8 opacity) {
+  SDL_Texture *tex = micIndicatorTex(muted);
+  if (!tex) return;
+  if (muted) {
+    SDL_SetTextureColorMod(tex, 255, 89, 89);
+    SDL_SetTextureAlphaMod(tex, opacity);
+  } else {
+    SDL_SetTextureColorMod(tex, 255, 255, 255);
+    SDL_SetTextureAlphaMod(tex, (Uint8)(((int)opacity * 102) / 255));
+  }
+  SDL_RenderTexture(gRenderer, tex, NULL, dst);
+  SDL_SetTextureColorMod(tex, 255, 255, 255);
+  SDL_SetTextureAlphaMod(tex, 255);
+}
+#endif
 
 /* The classic view's pill and base numbers, kept between frames. On this
    window's renderer, so it is this file's rather than the overview's — that
@@ -1614,6 +1662,10 @@ void sdl3DrawCleanup(void) {
   if (gStaticTex)        { SDL_DestroyTexture(gStaticTex);        gStaticTex        = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gHudSrcTex)        { SDL_DestroyTexture(gHudSrcTex);        gHudSrcTex        = NULL; }
+#if defined(WINBOLO_VOICE)
+  if (gMicIconTex)      { SDL_DestroyTexture(gMicIconTex);      gMicIconTex      = NULL; }
+  if (gMicMutedIconTex) { SDL_DestroyTexture(gMicMutedIconTex); gMicMutedIconTex = NULL; }
+#endif
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
@@ -1694,6 +1746,10 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
   tileLoaderCleanup();
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gManStatusTex) { SDL_DestroyTexture(gManStatusTex); gManStatusTex = NULL; }
+#if defined(WINBOLO_VOICE)
+  if (gMicIconTex)      { SDL_DestroyTexture(gMicIconTex);      gMicIconTex      = NULL; }
+  if (gMicMutedIconTex) { SDL_DestroyTexture(gMicMutedIconTex); gMicMutedIconTex = NULL; }
+#endif
 
   /* Destroy font resources — sdl3draw_status owns the per-zoom label
      and message texture caches; have it free those before we close
@@ -2017,6 +2073,17 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   if (!gOverviewSnapshot) gOverviewSnapshot = overviewSnapshotCreate();
   if (!gOverviewSnapshot) return;
 
+  /* The microphone row is only laid out on a connection that would carry
+     voice: on any other an indicator says nothing, and the column comes out a
+     row shorter rather than carrying a gap where one would have gone. */
+#if defined(WINBOLO_VOICE)
+  bool voiceWanted = voiceIsEnabled() && voiceConnectionCarriesVoice();
+  bool voiceMuted  = voiceIsSelfMuted();
+#else
+  bool voiceWanted = FALSE;
+  bool voiceMuted  = FALSE;
+#endif
+
   /* What the panels cover, before the draw that has to work around it: a tank
      respawning behind the newswire or under the status column is scrolled into
      the clear, and only the view knows when that has happened. The layout is
@@ -2029,7 +2096,7 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      it comes back up on the next message, and a tank parked in the strip it
      covers would be behind it as soon as anyone said anything. */
   OverviewHudLayout hud;
-  bool haveHud = overviewHudLayout(w, h, &hud);
+  bool haveHud = overviewHudLayout(w, h, voiceWanted, &hud);
   if (haveHud) {
     overviewViewSetHudInsets(gOverviewView,
                              hud.buildX + hud.buildW,
@@ -2056,6 +2123,9 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
       sdl3DrawGetItemViewLabel(cs, gOverviewPrepLabel,
                                sizeof(gOverviewPrepLabel));
 
+  gOverviewPrepVoiceWanted = voiceWanted;
+  gOverviewPrepVoiceMuted  = voiceMuted;
+
   gOverviewPrepW       = w;
   gOverviewPrepH       = h;
   gOverviewPrepMenuBar = menuBarHeight;
@@ -2078,6 +2148,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
   int   h             = gOverviewPrepH;
   float menuBarHeight = gOverviewPrepMenuBar;
   bool  drawHud       = gOverviewPrepDrawHud;
+  bool  voiceWanted   = gOverviewPrepVoiceWanted;
   OverviewHudLayout hud = gOverviewPrepHud;
 
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
@@ -2182,6 +2253,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
           continue;
         }
         if (i == OVERVIEW_HUD_MANSTATUS && !haveMan) continue;
+        if (i == OVERVIEW_HUD_VOICE && !voiceWanted) continue;
         pieces[n].x = originX + hud.el[i].dstX;
         pieces[n].y = originY + hud.el[i].dstY;
         pieces[n].w = hud.el[i].dstW;
@@ -2239,6 +2311,9 @@ void sdl3DrawFlushOverviewInWindow(void) {
          on pixel centres and grey where it straddled two. It is drawn below
          at the scale it is shown at instead. */
       if (i == OVERVIEW_HUD_MANSTATUS) continue;
+      /* The microphone carries no slice of the source frame — it is an icon
+         of its own, drawn below. */
+      if (i == OVERVIEW_HUD_VOICE) continue;
       /* A solid panel keeps the straight copy the classic panel blits use.
          A translucent one goes through the blend instead, where the source
          frame's own alpha — 255 everywhere it was drawn — leaves the mod to
@@ -2280,6 +2355,17 @@ void sdl3DrawFlushOverviewInWindow(void) {
       sdl3DrawManStatusShape(box.x, box.y, hud.scale, stroke, manDead,
                              manAngle, colAlpha);
     }
+
+#if defined(WINBOLO_VOICE)
+    /* Whether your own microphone is muted. Full screen has no menu bar, so
+       this is the only place the mute key has anything to show for itself. */
+    if (voiceWanted) {
+      const OverviewHudElement *e = &hud.el[OVERVIEW_HUD_VOICE];
+      SDL_FRect icon = { originX + e->dstX, originY + e->dstY,
+                         e->dstW, e->dstH };
+      micIndicatorDraw(&icon, gOverviewPrepVoiceMuted, colAlpha);
+    }
+#endif
 
     /* Back to how the rest of the frame draws, and how the next frame's
        source render expects to find it. */
@@ -2784,6 +2870,27 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
 
     sdl3RenderStatusPanels();
     sdl3RenderCachedText();
+
+#if defined(WINBOLO_VOICE)
+    /* Whether your own microphone is muted, in the flat grey band down the
+       right edge of the background art. Measured off background.bmp: x 497
+       to 514 inclusive is a solid 107,107,107 for the whole 325-line height,
+       the panel well's light bevel ends at 496 and nothing in positions.h
+       places anything past x 493, so the band is free. The icon takes 16 of
+       its 18 columns, a pixel clear either side, and is centred on the LGM
+       circle (MAN_STATUS_Y, MAN_STATUS_HEIGHT) so it reads as that row's
+       right-hand neighbour. */
+    if (voiceIsEnabled() && voiceConnectionCarriesVoice()) {
+      const int micSrcX = 498;
+      const int micSrcSize = 16;
+      const int micSrcY = MAN_STATUS_Y + (MAN_STATUS_HEIGHT - micSrcSize) / 2;
+      SDL_FRect icon = { (float)(micSrcX * gZoomFactor),
+                         (float)(micSrcY * gZoomFactor),
+                         (float)(micSrcSize * gZoomFactor),
+                         (float)(micSrcSize * gZoomFactor) };
+      micIndicatorDraw(&icon, voiceIsSelfMuted(), 255);
+    }
+#endif
   }
 
   sdl3DrawCountFrame();

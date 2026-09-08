@@ -227,6 +227,21 @@ bool voiceIsSelfMuted(void);
 bool voiceIsTransmitting(void);
 
 /*********************************************************
+*NAME:          voiceConnectionCarriesVoice
+*PURPOSE:
+*  Returns whether the connection we are on carries this
+*  client's voice at all - a transport that passes it, and
+*  not a viewer, whose voice does not reach the players.
+*  Refreshed once a tick by voiceTick. What the game view
+*  reads to decide whether a mute indicator means anything
+*  on this connection.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceConnectionCarriesVoice(void);
+
+/*********************************************************
 *NAME:          voiceReset
 *PURPOSE:
 *  Forgets every remote talker, releasing their decoders and
