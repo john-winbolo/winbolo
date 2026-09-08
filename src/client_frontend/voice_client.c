@@ -112,6 +112,17 @@
  * back, short enough that nobody is left waiting on it. */
 #define VOICE_MICTEST_FRAMES 150
 
+/* How long since the last mic status went to the server before it is sent
+ * again unchanged.  A command submitted before the transport reaches
+ * CONNECTED is discarded without a word, and the lobby is on screen calling
+ * voiceTick while the map is still downloading - which is exactly when the
+ * microphone first opens - so the report that matters is the one most likely
+ * to be lost.  Three seconds sits inside the ~5 s the server republishes
+ * lobby slots on (server_lifecycle.c), so a status put right here reaches
+ * every other client's row on the next republish, and it is quick enough
+ * that a lost report is corrected before a player reads the icon. */
+#define VOICE_STATE_REPORT_INTERVAL_MS 3000
+
 static bool isInitialised = false;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
@@ -197,12 +208,15 @@ static bool talkingStamped[MAX_TANKS];
  * configuration problem, not a per-frame event: say so once. */
 static bool warnedFrameTooLarge = false;
 
-/* Last mic status put on the wire, so the report only goes out on a change.
- * reportedState is cleared with the rest of the per-connection state, which
- * makes the first tick of the next connection re-report. */
+/* Last mic status put on the wire, and the clock reading it went out at: the
+ * report goes out the moment one of them changes, and again once the
+ * re-assert interval has passed with no change.  All four are cleared with
+ * the rest of the per-connection state, which makes the first tick of the
+ * next connection re-report. */
 static bool reportedState = false;
 static bool reportedHasMic = false;
 static bool reportedSelfMuted = false;
+static uint32_t reportedAtMs = 0;
 
 /*********************************************************
 *NAME:          captureIsWanted
@@ -504,6 +518,7 @@ void voiceReset(void) {
     reportedState = false;
     reportedHasMic = false;
     reportedSelfMuted = false;
+    reportedAtMs = 0;
     connectionCarriesVoice = false;
     wasCarryingVoice = false;
     wasSending = false;
@@ -1339,12 +1354,25 @@ static void voicePlayRemote(struct ClientSim *cs) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Tells the server this client's mic status, on the tick it
-*  changes.  A microphone is had once voice is up and a
-*  recording device has actually opened - asking for one that
-*  never came up is not having one.  Muted is having a
-*  microphone that cannot reach the wire, so the two never
-*  both read true.
+*  Tells the server this client's mic status: at once on the
+*  tick it changes, and again every
+*  VOICE_STATE_REPORT_INTERVAL_MS whether it has changed or
+*  not.  A microphone is had once voice is up and a recording
+*  device has actually opened - asking for one that never came
+*  up is not having one.  Muted is having a microphone that
+*  cannot reach the wire, so the two never both read true.
+*
+*  The repeat is what makes the status arrive at all.  A
+*  command submitted before the transport reaches CONNECTED is
+*  dropped without a word, and the lobby is on screen - and
+*  calling this - while the map is still downloading, which is
+*  where the first report of an open microphone lands.  Sent
+*  once, that report has nothing anywhere to correct it, and
+*  the player shows as having no microphone to every other
+*  client for the rest of the connection.  A re-send that
+*  matches what the slot already holds is dropped by the
+*  server without publishing anything, so repeating costs one
+*  small command on the reliable channel.
 *
 *ARGUMENTS:
 *  cs - the connected client
@@ -1352,6 +1380,7 @@ static void voicePlayRemote(struct ClientSim *cs) {
 void voiceReportState(struct ClientSim *cs) {
     bool hasMic;
     bool selfMuted;
+    uint32_t nowMs;
 
     if (cs == NULL) {
         return;
@@ -1366,8 +1395,12 @@ void voiceReportState(struct ClientSim *cs) {
     selfMuted = hasMic && (selfMuteRequested ||
                            !(voiceEnabled && voiceMode != VOICE_MODE_OFF));
 
+    /* Unsigned subtraction, so the interval still measures right across the
+     * clock's 32-bit wrap. */
+    nowMs = voiceBackendNowMs();
     if (reportedState && hasMic == reportedHasMic &&
-        selfMuted == reportedSelfMuted) {
+        selfMuted == reportedSelfMuted &&
+        (uint32_t)(nowMs - reportedAtMs) < VOICE_STATE_REPORT_INTERVAL_MS) {
         return;
     }
 
@@ -1375,6 +1408,7 @@ void voiceReportState(struct ClientSim *cs) {
     reportedState = true;
     reportedHasMic = hasMic;
     reportedSelfMuted = selfMuted;
+    reportedAtMs = nowMs;
 }
 
 /*********************************************************
