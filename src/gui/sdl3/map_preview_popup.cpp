@@ -679,6 +679,11 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                  * activates a free start to claim. The map on the right is
                  * highlight-only — no wheel/drag/zoom input is fed. */
                 int startCount = mapPreviewViewGetStartCount(g_popupView);
+                /* The list applies the same side rules as the marker
+                 * overlay, so a start the pad cannot take reads off-side
+                 * in both places. */
+                BYTE listMasks[MAX_STARTS + 1] = {0};
+                startPickerSideMasks(listMasks);
                 /* NavFlattened so the list's rows live in the popup window's
                  * focus scope — the pad navigates straight into them and
                  * B/Escape still closes the popup in one press (no extra
@@ -687,7 +692,7 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                                   ImGuiChildFlags_NavFlattened);
                 int focusedStart = lobbyStartListRender(g_startPickerCs,
                                                         g_startPickerMySlot,
-                                                        startCount);
+                                                        startCount, listMasks);
                 ImGui::EndChild();
                 ImGui::SameLine();
                 ImVec2 imgMin = ImGui::GetCursorScreenPos();
