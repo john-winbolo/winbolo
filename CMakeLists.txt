@@ -4002,6 +4002,7 @@ set(_unit_test_names
     fx_viewport_cull
     sound_event_codec
     sound_delivery_builder
+    sound_payload_shape
     view_rects_default_baseline
     view_rects_always_base_ally
     view_rects_off

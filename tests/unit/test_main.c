@@ -474,6 +474,7 @@ static const UnitTestEntry s_tests[] = {
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
     { "sound_event_codec",                       run_sound_event_codec                       },
     { "sound_delivery_builder",                  run_sound_delivery_builder                  },
+    { "sound_payload_shape",                     run_sound_payload_shape                     },
     { "view_rects_default_baseline",             run_view_rects_default_baseline             },
     { "view_rects_always_base_ally",             run_view_rects_always_base_ally             },
     { "view_rects_off",                          run_view_rects_off                          },

@@ -551,6 +551,15 @@ typedef struct {
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 
+/* The near/far tier and the coarse compass bearing a human recipient is sent in
+ * place of a sound's map square. Returns false when the sound is at or past
+ * SDIST_NONE on either axis — the range cull both delivery paths apply — and
+ * true when it is in range. *tier and *dir are written whatever it returns, so
+ * a caller that deliberately skips the range cull (a tank hit on the recipient
+ * itself) still has values to send. */
+bool soundTierAndDirection(int listenerMX, int listenerMY, int mx, int my,
+                           uint8_t *tier, uint8_t *dir);
+
 /* Per-client copies of the terrain (clientKnownMap above). Seed points a
  * slot's handle at its storage and copies the live map into it; SeedAll does
  * every slot. Called wherever the real map is installed or replaced — sim

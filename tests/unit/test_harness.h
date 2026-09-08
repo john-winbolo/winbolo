@@ -865,14 +865,16 @@ int run_two_clients_full_sync_independent(void);
 int run_fx_viewport_cull(void);
 
 /* Sound events (test_sound_delivery.c): the three sound events round-trip
- * through packGameEvent / unpackGameEvent with their four-byte
- * [soundId, mx, my, sourcePlayer] payload intact and nothing past it, and
- * serverSimBuildSnapshot's sound block culls by distance at SDIST_NONE, skips
- * a recipient's own shot, sends bubbles only to the player losing the ammo,
- * sends a tank hit to the player hit at any range, and delivers
- * manLayingMineNear along the listener's row out to SDIST_NONE. */
+ * through packGameEvent / unpackGameEvent with their four-byte payload intact
+ * and nothing past it; serverSimBuildSnapshot's sound block culls by distance
+ * at SDIST_NONE, skips a recipient's own shot, sends bubbles only to the player
+ * losing the ammo, sends a tank hit to the player hit at any range, and drops
+ * manLayingMineNear once its tier is far; and the delivered payload carries a
+ * tier and a compass direction for a human recipient — never the sound's map
+ * square, in or out of its viewport rects — while a bot keeps the square. */
 int run_sound_event_codec(void);
 int run_sound_delivery_builder(void);
+int run_sound_payload_shape(void);
 
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,

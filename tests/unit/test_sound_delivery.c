@@ -1,28 +1,32 @@
 /*
  * Sound events: wire payload and in-process delivery (test_sound_delivery.c).
  *
- * Nothing under tests/ reached EVENT_SOUND before this file. Two off-line
- * CODE-VERIFIABLE pins:
+ * Three off-line CODE-VERIFIABLE pins:
  *
  *   1. The three sound events — EVENT_SOUND, EVENT_SOUND_TANK_HIT and
- *      EVENT_SOUND_SHOOT — carry a four-byte [soundId, mx, my, sourcePlayer]
- *      payload that survives packGameEvent / unpackGameEvent unchanged, and
- *      nothing past those four bytes crosses.
+ *      EVENT_SOUND_SHOOT — carry a four-byte payload that survives
+ *      packGameEvent / unpackGameEvent unchanged, and nothing past those four
+ *      bytes crosses.
  *
  *   2. serverSimBuildSnapshot's sound block decides per recipient: sounds are
  *      culled by map-square distance at SDIST_NONE, a player's own shot is
- *      skipped, bubbles reach only the player losing the ammo, and a tank hit
- *      reaches the player hit whatever the range.
+ *      skipped, bubbles reach only the player losing the ammo, a tank hit
+ *      reaches the player hit whatever the range, and a near-only sound whose
+ *      tier came back far is not sent at all.
+ *
+ *   3. What the middle two payload bytes hold. A human recipient is sent a tier
+ *      and a compass bearing measured against its own tank, never the sound's
+ *      map square; a bot recipient is sent the square.
  *
  * The builder keeps the closest event of each sound id, so every arm stages its
  * own events and builds once. Where two events in the same build have to be
  * told apart in the result they are given different sound ids; where the arm is
  * about one of them being dropped before the dedup ever sees it, they share one.
  *
- * Both tests drive ut_make_running_sim (slot 0) plus a second human at slot 1,
- * position the slot-0 tank with tankSetWorld so the listener square is known,
- * and reach the sim's event buffer directly (the unittests profile permits
- * T2-internal access).
+ * The two builder tests drive ut_make_running_sim (slot 0) plus a second human
+ * at slot 1, position the slot-0 tank with tankSetWorld so the listener square
+ * is known, and reach the sim's event buffer directly (the unittests profile
+ * permits T2-internal access).
  */
 
 #include <string.h>
@@ -33,6 +37,7 @@
 #include "game_sim.h"               /* GameSim.tanks */
 #include "tank.h"                   /* tankSetWorld */
 #include "client_enums.h"           /* sndEffects — bubbles, manLayingMineNear */
+#include "view_policy.h"            /* viewCategory* / viewPolicyOff */
 #include "sounddist.h"              /* SDIST_SOFT / SDIST_NONE */
 #include "input_packet.h"
 #include "transport_udp_internal.h" /* packGameEvent / unpackGameEvent */
@@ -43,8 +48,10 @@
 #define SD_LISTENER_MX 100
 #define SD_LISTENER_MY 100
 
-/* Gaps the arms use, in map squares: inside SDIST_NONE, past it, and far
- * enough past it that only the tank-hit-to-self path can carry a sound. */
+/* Gaps the arms use, in map squares: inside SDIST_SOFT, inside SDIST_NONE but
+ * past SDIST_SOFT, past SDIST_NONE, and far enough past it that only the
+ * tank-hit-to-self path can carry a sound. */
+#define SD_GAP_NEAR   10
 #define SD_GAP_HEARD  30
 #define SD_GAP_SILENT 45
 #define SD_GAP_FAR    60
@@ -339,34 +346,271 @@ int run_sound_delivery_builder(void) {
                       "%d event(s)", sdCountSounds(ev, n), n);
     }
 
-    /* ---- manLayingMineNear on the listener's row ------------------------- */
-    /* The builder culls every sound by distance alone, so a mine being laid
-     * SD_GAP_HEARD squares along the listener's row is inside SDIST_NONE and is
-     * delivered. What the listener then hears is decided in clientSoundDist,
-     * whose rule for this one sound is gapX <= SDIST_SOFT || gapY <= SDIST_SOFT
-     * (sounddist.c:164) — an OR where bubbles, the other near-only sound, uses
-     * AND (sounddist.c:117) — so a zero Y gap makes it play at near volume the
-     * whole way out. This arm pins that reach as it stands. */
+    /* ---- manLayingMineNear reaches the near tier only -------------------- */
+    /* manLayingMineNear and bubbles have no far variant, so a far one would be
+     * silence at the recipient. The builder drops those two for a human
+     * recipient once the tier comes back far, whatever axis the gap is on: a
+     * mine laid SD_GAP_HEARD squares along the listener's row is past
+     * SDIST_SOFT and is not sent, one at SD_GAP_NEAR is inside it and is. */
     {
-        const BYTE mineMX = (BYTE)(SD_LISTENER_MX + SD_GAP_HEARD);
+        const BYTE farMineMX  = (BYTE)(SD_LISTENER_MX + SD_GAP_HEARD);
+        const BYTE nearMineMX = (BYTE)(SD_LISTENER_MX + SD_GAP_NEAR);
 
         sdResetEvents(sim);
-        sdAddSound(sim, EVENT_SOUND, (uint8_t)manLayingMineNear, mineMX,
+        sdAddSound(sim, EVENT_SOUND, (uint8_t)manLayingMineNear, farMineMX,
+                   SD_LISTENER_MY, 1);
+        n = sdBuild(sim, 0, ev);
+
+        UT_ASSERT_MSG(sdFind(ev, n, EVENT_SOUND,
+                             (uint8_t)manLayingMineNear) == NULL,
+                      "manLayingMineNear at %u,%u (%d squares along the "
+                      "listener's row from %u,%u, past SDIST_SOFT %d) was "
+                      "delivered — it has no far variant, so a far one is "
+                      "silence; %d event(s) came back, %d of them sound(s)",
+                      (unsigned)farMineMX, (unsigned)SD_LISTENER_MY,
+                      SD_GAP_HEARD, (unsigned)SD_LISTENER_MX,
+                      (unsigned)SD_LISTENER_MY, SDIST_SOFT, n,
+                      sdCountSounds(ev, n));
+
+        sdResetEvents(sim);
+        sdAddSound(sim, EVENT_SOUND, (uint8_t)manLayingMineNear, nearMineMX,
                    SD_LISTENER_MY, 1);
         n = sdBuild(sim, 0, ev);
 
         hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)manLayingMineNear);
         UT_ASSERT_MSG(hit != NULL,
                       "manLayingMineNear at %u,%u (%d squares along the "
-                      "listener's row from %u,%u, Y gap 0) was not delivered — "
-                      "%d event(s) came back, %d of them sound(s)",
-                      (unsigned)mineMX, (unsigned)SD_LISTENER_MY, SD_GAP_HEARD,
-                      (unsigned)SD_LISTENER_MX, (unsigned)SD_LISTENER_MY, n,
+                      "listener's row from %u,%u, inside SDIST_SOFT %d) was not "
+                      "delivered — %d event(s) came back, %d of them sound(s)",
+                      (unsigned)nearMineMX, (unsigned)SD_LISTENER_MY,
+                      SD_GAP_NEAR, (unsigned)SD_LISTENER_MX,
+                      (unsigned)SD_LISTENER_MY, SDIST_SOFT, n,
                       sdCountSounds(ev, n));
-        UT_ASSERT_MSG(hit->data[1] == mineMX && hit->data[2] == SD_LISTENER_MY,
-                      "manLayingMineNear came back for square %u,%u, staged at "
-                      "%u,%u", hit->data[1], hit->data[2], (unsigned)mineMX,
-                      (unsigned)SD_LISTENER_MY);
+        UT_ASSERT_MSG(hit->data[1] == SOUND_TIER_NEAR,
+                      "manLayingMineNear %d squares away came back tier %u, "
+                      "expected SOUND_TIER_NEAR (%d)", SD_GAP_NEAR,
+                      hit->data[1], SOUND_TIER_NEAR);
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 3. The two payload shapes: what a human recipient is sent in data[1]/data[2]
+ *    and what a bot is sent. Same fixture as the delivery arms — a listener at
+ *    slot 0, a second player at slot 1, both parked on the listener square. */
+int run_sound_payload_shape(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    GameSim *gs;
+    GameEvent ev[MAX_SNAPSHOT_EVENTS];
+    const GameEvent *hit;
+    ViewportRect vps[MAX_VIEWPORTS];
+    WORLD lwx = 0, lwy = 0;
+    int c, n, nvp;
+
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(gs->tanks[0] != NULL && gs->tanks[1] != NULL,
+                  "slot-0/slot-1 tanks not both valid for positioning");
+
+    {
+        WORLD wx = (WORLD)(((int)SD_LISTENER_MX << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+        WORLD wy = (WORLD)(((int)SD_LISTENER_MY << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+        tankSetWorld(gs, &gs->tanks[0], wx, wy, 0, false);
+        tankSetWorld(gs, &gs->tanks[1], wx, wy, 0, false);
+    }
+    UT_ASSERT_MSG(serverSimGetTankState(sim, 0, &lwx, &lwy),
+                  "no tank state for the slot-0 listener");
+    UT_ASSERT_MSG((BYTE)(lwx >> 8) == SD_LISTENER_MX &&
+                  (BYTE)(lwy >> 8) == SD_LISTENER_MY,
+                  "listener sits at %u,%u, expected %u,%u",
+                  (unsigned)(BYTE)(lwx >> 8), (unsigned)(BYTE)(lwy >> 8),
+                  (unsigned)SD_LISTENER_MX, (unsigned)SD_LISTENER_MY);
+
+    /* ---- Tier boundary at SDIST_SOFT ------------------------------------- */
+    /* bigExplosionNear has a far variant, so neither side of the boundary is
+     * dropped and both come back to be read. One build per case: the two share
+     * a sound id and the dedup would otherwise keep only the nearer. */
+    {
+        static const struct {
+            int         gap;
+            uint8_t     tier;
+            const char *name;
+        } cases[] = {
+            { SDIST_SOFT,     SOUND_TIER_NEAR, "SOUND_TIER_NEAR" },
+            { SDIST_SOFT + 1, SOUND_TIER_FAR,  "SOUND_TIER_FAR"  },
+        };
+
+        for (c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
+            const BYTE soundMX = (BYTE)(SD_LISTENER_MX + cases[c].gap);
+
+            sdResetEvents(sim);
+            sdAddSound(sim, EVENT_SOUND, (uint8_t)bigExplosionNear, soundMX,
+                       SD_LISTENER_MY, 1);
+            n = sdBuild(sim, 0, ev);
+
+            hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)bigExplosionNear);
+            UT_ASSERT_MSG(hit != NULL,
+                          "a sound %d squares along the listener's row was not "
+                          "delivered — %d event(s) came back, %d of them "
+                          "sound(s)", cases[c].gap, n, sdCountSounds(ev, n));
+            UT_ASSERT_MSG(hit->data[1] == cases[c].tier,
+                          "a sound %d squares from the listener (SDIST_SOFT is "
+                          "%d) came back tier %u, expected %s (%u)",
+                          cases[c].gap, SDIST_SOFT, hit->data[1],
+                          cases[c].name, cases[c].tier);
+        }
+    }
+
+    /* ---- Direction, map-absolute with Y increasing southward -------------- */
+    /* Axis cases have one component zero and diagonals equal magnitudes, so
+     * each sits in the middle of its sector rather than on a boundary. */
+    {
+        static const struct {
+            int         dx, dy;
+            uint8_t     dir;
+            const char *name;
+        } cases[] = {
+            {            0, -SD_GAP_NEAR, SOUND_DIR_N,      "SOUND_DIR_N"      },
+            {  SD_GAP_NEAR, -SD_GAP_NEAR, SOUND_DIR_NE,     "SOUND_DIR_NE"     },
+            {  SD_GAP_NEAR,            0, SOUND_DIR_E,      "SOUND_DIR_E"      },
+            {  SD_GAP_NEAR,  SD_GAP_NEAR, SOUND_DIR_SE,     "SOUND_DIR_SE"     },
+            {            0,  SD_GAP_NEAR, SOUND_DIR_S,      "SOUND_DIR_S"      },
+            { -SD_GAP_NEAR,  SD_GAP_NEAR, SOUND_DIR_SW,     "SOUND_DIR_SW"     },
+            { -SD_GAP_NEAR,            0, SOUND_DIR_W,      "SOUND_DIR_W"      },
+            { -SD_GAP_NEAR, -SD_GAP_NEAR, SOUND_DIR_NW,     "SOUND_DIR_NW"     },
+            {            0,            0, SOUND_DIR_CENTRE, "SOUND_DIR_CENTRE" },
+        };
+
+        for (c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
+            const BYTE soundMX = (BYTE)(SD_LISTENER_MX + cases[c].dx);
+            const BYTE soundMY = (BYTE)(SD_LISTENER_MY + cases[c].dy);
+
+            sdResetEvents(sim);
+            sdAddSound(sim, EVENT_SOUND, (uint8_t)bigExplosionNear, soundMX,
+                       soundMY, 1);
+            n = sdBuild(sim, 0, ev);
+
+            hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)bigExplosionNear);
+            UT_ASSERT_MSG(hit != NULL,
+                          "a sound at %u,%u, %d,%d from the listener at %u,%u, "
+                          "was not delivered — %d event(s) came back, %d of "
+                          "them sound(s)", (unsigned)soundMX, (unsigned)soundMY,
+                          cases[c].dx, cases[c].dy, (unsigned)SD_LISTENER_MX,
+                          (unsigned)SD_LISTENER_MY, n, sdCountSounds(ev, n));
+            UT_ASSERT_MSG(hit->data[2] == cases[c].dir,
+                          "a sound %d,%d from the listener came back direction "
+                          "%u, expected %s (%u) — map Y increases southward",
+                          cases[c].dx, cases[c].dy, hit->data[2],
+                          cases[c].name, cases[c].dir);
+        }
+    }
+
+    /* ---- No map square reaches a human, in or out of its rects ------------ */
+    /* The rect set decides nothing about sound any more, so both arms have to
+     * hold. With every view category off the recipient's only rect is its own
+     * tank screen, which makes the in/out claims exact — a pill the map happens
+     * to own near the far square would otherwise grant a rect around it. */
+    {
+        static const struct {
+            int         gap;
+            const char *where;
+        } cases[] = {
+            { SD_GAP_NEAR,  "inside"  },
+            { SD_GAP_HEARD, "outside" },
+        };
+
+        serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyOff,
+                               VIEW_DECAY_DEFAULT_SECS);
+        serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff,
+                               VIEW_DECAY_DEFAULT_SECS);
+        serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyOff,
+                               VIEW_DECAY_DEFAULT_SECS);
+
+        nvp = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
+        UT_ASSERT_MSG(nvp == 1,
+                      "the listener has %d viewport rect(s), expected 1 (its "
+                      "own tank screen) — the in/out arms below would prove "
+                      "nothing", nvp);
+
+        for (c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
+            const BYTE soundMX = (BYTE)(SD_LISTENER_MX + cases[c].gap);
+            const bool wantIn = (c == 0);
+
+            UT_ASSERT_MSG(inAnyViewport(vps, nvp, soundMX, SD_LISTENER_MY) ==
+                          wantIn,
+                          "the square %u,%u, %d from the listener at %u,%u, is "
+                          "not %s its rect — the arm proves nothing",
+                          (unsigned)soundMX, (unsigned)SD_LISTENER_MY,
+                          cases[c].gap, (unsigned)SD_LISTENER_MX,
+                          (unsigned)SD_LISTENER_MY, cases[c].where);
+
+            sdResetEvents(sim);
+            sdAddSound(sim, EVENT_SOUND, (uint8_t)bigExplosionNear, soundMX,
+                       SD_LISTENER_MY, 1);
+            n = sdBuild(sim, 0, ev);
+
+            hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)bigExplosionNear);
+            UT_ASSERT_MSG(hit != NULL,
+                          "a sound at %u,%u, %s the listener's rect and inside "
+                          "SDIST_NONE %d, was not delivered — %d event(s) came "
+                          "back, %d of them sound(s)", (unsigned)soundMX,
+                          (unsigned)SD_LISTENER_MY, cases[c].where, SDIST_NONE,
+                          n, sdCountSounds(ev, n));
+            UT_ASSERT_MSG(hit->data[1] != soundMX,
+                          "a sound staged at %u,%u, %s the listener's rect, "
+                          "came back carrying its own map X in data[1]",
+                          (unsigned)soundMX, (unsigned)SD_LISTENER_MY,
+                          cases[c].where);
+            UT_ASSERT_MSG(hit->data[2] != SD_LISTENER_MY,
+                          "a sound staged at %u,%u, %s the listener's rect, "
+                          "came back carrying its own map Y in data[2]",
+                          (unsigned)soundMX, (unsigned)SD_LISTENER_MY,
+                          cases[c].where);
+            UT_ASSERT_MSG(hit->data[1] <= SOUND_TIER_FAR,
+                          "a sound %s the listener's rect came back with %u in "
+                          "data[1]; the tier runs to SOUND_TIER_FAR (%d)",
+                          cases[c].where, hit->data[1], SOUND_TIER_FAR);
+            UT_ASSERT_MSG(hit->data[2] <= SOUND_DIR_NW,
+                          "a sound %s the listener's rect came back with %u in "
+                          "data[2]; the direction runs to SOUND_DIR_NW (%d)",
+                          cases[c].where, hit->data[2], SOUND_DIR_NW);
+        }
+    }
+
+    /* ---- A bot recipient keeps the map square ---------------------------- */
+    /* serverSimIsBot reads sim->botMgr.bots[slot].active and nothing else, so
+     * slot 1 is turned into a bot by setting that flag. serverSimAddBot is not
+     * an option here: it wants a real brain file, and the unit tests stub the
+     * Lua brain entry points out entirely (test_stubs.c). No tick runs while
+     * the flag is set, so the snapshot build below is its only reader. */
+    {
+        const BYTE soundMX = (BYTE)(SD_LISTENER_MX + SD_GAP_NEAR);
+
+        sim->botMgr.bots[1].active = true;
+
+        sdResetEvents(sim);
+        sdAddSound(sim, EVENT_SOUND, (uint8_t)bigExplosionNear, soundMX,
+                   SD_LISTENER_MY, 0);
+        n = sdBuild(sim, 1, ev);
+        hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)bigExplosionNear);
+
+        sim->botMgr.bots[1].active = false;
+
+        UT_ASSERT_MSG(hit != NULL,
+                      "a sound at %u,%u, %d squares from the bot at %u,%u, was "
+                      "not delivered — %d event(s) came back, %d of them "
+                      "sound(s)", (unsigned)soundMX, (unsigned)SD_LISTENER_MY,
+                      SD_GAP_NEAR, (unsigned)SD_LISTENER_MX,
+                      (unsigned)SD_LISTENER_MY, n, sdCountSounds(ev, n));
+        UT_ASSERT_MSG(hit->data[1] == soundMX && hit->data[2] == SD_LISTENER_MY,
+                      "a bot was sent %u,%u for a sound staged at %u,%u — a bot "
+                      "keeps the square, only a human is sent a tier and a "
+                      "direction", hit->data[1], hit->data[2],
+                      (unsigned)soundMX, (unsigned)SD_LISTENER_MY);
     }
 
     serverSimDestroy(sim);
