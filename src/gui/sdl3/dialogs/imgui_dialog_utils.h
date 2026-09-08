@@ -413,6 +413,41 @@ static inline void imguiHelpTooltip(const char *text) {
         ImGui::SetTooltip("%s", text);
 }
 
+/* ── Per-image texture sampling ─────────────────────────────────────
+ * SDL_SetTextureScaleMode() on a texture is IGNORED for anything drawn
+ * through ImGui::Image: the SDL_Renderer backend overwrites the scale
+ * mode of every texture it binds, every draw command, from its own
+ * per-frame state —
+ *
+ *     SDL_SetTextureScaleMode(tex, bd->CurrentScaleMode);
+ *
+ * (imgui_impl_sdlrenderer3.cpp) — and that state is reset to
+ * SDL_SCALEMODE_LINEAR at the top of every render pass. The supported
+ * way to get point sampling is the backend's standard sampler draw
+ * callbacks, which it publishes in the platform IO.
+ *
+ * Bracket a magnified pixel-art Image with these: tile art blown up
+ * several times over turns to mush under bilinear, and everything drawn
+ * after it (glyphs especially) needs LINEAR back. Both no-op when the
+ * active backend publishes no callbacks. */
+/* The pair on a named list, for art that is not drawn into the current
+ * window's list — the tablet HUD builds its buttons on the foreground
+ * list, and a callback added to the window list would not bracket them. */
+static inline void imguiPushNearestSamplingOn(ImDrawList *dl) {
+    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerNearest;
+    if (cb && dl) dl->AddCallback(cb, NULL);
+}
+static inline void imguiPopNearestSamplingOn(ImDrawList *dl) {
+    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerLinear;
+    if (cb && dl) dl->AddCallback(cb, NULL);
+}
+static inline void imguiPushNearestSampling(void) {
+    imguiPushNearestSamplingOn(ImGui::GetWindowDrawList());
+}
+static inline void imguiPopNearestSampling(void) {
+    imguiPopNearestSamplingOn(ImGui::GetWindowDrawList());
+}
+
 /* The game's tile atlas, owned by the SDL3 renderer. Declared here rather
  * than including sdl3draw.h, which would pull the whole render/sim surface
  * into every dialog translation unit. Non-game builds that include this
@@ -440,7 +475,15 @@ static inline void imguiDrawAtlasIcon(int srcX, int srcY, int srcW, int srcH) {
     ImVec2 uv0((float)srcX / TILE_FILE_X, (float)srcY / TILE_FILE_Y);
     ImVec2 uv1((float)(srcX + srcW) / TILE_FILE_X,
                (float)(srcY + srcH) / TILE_FILE_Y);
+    /* This is the game's live sheet, not a copy, and the backend leaves
+       whatever sampler it bound with on it.  Without the bracket, one dialog
+       carrying an icon leaves the map itself drawing through LINEAR for the
+       rest of the session; sdl3DrawAssertTilesSampler puts it back each
+       frame, and this keeps it from going wrong in the first place — the
+       icons are pixel art at text height and want point sampling anyway. */
+    imguiPushNearestSampling();
     ImGui::Image((ImTextureID)tex, ImVec2(w, h), uv0, uv1);
+    imguiPopNearestSampling();
 }
 
 /* A whole 16x16 map tile — the common case, square at text height. */
@@ -699,32 +742,6 @@ extern int g_currentDevicePreset;
 #ifdef __cplusplus
 }
 #endif
-
-/* ── Per-image texture sampling ─────────────────────────────────────
- * SDL_SetTextureScaleMode() on a texture is IGNORED for anything drawn
- * through ImGui::Image: the SDL_Renderer backend overwrites the scale
- * mode of every texture it binds, every draw command, from its own
- * per-frame state —
- *
- *     SDL_SetTextureScaleMode(tex, bd->CurrentScaleMode);
- *
- * (imgui_impl_sdlrenderer3.cpp) — and that state is reset to
- * SDL_SCALEMODE_LINEAR at the top of every render pass. The supported
- * way to get point sampling is the backend's standard sampler draw
- * callbacks, which it publishes in the platform IO.
- *
- * Bracket a magnified pixel-art Image with these: tile art blown up
- * several times over turns to mush under bilinear, and everything drawn
- * after it (glyphs especially) needs LINEAR back. Both no-op when the
- * active backend publishes no callbacks. */
-static inline void imguiPushNearestSampling(void) {
-    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerNearest;
-    if (cb) ImGui::GetWindowDrawList()->AddCallback(cb, NULL);
-}
-static inline void imguiPopNearestSampling(void) {
-    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerLinear;
-    if (cb) ImGui::GetWindowDrawList()->AddCallback(cb, NULL);
-}
 
 /* Set dialog window size; only re-center if the size actually changed.
  * If a device preset is active, uses the preset dimensions instead.

@@ -543,6 +543,28 @@ void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode) {
   }
 }
 
+/* Put the player's Texture Filter back on the sheet at the top of a frame.
+ *
+ * The sampler is texture state, and ImGui's SDL3 renderer backend sets it on
+ * every texture it binds - to LINEAR unless a draw callback says otherwise -
+ * without restoring what was there.  Several dialogs draw map sprites
+ * straight out of this atlas (the Skins tab's preview strip, the lobby
+ * recap), so one visit to any of them leaves the game's own drawing on a
+ * filter the player did not choose for the rest of the session, and no
+ * amount of setting it at load time survives that.
+ *
+ * Cheap enough to do unconditionally: SDL_SetTextureScaleMode stores a field.
+ * The map editor re-asserts its own atlas the same way and for the same
+ * reason, and the full screen map does it inside
+ * overviewViewRenderOffscreen; this is the classic view's turn.  Read from
+ * the setting rather than from gTilesScaleMode so the player's choice stays
+ * the single answer to what the filter is. */
+static void sdl3DrawAssertTilesSampler(void) {
+  if (gTilesTex == NULL) return;
+  SDL_SetTextureScaleMode(gTilesTex,
+                          sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+}
+
 /* Rebuilds only the tile atlas in place (for a skin change) by re-reading
  * the skin assets from disk.  Does not touch the renderer, window, fonts,
  * or zoom.  Bumps the generation whether or not the build succeeds: the art
@@ -581,7 +603,7 @@ static SDL_Texture *sdl3LoadSkinBmpTexture(SkinSource *skin, const char *name) {
   SDL_IOStream *io = SDL_IOFromMem(buf, len);
   if (io != NULL) {
     /* closeio closes the stream, not the bytes behind it. */
-    tex = sdlLoadBmpStreamAsTexture(gRenderer, io, true, false);
+    tex = sdlLoadBmpStreamAsTexture(gRenderer, io, true);
   }
   SDL_free(buf);
   return tex;
@@ -612,7 +634,7 @@ static bool sdl3LoadBackground(void) {
     if (!basePath) basePath = "";
     char pathBuf[512];
     SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/background.bmp", basePath);
-    gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, pathBuf, false);
+    gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, pathBuf);
   }
 
   if (gBackgroundTex == NULL) {
@@ -2338,6 +2360,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     return;
   }
 
+  sdl3DrawAssertTilesSampler();
+
   /* Held for the returning-to-lobby frame, which redraws the map with no
      arguments of its own. */
   gLastPillLabels = showPillLabels;
@@ -2860,6 +2884,8 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
                        bool showPillsStatus, bool showBasesStatus) {
   (void)rcWindow;
   if (gRenderer == NULL) return;
+
+  sdl3DrawAssertTilesSampler();
 
   /* The in-window overview redraws the whole window from sim state every
      frame, so a full repaint has nothing to add — and the classic chrome it

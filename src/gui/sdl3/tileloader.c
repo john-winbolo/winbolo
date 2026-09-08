@@ -819,6 +819,126 @@ static void applySheetKey(SDL_Surface *rgba, int density) {
     makeStatusSlotsOpaque(rgba, density);
 }
 
+/* How far the sprite's colour is carried out into the transparent texels
+ * around it.  Bilinear reads a 2x2 block, so one ring is what a sample
+ * straddling the edge can actually reach; the second is slack for a sampler
+ * that reads wider, and costs one more pass over slots that are mostly
+ * transparent anyway. */
+#define SHEET_BLEED_PASSES 2
+
+void tileLoaderBleedEdges(SDL_Surface *rgba, const SDL_Rect *clip) {
+    if (!rgba || !rgba->pixels) return;
+    /* Byte order matters here — the loop indexes channels directly — so this
+       takes the same guard reduceSheetSprite does rather than trusting the
+       caller. */
+    if (rgba->format != SDL_PIXELFORMAT_RGBA32) return;
+
+    int x0 = 0, y0 = 0, x1 = rgba->w, y1 = rgba->h;
+    if (clip) {
+        x0 = clip->x;         y0 = clip->y;
+        x1 = clip->x + clip->w; y1 = clip->y + clip->h;
+    }
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > rgba->w) x1 = rgba->w;
+    if (y1 > rgba->h) y1 = rgba->h;
+
+    int w = x1 - x0, h = y1 - y0;
+    if (w < 1 || h < 1) return;
+
+    /* Which texels hold a colour worth spreading.  Starts as "has alpha" and
+       grows by one ring per pass; a texel filled this pass is not a source
+       until the next one, so a pass cannot chase its own output across the
+       slot. */
+    size_t cells = (size_t)w * (size_t)h;
+    bool *filled = (bool *)SDL_malloc(cells * sizeof(bool));
+    bool *wrote  = (bool *)SDL_malloc(cells * sizeof(bool));
+    if (!filled || !wrote) {
+        SDL_free(filled);
+        SDL_free(wrote);
+        return;
+    }
+
+    for (int y = 0; y < h; y++) {
+        const unsigned char *row = (const unsigned char *)rgba->pixels +
+                                   (size_t)(y0 + y) * (size_t)rgba->pitch;
+        for (int x = 0; x < w; x++) {
+            filled[(size_t)y * (size_t)w + x] = (row[(size_t)(x0 + x) * 4 + 3] != 0);
+        }
+    }
+
+    for (int pass = 0; pass < SHEET_BLEED_PASSES; pass++) {
+        bool grew = false;
+        SDL_memset(wrote, 0, cells * sizeof(bool));
+
+        for (int y = 0; y < h; y++) {
+            unsigned char *row = (unsigned char *)rgba->pixels +
+                                 (size_t)(y0 + y) * (size_t)rgba->pitch;
+            for (int x = 0; x < w; x++) {
+                if (filled[(size_t)y * (size_t)w + x]) continue;
+
+                unsigned int sumR = 0, sumG = 0, sumB = 0, n = 0;
+                for (int dy = -1; dy <= 1; dy++) {
+                    int ny = y + dy;
+                    if (ny < 0 || ny >= h) continue;
+                    const unsigned char *nRow =
+                        (const unsigned char *)rgba->pixels +
+                        (size_t)(y0 + ny) * (size_t)rgba->pitch;
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int nx = x + dx;
+                        if (nx < 0 || nx >= w) continue;
+                        /* Only inside the clip: the atlas packs its sprites
+                           edge to edge, so reaching past it would bleed the
+                           neighbouring sprite in. */
+                        if (!filled[(size_t)ny * (size_t)w + nx]) continue;
+                        const unsigned char *p = nRow + (size_t)(x0 + nx) * 4;
+                        sumR += p[0]; sumG += p[1]; sumB += p[2];
+                        n++;
+                    }
+                }
+                if (n == 0) continue;
+
+                unsigned char *d = row + (size_t)(x0 + x) * 4;
+                d[0] = (unsigned char)(sumR / n);
+                d[1] = (unsigned char)(sumG / n);
+                d[2] = (unsigned char)(sumB / n);
+                /* d[3] stays 0: this changes what a blend finds, never what
+                   the sprite covers. */
+                wrote[(size_t)y * (size_t)w + x] = true;
+                grew = true;
+            }
+        }
+
+        if (!grew) break;
+
+        /* Fold this pass's ring in only now the pass is complete, so a texel
+           written this pass cannot also have been a source for it. Reading
+           and marking in one sweep would let the fill chase itself across the
+           slot in a single pass instead of advancing one ring. */
+        for (size_t i = 0; i < cells; i++) {
+            if (wrote[i]) filled[i] = true;
+        }
+    }
+
+    /* Whatever the passes could not reach is further from the sprite than any
+       sampler reads, so its colour never shows.  Clearing it is what lets the
+       sheet be checked with one rule — no transparent texel holds the key
+       colour — rather than one that has to know how far the bleed got. */
+    for (int y = 0; y < h; y++) {
+        unsigned char *row = (unsigned char *)rgba->pixels +
+                             (size_t)(y0 + y) * (size_t)rgba->pitch;
+        for (int x = 0; x < w; x++) {
+            unsigned char *p = row + (size_t)(x0 + x) * 4;
+            if (p[3] == 0 && !filled[(size_t)y * (size_t)w + x]) {
+                p[0] = p[1] = p[2] = 0;
+            }
+        }
+    }
+
+    SDL_free(filled);
+    SDL_free(wrote);
+}
+
 /* Convert a freshly loaded sheet BMP to RGBA32.  Nothing is made
  * transparent here: applySheetKey does that once the caller knows the
  * multiple the sheet is drawn at.  Consumes `raw`; NULL in gives NULL
@@ -1179,6 +1299,31 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
             }
         }
         SDL_free(frame0);
+    }
+
+    /* Every slot is final, so take the colour out from under the transparency.
+       A fully transparent texel still carries whatever RGB its source left
+       there: the PNGs under data/svg store the key colour under alpha 0, and
+       the BMP path blends the key away to black.  Either way a sampler that
+       reads across a sprite's edge mixes that colour into the edge — the
+       green outline a tank wears under Linear or Pixel Art filtering, and the
+       dark one the map editor's canvas showed between tiles.  Bleeding the
+       sprite's own colour outward instead makes the edge blend to itself
+       whatever the sampler.
+
+       Per slot rather than over the whole sheet: the slots are packed edge to
+       edge — pillbox_good_10 sits directly on top of tank_evil_05 — so one
+       pass over everything would bleed each sprite into its neighbours, which
+       is the problem this is here to avoid.
+
+       After makeStatusSlotsOpaque, which leaves no transparent texel in a
+       status slot for this to reach.  Those icons are drawn in the key colour
+       and have to keep it. */
+    for (int i = 0; gTileMap[i].name != NULL; i++) {
+        const TileMapEntry *e = &gTileMap[i];
+        SDL_Rect slot = { e->sheetX * scale, e->sheetY * scale,
+                          e->width * scale, e->height * scale };
+        tileLoaderBleedEdges(sheet, &slot);
     }
 
     WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, tile detail=%s, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d @Nx, %d sheet sprites from a density %d sheet, %d slots filled by rotation",
