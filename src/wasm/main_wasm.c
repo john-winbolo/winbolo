@@ -879,6 +879,22 @@ void windowSetMasterVolume(int pct) {
   voiceSetMasterVolume((float)pct / 100.0f);
 }
 
+/* Full screen from the screens outside a game. Here for the same reason as
+ * the setters below: the welcome, lobby and settings dialogs are shared and
+ * call this, and winbolo.c's copy is not part of this build. SDL maps it onto
+ * the browser's Fullscreen API, which needs a user gesture — every call site
+ * is inside a click handler, so that holds. No SDL_SyncWindow: the desktop
+ * copy waits because Wayland and X11 apply the change asynchronously under a
+ * dialog that is about to read the window position, and neither applies. */
+void windowFullScreenChoose(bool on) {
+  gameFrontFullScreen = on;
+  SDL_Window *win = sdl3DrawGetWindow();
+  if (win) {
+    SDL_SetWindowFullscreen(win, on);
+  }
+  gameFrontSaveCurrentPrefs();
+}
+
 /* -------------------------------------------------------
  * Voice settings — apply a value to the running voice module
  * and clamp it to the range the UI offers, the same way
