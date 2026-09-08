@@ -60,8 +60,13 @@
  *                                         value clamped to the engine
  *                                         max (90), so pass anything
  *                                         big for "full"
- *    game.spawn_bot([name][, brain][, team][, mode][, init])
- *                                      -> playerNum | nil, err; mode
+ *    game.spawn_bot([name][, brain][, team][, mode][, init][, start])
+ *                                      -> playerNum | nil, err; start
+ *                                         (1-based, as game.start) pins
+ *                                         where THIS bot is placed, ahead
+ *                                         of on_choose_start, which fires
+ *                                         before the script knows the
+ *                                         new slot; mode
  *                                         "open"/"tournament"/"strict"
  *                                         sets the STARTING LOADOUT
  *                                         (default: the sim's rules).
@@ -151,6 +156,13 @@ typedef struct ScenarioState {
     int        tickRef;                 /* registry ref to on_tick (or NOREF) */
     int        gameRef;                 /* registry ref to the game table */
     BYTE       teamOf[MAX_TANKS];       /* game.set_team state */
+    BYTE       spawnStartHint[MAX_TANKS];/* start+1 a spawn_bot call asked for
+                                         * (6th argument), staged before the
+                                         * engine creates the tank and honoured
+                                         * by scenarioChooseStart ahead of the
+                                         * on_choose_start hook -- the hook
+                                         * fires DURING spawn_bot, before the
+                                         * script can know the new slot. */
     BYTE       spawnTeamHint[MAX_TANKS];/* team+1 a spawn_bot call intends
                                          * for a slot, staged BEFORE the
                                          * engine creates the tank (the join
@@ -463,9 +475,20 @@ static int l_spawn_bot(lua_State *L) {
         gameTypeGet(&serverSimGetGameSim(sim)->game));
     /* Per-bot brain config, handed to this one brain as BRAIN_INIT_ARG. */
     const char *initArg = luaL_optstring(L, 5, NULL);
+    /* Optional 1-based start for THIS bot (see spawnStartHint). */
+    lua_Integer startArg = luaL_optinteger(L, 6, 0);
     char botName[32];
     BYTE slot;
     int s;
+    if (startArg != 0) {
+        lua_Integer ns = (lua_Integer)startsGetNumStarts(&serverSimGetGameSim(sim)->ss);
+        if (startArg < 1 || startArg > ns) {
+            lua_pushnil(L);
+            lua_pushfstring(L, "start %d out of range (map has 1..%d)",
+                            (int)startArg, (int)ns);
+            return 2;
+        }
+    }
 
     /* Fill from the TOP down: humans join through serverSimFindFreeSlot,
      * which scans 0..maxPlayers-1, so keeping scenario bots in the high
@@ -515,6 +538,9 @@ static int l_spawn_bot(lua_State *L) {
     if (hasTeam && team >= 0 && team < MAX_TANKS) {
         st->spawnTeamHint[slot] = (BYTE)(team + 1);
     }
+    /* Stage the requested start the same way: scenarioChooseStart reads it
+     * for this slot before consulting the script. */
+    st->spawnStartHint[slot] = (startArg != 0) ? (BYTE)startArg : 0;
 
     /* Stage the brain's BRAIN_INIT_ARG immediately before the create that
      * consumes it — luaBrainInstanceCreate reads the staged value, sets the
@@ -529,11 +555,13 @@ static int l_spawn_bot(lua_State *L) {
         luaBrainsSetNextInitArg(NULL);   /* nothing consumed it — unstage */
         serverSimGetGameSim(sim)->spawnLoadout[slot] = 0;
         st->spawnTeamHint[slot] = 0;
+        st->spawnStartHint[slot] = 0;
         lua_pushnil(L);
         lua_pushstring(L, "serverSimCreateBot failed");
         return 2;
     }
     st->spawnTeamHint[slot] = 0;
+    st->spawnStartHint[slot] = 0;
     if (hasTeam) {
         st->teamOf[slot] = (BYTE)team;
         serverSimSetBotTeams(sim, st->teamOf, MAX_TANKS);
@@ -1482,6 +1510,13 @@ bool scenarioChooseStart(ServerSim *sim, BYTE playerNum, BYTE *startIdx) {
     ScenarioState *st = scState(sim);
     bool ok = FALSE;
     if (st == NULL) return FALSE;
+    /* A start pinned by spawn_bot's 6th argument wins outright: the script
+     * asked for it by name and cannot answer for this slot from the hook
+     * (the hook runs inside spawn_bot, before the slot is returned). */
+    if (playerNum < MAX_TANKS && st->spawnStartHint[playerNum] != 0) {
+        *startIdx = (BYTE)(st->spawnStartHint[playerNum] - 1);
+        return TRUE;
+    }
     scLuaLock(st);
     if (st->disabled || st->L == NULL || st->inChooseStart ||
         !scPushHook(st->L, "on_choose_start")) {

@@ -56,7 +56,13 @@ function on_choose_start(g, p)
 end
 
 function on_tick(g, tick)
-  if not spawn_tried and tick >= 2 then
+  -- 50 ticks after bot 0, not 2: the two starts are the same distance from
+  -- the pill, and two pools that become eligible on the SAME tick both send
+  -- their man -- a claim only reaches the ally on the next tick and there is
+  -- no recall. Andrew (2026-09-08) chose to live with that race rather than
+  -- delay every dispatch by a tick, so the arena keeps the claim's one-tick
+  -- head start by offsetting the ally's whole timeline instead.
+  if not spawn_tried and tick >= 50 then
     spawn_tried = true
     -- The 5th argument is this bot's BRAIN_INIT_ARG.  cfg=DEFEND_ALARM_MODE=
     -- false keeps the ALLY on the keel defend evaluator, whose ARRIVED
@@ -65,8 +71,14 @@ function on_tick(g, tick)
     -- this map, so without the pin the ally wanders off and the arena stops
     -- being about the claim.  builder_pool_test.py pins slot 0 the same way and
     -- carries the full reasoning (see KEEL_DEFEND there).
+    -- The 6th argument pins the ally to start 2 (the east pond).  The
+    -- on_choose_start hook below cannot do it: it fires INSIDE spawn_bot,
+    -- before `ally` is known, so it used to answer nil for the ally and the
+    -- engine picked -- which, before the 2026-09-08 start rewrite, dropped
+    -- the ally on start 1 next to bot 0 and made the arena asymmetric by
+    -- accident (the claim then had a tick to win).
     local s, err = g.spawn_bot("Ally", ALLY_BRAIN, 0, nil,
-                               "cfg=DEFEND_ALARM_MODE=false")
+                               "cfg=DEFEND_ALARM_MODE=false", 2)
     if s == nil then
       g.message("BUILDER_POOL_C spawn_bot failed: " .. tostring(err))
     else
