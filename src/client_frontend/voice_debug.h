@@ -31,11 +31,14 @@
  *   anywhere in here.
  *
  *   The WAV length fields are patched when the file is
- *   closed. A process killed mid-run leaves them at zero and
- *   the two sizes have to be patched by hand from the length
- *   of the file: the RIFF size at offset 4 is the file
- *   length minus 8, and the data size at offset 40 is the
- *   file length minus 44.
+ *   closed, and every normal exit reaches that: the recorder
+ *   hands its own stop to atexit when it starts, so a run
+ *   that ends on one of main's early returns is patched too.
+ *   A process killed outright runs neither, leaving both
+ *   fields at zero, and the two sizes then have to be
+ *   patched by hand from the length of the file: the RIFF
+ *   size at offset 4 is the file length minus 8, and the
+ *   data size at offset 40 is the file length minus 44.
  *
  *   The millisecond column is wall clock. An injected run is
  *   not paced to real time and runs faster than the audio it

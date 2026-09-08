@@ -34,6 +34,7 @@
 
 #include <opus.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "global.h"
@@ -71,6 +72,11 @@ static const char *const tapFileNames[VOICE_TAP_REMOTE] = {
 };
 
 static bool recording = false;
+
+/* Whether voiceDebugStop has been handed to atexit.  Once for the life of
+ * the process, however many recordings it makes. */
+static bool stopRegistered = false;
+
 static char outDir[VOICE_DEBUG_DIR_MAX];
 static DebugWav tapWavs[VOICE_TAP_REMOTE];
 static DebugWav remoteWavs[MAX_TANKS];
@@ -460,6 +466,17 @@ bool voiceDebugStart(const char *dir) {
     }
 
     recording = true;
+
+    /* main has return paths that never reach voiceCleanup - quitting from
+     * the welcome screen, which returns FALSE out of gameFrontStart, is the
+     * ordinary one - and a recording that ended on one of those left every
+     * WAV with both length fields at zero and no player would open it.
+     * voiceDebugStop does nothing when there is no recording, so the call
+     * from voiceCleanup and this one cannot both do the work. */
+    if (!stopRegistered) {
+        stopRegistered = (atexit(voiceDebugStop) == 0);
+    }
+
     fprintf(stderr, "Voice recorder: recording to %s\n", outDir);
     fflush(stderr);
     return true;
