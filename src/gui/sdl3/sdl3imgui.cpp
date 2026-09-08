@@ -2424,6 +2424,11 @@ static void renderPlayersContent(ClientSim *cs) {
             char volLabel[64];
             snprintf(volLabel, sizeof(volLabel), "##vol%d", i);
             float gain = voiceGetPlayerVolume(i);
+            /* A bot sends no audio, so there is no volume to set on it. The
+             * slider is still drawn, at the width every other row's takes,
+             * but greyed and not draggable. */
+            bool botRow = (s_playerFlags[i] & PLAYER_FLAG_BOT) != 0;
+            if (botRow) ImGui::BeginDisabled();
             ImGui::SetNextItemWidth(volWidth);
             /* Zero FramePadding for the reason the mic button has it: the
              * default padding would make this taller than the Selectable
@@ -2437,6 +2442,7 @@ static void renderPlayersContent(ClientSim *cs) {
             }
             ImGui::PopStyleVar();
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_VOICE_VOLUME));
+            if (botRow) ImGui::EndDisabled();
         }
         ImGui::SameLine();
 #endif
@@ -6915,6 +6921,7 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
     bool hasMic    = (clientFlags & PLAYER_FLAG_HAS_MIC) != 0;
     bool selfMuted = (clientFlags & PLAYER_FLAG_VOICE_MUTED) != 0;
     bool talking   = (talkingMap & ((PlayerBitMap)1u << playerNum)) != 0;
+    bool isBot     = (clientFlags & PLAYER_FLAG_BOT) != 0;
 
     /* The own row renders from local truth: s_playerFlags[] is only ever
        written from server-published state, so a click would not move the icon
@@ -6983,6 +6990,12 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
                          : STR_PLAYER_TIP_VOICE_IDLE;
     }
 
+    /* A bot has no microphone and nothing to play back, so its cell is drawn
+     * but not live: the glyph greys out and the click that would mute a
+     * player does nothing. Tested here rather than at the two call sites,
+     * which both pass flags carrying PLAYER_FLAG_BOT. The early return above
+     * needs no pair — it draws a Dummy, which looks the same either way. */
+    if (isBot) ImGui::BeginDisabled();
     if (!micTex) {
         /* An SVG that would not load must still hold the column, or
          * the name and ping shift between rows. */
@@ -7042,6 +7055,7 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
             }
         }
     }
+    if (isBot) ImGui::EndDisabled();
 }
 #endif
 
