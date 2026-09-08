@@ -615,6 +615,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_map_cull",                       run_loopback_map_cull                       },
     { "loopback_map_cull_resync",                run_loopback_map_cull_resync                },
     { "sound_delivery_wire_cull",                run_sound_delivery_wire_cull                },
+    { "sound_tier_playback",                     run_sound_tier_playback                     },
     { "view_ally_loopback",                      run_view_ally_loopback                      },
     { "resync_finalize_corrupt_keeps_gen",       run_resync_finalize_corrupt_keeps_gen       },
     { "resync_finalize_valid_advances_gen",      run_resync_finalize_valid_advances_gen      },

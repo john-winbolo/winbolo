@@ -29,6 +29,11 @@
  * any arm runs. Sound no longer consults the rects, but the payload arm still
  * has to know which side of the rect each of its squares sits on.
  *
+ * run_sound_tier_playback runs on the same fixture and carries on past the
+ * wire: it asserts which sound the client's frontend was handed. A sound 10
+ * squares out plays the near variant, one 30 squares out plays the far
+ * variant, and manLayingMineNear 10 squares out plays itself.
+ *
  * Sounds are staged into the sim's event buffer and handed to the real
  * transportUdpServerDrainEvents, the same producer a running frame uses. What
  * arrived is read off the client's brain-event buffer: clientSimApplyGameEvents
@@ -200,6 +205,30 @@ static bool sndInBuild(const GameEvent *ev, int n, uint8_t type,
         if (ev[i].type == type && ev[i].data[0] == soundId) return true;
     }
     return false;
+}
+
+/* Where a sound turned up in what the client's frontend was handed, or -1. */
+static int sndPlayedIndex(int soundId) {
+    int n = ut_sound_count();
+    int i;
+    for (i = 0; i < n; i++) {
+        if (ut_sound_get(i) == soundId) return i;
+    }
+    return -1;
+}
+
+/* The two variants of one staged sound. farId is -1 for a near-only sound. */
+typedef struct {
+    int nearId;
+    int farId;
+} SndVariants;
+
+/* Either variant has been played, whichever the client picked. */
+static bool sndPlayedEither(LoopbackHarness *h, void *user) {
+    const SndVariants *v = (const SndVariants *)user;
+    (void)h;
+    if (sndPlayedIndex(v->nearId) >= 0) return true;
+    return v->farId >= 0 && sndPlayedIndex(v->farId) >= 0;
 }
 
 int run_sound_delivery_wire_cull(void) {
@@ -534,6 +563,141 @@ int run_sound_delivery_wire_cull(void) {
                 "over %d pumps", (unsigned)soundMX, (unsigned)listenMY,
                 SND_GAP_OUTSIDE, (unsigned)listenMX, (unsigned)listenMY,
                 SDIST_SOFT, SND_QUIET_PUMPS);
+    }
+
+    if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client left CONNECTED (state %d) during the exchange",
+                (int)clientSimGetConnectState(h.cs));
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+int run_sound_tier_playback(void) {
+    LoopbackHarness h;
+    SndVariants want;
+    BYTE slot, other;
+    BYTE listenMX = 0, listenMY = 0;
+    BYTE soundMX;
+    int dir, at, k, expected, unexpected;
+
+    /* Each arm stages one sound at a gap and names the variant the client
+     * should end up playing. The client is handed a tier, not the square, so
+     * the variant it plays is the server's reading of the distance rather than
+     * its own. */
+    static const struct {
+        uint8_t staged;
+        int     gap;
+        int     nearId;
+        int     farId;   /* -1 for a sound with no far variant */
+        bool    wantFar;
+    } playbackArms[3] = {
+        { (uint8_t)bigExplosionNear,  SND_GAP_INSIDE,  (int)bigExplosionNear,
+          (int)bigExplosionFar,  false },
+        { (uint8_t)bigExplosionNear,  SND_GAP_OUTSIDE, (int)bigExplosionNear,
+          (int)bigExplosionFar,  true  },
+        { (uint8_t)manLayingMineNear, SND_GAP_INSIDE,  (int)manLayingMineNear,
+          -1,                    false },
+    };
+
+    if (loopbackHarnessStart(&h, "Tier", /*lobbyMode*/ false,
+                             /*impairSpec*/ NULL, SND_SEED) != true) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("harness start (sound tier playback) failed");
+    }
+    if (loopbackHarnessPumpUntil(&h, SND_CONNECT_MAX, sndConnected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never reached CONNECTED within %d pumps",
+                SND_CONNECT_MAX);
+    }
+    if (loopbackHarnessPumpUntil(&h, SND_READY_MAX, sndServerReady, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the server never saw the map download acked within %d pumps",
+                SND_READY_MAX);
+    }
+    if (loopbackHarnessPumpUntil(&h, SND_READY_MAX, sndHaveTank, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never got a tank within %d pumps", SND_READY_MAX);
+    }
+
+    slot = clientSimGetMyPlayerNum(h.cs);
+    if (slot >= MAX_TANKS || !sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("no slot or server-side tank position after convergence "
+                "(slot %u)", (unsigned)slot);
+    }
+    other = (BYTE)(slot == 0 ? 1 : 0);
+
+    /* Same fixture the cull case runs on: with the pill and base categories
+     * off, nothing the loaded map owns can hand the recipient an extra rect. */
+    threadsWaitForMutex();
+    serverSimSetViewPolicy(h.sim, viewCategoryPill, viewPolicyOff,
+                           VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(h.sim, viewCategoryBase, viewPolicyOff,
+                           VIEW_DECAY_DEFAULT_SECS);
+    threadsReleaseMutex();
+
+    /* Put every sound on the recipient's row, on whichever side of it has room
+     * for the longest gap. */
+    dir = ((int)listenMX + SND_GAP_OUTSIDE <= 255) ? 1 : -1;
+    if ((int)listenMX + dir * SND_GAP_OUTSIDE < 0 ||
+        (int)listenMX + dir * SND_GAP_OUTSIDE > 255) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the tank at %u,%u has no room for a sound %d squares away on "
+                "either side", (unsigned)listenMX, (unsigned)listenMY,
+                SND_GAP_OUTSIDE);
+    }
+
+    for (k = 0; k < 3; k++) {
+        if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("lost the server-side tank position before the arm at %d "
+                    "squares", playbackArms[k].gap);
+        }
+        soundMX = (BYTE)((int)listenMX + dir * playbackArms[k].gap);
+
+        ut_sound_reset();
+        clientSimSetBrainEventCount(h.cs, 0);
+        sndStage(&h, slot, EVENT_SOUND, playbackArms[k].staged, soundMX,
+                 listenMY, other, NULL, NULL);
+
+        want.nearId = playbackArms[k].nearId;
+        want.farId = playbackArms[k].farId;
+        at = loopbackHarnessPumpUntil(&h, SND_DELIVER_MAX, sndPlayedEither,
+                                      &want);
+        if (at < 0) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("sound %u staged at %u,%u, %d squares from the tank at "
+                    "%u,%u, was never played within %d pumps (%d sound(s) "
+                    "played, %d brain event(s) buffered)",
+                    (unsigned)playbackArms[k].staged, (unsigned)soundMX,
+                    (unsigned)listenMY, playbackArms[k].gap,
+                    (unsigned)listenMX, (unsigned)listenMY, SND_DELIVER_MAX,
+                    ut_sound_count(), clientSimGetBrainEventCount(h.cs));
+        }
+
+        expected = playbackArms[k].wantFar ? playbackArms[k].farId
+                                           : playbackArms[k].nearId;
+        unexpected = playbackArms[k].wantFar ? playbackArms[k].nearId
+                                             : playbackArms[k].farId;
+        if (sndPlayedIndex(expected) < 0) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("sound %u staged %d squares from the tank at %u,%u did "
+                    "not play variant %d; %d sound(s) were played, the first "
+                    "being %d", (unsigned)playbackArms[k].staged,
+                    playbackArms[k].gap, (unsigned)listenMX,
+                    (unsigned)listenMY, expected, ut_sound_count(),
+                    ut_sound_get(0));
+        }
+        if (unexpected >= 0 && sndPlayedIndex(unexpected) >= 0) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("sound %u staged %d squares from the tank at %u,%u played "
+                    "variant %d as well as %d", (unsigned)playbackArms[k].staged,
+                    playbackArms[k].gap, (unsigned)listenMX,
+                    (unsigned)listenMY, unexpected, expected);
+        }
     }
 
     if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {

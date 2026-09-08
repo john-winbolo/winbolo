@@ -1387,11 +1387,17 @@ int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
 
 /* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
- * recipient whose only viewport rect is its own tank screen, the drain's
- * rect-based cull drops a sound 30 squares away that the in-process builder
- * delivers, passes one 10 squares away, and passes a tank hit on the recipient
- * from 60 squares out. */
+ * recipient whose only viewport rect is its own tank screen, both delivery
+ * paths carry a sound 30 squares away and neither carries one at 45, a
+ * delivered sound arrives with a tier and a bearing rather than its map
+ * square, a far manLayingMineNear is dropped, and a tank hit on the recipient
+ * arrives from 60 squares out. */
 int run_sound_delivery_wire_cull(void);
+
+/* What the client plays for a sound the wire delivered
+ * (test_sound_delivery_wire.c): the near variant at 10 squares, the far
+ * variant at 30, and manLayingMineNear at 10. */
+int run_sound_tier_playback(void);
 
 /* Ally view over the loopback transport (test_view_ally_loopback.c): under
  * viewPolicyKey, with an allied in-process player parked outside every rect
@@ -1558,6 +1564,14 @@ int run_netdebug_error_offset_clamped(void);
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
 struct ServerSim *ut_make_running_sim(const char *player_name);
+
+/* The sounds frontEndPlaySound was handed, recorded by the stub in
+ * test_stubs.c so a test can assert which variant the client played.
+ * ut_sound_get returns the sndEffects value at that index, or -1 past the
+ * end. The recorder is bounded; sounds past its cap are not kept. */
+void ut_sound_reset(void);
+int  ut_sound_count(void);
+int  ut_sound_get(int index);
 
 #ifdef __cplusplus
 }

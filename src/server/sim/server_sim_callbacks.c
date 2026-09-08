@@ -82,9 +82,78 @@ void serverSimCbMessageAdd(void *ctx, messageType msgType,
     }
 }
 
+/* Write the .wbv entry a sound maps to. Recording sits on the callback
+ * because this is where the sound still carries its real map square: a human
+ * client is sent a near/far tier and a bearing instead. Sounds with no log
+ * type of their own add nothing. */
+static void serverSimLogSound(sndEffects value, BYTE mx, BYTE my) {
+    BYTE logMessageType = 0; /* Log item type */
+
+    switch (value) {
+        case shootSelf:
+        case shootNear:
+        case shootFar:
+            logMessageType = log_SoundShoot;
+            break;
+
+        case shotTreeNear:
+        case shotTreeFar:
+            logMessageType = log_SoundFarm;
+            break;
+
+        case shotBuildingNear:
+        case shotBuildingFar:
+//            logMessageType = log_SoundHit;
+            break;
+
+        case hitTankNear:
+        case hitTankFar:
+        case hitTankSelf:
+            break;
+        case bubbles:
+        case tankSinkNear:
+        case tankSinkFar:
+            break;
+        case bigExplosionNear:
+            logMessageType = log_SoundExplosion;
+            break;
+        case bigExplosionFar:
+            logMessageType = log_SoundExplosion;
+            break;
+        case farmingTreeNear:
+        case farmingTreeFar:
+            logMessageType = log_SoundFarm;
+            break;
+        case manBuildingNear:
+        case manBuildingFar:
+            logMessageType = log_SoundBuild;
+            break;
+        case manDyingNear:
+        case manDyingFar:
+            logMessageType = log_SoundManDie;
+            break;
+
+        case manLayingMineNear:
+            logMessageType = log_SoundMineLay;
+            break;
+
+        case mineExplosionNear:
+        case mineExplosionFar:
+            logMessageType = log_SoundMineExplode;
+            break;
+    }
+
+    if (logMessageType) {
+        logAddEvent(logMessageType, mx, my, 0, 0, 0, NULL);
+    }
+}
+
 void serverSimCbSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
+    if (logIsRecording() == TRUE) {
+        serverSimLogSound(value, mx, my);
+    }
     ev.type = EVENT_SOUND;
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = (uint8_t)value;
@@ -97,6 +166,9 @@ void serverSimCbSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
 void serverSimCbSoundDistShoot(void *ctx, BYTE mx, BYTE my, BYTE owner) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
+    if (logIsRecording() == TRUE) {
+        serverSimLogSound(shootNear, mx, my);
+    }
     ev.type = EVENT_SOUND_SHOOT;
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = (uint8_t)shootNear;

@@ -4148,6 +4148,7 @@ set(_unit_test_names
     loopback_map_cull
     loopback_map_cull_resync
     sound_delivery_wire_cull
+    sound_tier_playback
     view_ally_loopback
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
