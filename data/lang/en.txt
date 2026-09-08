@@ -1639,6 +1639,10 @@ STR_PLAYER_TIP_VOICE_SELF_MUTED=Your microphone is off — click to unmute
 # Players panel — per-player playback volume slider
 STR_PLAYER_TIP_VOICE_VOLUME=How loud this player is played here
 
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Your microphone and voice settings
+STR_DLGLOBBY_VOICE_OFF=Voice is turned off
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

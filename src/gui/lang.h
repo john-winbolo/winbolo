@@ -1713,6 +1713,10 @@
 /* Players panel — per-player playback volume slider */
 #define STR_PLAYER_TIP_VOICE_VOLUME             2090
 
+/* Lobby — the local player's voice sub-row */
+#define STR_DLGLOBBY_TOOLTIP_VOICE              2095
+#define STR_DLGLOBBY_VOICE_OFF                  2096
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

@@ -1992,6 +1992,10 @@ static const LangEntry langTable[] = {
 
     /* Players panel — per-player playback volume slider */
     {2090, "How loud this player is played here"},
+
+    /* Lobby — the local player's voice sub-row */
+    {2095, "Your microphone and voice settings"},
+    {2096, "Voice is turned off"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
