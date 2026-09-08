@@ -1717,6 +1717,9 @@
 #define STR_DLGLOBBY_TOOLTIP_VOICE              2095
 #define STR_DLGLOBBY_VOICE_OFF                  2096
 
+/* Players panel — a player muted here who is talking anyway */
+#define STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING 2097
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

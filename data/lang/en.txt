@@ -1643,6 +1643,9 @@ STR_PLAYER_TIP_VOICE_VOLUME=How loud this player is played here
 STR_DLGLOBBY_TOOLTIP_VOICE=Your microphone and voice settings
 STR_DLGLOBBY_VOICE_OFF=Voice is turned off
 
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Muted by you, and talking — click to unmute
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

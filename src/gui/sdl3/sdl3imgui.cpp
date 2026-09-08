@@ -381,6 +381,20 @@ static const ImVec4 MIC_TINT_NORMAL  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 static const ImVec4 MIC_TINT_TALKING = ImVec4(0.30f, 1.00f, 0.40f, 1.00f);
 static const ImVec4 MIC_TINT_MUTED   = ImVec4(1.00f, 0.35f, 0.35f, 1.00f);
 static const ImVec4 MIC_TINT_DIM     = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
+/* The resting shape only while a player muted here is talking: the same red
+ * held back so the pulsing fill drawn over it has something to show against,
+ * the way the talking speaker's green wells up inside a dim glyph. A muted
+ * player who is silent keeps the flat MIC_TINT_MUTED. Not MIC_TINT_DIM —
+ * that is white, and a red row washing out to white and back as someone
+ * speaks reads as a change of state rather than as an animation. */
+static const ImVec4 MIC_TINT_MUTED_DIM = ImVec4(1.00f, 0.35f, 0.35f, 0.40f);
+/* The two dials for that pulse, if it reads wrong on screen. The period is a
+ * second and a bit, slow enough to carry the rhythm of speech rather than
+ * blink like a warning light. The floor is how empty the glyph gets at the
+ * bottom of each sweep: a fill that reached zero would read as "they have
+ * stopped", which is the one thing this is here to say they have not. */
+static const float MIC_PULSE_PERIOD_SEC = 1.25f;
+static const float MIC_PULSE_FLOOR      = 0.35f;
 /* What sdl3ImguiCreateMicIconSurface will rasterize at. Below the floor the
  * glyph is unreadable whatever we do; the ceiling is well past the largest
  * size the game view asks for and stops a degenerate layout turning into a
@@ -6810,12 +6824,17 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 }
 
 #if defined(WINBOLO_VOICE)
-/* Draws the speaker again over the bottom of itself, up to how loud that
- * player is right now: the dim glyph underneath is the shape, the talking
- * tint over the bottom of it is the level. Source rows and destination rows
- * are cut together, so the fill takes the speaker's own shape rather than
- * sitting over it as a rectangle — the same way the game view's own
- * microphone indicator draws its capture level.
+/* Draws the icon again over the bottom of itself, as far up as the fill it
+ * is given: the dim glyph underneath is the shape, the tinted redraw over
+ * the bottom of it is the fill. Source rows and destination rows are cut
+ * together, so the fill takes the glyph's own shape rather than sitting over
+ * it as a rectangle — the same way the game view's own microphone indicator
+ * draws its capture level.
+ *
+ * How far up, and in what colour, is the caller's to say. A player who is
+ * talking fills the speaker with their decoded level; a player muted here
+ * fills the barred speaker with micTalkPulse(), because nothing arrives from
+ * them to measure.
  *
  * Call it straight after the widget that drew the icon: the rect comes from
  * that item, and this only adds to the draw list, so the cell is exactly the
@@ -6825,10 +6844,10 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
  * the held peak, and at this icon size a band would be a pixel or two. The
  * game view has both because it draws at 32-43 px.
  *
- * Never runs on the local player's own row: the talking map carries no self
- * bit, so the caller's talking branch is unreachable there. */
-static void micDrawLevelFill(SDL_Texture *micTex, int playerNum) {
-    float level = voiceGetPlayerLevel(playerNum);
+ * Never runs on the local player's own row from a decoded level: the talking
+ * map carries no self bit, so the caller's talking branch is unreachable
+ * there. */
+static void micDrawLevelFill(SDL_Texture *micTex, float level, ImVec4 tint) {
     if (level <= 0.0f) return;
     if (level > 1.0f) level = 1.0f;   /* over 1 would sample off the texture */
 
@@ -6839,7 +6858,25 @@ static void micDrawLevelFill(SDL_Texture *micTex, int playerNum) {
                                          ImVec2(mn.x, top), mx,
                                          ImVec2(0.0f, 1.0f - level),
                                          ImVec2(1.0f, 1.0f),
-                                         ImGui::GetColorU32(MIC_TINT_TALKING));
+                                         ImGui::GetColorU32(tint));
+}
+
+/* How full to draw the glyph for a player who is talking but muted here.
+ * There is no level and there cannot be one: the server drops a muted talker
+ * before it sends and this client drops them again on arrival, so no audio
+ * ever reaches us. The fill is therefore a sweep on the clock rather than a
+ * meter, and it says only that they are speaking. */
+static float micTalkPulse(void) {
+    /* Reduced to one period in double before it is narrowed: ImGui's clock
+     * is seconds since startup, and a float taken straight from it would
+     * coarsen into steps once a client had been up for days. */
+    double periods = ImGui::GetTime() / (double)MIC_PULSE_PERIOD_SEC;
+    float  phase   = (float)(periods - (double)(long long)periods);
+    /* A raised cosine: slowest at the top and the bottom of the sweep and
+     * quickest between them, so it swells and falls instead of ramping to a
+     * corner and snapping back. */
+    float  wave    = 0.5f - 0.5f * ImCos(phase * 2.0f * IM_PI);
+    return MIC_PULSE_FLOOR + (1.0f - MIC_PULSE_FLOOR) * wave;
 }
 
 void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
@@ -6882,10 +6919,20 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
     ImVec4       micTint;
     langid       micTip;
     bool         micLevelFill = false;
+    bool         micPulseFill = false;
     if (mutedByMe) {
+        /* Their voice never arrives, so the server's own set of who is
+         * talking is the only thing that can say they are speaking. It is
+         * empty in a running game by design — voice there is alliance-only
+         * and publishing the set would say that an enemy is talking — so
+         * this lights in the lobby and the countdown and nowhere else. */
+        bool mutedTalking = (clientSimGetVoiceTalkingMap(cs) &
+                             ((PlayerBitMap)1u << playerNum)) != 0;
         micTex  = s_iconSpeakerMuted[iconSlot];
-        micTint = MIC_TINT_MUTED;
-        micTip  = STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
+        micTint = mutedTalking ? MIC_TINT_MUTED_DIM : MIC_TINT_MUTED;
+        micTip  = mutedTalking ? STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING
+                               : STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
+        micPulseFill = mutedTalking;
     } else if (!hasMic) {
         micTex  = s_iconMicOff[iconSlot];
         micTint = MIC_TINT_DIM;
@@ -6925,7 +6972,12 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(size, size),
                            ImVec2(0, 0), ImVec2(1, 1),
                            ImVec4(0, 0, 0, 0), micTint);
-        if (micLevelFill) micDrawLevelFill(micTex, playerNum);
+        if (micLevelFill) {
+            micDrawLevelFill(micTex, voiceGetPlayerLevel(playerNum),
+                             MIC_TINT_TALKING);
+        } else if (micPulseFill) {
+            micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        }
         imguiHelpTooltip(langGetText(micTip));
     } else {
         char micLabel[64];
@@ -6944,7 +6996,12 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         ImGui::PopStyleColor(3);
         ImGui::PopStyleVar();
         /* Still the button's rect: the pops above changed no item. */
-        if (micLevelFill) micDrawLevelFill(micTex, playerNum);
+        if (micLevelFill) {
+            micDrawLevelFill(micTex, voiceGetPlayerLevel(playerNum),
+                             MIC_TINT_TALKING);
+        } else if (micPulseFill) {
+            micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        }
         imguiHelpTooltip(langGetText(micTip));
         imguiHandOnHover();
         if (micClicked) {
