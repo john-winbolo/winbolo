@@ -36,29 +36,34 @@
 /* What a player's voice state puts beside their tank, or nothing. */
 typedef enum {
     TANK_VOICE_NONE,
-    TANK_VOICE_MUTED_BY_ME,  /* barred speaker, in the panel's red */
     TANK_VOICE_TALKING,      /* plain speaker */
     TANK_VOICE_SELF_MUTED    /* barred microphone, dimmed */
 } TankVoiceIcon;
 
 /* Resolved in renderPlayerMicCell's precedence order, so the map and the
- * players panel never disagree about a player. Muting someone is this
- * client's own doing and outranks whatever their microphone is doing — you
- * have to be able to see that you muted them, whatever their state.
- *
- * Two of the panel's five states draw nothing here: an icon beside every
- * player all the time is clutter mid-fight, and the two mutes are what is
- * worth interrupting the map for.
+ * players panel never disagree about which state a player is in. Three of the
+ * panel's five states draw nothing here: an icon beside every player all the
+ * time is clutter mid-fight, and talking and self-muted are the two worth
+ * interrupting the map for.
  *
  * A limit this inherits rather than introduces: in a running game the server
  * strips the microphone bits for players this client is not allied with
  * (server_sim_snapshot.c), mirroring where voice is actually routed. An
  * enemy's no-microphone and self-muted states are therefore not known here
- * and read as blank. Muted-by-me is local and shows regardless. */
+ * and read as blank. */
 static TankVoiceIcon tankVoiceIconFor(BYTE playerNum) {
     uint8_t flags = sdl3ImguiPlayerFlags(playerNum);
 
-    if (voiceIsPlayerMuted((int)playerNum))         return TANK_VOICE_MUTED_BY_ME;
+    /* A player this client has muted draws nothing, in every state. What is
+     * worth marking beside a tank is someone saying something now, and for a
+     * muted player that cannot be known here: their audio never reaches this
+     * client, and the server's talking set is published in the lobby and the
+     * countdown only — deliberately, because broadcasting it in a running game
+     * would tell a player that an enemy is speaking. Their row in the players
+     * panel is where being muted is shown, and where the click that undoes it
+     * lives. Checked first, so a player who is muted here and self-muted at
+     * their end draws nothing either. */
+    if (voiceIsPlayerMuted((int)playerNum))         return TANK_VOICE_NONE;
     if ((flags & PLAYER_FLAG_HAS_MIC) == 0)         return TANK_VOICE_NONE;
     if ((voiceGetTalkingMap() & ((PlayerBitMap)1u << playerNum)) != 0)
                                                     return TANK_VOICE_TALKING;
@@ -67,8 +72,8 @@ static TankVoiceIcon tankVoiceIconFor(BYTE playerNum) {
 }
 
 /* Textured per renderer beside the cached name and icon, and rasterized at
- * the height it is drawn at rather than scaled to it: the barred glyphs cut
- * their slash as thin negative space, and a draw-time downscale averages it
+ * the height it is drawn at rather than scaled to it: the barred microphone
+ * cuts its slash as thin negative space, and a draw-time downscale averages it
  * into grey until the icon stops reading as barred. Unlike the name and the
  * flag these are not part of the per-label rebuild — a player's voice state
  * changes from frame to frame, while the cache is keyed on the label string —
@@ -84,19 +89,16 @@ static SDL_Texture *voiceTexFor(TankLabelCache *c, SDL_Renderer *r,
     SDL_Surface  *surf;
 
     if (c->voiceTexPx != px) {
-        if (c->speakerTex)      { SDL_DestroyTexture(c->speakerTex);      c->speakerTex = NULL; }
-        if (c->speakerMutedTex) { SDL_DestroyTexture(c->speakerMutedTex); c->speakerMutedTex = NULL; }
-        if (c->micMutedTex)     { SDL_DestroyTexture(c->micMutedTex);     c->micMutedTex = NULL; }
+        if (c->speakerTex)  { SDL_DestroyTexture(c->speakerTex);  c->speakerTex = NULL; }
+        if (c->micMutedTex) { SDL_DestroyTexture(c->micMutedTex); c->micMutedTex = NULL; }
         c->voiceTexPx = px;
     }
 
     switch (which) {
-        case TANK_VOICE_MUTED_BY_ME:
-            slot = &c->speakerMutedTex; glyph = MIC_GLYPH_SPEAKER_MUTED; break;
         case TANK_VOICE_SELF_MUTED:
-            slot = &c->micMutedTex;     glyph = MIC_GLYPH_MIC_MUTED;     break;
+            slot = &c->micMutedTex; glyph = MIC_GLYPH_MIC_MUTED; break;
         default:
-            slot = &c->speakerTex;      glyph = MIC_GLYPH_SPEAKER;       break;
+            slot = &c->speakerTex;  glyph = MIC_GLYPH_SPEAKER;   break;
     }
     if (*slot) return *slot;
 
@@ -109,16 +111,11 @@ static SDL_Texture *voiceTexFor(TankLabelCache *c, SDL_Renderer *r,
     if (!*slot) return NULL;
 
     SDL_SetTextureBlendMode(*slot, SDL_BLENDMODE_BLEND);
-    /* The panel's colours, so red and dim mean the same thing in both places.
-     * Talking keeps the plain glyph the label has always drawn: the panel dims
-     * that one only because it draws the level fill over it, and there is no
-     * fill here. */
+    /* The panel's colour, so dim means the same thing in both places. Talking
+     * keeps the plain glyph the label has always drawn: the panel dims that
+     * one only because it draws the level fill over it, and there is no fill
+     * here. */
     switch (which) {
-        case TANK_VOICE_MUTED_BY_ME:
-            /* MIC_TINT_MUTED, whose own alpha is full. */
-            SDL_SetTextureColorMod(*slot, 255, 89, 89);
-            SDL_SetTextureAlphaMod(*slot, TANK_LABEL_ICON_ALPHA);
-            break;
         case TANK_VOICE_SELF_MUTED:
             /* MIC_TINT_DIM: white at 40%, over the label's own alpha. */
             SDL_SetTextureAlphaMod(*slot, (Uint8)(TANK_LABEL_ICON_ALPHA * 2 / 5));
@@ -304,10 +301,6 @@ void tankLabelCacheFlush(TankLabelCache *c) {
     if (c->speakerTex) {
         SDL_DestroyTexture(c->speakerTex);
         c->speakerTex = NULL;
-    }
-    if (c->speakerMutedTex) {
-        SDL_DestroyTexture(c->speakerMutedTex);
-        c->speakerMutedTex = NULL;
     }
     if (c->micMutedTex) {
         SDL_DestroyTexture(c->micMutedTex);

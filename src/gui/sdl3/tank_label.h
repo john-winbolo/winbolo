@@ -54,13 +54,13 @@ typedef struct TankLabelCache {
     SDL_Texture  *iconTex[MAX_TANKS];   /* flag or brain icon, NULL for none */
     char          str[MAX_TANKS][TANK_LABEL_NAME_LEN];
 #if defined(WINBOLO_VOICE)
-    /* The three voice glyphs a label can carry, built on demand and kept
+    /* The two voice glyphs a label can carry, built on demand and kept
      * beside the pixel size they were rasterized at: they are drawn at a
-     * height that follows the font and the view's scale, and the barred pair
-     * only reads when it was rasterized at that height rather than resampled
-     * to it. A size change rebuilds all three; a steady size rebuilds none. */
+     * height that follows the font and the view's scale, and the barred
+     * microphone only reads when it was rasterized at that height rather than
+     * resampled to it. A size change rebuilds both; a steady size rebuilds
+     * neither. */
     SDL_Texture  *speakerTex;
-    SDL_Texture  *speakerMutedTex;
     SDL_Texture  *micMutedTex;
     int           voiceTexPx;
 #endif
