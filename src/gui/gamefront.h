@@ -984,6 +984,11 @@ extern bool           gameFrontHostingServeReplays;    /* default Yes   */
                                * ask for it. Yes leaves the serve policy at
                                * ROUND_LOG_SERVE_AUTO, which serves unless
                                * WinBolo.net is running; No forces it off. */
+extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
+                              /* How the hosted server handles the voice its
+                               * clients send it. Holds a ServerVoiceMode.
+                               * serverVoiceProximity is not implemented and
+                               * forwards the same as serverVoiceOn. */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
@@ -995,6 +1000,7 @@ void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
+void gameFrontSetHostingVoiceMode(int mode);
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Read by gameFrontGetPrefs and pushed onto the sim with

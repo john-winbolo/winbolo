@@ -1610,6 +1610,11 @@ STR_DLGSETTINGS_HOSTING_ENABLELOG=Enable Logging
 STR_DLGSETTINGS_HOSTING_LOGDIR=Log Directory
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Send Replays to Players
 STR_DLGSETTINGS_HOSTING_APPLYNOTE=Applies to the next hosted / New Internet game.
+STR_DLGSETTINGS_HOSTING_VOICE=Voice Chat
+STR_DLGSETTINGS_HOSTING_VOICE_ON=On
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Off
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximity
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Off drops voice instead of carrying it to anyone. Proximity is not implemented yet and behaves the same as On.
 
 # Log viewer Options menu
 STR_LV_HIDE_LOBBY=Hide Lobby

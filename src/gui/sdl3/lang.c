@@ -1888,6 +1888,13 @@ static const LangEntry langTable[] = {
     {1919, "Log Directory"},
     {1920, "Applies to the next hosted / New Internet game."},
     {1937, "Send Replays to Players"},
+    /* Voice row of the Hosting tab: what the hosted server does with the
+     * voice its clients send it. 2123 is the tooltip on the combo. */
+    {2119, "Voice Chat"},
+    {2120, "On"},
+    {2121, "Off"},
+    {2122, "Proximity"},
+    {2123, "Off drops voice instead of carrying it to anyone. Proximity is not implemented yet and behaves the same as On."},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
     {1866, "[Spectator] {string1}"},

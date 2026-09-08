@@ -45,6 +45,7 @@ extern "C" {
 #include "client_enums.h"  /* labelLen */
 #include "upload_policy.h"  /* UploadPolicy — map-upload combo */
 #include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
+#include "server_voice_mode.h"  /* ServerVoiceMode — hosting voice combo */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../skin_source.h"
@@ -2065,6 +2066,37 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                 &serveReplays)) {
                 gameFrontSetHostingServeReplays(serveReplays);
             }
+        }
+    }
+
+    /* ---- Voice chat ----
+     * What the hosted server does with the voice its clients send it.
+     * Fixed when the server starts, so this is read at host time and there
+     * is no lobby control for it. */
+    {
+        /* Combo display order is On / Off / Proximity, and the enum values
+         * happen to run ON=0, OFF=1, PROXIMITY=2 — map explicitly anyway so
+         * a later reordering of either list cannot silently mismatch. */
+        static const int kVoiceByIndex[3] = {
+            serverVoiceOn, serverVoiceOff, serverVoiceProximity
+        };
+        const char *voiceItems[3] = {
+            langGetText(STR_DLGSETTINGS_HOSTING_VOICE_ON),
+            langGetText(STR_DLGSETTINGS_HOSTING_VOICE_OFF),
+            langGetText(STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY)
+        };
+        int idx = 0;  /* default On */
+        for (int i = 0; i < 3; ++i) {
+            if (kVoiceByIndex[i] == gameFrontHostingVoiceMode) { idx = i; break; }
+        }
+        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_VOICE),
+                         &idx, voiceItems, 3)) {
+            gameFrontSetHostingVoiceMode(kVoiceByIndex[idx]);
+        }
+        /* Proximity is stored and sent but nothing acts on it yet, so say so
+         * rather than let a host think picking it changed anything. */
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_HOSTING_VOICE_TIP));
         }
     }
 

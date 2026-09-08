@@ -262,6 +262,10 @@ bool           gameFrontHostingLogging         = TRUE;
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
+/* How the hosted server handles the voice its clients send it. Holds a
+ * ServerVoiceMode; serverVoiceOn is what a client host did before this
+ * setting existed. */
+int            gameFrontHostingVoiceMode      = serverVoiceOn;
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Defaults match serverSimInit so hosting with an untouched INI leaves
@@ -2121,6 +2125,16 @@ void gameFrontSetHostingServeReplays(bool serve) {
   prefsSetString("HOSTING", "Serve Replays", TRUEFALSE_TO_STR(serve));
 }
 
+/* Stored as a word rather than the enum number so a hand-edited INI reads
+ * clearly, the same as Upload Policy. */
+void gameFrontSetHostingVoiceMode(int mode) {
+  gameFrontHostingVoiceMode = mode;
+  const char *str = (mode == serverVoiceOff)       ? "Off"
+                  : (mode == serverVoiceProximity) ? "Proximity"
+                                                   : "On";
+  prefsSetString("HOSTING", "Voice", str);
+}
+
 /* Visibility write-through setters. Same shape as the hosting ones
  * above: update the global and persist the [GAME OPTIONS] key now. The
  * policies are stored as words so a hand-edited INI reads clearly. */
@@ -2797,6 +2811,9 @@ bool gameFrontSetupServer(void) {
   cfg.uploadMaxFiles      = (uint8_t)gameFrontHostingUploadMaxFiles;
   cfg.uploadMaxStorageBytes =
       (uint32_t)gameFrontHostingUploadMaxStorage * 1024u * 1024u;
+  /* cfg is memset above, which would leave voiceMode at serverVoiceOn; this
+   * line is what carries the [HOSTING] Voice pref to the server instead. */
+  cfg.voiceMode           = (ServerVoiceMode)gameFrontHostingVoiceMode;
   /* Persist saves uploads to disk under the chosen directory. Create it on
    * use and refuse to host if that fails — no silent fallback. Off/Allow
    * never touch disk, so leave uploadPersistDir NULL (memset-zero) for them. */
@@ -3027,6 +3044,17 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
   prefsGetString("HOSTING", "Serve Replays", "Yes", buff, FILENAME_MAX);
   gameFrontHostingServeReplays = YESNO_TO_TRUEFALSE(buff[0]);
+  /* Anything the setter did not write — a mistyped word, or the key absent
+   * on an INI written before this setting existed — reads as On, which is
+   * what a client host did then. */
+  prefsGetString("HOSTING", "Voice", "On", buff, FILENAME_MAX);
+  if (strcmp(buff, "Off") == 0) {
+    gameFrontHostingVoiceMode = serverVoiceOff;
+  } else if (strcmp(buff, "Proximity") == 0) {
+    gameFrontHostingVoiceMode = serverVoiceProximity;
+  } else {
+    gameFrontHostingVoiceMode = serverVoiceOn;
+  }
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -3651,6 +3679,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
   prefsSetString("HOSTING", "Serve Replays",
                             TRUEFALSE_TO_STR(gameFrontHostingServeReplays));
+  prefsSetString("HOSTING", "Voice",
+                 gameFrontHostingVoiceMode == serverVoiceOff       ? "Off"
+                 : gameFrontHostingVoiceMode == serverVoiceProximity ? "Proximity"
+                                                                     : "On");
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

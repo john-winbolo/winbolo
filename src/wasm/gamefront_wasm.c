@@ -225,6 +225,7 @@ char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
 bool           gameFrontHostingLogging          = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays     = TRUE;
+int            gameFrontHostingVoiceMode        = serverVoiceOn;
 
 /* Visibility rules a hosted game starts with. Same story as the hosting
  * knobs above — held for the dialogs, never applied to a server here. */
@@ -894,6 +895,7 @@ void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPol
 void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }
 void gameFrontSetHostingLogging(bool logging)        { gameFrontHostingLogging = logging; }
 void gameFrontSetHostingServeReplays(bool serve)     { gameFrontHostingServeReplays = serve; }
+void gameFrontSetHostingVoiceMode(int mode)          { gameFrontHostingVoiceMode = mode; }
 
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb) {
   gameFrontHostingUploadMaxStorage = maxStorageMb;
