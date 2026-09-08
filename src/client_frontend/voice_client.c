@@ -45,6 +45,9 @@
 #if defined(WINBOLO_VOICE_AEC)
 #include "voice_aec.h"
 #endif
+#if defined(WB_VOICEDEBUG)
+#include "voice_debug.h"
+#endif
 
 /* Frames drained per voiceTick.  A tick that has been stalled long enough to
  * bank more than this leaves the excess queued for the ticks that follow,
@@ -212,6 +215,14 @@ static bool captureIsWanted(void) {
     if (!voiceEnabled) {
         return false;
     }
+#if defined(WB_VOICEDEBUG)
+    /* A recording wants the microphone on its own, with no server and no
+     * microphone test, which is what lets a recording be made on one
+     * machine. */
+    if (voiceDebugIsRecording()) {
+        return true;
+    }
+#endif
     return micTestState == VOICE_MICTEST_RECORDING ||
            voiceMode != VOICE_MODE_OFF;
 }
@@ -374,6 +385,10 @@ bool voiceInit(void) {
 *  (none)
 *********************************************************/
 void voiceCleanup(void) {
+#if defined(WB_VOICEDEBUG)
+    /* Closed here so a clean exit patches the WAV lengths. */
+    voiceDebugStop();
+#endif
     voiceReset();
     voiceBackendShutdown();
 #if defined(WINBOLO_VOICE_AEC)
@@ -1259,6 +1274,11 @@ static void voicePlayRemote(struct ClientSim *cs) {
             if (!voiceSpeakerPop(speakers[i], pcm)) {
                 break;
             }
+#if defined(WB_VOICEDEBUG)
+            /* Taken before the output volume, so the file holds the decoded
+             * audio rather than this listener's volume setting. */
+            voiceDebugTap(VOICE_TAP_REMOTE, i, pcm);
+#endif
             applyOutputVolume(pcm);
 #if defined(WINBOLO_VOICE_AEC)
             /* Taken after the output gain, so the reference is at the level
@@ -1270,6 +1290,26 @@ static void voicePlayRemote(struct ClientSim *cs) {
             voiceBackendSpeakerPlay(i, pcm);
         }
     }
+
+#if defined(WB_VOICEDEBUG)
+    /* The talker table is private to this file, so the recorder says when a
+     * row is due and the walk happens here. */
+    {
+        uint32_t nowMs = voiceBackendNowMs();
+        VoiceSpeakerStats stats;
+
+        if (voiceDebugSpeakerStatsDue(nowMs)) {
+            for (i = 0; i < MAX_TANKS; i++) {
+                if (speakers[i] == NULL) {
+                    continue;
+                }
+                voiceSpeakerGetStats(speakers[i], &stats);
+                voiceDebugSpeakerRow(nowMs, i, &stats,
+                                     voiceBackendSpeakerQueuedFrames(i));
+            }
+        }
+    }
+#endif
 }
 
 /*********************************************************
@@ -1435,6 +1475,11 @@ void voiceTick(struct ClientSim *cs) {
     float sample;
     float sumSquares;
     float gateLevel;
+#if defined(WB_VOICEDEBUG)
+    /* Samples the mic gain pushed out of the int16 range, counted per frame
+     * before the clamp writes them back. */
+    int clipped = 0;
+#endif
 
     if (!isInitialised) {
         return;
@@ -1466,8 +1511,18 @@ void voiceTick(struct ClientSim *cs) {
      * every VOICE_CAPTURE_RETRY_TICKS, since the open fails for as long as
      * the operating system's permission prompt is still up.  The start is
      * idempotent, so an open that succeeded is never repeated. */
+#if defined(WB_VOICEDEBUG)
+    /* A recording opens the device with no connection to carry voice, since
+     * a recording made on one machine has none.  An injected run takes its
+     * audio from the file instead, so it opens no recording device at all
+     * and runs on a machine whose microphone does not work. */
+    if ((connectionCarriesVoice || voiceDebugIsRecording()) &&
+        !voiceDebugInjectIsOpen() && captureIsWanted() &&
+        !voiceBackendCaptureIsOpen()) {
+#else
     if (connectionCarriesVoice && captureIsWanted() &&
         !voiceBackendCaptureIsOpen()) {
+#endif
         if (!wasCarryingVoice || captureRetryTicks == 0) {
             startCaptureIfWanted();
             captureRetryTicks = VOICE_CAPTURE_RETRY_TICKS;
@@ -1497,14 +1552,38 @@ void voiceTick(struct ClientSim *cs) {
     }
 
     for (frame = 0; frame < VOICE_FRAMES_PER_TICK; frame++) {
+#if defined(WB_VOICEDEBUG)
+        clipped = 0;
+        /* An injected file stands in for the recording device, so the same
+         * signal can be put through the chain before and after a change.
+         * The end of the file ends the run. */
+        if (voiceDebugInjectIsOpen()) {
+            if (!voiceDebugInjectRead(pcm)) {
+                break;
+            }
+            got = VOICE_FRAME_SAMPLES;
+        } else {
+            got = voiceBackendCaptureRead(pcm);
+        }
+#else
         got = voiceBackendCaptureRead(pcm);
+#endif
         if (got != VOICE_FRAME_SAMPLES) {
             break;
         }
 
+#if defined(WB_VOICEDEBUG)
+        voiceDebugTap(VOICE_TAP_RAW, 0, pcm);
+#endif
+
         sumSquares = 0.0f;
         for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
             sample = (float)pcm[i] * micGain;
+#if defined(WB_VOICEDEBUG)
+            if (sample > 32767.0f || sample < -32768.0f) {
+                clipped++;
+            }
+#endif
             if (sample > 32767.0f) {
                 sample = 32767.0f;
             } else if (sample < -32768.0f) {
@@ -1518,6 +1597,10 @@ void voiceTick(struct ClientSim *cs) {
             inputLevel = 1.0f;
         }
 
+#if defined(WB_VOICEDEBUG)
+        voiceDebugTap(VOICE_TAP_GAINED, 0, pcm);
+#endif
+
         gateLevel = inputLevel;
 #if defined(WINBOLO_VOICE_AEC)
         /* Below the level meter, which reports the microphone as it is, and
@@ -1530,6 +1613,13 @@ void voiceTick(struct ClientSim *cs) {
         /* The gate's own reading, taken off the frame the canceller has just
          * cleaned rather than off the meter's. */
         gateLevel = voiceFrameRms(pcm);
+#endif
+
+#if defined(WB_VOICEDEBUG)
+        /* Written whether or not the canceller is built.  Without it this is
+         * the same frame as gained, and writing it anyway keeps the set of
+         * files the same shape either way. */
+        voiceDebugTap(VOICE_TAP_CLEANED, 0, pcm);
 #endif
 
         /* Open mic decides on the signal that will actually be sent, not on
@@ -1556,15 +1646,32 @@ void voiceTick(struct ClientSim *cs) {
         /* Between words in push-to-talk, and with the microphone test not
          * recording, the frame is only worth its level reading - which is
          * already taken.  Encoding it would be work nobody consumes. */
-        if (!sending && micTestState != VOICE_MICTEST_RECORDING) {
+        if (!sending && micTestState != VOICE_MICTEST_RECORDING
+#if defined(WB_VOICEDEBUG)
+            /* A recording encodes every captured frame, sent or not, so the
+             * round-trip file and the encoded length in frames.csv cover the
+             * whole run. */
+            && !voiceDebugIsRecording()
+#endif
+        ) {
             continue;
         }
 
         /* One encode feeds both consumers. */
         encodedLen = voiceEncoderEncode(encoder, pcm, packet, (int)sizeof(packet));
         if (encodedLen <= 0) {
+#if defined(WB_VOICEDEBUG)
+            /* Recorded before the frame is dropped: a frame that would not
+             * encode is one a hole in the audio is found in. */
+            voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
+                                 clipped, gateOpen, sending, 0, false);
+#endif
             continue;
         }
+
+#if defined(WB_VOICEDEBUG)
+        voiceDebugRoundtrip(packet, encodedLen);
+#endif
 
         if (sending) {
             if (encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES) {
@@ -1582,6 +1689,12 @@ void voiceTick(struct ClientSim *cs) {
                 clientSimNetSendVoice(cs, packet, encodedLen);
             }
         }
+
+#if defined(WB_VOICEDEBUG)
+        voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
+                             clipped, gateOpen, sending, encodedLen,
+                             encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES);
+#endif
 
         /* Kept at the same size a frame may be on the wire, so the test hears
          * what a listener would.  A frame over that is dropped here exactly as

@@ -1142,6 +1142,15 @@ if(WB_NETDEBUG)
     add_compile_definitions(WB_NETDEBUG=1)
 endif()
 
+# Voice capture-chain recorder: WAV taps at each stage of the capture chain,
+# the two CSVs, and the WAV injection path (src/client_frontend/voice_debug.c).
+# OFF in every shipping build. The source is on the WinBolo target only, which
+# is the only target that compiles voice_client.c.
+option(WB_VOICEDEBUG "Build the voice capture-chain recorder" OFF)
+if(WB_VOICEDEBUG)
+    add_compile_definitions(WB_VOICEDEBUG=1)
+endif()
+
 # Fuzzing: libFuzzer targets over the wire parsers and the server packet
 # dispatcher (hardening plan §1.2). Linux + Clang only. This is a DEDICATED
 # build config, not mixed with a normal build: when ON, the whole build is
@@ -1678,6 +1687,12 @@ target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE=1)
 target_sources(WinBolo PRIVATE src/client_frontend/voice_aec.c)
 target_link_libraries(WinBolo PRIVATE speexdsp)
 target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE_AEC=1)
+
+# The capture-chain recorder (WB_VOICEDEBUG above). This target only: it is
+# called from voice_client.c and winbolo.c, which nothing else compiles.
+if(WB_VOICEDEBUG)
+    target_sources(WinBolo PRIVATE src/client_frontend/voice_debug.c)
+endif()
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)

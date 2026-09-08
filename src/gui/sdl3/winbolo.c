@@ -74,6 +74,9 @@
 #if defined(WINBOLO_VOICE_AEC)
 #include "voice_aec.h"
 #endif
+#if defined(WB_VOICEDEBUG)
+#include "voice_debug.h"
+#endif
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
@@ -316,6 +319,10 @@ int main(int argc, char *argv[]) {
   char connectArg[FILENAME_MAX];
   bool joinedViaSteam = FALSE;
   ClientSim *cs = NULL;
+#if defined(WB_VOICEDEBUG)
+  const char *voiceRecordDir = NULL;
+  const char *voiceInjectPath = NULL;
+#endif
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
@@ -353,6 +360,37 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[i], "--allow-unsafe-brains") == 0 ||
         strcmp(argv[i], "-allow-unsafe-brains") == 0) {
       luaBrainsSetAllowUnsafe(1);
+      continue;
+    }
+    /* The voice capture-chain recorder. Both switches take a value, and both
+     * consume it in every build: the clause below assigns anything left over
+     * to cmdLine, which would read the value as a map name. */
+    if (strcmp(argv[i], "--voice-record") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--voice-record needs a directory\n");
+        continue;
+      }
+#if defined(WB_VOICEDEBUG)
+      voiceRecordDir = argv[i + 1];
+#else
+      fprintf(stderr,
+              "--voice-record: this build does not carry the voice recorder\n");
+#endif
+      i++;
+      continue;
+    }
+    if (strcmp(argv[i], "--voice-inject") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--voice-inject needs a WAV file\n");
+        continue;
+      }
+#if defined(WB_VOICEDEBUG)
+      voiceInjectPath = argv[i + 1];
+#else
+      fprintf(stderr,
+              "--voice-inject: this build does not carry the voice recorder\n");
+#endif
+      i++;
       continue;
     }
     if (cmdLine[0] == '\0') {
@@ -441,6 +479,27 @@ int main(int argc, char *argv[]) {
    * will not open is not fatal — voiceInit leaves the module disabled and
    * every entry point no-ops. */
   voiceInit();
+
+#if defined(WB_VOICEDEBUG)
+  /* Injecting without recording writes nothing, so the file implies a
+   * directory. The recorder is plain C stdio and does not make the
+   * directory itself, so it is made here. */
+  if (voiceInjectPath != NULL && voiceRecordDir == NULL) {
+    voiceRecordDir = "./voice-rec";
+  }
+  if (voiceRecordDir != NULL) {
+    if (!SDL_CreateDirectory(voiceRecordDir)) {
+      fprintf(stderr, "Voice recorder: cannot create %s: %s\n", voiceRecordDir,
+              SDL_GetError());
+    }
+    if (!voiceDebugStart(voiceRecordDir)) {
+      fprintf(stderr, "Voice recorder: recording did not start\n");
+    }
+  }
+  if (voiceInjectPath != NULL && !voiceDebugInjectOpen(voiceInjectPath)) {
+    fprintf(stderr, "Voice recorder: injection did not start\n");
+  }
+#endif
 
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();
