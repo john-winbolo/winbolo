@@ -3429,6 +3429,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # that takes it out. Runs on the real data/svg art beside the binary.
     tests/unit/test_sheet_bleed.c
     src/gui/sdl3/sdl_bmp.c
+    # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
+    # and the compaction that leaves the members which decoded contiguous.
+    # Name arithmetic only: no audio device, and it opens no file.
+    tests/unit/test_sound_variants.c
+    src/gui/sdl3/sound_variants.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -4265,6 +4270,8 @@ set(_unit_test_names
     sheet_bleed_edges
     sheet_no_key_under_alpha
     bmp_sheet_no_key_under_alpha
+    sound_variant_pool_names
+    sound_variant_load_compaction
     pascal_string_lengths
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip

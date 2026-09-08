@@ -655,6 +655,8 @@ static const UnitTestEntry s_tests[] = {
     { "sheet_bleed_edges",                       run_sheet_bleed_edges                       },
     { "sheet_no_key_under_alpha",                run_sheet_no_key_under_alpha                },
     { "bmp_sheet_no_key_under_alpha",            run_bmp_sheet_no_key_under_alpha            },
+    { "sound_variant_pool_names",                run_sound_variant_pool_names                },
+    { "sound_variant_load_compaction",           run_sound_variant_load_compaction           },
     { "pascal_string_lengths",                   run_pascal_string_lengths                   },
     { "pascal_string_viewer_copy_agrees",        run_pascal_string_viewer_copy_agrees        },
     { "pascal_string_roundtrip",                 run_pascal_string_roundtrip                 },
