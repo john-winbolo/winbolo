@@ -888,9 +888,10 @@ void clientSimNetSendViewCycle(ClientSim *cs, uint8_t kind, uint8_t direction,
 
 /* === Voice === */
 
-void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen) {
+void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen,
+                           uint8_t flags) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendVoice(&cs->transport, opus, opusLen);
+  transportUdpClientSendVoice(&cs->transport, opus, opusLen, flags);
 }
 
 int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,

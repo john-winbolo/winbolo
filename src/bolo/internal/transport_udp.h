@@ -372,10 +372,10 @@ void transportUdpClientSendWbnReauth(Transport *t);
 
 /* Frame one encoded 20 ms audio frame and queue it on the best-effort
  * voice channel, stamped with this connection's next voice sequence
- * number. Dropped silently when the client is not connected or the frame
- * is too large for one segment. */
+ * number and the caller's flags byte. Dropped silently when the client is
+ * not connected or the frame is too large for one segment. */
 void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
-                                 int opusLen);
+                                 int opusLen, uint8_t flags);
 
 /* Pop the oldest voice frame received from the server, writing its payload
  * to out. Returns the payload length, or 0 when none is pending. */

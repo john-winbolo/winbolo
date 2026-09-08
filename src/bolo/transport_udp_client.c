@@ -4443,7 +4443,7 @@ BOLO_STATIC_ASSERT(CLIENT_VOICE_MAX_FRAME_BYTES == VOICE_SEG_MAX_OPUS,
                    client_voice_max_frame_bytes_drift);
 
 void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
-                                 int opusLen) {
+                                 int opusLen, uint8_t flags) {
     TransportUdpClientCtx *c;
     uint8_t seg[CHANNEL_VOICE_SEG];
     int segLen;
@@ -4452,8 +4452,10 @@ void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
     c = (TransportUdpClientCtx *)t->ctx;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    /* Flags stay clear: nothing here ends an utterance yet. */
-    segLen = voiceSegmentPackUp(seg, (int)sizeof(seg), c->voiceSeq, 0,
+    /* The caller's flags byte goes out as it stands.  The only bit defined
+     * is VOICE_FLAG_END_OF_UTTERANCE, which the sender sets on the frame
+     * that ends a run of speech and the server forwards untouched. */
+    segLen = voiceSegmentPackUp(seg, (int)sizeof(seg), c->voiceSeq, flags,
                                 opus, opusLen);
     if (segLen <= 0) return;
     c->voiceSeq++;

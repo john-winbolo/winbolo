@@ -156,6 +156,11 @@ static bool connectionCarriesVoice = false;
  * for it, so starting the game on its own never prompts. */
 static bool wasCarryingVoice = false;
 
+/* Previous captured frame's transmit decision.  The falling edge is where
+ * the end-of-utterance marker is sent from, since the last frame of speech
+ * has already gone by the time transmission stops. */
+static bool wasSending = false;
+
 /* Ticks left before the recording device is asked for again after an open
  * that failed.  Only counts while the connection carries voice and the
  * microphone is wanted but not open. */
@@ -492,6 +497,7 @@ void voiceReset(void) {
     reportedSelfMuted = false;
     connectionCarriesVoice = false;
     wasCarryingVoice = false;
+    wasSending = false;
     captureRetryTicks = 0;
 }
 
@@ -1649,6 +1655,38 @@ void voiceTick(struct ClientSim *cs) {
 
         sending = voiceIsTransmitting();
 
+        /* Transmission has just stopped, so tell the listeners the utterance
+         * ended.  Without it they have nothing to separate a pause from a
+         * talker who has finished, and each utterance ends in
+         * VOICE_JITTER_MAX_PLC concealed frames before the buffer gives up.
+         *
+         * The marker carries silence rather than the frame in hand because
+         * transmission also stops when the player mutes themselves, and
+         * sending what was just captured would put 20 ms of their audio on
+         * the wire after they muted.
+         *
+         * It is a hint, not a guarantee.  Lost, evicted, or never sent at
+         * all - the connection went away, or capture stopped and this loop
+         * is not reached - and the receiver still tears itself down after
+         * its run of concealed frames, exactly as it did before. */
+        if (!sending && wasSending) {
+            int16_t silence[VOICE_FRAME_SAMPLES];
+            uint8_t marker[VOICE_MAX_PACKET];
+            int markerLen;
+
+            memset(silence, 0, sizeof(silence));
+            markerLen = voiceEncoderEncode(encoder, silence, marker,
+                                           (int)sizeof(marker));
+            /* Silence encodes far under the segment limit, so a length past
+             * it means something is wrong with the encoder and the marker is
+             * not worth sending. */
+            if (markerLen > 0 && markerLen <= CLIENT_VOICE_MAX_FRAME_BYTES) {
+                clientSimNetSendVoice(cs, marker, markerLen,
+                                      VOICE_FLAG_END_OF_UTTERANCE);
+            }
+        }
+        wasSending = sending;
+
         /* Between words in push-to-talk, and with the microphone test not
          * recording, the frame is only worth its level reading - which is
          * already taken.  Encoding it would be work nobody consumes. */
@@ -1693,7 +1731,7 @@ void voiceTick(struct ClientSim *cs) {
                     warnedFrameTooLarge = true;
                 }
             } else {
-                clientSimNetSendVoice(cs, packet, encodedLen);
+                clientSimNetSendVoice(cs, packet, encodedLen, 0);
             }
         }
 

@@ -123,7 +123,7 @@ int run_voice_flood_cap_enforced(void) {
      * carries all of them and one server pump sees the lot. */
     transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped, &baseCapped);
     for (i = 0; i < BURST_FRAMES; i++) {
-        clientSimNetSendVoice(h.cs, frames[i].data, frames[i].len);
+        clientSimNetSendVoice(h.cs, frames[i].data, frames[i].len, 0);
     }
 
     /* Pump until the server has accounted for the whole burst one way or the
@@ -174,7 +174,7 @@ int run_voice_flood_cap_enforced(void) {
     transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped, &baseCapped);
     for (i = 0; i < STEADY_FRAMES; i++) {
         clientSimNetSendVoice(h.cs, frames[BURST_FRAMES + i].data,
-                              frames[BURST_FRAMES + i].len);
+                              frames[BURST_FRAMES + i].len, 0);
         loopbackHarnessPump(&h);
     }
     /* Drain the last frames still in flight. */

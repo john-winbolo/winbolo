@@ -367,9 +367,11 @@ uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen);
  * equal at compile time, so the two cannot drift apart. */
 #define CLIENT_VOICE_MAX_FRAME_BYTES 125
 
-/* Queue one encoded 20 ms voice frame for the server. No-op for in-process
- * (local) transports, which never carry voice. */
-void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen);
+/* Queue one encoded 20 ms voice frame for the server. flags is the frame's
+ * flags byte, carried to the wire untouched; 0 for an ordinary frame. No-op
+ * for in-process (local) transports, which never carry voice. */
+void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen,
+                           uint8_t flags);
 
 /* Pop one received voice frame. Returns the payload length written to
  * out, or 0 when nothing is pending. */
