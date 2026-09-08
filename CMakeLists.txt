@@ -783,6 +783,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
+    src/gui/sdl3/sound_variants.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
@@ -1426,7 +1427,7 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
     # sits on the chooser + wbn_map_source stack the standalone MapEditor

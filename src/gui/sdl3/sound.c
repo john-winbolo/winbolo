@@ -32,6 +32,7 @@
 #include "client_enums.h"  /* sndEffects */
 #include "../sound.h"
 #include "skin_source.h"
+#include "sound_variants.h"
 #include "../../common/wb_log.h"
 
 #define NUM_SOUNDS 31
@@ -60,8 +61,19 @@ static bool s_muted = FALSE;   /* logical mute state, tracked across (un)playabl
 static SDL_AudioStream *audioStream = NULL;
 static SDL_AudioSpec deviceSpec;
 
-/* Sound effect data (pre-loaded and converted) */
-static SoundData sounds[NUM_SOUNDS];
+/* Sound effect data (pre-loaded and converted).
+ * Each sound's pool. Members 0 .. variantCount-1 are loaded and playable;
+ * a member that would not decode never takes a position, so there are no
+ * gaps to land on. lastPlayed keeps the previous pick out of the next one. */
+static SoundData     sounds[NUM_SOUNDS][SOUND_VARIANT_MAX];
+static unsigned char variantCount[NUM_SOUNDS];
+static unsigned char lastPlayed[NUM_SOUNDS];
+
+/* Seeded on first use. The picks are cosmetic and per client, so this is
+ * deliberately not the Bolo RNG: that one is the sim's and is pinned
+ * deterministic by its own test. playSound holds slotsMutex, which is what
+ * makes this state safe to touch from the timer thread. */
+static Uint64 variantSeed = 0;
 
 /* Active sound slots for mixing.  The mutex is created by the first
  * soundSetup and then kept for the life of the process: soundCleanup runs
@@ -182,55 +194,30 @@ static bool loadWavFromSkin(SkinSource *src, const char *relName,
 }
 
 /*********************************************************
-*NAME:          loadSoundFromFile
-*AUTHOR:        John Morrison
-*CREATION DATE: 2024
-*LAST MODIFIED: 2024
+*NAME:          storeSoundData
 *PURPOSE:
-*  Loads a WAV from the active skin or from disk and
-*  converts it to the device audio format.  The skin is
-*  tried under sounds/ first, then at its top level for
-*  the flat 1.x layout; a sound the skin lacks comes from
-*  data/sounds/ beside the executable.
+*  Converts one decoded WAV into the device format and
+*  keeps it as a pool member.  The WAV bytes are freed
+*  either way.  A conversion that fails is not fatal: the
+*  data is used as it came, which is what one file did
+*  before there were pools.
 *
 *ARGUMENTS:
-*  basePath  - Base path to look for sounds
-*  filename  - WAV filename (relative to data/sounds/)
-*  sound     - Pointer to SoundData to fill
+*  sound     - Pool member to fill
+*  spec      - Format the WAV bytes are in
+*  wavData   - The WAV bytes, freed here
+*  wavLength - Byte count
 *
 *RETURNS:
-*  true if successful, false otherwise
+*  true unless the fallback allocation failed
 *********************************************************/
-static bool loadSoundFromFile(const char *basePath, const char *filename, SoundData *sound) {
-    SDL_AudioSpec wavSpec;
-    Uint8 *wavData = NULL;
-    Uint32 wavLength = 0;
-    char fullPath[4096];
-    bool loaded = false;
-
+static bool storeSoundData(SoundData *sound, const SDL_AudioSpec *spec,
+                           Uint8 *wavData, Uint32 wavLength) {
     sound->data = NULL;
     sound->size = 0;
 
-    SkinSource *skin = skinGetActiveSource();
-    if (skin != NULL) {
-        SDL_snprintf(fullPath, sizeof(fullPath), "sounds/%s", filename);
-        loaded = loadWavFromSkin(skin, fullPath, &wavSpec, &wavData, &wavLength);
-        if (!loaded) {
-            loaded = loadWavFromSkin(skin, filename, &wavSpec, &wavData, &wavLength);
-        }
-    }
-
-    if (!loaded) {
-        SDL_snprintf(fullPath, sizeof(fullPath), "%sdata/sounds/%s", basePath, filename);
-        loaded = SDL_LoadWAV(fullPath, &wavSpec, &wavData, &wavLength);
-    }
-
-    if (!loaded) {
-        return false;
-    }
-
     /* Convert audio data to device format */
-    if (!convertAudioData(wavData, wavLength, &wavSpec, &sound->data, &sound->size)) {
+    if (!convertAudioData(wavData, wavLength, spec, &sound->data, &sound->size)) {
         /* If conversion fails, use data directly */
         sound->data = (Uint8 *)SDL_malloc(wavLength);
         if (!sound->data) {
@@ -242,6 +229,138 @@ static bool loadSoundFromFile(const char *basePath, const char *filename, SoundD
     }
 
     SDL_free(wavData);
+    return true;
+}
+
+/* What the pool callbacks need to reach one sound's members. */
+typedef struct {
+    SkinSource *skin;      /* the active skin, for the skin adapters */
+    const char *basePath;  /* for the built-in adapters */
+    const char *baseName;  /* the plain name, so the built-in adapter can
+                              answer by name shape and open nothing */
+    int         index;     /* which row of sounds[] is being filled */
+    int         failures;  /* members that would not decode */
+} SoundPoolCtx;
+
+/*********************************************************
+*NAME:          skinHasMember
+*PURPOSE:
+*  Whether the active skin holds one pool member, under
+*  sounds/ or at its top level for the flat 1.x layout.
+*  A hash lookup either way, so asking for all eleven
+*  members of a pool costs no I/O.
+*
+*ARGUMENTS:
+*  ctx     - SoundPoolCtx for the sound being filled
+*  relName - Bare member name, carrying its .wav
+*
+*RETURNS:
+*  true if the skin holds it under either name
+*********************************************************/
+static bool skinHasMember(void *ctx, const char *relName) {
+    SoundPoolCtx *c = (SoundPoolCtx *)ctx;
+    char fullPath[4096];
+
+    SDL_snprintf(fullPath, sizeof(fullPath), "sounds/%s", relName);
+    return skinSourceExists(c->skin, fullPath) ||
+           skinSourceExists(c->skin, relName);
+}
+
+/*********************************************************
+*NAME:          skinLoadMember
+*PURPOSE:
+*  Decodes one member out of the active skin into its pool
+*  position, trying sounds/<name> then the top level.
+*
+*ARGUMENTS:
+*  ctx     - SoundPoolCtx for the sound being filled
+*  relName - Bare member name, carrying its .wav
+*  slot    - Pool position to fill
+*
+*RETURNS:
+*  true if the member decoded
+*********************************************************/
+static bool skinLoadMember(void *ctx, const char *relName, int slot) {
+    SoundPoolCtx *c = (SoundPoolCtx *)ctx;
+    SDL_AudioSpec wavSpec;
+    Uint8 *wavData = NULL;
+    Uint32 wavLength = 0;
+    char fullPath[4096];
+    bool loaded;
+
+    SDL_snprintf(fullPath, sizeof(fullPath), "sounds/%s", relName);
+    loaded = loadWavFromSkin(c->skin, fullPath, &wavSpec, &wavData, &wavLength);
+    if (!loaded) {
+        loaded = loadWavFromSkin(c->skin, relName, &wavSpec, &wavData, &wavLength);
+    }
+    if (loaded) {
+        loaded = storeSoundData(&sounds[c->index][slot], &wavSpec, wavData,
+                                wavLength);
+    }
+    if (!loaded) {
+        c->failures++;
+        WB_LOG_WARN(WB_LOG_CAT_AUDIO, "soundSetup: skin sound %s: %s",
+                    relName, SDL_GetError());
+        return false;
+    }
+    return true;
+}
+
+/*********************************************************
+*NAME:          builtinHasMember
+*PURPOSE:
+*  Whether the built-in set holds one pool member.  The
+*  built-in set is one file per sound, so only the plain
+*  name is ever a member and no _N name is looked for on
+*  disk.  This answers by name shape and opens nothing:
+*  answering honestly would mean up to ten failed file
+*  opens per sound, 310 at startup with no skin active,
+*  which is cheap on a desktop and not on a phone reading
+*  through an APK asset reader.
+*
+*ARGUMENTS:
+*  ctx     - SoundPoolCtx for the sound being filled
+*  relName - Bare member name, carrying its .wav
+*
+*RETURNS:
+*  true only for the sound's plain name
+*********************************************************/
+static bool builtinHasMember(void *ctx, const char *relName) {
+    SoundPoolCtx *c = (SoundPoolCtx *)ctx;
+
+    return SDL_strcmp(relName, c->baseName) == 0;
+}
+
+/*********************************************************
+*NAME:          builtinLoadMember
+*PURPOSE:
+*  Decodes one member out of data/sounds/ beside the
+*  executable into its pool position.
+*
+*ARGUMENTS:
+*  ctx     - SoundPoolCtx for the sound being filled
+*  relName - Bare member name, carrying its .wav
+*  slot    - Pool position to fill
+*
+*RETURNS:
+*  true if the member decoded
+*********************************************************/
+static bool builtinLoadMember(void *ctx, const char *relName, int slot) {
+    SoundPoolCtx *c = (SoundPoolCtx *)ctx;
+    SDL_AudioSpec wavSpec;
+    Uint8 *wavData = NULL;
+    Uint32 wavLength = 0;
+    char fullPath[4096];
+
+    SDL_snprintf(fullPath, sizeof(fullPath), "%sdata/sounds/%s", c->basePath,
+                 relName);
+    if (!SDL_LoadWAV(fullPath, &wavSpec, &wavData, &wavLength) ||
+        !storeSoundData(&sounds[c->index][slot], &wavSpec, wavData, wavLength)) {
+        c->failures++;
+        WB_LOG_WARN(WB_LOG_CAT_AUDIO, "soundSetup: %s: %s", fullPath,
+                    SDL_GetError());
+        return false;
+    }
     return true;
 }
 
@@ -355,6 +474,7 @@ static void SDLCALL mixAudioCallback(void *userdata, SDL_AudioStream *stream, in
 bool soundSetup(void) {
     bool returnValue = TRUE;
     int i;
+    int v;
 
     isPlayable = FALSE;
 
@@ -410,27 +530,70 @@ bool soundSetup(void) {
         SDL_SetAudioStreamGain(audioStream, (float)soundVolume / 100.0f);
     }
 
-    /* Load all sound effects from data/sounds/ relative to the executable.
-     * A file that will not load leaves its entry NULL and is simply silent —
-     * playSound skips an entry with no data — so one unreadable WAV costs one
-     * effect rather than the whole sound system.  An empty set is different:
-     * that is data/sounds/ missing or unreadable as a whole, and it takes the
-     * failure path below. */
+    /* Load every sound effect's pool: the active skin's members when it holds
+     * any that decode, otherwise the one file under data/sounds/ relative to
+     * the executable.  A member that will not decode is dropped and the rest
+     * of its pool still plays; a sound with an empty pool is simply silent —
+     * playSound skips it — so one unreadable WAV costs one effect rather than
+     * the whole sound system.  An empty set is different: that is
+     * data/sounds/ missing or unreadable as a whole, and it takes the failure
+     * path below. */
     {
         const char *basePath = SDL_GetBasePath();
+        SkinSource *skin = skinGetActiveSource();
+        const char *skinLabel = skinGetActive();
         int loadedCount = 0;
+        int fromSkin = 0;
+        int withVariants = 0;
+        int maxVariants = 0;
+        int membersUnreadable = 0;
+        int fellBack = 0;
         if (!basePath) basePath = "./";
+        if (skinLabel == NULL || skinLabel[0] == '\0') skinLabel = "none";
 
         SDL_zero(sounds);
+        SDL_zero(variantCount);
+        SDL_zero(lastPlayed);
 
         for (i = 0; i < NUM_SOUNDS; i++) {
-            if (loadSoundFromFile(basePath, soundFiles[i], &sounds[i])) {
-                loadedCount++;
-            } else {
-                WB_LOG_WARN(WB_LOG_CAT_AUDIO, "soundSetup: %sdata/sounds/%s: %s",
-                            basePath, soundFiles[i], SDL_GetError());
+            SoundPoolCtx ctx;
+            int n = 0;
+
+            ctx.skin = skin;
+            ctx.basePath = basePath;
+            ctx.baseName = soundFiles[i];
+            ctx.index = i;
+            ctx.failures = 0;
+
+            if (skin != NULL) {
+                n = soundVariantLoad(soundFiles[i], skinHasMember,
+                                     skinLoadMember, &ctx);
             }
+            membersUnreadable += ctx.failures;
+            if (n > 0) {
+                fromSkin++;
+            } else {
+                /* A skin that held names none of which decoded falls back to
+                   the game's own sound rather than to silence, which is what
+                   one file did before there were pools.  A skin that simply
+                   does not replace this sound is not a fallback. */
+                if (ctx.failures > 0) fellBack++;
+                ctx.failures = 0;
+                n = soundVariantLoad(soundFiles[i], builtinHasMember,
+                                     builtinLoadMember, &ctx);
+                membersUnreadable += ctx.failures;
+            }
+            variantCount[i] = (unsigned char)n;
+
+            if (n > 0) loadedCount++;
+            if (n > 1) withVariants++;
+            if (n > maxVariants) maxVariants = n;
         }
+
+        WB_LOG_INFO(WB_LOG_CAT_AUDIO,
+                    "soundSetup: %d effects, %d from skin=%s, %d with variants (max %d), %d members unreadable, %d fell back to the built-in",
+                    loadedCount, fromSkin, skinLabel, withVariants, maxVariants,
+                    membersUnreadable, fellBack);
 
         if (loadedCount == 0) {
             imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error loading sound effects",
@@ -465,9 +628,11 @@ bool soundSetup(void) {
         /* Cleanup on failure.  The mutex stays: nothing here made it
          * playable, and the next soundSetup reuses it. */
         for (i = 0; i < NUM_SOUNDS; i++) {
-            if (sounds[i].data) {
-                SDL_free(sounds[i].data);
-                sounds[i].data = NULL;
+            for (v = 0; v < SOUND_VARIANT_MAX; v++) {
+                if (sounds[i][v].data) {
+                    SDL_free(sounds[i][v].data);
+                    sounds[i][v].data = NULL;
+                }
             }
         }
         if (audioStream) {
@@ -494,6 +659,7 @@ bool soundSetup(void) {
 *********************************************************/
 void soundCleanup(void) {
     int i;
+    int v;
 
     /* Drop the flag under the mutex.  playSound on the timer thread checks
      * it under the same mutex, so any call that gets the lock from here on
@@ -530,12 +696,16 @@ void soundCleanup(void) {
      * later soundSetup fails partway. */
     if (slotsMutex) SDL_LockMutex(slotsMutex);
     for (i = 0; i < NUM_SOUNDS; i++) {
-        if (sounds[i].data) {
-            SDL_free(sounds[i].data);
-            sounds[i].data = NULL;
-            sounds[i].size = 0;
+        for (v = 0; v < SOUND_VARIANT_MAX; v++) {
+            if (sounds[i][v].data) {
+                SDL_free(sounds[i][v].data);
+                sounds[i][v].data = NULL;
+                sounds[i][v].size = 0;
+            }
         }
     }
+    SDL_zero(variantCount);
+    SDL_zero(lastPlayed);
     for (i = 0; i < MAX_SOUND_SLOTS; i++) {
         slots[i].active = false;
         slots[i].data = NULL;
@@ -566,6 +736,7 @@ static void playSound(int index) {
     int search_start;
     Uint32 most_progress;
     int evict_slot;
+    int pick;
 
     if (index < 0 || index >= NUM_SOUNDS || !slotsMutex)
         return;
@@ -575,8 +746,7 @@ static void playSound(int index) {
      * gets the lock after that sees the flag and leaves. */
     SDL_LockMutex(slotsMutex);
 
-    if (!isPlayable || !audioStream ||
-        !sounds[index].data || sounds[index].size == 0) {
+    if (!isPlayable || !audioStream || variantCount[index] == 0) {
         SDL_UnlockMutex(slotsMutex);
         return;
     }
@@ -619,9 +789,26 @@ static void playSound(int index) {
         }
     }
 
+    /* Choose which member of the pool plays.  This sits below the duplicate
+     * check on purpose: a trigger that check suppresses must not advance the
+     * rotation, or the rotation is driven by events nobody heard. */
+    pick = 0;
+    if (variantCount[index] > 1) {
+        if (variantSeed == 0) {
+            variantSeed = SDL_GetPerformanceCounter();
+            if (variantSeed == 0) variantSeed = 1;
+        }
+        /* Draw from the members other than the one that played last, so a
+         * pool of three cannot repeat a third of the time and a pool of two
+         * alternates. */
+        pick = SDL_rand_r(&variantSeed, variantCount[index] - 1);
+        if (pick >= lastPlayed[index]) pick++;
+        lastPlayed[index] = (unsigned char)pick;
+    }
+
     /* Start playback in the slot */
-    slots[slot_found].data = sounds[index].data;
-    slots[slot_found].size = sounds[index].size;
+    slots[slot_found].data = sounds[index][pick].data;
+    slots[slot_found].size = sounds[index][pick].size;
     slots[slot_found].pos = 0;
     slots[slot_found].sound = index;
     slots[slot_found].active = true;
