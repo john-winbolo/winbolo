@@ -1,19 +1,33 @@
 /*
  * Sound delivery over the wire (test_sound_delivery_wire.c).
  *
- * The two delivery paths do not cull sounds the same way. The snapshot builder
- * culls by map-square distance against SDIST_NONE
- * (server_sim_snapshot.c:1267); the UDP drain culls by rect membership,
- * !inAnyViewport over the recipient's viewport set
- * (transport_udp_server.c:6747). A wire client therefore stops hearing at the
- * rect's 27-square half-extent while a host hears out to 40.
+ * Both delivery paths now cull sounds the same way. soundTierAndDirection
+ * measures the sound against the recipient's own tank square and reports
+ * whether it is inside SDIST_NONE; the UDP drain and the in-process snapshot
+ * builder both call it, so a wire client hears exactly as far as a host does.
+ * The viewport rects have no say in it any more.
  *
- * This case drives that difference over real sockets. One wire client and no
- * other players, with the pill and base view policies turned off so that
- * whatever the loaded map owns cannot grant a rect: the drain culls against the
- * whole rect set, so an allied pill or base near a sound would carry it through
- * by accident and prove nothing. The recipient's rect count is asserted to be
- * one — its own tank screen — before any arm runs.
+ * What the drain puts on the wire is [soundId, tier, bearing, sourcePlayer] —
+ * a near/far band and a coarse compass bearing in place of the map square the
+ * sound was raised at.
+ *
+ * The arms:
+ *   - a sound 10 squares out is delivered;
+ *   - one at 30 is delivered by both paths, though it sits outside the
+ *     recipient's only rect — the range parity;
+ *   - one at 45, past SDIST_NONE, reaches neither path;
+ *   - a tank hit on the recipient arrives from 60 squares out, since that one
+ *     deliberately skips the range cull;
+ *   - a delivered sound carries no map square, whether its square is inside the
+ *     recipient's rect or outside it;
+ *   - manLayingMineNear 30 squares away is dropped, because it has no far
+ *     variant for the client to play.
+ *
+ * One wire client and no other players, with the pill and base view policies
+ * turned off so that whatever the loaded map owns cannot grant a rect. The
+ * recipient's rect count is asserted to be one — its own tank screen — before
+ * any arm runs. Sound no longer consults the rects, but the payload arm still
+ * has to know which side of the rect each of its squares sits on.
  *
  * Sounds are staged into the sim's event buffer and handed to the real
  * transportUdpServerDrainEvents, the same producer a running frame uses. What
@@ -36,7 +50,7 @@
 #include "client_enums.h"          /* sndEffects */
 #include "view_policy.h"           /* viewCategoryPill / viewPolicyOff */
 #include "sounddist.h"             /* SDIST_NONE */
-#include "input_packet.h"
+#include "input_packet.h"          /* SOUND_TIER_* / SOUND_DIR_* */
 #include "transport_udp.h"         /* the server drain + the download-complete test hook */
 #include "threads.h"
 #include "test_harness.h"
@@ -48,17 +62,21 @@
 #define SND_READY_MAX   4000
 #define SND_DELIVER_MAX 400
 
-/* How long a sound the drain culled is given to turn up anyway. Sounds ride
+/* How long a sound the drain dropped is given to turn up anyway. Sounds ride
  * the best-effort channel, which is carried on the next snapshot, so a
  * delivered one arrives in a handful of pumps. */
 #define SND_QUIET_PUMPS 400
 
-/* Gaps from the recipient's tank, in map squares. The viewport rect reaches 27
- * squares (SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN), so 10 is
- * inside it and 30 is outside while still inside SDIST_NONE — the range the
- * two paths disagree over. 60 is past both. */
+/* Gaps from the recipient's tank, in map squares. 10 and 30 are both inside
+ * SDIST_NONE (40), so both are audible; 45 is past it and silent. 30 also sits
+ * outside the viewport rect's 27-square half-extent
+ * (SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN), which is what makes it
+ * the range arm: it is audible while sitting outside every rect the recipient
+ * has. 60 is past everything, and only a tank hit on the recipient itself
+ * reaches from there. */
 #define SND_GAP_INSIDE  10
 #define SND_GAP_OUTSIDE 30
+#define SND_GAP_SILENT  45
 #define SND_GAP_FAR     60
 
 /* Nothing on a clean path draws from the impairment stream; the seed keeps the
@@ -85,17 +103,23 @@ static bool sndHaveTank(LoopbackHarness *h, void *user) {
     return clientSimGetMyTankMapPos(h->cs, &mx, &my) == TRUE;
 }
 
-/* Whether a sound of this type and id has reached the client. */
-static bool sndArrived(LoopbackHarness *h, uint8_t type, uint8_t soundId) {
+/* The event a sound of this type and id reached the client as, or NULL. */
+static const GameEvent *sndFind(LoopbackHarness *h, uint8_t type,
+                                uint8_t soundId) {
     const GameEvent *ev = clientSimGetBrainEvents(h->cs);
     int n = clientSimGetBrainEventCount(h->cs);
     int i;
 
-    if (ev == NULL) return false;
+    if (ev == NULL) return NULL;
     for (i = 0; i < n; i++) {
-        if (ev[i].type == type && ev[i].data[0] == soundId) return true;
+        if (ev[i].type == type && ev[i].data[0] == soundId) return &ev[i];
     }
-    return false;
+    return NULL;
+}
+
+/* Whether a sound of this type and id has reached the client. */
+static bool sndArrived(LoopbackHarness *h, uint8_t type, uint8_t soundId) {
+    return sndFind(h, type, soundId) != NULL;
 }
 
 typedef struct {
@@ -108,8 +132,8 @@ static bool sndDelivered(LoopbackHarness *h, void *user) {
     return sndArrived(h, w->type, w->soundId);
 }
 
-/* The recipient's tank square as the server holds it — the square both culls
- * measure from. */
+/* The recipient's tank square as the server holds it — the square the range
+ * cull measures from. */
 static bool sndListenerSquare(LoopbackHarness *h, BYTE slot, BYTE *mx,
                               BYTE *my) {
     WORLD wx = 0, wy = 0;
@@ -182,12 +206,13 @@ int run_sound_delivery_wire_cull(void) {
     LoopbackHarness h;
     ViewportRect vps[MAX_VIEWPORTS];
     GameEvent builderEv[MAX_SNAPSHOT_EVENTS];
+    const GameEvent *got;
     SndWait wait;
     BYTE slot, other;
     BYTE listenMX = 0, listenMY = 0;
     BYTE soundMX;
     int builderCount = 0;
-    int dir, n, at;
+    int dir, n, at, k;
 
     if (loopbackHarnessStart(&h, "Snd", /*lobbyMode*/ false,
                              /*impairSpec*/ NULL, SND_SEED) != true) {
@@ -220,8 +245,9 @@ int run_sound_delivery_wire_cull(void) {
     /* With the pill and base categories off, nothing the map happens to hand
      * the recipient can grant a rect, and there is no second player to grant an
      * ally one — so the rect set is the recipient's own tank screen and nothing
-     * else. Without that the range arms mean nothing: the drain culls against
-     * the whole set, so an allied item near a sound would carry it through. */
+     * else. The range arms no longer turn on that, but the payload arm reads
+     * the rect to place a square inside it and another outside it, and a
+     * fixture that is not what it claims would make that arm meaningless. */
     threadsWaitForMutex();
     serverSimSetViewPolicy(h.sim, viewCategoryPill, viewPolicyOff,
                            VIEW_DECAY_DEFAULT_SECS);
@@ -233,8 +259,7 @@ int run_sound_delivery_wire_cull(void) {
     if (n != 1) {
         loopbackHarnessStop(&h);
         UT_FAIL("the recipient has %d viewport rect(s), expected 1 (its own "
-                "tank screen) — an allied rect would carry a culled sound "
-                "through", n);
+                "tank screen)", n);
     }
 
     /* Put every sound on the recipient's row, on whichever side of it has room
@@ -249,8 +274,8 @@ int run_sound_delivery_wire_cull(void) {
     }
 
     /* ---- Outside the rect, inside the sound model ------------------------ */
-    /* The two paths disagree here: the builder delivers this sound and the
-     * drain does not. */
+    /* The range parity: both paths deliver this one, and the rect stops well
+     * short of it, so nothing but the distance cull can be carrying it. */
     soundMX = (BYTE)((int)listenMX + dir * SND_GAP_OUTSIDE);
     if (inAnyViewport(vps, n, soundMX, listenMY)) {
         loopbackHarnessStop(&h);
@@ -273,20 +298,55 @@ int run_sound_delivery_wire_cull(void) {
                 SDIST_NONE, builderCount);
     }
 
-    loopbackHarnessPumpUntil(&h, SND_QUIET_PUMPS, NULL, NULL);
-    if (sndArrived(&h, EVENT_SOUND, (uint8_t)bigExplosionNear)) {
+    wait.type = EVENT_SOUND;
+    wait.soundId = (uint8_t)bigExplosionNear;
+    at = loopbackHarnessPumpUntil(&h, SND_DELIVER_MAX, sndDelivered, &wait);
+    if (at < 0) {
         loopbackHarnessStop(&h);
         UT_FAIL("a sound at %u,%u, %d squares from the tank at %u,%u and "
-                "outside its only rect, reached the wire client over %d pumps "
-                "(the in-process builder delivers it; the drain's rect cull "
-                "does not)", (unsigned)soundMX, (unsigned)listenMY,
-                SND_GAP_OUTSIDE, (unsigned)listenMX, (unsigned)listenMY,
+                "inside SDIST_NONE %d, never reached the wire client within %d "
+                "pumps — the in-process builder delivers it, so the two paths "
+                "still disagree about range (%d brain event(s) buffered)",
+                (unsigned)soundMX, (unsigned)listenMY, SND_GAP_OUTSIDE,
+                (unsigned)listenMX, (unsigned)listenMY, SDIST_NONE,
+                SND_DELIVER_MAX, clientSimGetBrainEventCount(h.cs));
+    }
+
+    /* ---- Past SDIST_NONE ------------------------------------------------- */
+    /* Neither path carries this one: the helper reports out of range and both
+     * callers drop it. */
+    if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("lost the server-side tank position before the silent arm");
+    }
+    soundMX = (BYTE)((int)listenMX + dir * SND_GAP_SILENT);
+    clientSimSetBrainEventCount(h.cs, 0);
+    sndStage(&h, slot, EVENT_SOUND, (uint8_t)mineExplosionNear, soundMX,
+             listenMY, other, builderEv, &builderCount);
+
+    if (sndInBuild(builderEv, builderCount, EVENT_SOUND,
+                   (uint8_t)mineExplosionNear)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the in-process builder delivered a sound at %u,%u, %d squares "
+                "from the tank at %u,%u and past SDIST_NONE %d",
+                (unsigned)soundMX, (unsigned)listenMY, SND_GAP_SILENT,
+                (unsigned)listenMX, (unsigned)listenMY, SDIST_NONE);
+    }
+
+    loopbackHarnessPumpUntil(&h, SND_QUIET_PUMPS, NULL, NULL);
+    if (sndArrived(&h, EVENT_SOUND, (uint8_t)mineExplosionNear)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a sound at %u,%u, %d squares from the tank at %u,%u and past "
+                "SDIST_NONE %d, reached the wire client over %d pumps",
+                (unsigned)soundMX, (unsigned)listenMY, SND_GAP_SILENT,
+                (unsigned)listenMX, (unsigned)listenMY, SDIST_NONE,
                 SND_QUIET_PUMPS);
     }
 
     /* ---- Inside the rect ------------------------------------------------- */
-    /* The tank may have drifted over the window above, so take its square and
-     * its rects again rather than reusing the ones the first arm ran against. */
+    /* The tank may have drifted over the windows above, so take its square and
+     * its rects again rather than reusing the ones an earlier arm ran
+     * against. */
     if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
         loopbackHarnessStop(&h);
         UT_FAIL("lost the server-side tank position before the near arm");
@@ -319,7 +379,7 @@ int run_sound_delivery_wire_cull(void) {
 
     /* ---- A tank hit on the recipient, past every rect -------------------- */
     /* The drain sends a hit to the player hit whatever the range, so this one
-     * arrives from 60 squares out with no rect covering it. */
+     * arrives from 60 squares out — past SDIST_NONE as well as past the rect. */
     if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
         loopbackHarnessStop(&h);
         UT_FAIL("lost the server-side tank position before the tank-hit arm");
@@ -348,6 +408,132 @@ int run_sound_delivery_wire_cull(void) {
                 (unsigned)listenMY, SND_GAP_FAR, (unsigned)listenMX,
                 (unsigned)listenMY, SND_DELIVER_MAX,
                 clientSimGetBrainEventCount(h.cs));
+    }
+
+    /* ---- What a delivered sound carries ---------------------------------- */
+    /* The wire payload is [soundId, tier, bearing, sourcePlayer]: the map
+     * square the sound was raised at does not reach the client. Run on both
+     * sides of the rect, since the rect no longer decides anything about
+     * sound. */
+    {
+        static const struct {
+            int gap;
+            uint8_t soundId;
+            bool inRect;
+        } payloadArms[2] = {
+            { SND_GAP_INSIDE,  (uint8_t)manBuildingNear, true  },
+            { SND_GAP_OUTSIDE, (uint8_t)shotTreeNear,    false },
+        };
+
+        for (k = 0; k < 2; k++) {
+            if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("lost the server-side tank position before the payload "
+                        "arm at %d squares", payloadArms[k].gap);
+            }
+            n = serverSimBuildViewports(h.sim, slot, vps, MAX_VIEWPORTS);
+            soundMX = (BYTE)((int)listenMX + dir * payloadArms[k].gap);
+
+            /* A staged square below the largest bearing could pass for a tier
+             * or a bearing byte, and the assertions below would prove nothing
+             * about what was sent. */
+            if (soundMX <= SOUND_DIR_NW) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("the staged square %u is not above the largest bearing "
+                        "value %d — the payload arm proves nothing",
+                        (unsigned)soundMX, SOUND_DIR_NW);
+            }
+            if (inAnyViewport(vps, n, soundMX, listenMY) !=
+                payloadArms[k].inRect) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("the square %u,%u, %d from the tank at %u,%u, is %s the "
+                        "recipient's %d rect(s); the arm wants it %s",
+                        (unsigned)soundMX, (unsigned)listenMY,
+                        payloadArms[k].gap, (unsigned)listenMX,
+                        (unsigned)listenMY,
+                        payloadArms[k].inRect ? "outside" : "inside", n,
+                        payloadArms[k].inRect ? "inside" : "outside");
+            }
+
+            clientSimSetBrainEventCount(h.cs, 0);
+            sndStage(&h, slot, EVENT_SOUND, payloadArms[k].soundId, soundMX,
+                     listenMY, other, NULL, NULL);
+
+            wait.type = EVENT_SOUND;
+            wait.soundId = payloadArms[k].soundId;
+            at = loopbackHarnessPumpUntil(&h, SND_DELIVER_MAX, sndDelivered,
+                                          &wait);
+            if (at < 0) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("a sound at %u,%u, %d squares from the tank at %u,%u, "
+                        "never reached the wire client within %d pumps (%d "
+                        "brain event(s) buffered)", (unsigned)soundMX,
+                        (unsigned)listenMY, payloadArms[k].gap,
+                        (unsigned)listenMX, (unsigned)listenMY,
+                        SND_DELIVER_MAX, clientSimGetBrainEventCount(h.cs));
+            }
+
+            got = sndFind(&h, EVENT_SOUND, payloadArms[k].soundId);
+            if (got == NULL) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("the sound at %u,%u went missing between the wait and "
+                        "the read", (unsigned)soundMX, (unsigned)listenMY);
+            }
+            if (got->data[1] > SOUND_TIER_FAR) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("the sound staged at %u,%u arrived with data[1] = %u, "
+                        "which is not a tier (near %d, far %d)",
+                        (unsigned)soundMX, (unsigned)listenMY,
+                        (unsigned)got->data[1], SOUND_TIER_NEAR,
+                        SOUND_TIER_FAR);
+            }
+            if (got->data[2] > SOUND_DIR_NW) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("the sound staged at %u,%u arrived with data[2] = %u, "
+                        "which is not a bearing (centre %d through NW %d)",
+                        (unsigned)soundMX, (unsigned)listenMY,
+                        (unsigned)got->data[2], SOUND_DIR_CENTRE,
+                        SOUND_DIR_NW);
+            }
+            if (got->data[1] == soundMX) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("the sound staged at %u,%u arrived carrying its own map "
+                        "X in data[1]", (unsigned)soundMX, (unsigned)listenMY);
+            }
+        }
+    }
+
+    /* ---- A near-only sound past the near square -------------------------- */
+    /* manLayingMineNear has no far variant, so a far one would be silence at
+     * the recipient. Both paths drop it rather than send something the client
+     * cannot play. */
+    if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("lost the server-side tank position before the near-only arm");
+    }
+    soundMX = (BYTE)((int)listenMX + dir * SND_GAP_OUTSIDE);
+    clientSimSetBrainEventCount(h.cs, 0);
+    sndStage(&h, slot, EVENT_SOUND, (uint8_t)manLayingMineNear, soundMX,
+             listenMY, other, builderEv, &builderCount);
+
+    if (sndInBuild(builderEv, builderCount, EVENT_SOUND,
+                   (uint8_t)manLayingMineNear)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the in-process builder delivered manLayingMineNear at %u,%u, "
+                "%d squares from the tank at %u,%u and so past the near square "
+                "at %d", (unsigned)soundMX, (unsigned)listenMY,
+                SND_GAP_OUTSIDE, (unsigned)listenMX, (unsigned)listenMY,
+                SDIST_SOFT);
+    }
+
+    loopbackHarnessPumpUntil(&h, SND_QUIET_PUMPS, NULL, NULL);
+    if (sndArrived(&h, EVENT_SOUND, (uint8_t)manLayingMineNear)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("manLayingMineNear at %u,%u, %d squares from the tank at %u,%u "
+                "and so past the near square at %d, reached the wire client "
+                "over %d pumps", (unsigned)soundMX, (unsigned)listenMY,
+                SND_GAP_OUTSIDE, (unsigned)listenMX, (unsigned)listenMY,
+                SDIST_SOFT, SND_QUIET_PUMPS);
     }
 
     if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
