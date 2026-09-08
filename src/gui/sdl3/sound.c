@@ -50,6 +50,7 @@ typedef struct {
     const Uint8 *data;  /* Pointer to sound data */
     Uint32 size;        /* Total size */
     Uint32 pos;         /* Current playback position */
+    int sound;          /* Index into sounds[] being played, -1 for none */
     bool active;        /* Is this slot playing? */
 } SoundSlot;
 
@@ -389,6 +390,7 @@ bool soundSetup(void) {
         slots[i].data = NULL;
         slots[i].size = 0;
         slots[i].pos = 0;
+        slots[i].sound = -1;
     }
     SDL_UnlockMutex(slotsMutex);
 
@@ -539,6 +541,7 @@ void soundCleanup(void) {
         slots[i].data = NULL;
         slots[i].size = 0;
         slots[i].pos = 0;
+        slots[i].sound = -1;
     }
     if (slotsMutex) SDL_UnlockMutex(slotsMutex);
 
@@ -581,7 +584,7 @@ static void playSound(int index) {
     /* Deduplicate: skip if this sound was already triggered this tick
      * (pos == 0 means it was just started and hasn't been mixed yet) */
     for (i = 0; i < MAX_SOUND_SLOTS; i++) {
-        if (slots[i].active && slots[i].data == sounds[index].data && slots[i].pos == 0) {
+        if (slots[i].active && slots[i].sound == index && slots[i].pos == 0) {
             if (slotsMutex) {
                 SDL_UnlockMutex(slotsMutex);
             }
@@ -620,6 +623,7 @@ static void playSound(int index) {
     slots[slot_found].data = sounds[index].data;
     slots[slot_found].size = sounds[index].size;
     slots[slot_found].pos = 0;
+    slots[slot_found].sound = index;
     slots[slot_found].active = true;
 
     if (slotsMutex) {
@@ -809,6 +813,7 @@ void soundSetMuted(bool mute) {
         }
         for (i = 0; i < MAX_SOUND_SLOTS; i++) {
             slots[i].active = false;
+            slots[i].sound = -1;
         }
         if (slotsMutex) {
             SDL_UnlockMutex(slotsMutex);
