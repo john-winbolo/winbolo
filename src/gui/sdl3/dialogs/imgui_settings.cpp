@@ -1506,15 +1506,40 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_KEEPALIVE), &sk)) windowSoundKeepalive();
     }
 #endif
+    /* The three volume rows read label, slider, value, so the sliders have to
+       start at a common x or the group looks ragged.  Widest of the labels
+       this build draws, measured once. */
+    float volLabelW = ImGui::CalcTextSize(langGetText(STR_DLGSETTINGS_MASTER_VOLUME)).x;
+    {
+        float w = ImGui::CalcTextSize(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME)).x;
+        if (w > volLabelW) volLabelW = w;
+    }
+#if defined(WINBOLO_VOICE)
+    {
+        float w = ImGui::CalcTextSize(langGetText(STR_DLGSETTINGS_VOICE_VOLUME)).x;
+        if (w > volLabelW) volLabelW = w;
+    }
+#endif
+    const float volSliderX = volLabelW + ImGui::GetStyle().ItemSpacing.x;
     {
         int vol = windowMasterVolume;
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MASTER_VOLUME));
+        ImGui::SameLine(volSliderX);
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_MASTER_VOLUME), &vol, 0, 100, "%d%%")) windowSetMasterVolume(vol);
+        /* Empty format, and a ## id, so the slider draws neither the value
+           inside itself nor a label after it; both go beside it instead. */
+        if (ImGui::SliderInt("##mastervolume", &vol, 0, 100, "")) windowSetMasterVolume(vol);
+        ImGui::SameLine();
+        ImGui::Text("%d%%", vol);
     }
     {
         int vol = soundVolume;
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME));
+        ImGui::SameLine(volSliderX);
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+        if (ImGui::SliderInt("##effectsvolume", &vol, 0, 100, "")) windowSetSoundVolume(vol);
+        ImGui::SameLine();
+        ImGui::Text("%d%%", vol);
     }
 #if defined(WINBOLO_VOICE)
     /* The third of the three, drawn here rather than down in the voice
@@ -1523,12 +1548,17 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     {
         bool voiceOnForVolume = voiceIsEnabled();
         float vol = voiceGetOutputVolume();
+        /* The disable takes in the label and the value as well as the slider,
+           so the row greys out as one. */
         if (!voiceOnForVolume) ImGui::BeginDisabled();
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_VOLUME));
+        ImGui::SameLine(volSliderX);
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_VOLUME), &vol,
-                               0.0f, 2.0f, "%.2fx")) {
+        if (ImGui::SliderFloat("##voicevolume", &vol, 0.0f, 2.0f, "")) {
             windowSetVoiceVolume(vol);
         }
+        ImGui::SameLine();
+        ImGui::Text("%.2fx", vol);
         if (!voiceOnForVolume) ImGui::EndDisabled();
     }
 
