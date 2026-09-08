@@ -457,6 +457,88 @@ static bool playersPanelDrawSkull(void) {
     return true;
 }
 
+/* A pop-out's own copy of the tile sheet, for the counter-column sprites.
+ * The game's sheet belongs to the game window's renderer and cannot be drawn
+ * through any other, so a pop-out that wants the map art builds its own.
+ * Keyed on the renderer as well as held in a single static: the pop-out icon
+ * slot is shared by every pop-out window, and the textures in it belong to
+ * whichever one built them, so a different pop-out becoming the active
+ * renderer has to rebuild. Keyed on the tiles generation too, so a skin or a
+ * Tile Detail change reaches this copy the same way it reaches the game's own
+ * sheet. The game's sheet scale is deliberately not a key: this copy is built
+ * at a fixed size for icons drawn at text height, not at the size the map is
+ * drawn at, so a scale change has nothing to say about it. Like the overview's
+ * sheet, the keys are recorded before the build is attempted, so a build that
+ * failed is not retried every frame. */
+static SDL_Texture  *s_tilesPopOut         = nullptr;
+static SDL_Renderer *s_tilesPopOutRenderer = nullptr;
+static unsigned int  s_tilesPopOutGen      = 0;
+
+/* The tile sheet the current draw can read from: the game's own while the
+ * game window is drawing, the pop-out's copy otherwise. NULL when there is no
+ * sheet at all, which is the caller's cue to print written labels instead.
+ *
+ * The copy is built at twice the 1x tile size so the sprites are a downscale
+ * at the text heights they are drawn at rather than a blow-up. Source coords
+ * stay in 1x units either way: UVs normalised against the 1x reference size
+ * (TILE_FILE_X/Y) address a sheet assembled at any scale. */
+static SDL_Texture *activeTilesTexture(void) {
+    if (!s_popOutRenderer) return sdl3DrawGetTilesTexture();
+
+    unsigned int gen = sdl3DrawGetTilesGeneration();
+    if (s_tilesPopOutRenderer == s_popOutRenderer && s_tilesPopOutGen == gen) {
+        return s_tilesPopOut;
+    }
+
+    if (s_tilesPopOut) {
+        SDL_DestroyTexture(s_tilesPopOut);
+        s_tilesPopOut = nullptr;
+    }
+    s_tilesPopOutRenderer = s_popOutRenderer;
+    s_tilesPopOutGen      = gen;
+
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * 2);
+    if (!sheet) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[PopOut] tileLoaderBuildSheet failed");
+        return nullptr;
+    }
+    s_tilesPopOut = SDL_CreateTextureFromSurface(s_popOutRenderer, sheet);
+    SDL_DestroySurface(sheet);
+    if (!s_tilesPopOut) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[PopOut] SDL_CreateTextureFromSurface failed: %s",
+                     SDL_GetError());
+        return nullptr;
+    }
+    SDL_SetTextureBlendMode(s_tilesPopOut, SDL_BLENDMODE_BLEND);
+    return s_tilesPopOut;
+}
+
+/* imguiDrawAtlasIcon against a sheet the caller names. Same inline sprite at
+ * text height, keeping the source aspect so a sprite that is not square (the
+ * 3x4 LGM) is not stretched; the shared helper reads the game window's sheet
+ * directly, which is the one thing a pop-out cannot do. Source coords and
+ * extents are in 1x units, normalised against the 1x reference size, so the
+ * game's sheet and the pop-out's are addressed the same way whatever scale
+ * each was assembled at.
+ *
+ * The nearest-sampling bracket is the shared helper's, for the same two
+ * reasons: the icons are pixel art at text height, and the game's live sheet
+ * would otherwise keep whatever sampler the backend last bound it with. */
+static void drawAtlasIconFrom(SDL_Texture *tex, int srcX, int srcY,
+                              int srcW, int srcH) {
+    if (!tex || srcW <= 0 || srcH <= 0) return;
+    float h = ImGui::GetTextLineHeight();
+    float w = h * (float)srcW / (float)srcH;
+    ImVec2 uv0((float)srcX / TILE_FILE_X, (float)srcY / TILE_FILE_Y);
+    ImVec2 uv1((float)(srcX + srcW) / TILE_FILE_X,
+               (float)(srcY + srcH) / TILE_FILE_Y);
+    imguiPushNearestSampling();
+    ImGui::Image((ImTextureID)tex, ImVec2(w, h), uv0, uv1);
+    imguiPopNearestSampling();
+}
+
 /* Platform icon textures, indexed by ClientType. UNKNOWN slot stays NULL. */
 static SDL_Texture *s_iconPlatform[ICON_SLOT_COUNT][CLIENT_TYPE_COUNT] = {};
 static bool s_platformIconsLoaded[ICON_SLOT_COUNT] = {};
@@ -2534,13 +2616,14 @@ static void renderPlayersContent(ClientSim *cs) {
      * sits over its column, with the written column name on the tooltip.
      * The name region is left empty. */
     if (showStats && panelRowCount > 0) {
-        /* The tile sheet is built for the game window's renderer only, so a
-         * pop-out cannot draw the map art at all — and unlike a missing SVG
-         * the texture pointer is valid, just not this renderer's, so the
-         * "no sprite" fallback below never fires. Off the main renderer the
-         * whole line prints its written names instead, all six of them, so it
-         * does not mix sprites and words. */
-        const bool headerAsText = (activeRenderer() != s_renderer);
+        /* The sheet this window can draw from: the game's own, or the
+         * pop-out's copy of it. With neither there is no map art to mark the
+         * columns with, and the draw below would silently do nothing — it
+         * cannot report a texture it never had — so the whole line prints its
+         * written names instead, all six of them, rather than mixing sprites
+         * and words. */
+        SDL_Texture *headerTiles = activeTilesTexture();
+        const bool headerAsText = (headerTiles == nullptr);
         ImGui::Dummy(ImVec2(1.0f, iconH));
         for (int c = 0; c < 6; c++) {
             const char *label = langGetText(statColStr[c]);
@@ -2553,26 +2636,31 @@ static void renderPlayersContent(ClientSim *cs) {
             bool drewIcon = true;
             switch (c) {
                 case 0:
-                    imguiDrawTileIcon(TANK_SELF_0_X, TANK_SELF_0_Y);
+                    drawAtlasIconFrom(headerTiles, TANK_SELF_0_X, TANK_SELF_0_Y,
+                                      TILE_SIZE_X, TILE_SIZE_Y);
                     break;
                 case 1:
                     drewIcon = playersPanelDrawSkull();
                     break;
                 case 2:
-                    imguiDrawTileIcon(BASE_GOOD_X, BASE_GOOD_Y);
+                    drawAtlasIconFrom(headerTiles, BASE_GOOD_X, BASE_GOOD_Y,
+                                      TILE_SIZE_X, TILE_SIZE_Y);
                     break;
                 case 3:
-                    imguiDrawTileIcon(PILL_EVIL15_X, PILL_EVIL15_Y);
+                    drawAtlasIconFrom(headerTiles, PILL_EVIL15_X, PILL_EVIL15_Y,
+                                      TILE_SIZE_X, TILE_SIZE_Y);
                     break;
                 case 4:
-                    imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                    drawAtlasIconFrom(headerTiles, LGM0_X, LGM0_Y,
+                                      LGM_WIDTH, LGM_HEIGHT);
                     break;
                 default:
                     /* Man then skull — the pair reads as "little men lost",
                      * against the previous column's bare man for the ones
                      * you killed. Without the skull the pair is ambiguous,
                      * so that case falls back to the written label. */
-                    imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                    drawAtlasIconFrom(headerTiles, LGM0_X, LGM0_Y,
+                                      LGM_WIDTH, LGM_HEIGHT);
                     imguiHelpTooltip(label);
                     ImGui::SameLine(0.0f, sty.ItemInnerSpacing.x);
                     drewIcon = playersPanelDrawSkull();
@@ -6583,8 +6671,16 @@ void sdl3ImguiShowPlayersPanel(bool open) {
     if (!uiModeIsTablet() && !uiShouldUseControllerMode()) {
         if (open) {
             /* popOutCreate re-shows and raises a window it made earlier, so
-               opening an already-open pop-out raises it. */
-            if (popOutCreate(&s_popPlayers, langGetText(STR_DLGPLAYERS_TITLE), 520, 420, 0)) {
+               opening an already-open pop-out raises it.
+               Opened at the size the docked panel opens at, so the two agree
+               on the room a row needs: the counter columns and the ping fit
+               beside a name rather than squeezing it. The numbers are in the
+               units popOutCreate is given — window size, not the ImGui
+               coordinates the docked panel scales by s_uiScale.
+               Resizable so the window can be dragged to another size, which
+               is also what leaves it its minimize and maximize boxes. */
+            if (popOutCreate(&s_popPlayers, langGetText(STR_DLGPLAYERS_TITLE), 760, 560,
+                             SDL_WINDOW_RESIZABLE)) {
                 /* The rows draw country flags, which have to be rasterized
                    against this window's own renderer. Idempotent, so the
                    re-show path above costs nothing. */
@@ -7180,6 +7276,11 @@ void sdl3ImguiCleanup(void) {
     /* Textures die with the renderer that made them, so the pop-out's copies
      * and its flag cache go before popOutDestroy takes its renderer down —
      * SDL_DestroyTexture afterwards would be running against freed state. */
+    if (s_tilesPopOut) {
+        SDL_DestroyTexture(s_tilesPopOut);
+        s_tilesPopOut = nullptr;
+    }
+    s_tilesPopOutRenderer = nullptr;
     destroyIconSlot(ICON_SLOT_POPOUT);
     flagsDestroy();
     for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
