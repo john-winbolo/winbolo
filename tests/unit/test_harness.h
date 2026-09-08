@@ -1453,6 +1453,8 @@ int run_skin_workshop_id_roundtrip(void);
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */
 int run_skin_density_scan(void);
+int run_sheet_bleed_edges(void);
+int run_sheet_no_key_under_alpha(void);
 
 /* Bolo pascal-string reader, both copies of it (test_pascal_string.c). */
 int run_pascal_string_lengths(void);
