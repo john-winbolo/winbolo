@@ -2724,10 +2724,14 @@ static void renderPlayersPanel(ClientSim *cs) {
          * The default size is also clamped so it never opens oversized. */
         const ImGuiViewport *vp = ImGui::GetMainViewport();
         float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
-        /* Wide enough for a name plus the six counter columns and the ping;
-         * the old 340/280 pair was sized for a name and a ping alone. */
-        ImGui::SetNextWindowSize(ImVec2(SDL_min(520 * s_uiScale, maxW),
-                                        SDL_min(420 * s_uiScale, maxH)),
+        /* Every cell in a row except the name is reserved at a fixed width -
+         * alliance mark, flags, icons, checkbox, voice cell, volume slider,
+         * six counter columns and the ping - so 760 is what leaves the name
+         * room rather than a few squeezed characters. Opening at 90% of the
+         * work area instead of all of it keeps some of the map in view when
+         * the game window is small. */
+        ImGui::SetNextWindowSize(ImVec2(SDL_min(760 * s_uiScale, maxW * 0.9f),
+                                        SDL_min(560 * s_uiScale, maxH * 0.9f)),
                                  ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(420 * s_uiScale, 200 * s_uiScale),
                                             ImVec2(maxW, maxH));
