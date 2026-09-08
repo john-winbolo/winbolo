@@ -1917,6 +1917,9 @@ static const LangEntry langTable[] = {
     {1872, "Could not connect to the server."},
     {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
 
+    /* soundSetup: none of the sound effects could be loaded. */
+    {2046, "Error loading sound effects"},
+
     /* Log viewer Options item: present the round on a game-relative clock. */
     {1921, "Hide Lobby"},
 

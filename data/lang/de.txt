@@ -2021,3 +2021,5 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(Abseits)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} Startpunkte für {number2} Spieler — {number3} starten auf See.\nEin Seitenwechsel weist jedem Spieler einen neuen Start zu.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Alle Startpunkte, die dieses Team nutzen kann, sind belegt, daher\nstartet dieser Spieler auf See neben dem Start eines Teamkollegen.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Abseits: Dieser Start liegt nicht auf {string1}, der Teamseite.\nDer Gastgeber hat ihn für diesen Spieler ausgewählt.
+
+STR_SOUND_LOAD_FAILED=Fehler beim Laden der Soundeffekte

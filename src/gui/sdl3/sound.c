@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include "client_enums.h"  /* sndEffects */
 #include "../sound.h"
+#include "../lang.h"
 #include "skin_source.h"
 #include "sound_variants.h"
 #include "../../common/wb_log.h"
@@ -618,7 +619,7 @@ bool soundSetup(void) {
                     membersUnreadable, fellBack);
 
         if (loadedCount == 0) {
-            imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error loading sound effects",
+            imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_SOUND_LOAD_FAILED),
                               IMGUI_MSG_WARNING, IMGUI_MSG_OK);
             returnValue = FALSE;
         }

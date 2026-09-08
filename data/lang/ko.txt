@@ -2019,3 +2019,5 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(오프사이드)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: 플레이어 {number2}명에 시작점 {number}개 — {number3}명은 바다에서 시작해요.\n이 팀 진영을 변경하면 모든 플레이어의 시작점이 다시 정해져요.
 STR_DLGLOBBY_TOOLTIP_START_SEA=이 팀이 사용할 수 있는 시작점이 모두 찼기 때문에, 이 플레이어는\n팀원의 시작점 옆 바다에서 시작해요.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=오프사이드: 이 시작점은 팀 진영인 {string1}에 없어요.\n호스트가 이 플레이어를 위해 선택했어요.
+
+STR_SOUND_LOAD_FAILED=음향 효과를 불러오는 데 실패했습니다

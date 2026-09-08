@@ -2019,3 +2019,5 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(fora da zona)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} inícios para {number2} jogadores — {number3} começarão no mar.\nMudar de lado reatribui o início de cada jogador.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Todos os inícios que esta equipe pode usar estão ocupados, então este jogador\ncomeçará no mar ao lado do início de um companheiro de equipe.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Fora da zona: este início não está em {string1}, o lado da equipe.\nO anfitrião o escolheu para este jogador.
+
+STR_SOUND_LOAD_FAILED=Erro ao carregar efeitos sonoros

@@ -2130,6 +2130,9 @@
 #define STR_WEB_CONNECT_FAILED              1872
 #define STR_WEB_JOIN_NO_RESPONSE            1873
 
+/* Sound setup: message box when no sound effect at all could be loaded */
+#define STR_SOUND_LOAD_FAILED               2046
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
