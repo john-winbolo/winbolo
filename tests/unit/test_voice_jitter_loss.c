@@ -558,6 +558,120 @@ int run_voice_jitter_under_loss(void) {
         voiceSpeakerDestroy(sp);
     }
 
+    /* ---- Property 8: an eviction moves playback on ----
+     *
+     * A full buffer means the waits above have left the receiver about
+     * VOICE_JITTER_SLOTS frames behind its talker. voiceSpeakerPush drops the
+     * lowest sequence held to shed that, and what it drops is the frame the
+     * pop is waiting for or about to play, so playback has to move on to what
+     * is left rather than wait the deadline out for a frame that is gone.
+     * Every pop below is at an unadvanced clock: a buffer that was still
+     * waiting would return false instead of playing. */
+    {
+        VoiceSpeaker *sp;
+        int16_t pcm[VOICE_FRAME_SAMPLES];
+        VoiceSpeakerStats st;
+        uint32_t nowMs = 0;
+
+        /* --- the frame due next never arrives and the buffer fills --- */
+        sp = voiceSpeakerCreate();
+        UT_ASSERT(sp != NULL);
+        voiceSpeakerPush(sp, 0, 0, pool[0].data, pool[0].len);
+        voiceSpeakerPush(sp, 1, 0, pool[1].data, pool[1].len);
+        voiceSpeakerPush(sp, 2, 0, pool[2].data, pool[2].len);
+        for (i = 0; i < 3; i++) {
+            UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm, nowMs),
+                          "property 8: no audio for priming frame %d", i);
+        }
+
+        /* Seq 3 is due and is not coming. The pop starts waiting for it, and
+         * the frames behind it take every slot. */
+        UT_ASSERT(!voiceSpeakerPop(sp, pcm, nowMs));
+        for (i = 4; i < 4 + VOICE_JITTER_SLOTS; i++) {
+            voiceSpeakerPush(sp, (uint8_t)i, 0, pool[i % JL_POOL_FRAMES].data,
+                             pool[i % JL_POOL_FRAMES].len);
+        }
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.evicted == 0,
+                      "property 8: %u evicted filling the buffer to its %d "
+                      "slots", st.evicted, VOICE_JITTER_SLOTS);
+
+        /* One frame more than there are slots: the oldest goes. */
+        voiceSpeakerPush(sp, (uint8_t)(4 + VOICE_JITTER_SLOTS), 0,
+                         pool[0].data, pool[0].len);
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.evicted == 1,
+                      "property 8: %u evicted from a full buffer, expected 1",
+                      st.evicted);
+        UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm, nowMs),
+                      "property 8: nothing played after the eviction — the "
+                      "buffer is still waiting out the deadline for a frame "
+                      "that was discarded");
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.played == 4 && st.concealed == 0,
+                      "property 8: played %u concealed %u after the eviction, "
+                      "expected 4 and 0 — the pop concealed rather than "
+                      "playing what was still held", st.played, st.concealed);
+        voiceSpeakerDestroy(sp);
+
+        /* --- the frame due next is present, and it is the one evicted --- */
+        sp = voiceSpeakerCreate();
+        UT_ASSERT(sp != NULL);
+        /* Nothing is popped here, so seq 0 is both due next and the oldest
+         * frame held when the buffer overflows. */
+        for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+            voiceSpeakerPush(sp, (uint8_t)i, 0, pool[i % JL_POOL_FRAMES].data,
+                             pool[i % JL_POOL_FRAMES].len);
+        }
+        voiceSpeakerPush(sp, (uint8_t)VOICE_JITTER_SLOTS, 0, pool[0].data,
+                         pool[0].len);
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.evicted == 1,
+                      "property 8: %u evicted when the frame due next was the "
+                      "oldest held, expected 1", st.evicted);
+        UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm, nowMs),
+                      "property 8: nothing played after the frame due next "
+                      "was the one evicted");
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.played == 1 && st.concealed == 0,
+                      "property 8: played %u concealed %u after the frame due "
+                      "next was evicted, expected 1 and 0 — the frame behind "
+                      "it should play straight away", st.played, st.concealed);
+        voiceSpeakerDestroy(sp);
+
+        /* --- the arriving frame is itself the oldest now held --- */
+        sp = voiceSpeakerCreate();
+        UT_ASSERT(sp != NULL);
+        voiceSpeakerPush(sp, 0, 0, pool[0].data, pool[0].len);
+        voiceSpeakerPush(sp, 1, 0, pool[1].data, pool[1].len);
+        voiceSpeakerPush(sp, 2, 0, pool[2].data, pool[2].len);
+        for (i = 0; i < 3; i++) {
+            UT_ASSERT(voiceSpeakerPop(sp, pcm, nowMs));
+        }
+        /* Seq 3 is due and every slot is taken by the frames behind it, so
+         * seq 3 arriving evicts seq 4 and is then the oldest frame held.
+         * Playback is moved on after the arriving frame is stored, so seq 3
+         * is what plays rather than what is stepped over. */
+        for (i = 4; i < 4 + VOICE_JITTER_SLOTS; i++) {
+            voiceSpeakerPush(sp, (uint8_t)i, 0, pool[i % JL_POOL_FRAMES].data,
+                             pool[i % JL_POOL_FRAMES].len);
+        }
+        voiceSpeakerPush(sp, 3, 0, pool[3].data, pool[3].len);
+        UT_ASSERT(voiceSpeakerPop(sp, pcm, nowMs));
+        /* Seq 4 was the frame evicted. Sent again it is still what is due,
+         * which it would not be had the pop above stepped over seq 3. */
+        voiceSpeakerPush(sp, 4, 0, pool[4].data, pool[4].len);
+        UT_ASSERT(voiceSpeakerPop(sp, pcm, nowMs));
+        voiceSpeakerGetStats(sp, &st);
+        UT_ASSERT_MSG(st.played == 5 && st.concealed == 0 &&
+                          st.lateDropped == 0,
+                      "property 8: played %u concealed %u late %u — a frame "
+                      "arriving into the slot the eviction freed is the "
+                      "oldest held and has to play, not be stepped over",
+                      st.played, st.concealed, st.lateDropped);
+        voiceSpeakerDestroy(sp);
+    }
+
     /* ---- Characterisation at the as-built VOICE_JITTER_TARGET ---- */
     jlRun(pool, &table[0], JL_SEED + 30, 600, 0,  0, -1, 0);
     jlRun(pool, &table[1], JL_SEED + 31, 600, 0,  2, -1, 0);

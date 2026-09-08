@@ -243,6 +243,7 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
                       const uint8_t *opus, int opusLen) {
     int i;
     int target = -1;
+    bool evicted = false;
 
     if (sp == NULL || opus == NULL || opusLen <= 0 ||
         opusLen > (int)sizeof(sp->slots[0].data)) {
@@ -270,7 +271,8 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
 
     if (target < 0) {
         /* Full: the oldest frame is the one closest to being played, and
-         * losing it costs one concealed frame. */
+         * dropping it is what sheds the delay that filled the buffer - see
+         * the resynchronisation below. */
         target = 0;
         for (i = 1; i < VOICE_JITTER_SLOTS; i++) {
             if (voiceSeqAfter(sp->slots[target].seq, sp->slots[i].seq)) {
@@ -278,6 +280,7 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
             }
         }
         sp->stats.evicted++;
+        evicted = true;
     } else if (!sp->slots[target].present) {
         sp->count++;
     }
@@ -304,6 +307,32 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
         sp->primed = true;
         sp->nextSeq = sp->slots[lowest].seq;
         sp->consecutivePlc = 0;
+    }
+
+    /* An eviction means the receiver has fallen about VOICE_JITTER_SLOTS
+     * frames - some 160 ms - behind its talker.  That depth is the delay the
+     * waits in voiceSpeakerPop built up, and the frame just dropped is part
+     * of it rather than a loss to be concealed later, so playback moves on to
+     * what is still held instead of waiting the deadline out for a frame that
+     * is no longer here.
+     *
+     * The cursor only ever moves forward or stays put, never back: a frame
+     * behind nextSeq is dropped as late above, so everything held is at or
+     * after it.  And this runs after the arriving frame has been stored,
+     * because that frame may be the lowest sequence now held. */
+    if (evicted && sp->primed) {
+        int lowest = -1;
+        for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+            if (!sp->slots[i].present) {
+                continue;
+            }
+            if (lowest < 0 || voiceSeqAfter(sp->slots[lowest].seq,
+                                            sp->slots[i].seq)) {
+                lowest = i;
+            }
+        }
+        sp->nextSeq = sp->slots[lowest].seq;
+        sp->waiting = false;
     }
 }
 
