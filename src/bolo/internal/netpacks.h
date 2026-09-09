@@ -631,7 +631,7 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               live state and answers with
                                               CTRL_VIEW_TARGET. */
 
-#define PACKET_MAP_PING                217  /* client → server
+#define PACKET_MAP_PING                218  /* client → server
                                               { kind 1, worldX 2, worldY 2 } —
                                               a smart ping the sender wants
                                               placed on the map for its team.

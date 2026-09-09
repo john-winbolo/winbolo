@@ -2142,30 +2142,30 @@
  * heads that section and labels its first chord row, with the two _ALT names
  * for the other two; the rest name the binding chord pieces the key-setup
  * field shows. */
-#define MESSAGE_PING_STANDARD               2051
-#define MESSAGE_PING_CAUTION                2052
-#define MESSAGE_PING_ASSIST                 2053
-#define MESSAGE_PING_ATTACK                 2054
-#define MESSAGE_PING_ON_MY_WAY              2055
-#define MESSAGE_PING_BOT_COMMAND            2056
-#define STR_PING_STANDARD                   2057
-#define STR_PING_CAUTION                    2058
-#define STR_PING_ASSIST                     2059
-#define STR_PING_ATTACK                     2060
-#define STR_PING_ON_MY_WAY                  2061
-#define STR_PING_BOT_COMMAND                2062
-#define STR_DLGKEYSETUP_PING                2063
-#define STR_DLGKEYSETUP_PING_ALT            2064
-#define STR_DLGKEYSETUP_PRESSACHORD         2065
-#define STR_PING_MOD_CTRL                   2066
-#define STR_PING_MOD_ALT                    2067
-#define STR_PING_MOD_SHIFT                  2068
-#define STR_PING_MOUSE_LEFT                 2069
-#define STR_PING_MOUSE_MIDDLE               2070
-#define STR_PING_MOUSE_RIGHT                2071
-#define STR_PING_MOUSE_X1                   2072
-#define STR_PING_MOUSE_X2                   2073
-#define STR_DLGKEYSETUP_PING_ALT2           2074
+#define MESSAGE_PING_STANDARD               2128
+#define MESSAGE_PING_CAUTION                2129
+#define MESSAGE_PING_ASSIST                 2130
+#define MESSAGE_PING_ATTACK                 2131
+#define MESSAGE_PING_ON_MY_WAY              2132
+#define MESSAGE_PING_BOT_COMMAND            2133
+#define STR_PING_STANDARD                   2134
+#define STR_PING_CAUTION                    2135
+#define STR_PING_ASSIST                     2136
+#define STR_PING_ATTACK                     2137
+#define STR_PING_ON_MY_WAY                  2138
+#define STR_PING_BOT_COMMAND                2139
+#define STR_DLGKEYSETUP_PING                2140
+#define STR_DLGKEYSETUP_PING_ALT            2141
+#define STR_DLGKEYSETUP_PRESSACHORD         2142
+#define STR_PING_MOD_CTRL                   2143
+#define STR_PING_MOD_ALT                    2144
+#define STR_PING_MOD_SHIFT                  2145
+#define STR_PING_MOUSE_LEFT                 2146
+#define STR_PING_MOUSE_MIDDLE               2147
+#define STR_PING_MOUSE_RIGHT                2148
+#define STR_PING_MOUSE_X1                   2149
+#define STR_PING_MOUSE_X2                   2150
+#define STR_DLGKEYSETUP_PING_ALT2           2151
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
