@@ -118,6 +118,50 @@ diff_sorted_lobby() {
     <(sed -E "$NORMALIZE_EVENTS_SED" "$actual"   | sed -E "$LOBBY_TEARDOWN_SED" | sort -u)
 }
 
+# ── Fixed-port hygiene ─────────────────────────────────────────────
+# Every UDP scenario binds a hardcoded port (the CTest RESOURCE_LOCK groups in
+# CMakeLists.txt pair the scenarios to ports). The DS's listen socket is
+# exclusive on every platform — createUdpSocket(true) in
+# src/bolo/transport_udp_common.c skips SO_REUSEADDR/SO_REUSEPORT for the
+# server case — so a stale WinBoloDS still holding one of these ports makes the
+# DS we launch here fail bind() and exit immediately, while the headless
+# clients connect to that OLDER server instead. The resulting captures differ
+# from the fixtures in ways that read as a code regression rather than as a
+# squatted port, so both ends of that are handled explicitly below.
+#
+# Strays outlive a run because the EXIT trap in each helper cannot fire when
+# the harness is SIGKILLed — a CTest TIMEOUT, or an IDE stopping the run.
+
+# Kill any leftover DS still holding this scenario's port. The pattern is
+# scoped to the DS binary name plus this exact -port argument, so a real server
+# on some other port is never touched. pkill -f is present on both macOS (BSD)
+# and Linux (procps); lsof and fuser are not portable enough to rely on here.
+reap_stale_ds() {
+  local port="$1"
+  local ds_name
+  ds_name="$(basename "$BIN_DS")"
+  if pkill -f "$ds_name .*-port $port( |\$)" 2>/dev/null; then
+    echo "reaped a stale $ds_name holding port $port" >&2
+    # SIGTERM is asynchronous; give the old process time to close its socket
+    # before we try to bind it.
+    sleep 0.5
+  fi
+}
+
+# Verify the DS just launched actually owns its port. Its own bind() failure
+# message is the signal to test: the DS is an unwaited background child, so it
+# becomes a zombie on exit and `kill -0` still succeeds against it on both
+# macOS and Linux. $1 = port, $2 = the DS's captured stderr.
+require_ds_up() {
+  local port="$1"
+  local errfile="$2"
+  if grep -q "bind() failed" "$errfile" 2>/dev/null; then
+    echo "DS FAILED TO BIND (port $port already in use)"
+    return 1
+  fi
+  return 0
+}
+
 run() {
   local name="$1"
   local map="$2"
@@ -150,8 +194,11 @@ run_ds() {
   if [ -n "$ally" ]; then
     args+=( -allybots "$ally" )
   fi
+  reap_stale_ds 50001
   "$BIN_DS" "${args[@]}" \
-      > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
+      > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || {
+        require_ds_up 50001 "$ACTUAL/$name.err" || return 1
+        echo "CRASH"; return 1; }
   if diff -q "$EXPECTED/$name.out" "$ACTUAL/$name.out" >/dev/null 2>&1; then
     echo "OK"
   else
@@ -191,6 +238,7 @@ run_events_udp() {
   local port=50002
   echo -n "  $name ... "
 
+  reap_stale_ds "$port"
   "$BIN_DS" -map "$map" -port "$port" -nolobby \
             -gametype open \
             -bots 1 -brain "$brain" \
@@ -208,6 +256,7 @@ run_events_udp() {
   # tolerates a slower startup, but a short delay avoids the first packet
   # going to an unbound port.
   sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
 
   local rc=0
   "$BIN" --server 127.0.0.1 --port "$port" --brain "$brain" \
@@ -285,12 +334,14 @@ run_events_cmd_udp() {
     ds_args+=( -nolobby )
   fi
 
+  reap_stale_ds "$port"
   "$BIN_DS" "${ds_args[@]}" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
 
   local rc=0
   "$BIN" --server 127.0.0.1 --port "$port" \
@@ -328,6 +379,7 @@ run_events_cmd_udp_server_only() {
   local port=50004
   echo -n "  $name ... "
 
+  reap_stale_ds "$port"
   "$BIN_DS" -map "$map" -port "$port" -gametype open \
             -nolobby \
             -cmd-stdin "$server_cmd" \
@@ -338,6 +390,7 @@ run_events_cmd_udp_server_only() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
 
   local rc=0
   "$BIN" --server 127.0.0.1 --port "$port" \
@@ -378,6 +431,7 @@ run_events_cmd_udp_two_clients() {
   local port=50005
   echo -n "  $name ... "
 
+  reap_stale_ds "$port"
   "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
@@ -386,6 +440,7 @@ run_events_cmd_udp_two_clients() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
 
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
@@ -455,6 +510,7 @@ run_events_cmd_udp_two_clients_lobby() {
   local port=50007
   echo -n "  $name ... "
 
+  reap_stale_ds "$port"
   "$BIN_DS" -map "$map" -port "$port" -gametype open \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
@@ -463,6 +519,7 @@ run_events_cmd_udp_two_clients_lobby() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
 
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
@@ -532,6 +589,7 @@ run_events_cmd_udp_three_clients() {
   local port=50008
   echo -n "  $name ... "
 
+  reap_stale_ds "$port"
   "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
@@ -540,6 +598,7 @@ run_events_cmd_udp_three_clients() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
 
   # Stagger joins by 0.3s each so slot assignment is deterministic
   # (c1→0, c2→1, c3→2). Distinct --name args so the server doesn't
@@ -615,6 +674,7 @@ run_events_udp_two_clients_ticklimit() {
   local port=50006
   echo -n "  $name ... "
 
+  reap_stale_ds "$port"
   "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
             -ticklimit "$ticklimit" \
             -nowinbolonet -quiet -threads 1 \
@@ -624,6 +684,7 @@ run_events_udp_two_clients_ticklimit() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
 
   "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --brain "$brain" \

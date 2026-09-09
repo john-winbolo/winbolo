@@ -190,6 +190,19 @@ typedef struct {
      * installed. */
     bool     mapInstalled;
 
+    /* Monotonic count of installed maps thrown away — incremented on each
+     * mapInstalled true -> false transition, i.e. each time a (re-)accept
+     * arms a fresh download over a map this client had already installed.
+     * The initial join does not count: nothing was installed to discard.
+     *
+     * Exists because the invalidation is a transient. The window between
+     * dropping the old map and finishing the new one can close inside a
+     * single test pump, so a test that samples clientSimGetServerMapData
+     * for NULL can miss it entirely and wrongly conclude the map change
+     * never re-armed the download. A monotonic counter cannot be missed
+     * however the sampling falls. */
+    uint32_t mapInvalidateCount;
+
     /* Join-download readiness/watchdog. The server streams the map only after
      * this client's PACKET_MAP_DL_READY (sent when JOIN_ACCEPT arms the
      * buffers), so the stream can never race the accept. The watchdog re-sends
@@ -1956,6 +1969,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                         memset(c->mapDownloadBuf, 0, specMapSize);
                         c->mapDownloadTotal = specMapSize;
                         c->mapDownloadReceived = 0;
+                        if (c->mapInstalled) c->mapInvalidateCount++;
                         c->mapInstalled = false;
                         c->specLobbyMapDownloading = true;
                         bulkReceiverInit(&c->bulkRecv);
@@ -2046,6 +2060,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memset(c->mapDownloadBuf, 0, mapSize);
             c->mapDownloadTotal = mapSize;
             c->mapDownloadReceived = 0;
+            if (c->mapInstalled) c->mapInvalidateCount++;
             c->mapInstalled = false;
 
             /* A fresh full download (initial join or a wholesale map change)
@@ -4321,6 +4336,11 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
         (unsigned)c->activeResyncGen, (unsigned)c->resyncAttempts);
 }
 
+uint32_t transportUdpClientGetMapInvalidateCount(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return 0;
+    return ((TransportUdpClientCtx *)t->ctx)->mapInvalidateCount;
+}
+
 const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) return NULL;
@@ -4996,6 +5016,11 @@ void transportUdpClientFuzzInit(ClientSim *sim) {
     g_fuzzClientCtx.sock = INVALID_SOCKET;
     g_fuzzClientCtx.joinState = UDP_CLIENT_CONNECTED;
     g_fuzzClientCtx.clientSim = sim;
+    /* The seam starts already CONNECTED, so it never runs
+     * transportUdpClientCreate and the mux would stay zeroed. Every channel's
+     * window is 0 then, and the first channelReceive on a snapshot's trailer
+     * divides by it. */
+    channelMuxInit(&g_fuzzClientCtx.channelMux);
 }
 
 void transportUdpClientFuzzProcessSnapshot(const uint8_t *body, size_t size) {
