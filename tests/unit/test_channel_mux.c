@@ -11,9 +11,12 @@
  * coalescing under a tight budget, a worst-case control event fitting one
  * datagram, malformed-input rejection, the named
  * live-play regressions (lobby-ack resend, seq-space across game start,
- * drop-don't-reset), and the game-boundary baseline reset (send-tail drop,
+ * drop-don't-reset), the game-boundary baseline reset (send-tail drop,
  * coordinated send/recv truncation, buffer-before-lift, near-window
- * retransmit recovery, no-rewind).
+ * retransmit recovery, no-rewind), and the best-effort sequence-jump bound
+ * (a top-of-space or far-ahead seq is refused, a forgery inside the allowance
+ * is resynchronised away, an ordinary jump still evicts the oldest, delivery
+ * survives the wrap at 0xFFFFFFFF).
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -1893,6 +1896,385 @@ done:
     return 0;
 }
 
+/* ---- best-effort sequence jumps: bounded, and safe across the wrap ---- */
+
+/* Mirrors CHANNEL_BEST_EFFORT_JUMP_WINDOWS in channel_mux.c: a best-effort
+ * receiver follows a forward jump of up to this many of its own windows on one
+ * segment's say-so, and needs a second agreeing segment past that. */
+#define BE_JUMP_WINDOWS 4u
+
+/* Hand-build a one-segment frame (no acks) carrying an arbitrary sequence
+ * number. channelBuildFrame can only emit the numbers its own sender reached,
+ * so a hostile or corrupted seq has to be written out by hand. */
+static int makeSegFrame(uint8_t *buf, uint8_t ch, uint32_t seq,
+                        const uint8_t *payload, uint16_t len) {
+    int pos = 0;
+    buf[pos++] = 0;  /* ackCount */
+    buf[pos++] = 1;  /* segCount */
+    buf[pos++] = ch;
+    buf[pos++] = (uint8_t)(seq >> 24);
+    buf[pos++] = (uint8_t)(seq >> 16);
+    buf[pos++] = (uint8_t)(seq >> 8);
+    buf[pos++] = (uint8_t)seq;
+    buf[pos++] = (uint8_t)(len >> 8);
+    buf[pos++] = (uint8_t)len;
+    memcpy(buf + pos, payload, len);
+    return pos + (int)len;
+}
+
+/* One segment claiming the top of the sequence space must not wedge the
+ * channel: the receiver refuses to follow it, keeps its cursor, and ordinary
+ * traffic keeps delivering afterwards. There is no reset for a best-effort
+ * channel, so a cursor moved up there would silence it for the connection. */
+static int t_best_effort_absurd_seq_no_wedge(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t olen;
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    channelTick(a, 0, LINK_RTT_MS);
+    channelTick(b, 0, LINK_RTT_MS);
+
+    /* Ordinary voice traffic first: seq 0 delivers, the cursor sits at 1. */
+    putIdx(msg, 0);
+    if (!channelSendBestEffort(a, CHANNEL_VOICE, msg, 8)) {
+        goto done;
+    }
+    {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+    }
+    if (!channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen) ||
+        getIdx(out) != 0) {
+        goto done;
+    }
+
+    /* One datagram claiming 0xFFFFFFFF. */
+    putIdx(msg, 999);
+    {
+        int lf = makeSegFrame(frame, CHANNEL_VOICE, 0xFFFFFFFFu, msg, 8);
+        channelRecvFrame(b, frame, lf);
+    }
+    if (channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen)) {
+        goto done; /* the segment was refused, so nothing is deliverable */
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != 1) {
+        goto done; /* the cursor did not follow it */
+    }
+
+    /* The channel still works: the next real segments deliver in order. */
+    uint32_t i;
+    for (i = 1; i <= 3; i++) {
+        putIdx(msg, i);
+        if (!channelSendBestEffort(a, CHANNEL_VOICE, msg, 8)) {
+            goto done;
+        }
+    }
+    {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+    }
+    for (i = 1; i <= 3; i++) {
+        if (!channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen) ||
+            getIdx(out) != i) {
+            goto done;
+        }
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != 4) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("a top-of-space seq wedged the best-effort channel");
+    }
+    return 0;
+}
+
+/* A jump far past the cursor is refused without disturbing the channel: what
+ * was already buffered still delivers, in order, and the refused segment is
+ * not among it. */
+static int t_best_effort_far_jump_refused(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t olen;
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    channelTick(a, 0, LINK_RTT_MS);
+    channelTick(b, 0, LINK_RTT_MS);
+
+    /* Two real segments arrive and stay buffered (nothing popped yet). */
+    uint32_t i;
+    for (i = 0; i < 2; i++) {
+        putIdx(msg, i);
+        if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, msg, 8)) {
+            goto done;
+        }
+    }
+    {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+    }
+
+    /* A seq a billion past the cursor — no sender reaches that on a connection
+     * that drops itself after one timeout of silence. */
+    putIdx(msg, 777);
+    {
+        int lf = makeSegFrame(frame, CHANNEL_GAME_EFFECT, 0x40000000u, msg, 8);
+        channelRecvFrame(b, frame, lf);
+    }
+
+    for (i = 0; i < 2; i++) {
+        if (!channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen) ||
+            getIdx(out) != i) {
+            goto done; /* the buffered segments survived the refusal */
+        }
+    }
+    if (channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen)) {
+        goto done; /* the refused segment was not buffered */
+    }
+    if (b->ch[CHANNEL_GAME_EFFECT].expectedSeq != 2) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("a far-ahead seq was followed or cost the buffered segments");
+    }
+    return 0;
+}
+
+/* A forgery does not have to be absurd to strand the cursor: one inside the
+ * jump allowance is followed, which leaves the real sender behind the cursor
+ * and every one of its segments refused. Two of those segments agree with each
+ * other, so the cursor re-bases onto them and the channel delivers again —
+ * no cursor position outlives the traffic. */
+static int t_best_effort_in_allowance_forgery_recovers(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t olen;
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    channelTick(a, 0, LINK_RTT_MS);
+    channelTick(b, 0, LINK_RTT_MS);
+    const uint32_t window = b->ch[CHANNEL_VOICE].window;
+
+    /* Ordinary traffic: seqs 0..2 delivered, the cursor sits at 3. */
+    uint32_t i;
+    for (i = 0; i < 3; i++) {
+        putIdx(msg, i);
+        if (!channelSendBestEffort(a, CHANNEL_VOICE, msg, 8)) {
+            goto done;
+        }
+    }
+    {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+    }
+    for (i = 0; i < 3; i++) {
+        if (!channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen) ||
+            getIdx(out) != i) {
+            goto done;
+        }
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != 3) {
+        goto done;
+    }
+
+    /* One forged datagram, as far ahead as the allowance permits. Following it
+     * is what a single segment inside the allowance is allowed to do. */
+    uint32_t forged = 3 + window * BE_JUMP_WINDOWS - 1;
+    putIdx(msg, 999);
+    {
+        int lf = makeSegFrame(frame, CHANNEL_VOICE, forged, msg, 8);
+        channelRecvFrame(b, frame, lf);
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != forged - window + 1) {
+        goto done; /* the cursor is now well ahead of the real sender */
+    }
+    while (channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen)) {
+    }
+
+    /* The real sender carries on from seq 3. Its first segment is refused and
+     * recorded, the second agrees with it and re-bases the cursor, and the
+     * rest deliver — one segment lost to the resync, not the channel. */
+    for (i = 3; i < 9; i++) {
+        putIdx(msg, i);
+        if (!channelSendBestEffort(a, CHANNEL_VOICE, msg, 8)) {
+            goto done;
+        }
+    }
+    {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+    }
+    for (i = 4; i < 9; i++) {
+        if (!channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen) ||
+            getIdx(out) != i) {
+            goto done;
+        }
+    }
+    if (channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen)) {
+        goto done;
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != 9) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("a forgery inside the allowance kept the best-effort channel");
+    }
+    return 0;
+}
+
+/* An ordinary forward jump still evicts the oldest rather than waiting, all
+ * the way out to the last seq inside the allowance; the first seq past it is
+ * refused. */
+static int t_best_effort_forward_jump_bound(void) {
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t olen;
+    int rc = 1;
+    if (!b) {
+        goto done;
+    }
+    channelMuxInit(b);
+    const uint32_t window = b->ch[CHANNEL_VOICE].window;
+    const uint32_t maxAhead = window * BE_JUMP_WINDOWS; /* jump allowance */
+
+    /* Seqs 0 and 1 buffered, nothing popped. */
+    uint32_t i;
+    for (i = 0; i < 2; i++) {
+        putIdx(msg, i);
+        int lf = makeSegFrame(frame, CHANNEL_VOICE, i, msg, 8);
+        channelRecvFrame(b, frame, lf);
+    }
+
+    /* Seq 9 is past the window: the cursor moves to 2, the two older segments
+     * are dropped rather than waited for, and only seq 9 delivers. */
+    putIdx(msg, 9);
+    {
+        int lf = makeSegFrame(frame, CHANNEL_VOICE, 9, msg, 8);
+        channelRecvFrame(b, frame, lf);
+    }
+    if (!channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen) ||
+        getIdx(out) != 9) {
+        goto done;
+    }
+    if (channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen)) {
+        goto done;
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != 10) {
+        goto done;
+    }
+
+    /* The last seq inside the allowance is still followed. */
+    uint32_t edge = b->ch[CHANNEL_VOICE].expectedSeq + maxAhead - 1;
+    putIdx(msg, 11);
+    {
+        int lf = makeSegFrame(frame, CHANNEL_VOICE, edge, msg, 8);
+        channelRecvFrame(b, frame, lf);
+    }
+    if (!channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen) ||
+        getIdx(out) != 11) {
+        goto done;
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != edge + 1) {
+        goto done;
+    }
+
+    /* One seq further out is refused, and the cursor stays put. */
+    uint32_t cursor = b->ch[CHANNEL_VOICE].expectedSeq;
+    putIdx(msg, 12);
+    {
+        int lf = makeSegFrame(frame, CHANNEL_VOICE, cursor + maxAhead, msg, 8);
+        channelRecvFrame(b, frame, lf);
+    }
+    if (channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen)) {
+        goto done;
+    }
+    if (b->ch[CHANNEL_VOICE].expectedSeq != cursor) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(b);
+    if (rc) {
+        UT_FAIL("best-effort forward jump did not evict / bound as expected");
+    }
+    return 0;
+}
+
+/* A channel whose numbering legitimately reaches the top keeps delivering
+ * across the wrap at 0xFFFFFFFF — the property that lets the receiver run
+ * without a reset. channelResetExpected places the cursor up there directly;
+ * arriving at it a segment at a time would take the whole sequence space. */
+static int t_best_effort_wrap_delivers(void) {
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t olen;
+    int rc = 1;
+    if (!b) {
+        goto done;
+    }
+    channelMuxInit(b);
+    channelResetExpected(b, CHANNEL_VOICE, 0xFFFFFFFEu);
+
+    static const uint32_t seqs[4] = {0xFFFFFFFEu, 0xFFFFFFFFu, 0u, 1u};
+    uint32_t i;
+    for (i = 0; i < 4; i++) {
+        putIdx(msg, i);
+        int lf = makeSegFrame(frame, CHANNEL_VOICE, seqs[i], msg, 8);
+        channelRecvFrame(b, frame, lf);
+        if (!channelReceiveBestEffort(b, CHANNEL_VOICE, out, &olen) ||
+            getIdx(out) != i) {
+            goto done; /* delivery stopped at or after the wrap */
+        }
+        if (b->ch[CHANNEL_VOICE].expectedSeq != seqs[i] + 1) {
+            goto done;
+        }
+    }
+    rc = 0;
+done:
+    free(b);
+    if (rc) {
+        UT_FAIL("best-effort delivery broke across the sequence wrap");
+    }
+    return 0;
+}
+
 /* ---- fast loss recovery: a reported gap retransmits before the RTO ---- */
 
 /* One segment is lost mid-stream so the receiver buffers a gap (seq 0 and 2,
@@ -2094,6 +2476,21 @@ int run_channel_mux(void) {
         return 1;
     }
     if (t_best_effort_usage()) {
+        return 1;
+    }
+    if (t_best_effort_absurd_seq_no_wedge()) {
+        return 1;
+    }
+    if (t_best_effort_far_jump_refused()) {
+        return 1;
+    }
+    if (t_best_effort_in_allowance_forgery_recovers()) {
+        return 1;
+    }
+    if (t_best_effort_forward_jump_bound()) {
+        return 1;
+    }
+    if (t_best_effort_wrap_delivers()) {
         return 1;
     }
     if (t_fast_retransmit()) {

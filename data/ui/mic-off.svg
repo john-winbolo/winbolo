@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No microphone: the cradle and stand standing empty, with no capsule in
+     them. Distinguished from mic-muted.svg by silhouette rather than by
+     colour - the whole top of the icon is open where the other two are a
+     solid mass - which is what survives being rasterised to 16 px. The
+     cradle is drawn taller than mic.svg's so the shape still fills its
+     slot with the capsule gone. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path d="M4 4v6a8 8 0 0 0 16 0V4h-3v6a5 5 0 0 1-10 0V4H4z"/>
+  <path d="M11 18h2v2h3v2H8v-2h3v-2z"/>
+</svg>

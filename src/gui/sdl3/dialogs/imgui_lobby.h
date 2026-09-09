@@ -65,6 +65,17 @@ LobbyFrameStatus imguiLobbyRenderFrame(struct ClientSim *cs);
  * lobby. */
 void imguiLobbyFrameReset(void);
 
+#if defined(WINBOLO_VOICE)
+/* Reads the push-to-talk key for the lobby and hands the answer to the voice
+ * runtime. Every host running a lobby must call this once per turn of its
+ * loop, whether or not the key is down: no other poll runs in the lobby, so
+ * the call is both what makes push to talk work here and what stops a key
+ * held as the game ended latching the microphone open for the whole lobby.
+ * Best called before the host's voiceTick, which then sends this turn's
+ * answer rather than the last one's. */
+void imguiLobbyPushToTalkPoll(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

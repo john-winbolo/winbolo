@@ -343,6 +343,7 @@ bool clientSimCreate(ClientSim *cs) {
 
   /* Lobby state defaults (memset already zeroed, but be explicit) */
   memset(cs->lobbySlots, 0, sizeof(cs->lobbySlots));
+  cs->voiceTalkingMap = 0;
   cs->countdownSeconds = 0;
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
@@ -1946,6 +1947,12 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   return &cs->lobbySlots[n];
 }
 
+const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
+                                                 BYTE playerNum) {
+  if (cs == NULL || playerNum >= MAX_TANKS) return NULL;
+  return &cs->liveStats[playerNum];
+}
+
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx) {
   if (idx >= MAX_SPECTATORS) return NULL;
   return &cs->spectatorSlots[idx];
@@ -1958,6 +1965,11 @@ BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
     if (cs->lobbySlots[i].connected) count++;
   }
   return count;
+}
+
+PlayerBitMap clientSimGetVoiceTalkingMap(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return cs->voiceTalkingMap;
 }
 
 bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {
@@ -2375,6 +2387,10 @@ bool clientSimGetClassicMode(const ClientSim *cs) {
 
 bool clientSimGetAlliesInTrees(const ClientSim *cs) {
   return cs ? cs->alliesInTrees : false;
+}
+
+ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs) {
+  return cs ? cs->serverVoiceMode : serverVoiceOn;
 }
 
 uint16_t clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat) {

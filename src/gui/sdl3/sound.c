@@ -62,6 +62,21 @@ static bool s_muted = FALSE;   /* logical mute state, tracked across (un)playabl
 static SDL_AudioStream *audioStream = NULL;
 static SDL_AudioSpec deviceSpec;
 
+/* The two settings the stream gain is made of, and the one place the gain is
+ * worked out from them.  Opening the device and changing either setting both
+ * go through applyStreamGain, so neither can be applied without the other.
+ * Seeded with the same defaults the frontend globals carry, for the case where
+ * the device opens before the preferences have been read. */
+static int masterVolumePct = 100;
+static int effectsVolumePct = 50;
+
+static void applyStreamGain(void) {
+    if (audioStream) {
+        SDL_SetAudioStreamGain(
+            audioStream, (float)(masterVolumePct * effectsVolumePct) / 10000.0f);
+    }
+}
+
 /* Sound effect data (pre-loaded and converted).
  * Each sound's pool. Members 0 .. variantCount-1 are loaded and playable;
  * a member that would not decode never takes a position, so there are no
@@ -546,12 +561,9 @@ bool soundSetup(void) {
         return FALSE;
     }
 
-    /* Apply the current master volume (loaded from prefs or default).
-     * The extern lives in winbolo.c. */
-    {
-        extern int soundVolume;
-        SDL_SetAudioStreamGain(audioStream, (float)soundVolume / 100.0f);
-    }
+    /* Apply the current volumes (loaded from prefs, or the defaults above if
+     * the device opened first). */
+    applyStreamGain();
 
     /* Load every sound effect's pool: the active skin's members when it holds
      * any that decode, otherwise the one file under data/sounds/ relative to
@@ -1036,12 +1048,18 @@ bool soundIsMuted(void) {
     return s_muted;
 }
 
-void soundSetVolume(int pct) {
+void soundSetMasterVolume(int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
-    if (audioStream) {
-        SDL_SetAudioStreamGain(audioStream, (float)pct / 100.0f);
-    }
+    masterVolumePct = pct;
+    applyStreamGain();
+}
+
+void soundSetEffectsVolume(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    effectsVolumePct = pct;
+    applyStreamGain();
 }
 
 void soundSetReturningToLobby(bool active) {

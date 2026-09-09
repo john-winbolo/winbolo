@@ -82,6 +82,11 @@ static bool s_isPlayable = FALSE;
  * returning-to-lobby save/restore. */
 static double s_currentGain = 0.5;
 
+/* The two settings the gain is made of. The one place it is worked out from
+ * them is applyStreamGain, below the JS helpers it calls. */
+static int s_masterVolumePct = 100;
+static int s_effectsVolumePct = 50;
+
 /* -------------------------------------------------------
  * JS-side helpers, defined inline via EM_JS.
  *
@@ -103,8 +108,8 @@ EM_JS(void, wb_audio_init, (void), {
 
   var ctx = new Ctx();
   var gain = ctx.createGain();
-  /* Default to 50%. soundSetVolume() overrides once the saved preference
-     has been read. */
+  /* Placeholder only — soundSetup calls applyStreamGain straight after this,
+     and the saved preferences override that in turn. */
   gain.gain.value = 0.5;
   gain.connect(ctx.destination);
 
@@ -187,6 +192,14 @@ EM_JS(void, wb_audio_cleanup, (void), {
   Module.WB_audio = null;
 });
 
+/* The gain the graph runs at, worked out from the two settings above in the
+ * one place. Called when the context is created and on every change, so a
+ * change to one setting cannot leave the other behind. */
+static void applyStreamGain(void) {
+  s_currentGain = (double)(s_masterVolumePct * s_effectsVolumePct) / 10000.0;
+  wb_audio_set_gain(s_currentGain);
+}
+
 /* -------------------------------------------------------
  * Public sound API (matches gui/sound.h)
  * ------------------------------------------------------- */
@@ -196,6 +209,7 @@ bool soundSetup(void) {
   char path[256];
 
   wb_audio_init();
+  applyStreamGain();
   for (i = 0; i < WB_NUM_SOUNDS; i++) {
     snprintf(path, sizeof(path), "/data/sounds/%s", kSoundFiles[i]);
     wb_audio_load(i, path);
@@ -265,11 +279,18 @@ void soundSetMuted(bool mute) {
   wb_audio_set_muted(mute ? 1 : 0);
 }
 
-void soundSetVolume(int pct) {
+void soundSetMasterVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
-  s_currentGain = (double)pct / 100.0;
-  wb_audio_set_gain(s_currentGain);
+  s_masterVolumePct = pct;
+  applyStreamGain();
+}
+
+void soundSetEffectsVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  s_effectsVolumePct = pct;
+  applyStreamGain();
 }
 
 void soundSetReturningToLobby(bool active) {

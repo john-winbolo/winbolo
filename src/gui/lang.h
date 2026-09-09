@@ -508,8 +508,8 @@
 #define STR_STARTPICK_SWAP_WITH             1517
 #define STR_STARTPICK_ASSIGN_TO             1518
 #define STR_STARTPICK_SLOT_FALLBACK         1519
-#define STR_STARTPICK_TIP_OFFSIDE           2044
-#define STR_STARTPICK_TIP_OFFSIDE_HOST      2045
+#define STR_STARTPICK_TIP_OFFSIDE           2116
+#define STR_STARTPICK_TIP_OFFSIDE_HOST      2117
 
 /* Player-row badge tooltips */
 #define STR_PLAYER_TIP_AI                   1520
@@ -1596,23 +1596,23 @@
 #define STR_DLGBROWSER_VIEWS_CLASSIC        2028
 #define STR_DLGBROWSER_VIEWS_ALLYTREES      2029
 /* Lobby team start side: header selector, row start cell and dropdown actions */
-#define STR_DLGLOBBY_TEAM_SIDE              2030
-#define STR_DLGLOBBY_SIDE_ANY               2031
-#define STR_DLGLOBBY_SIDE_N                 2032
-#define STR_DLGLOBBY_SIDE_E                 2033
-#define STR_DLGLOBBY_SIDE_S                 2034
-#define STR_DLGLOBBY_SIDE_W                 2035
-#define STR_DLGLOBBY_START_SEA              2036
-#define STR_DLGLOBBY_START_TEAM_SIDE        2037
-#define STR_DLGLOBBY_START_AUTO             2038
-#define STR_DLGLOBBY_START_UNASSIGN         2039
-#define STR_DLGLOBBY_START_OFFSIDE_SUFFIX   2040
-#define STR_DLGLOBBY_TOOLTIP_TEAM_SIDE      2041
-#define STR_DLGLOBBY_TOOLTIP_START_SEA      2042
-#define STR_DLGLOBBY_TOOLTIP_START_OFFSIDE  2043
+#define STR_DLGLOBBY_TEAM_SIDE              2102
+#define STR_DLGLOBBY_SIDE_ANY               2103
+#define STR_DLGLOBBY_SIDE_N                 2104
+#define STR_DLGLOBBY_SIDE_E                 2105
+#define STR_DLGLOBBY_SIDE_S                 2106
+#define STR_DLGLOBBY_SIDE_W                 2107
+#define STR_DLGLOBBY_START_SEA              2108
+#define STR_DLGLOBBY_START_TEAM_SIDE        2109
+#define STR_DLGLOBBY_START_AUTO             2110
+#define STR_DLGLOBBY_START_UNASSIGN         2111
+#define STR_DLGLOBBY_START_OFFSIDE_SUFFIX   2112
+#define STR_DLGLOBBY_TOOLTIP_TEAM_SIDE      2113
+#define STR_DLGLOBBY_TOOLTIP_START_SEA      2114
+#define STR_DLGLOBBY_TOOLTIP_START_OFFSIDE  2115
 /* Map-preview compass: the two-team N/S or E/W shortcut hover text */
-#define STR_DLGLOBBY_TOOLTIP_COMPASS_SET    2047
-#define STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR  2048
+#define STR_DLGLOBBY_TOOLTIP_COMPASS_SET    2124
+#define STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR  2125
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468
@@ -1686,9 +1686,70 @@
 #define STR_DLGSETTINGS_HOSTING_LOGDIR          1919
 #define STR_DLGSETTINGS_HOSTING_SERVEREPLAY     1937
 #define STR_DLGSETTINGS_HOSTING_APPLYNOTE       1920
+#define STR_DLGSETTINGS_HOSTING_VOICE           2119
+#define STR_DLGSETTINGS_HOSTING_VOICE_ON        2120
+#define STR_DLGSETTINGS_HOSTING_VOICE_OFF       2121
+#define STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY 2122
+#define STR_DLGSETTINGS_HOSTING_VOICE_TIP       2123
 
 /* Log viewer Options menu */
 #define STR_LV_HIDE_LOBBY                   1921
+
+/* Voice section of the Display/Sound settings tab */
+#define STR_DLGSETTINGS_VOICE                   2030
+#define STR_DLGSETTINGS_VOICE_LOOPBACK          2031
+#define STR_DLGSETTINGS_VOICE_MICGAIN           2032
+#define STR_DLGSETTINGS_VOICE_LEVEL             2033
+#define STR_DLGSETTINGS_VOICE_ENABLE            2034
+#define STR_DLGSETTINGS_VOICE_MODE              2035
+#define STR_DLGSETTINGS_VOICE_MODE_OFF          2036
+#define STR_DLGSETTINGS_VOICE_MODE_PTT          2037
+#define STR_DLGSETTINGS_VOICE_MODE_OPEN         2038
+#define STR_DLGSETTINGS_VOICE_PTTKEY            2039
+#define STR_DLGSETTINGS_VOICE_TRANSMITTING      2040
+#define STR_DLGSETTINGS_VOICE_NOTTRANSMITTING   2041
+#define STR_DLGSETTINGS_VOICE_VOLUME            2042
+#define STR_DLGSETTINGS_VOICE_TANKICONS         2052
+#define STR_DLGSETTINGS_VOICE_ECHOCANCEL        2053
+#define STR_DLGSETTINGS_VOICE_MICTEST_RECORDING 2054
+#define STR_DLGSETTINGS_VOICE_MICTEST_PLAYING   2055
+#define STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE 2056
+#define STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM 2057
+#define STR_DLGSETTINGS_VOICE_MICDEVICE         2060
+#define STR_DLGSETTINGS_VOICE_OUTDEVICE         2061
+#define STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT    2062
+#define STR_DLGSETTINGS_VOICE_SERVER_OFF        2126
+
+/* Key setup — push to talk binding */
+#define STR_DLGKEYSETUP_PUSHTOTALK              2043
+
+/* Key setup — self-mute binding */
+#define STR_DLGKEYSETUP_MUTEMIC                 2059
+
+/* Players panel — microphone state icon */
+#define STR_PLAYER_TIP_VOICE_TALKING            2044
+#define STR_PLAYER_TIP_VOICE_IDLE               2045
+#define STR_PLAYER_TIP_VOICE_SELFMUTED          2046
+#define STR_PLAYER_TIP_VOICE_NOMIC              2047
+#define STR_PLAYER_TIP_VOICE_MUTEDBYYOU         2048
+#define STR_PLAYER_TIP_VOICE_SELF               2049
+#define STR_PLAYER_TIP_VOICE_SELF_NOMIC         2050
+#define STR_PLAYER_TIP_VOICE_SELF_MUTED         2051
+
+/* Players panel — per-player playback volume slider */
+#define STR_PLAYER_TIP_VOICE_VOLUME             2090
+
+/* Lobby — the local player's voice sub-row */
+#define STR_DLGLOBBY_TOOLTIP_VOICE              2095
+#define STR_DLGLOBBY_VOICE_OFF                  2096
+
+/* Players panel — a player muted here who is talking anyway */
+#define STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING 2097
+
+/* Sound settings — the three volumes, of which the third is
+   STR_DLGSETTINGS_VOICE_VOLUME above */
+#define STR_DLGSETTINGS_MASTER_VOLUME           2100
+#define STR_DLGSETTINGS_EFFECTS_VOLUME          2101
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
@@ -2133,8 +2194,11 @@
 #define STR_WEB_CONNECT_FAILED              1872
 #define STR_WEB_JOIN_NO_RESPONSE            1873
 
+/* Players menu — open the players panel */
+#define STR_MENU_PLAYERS_PANEL                  2058
+
 /* Sound setup: message box when no sound effect at all could be loaded */
-#define STR_SOUND_LOAD_FAILED               2046
+#define STR_SOUND_LOAD_FAILED               2118
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

@@ -36,6 +36,11 @@
                                      (they end 13 px down; the panel's bottom bevel
                                      starts 19 px down and must stay out of the slice) */
 #define HUD_BUILD_ITEMS        5  /* trees, road, building, pillbox, mine */
+/* The microphone icon's square, in source pixels. Sized against the
+ * shells/mines/armour/trees icon row at the foot of the tank bars
+ * (HUD_TANK_BARS_FOOT_H) so it reads as one more piece of the column rather
+ * than a badge stuck under it. */
+#define HUD_VOICE_ICON_SRC    20
 
 /* The right-hand panel well in the background art: black interior from
  * HUD_PANEL_INNER_LEFT up to (not including) HUD_PANEL_INNER_RIGHT, with the
@@ -141,9 +146,15 @@ static void hudSourceRects(OverviewHudElement *el) {
               MESSAGE_TOP - HUD_SLICE_PAD,
               MESSAGE_BOX_WIDTH + 2 * HUD_SLICE_PAD,
               MESSAGE_HEIGHT + 2 * HUD_SLICE_PAD);
+
+    /* The microphone icon. The source position is unused — it is an icon of
+       its own, not a slice — so only the size is meant here. */
+    hudSetSrc(&el[OVERVIEW_HUD_VOICE], 0, 0,
+              HUD_VOICE_ICON_SRC, HUD_VOICE_ICON_SRC);
 }
 
-bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
+bool overviewHudLayout(int viewW, int viewH, bool wantVoice,
+                       OverviewHudLayout *out) {
     if (!out || viewW < 1 || viewH < 1) return false;
 
     OverviewHudLayout lay;
@@ -182,6 +193,20 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
     colY[OVERVIEW_HUD_TANKBARS]    = y;
     y += lay.el[OVERVIEW_HUD_TANKBARS].srcH;
 
+    /* The microphone sits under the tank bars, on the same gap as every other
+       row. Wanted or not, the column ends where the last row it carries ends,
+       so a build or a connection without voice loses the row rather than
+       leaving a hole in the column. */
+    colX[OVERVIEW_HUD_VOICE] = 0;
+    colY[OVERVIEW_HUD_VOICE] = 0;
+    if (wantVoice) {
+        y += HUD_ROW_GAP;
+        colY[OVERVIEW_HUD_VOICE] = y;
+        y += lay.el[OVERVIEW_HUD_VOICE].srcH;
+    } else {
+        hudSetSrc(&lay.el[OVERVIEW_HUD_VOICE], 0, 0, 0, 0);
+    }
+
     /* Neither the build strip nor the newswire is in the column: the strip
        stands on the left edge and the newswire gets its own full-width strip
        along the bottom. */
@@ -200,9 +225,12 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
 
     /* The tank bars' panel well is narrower than the grids above it, so
        centre that row in the column rather than leaving it against the
-       left edge. */
+       left edge. The microphone is narrower still and is centred the same
+       way. */
     colX[OVERVIEW_HUD_TANKBARS] =
         hudMaxInt(0, (columnWSrc - lay.el[OVERVIEW_HUD_TANKBARS].srcW) / 2);
+    colX[OVERVIEW_HUD_VOICE] =
+        hudMaxInt(0, (columnWSrc - lay.el[OVERVIEW_HUD_VOICE].srcW) / 2);
 
     /* One scale fits the column and the newswire strip together. Solving
 
@@ -237,6 +265,16 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
         lay.el[i].dstY = lay.columnY + (float)colY[i] * scale;
         lay.el[i].dstW = (float)lay.el[i].srcW * scale;
         lay.el[i].dstH = (float)lay.el[i].srcH * scale;
+    }
+
+    /* A row that is not wanted keeps no rect at all — an empty one placed at
+       the column's origin is still something a caller could draw. */
+    if (!wantVoice) {
+        OverviewHudElement *voice = &lay.el[OVERVIEW_HUD_VOICE];
+        voice->dstX = 0.0f;
+        voice->dstY = 0.0f;
+        voice->dstW = 0.0f;
+        voice->dstH = 0.0f;
     }
 
     lay.dividerX = lay.columnX;

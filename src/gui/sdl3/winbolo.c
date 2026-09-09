@@ -70,6 +70,13 @@
 #include "build_cursor.h"
 #include "../lang.h"
 #include "../sound.h"
+#include "../voice.h"
+#if defined(WINBOLO_VOICE_AEC)
+#include "voice_aec.h"
+#endif
+#if defined(WB_VOICEDEBUG)
+#include "voice_debug.h"
+#endif
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
@@ -114,8 +121,13 @@ bool soundEffects = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
-/* Master volume (0-100); applied to the audio stream gain */
+/* Sound effects volume (0-100), the MENU / Sound Volume preference; scales the
+ * master volume for the mixer, and does not reach voice */
 int soundVolume = 50;
+
+/* Master volume (0-100), the MENU / Master Volume preference; scales the sound
+ * effects and voice alike */
+int windowMasterVolume = 100;
 
 /* Is Sound Keepalive enabled */
 bool useSoundKeepalive = TRUE;
@@ -321,6 +333,10 @@ int main(int argc, char *argv[]) {
   char connectArg[FILENAME_MAX];
   bool joinedViaSteam = FALSE;
   ClientSim *cs = NULL;
+#if defined(WB_VOICEDEBUG)
+  const char *voiceRecordDir = NULL;
+  const char *voiceInjectPath = NULL;
+#endif
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
@@ -358,6 +374,37 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[i], "--allow-unsafe-brains") == 0 ||
         strcmp(argv[i], "-allow-unsafe-brains") == 0) {
       luaBrainsSetAllowUnsafe(1);
+      continue;
+    }
+    /* The voice capture-chain recorder. Both switches take a value, and both
+     * consume it in every build: the clause below assigns anything left over
+     * to cmdLine, which would read the value as a map name. */
+    if (strcmp(argv[i], "--voice-record") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--voice-record needs a directory\n");
+        continue;
+      }
+#if defined(WB_VOICEDEBUG)
+      voiceRecordDir = argv[i + 1];
+#else
+      fprintf(stderr,
+              "--voice-record: this build does not carry the voice recorder\n");
+#endif
+      i++;
+      continue;
+    }
+    if (strcmp(argv[i], "--voice-inject") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--voice-inject needs a WAV file\n");
+        continue;
+      }
+#if defined(WB_VOICEDEBUG)
+      voiceInjectPath = argv[i + 1];
+#else
+      fprintf(stderr,
+              "--voice-inject: this build does not carry the voice recorder\n");
+#endif
+      i++;
       continue;
     }
     if (cmdLine[0] == '\0') {
@@ -438,6 +485,35 @@ int main(int argc, char *argv[]) {
    * runs during setup dialogs. Without this, SDL_LockMutex silently
    * no-ops on the NULL handle and the bg game's "lock" is fictional. */
   threadsCreate(FALSE);
+
+  /* Voice runs for the life of the process. It comes up before
+   * gameFrontStart because the pre-game dialogs the first start shows are
+   * blocking loops that already expect it to exist; it brings up the audio
+   * subsystem itself rather than relying on soundSetup's. A device that
+   * will not open is not fatal — voiceInit leaves the module disabled and
+   * every entry point no-ops. */
+  voiceInit();
+
+#if defined(WB_VOICEDEBUG)
+  /* Injecting without recording writes nothing, so the file implies a
+   * directory. The recorder is plain C stdio and does not make the
+   * directory itself, so it is made here. */
+  if (voiceInjectPath != NULL && voiceRecordDir == NULL) {
+    voiceRecordDir = "./voice-rec";
+  }
+  if (voiceRecordDir != NULL) {
+    if (!SDL_CreateDirectory(voiceRecordDir)) {
+      fprintf(stderr, "Voice recorder: cannot create %s: %s\n", voiceRecordDir,
+              SDL_GetError());
+    }
+    if (!voiceDebugStart(voiceRecordDir)) {
+      fprintf(stderr, "Voice recorder: recording did not start\n");
+    }
+  }
+  if (voiceInjectPath != NULL && !voiceDebugInjectOpen(voiceInjectPath)) {
+    fprintf(stderr, "Voice recorder: injection did not start\n");
+  }
+#endif
 
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();
@@ -685,6 +761,10 @@ int main(int argc, char *argv[]) {
           windowRunGameTick(cs);
         }
 
+        /* Voice encode/decode runs here, on the main thread, beside the
+         * game tick — the codec state has no lock of its own. */
+        voiceTick(cs);
+
         /* Detect game-over returning to lobby */
         if (cs && clientSimIsInLobby(cs) &&
             (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
@@ -758,6 +838,11 @@ int main(int argc, char *argv[]) {
 
     finishedLoop = TRUE;
 
+    /* Release the remote talkers with the game they belong to — player
+     * numbers are handed out afresh next time, so a stale decoder would be
+     * fed someone else's voice. */
+    voiceReset();
+
     /* Kill Timers */
     SDL_RemoveTimer(timerGameID);
     SDL_RemoveTimer(timerFrameID);
@@ -799,6 +884,7 @@ int main(int argc, char *argv[]) {
    * too), so leaving it live races bgGameDestroy's frees and can crash the
    * audio thread mid-conversion. */
   soundCleanup();
+  voiceCleanup();
   /* Tear down the process-lifetime welcome-screen bg before the renderer
    * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
    * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying
@@ -1637,11 +1723,125 @@ void windowSoundKeepalive(void) {
   }
 }
 
+/* The in-game menu, the macOS menu bar and the settings dialog all come here
+ * for the game sounds. */
 void windowSetSoundVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   soundVolume = pct;
-  soundSetVolume(pct);
+  soundSetEffectsVolume(pct);
+}
+
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * streams and its own gain, and nothing downstream of here covers both. */
+void windowSetMasterVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  windowMasterVolume = pct;
+  soundSetMasterVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
+}
+
+/* -------------------------------------------------------
+ * Voice settings — apply a value to the running voice module
+ * and clamp it to the range the UI offers, in one place, so
+ * the settings dialog and the prefs loader agree.  The voice
+ * module itself holds the value; gameFrontPutPrefs reads it
+ * back out through the getters below at save time.
+ * ------------------------------------------------------- */
+void windowSetVoiceEnabled(bool on) {
+  voiceSetEnabled(on);
+}
+
+bool windowGetVoiceEnabled(void) {
+  return voiceIsEnabled();
+}
+
+void windowSetVoiceMode(int mode) {
+  if (mode < VOICE_MODE_OFF || mode > VOICE_MODE_OPEN) {
+    mode = VOICE_MODE_PTT;
+  }
+  voiceSetMode((VoiceMode)mode);
+}
+
+int windowGetVoiceMode(void) {
+  return (int)voiceGetMode();
+}
+
+void windowSetVoiceMicGain(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 4.0f) gain = 4.0f;
+  voiceSetMicGain(gain);
+}
+
+float windowGetVoiceMicGain(void) {
+  return voiceGetMicGain();
+}
+
+void windowSetVoiceVolume(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 2.0f) gain = 2.0f;
+  voiceSetOutputVolume(gain);
+}
+
+float windowGetVoiceVolume(void) {
+  return voiceGetOutputVolume();
+}
+
+/* The chosen audio devices, by display name, "" for the system default.
+ * Nothing to clamp — the voice module holds the name and truncates it — but
+ * they sit with the rest of the façade so gameFrontPutPrefs reads them back
+ * the same way as everything else here. */
+void windowSetVoiceRecordingDevice(const char *name) {
+  voiceSetRecordingDevice(name);
+}
+
+const char *windowGetVoiceRecordingDevice(void) {
+  return voiceGetRecordingDevice();
+}
+
+void windowSetVoicePlaybackDevice(const char *name) {
+  voiceSetPlaybackDevice(name);
+}
+
+const char *windowGetVoicePlaybackDevice(void) {
+  return voiceGetPlaybackDevice();
+}
+
+#if defined(WINBOLO_VOICE_AEC)
+/* Echo cancellation of the other players' voices out of this microphone.
+ * Same shape as the voice settings above: the canceller module holds the
+ * switch and gameFrontPutPrefs reads it back through the getter. */
+void windowSetVoiceEchoCancel(bool on) {
+  voiceAecSetEnabled(on);
+}
+
+bool windowGetVoiceEchoCancel(void) {
+  return voiceAecIsEnabled();
+}
+
+/* Whether a canceller came up at all, which the getter above cannot say -
+ * it reports the switch, and the switch is the player's either way. */
+bool windowGetVoiceEchoCancelAvailable(void) {
+  return voiceAecIsAvailable();
+}
+
+/* Whether that canceller is the operating system's rather than ours, which
+ * is a different row in Settings: switched off and greyed, because there is
+ * nothing here for the player to switch. */
+bool windowGetVoiceEchoCancelPlatform(void) {
+  return voiceAecIsPlatform();
+}
+#endif
+
+/* Tank-label microphone icons are held by the status renderer that
+ * draws them; same façade shape as the voice settings above. */
+void windowSetShowTankMicIcons(bool on) {
+  sdl3DrawStatusSetShowMicIcons(on);
+}
+
+bool windowGetShowTankMicIcons(void) {
+  return sdl3DrawStatusGetShowMicIcons();
 }
 
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
