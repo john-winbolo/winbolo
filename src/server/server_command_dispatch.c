@@ -622,18 +622,36 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                 return CMD_REJECT_INVALID;
             }
         }
-        /* Slot pick: on a scenario map, bots joining the ENEMY side
-         * (team 2) fill from the TOP — those seats are the script's
-         * roster and live above the defender cap. Everything else goes
-         * through serverSimFindFreeSlot, which honors the effective
-         * player cap (operator -maxplayers clamped by the scenario's
-         * max_players) so scenario defender seats stay bounded. */
+        /* Slot pick: on a scenario map the bots ARE the script's roster,
+         * not human seats, so they are not bound by the human player cap
+         * (max_players reserves the LOW slots for humans; the wave/horde
+         * lives in the high slots). Enemy/wave bots (team 2) fill from the
+         * TOP; every other bot — a defender ally, or an untagged add the
+         * host will assign a team to afterwards — fills the LOWEST free
+         * slot. So a human plus five ally bots land in slots 0..5 and the
+         * ten horde bots in 6..15: the full sixteen-slot survival roster.
+         *
+         * Off a scenario map, or if somehow every slot is taken, we fall
+         * back to serverSimFindFreeSlot (the human-capped scan). Before
+         * this, a team-0/team-1 add went through that capped scan and was
+         * rejected the instant slots 0..maxPlayers-1 filled — which stopped
+         * the host loading more than max_players bots even though the wave
+         * slots were empty ("no free slot under the player cap"). */
         int freeSlot = -1;
-        if (scenarioIsActive(sim) && p->teamNumber == 2) {
-            for (int s2 = MAX_TANKS - 1; s2 >= 0; s2--) {
-                if (!serverSimIsPlayerConnected(sim, (BYTE)s2)) {
-                    freeSlot = s2;
-                    break;
+        if (scenarioIsActive(sim)) {
+            if (p->teamNumber == 2) {
+                for (int s2 = MAX_TANKS - 1; s2 >= 0; s2--) {
+                    if (!serverSimIsPlayerConnected(sim, (BYTE)s2)) {
+                        freeSlot = s2;
+                        break;
+                    }
+                }
+            } else {
+                for (int s2 = 0; s2 < MAX_TANKS; s2++) {
+                    if (!serverSimIsPlayerConnected(sim, (BYTE)s2)) {
+                        freeSlot = s2;
+                        break;
+                    }
                 }
             }
         } else {

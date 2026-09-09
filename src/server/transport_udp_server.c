@@ -1374,6 +1374,11 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         packU16(msg + 1, (uint16_t)bodyLen);
         if (!channelSend(&udpServer.channelMux[idx], CHANNEL_CONTROL,
                          msg, (uint16_t)(3 + bodyLen))) {
+            /* Control window full: defer the disconnect off this publish path
+             * (as before). Not the survival-launch overflow -- that turned out
+             * to be the MAP channel (terrain burst), fixed above. If this ever
+             * fires in practice, the control channel needs the same backlog
+             * treatment the map channel now has. */
             if (!udpServer.pendingSimRemove[idx]) {
                 WB_LOG_ERROR(WB_LOG_CAT_NET,
                              "control channel overflow for slot %d, deferring disconnect",
@@ -3870,12 +3875,15 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
             evLen = packGameEvent(mapMsg + 4, &mapQ->buffer[idx].event);
             if (!channelSend(&udpServer.channelMux[clientIdx], CHANNEL_MAP,
                              mapMsg, (uint16_t)(4 + evLen))) {
-                if (!udpServer.pendingSimRemove[clientIdx]) {
-                    WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                 "map channel overflow for slot %d, deferring disconnect",
-                                 clientIdx);
-                    udpServer.pendingSimRemove[clientIdx] = true;
-                }
+                /* MAP window (128) is full for now: DON'T disconnect. Leave the
+                 * unsent events in mapQ (the 2048-deep hold buffer -- ackedSeq
+                 * is not advanced past them) and resume draining on the next
+                 * snapshot as the client's acks free window slots. That paces a
+                 * big terrain burst (e.g. the scenario's set_tile prebuild
+                 * roads) over a few ticks instead of dropping the client, and
+                 * it's safe at high ping. (Andrew: "queue bumps to next tick.")
+                 * The old code set pendingSimRemove here and dropped the client
+                 * as "timed out" -- that was the survival 2-player disconnect. */
                 break;
             }
             mapQ->ackedSeq = seq + 1; /* Sent reliably — free the hold slot. */
@@ -5484,8 +5492,18 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_PING:
             serverHandlePing(buf, len, fromAddr);
-            /* Spectators aren't in clients[]; refresh their liveness too. */
+            /* PACKET_PING is the client's steady ~1 Hz keepalive: it is the
+             * ONLY traffic a client sends while idle in the lobby. Refresh the
+             * client's liveness clock here, or a client that is quietly waiting
+             * in the lobby (long survival setup, say) gets timed out and
+             * dropped even though it is pinging us every second. The spectator
+             * path below already did this; the connected-client path did not. */
             {
+                int cIdx = serverFindClient(fromAddr);
+                if (cIdx >= 0) {
+                    udpServer.clients[cIdx].lastReceivedTick = udpServer.tickCount;
+                }
+                /* Spectators aren't in clients[]; refresh their liveness too. */
                 int sIdx = serverFindSpectator(fromAddr);
                 if (sIdx >= 0) {
                     udpServer.spectators[sIdx].lastReceivedTick = udpServer.tickCount;
@@ -5564,6 +5582,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
             UdpServerClient *client = &udpServer.clients[clientIdx];
+            /* A command packet from a connected client is proof of life:
+             * refresh the timeout clock, exactly as every other client
+             * packet path does (and as the spectator branch above does).
+             * Without this, a client whose only inbound traffic is
+             * COMMAND_TICK — which is all it sends while sitting in the
+             * lobby (ready / team-set / chat / ping) — goes stale after
+             * CLIENT_TIMEOUT_TICKS and the timeout sweep disconnects it
+             * mid-lobby or the instant the game starts, even though it is
+             * actively talking to us. */
+            client->lastReceivedTick = udpServer.tickCount;
             if (len < PACKET_HEADER_SIZE + 1) break;
             uint8_t count = buf[PACKET_HEADER_SIZE];
             size_t pos = PACKET_HEADER_SIZE + 1;
@@ -7382,6 +7410,13 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
         if (udpServer.tickCount - udpServer.clients[i].lastReceivedTick
             > CLIENT_TIMEOUT_TICKS) {
+            fprintf(stderr,
+                "[timeout-dbg srv] *** DROPPING slot=%d name='%s' tick=%u lastRecv=%u diff=%u > limit=%d ***\n",
+                i, udpServer.clients[i].playerName,
+                (unsigned)udpServer.tickCount,
+                (unsigned)udpServer.clients[i].lastReceivedTick,
+                (unsigned)(udpServer.tickCount - udpServer.clients[i].lastReceivedTick),
+                (int)CLIENT_TIMEOUT_TICKS);
             WB_LOG_WARN(WB_LOG_CAT_NET,
                 "timeout: slot=%d name='%s' tickCount=%u lastReceived=%u "
                 "diff=%u > CLIENT_TIMEOUT_TICKS=%d -> disconnect",

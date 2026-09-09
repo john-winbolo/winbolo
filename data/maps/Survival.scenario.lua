@@ -125,6 +125,23 @@ end
 -- The [pills] / [bases] / "*** ... ***" lines are unaffected.
 local DEBUG_MESSAGES = false
 
+-- [survival-dbg] guarded server-log breadcrumb: uses the new slog()
+-- binding when the server exe has it, and is a silent no-op on an older
+-- server exe that predates the binding (so this instrumented script still
+-- loads there). Remove with the rest of the [survival-dbg] lines.
+local function slog(msg)
+  -- [survival-dbg] Write straight to a file from Lua so this works in the
+  -- LIVE server binary (no dependency on the game.log C binding, no rebuild).
+  -- Open+flush+close per line so a hard crash still leaves the last line.
+  -- Absolute path: lands in one known place whatever the server's cwd is.
+  local f = io.open("D:/Development/winbolo2/debug.log", "a")
+  if f then
+    f:write(os.date("%H:%M:%S "), tostring(msg), "\n")
+    f:close()
+  end
+  if game and game.log then game.log(msg) end
+end
+
 local WAVES        = 5
 local WAVE_TEAM    = 2      -- the enemy side IS lobby Team 2
 -- Wave size AND names come from Team 2's roster as the round begins:
@@ -260,6 +277,20 @@ local half_min_said = false -- the one 30-seconds-left warning
 -- The staggered ARRIVAL queue (see SPAWN_SPACING_TICKS).
 local spawn_left    = 0     -- attackers still to spawn this wave
 local spawn_next_at = nil   -- tick the next one spawns (nil = spawn now)
+
+-- The defenders' own lobby bots (allies, any team but WAVE_TEAM) are LEFT
+-- ON THE FIELD for the whole round (Andrew 2026-09-09, option a): they are
+-- the human's defence, they hold the centre from tick 0 so the instant-loss
+-- can't misfire, and leaving them in adds no spawn/despawn churn.
+--
+-- The wave (team WAVE_TEAM) still has to leave the field at round start so
+-- the wave clock can re-field it -- but it is pulled off a FEW PER TICK, not
+-- all at once. A mass remove_bot of the whole wave in a single tick floods
+-- the client's reliable control channel (window ~64) faster than it can ack,
+-- and the server then drops the human as "timed out" -- badly so at high
+-- ping. Andrew: "keep them all in, then only remove slowly."
+local WAVE_REMOVE_PER_TICK = 3     -- wave bots pulled off the field per tick
+local wave_remove_queue    = {}    -- team-WAVE_TEAM slots still to pull off
 local spawn_index   = 0     -- next WAVE_NAMES entry to use
 local spawned       = {}    -- slots this wave's spawns actually landed in
 local spawn_fail_said = false  -- the one "no free slot" report per wave
@@ -1074,24 +1105,160 @@ local function build_shallow_rim(game)
   end
 end
 
+-- ---------------------------------------------------------------------
+-- PRE-BUILT DEFENDER PILLS (Andrew 2026-09-09)
+-- A bot can't sensibly build a pill it's carrying -- it just wanders with
+-- it in-tank -- so a defender BOT would meet the wave with a dead pill on
+-- board and nothing built. For every DEFENDER SLOT that is a bot we take the
+-- pill nearest that slot's start, slide it OUT along its base->pill line to
+-- where that line meets the ring road, PRE-BUILD it there (full armour) and
+-- road it back to the base -- so the defence is spread around the ring and
+-- ready. HUMAN defenders are skipped on purpose: a human carries the pill
+-- in-tank and builds it wherever they choose.
+--
+-- Only the six centre pills (1..CENTER_PILLS) are considered: the ten wave
+-- pills are off-map by this point (hide_wave_pills) and are the attackers'.
+local BUILT_PILL_ARMOUR = 15   -- a full pillbox (0 = the dead/scoopable state)
+
+-- Paint T_ROAD along the straight line between two tiles (Bresenham),
+-- skipping both endpoints (the start tile and the pill's own tile) and never
+-- stamping over deep sea.
+local function draw_road_line(game, x0, y0, x1, y1)
+  local dx, dy = math.abs(x1 - x0), math.abs(y1 - y0)
+  local sx = (x0 < x1) and 1 or -1
+  local sy = (y0 < y1) and 1 or -1
+  local err = dx - dy
+  local x, y = x0, y0
+  while true do
+    if not (x == x0 and y == y0) and not (x == x1 and y == y1) then
+      local t = game.map_tile(x, y)
+      if t ~= nil and t ~= T_DEEP_SEA then
+        game.set_tile(x, y, T_ROAD)
+      end
+    end
+    if x == x1 and y == y1 then break end
+    local e2 = 2 * err
+    if e2 > -dy then err = err - dy; x = x + sx end
+    if e2 <  dx then err = err + dx; y = y + sy end
+  end
+end
+
+-- Find where the line from (bx,by) through (px,py) first meets the ring road:
+-- march OUTWARD from the pill along the base->pill direction until a T_ROAD
+-- tile. That's where the pill gets built, so the defence spreads out onto the
+-- ring instead of bunching at the centre. Returns nil if the ray never hits a
+-- road (caller then builds the pill where it already is).
+local function ring_road_spot(game, bx, by, px, py)
+  local dx, dy = px - bx, py - by
+  if dx == 0 and dy == 0 then           -- pill sits on its base: go radial
+    dx, dy = px - 128, py - 128
+  end
+  if dx == 0 and dy == 0 then return nil end
+  local len = math.sqrt(dx * dx + dy * dy)
+  local ux, uy = dx / len, dy / len
+  for step = 1, 120 do                  -- 120 = more than a map radius
+    local x = math.floor(px + ux * step + 0.5)
+    local y = math.floor(py + uy * step + 0.5)
+    if x < 0 or x > 255 or y < 0 or y > 255 then break end
+    if game.map_tile(x, y) == T_ROAD then return x, y end
+  end
+  return nil
+end
+
+-- Pre-build one centre pill per DEFENDER BOT (see block comment). Call after
+-- deal_center (centre-pill ownership settled) and after the terrain rings are
+-- laid (road sits on final ground). Runs at the pre-snapshot tick, so the
+-- built pills and roads ride the baseline -- the round OPENS with them.
+local function prebuild_bot_pills(game)
+  local used = {}
+  for p = 0, 5 do                       -- defender slots
+    local ls = game.lobby_slot(p)
+    if ls ~= nil and ls.bot then        -- bots only; humans build their own
+      local si = game.start(1 + (p % 6))    -- the start this defender takes (see on_choose_start)
+      if si ~= nil then
+        local best, bestd                 -- nearest not-yet-taken centre pill
+        for n = 1, CENTER_PILLS do
+          if not used[n] then
+            local pi = game.pill(n)
+            if pi ~= nil then
+              local ddx, ddy = pi.x - si.x, pi.y - si.y
+              local d = ddx * ddx + ddy * ddy
+              if bestd == nil or d < bestd then best, bestd = n, d end
+            end
+          end
+        end
+        if best ~= nil then
+          used[best] = true
+          local pi = game.pill(best)
+          -- Spread it out onto the ring road: follow the base->pill line out
+          -- to where it meets the ring road and build it THERE, not bunched
+          -- at the centre. The paired centre base is CENTER_FIRST-1+best.
+          local base = game.base(CENTER_FIRST - 1 + best)
+          local rx, ry
+          if base ~= nil then
+            rx, ry = ring_road_spot(game, base.x, base.y, pi.x, pi.y)
+          end
+          if rx == nil then rx, ry = pi.x, pi.y end   -- no ring road hit: build in place
+          -- Relocate the pill (hide->show places it; show leaves it dead),
+          -- then hand it to the bot and build it.
+          game.hide_pill(best)
+          game.show_pill(best, rx, ry)
+          game.set_pill_owner(best, p)                  -- the bot's own pill
+          game.set_pill_armour(best, BUILT_PILL_ARMOUR)  -- pre-built, ready to fire
+          -- Road along the whole line: the base out to the pill on the ring.
+          if base ~= nil then
+            draw_road_line(game, base.x, base.y, rx, ry)
+          end
+          slog(string.format(
+            "prebuild: defender bot slot %d pill %d -> ring road (%d,%d): built + road from base",
+            p, best, rx, ry))
+        end
+      end
+    end
+  end
+end
+
 -- The SILENT pre-snapshot tick: on a lobby server the round's tanks
 -- already exist here, so the deal lands before any client sees the
 -- world — nothing "changes alliance" on the newswire at tick 0.
 -- (Lobby-less harnesses join players after ticking starts; on_tick
 -- below retries the deal until someone is seated.)
 function on_setup(game)
+  slog("===== on_setup START =====")
   -- Team 2's roster IS the wave: capture its size and NAMES as the
   -- round begins, then pull those bots off the field — the waves
   -- re-field them (same names, full open tanks) on the wave clock.
   -- All silent: this is the pre-snapshot tick.
   WAVE_NAMES = {}
+  wave_remove_queue = {}
+  -- [survival-dbg] dump the full lobby roster so we can see who is a bot,
+  -- who is human, and what team each is on going into on_setup.
+  for p = 0, 15 do
+    local ls = game.lobby_slot(p)
+    if ls ~= nil then
+      slog(string.format(
+        "on_setup roster: slot=%d bot=%s team=%s name='%s'",
+        p, tostring(ls.bot), tostring(ls.team), tostring(ls.name)))
+    end
+  end
   for p = 0, 15 do
     local ls = game.lobby_slot(p)
     if ls ~= nil and ls.bot and ls.team == WAVE_TEAM then
+      -- The wave's roster: capture the name, and QUEUE the slot to be pulled
+      -- off the field a few per tick from on_tick (see wave_remove_queue).
+      -- We do NOT remove here: removing the whole wave in this one tick
+      -- overflows the client's reliable control window and the server drops
+      -- the human. The wave clock re-fields these names later.
       WAVE_NAMES[#WAVE_NAMES + 1] = ls.name
-      game.remove_bot(p)
+      wave_remove_queue[#wave_remove_queue + 1] = p
     end
+    -- Ally bots (team ~= WAVE_TEAM) are left on the field: no queue, no
+    -- removal. They defend from tick 0 and hold the centre.
   end
+  -- [survival-dbg] how many wave bots we'll pull off, and wave name count
+  slog(string.format(
+    "on_setup: %d wave bot(s) queued for staggered removal, %d wave name(s)",
+    #wave_remove_queue, #WAVE_NAMES))
   if #WAVE_NAMES > 0 then
     WAVE_SIZE = #WAVE_NAMES
   else
@@ -1099,7 +1266,9 @@ function on_setup(game)
     if n and n > 0 then WAVE_SIZE = n end
   end
 
+  slog("on_setup: before deal_center")
   dealt = deal_center(game)
+  slog("on_setup: after deal_center")
 
   -- The wave's 10 ring pills go OFF THE MAP right here, after the center
   -- deal (which only touches pills 1..6) and before any client sees the
@@ -1108,23 +1277,38 @@ function on_setup(game)
   -- reason: a full minute of grace with ten free dead pillboxes lying on
   -- the shore is a minute the defenders spend driving out to collect
   -- them. See PILL_REVEAL_LEAD_TICKS.
+  slog("on_setup: before hide_wave_pills")
   hide_wave_pills(game, "setup")
+  slog("on_setup: after hide_wave_pills")
 
   -- The ring is fixed geometry, so it is measured once, here, off the
   -- base positions the map file actually shipped.
   math.randomseed(os.time())
+  slog("on_setup: before build_tree_ring")
   build_tree_ring(game)
+  slog("on_setup: after build_tree_ring")
 
   -- Shallows around the coast, laid before anyone sees the map: the
   -- terrain edit rides the baseline snapshot instead of arriving as a
   -- map-change event, so the island simply HAS a beach from tick 0.
+  slog("on_setup: before build_shallow_rim")
   build_shallow_rim(game)
+  slog("on_setup: after build_shallow_rim")
+
+  -- Dig in every DEFENDER BOT: pre-build the pill nearest its start and road
+  -- it to the start, so a bot doesn't head into the wave carrying a dead pill.
+  -- Human defenders are left to carry-and-build themselves. Rides the baseline.
+  slog("on_setup: before prebuild_bot_pills")
+  prebuild_bot_pills(game)
+  slog("on_setup: after prebuild_bot_pills")
+  slog("===== on_setup END (returning to engine) =====")
 end
 
 -- Nothing forest-related happens at a round boundary: whatever trees
 -- the map file ships with are the trees the round opens with, and the
 -- ring cadence in on_tick takes it from there.
 function on_start(game)
+  slog("===== on_start (game is now RUNNING) =====")
   game.message(string.format(
     "*** SURVIVAL: dig in! First of %d waves in %d seconds. ***",
     WAVES, GRACE_TICKS / 50))
@@ -1132,6 +1316,11 @@ end
 
 function on_tick(game, tick)
   if ended then return end
+  -- [survival-dbg] mark the first few running ticks so debug.log shows the
+  -- game actually advanced (and how far) if the crash is right after start.
+  if tick <= 6 or tick == 50 or tick == 100 then
+    slog(string.format("on_tick %d", tick))
+  end
 
   -- Late deal for lobby-less harnesses (see on_setup).
   if not dealt then dealt = deal_center(game) end
@@ -1142,6 +1331,24 @@ function on_tick(game, tick)
   if newswire_unmute_at ~= nil and tick >= newswire_unmute_at then
     newswire_unmute_at = nil
     set_newswire_mute(game, false)
+  end
+
+  -- Pull the wave off the field a FEW PER TICK (see wave_remove_queue in
+  -- on_setup), never the whole wave in one tick: a mass removal floods the
+  -- client's reliable control channel and the server drops the human as
+  -- "timed out" (badly at high ping). The wave clock re-fields these names
+  -- later. Allies are left on the field the whole round and are never queued
+  -- here. This finishes in the first few ticks, long before wave 1.
+  if #wave_remove_queue > 0 then
+    local pulled = 0
+    while pulled < WAVE_REMOVE_PER_TICK and #wave_remove_queue > 0 do
+      local slot = table.remove(wave_remove_queue, 1)
+      slog(string.format(
+        "on_tick %d: pulling wave bot off slot=%d (%d still queued)",
+        tick, slot, #wave_remove_queue))
+      game.remove_bot(slot)
+      pulled = pulled + 1
+    end
   end
 
   -- INSTANT LOSS: the round is over the moment no inner base is in

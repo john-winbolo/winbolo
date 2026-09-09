@@ -503,6 +503,14 @@ static int l_spawn_bot(lua_State *L) {
         return 2;
     }
     slot = (BYTE)s;
+    /* [survival-dbg] Trace every scripted spawn into the server log file so a
+     * crash during a mid-game bot join (e.g. the staggered ally respawn) shows
+     * exactly which bot and how far the create got. Remove once diagnosed. */
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "scenario: spawn_bot ENTER name='%s' team=%s(%d) startHint=%d -> slot %d (tick=%u)",
+        (name != NULL && name[0] != '\0') ? name : "(auto)",
+        hasTeam ? "yes" : "no", team, (int)startArg, (int)slot,
+        (unsigned)sim->tick);
     /* Brain fallback chain: explicit argument > scenario.default_brain
      * (the script ships with the map and knows what it wants) > the
      * sim's operator-configured bot brain. */
@@ -549,6 +557,11 @@ static int l_spawn_bot(lua_State *L) {
      * from some earlier path can never bleed into a wave bot. */
     luaBrainsSetNextInitArg(initArg);
 
+    /* [survival-dbg] Last line before the create — if the server dies here the
+     * fault is inside serverSimCreateBot / the brain load, not the args. */
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "scenario: spawn_bot slot %d name='%s' brain='%s' -> serverSimCreateBot",
+        (int)slot, botName, brain);
     if (!serverSimCreateBot(sim, slot, brain, botName,
                             (aiType)serverSimGetBotAiType(sim),
                             spawnGame, st->hiddenMines)) {
@@ -595,13 +608,26 @@ static int l_spawn_bot(lua_State *L) {
             BYTE mate = 0xFF;
             for (BYTE i = 0; i < MAX_TANKS; i++) {
                 if (i == (BYTE)slot) continue;
-                if (st->teamOf[i] != (BYTE)team) continue;
+                /* Match any connected player already on this team by the
+                 * LOBBY team, not just the scenario's own teamOf table.
+                 * teamOf only tracks bots the script spawned, so a human
+                 * defender (never spawned through spawn_bot) was invisible
+                 * here — a respawned ally then allied only with other bots
+                 * and came back HOSTILE to the human it was meant to defend.
+                 * The lobby team is set for humans at join and mirrored for
+                 * every spawned bot via serverSimSetTeamBatch just above. */
+                if (sim->lobbyPlayers[i].teamNumber != (BYTE)team) continue;
                 if (!serverSimIsPlayerConnected(sim, i)) continue;
                 mate = i;
                 break;
             }
             if (mate != 0xFF) {
                 ControlEvent allyEvt;
+                /* [survival-dbg] which slot is being allied to which mate,
+                 * right before the control event goes on the wire. */
+                WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                    "scenario: spawn_bot slot %d team %d -> CTRL_ALLIANCE_ACCEPT with mate %d",
+                    (int)slot, (int)team, (int)mate);
                 memset(&allyEvt, 0, sizeof(allyEvt));
                 allyEvt.type = CTRL_ALLIANCE_ACCEPT;
                 allyEvt.u.allianceAccept.acceptedBy = mate;
@@ -1056,6 +1082,18 @@ static int l_message(lua_State *L) {
     return 0;
 }
 
+/* game.log(text) -- [survival-dbg] write a breadcrumb to the SERVER log file
+ * (winbolods.log, SERVER category, INFO so it survives Release). The survival
+ * scenario runs in a server-side Lua VM that has no access to the brains'
+ * print2 helper (print2 is gated by _PRINT2_ENABLED and routes to per-bot
+ * brain-debug files), so this is how the script leaves a trace in the SAME
+ * ordered file as the C spawn/setup logging. Diagnostic aid; safe to leave. */
+static int l_log(lua_State *L) {
+    const char *msg = luaL_checkstring(L, 1);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER, "scenario-lua: %s", msg);
+    return 0;
+}
+
 /* game.newswire_mute(on) -> true. Silences (on=true) or restores the
  * ENGINE-GENERATED newswire for the server and every client attached to
  * it: player quit lines, base and pill captures, builder lost, name
@@ -1121,6 +1159,7 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "lobby_set_team", l_lobby_set_team);
     scRegister(L, st, "set_team",       l_set_team);
     scRegister(L, st, "message",        l_message);
+    scRegister(L, st, "log",            l_log);
     scRegister(L, st, "newswire_mute",  l_newswire_mute);
     scRegister(L, st, "end_round",      l_end_round);
     /* NEUTRAL constant so scripts don't hardcode 0xFF */
@@ -1371,12 +1410,29 @@ bool scenarioSetup(ServerSim *sim) {
         scLuaUnlock(st);
         return FALSE;
     }
+    /* [survival-dbg] roster size at the start of the pre-snapshot tick. */
+    {
+        int nconn = 0, i;
+        for (i = 0; i < MAX_TANKS; i++)
+            if (serverSimIsPlayerConnected(sim, (BYTE)i)) nconn++;
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "scenario: on_setup ENTER, %d player(s) connected (tick=%u)",
+            nconn, (unsigned)sim->tick);
+    }
     scSnapshotHumans(sim, humanBefore);
     lua_rawgeti(st->L, LUA_REGISTRYINDEX, st->gameRef);
     if (lua_pcall(st->L, 1, 0, 0) != 0) {
         scReportError(st, "on_setup");
     }
     scAuditRoster(st, humanBefore, "on_setup");
+    /* [survival-dbg] roster size after on_setup's removals/spawns settle. */
+    {
+        int nconn = 0, i;
+        for (i = 0; i < MAX_TANKS; i++)
+            if (serverSimIsPlayerConnected(sim, (BYTE)i)) nconn++;
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "scenario: on_setup DONE, %d player(s) connected", nconn);
+    }
     scLuaUnlock(st);
     return TRUE;
 }
