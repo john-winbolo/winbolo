@@ -25,6 +25,7 @@
 #include <stdio.h>   /* FILENAME_MAX — uploadPersistDir */
 
 #include "global.h"         /* BYTE, MAX_TANKS, PlayerBitMap */
+#include "lang_message.h"   /* langid — the localized server->client sends */
 #include "platform_net.h"   /* SOCKET, struct sockaddr_in */
 #include "netpacks.h"       /* MAP_DOWNLOAD_MAX_SIZE, PACKET_MAX_PLAYER_NAME */
 #include "transport_udp.h"  /* UdpServerClient, MAX_SPECTATORS, SubscriberHandle */
@@ -38,6 +39,14 @@
 #define RECV_QUEUE_SIZE 1024
 
 #define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
+
+/* Anonymous-fallback ceiling for a deferred WBN PLAYER_JOIN: how long
+ * we wait for the joiner's rekey->reauth round-trip (two network hops
+ * plus two blocking winbolo.net HTTP calls) to fill the slot's key
+ * before announcing the join un-keyed.  The keyed path fires the moment
+ * the reauth verifies, so this only bounds the never-reauth case
+ * (direct-IP / not signed in / WBN unreachable).  ~5 s @ 50 Hz. */
+#define WBN_JOIN_REGISTER_GRACE_TICKS 250
 
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
@@ -411,5 +420,57 @@ uint32_t udpServerRecvDropCount(void);
  * it from the send path and from the timeout sweep, ahead of the carriers
  * that put channel data on the wire. */
 void serverPumpVoice(struct ServerSim *sim);
+
+/* Join handshake and admission control. Owned by
+ * src/server/udp/udp_server_join.c. src/server/transport_udp_server.c calls
+ * these from serverProcessPacket, the spectator accept, the WBN reauth path
+ * and the timeout sweep; the cookie pair and serverFindClient are also what
+ * the WB_FUZZ harness at the end of that file reaches for.
+ * The seven value-only decision helpers this file's join path also uses
+ * (wbnJoinArm and friends) are declared in transport_udp.h, as is
+ * transportUdpServerFindByConnId. */
+int      serverFindClient(const struct sockaddr_in *addr);
+void     serverHandleJoinRequest(const uint8_t *buf, int len,
+                                 const struct sockaddr_in *fromAddr,
+                                 struct ServerSim *sim);
+void     serverSendJoinAccept(int slot, struct ServerSim *sim,
+                              const struct sockaddr_in *addr);
+void     serverSendJoinReject(const struct sockaddr_in *addr, langid id,
+                              int argCount, const char *const args[]);
+bool     packLocalizedPayload(uint8_t *buf, int *pos, int bufSize,
+                              langid id, int argCount,
+                              const char *const args[]);
+void     packConnId(uint8_t *buf, uint64_t connId);
+uint64_t unpackConnId(const uint8_t *buf);
+uint64_t serverNextConnId(void);
+uint64_t serverCookieCurrentWindow(void);
+bool     serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
+                             uint8_t out[JOIN_COOKIE_LEN]);
+void     serverPreemptRename(struct ServerSim *sim, int victimSlot,
+                             const char *chosenName,
+                             const char *incomingName,
+                             const char *incomingCountry);
+bool     serverChooseUnverifiedSuffix(const char *baseName, int excludeSlot,
+                                      char *out, size_t outLen);
+
+/* Reached by the join cluster above but still defined in
+ * src/server/transport_udp_server.c, which owns them. */
+void serverAcceptSpectator(struct ServerSim *sim,
+                           const struct sockaddr_in *fromAddr,
+                           const char *name,
+                           uint8_t clientType, uint8_t clientHints,
+                           const char *spectatorKey, uint8_t wbnFlags,
+                           const char *country);
+void serverDisconnectClient(struct ServerSim *sim, int idx, bool graceful);
+void serverInitMapDownload(int slot);
+void serverSendServerEnglishBroadcast(struct ServerSim *sim,
+                                      const char *message);
+void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
+                             const char *const args[]);
+void transportUdpServerFlushChannel(int clientIdx);
+void transportUdpServerSendWbnRekey(UdpServerClient *c);
+void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
+void udpServerResetMapReaskLimit(int idx);
+void udpServerResetRoundLogLimits(int idx);
 
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */
