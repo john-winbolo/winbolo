@@ -2728,6 +2728,13 @@ static bool gameFrontStartServerSim(ServerSim *sim,
   return true;
 }
 
+/* A config cleared with memset, an advertisement from a server built before
+ * the voice field existed, and a [HOSTING] Voice value that cannot be parsed
+ * all have to mean voice on, and each of them arrives as a zero. Stated here
+ * because the memset that leans on it is in the function below. Reordering
+ * ServerVoiceMode would turn all three into off with no line changing. */
+BOLO_STATIC_ASSERT(serverVoiceOn == 0, server_voice_default_is_on);
+
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
 
