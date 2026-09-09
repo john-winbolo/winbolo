@@ -405,4 +405,11 @@ void     udpServerRecvThreadStart(SOCKET sock);
 void     udpServerRecvThreadStop(void);
 uint32_t udpServerRecvDropCount(void);
 
+/* Move one tick's voice from each sender's channel to the recipients allowed
+ * to hear it, and publish the talking set. Owned by
+ * src/server/udp/udp_server_voice.c; src/server/transport_udp_server.c calls
+ * it from the send path and from the timeout sweep, ahead of the carriers
+ * that put channel data on the wire. */
+void serverPumpVoice(struct ServerSim *sim);
+
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */
