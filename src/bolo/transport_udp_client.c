@@ -5016,6 +5016,11 @@ void transportUdpClientFuzzInit(ClientSim *sim) {
     g_fuzzClientCtx.sock = INVALID_SOCKET;
     g_fuzzClientCtx.joinState = UDP_CLIENT_CONNECTED;
     g_fuzzClientCtx.clientSim = sim;
+    /* The seam starts already CONNECTED, so it never runs
+     * transportUdpClientCreate and the mux would stay zeroed. Every channel's
+     * window is 0 then, and the first channelReceive on a snapshot's trailer
+     * divides by it. */
+    channelMuxInit(&g_fuzzClientCtx.channelMux);
 }
 
 void transportUdpClientFuzzProcessSnapshot(const uint8_t *body, size_t size) {
