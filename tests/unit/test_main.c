@@ -484,6 +484,8 @@ static const UnitTestEntry s_tests[] = {
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "voice_flags_snapshot_masking",            run_voice_flags_snapshot_masking            },
     { "voice_talking_codec",                     run_voice_talking_codec                     },
+    { "voice_talking_stops_in_countdown",        run_voice_talking_stops_in_countdown        },
+    { "voice_talking_clears_on_leave",           run_voice_talking_clears_on_leave           },
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
     { "viewport_floor",                          run_viewport_floor                          },
     { "sound_event_codec",                       run_sound_event_codec                       },

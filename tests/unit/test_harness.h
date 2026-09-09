@@ -885,6 +885,14 @@ int run_voice_flags_snapshot_masking(void);
  * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
 int run_voice_talking_codec(void);
 
+/* The lobby's talking set over the loopback transport (test_voice_talking_set.c),
+ * read off the watching client's mirror of it: a talker who goes quiet after the
+ * countdown has begun still ages out of the set (the silence is measured on a
+ * clock that keeps running while the sim's tick does not), and the only talker
+ * leaving empties the set on every other client rather than leaving them lit. */
+int run_voice_talking_stops_in_countdown(void);
+int run_voice_talking_clears_on_leave(void);
+
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);

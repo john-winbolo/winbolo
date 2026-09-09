@@ -3301,6 +3301,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
+    tests/unit/test_voice_talking_set.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
@@ -4104,6 +4105,8 @@ set(_unit_test_names
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
+    voice_talking_stops_in_countdown
+    voice_talking_clears_on_leave
     fx_viewport_cull
     viewport_floor
     sound_event_codec

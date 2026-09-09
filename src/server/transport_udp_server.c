@@ -576,17 +576,31 @@ static struct {
      * nowhere, these were accepted and forwarded to everyone else. */
     uint32_t voiceSegsTalkerCapped;
 
-    /* Per-slot voice arrival bookkeeping, in server ticks, feeding the
+    /* Per-slot voice arrival bookkeeping, in tickCount ticks, feeding the
      * concurrent-talker cap: the tick this slot's last voice frame landed on,
      * and the tick its current utterance began.  A gap longer than
      * VOICE_ONSET_GAP_TICKS makes the next frame a new onset.  Both are
-     * cleared on disconnect so a recycled slot starts silent. */
+     * cleared on disconnect so a recycled slot starts silent.
+     *
+     * tickCount rather than the sim's tick because this is a wall-clock
+     * measure of silence and has to keep running in every server state: the
+     * sim's tick stands still for the whole countdown and the whole game-over
+     * hold, and runs at twice the rate inside a game. tickCount advances once
+     * per server frame regardless. Zero means the slot has never spoken, which
+     * tickCount cannot collide with: it is incremented at the top of the frame
+     * and so is at least 1 by the time voice is pumped. */
     uint32_t voiceLastFrameTick[MAX_TANKS];
     uint32_t voiceOnsetTick[MAX_TANKS];
     /* The talking set last sent as CTRL_VOICE_TALKING. Held so the event
      * goes out only when the set changes: a quiet lobby then costs nothing,
      * rather than one event per tick per client. */
     PlayerBitMap voiceTalkingPublished;
+    /* Send the set again even though it has not changed. Someone has left and
+     * the copy every other client holds still names them, so "the value is the
+     * same as last time" and "there is nothing to say" have come apart —
+     * without this the only case that matters, the leaver being the one talker,
+     * computes back to the same empty set and is never sent. */
+    bool voiceTalkingResend;
 } udpServer;
 
 /* The registered round-log source. Held outside udpServer so a transport
@@ -4029,11 +4043,16 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * would hand a new joiner talker priority they did not earn. */
     udpServer.voiceLastFrameTick[idx] = 0;
     udpServer.voiceOnsetTick[idx] = 0;
-    /* The published set still names this slot, and clearing the tick above
-     * is what would otherwise stop the next pass noticing the difference.
-     * Zeroing it makes that pass rebuild and re-send the set without the
-     * leaver, rather than leaving them talking on every other client. */
-    udpServer.voiceTalkingPublished = 0;
+    /* If the set every other client holds names this slot as talking, they go
+     * on showing it until they are told otherwise, and clearing the tick above
+     * is what stops the next pass computing a set that differs from the
+     * published one. Ask for the send explicitly so the leaver goes out of that
+     * set even when what remains is empty — which is exactly the case where
+     * nothing else would send it. A leaver nobody was hearing is not in the
+     * published set and costs no event. */
+    if ((udpServer.voiceTalkingPublished & ((PlayerBitMap)1u << idx)) != 0) {
+        udpServer.voiceTalkingResend = true;
+    }
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
     /* Drop any owed PLAYER_JOIN — the player left before it resolved, so
@@ -6985,9 +7004,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
 #define VOICE_MAX_FORWARDED_TALKERS 4
 
 /* Silence longer than this ends an utterance: the next frame from that slot
- * starts a new one and ranks as a fresh arrival for the cap above. Ten ticks
- * is 200 ms at the 50 Hz wire tick — long enough to ride out the gaps inside
- * ordinary speech, short enough that taking a turn to speak counts as one. */
+ * starts a new one and ranks as a fresh arrival for the cap above. Measured in
+ * udpServer.tickCount, one per 20 ms server frame, so ten ticks is 200 ms in
+ * every server state — long enough to ride out the gaps inside ordinary
+ * speech, short enough that taking a turn to speak counts as one. */
 #define VOICE_ONSET_GAP_TICKS 10
 
 /* One accepted, packed server->client voice segment held between the two
@@ -7010,7 +7030,12 @@ typedef struct {
 static void serverPumpVoice(ServerSim *sim) {
     bool inGame = (serverSimGetState(sim) == serverStateRunning);
     bool voiceOn = !udpServer.voiceDisabled;
-    uint32_t tick = serverSimGetTick(sim);
+    /* The transport's own tick, not the sim's: this measures how long ago a
+     * frame arrived, and the sim's tick does not advance at a constant rate —
+     * it stands still through the countdown and the game-over hold, and runs
+     * twice per frame inside a game. Both the onset bookkeeping and the
+     * talking set below read it, so they stay on one clock. */
+    uint32_t tick = udpServer.tickCount;
     /* Every frame accepted this tick, held until pass 2 knows who hears it.
      * Bounded by the per-sender flood cap, so it cannot overflow. */
     VoiceStagedFrame staged[MAX_TANKS * VOICE_SEGMENTS_PER_TICK];
@@ -7104,7 +7129,7 @@ static void serverPumpVoice(ServerSim *sim) {
              * (zero-initialised, and cleared again on disconnect), which is
              * an onset rather than the continuation the subtraction below
              * would otherwise make of it.  That subtraction is unsigned on
-             * purpose: if the sim's tick restarts under this bookkeeping it
+             * purpose: if the tick restarts under this bookkeeping it
              * underflows to a large gap, which reads as a new onset — the
              * safe answer. */
             if (!onsetDone) {
@@ -7243,13 +7268,18 @@ static void serverPumpVoice(ServerSim *sim) {
             }
         }
 
-        if (talking != udpServer.voiceTalkingPublished) {
+        /* Still only on a change, so a quiet lobby costs nothing — plus the
+         * explicit ask a departure leaves behind, which is the one case where
+         * the set has to go out again while comparing equal. */
+        if (talking != udpServer.voiceTalkingPublished ||
+            udpServer.voiceTalkingResend) {
             ControlEvent evt;
             memset(&evt, 0, sizeof(evt));
             evt.type = CTRL_VOICE_TALKING;
             evt.u.voiceTalking.talking = talking;
             serverSimPublishControl(sim, &evt);
             udpServer.voiceTalkingPublished = talking;
+            udpServer.voiceTalkingResend = false;
         }
     }
 }
