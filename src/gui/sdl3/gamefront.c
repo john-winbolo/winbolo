@@ -3582,7 +3582,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 #if defined(WINBOLO_VOICE)
   /* Voice.  Applied straight onto the running voice module, which is already
      up by the time this runs — winbolo.c brings it up before gameFrontStart. */
-  prefsGetString("VOICE", "Enabled", "Yes", buff, FILENAME_MAX);
+  /* Off unless the prefs file says otherwise, so a fresh install joins
+     without opening a microphone.  A player who has already chosen has
+     Enabled written in their file and keeps whatever they chose. */
+  prefsGetString("VOICE", "Enabled", "No", buff, FILENAME_MAX);
   windowSetVoiceEnabled(YESNO_TO_TRUEFALSE(buff[0]));
   prefsGetString("VOICE", "Mode", VOICE_MODE_NAME_PTT, buff, FILENAME_MAX);
   if (strcmp(buff, VOICE_MODE_NAME_OFF) == 0) {

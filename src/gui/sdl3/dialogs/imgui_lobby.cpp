@@ -261,6 +261,41 @@ extern "C" void imguiLobbyFrameReset(void) {
     s_lf.active = false;
 }
 
+#if defined(WINBOLO_VOICE)
+/* Voice starts off, so a player who has never turned it on has no reason to
+ * know it is there. Said once, in the lobby chat, the first time somebody
+ * else is heard, and it names the cog beside your own row as the way in.
+ *
+ * The talking set is read off the ClientSim, not the voice module: with voice
+ * off this client is sent no voice frames at all, so the module's own map is
+ * always empty. The server publishes this one whether or not this client is
+ * listening, and it is the set each row's mic cell already reads.
+ *
+ * It is non-empty in the lobby and the countdown only — in a running game
+ * voice follows the alliance and the server publishes an empty set on
+ * purpose — so this cannot fire mid-game, which is the window the line wants.
+ *
+ * A file-static rather than a prefs key: a player who still has voice off on
+ * the next run is worth telling once more. */
+static bool s_voiceHintShown = false;
+
+static void lobbyVoiceHintPoll(ClientSim *cs) {
+    if (s_voiceHintShown || cs == NULL) return;
+    if (voiceIsEnabled()) return;
+    /* Nothing here to turn on where the server carries no voice. */
+    if (voiceServerHasVoiceOff()) return;
+    PlayerBitMap talking = clientSimGetVoiceTalkingMap(cs);
+    /* With voice off you cannot be the one talking, but clear your own bit
+       rather than leaving that to be worked out. A spectator holds no slot,
+       so it has no bit of its own to clear. */
+    BYTE me = clientSimGetMyPlayerNum(cs);
+    if (me < MAX_TANKS) talking &= ~((PlayerBitMap)1u << me);
+    if (talking == 0) return;
+    clientSimAppendLobbyChat(cs, "***", langGetText(STR_DLGLOBBY_VOICE_HINT));
+    s_voiceHintShown = true;
+}
+#endif
+
 /* Build the lobby UI into the currently-active ImGui frame. See
  * imgui_lobby.h for the host contract. Returns LOBBY_FRAME_LEFT once the
  * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
@@ -271,6 +306,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     /* Before anything draws, so a round that has ended takes its rating and
      * comments with it whether or not the recap is the view on screen. */
     lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);
+#endif
+
+#if defined(WINBOLO_VOICE)
+    /* Here rather than in either host's loop: both of them come through this
+       function, so one call covers the blocking lobby and the in-game seam. */
+    lobbyVoiceHintPoll(cs);
 #endif
 
     SDL_Window   *window   = sdl3DrawGetWindow();

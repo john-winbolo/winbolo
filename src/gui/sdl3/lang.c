@@ -2044,6 +2044,9 @@ static const LangEntry langTable[] = {
     {2095, "Your microphone and voice settings"},
     {2096, "Voice is turned off"},
 
+    /* Lobby chat — said once when somebody else is heard and voice is off here */
+    {2127, "Someone is using voice chat. Yours is off — turn it on with the cog beside your name."},
+
     /* Players panel — a player muted here who is talking anyway */
     {2097, "Muted by you, and talking — click to unmute"},
 
