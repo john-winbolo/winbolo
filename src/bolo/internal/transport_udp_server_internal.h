@@ -54,8 +54,10 @@
  * CHANNEL_BULK window (96 segments) in a tick rather than throttling the map to
  * ~one frame/tick; the unacked window then bounds bytes in flight.
  *
- * Read by the per-client carrier in src/server/transport_udp_server.c and by
- * the spectator carrier in src/server/udp/udp_server_spectator.c. */
+ * Read by the per-client carrier in the send path in
+ * src/server/udp/udp_server_send.c, by the one in the timeout sweep in
+ * src/server/transport_udp_server.c, and by the spectator carrier in
+ * src/server/udp/udp_server_spectator.c. */
 #define MAP_DOWNLOAD_FRAMES_PER_TICK 24
 
 typedef struct {
@@ -392,23 +394,29 @@ void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
  * reads. */
 void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
 
-/* Fill an INFO_PACKET from the current sim state, shared by the info-request
- * reply and the tracker update. Owned by
- * src/server/transport_udp_server.c. */
-void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
-
-/* The packet work that stayed in src/server/transport_udp_server.c when the
- * type switch and the per-packet handlers moved out: the input and ping paths,
- * which read and write the per-slot state the rest of that file maintains; the
- * old-protocol info request and the reply built from buildInfoPacket above; and
- * the terrain-name helper the map-resync self-check prints. All five are
- * reached from src/server/udp/udp_server_dispatch.c and from nowhere else. */
-const char *resyncTerrainName(BYTE t);
+/* The outbound per-tick path to a connected player: an inbound input packet
+ * applied to the sim, a ping answered with a pong, one client's filtered
+ * snapshot built and sent, and the send loop over all clients. Owned by
+ * src/server/udp/udp_server_send.c.
+ * Only these two are reached from elsewhere in src/server/:
+ * src/server/udp/udp_server_dispatch.c calls both from the packet-type switch.
+ * The rest of the file is public API and is declared in transport_udp.h. */
 void serverHandleInput(const uint8_t *buf, int len,
                        const struct sockaddr_in *fromAddr,
                        struct ServerSim *sim);
 void serverHandlePing(const uint8_t *buf, int len,
                       const struct sockaddr_in *fromAddr);
+
+/* The server-info query protocol: the INFO_PACKET filled from the current sim
+ * state, the reply built from it, the old-protocol form of the request, and
+ * the terrain-name helper the map-resync self-check prints. Owned by
+ * src/server/udp/udp_server_query.c.
+ * src/server/udp/udp_server_dispatch.c calls the terrain name from the resync
+ * diagnostics and the request pair from the packet-type switch;
+ * src/server/udp/udp_server_tracker.c builds its tracker update from
+ * buildInfoPacket, which the reply above also shares. */
+const char *resyncTerrainName(BYTE t);
+void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
 void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                              struct ServerSim *sim);
 bool isOldProtocolInfoRequest(const uint8_t *buf, int len);
@@ -443,9 +451,9 @@ uint32_t udpServerRecvDropCount(void);
 
 /* Move one tick's voice from each sender's channel to the recipients allowed
  * to hear it, and publish the talking set. Owned by
- * src/server/udp/udp_server_voice.c; src/server/transport_udp_server.c calls
- * it from the send path and from the timeout sweep, ahead of the carriers
- * that put channel data on the wire. */
+ * src/server/udp/udp_server_voice.c; src/server/udp/udp_server_send.c calls it
+ * from the send path and src/server/transport_udp_server.c from the timeout
+ * sweep, ahead of the carriers that put channel data on the wire. */
 void serverPumpVoice(struct ServerSim *sim);
 
 /* Join handshake and admission control. Owned by
@@ -513,8 +521,9 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
  * compressed map streamed down to a joining or resyncing client on
  * CHANNEL_BULK, and the lobby map upload reassembled back off it. Owned by
  * src/server/udp/udp_server_maptransfer.c.
- * src/server/transport_udp_server.c calls these from the packet handler, the
- * disconnect and map-change paths and the per-tick send path;
+ * src/server/transport_udp_server.c calls these from the packet handler and
+ * the disconnect and map-change paths, and src/server/udp/udp_server_send.c
+ * from the per-tick send path;
  * src/server/udp/udp_server_join.c arms a joiner's download through
  * serverInitMapDownload and clears its re-ask limit at join.
  * lobbyClientMayEdit is the lobby authority check the upload handlers share.
@@ -535,8 +544,9 @@ void udpServerResetMapReaskLimit(int idx);
 /* Tankless spectator support. Owned by
  * src/server/udp/udp_server_spectator.c.
  * src/server/transport_udp_server.c calls these from the packet handler, the
- * map-change and return-to-lobby paths, the per-tick send path and the timeout
- * sweep; serverEnumSpectatorRoster is not called directly, it is handed to
+ * map-change and return-to-lobby paths and the timeout sweep, and
+ * src/server/udp/udp_server_send.c from the per-tick send path;
+ * serverEnumSpectatorRoster is not called directly, it is handed to
  * serverSimSetSpectatorRosterEnumerator in transportUdpServerCreate. */
 void serverAcceptSpectator(struct ServerSim *sim,
                            const struct sockaddr_in *fromAddr,
