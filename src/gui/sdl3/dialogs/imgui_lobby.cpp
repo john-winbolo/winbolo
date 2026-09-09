@@ -56,6 +56,7 @@ extern "C" {
 #include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_keyboard.h"
+#include "imgui_keysetup.h"  /* the Key Setup popup, drawn and fed from this loop */
 #include "imgui_messagebox.h"
 #if defined(WINBOLO_VOICE)
 #include "../../voice.h"
@@ -2346,6 +2347,11 @@ static float lobbyComputeUiScale(SDL_Window *window) {
 *  blocking loop polls this before its ImGui::NewFrame — and
 *  a frame either way does not matter for a key held down.
 *
+*  A Key Setup row waiting for a key is the same case: the
+*  keystroke is being aimed at a binding, not at the
+*  microphone, and the key still bound to push to talk may
+*  well be the one held down while it is rebound.
+*
 *  An unbound key is scancode 0, which inputPushToTalkPoll
 *  never reports as held.
 *********************************************************/
@@ -2356,7 +2362,8 @@ extern "C" void imguiLobbyPushToTalkPoll(void) {
     const bool reading =
         window != NULL &&
         (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0 &&
-        !ImGui::GetIO().WantTextInput;
+        !ImGui::GetIO().WantTextInput &&
+        !imguiKeySetupIsCapturingInGameKey();
     inputPushToTalkPoll(&lobbyKeys, reading);
 }
 #endif
@@ -2512,6 +2519,38 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 continue;
             }
 #endif
+            /* Key Setup is open and a row is waiting for a key: the
+               keystroke belongs to the binding, so it goes straight to the
+               dialog and no further. Ahead of the ImGui feed because the
+               lobby holds a chat input, and a key being bound must not be
+               typed into it. */
+            if (imguiKeySetupIsCapturingInGameKey() &&
+                ev.type == SDL_EVENT_KEY_DOWN &&
+                ev.key.windowID == SDL_GetWindowID(window)) {
+                imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
+                continue;
+            }
+            /* Same for a controller row: a button or a trigger past half
+               travel binds it, Escape drops the capture. Stick movement is
+               ignored, so the row stays armed until one of those arrives. */
+            if (imguiKeySetupIsCapturingInGamePad()) {
+                if (ev.type == SDL_EVENT_KEY_DOWN &&
+                    ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                    imguiKeySetupCancelInGamePad();
+                    continue;
+                }
+                if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                    imguiKeySetupHandleInGamePadButton((int)ev.gbutton.button);
+                    continue;
+                }
+                if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+                    (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                     ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+                    ev.gaxis.value > 16384 /* ~0.5 of 32767 */) {
+                    imguiKeySetupHandleInGamePadTrigger((int)ev.gaxis.axis);
+                    continue;
+                }
+            }
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
@@ -2619,6 +2658,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 break;
         }
 
+        /* This dialog owns the frame while it is up, so the Key Setup popup
+           the in-game frame draws has to be drawn here too — the same reason
+           voiceTick runs from this loop. NULL rather than cs: the popup seeds
+           its two checkboxes from a live tank when it is given one, and a
+           lobby has no tank, only an idle slot. */
+        imguiKeySetupRenderInGamePopup(NULL);
+
         dialogDrawNavOutline();
         keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
@@ -2632,6 +2678,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
     /* Release per-frame state (texture, popup buffers, transient flags). */
     imguiLobbyFrameReset();
+
+    /* The usual way out of here is the game starting, which breaks the loop
+     * before another frame is drawn, and the running game's event pump reads
+     * the same Key Setup capture state this loop was feeding. Drop it here, so
+     * a dialog left open does not reappear over the game and an armed row does
+     * not swallow the game's first keystroke. */
+    imguiKeySetupCancelInGame();
 
     /* The lobby closing is the last chance to write a move / resize / split
      * drag that landed inside the debounce window — there is no further

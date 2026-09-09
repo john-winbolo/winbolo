@@ -899,6 +899,21 @@ extern "C" void imguiKeySetupOpenInGame(void) {
     s_inGameShowRequested = true;
 }
 
+/* Forget a pending open and any armed row. Called by a host that owns its
+ * own event loop as that loop ends: the flags below outlive the ImGui
+ * context the popup was drawn in, and the next context to run reads them.
+ * Keys and pad bindings are pushed out only when OK is pressed, and both
+ * working copies are re-read on the next open, so this is a Cancel — it
+ * drops nothing that was saved. Touches no ImGui state: it can be called
+ * outside a frame, and after a context has been destroyed. */
+extern "C" void imguiKeySetupCancelInGame(void) {
+    s_inGameShowRequested = false;
+    s_inGameOpen          = false;
+    s_inGameFadeAlpha     = 0.0f;
+    s_waiting             = ksNone;
+    s_padWaitAction       = -1;
+}
+
 extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     char title[128];
     snprintf(title, sizeof(title), "%s###keysetup",

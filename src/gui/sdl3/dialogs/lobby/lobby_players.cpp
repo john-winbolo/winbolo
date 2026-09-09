@@ -40,6 +40,7 @@
 #include "imgui_internal.h"  /* ImGui::CloseButton, GetCurrentWindow, ImMax */
 #include "lobby_internal.h"
 #include "dialog_footer.h"   /* WBUI cancel styling + CancelKeyPressed */
+#include "imgui_keysetup.h"  /* imguiKeySetupOpenInGame — the push-to-talk row's Change button */
 #include "../../wb_theme.h"  /* g_theme / wbThemeColor — team tints, tag pills */
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, BrainList, PingBand */
@@ -2665,8 +2666,9 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s) {
     ImGui::SameLine();
     ImGui::TextUnformatted(langGetText(modeStr));
 
-    /* The binding itself is set in Key Setup; showing it here is so the
-       player can see which key push to talk is on without leaving. */
+    /* Which key push to talk is on, and the way to change it — Key Setup
+       opens over the lobby, so the commonest reason voice does nothing can
+       be fixed without leaving. */
     if (mode == VOICE_MODE_PTT) {
         keyItems pttKeys;
         windowGetKeys(&pttKeys);
@@ -2678,6 +2680,10 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s) {
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
         ImGui::SameLine();
         ImGui::TextUnformatted(pttName);
+        ImGui::SameLine();
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+            imguiKeySetupOpenInGame();
+        }
     }
 
     if (!voiceOn || serverOff) ImGui::EndDisabled();
