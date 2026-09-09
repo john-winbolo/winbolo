@@ -117,6 +117,19 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     server_console.c
     server_lifecycle.c
     transport_udp_server.c
+    udp/udp_server_admin.c
+    udp/udp_server_control.c
+    udp/udp_server_dispatch.c
+    udp/udp_server_join.c
+    udp/udp_server_maptransfer.c
+    udp/udp_server_query.c
+    udp/udp_server_recv.c
+    udp/udp_server_send.c
+    udp/udp_server_spectator.c
+    udp/udp_server_test_hooks.c
+    udp/udp_server_tracker.c
+    udp/udp_server_voice.c
+    udp/udp_server_wbn.c
     mdns_advertise.c
     server_dedicated_log.c
     server_dedicated_log_path.c
