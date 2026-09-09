@@ -135,6 +135,14 @@ typedef struct {
     uint16_t *recvLen;     /* [window]                                  */
     uint8_t  *recvData;    /* [window * segSize], row stride = segSize  */
 
+    /* Best-effort resync state (unused by the reliable channels). A segment
+     * too far from the delivery cursor to be followed on its own is recorded
+     * here instead of acted on; a later one agreeing with it re-bases the
+     * cursor onto where the traffic actually is. Cleared by any accepted
+     * segment, so the two have to be consecutive. */
+    uint32_t refusedSeq;   /* the last refused sequence number           */
+    bool     refusedValid; /* refusedSeq holds a candidate               */
+
     /* Fast-retransmit (NAK) state. */
     uint32_t recvHighestSeq; /* exclusive upper bound on the highest seq
                               * accepted on the receive side; reported as
