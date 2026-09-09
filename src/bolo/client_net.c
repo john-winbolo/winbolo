@@ -390,6 +390,11 @@ const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen) {
   return transportUdpClientGetMapData((Transport *)&cs->transport, outLen);
 }
 
+uint32_t clientSimGetMapInvalidateCount(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientGetMapInvalidateCount((Transport *)&cs->transport);
+}
+
 uint32_t clientSimGetViewTick(const ClientSim *cs) {
   if (cs == NULL) return 0;
   return cs->clientState.prevAppliedServerTick;
