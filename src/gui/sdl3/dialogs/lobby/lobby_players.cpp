@@ -2648,7 +2648,43 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s, float contentW) {
     const bool hasMic = mySlot &&
                         (mySlot->clientFlags & PLAYER_FLAG_HAS_MIC) != 0;
 
-    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
+    /* Three columns, and three however narrow the window gets: dropping to
+       two would change this row's height, and every player below it would
+       move. The controls get small instead. The panel's width is passed in
+       because the sub-row draws in the table's first column — the width
+       available here is that column's, not the panel's. */
+    const float gap = ImGui::GetStyle().ItemSpacing.x * 3.0f;
+    const float avail = contentW - ImGui::GetStyle().CellPadding.x * 2.0f;
+    float colW = (avail - gap * 2.0f) / 3.0f;
+    if (colW < 110.0f * s) colW = 110.0f * s;
+    /* A control gets its column less whatever is drawn beside it on the same
+       line, and the space between the two. */
+    auto ctrlW = [colW, s](float besideW) {
+        float w = colW - besideW - ImGui::GetStyle().ItemSpacing.x;
+        return w < 60.0f * s ? 60.0f * s : w;
+    };
+    auto textW = [](langid id) {
+        return ImGui::CalcTextSize(langGetText(id)).x;
+    };
+
+    /* SeparatorText measures itself against the room the cell gives it, and
+       in the table's first column that is narrow enough to cut the heading
+       short and leave no room for the rule. Both are drawn against the width
+       the controls below use instead. */
+    {
+        const char *head = langGetText(STR_DLGSETTINGS_VOICE);
+        const ImVec2 headPos = ImGui::GetCursorScreenPos();
+        ImGui::TextUnformatted(head);
+        const float ruleY = headPos.y + ImGui::GetTextLineHeight() * 0.5f;
+        const float ruleX = headPos.x + ImGui::CalcTextSize(head).x
+                          + ImGui::GetStyle().ItemSpacing.x;
+        const float ruleEnd = headPos.x + avail;
+        if (ruleEnd > ruleX) {
+            ImGui::GetWindowDrawList()->AddLine(
+                ImVec2(ruleX, ruleY), ImVec2(ruleEnd, ruleY),
+                ImGui::GetColorU32(ImGuiCol_Separator), 1.0f * s);
+        }
+    }
 
     /* Read the master switch once: the line below, the checkbox that writes
        it and the BeginDisabled / EndDisabled around the rest all have to be
@@ -2672,25 +2708,6 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s, float contentW) {
     } else if (!hasMic) {
         ImGui::TextDisabled("%s", langGetText(STR_PLAYER_TIP_VOICE_SELF_NOMIC));
     }
-
-    /* Three columns, and three however narrow the window gets: dropping to
-       two would change this row's height, and every player below it would
-       move. The controls get small instead. The panel's width is passed in
-       because the sub-row draws in the table's first column — the width
-       available here is that column's, not the panel's. */
-    const float gap = ImGui::GetStyle().ItemSpacing.x * 3.0f;
-    const float avail = contentW - ImGui::GetStyle().CellPadding.x * 2.0f;
-    float colW = (avail - gap * 2.0f) / 3.0f;
-    if (colW < 110.0f * s) colW = 110.0f * s;
-    /* A control gets its column less whatever is drawn beside it on the same
-       line, and the space between the two. */
-    auto ctrlW = [colW, s](float besideW) {
-        float w = colW - besideW - ImGui::GetStyle().ItemSpacing.x;
-        return w < 60.0f * s ? 60.0f * s : w;
-    };
-    auto textW = [](langid id) {
-        return ImGui::CalcTextSize(langGetText(id)).x;
-    };
 
     /* ── Column 1: the switch, mute, gain, level ────────────────── */
     ImGui::BeginGroup();
