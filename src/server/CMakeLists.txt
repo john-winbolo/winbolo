@@ -119,6 +119,7 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     transport_udp_server.c
     udp/udp_server_admin.c
     udp/udp_server_control.c
+    udp/udp_server_dispatch.c
     udp/udp_server_join.c
     udp/udp_server_maptransfer.c
     udp/udp_server_recv.c

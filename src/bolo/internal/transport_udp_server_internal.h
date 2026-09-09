@@ -380,7 +380,8 @@ typedef struct UdpServerState {
 extern UdpServerState udpServer;
 
 /* Handle one received datagram. Owned by
- * src/server/transport_udp_server.c, which drives it from both the
+ * src/server/udp/udp_server_dispatch.c, which holds the type switch and every
+ * per-packet handler; src/server/transport_udp_server.c calls it from both the
  * polled fallback and the recv-thread drain path. */
 void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
                          struct sockaddr_in *fromAddr);
@@ -395,6 +396,22 @@ void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
  * reply and the tracker update. Owned by
  * src/server/transport_udp_server.c. */
 void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
+
+/* The packet work that stayed in src/server/transport_udp_server.c when the
+ * type switch and the per-packet handlers moved out: the input and ping paths,
+ * which read and write the per-slot state the rest of that file maintains; the
+ * old-protocol info request and the reply built from buildInfoPacket above; and
+ * the terrain-name helper the map-resync self-check prints. All five are
+ * reached from src/server/udp/udp_server_dispatch.c and from nowhere else. */
+const char *resyncTerrainName(BYTE t);
+void serverHandleInput(const uint8_t *buf, int len,
+                       const struct sockaddr_in *fromAddr,
+                       struct ServerSim *sim);
+void serverHandlePing(const uint8_t *buf, int len,
+                      const struct sockaddr_in *fromAddr);
+void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
+                             struct ServerSim *sim);
+bool isOldProtocolInfoRequest(const uint8_t *buf, int len);
 
 /* Public-address override advertised in place of the internal port and a zero
  * address once a UPnP/NAT-PMP/PCP mapping is negotiated. Owned by
