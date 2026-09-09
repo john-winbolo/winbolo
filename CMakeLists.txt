@@ -4507,7 +4507,8 @@ if(WB_FUZZ)
     set_tests_properties(fuzz.bulk_transfer PROPERTIES TIMEOUT 120)
 
     # Tier 2 — full server dispatcher via the WB_FUZZ-gated seam. Links
-    # server_static (which owns transport_udp_server.c, now carrying the seam).
+    # server_static (which owns udp/udp_server_test_hooks.c, the file that
+    # carries the seam).
     # test_stubs.c + the steam stub resolve the winbolonet / natPortMap /
     # frontend callbacks the server graph references but server_static doesn't
     # own — the same stub surface WinBoloUnitTests links.

@@ -22,7 +22,8 @@
 
 #define FUZZ_EMAP_LEN 5097
 
-/* Seam exported by transport_udp_server.c only under -DWB_FUZZ. */
+/* Seam exported by src/server/udp/udp_server_test_hooks.c only under
+ * -DWB_FUZZ. */
 void transportUdpServerFuzzInit(ServerSim *sim);
 void transportUdpServerFuzzProcessPacket(ServerSim *sim,
                                          const uint8_t *data, size_t size);

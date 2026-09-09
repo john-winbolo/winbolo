@@ -14,10 +14,14 @@
  *      and spectator state.
  *    - Stages events and connections a test needs without
  *      standing up sockets.
- *  Driven by the tests under tests/unit/, not by shipping
- *  code.
+ *    - Under -DWB_FUZZ only, the dispatcher seam that
+ *      feeds serverProcessPacket fuzzer bytes.
+ *  Called by the tests under tests/unit/ and the fuzz
+ *  harness under tests/fuzz/, never by shipping code.
  *********************************************************/
 
+#include <stdio.h>  /* fprintf, stderr */
+#include <stdlib.h> /* malloc, free, abort */
 #include <string.h>
 
 #include "transport_udp_internal.h"        /* eventQueueHasSpace, unpackU16, packGameEvent */
@@ -27,6 +31,8 @@
 #include "transport_control_codec.h"       /* transportControlCodecBodyDecoder */
 #include "bolo_map.h"                      /* mapSetPos */
 #include "server_sim_internal.h"           /* serverSimShadowApply */
+#include "../threads.h"                    /* threadsCreate, threadsWaitForMutex,
+                                              threadsReleaseMutex */
 
 void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs) {
     if (playerNum >= MAX_TANKS) return;
@@ -275,3 +281,182 @@ bool transportUdpServerTestPeekChannelReset(int slot, uint32_t *ch0Baseline,
     }
     return false;
 }
+
+#ifdef WB_FUZZ
+/* ================================================================
+ * Fuzz-only dispatcher seam (hardening plan §1.2, tier 2)
+ *
+ * Feeds serverProcessPacket attacker-controlled bytes directly —
+ * no socket, no recv thread. Compiled only under -DWB_FUZZ (the dedicated
+ * fuzz build); every shipping build leaves these symbols out entirely.
+ *
+ * The harness owns the ServerSim lifetime and calls Init once before
+ * feeding packets. State accumulates across inputs by design — that is the
+ * standard libFuzzer persistent-target pattern and explores deeper handler
+ * paths than a per-input reset would.
+ * ================================================================ */
+
+/* The fixed peer the dispatcher seam attributes every fuzz datagram to. The
+ * warm-up JOIN below and transportUdpServerFuzzProcessPacket share this exact
+ * (addr,port) so serverFindClient resolves a fuzz datagram to the pre-connected
+ * slot — change one without the other and the post-JOIN handlers go dark. */
+static void fuzzServerPeerAddr(struct sockaddr_in *from) {
+    memset(from, 0, sizeof(*from));
+    from->sin_family = AF_INET;
+    from->sin_addr.s_addr = htonl(0x7f000001u); /* 127.0.0.1 */
+    from->sin_port = htons((unsigned short)40000);
+}
+
+/* Drive one real JOIN to completion so the dispatcher starts with a connected
+ * client. Without it, serverFindClient() returns -1 for the fuzz peer and every
+ * post-JOIN handler (COMMAND_TICK, INPUT, CONTROL_ACK, the reliable event
+ * loops, map reassembly) bails at its `clientIdx < 0` guard — i.e. the hand-
+ * written count-loops this target exists to reach stay unfuzzed.
+ *
+ * The join is cookie-gated: normally the joiner echoes a cookie from a prior
+ * PACKET_JOIN_CHALLENGE, but that challenge reply is a no-op over the seam's
+ * INVALID_SOCKET, so a two-pass handshake can't observe it. Instead we mint the
+ * cookie directly (same secret/window the acceptor checks) and submit a single
+ * well-formed JOIN_REQUEST through the very dispatch path the fuzzer drives.
+ *
+ * The body layout mirrors serverHandleJoinRequest's reader exactly. One subtle
+ * ordering contract: the optional 2-byte fallbackCountry is read *before* the
+ * trailing cookie, so it must be present here — omit it and the handler eats
+ * the cookie's first two bytes as a country code and the address proof fails. */
+static bool fuzzServerWarmJoin(ServerSim *sim) {
+    uint8_t pkt[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 +
+                WBN_JOIN_KEY_WIRE_LEN + 1 /*flags*/ + 2 /*type,hints*/ +
+                2 /*country*/ + JOIN_COOKIE_LEN];
+    struct sockaddr_in from;
+    size_t pos;
+
+    fuzzServerPeerAddr(&from);
+    memset(pkt, 0, sizeof(pkt));
+    packHeader(pkt, PACKET_JOIN_REQUEST, 0);
+    pos = PACKET_HEADER_SIZE;
+
+    /* Player name (NUL-padded, validator-clean ASCII). */
+    memcpy(pkt + pos, "FuzzPeer", 8);
+    pos += PACKET_MAX_PLAYER_NAME;
+
+    /* Password: empty — the fuzz ServerSim is created without one. */
+    pos += MAP_STR_SIZE;
+
+    /* Protocol version triple: the CMake-defined values this server gates on,
+     * so it always matches and can't take the version-reject branch. */
+    pkt[pos++] = (uint8_t)BOLO_VERSION_MAJOR;
+    pkt[pos++] = (uint8_t)BOLO_VERSION_MINOR;
+    pkt[pos++] = (uint8_t)BOLO_VERSION_REVISION;
+
+    /* WBN join key empty → joins as a non-WBN player (skips token verify). */
+    pos += WBN_JOIN_KEY_WIRE_LEN;
+
+    pos += 1; /* flags: 0 (no rejoin, won't-authenticate) */
+    pos += 2; /* clientType, clientHints: 0 (unknown client) */
+
+    /* fallbackCountry — present so the cookie that follows stays aligned. */
+    pkt[pos++] = 'X';
+    pkt[pos++] = 'X';
+
+    /* Address-proof cookie for the current window. Fails closed if the CSPRNG
+     * secret is unavailable; we then skip the warm-up and the target degrades
+     * to its pre-warm (JOIN-gated) behaviour rather than connecting. */
+    if (!serverCookieCompute(&from, serverCookieCurrentWindow(), pkt + pos)) {
+        return false;
+    }
+    pos += JOIN_COOKIE_LEN;
+
+    /* serverProcessPacket's sim-mutating handlers assert the server mutex is
+     * held; take it here exactly as serverInstanceTick does in production. */
+    threadsWaitForMutex();
+    serverProcessPacket(sim, pkt, (int)pos, &from);
+    threadsReleaseMutex();
+
+    /* Caller decides how to treat a join that didn't connect: init aborts (a
+     * dead gate from the first input is a build-level regression), the per-
+     * input re-arm shrugs and lets the input bounce off the gate. */
+    return serverFindClient(&from) >= 0;
+}
+
+/* Minimal server context: mirrors the non-socket, non-thread portion of
+ * transportUdpServerCreate. sock stays INVALID_SOCKET so srvSendTo's
+ * underlying udpSendTo is a no-op and no datagrams leave the process. After
+ * the context is up we drive one JOIN so the dispatcher begins with a
+ * connected client (see fuzzServerWarmJoin). */
+void transportUdpServerFuzzInit(ServerSim *sim) {
+    int i;
+    /* The seam drives serverProcessPacket directly (no recv thread), but its
+     * sim-mutating handlers assert the server mutex is held. Create the mutex
+     * here so the seam can take it around each serverProcessPacket call, the
+     * way serverInstanceTick holds it in production. Idempotent. */
+    threadsCreate(true);
+    memset(&udpServer, 0, sizeof(udpServer));
+    memset(punchQueue, 0, sizeof(punchQueue));
+    udpServer.sock = INVALID_SOCKET;
+    udpServer.running = true;
+    udpServer.tickCount = 0;
+    udpServer.uploadMaxFiles        = 64;
+    udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
+    udpServer.compressedMapSize = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        udpServer.clients[i].connected = false;
+        udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
+        memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
+        udpServer.controlSyncInProgress[i] = false;
+        serverSimSetShadowCulled(sim, (BYTE)i, false);
+    }
+    netImpairInit(&srvImpairIn);
+    netImpairInit(&srvImpairOut);
+
+    /* Open the JOIN gate: leave one client connected at the fuzz peer address
+     * so the post-JOIN dispatcher paths are reachable from the first input. A
+     * join that doesn't connect here means the target is neutered before a
+     * single input runs — a build-level regression, so fail loudly. The
+     * -runs=0 corpus-replay ctest exercises this path on every build, turning
+     * a silent dead gate into a red test. */
+    if (!fuzzServerWarmJoin(sim)) {
+        fprintf(stderr, "fuzzServerWarmJoin: peer not connected after JOIN — "
+                        "server_dispatch would fuzz the dead JOIN gate\n");
+        abort();
+    }
+}
+
+/* One datagram, as if received on the game socket from a LAN peer. The buffer
+ * is heap-allocated to the EXACT input length (handlers need it mutable, and
+ * an exact size lets ASan's redzone catch any read/write past len — an
+ * oversized buffer would mask the very over-reads this target hunts). */
+void transportUdpServerFuzzProcessPacket(ServerSim *sim,
+                                         const uint8_t *data, size_t size) {
+    uint8_t *buf;
+    struct sockaddr_in from;
+    if (size == 0 || size > 65535) return;
+    fuzzServerPeerAddr(&from); /* same peer the warm-up JOIN registered */
+
+    /* Keep the post-JOIN surface live across inputs. State persists by design,
+     * so an earlier input that disconnected the peer (a QUIT, an idle-timeout
+     * path, a handler that drops the client) would otherwise leave every later
+     * input bouncing off the JOIN gate. Re-arm if needed — the input that did
+     * the disconnect already exercised that path; this just restores the
+     * connected-client context the next input wants to fuzz. */
+    if (serverFindClient(&from) < 0) {
+        (void)fuzzServerWarmJoin(sim);
+    }
+
+    buf = (uint8_t *)malloc(size);
+    if (buf == NULL) return;
+    memcpy(buf, data, size);
+    /* Hold the server mutex across dispatch, mirroring serverInstanceTick — the
+     * sim-mutating handlers (COMMAND_TICK → serverSimApplyCommand, etc.) assert
+     * it. The re-arm above self-locks, so this is a fresh, non-nested region. */
+    threadsWaitForMutex();
+    serverProcessPacket(sim, buf, (int)size, &from);
+    /* Mirror serverInstanceTick: drain deferred overflow-disconnects after
+     * recv, outside any publish, under the same mutex. Keeps the fuzz server's
+     * state consistent and exercises the deferred-disconnect path
+     * (serverDisconnectClient + leave broadcast + serverSimRemovePlayer) that
+     * the control-queue-overflow handler now defers here. */
+    transportUdpServerDrainPendingRemovals(sim);
+    threadsReleaseMutex();
+    free(buf);
+}
+#endif /* WB_FUZZ */
