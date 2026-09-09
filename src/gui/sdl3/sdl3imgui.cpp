@@ -5899,6 +5899,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 windowLeaveGame();
 #endif
             }
+            /* The lobby's copy of the Key Setup popup. This host draws the
+               lobby inside the shared frame and returns below, before the
+               in-game popup draw further down, so a binding opened from the
+               lobby would otherwise have nothing drawing it. NULL rather than
+               cs: the popup seeds its checkboxes from a live tank when it is
+               given one, and a lobby has no tank. */
+            imguiKeySetupRenderInGamePopup(NULL);
             keyboardUpdate();
             dialogDrawNavOutline();
             ImGui::Render();
