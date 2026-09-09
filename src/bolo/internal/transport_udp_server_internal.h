@@ -37,6 +37,8 @@
 
 #define RECV_QUEUE_SIZE 1024
 
+#define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
+
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
     int     len;
@@ -384,5 +386,23 @@ extern unsigned short udpServerPublicPort;
 /* Pending hole-punch bursts, one slot per joiner. Owned by
  * src/server/udp/udp_server_tracker.c. */
 extern PunchQueueEntry punchQueue[PUNCH_QUEUE_SIZE];
+
+/* Network impairment state for the server's inbound (client->server) and
+ * outbound (server->client) datagram paths. Owned by
+ * src/server/udp/udp_server_recv.c; srvSendTo and the transport's create /
+ * fuzz-init entry points read and reset them from
+ * src/server/transport_udp_server.c. */
+extern NetImpair srvImpairIn;
+extern NetImpair srvImpairOut;
+
+/* Recv-thread lifecycle. The thread, its SPSC ring and the drop counter are
+ * private to src/server/udp/udp_server_recv.c, which owns them; the transport's
+ * create and destroy entry points start and stop the thread through these
+ * three calls.
+ * udpServerRecvThreadStart takes its own copy of the socket, so the socket can
+ * be closed after udpServerRecvThreadStop has joined the thread. */
+void     udpServerRecvThreadStart(SOCKET sock);
+void     udpServerRecvThreadStop(void);
+uint32_t udpServerRecvDropCount(void);
 
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */
