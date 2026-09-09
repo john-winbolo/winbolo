@@ -153,9 +153,11 @@ bool voiceIsEnabled(void);
 *NAME:          voiceSetMode
 *PURPOSE:
 *  Chooses how captured audio reaches the other players.
-*  Opens the microphone if a transmitting mode is chosen and
-*  this is the first ask, and pauses it once no mode and no
-*  microphone test wants it. A mode change never leaves the
+*  Opens the microphone if something now wants it, and pauses
+*  it once nothing does. A transmitting mode is not a want on
+*  its own: it counts once there is a connection to carry the
+*  audio, so choosing one here never opens the microphone
+*  against no server. A mode change never leaves the
 *  microphone latched open.
 *
 *ARGUMENTS:
@@ -444,6 +446,44 @@ float voiceGetInputLevel(void);
 *  (none)
 *********************************************************/
 float voiceGetInputMeter(void);
+
+/*********************************************************
+*NAME:          voiceSettingsSectionDrawn
+*PURPOSE:
+*  Called by the settings voice section on every frame it
+*  draws. Holds the recording device open while it is on
+*  screen, so its input meter has a live level to show — the
+*  one check a player can make on their microphone before
+*  joining a game. Does nothing with the mode set to Off,
+*  which is the player saying they do not want the microphone
+*  open at all.
+*
+*  The hold lapses on its own: voiceTick reads it and clears
+*  it once a tick, so a section that stops being drawn stops
+*  asking, and no caller inside a loop that keeps ticking has
+*  to say when it went away.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceSettingsSectionDrawn(void);
+
+/*********************************************************
+*NAME:          voiceSettingsSectionClosed
+*PURPOSE:
+*  Gives the hold above up at once and releases the recording
+*  device unless something else wants it.
+*
+*  For the one caller the lapse cannot reach: a settings
+*  dialog that owns the event loop, whose exit hands control
+*  back to a loop that does not tick voice. Everywhere else
+*  the tick is what releases the microphone, so nothing else
+*  need call this.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceSettingsSectionClosed(void);
 
 /*********************************************************
 *NAME:          voiceGetPlayerLevel

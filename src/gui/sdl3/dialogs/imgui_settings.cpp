@@ -1565,6 +1565,14 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
 
     /* ---- Voice ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
+    /* Ahead of every control below, so the microphone is held open for the
+       whole of this frame: the input meter further down needs a live level to
+       show, and the controls in between can reach into the voice module,
+       which decides there and then whether anything still wants the device.
+       Not drawing this section is what gives the hold up again — the voice
+       tick takes it back — so only the pre-game dialog, whose exit stops the
+       ticking, says so explicitly when it closes. */
+    voiceSettingsSectionDrawn();
     /* Read the master switch once: the checkbox below writes it, and
        BeginDisabled / EndDisabled have to be told the same answer. */
     bool voiceOn = voiceIsEnabled();
@@ -2647,6 +2655,16 @@ extern "C" void imguiSettingsShow(void) {
         }
 #endif
     }
+
+#if defined(WINBOLO_VOICE)
+    /* The Sound tab holds the microphone open for its level meter, and that
+     * hold is otherwise given up by the voice tick this loop was running.
+     * Nothing ticks voice at the menu we are handing back to, so the release
+     * has to happen here or the recording device runs on with no-one draining
+     * it. The in-game overlay needs no such call: the game loop keeps
+     * ticking. */
+    voiceSettingsSectionClosed();
+#endif
 
     /* Flush the in-memory settings (player name, address/ports, language,
      * keys, tank options, ...) into the prefs document now the dialog has

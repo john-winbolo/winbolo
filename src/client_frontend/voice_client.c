@@ -172,10 +172,10 @@ static int micTestPlayed = 0;
  * which has no client of its own to ask. */
 static bool connectionCarriesVoice = false;
 
-/* Previous tick's connectionCarriesVoice.  The microphone is first asked for
- * on the rising edge - joining a connection that carries voice is what asks
- * for it, so starting the game on its own never prompts. */
-static bool wasCarryingVoice = false;
+/* Previous tick's captureIsWanted.  The microphone is first asked for on the
+ * rising edge - a reason for it appearing is what asks - so starting the game,
+ * where there is no reason for one yet, never prompts. */
+static bool wasCaptureWanted = false;
 
 /* Previous captured frame's transmit decision.  The falling edge is where
  * the end-of-utterance marker is sent from, since the last frame of speech
@@ -183,9 +183,23 @@ static bool wasCarryingVoice = false;
 static bool wasSending = false;
 
 /* Ticks left before the recording device is asked for again after an open
- * that failed.  Only counts while the connection carries voice and the
- * microphone is wanted but not open. */
+ * that failed.  Only counts while the microphone is wanted but not running. */
 static int captureRetryTicks = 0;
+
+/* Whether the recording device was started and has not been stopped since.
+ * The backend cannot be asked instead: voiceBackendCaptureIsOpen reports the
+ * stream object, and that outlives a stop, because stopping only pauses so
+ * that starting again does not put the microphone permission prompt back up. */
+static bool captureStarted = false;
+
+/* Whether the settings voice section has drawn since the last tick.  Its
+ * level meter reads the captured level, which only moves while the recording
+ * device runs, so the section being on screen is a reason to hold the
+ * microphone open in its own right - it is where a player checks their
+ * microphone before joining a game.  The section sets this on every frame it
+ * draws and voiceTick takes it back, so a section that has stopped being
+ * drawn stops asking without any dialog having to say so. */
+static bool settingsWantsMic = false;
 
 /* One remote talker per tank slot, keyed by player number.  Both the decoder
  * and the backend's playback are brought up the first time a frame arrives
@@ -240,17 +254,28 @@ static uint32_t reportedAtMs = 0;
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Returns whether anything still wants the microphone: the
-*  microphone test while it is recording, or a mode that can
-*  put audio on the wire.  The master switch overrides both.
+*  Returns whether anything still has a live reason for the
+*  microphone to be open: the microphone test while it is
+*  recording, or a mode that can put audio on the wire with
+*  somewhere for that audio to go - a connection that carries
+*  this client's voice, or the settings voice section on
+*  screen with its level meter to feed.  The master switch
+*  overrides all of them.
 *
 *  The test wants it while recording and at no other time -
-*  playing back its recording is speakers only.
+*  playing back its recording is speakers only.  It is its own
+*  reason, so it still runs with the mode set to Off.
 *
-*  A mode that can transmit holds the recording device open
-*  even between words, so the level meter keeps reading and
-*  the first syllable after a push-to-talk press is not lost
-*  to the device starting up.
+*  A transmitting mode is not a reason by itself.  It is
+*  loaded from the preferences before there is any connection,
+*  and on its own it would open the recording device at launch
+*  with no server to send to and nothing draining what was
+*  captured.  Paired with one of the other two it holds the
+*  device open between words, so the level meter keeps reading
+*  and the first syllable after a push-to-talk press is not
+*  lost to the device starting up.  The other way round, a
+*  player who has set the mode to Off does not get their
+*  microphone turned on by opening the settings.
 *
 *ARGUMENTS:
 *  (none)
@@ -268,7 +293,29 @@ static bool captureIsWanted(void) {
     }
 #endif
     return micTestState == VOICE_MICTEST_RECORDING ||
-           voiceMode != VOICE_MODE_OFF;
+           (voiceMode != VOICE_MODE_OFF &&
+            (connectionCarriesVoice || settingsWantsMic));
+}
+
+/*********************************************************
+*NAME:          captureIsRunning
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether the recording device is capturing right
+*  now, which is not what voiceBackendCaptureIsOpen answers -
+*  that is whether a stream exists, and it stays true across
+*  a stop.  Both halves are needed: the pause is only known
+*  here, and the stream can go away underneath this without
+*  the runtime being told, which is what a device change that
+*  could not re-open one leaves behind.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static bool captureIsRunning(void) {
+    return captureStarted && voiceBackendCaptureIsOpen();
 }
 
 /*********************************************************
@@ -277,21 +324,21 @@ static bool captureIsWanted(void) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Pauses the microphone once neither the microphone test
-*  nor a transmitting mode wants it any more.  They share
-*  one recording stream, so none of them may stop it on its
-*  own.
+*  Pauses the microphone once nothing has a reason for it any
+*  more.  The reasons share one recording stream, so none of
+*  them may stop it on its own.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
 static void stopCaptureIfIdle(void) {
-    if (captureIsWanted()) {
+    if (!captureStarted || captureIsWanted()) {
         return;
     }
     /* Drops what both sides still hold, or re-enabling would open with a
      * burst of audio recorded before it was switched off. */
     voiceBackendCaptureStop();
+    captureStarted = false;
     inputLevel = 0.0f;
     gateOpen = false;
     gateHangover = 0;
@@ -327,7 +374,8 @@ static bool startCaptureIfWanted(void) {
     if (!isInitialised || !captureIsWanted()) {
         return false;
     }
-    return voiceBackendCaptureStart();
+    captureStarted = voiceBackendCaptureStart();
+    return captureStarted;
 }
 
 /*********************************************************
@@ -469,6 +517,10 @@ void voiceCleanup(void) {
     masterVolume = 1.0f;
     inputLevel = 0.0f;
     warnedFrameTooLarge = false;
+    /* The streams went with the shutdown above, so nothing may still be
+     * holding the microphone open across an init that comes after this. */
+    captureStarted = false;
+    settingsWantsMic = false;
     isInitialised = false;
 }
 
@@ -561,9 +613,16 @@ void voiceReset(void) {
     reportedSelfMuted = false;
     reportedAtMs = 0;
     connectionCarriesVoice = false;
-    wasCarryingVoice = false;
+    wasCaptureWanted = false;
     wasSending = false;
     captureRetryTicks = 0;
+
+    /* The connection was one of the reasons the microphone was open, and it
+     * has just gone.  Nothing else would notice: no loop calls voiceTick at
+     * the main menu, so a recording device left running there keeps the
+     * operating system's microphone indicator lit and banks everything it
+     * hears for whoever drains it next. */
+    stopCaptureIfIdle();
 }
 
 /*********************************************************
@@ -586,10 +645,14 @@ void voiceMicTestStart(void) {
     }
 
     /* The master switch outranks the test - it is what decides whether the
-     * microphone runs at all. */
+     * microphone runs at all.  Started here rather than through
+     * startCaptureIfWanted, because the test is not a reason for the
+     * microphone until it is recording, and it is not recording until the
+     * device came up. */
     if (!voiceEnabled || !voiceBackendCaptureStart()) {
         return;
     }
+    captureStarted = true;
 
     micTestRecorded = 0;
     micTestPlayed = 0;
@@ -725,9 +788,10 @@ bool voiceIsEnabled(void) {
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  Chooses how captured audio reaches the other players.
-*  Opens the recording device if the new mode can transmit
-*  and this is the first ask, and pauses it once nothing
-*  wants it any more.
+*  Opens the recording device if something now wants it and
+*  pauses it once nothing does.  A mode that can transmit is
+*  only one with a connection to carry the audio, so a mode
+*  chosen from the main menu opens nothing by itself.
 *
 *ARGUMENTS:
 *  mode - one of the VoiceMode values
@@ -1047,6 +1111,57 @@ float voiceGetInputLevel(void) {
 *********************************************************/
 float voiceGetInputMeter(void) {
     return voiceMeterScale(inputLevel);
+}
+
+/*********************************************************
+*NAME:          voiceSettingsSectionDrawn
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Holds the recording device open for the frame the settings
+*  voice section is drawing.  Its level meter reads what was
+*  captured, so with the device shut it reads zero and the one
+*  check a player can make on their microphone before joining
+*  a game tells them nothing.
+*
+*  Said again on every frame rather than taken back at the
+*  end: the next tick reads it and clears it, so a section
+*  that has stopped being drawn releases the microphone on its
+*  own and no dialog has to remember to say it closed.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceSettingsSectionDrawn(void) {
+    settingsWantsMic = true;
+}
+
+/*********************************************************
+*NAME:          voiceSettingsSectionClosed
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Gives up the settings voice section's hold on the recording
+*  device and releases the device if nothing else wants it.
+*
+*  The hold otherwise lapses on the next tick, which covers a
+*  section that stops being drawn inside a loop that carries on
+*  ticking - the in-game overlay.  It does not cover the
+*  settings dialog that owns the loop itself: closing it hands
+*  control back to the main menu, where nothing calls voiceTick
+*  at all, so a microphone left running there stays running,
+*  with the operating system's indicator lit and everything it
+*  hears banked for whoever drains it next.  That is what this
+*  is for.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceSettingsSectionClosed(void) {
+    settingsWantsMic = false;
+    stopCaptureIfIdle();
 }
 
 /*********************************************************
@@ -1731,6 +1846,7 @@ void voiceTick(struct ClientSim *cs) {
     int16_t pcm[VOICE_FRAME_SAMPLES];
     uint8_t packet[VOICE_MAX_PACKET];
     bool sending;
+    bool wanted;
     int frame;
     int i;
     int got;
@@ -1768,32 +1884,39 @@ void voiceTick(struct ClientSim *cs) {
     connectionCarriesVoice =
         clientSimNetHasVoiceTransport(cs) && !clientSimIsSpectator(cs);
 
-    /* Joining a connection that carries voice is what opens the microphone.
-     * The first attempt goes out on the tick the connection starts carrying
-     * it; while that has not produced an open device it is asked for again
-     * every VOICE_CAPTURE_RETRY_TICKS, since the open fails for as long as
-     * the operating system's permission prompt is still up.  The start is
+    /* Settled once for the tick, above everything that acts on it: the
+     * settings section's asking is taken back at the end of this call, so
+     * a second reading part way down would be a different answer. */
+    wanted = captureIsWanted();
+
+    /* A reason for the microphone appearing is what opens it.  The first
+     * attempt goes out on the tick the reason appears; while that has not
+     * produced a running device it is asked for again every
+     * VOICE_CAPTURE_RETRY_TICKS, since the open fails for as long as the
+     * operating system's permission prompt is still up.  The start is
      * idempotent, so an open that succeeded is never repeated. */
 #if defined(WB_VOICEDEBUG)
-    /* A recording opens the device with no connection to carry voice, since
-     * a recording made on one machine has none.  An injected run takes its
-     * audio from the file instead, so it opens no recording device at all
-     * and runs on a machine whose microphone does not work. */
-    if ((connectionCarriesVoice || voiceDebugIsRecording()) &&
-        !voiceDebugInjectIsOpen() && captureIsWanted() &&
-        !voiceBackendCaptureIsOpen()) {
+    /* An injected run takes its audio from the file rather than the
+     * microphone, so it opens no recording device at all and runs on a
+     * machine whose microphone does not work. */
+    if (wanted && !voiceDebugInjectIsOpen() && !captureIsRunning()) {
 #else
-    if (connectionCarriesVoice && captureIsWanted() &&
-        !voiceBackendCaptureIsOpen()) {
+    if (wanted && !captureIsRunning()) {
 #endif
-        if (!wasCarryingVoice || captureRetryTicks == 0) {
+        if (!wasCaptureWanted || captureRetryTicks == 0) {
             startCaptureIfWanted();
             captureRetryTicks = VOICE_CAPTURE_RETRY_TICKS;
         } else {
             captureRetryTicks--;
         }
     }
-    wasCarryingVoice = connectionCarriesVoice;
+    wasCaptureWanted = wanted;
+
+    /* And the other way round.  A reason going - the connection ended, the
+     * settings section stopped being drawn, the test finished - is not an
+     * event anything reports, so the microphone is released here, on the
+     * first tick after there is nothing left to hold it open. */
+    stopCaptureIfIdle();
 
     /* Reported after the open attempt, so a device that came up on this
      * tick is what the server hears about rather than last tick's absence
@@ -1810,7 +1933,8 @@ void voiceTick(struct ClientSim *cs) {
 
     /* Nothing accumulates while the microphone is unwanted - the recording
      * device is paused, so there is no backlog to drain here. */
-    if (!captureIsWanted()) {
+    if (!wanted) {
+        settingsWantsMic = false;
         return;
     }
 
@@ -2005,10 +2129,15 @@ void voiceTick(struct ClientSim *cs) {
                 micTestState = VOICE_MICTEST_PLAYING;
                 micTestPlayed = 0;
                 /* The recording is done, so the test has no further use for
-                 * the microphone.  This closes it unless a transmitting mode
-                 * still wants it, and clears the level meter with it. */
+                 * the microphone.  This closes it unless something else still
+                 * wants it, and clears the level meter with it. */
                 stopCaptureIfIdle();
             }
         }
     }
+
+    /* The settings voice section asks again on every frame it draws, so
+     * taking the asking back here is what makes it lapse: a section that has
+     * stopped being drawn is not read as still asking on the next tick. */
+    settingsWantsMic = false;
 }
