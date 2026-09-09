@@ -2389,6 +2389,10 @@ bool clientSimGetAlliesInTrees(const ClientSim *cs) {
   return cs ? cs->alliesInTrees : false;
 }
 
+ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs) {
+  return cs ? cs->serverVoiceMode : serverVoiceOn;
+}
+
 uint16_t clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat) {
   if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
     return 0;

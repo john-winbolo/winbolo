@@ -1579,6 +1579,12 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ENABLE), &voiceOn)) {
         windowSetVoiceEnabled(voiceOn);
     }
+    /* Said once, above the controls, on a server that drops what it is sent:
+       the devices, the level meter and the microphone test below are all
+       local and still worth having, but nothing said here reaches anyone. */
+    if (voiceServerHasVoiceOff()) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
+    }
     if (!voiceOn) ImGui::BeginDisabled();
     {
         const char *voiceModeLabels[] = {

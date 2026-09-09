@@ -43,6 +43,7 @@
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
+#include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -907,6 +908,13 @@ bool        clientSimGetClassicMode(const ClientSim *cs);
  * event arrives, and a payload that predates the field leaves it false
  * too — which matches the classic behaviour the option turns off. */
 bool        clientSimGetAlliesInTrees(const ClientSim *cs);
+
+/* What the server does with the voice its clients send it, as last broadcast
+ * in the lobby-settings event. serverVoiceOff means voice sent from here is
+ * dropped, so a client on such a server captures and sends none. Reads back
+ * serverVoiceOn until the first event arrives, which is what every server did
+ * before the setting existed. */
+ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs);
 
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);

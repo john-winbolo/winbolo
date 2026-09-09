@@ -2618,8 +2618,17 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s) {
        left out — what the microphone is doing is worth seeing even
        when nothing is being sent. */
     const bool voiceOn = voiceIsEnabled();
+    /* The server dropping voice reads the same way here as the master switch
+       being off: the rest is greyed rather than left out, so the row keeps its
+       shape and the reason is stated instead of being left to guess at. The
+       switch is named first when both apply — it is the one the player can
+       do something about. */
+    const bool serverOff = voiceServerHasVoiceOff();
     if (!voiceOn) {
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_VOICE_OFF));
+        ImGui::BeginDisabled();
+    } else if (serverOff) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
         ImGui::BeginDisabled();
     } else if (!hasMic) {
         ImGui::TextDisabled("%s", langGetText(STR_PLAYER_TIP_VOICE_SELF_NOMIC));
@@ -2671,6 +2680,6 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s) {
         ImGui::TextUnformatted(pttName);
     }
 
-    if (!voiceOn) ImGui::EndDisabled();
+    if (!voiceOn || serverOff) ImGui::EndDisabled();
 }
 #endif

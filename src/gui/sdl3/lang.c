@@ -1903,6 +1903,9 @@ static const LangEntry langTable[] = {
     {2121, "Off"},
     {2122, "Proximity"},
     {2123, "Off drops voice instead of carrying it to anyone. Proximity is not implemented yet and behaves the same as On."},
+    /* Shown to a connected client whose server was started with voice off,
+     * where the controls below it reach nothing. */
+    {2126, "This server has voice turned off"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
     {1866, "[Spectator] {string1}"},

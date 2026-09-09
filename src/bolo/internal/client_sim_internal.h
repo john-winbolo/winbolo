@@ -344,6 +344,12 @@ struct ClientSim {
                                      * to their allies; raw mirror of the
                                      * lobby-settings event, false until the
                                      * first one lands */
+    ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
+                                       * its clients send it; raw mirror of
+                                       * the lobby-settings event. Zero is
+                                       * serverVoiceOn, so a client that has
+                                       * not been told yet behaves as it did
+                                       * before the server carried the mode */
     /* The client's own copy of the proximity clocks a viewPolicyDecay
      * category runs on, for the local player as the viewer. The server keeps
      * the same clocks and they are what decides which rects it sends; these

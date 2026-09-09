@@ -176,6 +176,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     }
     evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
     evt->u.lobbySettings.lobbyAlliesInTrees = sim->alliesInTrees;
+    evt->u.lobbySettings.voiceMode = sim->voiceMode;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {

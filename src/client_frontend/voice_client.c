@@ -167,10 +167,17 @@ static int micTestRecorded = 0;
 static int micTestPlayed = 0;
 
 /* Whether the connection we are on carries this client's voice at all - it
- * has to exist, and a viewer's voice is not passed to the players.  Refreshed
- * every tick, because voiceIsTransmitting is asked by the settings dialog,
- * which has no client of its own to ask. */
+ * has to exist, the server it reaches has to be carrying voice, and a viewer's
+ * voice is not passed to the players.  Refreshed every tick, because
+ * voiceIsTransmitting is asked by the settings dialog, which has no client of
+ * its own to ask. */
 static bool connectionCarriesVoice = false;
+
+/* Whether the server we are on has voice turned off, for the settings section
+ * and the lobby row to say so.  Separate from connectionCarriesVoice, which is
+ * also false in single player and for a viewer - neither is the server
+ * declining to carry voice, and neither should be reported as one. */
+static bool serverVoiceIsOff = false;
 
 /* Previous tick's captureIsWanted.  The microphone is first asked for on the
  * rising edge - a reason for it appearing is what asks - so starting the game,
@@ -613,6 +620,7 @@ void voiceReset(void) {
     reportedSelfMuted = false;
     reportedAtMs = 0;
     connectionCarriesVoice = false;
+    serverVoiceIsOff = false;
     wasCaptureWanted = false;
     wasSending = false;
     captureRetryTicks = 0;
@@ -935,6 +943,27 @@ bool voiceIsTransmitting(void) {
 *********************************************************/
 bool voiceConnectionCarriesVoice(void) {
     return connectionCarriesVoice;
+}
+
+/*********************************************************
+*NAME:          voiceServerHasVoiceOff
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether the server we are on was started with
+*  voice off, so the settings section and the lobby row can
+*  say the feature is unavailable here rather than offering
+*  controls that reach nothing.  False in single player and
+*  at the main menu: there is no server there declining
+*  anything, and a client that has not yet been told the
+*  mode reads the on it always ran with.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceServerHasVoiceOff(void) {
+    return serverVoiceIsOff;
 }
 
 /*********************************************************
@@ -1878,11 +1907,17 @@ void voiceTick(struct ClientSim *cs) {
     /* The connection has to be one that carries voice at all - the local
      * transport single-player attaches goes nowhere - and a viewer captures
      * for the microphone test like anyone else, but its voice is not carried
-     * to the players, so there is nothing to send.  Kept here rather than
+     * to the players, so there is nothing to send.  A server started with
+     * -voice off drains and discards what it is sent, so it is no more a
+     * destination than the local transport is: without this the microphone
+     * would be opened and frames encoded for nothing.  Kept here rather than
      * asked for inside voiceIsTransmitting, which the settings dialog calls
      * with no client of its own. */
+    serverVoiceIsOff = clientSimNetHasVoiceTransport(cs) &&
+                       clientSimGetServerVoiceMode(cs) == serverVoiceOff;
     connectionCarriesVoice =
-        clientSimNetHasVoiceTransport(cs) && !clientSimIsSpectator(cs);
+        clientSimNetHasVoiceTransport(cs) && !clientSimIsSpectator(cs) &&
+        !serverVoiceIsOff;
 
     /* Settled once for the tick, above everything that acts on it: the
      * settings section's asking is taken back at the end of this call, so

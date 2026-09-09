@@ -439,7 +439,7 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
                  ",\"lobbyAiType\":%u,\"lobbyTimeLimit\":%d"
                  ",\"lobbyPillCount\":%u,\"lobbyBaseCount\":%u"
                  ",\"lobbyStartCount\":%u,\"mapSkipAvailable\":%s"
-                 ",\"netStat\":%d,\"hasLobby\":%s",
+                 ",\"netStat\":%d,\"hasLobby\":%s,\"voiceMode\":%d",
               (int)evt->u.lobbySettings.lobbyGameType,
               evt->u.lobbySettings.lobbyHiddenMines ? "true" : "false",
               (unsigned)evt->u.lobbySettings.lobbyAiType,
@@ -449,7 +449,8 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.lobbySettings.lobbyStartCount,
               evt->u.lobbySettings.mapSkipAvailable ? "true" : "false",
               (int)evt->u.lobbySettings.netStat,
-              evt->u.lobbySettings.hasLobby ? "true" : "false");
+              evt->u.lobbySettings.hasLobby ? "true" : "false",
+              (int)evt->u.lobbySettings.voiceMode);
       break;
 
     case CTRL_LOBBY_MAP_CHANGE:

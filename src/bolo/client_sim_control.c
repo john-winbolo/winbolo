@@ -407,6 +407,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
+        cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
          * gameLength (it decrements every running tick), so applying it
