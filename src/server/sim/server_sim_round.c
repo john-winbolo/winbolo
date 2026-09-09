@@ -876,6 +876,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 6. Clear events */
     sim->eventCount = 0;
+    /* Drop any ping accepted but not yet buffered, so it can't leak a stale
+     * marker into the next round's first running tick. */
+    memset(sim->hasPendingPing, 0, sizeof(sim->hasPendingPing));
 
     /* Post-game stats are round-scoped: clear the accumulator and the notable
      * timeline so an aborted or finished round never leaks into the next. This
@@ -1058,6 +1061,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * snapshot's own arrays, not these queues, so flushing loses nothing. */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+    memset(sim->hasPendingPing, 0, sizeof(sim->hasPendingPing));
 
     /* Drop the lobby-chat catch-up buffer: this is an authoritative game start
      * just like serverSimStartGame's countdown->running path, and the just-ended

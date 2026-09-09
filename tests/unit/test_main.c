@@ -650,6 +650,7 @@ static const UnitTestEntry s_tests[] = {
     { "ping_dispatch_rejects_bad_kind",          run_ping_dispatch_rejects_bad_kind          },
     { "ping_dispatch_rate_limit",                run_ping_dispatch_rate_limit                },
     { "ping_reaches_team_only",                  run_ping_reaches_team_only                  },
+    { "ping_network",                            run_ping_network                            },
     { "lang_name_table",                         run_lang_name_table                         },
     { "screencalc_river_road_counts_as_water",   run_screencalc_river_road_counts_as_water   },
     { "screencalc_river_arms_of_road_centred_cross",

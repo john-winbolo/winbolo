@@ -3426,6 +3426,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # gates, the per-player rate limit, the GameEvent it builds, and the
     # team-only delivery predicate both snapshot filters share.
     tests/unit/test_ping_dispatch.c
+    # Smart ping over the wire: the full client -> server -> client path on the
+    # real loopback UDP transport, driven through serverInstanceTick so the
+    # per-frame event-buffer clear that drops a networked ping is exercised.
+    tests/unit/test_ping_network.c
     # Generated lang-name table: K_LANG_NAME_TABLE_SIZE vs the real array
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.

@@ -108,6 +108,20 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     }
 }
 
+void serverSimFlushPendingPings(ServerSim *sim) {
+    int i;
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->hasPendingPing[i]) continue;
+        sim->hasPendingPing[i] = false;
+        /* Buffer the ping into the freshly-cleared per-frame event buffer so
+         * both the per-client snapshot build and the UDP event drain (both run
+         * after the tick) see it. The dispatch arm records but never buffers,
+         * so this is the one and only add for this ping. */
+        serverSimAddEvent(sim, &sim->pendingPing[i]);
+    }
+}
+
 void serverSimClearBalanceProposal(ServerSim *sim) {
     memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }

@@ -62,19 +62,38 @@ static void pd_advance(ServerSim *sim, uint32_t ticks) {
     sim->tick += ticks;
 }
 
-/* The last EVENT_PING the sim buffered this tick, or NULL. */
+/* The last EVENT_PING the sim buffered, or NULL.
+ *
+ * The dispatch arm does not buffer the event itself — it records the ping in
+ * pendingPing, and serverSimFlushPendingPings (called at the top of a running
+ * serverSimTick, right after the per-frame event buffer is cleared) is the one
+ * place an EVENT_PING enters sim->events. Running the flush here is what a real
+ * frame does between receiving the command and draining events, so this reads
+ * the buffer the transports actually see. The flush clears the pending flags,
+ * so calling it twice cannot double-buffer a ping. */
 static const GameEvent *pd_last_ping(ServerSim *sim) {
-    const GameEvent *evs = serverSimGetEvents(sim);
-    int n = (int)serverSimGetEventCount(sim);
-    int i;
+    const GameEvent *evs;
+    int n, i;
+    serverSimFlushPendingPings(sim);
+    evs = serverSimGetEvents(sim);
+    n = (int)serverSimGetEventCount(sim);
     for (i = n - 1; i >= 0; i--) {
         if (evs[i].type == EVENT_PING) return &evs[i];
     }
     return NULL;
 }
 
+/* Both halves of the ping's path back to zero: the per-frame event buffer and
+ * the pending records the flush feeds it from. */
 static void pd_clear_events(ServerSim *sim) {
     sim->eventCount = 0;
+    memset(sim->hasPendingPing, 0, sizeof(sim->hasPendingPing));
+}
+
+/* Did the arm record a pending ping for this slot? A refused ping must leave
+ * this false — the record is the queue, so a stray one would still be sent. */
+static bool pd_has_pending(ServerSim *sim, int slot) {
+    return sim->hasPendingPing[slot];
 }
 
 int run_ping_dispatch_accepts_and_builds_event(void) {
@@ -87,8 +106,28 @@ int run_ping_dispatch_accepts_and_builds_event(void) {
                       == CMD_OK,
                   "a running game with a live tank must accept a ping");
 
+    /* The arm records, it does not buffer: the event must still be absent from
+     * sim->events, and waiting in the pending slot. Buffering at dispatch time
+     * as well would hand an in-process client, whose snapshot poll dedups per
+     * serverTick, the same ping on two consecutive ticks. */
+    UT_ASSERT_MSG(serverSimGetEventCount(sim) == 0,
+                  "the dispatch arm buffered an event; the flush is the only "
+                  "place a ping may enter sim->events");
+    UT_ASSERT_MSG(pd_has_pending(sim, 0), "no ping was recorded as pending");
+    UT_ASSERT_MSG(sim->pendingPing[0].type == EVENT_PING,
+                  "pending record is not an EVENT_PING");
+    UT_ASSERT_MSG(sim->pendingPing[0].data[1] == PING_KIND_ATTACK,
+                  "pending record kind = %d", sim->pendingPing[0].data[1]);
+
+    /* Now the tick's flush runs, and exactly one EVENT_PING appears. */
     ev = pd_last_ping(sim);
     UT_ASSERT_MSG(ev != NULL, "no EVENT_PING was buffered");
+    UT_ASSERT_MSG(serverSimGetEventCount(sim) == 1,
+                  "the flush buffered %d events, expected exactly 1",
+                  (int)serverSimGetEventCount(sim));
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "the flush left the pending record set; the next tick would "
+                  "send the same ping again");
     /* [sender, kind, xHi, xLo, yHi, yLo] — big-endian, the same order the
      * client's reader indexes. */
     UT_ASSERT_MSG(ev->data[0] == 0, "sender = %d", ev->data[0]);
@@ -99,6 +138,13 @@ int run_ping_dispatch_accepts_and_builds_event(void) {
                   "worldY round trip");
     /* Nothing past the six bytes the size table declares. */
     UT_ASSERT(ev->data[6] == 0 && ev->data[7] == 0);
+
+    /* A second frame with nothing new must add nothing: the flush clears what
+     * it consumed, so a ping cannot be re-sent tick after tick. */
+    serverSimFlushPendingPings(sim);
+    UT_ASSERT_MSG(serverSimGetEventCount(sim) == 1,
+                  "a second flush re-buffered the ping (count now %d)",
+                  (int)serverSimGetEventCount(sim));
 
     serverSimDestroy(sim);
     return 0;
@@ -116,6 +162,8 @@ int run_ping_dispatch_rejects_lobby(void) {
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_REJECT_BAD_STATE,
                   "a lobby ping must be refused");
+    UT_ASSERT_MSG(!sim->hasPendingPing[0],
+                  "a refused ping was recorded as pending");
     UT_ASSERT_MSG(pd_last_ping(sim) == NULL, "a refused ping emitted an event");
 
     serverSimDestroy(sim);
@@ -141,6 +189,8 @@ int run_ping_dispatch_rejects_tankless_and_spectator(void) {
     UT_ASSERT_MSG(pd_send(sim, -1, PING_KIND_STANDARD,
                           PD_WORLD_X, PD_WORLD_Y) == CMD_REJECT_INVALID,
                   "a negative sender must be refused");
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0) && !pd_has_pending(sim, 1),
+                  "a refused ping was recorded as pending");
     UT_ASSERT(pd_last_ping(sim) == NULL);
 
     serverSimDestroy(sim);
@@ -158,6 +208,8 @@ int run_ping_dispatch_rejects_bad_kind(void) {
     UT_ASSERT_MSG(pd_send(sim, 0, 255, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_REJECT_INVALID,
                   "a nonsense kind must be refused");
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "a refused ping was recorded as pending");
     UT_ASSERT_MSG(pd_last_ping(sim) == NULL, "a refused ping emitted an event");
 
     /* Every kind this build does know is accepted, one per cooldown window. */
@@ -180,19 +232,31 @@ int run_ping_dispatch_rate_limit(void) {
     UT_ASSERT(sim != NULL);
     pd_clear_events(sim);
 
-    /* First one lands. */
+    /* First one lands, and is recorded for the tick's flush to buffer. */
     UT_ASSERT(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                   == CMD_OK);
+    UT_ASSERT_MSG(pd_has_pending(sim, 0),
+                  "an accepted ping left no pending record");
+
+    /* Consume it the way the top of a running tick would, so what follows is
+     * measured against an empty queue: a cooldown rejection must add nothing
+     * back. The pending record IS the send queue, so a rejected ping that set
+     * it would still go out. */
+    pd_clear_events(sim);
 
     /* A second one on the same tick, and anywhere inside the minimum gap, is
      * a cooldown — a held key must not machine-gun the team's view. */
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_REJECT_COOLDOWN,
                   "two pings on one tick must not both land");
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "a rate-limited ping was still queued for sending");
     pd_advance(sim, PING_RATE_MIN_GAP_TICKS - 1);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_REJECT_COOLDOWN,
                   "just inside the minimum gap must still be a cooldown");
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "a rate-limited ping was still queued for sending");
 
     /* Past the gap it lands again — up to the burst cap. The first ping
      * above used one of the PING_RATE_BURST slots, so PING_RATE_BURST-1
@@ -210,6 +274,12 @@ int run_ping_dispatch_rate_limit(void) {
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_REJECT_COOLDOWN,
                   "the burst cap must hold once the allowance is spent");
+    pd_clear_events(sim);
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
+                      == CMD_REJECT_COOLDOWN,
+                  "the burst cap must hold on a retry too");
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "a burst-capped ping was still queued for sending");
 
     /* Once the window has rolled past the oldest of the burst, the
      * allowance comes back. */

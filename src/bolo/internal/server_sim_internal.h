@@ -424,6 +424,19 @@ struct ServerSim {
     uint32_t     pingBurstTicks[MAX_TANKS][PING_RATE_BURST];
     uint8_t      pingBurstIdx[MAX_TANKS];
 
+    /* Pings accepted since the last frame's event drain, one slot per sender
+     * (a sender is rate-limited to at most one accepted ping per frame). This
+     * is the queue for an accepted ping: the CMD_PING arm records it here and
+     * nowhere else, because commands run during packet receive — before
+     * serverSimTick clears the per-frame event buffer, which would wipe
+     * anything buffered at dispatch time before the post-tick UDP drain could
+     * send it. serverSimFlushPendingPings buffers these into the freshly-
+     * cleared buffer at the top of the running tick, and is the single point at
+     * which an EVENT_PING enters sim->events — so every recipient, wire or
+     * in-process, sees the ping exactly once. */
+    GameEvent    pendingPing[MAX_TANKS];
+    bool         hasPendingPing[MAX_TANKS];
+
     /* Last map square the builder saw this player's tank at; keeps a dead
      * or tankless player's view anchored instead of falling back to the
      * whole map. */
@@ -718,6 +731,15 @@ void serverSimFogPillUpdateEvent(ServerSim *sim, BYTE slot, GameEvent *ev,
  * copies of the delivery filter — the per-client snapshot build in
  * server_sim_snapshot.c and the UDP drain in transport_udp_server.c. */
 bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender);
+
+/* Buffer any pings accepted since the last drain (recorded in pendingPing) into
+ * the per-frame event buffer, then clear their pending flags. Called at the top
+ * of a running serverSimTick, right after the event buffer is cleared: the
+ * CMD_PING arm runs during packet receive, before that clear, so it records the
+ * ping instead of buffering it and this is the single point at which an
+ * EVENT_PING enters sim->events. A ping therefore survives to the UDP event
+ * drain that runs after the tick, and is delivered exactly once. */
+void serverSimFlushPendingPings(ServerSim *sim);
 
 /* serverSimGetCompressedMap over one slot's copy of the terrain and its record
  * of the pill squares, with the live bases and starts. The blob a client

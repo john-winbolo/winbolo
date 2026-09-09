@@ -862,7 +862,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             ev.data[3] = (BYTE)(p->worldX & 0xFF);
             ev.data[4] = (BYTE)(p->worldY >> 8);
             ev.data[5] = (BYTE)(p->worldY & 0xFF);
-            serverSimAddEvent(sim, &ev);
+            /* The pending record IS this ping's queue — the arm deliberately
+             * does not call serverSimAddEvent. It runs during packet receive,
+             * before serverSimTick clears the per-frame event buffer, so an
+             * event buffered here would be wiped before the post-tick UDP drain
+             * could send it; and buffering it both here and at the flush would
+             * deliver it twice to an in-process client, whose snapshot poll
+             * dedups per serverTick and so would take the pre-clear copy on one
+             * tick and the flushed copy on the next. serverSimFlushPendingPings,
+             * at the top of the running tick, is the single point at which an
+             * EVENT_PING enters sim->events. */
+            sim->pendingPing[slot] = ev;
+            sim->hasPendingPing[slot] = true;
         }
         /* Recorded whole so a replay can draw the marker where the sender
          * put it; the viewer culls nothing, since a replay watches every

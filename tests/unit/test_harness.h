@@ -1496,6 +1496,13 @@ int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
 int run_ping_reaches_team_only(void);
 
+/* Smart ping across the wire (test_ping_network.c): the full client -> server
+ * -> client path over the real loopback UDP transport, driven through
+ * serverInstanceTick so the per-frame event-buffer clear is exercised. A lone
+ * player's ping must echo back to itself, and a teammate's ping must reach the
+ * other client. Red while the EVENT_PING is cleared before the wire drain. */
+int run_ping_network(void);
+
 /* Generated lang-name lookup table pin (test_lang_name_table.c): the
  * K_LANG_NAME_TABLE_SIZE macro matches the real kLangNameTable[] length,
  * the table is strictly sorted for bsearch, and every name round-trips —
