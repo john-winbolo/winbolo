@@ -613,6 +613,55 @@ int run_sound_payload_shape(void) {
                       (unsigned)soundMX, (unsigned)SD_LISTENER_MY);
     }
 
+    /* ---- A slot flagged with serverSimSetSoundSquares keeps it too ------- */
+    /* The gym agent and the headless brain harness join as ordinary local
+     * players and are never bot-manager bots, yet their observation code reads
+     * the square. They mark their slot through the T1 setter; the flag has to
+     * win over the human default, and clearing it has to restore that default
+     * so a reused slot does not inherit it. A far manLayingMineNear is also
+     * staged: it is dropped for a human, who has no far variant to play, but a
+     * flagged recipient reads it as a position and gets it. */
+    {
+        const BYTE soundMX = (BYTE)(SD_LISTENER_MX + SD_GAP_NEAR);
+        const BYTE mineMX = (BYTE)(SD_LISTENER_MX + SD_GAP_HEARD);
+        const GameEvent *mine;
+
+        serverSimSetSoundSquares(sim, 1, true);
+
+        sdResetEvents(sim);
+        sdAddSound(sim, EVENT_SOUND, (uint8_t)bigExplosionNear, soundMX,
+                   SD_LISTENER_MY, 0);
+        sdAddSound(sim, EVENT_SOUND, (uint8_t)manLayingMineNear, mineMX,
+                   SD_LISTENER_MY, 0);
+        n = sdBuild(sim, 1, ev);
+        hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)bigExplosionNear);
+        mine = sdFind(ev, n, EVENT_SOUND, (uint8_t)manLayingMineNear);
+
+        UT_ASSERT_MSG(hit != NULL,
+                      "a sound %d squares from a slot flagged with "
+                      "serverSimSetSoundSquares was not delivered — %d "
+                      "event(s) came back", SD_GAP_NEAR, n);
+        UT_ASSERT_MSG(hit->data[1] == soundMX && hit->data[2] == SD_LISTENER_MY,
+                      "a slot flagged with serverSimSetSoundSquares was sent "
+                      "%u,%u for a sound staged at %u,%u — the flag means it "
+                      "keeps the square", hit->data[1], hit->data[2],
+                      (unsigned)soundMX, (unsigned)SD_LISTENER_MY);
+        UT_ASSERT_MSG(mine != NULL &&
+                      mine->data[1] == mineMX && mine->data[2] == SD_LISTENER_MY,
+                      "a far manLayingMineNear was %s a flagged slot — it reads "
+                      "the square as a position and has no tier to be silent in",
+                      mine == NULL ? "dropped for" : "reshaped for");
+
+        serverSimSetSoundSquares(sim, 1, false);
+
+        n = sdBuild(sim, 1, ev);
+        hit = sdFind(ev, n, EVENT_SOUND, (uint8_t)bigExplosionNear);
+        UT_ASSERT_MSG(hit != NULL && hit->data[1] <= SOUND_TIER_FAR &&
+                      hit->data[2] <= SOUND_DIR_NW,
+                      "clearing serverSimSetSoundSquares did not restore the "
+                      "tier and direction a human is sent");
+    }
+
     serverSimDestroy(sim);
     return 0;
 }

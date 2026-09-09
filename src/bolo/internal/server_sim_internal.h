@@ -409,6 +409,12 @@ struct ServerSim {
     uint8_t      lastTankMY[MAX_TANKS];
     bool         lastTankValid[MAX_TANKS];
 
+    /* Slots whose in-process consumer reads a sound's map square (the gym
+     * agent, the headless brain harness). Set through
+     * serverSimSetSoundSquares; never reachable from the wire. Cleared when
+     * the slot is joined or freed. */
+    bool         soundSquares[MAX_TANKS];
+
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */
@@ -559,6 +565,37 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
  * itself) still has values to send. */
 bool soundTierAndDirection(int listenerMX, int listenerMY, int mx, int my,
                            uint8_t *tier, uint8_t *dir);
+
+/* One recipient's pick of a tick's sound events: the closest instance of
+ * each sound id, already shaped for that recipient. The snapshot builder and
+ * the UDP drain both fill one of these with soundPickOffer and then send
+ * whatever it holds, so every rule about who hears what lives in
+ * soundPickOffer alone.
+ *
+ * SOUND_PICK_TYPES is indexed by sound id; sndEffects has about 24 values. */
+#define SOUND_PICK_TYPES 32
+typedef struct {
+    GameEvent ev[SOUND_PICK_TYPES];    /* the winner, shaped for the recipient */
+    int       dist[SOUND_PICK_TYPES];  /* manhattan distance on the real squares */
+    bool      has[SOUND_PICK_TYPES];
+} SoundPick;
+
+/* True for the three sound event types. */
+bool soundEventIsSound(uint8_t type);
+
+void soundPickInit(SoundPick *pick);
+
+/* Offer one sim event to a recipient. Non-sound events, sounds the recipient
+ * must not hear, and sounds farther than the one already held for that id are
+ * left alone. listenerMX/MY is the recipient's tank square. With keepSquare
+ * the held copy carries the real square; without it the middle two bytes are
+ * rewritten to the tier and bearing measured from the listener. */
+void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
+                    int listenerMX, int listenerMY, bool keepSquare);
+
+/* True when an in-process recipient is sent a sound's real map square: a
+ * bot-manager bot, or a slot flagged through serverSimSetSoundSquares. */
+bool serverSimRecipientKeepsSoundSquares(ServerSim *sim, BYTE playerNum);
 
 /* Per-client copies of the terrain (clientKnownMap above). Seed points a
  * slot's handle at its storage and copies the live map into it; SeedAll does

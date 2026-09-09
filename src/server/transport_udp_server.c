@@ -6721,75 +6721,18 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
          * Sounds are culled by distance instead, so the rect set has no say in
          * what a recipient hears. */
 
-        /* Pass 1: find best (closest) sound event per type for this client */
-        #define MAX_SOUND_TYPES 32
-        int bestSoundIdx[MAX_SOUND_TYPES];
-        int bestSoundDist[MAX_SOUND_TYPES];
-        uint8_t bestSoundTier[MAX_SOUND_TYPES];  /* what the winner is sent as */
-        uint8_t bestSoundDir[MAX_SOUND_TYPES];
+        /* Pass 1: the closest sound of each type for this client, shaped as
+         * a tier and a bearing. soundPickOffer holds every rule about who
+         * hears what, shared with the snapshot builder. keepSquare is false
+         * here whatever the slot is flagged: a wire recipient is never trusted
+         * with the square. */
+        SoundPick pick;
         int s;
-        for (s = 0; s < MAX_SOUND_TYPES; s++) {
-            bestSoundIdx[s] = -1;
-            bestSoundDist[s] = 255;
-            bestSoundTier[s] = SOUND_TIER_NEAR;
-            bestSoundDir[s] = SOUND_DIR_CENTRE;
-        }
-
-        for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
-            uint8_t evType = serverSimGetEvents(sim)[i].type;
-            if ((evType == EVENT_SOUND || evType == EVENT_SOUND_TANK_HIT || evType == EVENT_SOUND_SHOOT) && hasPos) {
-                uint8_t soundId = serverSimGetEvents(sim)[i].data[0];
-                uint8_t mx = serverSimGetEvents(sim)[i].data[1];
-                uint8_t my = serverSimGetEvents(sim)[i].data[2];
-                uint8_t tier = SOUND_TIER_NEAR;
-                uint8_t dir = SOUND_DIR_CENTRE;
-                bool inRange;
-                int dx = (clientMX > mx) ? (clientMX - mx) : (mx - clientMX);
-                int dy = (clientMY > my) ? (clientMY - my) : (my - clientMY);
-
-                /* Skip own shoot sound — client plays shootSelf via prediction */
-                if (evType == EVENT_SOUND_SHOOT && serverSimGetEvents(sim)[i].data[3] == (uint8_t)c) {
-                    continue;
-                }
-
-                /* Bubbles and a tank going under are each tied to one player's
-                 * own boat or drowning, so they only go to that player. */
-                if (evType == EVENT_SOUND &&
-                    (soundId == bubbles || soundId == tankSinkNear ||
-                     soundId == tankSinkFar) &&
-                    serverSimGetEvents(sim)[i].data[3] != (uint8_t)c) {
-                    continue;
-                }
-
-                /* Worked out for every sound, including the one below that
-                 * skips the range cull, so the winner always has a tier and a
-                 * bearing to be sent as. */
-                inRange = soundTierAndDirection(clientMX, clientMY, mx, my,
-                                                &tier, &dir);
-
-                /* Always send tank hit to the hit player (plays hitTankSelf at full volume) */
-                if (evType == EVENT_SOUND_TANK_HIT && serverSimGetEvents(sim)[i].data[3] == (uint8_t)c) {
-                    /* Skip distance cull */
-                } else if (!inRange) {
-                    continue;
-                }
-
-                /* Neither bubbles nor manLayingMineNear has a far variant, so a
-                 * far one is silence at the recipient. Drop it here, ahead of
-                 * the dedup, so it cannot take the slot a nearer one wants. */
-                if (tier == SOUND_TIER_FAR && evType == EVENT_SOUND &&
-                    (soundId == bubbles || soundId == manLayingMineNear)) {
-                    continue;
-                }
-
-                /* Keep closest per type, measured on the real squares */
-                int dist = dx + dy;
-                if (soundId < MAX_SOUND_TYPES && dist < bestSoundDist[soundId]) {
-                    bestSoundIdx[soundId] = i;
-                    bestSoundDist[soundId] = dist;
-                    bestSoundTier[soundId] = tier;
-                    bestSoundDir[soundId] = dir;
-                }
+        soundPickInit(&pick);
+        if (hasPos) {
+            for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
+                soundPickOffer(&pick, &serverSimGetEvents(sim)[i], (BYTE)c,
+                               clientMX, clientMY, false);
             }
         }
 
@@ -6799,7 +6742,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
          * (CHANNEL_GAME_EFFECT). Sounds are all best-effort. */
         for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
             uint8_t evType = serverSimGetEvents(sim)[i].type;
-            if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+            if (!soundEventIsSound(evType)) {
                 /* Per-recipient working copy so a non-closest dead base's stock
                  * event can be reshaped (armour-only) without mutating the
                  * shared event; forceReliable promotes that copy to the
@@ -6882,19 +6825,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                 }
             }
         }
-        for (s = 0; s < MAX_SOUND_TYPES; s++) {
-            if (bestSoundIdx[s] >= 0) {
+        for (s = 0; s < SOUND_PICK_TYPES; s++) {
+            if (pick.has[s]) {
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
-                /* The tier and bearing are written into a copy: the sim's event
-                 * array is shared with every other recipient in this pass and
-                 * with the snapshot build that follows, so rewriting it in
-                 * place would hand the next client a bearing measured against
-                 * this one's tank. */
-                GameEvent soundEv = serverSimGetEvents(sim)[bestSoundIdx[s]];
-                int evLen;
-                soundEv.data[1] = bestSoundTier[s];
-                soundEv.data[2] = bestSoundDir[s];
-                evLen = packGameEvent(evBuf, &soundEv);
+                int evLen = packGameEvent(evBuf, &pick.ev[s]);
                 /* Sounds are ephemeral — best-effort: never blocks, never
                  * disconnects on overflow (drops oldest). */
                 channelSendBestEffort(&udpServer.channelMux[c],
@@ -6902,7 +6836,6 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                                       (uint16_t)evLen);
             }
         }
-        #undef MAX_SOUND_TYPES
     }
 }
 

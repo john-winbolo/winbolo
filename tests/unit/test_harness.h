@@ -877,7 +877,9 @@ int run_viewport_floor(void);
  * losing the ammo, sends a tank hit to the player hit at any range, and drops
  * manLayingMineNear once its tier is far; and the delivered payload carries a
  * tier and a compass direction for a human recipient — never the sound's map
- * square, in or out of its viewport rects — while a bot keeps the square. */
+ * square, in or out of its viewport rects — while a bot keeps the square, and
+ * so does a local slot flagged through serverSimSetSoundSquares until the flag
+ * is cleared. */
 int run_sound_event_codec(void);
 int run_sound_delivery_builder(void);
 int run_sound_payload_shape(void);

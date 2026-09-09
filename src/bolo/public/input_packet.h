@@ -254,7 +254,10 @@ typedef struct {
  * Nothing on the wire says which. A recipient tells them apart by knowing its
  * own client type: the server works the tier and direction out against the
  * human recipient's own tank and sends those instead of the square, while a bot
- * keeps the square its observation builder reads.
+ * keeps the square its observation builder reads. "Bot" here means a
+ * bot-manager bot or a local slot the host marked with
+ * serverSimSetSoundSquares (the gym agent, the headless brain harness). A
+ * wire client is always sent the tier and direction.
  *
  * The direction is map-absolute — north is decreasing map Y — and is not
  * relative to where the listener is facing. The main view is north-up, so the
