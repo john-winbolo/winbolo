@@ -151,7 +151,14 @@ Texture filter setting does not apply to the background.
 ### Sounds
 
 `sounds/<name>.wav`, or `<name>.wav` at the top level (the 1.x layout). Both are
-searched, `sounds/` first. See [Sound names](#sound-names).
+searched, `sounds/` first.
+
+A sound can have up to eleven files: `<name>_0.wav` through `<name>_9.wav`
+beside `<name>.wav`, one of which is picked each time the sound plays. Gaps in
+the numbering are fine. Whichever of those names your skin holds is the whole
+pool for that sound, so the game's own file is not mixed in with yours, and a
+file that will not decode is skipped while the rest of the pool still plays.
+See [Sound names](#sound-names).
 
 ## Sprite names and sizes
 
@@ -350,6 +357,51 @@ lobby_unready.wav
 
 `near` and `far` are the same event heard close by or at a distance.
 
+### Variants
+
+A sound can have more than one file, and one of them is picked each time that
+sound plays. Beside `<name>.wav`, ship any of `<name>_0.wav` through
+`<name>_9.wav`:
+
+```
+skins/mytheme/sounds/
+    farming_tree_near_0.wav
+    farming_tree_near_1.wav
+    farming_tree_near_2.wav
+```
+
+- The pool for a sound is whichever of those eleven names your skin holds: the
+  ten numbered ones plus the plain `<name>.wav`, which counts as a member like
+  any other. Eleven is the most a sound can have.
+- Gaps are fine — `_0`, `_1` and `_5` is a pool of three. `_10` and above are
+  not part of the scheme and are ignored.
+- Each file is looked for at `sounds/<file>` and then at the skin's top level,
+  the same two places a single sound file is looked for.
+- **One source wins the whole sound.** If your skin holds any file for a sound
+  that decodes, your files are the pool and the game's own is not mixed in.
+  Three chops of your own do not end up rotating with the stock one.
+- A file that will not decode is dropped and the rest of the pool still plays.
+  If none of your files for a sound decode, the game's own sound is used rather
+  than silence.
+- Names match case-insensitively, and nothing goes in `skin.ini`. A variant is
+  found by its filename alone.
+- Variants are a skin feature. The game's own set is one file per effect, so a
+  sound you do not replace has a pool of one.
+- The file that played last is never the one picked next. Two files therefore
+  alternate; a larger pool is random, but never the same file twice running.
+
+**No sound name ends in `_<digit>`**, and none will, so a numbered file is
+always a variant and never a sound in its own right. Nothing in the list above
+is shaped that way.
+
+Give the files in a pool matching loudness and length. One that is louder or
+longer than its neighbours is heard as a wobble on every shot rather than as
+variety.
+
+Two players hear different variants of the same event. The choice is made on
+each machine as the sound plays rather than sent with the event, so both hear
+the same shot but not the same recording of it.
+
 ## Packaging a .wsf
 
 A `.wsf` is a zip with a different extension. From the folder containing your
@@ -453,6 +505,34 @@ built-in counts and the skin counts always add up to 307. Reading it:
   count beside it: 0 means no sheet was used.
 - **`0 slots filled by rotation`** with `InGameRotate=1` — the skin did not supply
   a group's `_00`, or it supplies a whole sheet.
+
+Sounds get a line of their own:
+
+```
+soundSetup: 31 effects, 12 from skin=user:mytheme, 7 with variants (max 4), 2 members unreadable, 1 fell back to the built-in
+```
+
+Reading it:
+
+- **`31 effects`** — sounds with at least one file that plays. There are 31 in
+  all, so a smaller number means some sound has nothing to play at all, and a
+  warning line just above names the file.
+- **`12 from skin=`** — sounds whose pool came from your skin rather than from
+  the game's own set. **`skin=none`** means no skin is loaded: either you have
+  not picked one, or yours was not found or failed to open.
+- **`7 with variants (max 4)`** — how many sounds have more than one file, and
+  the largest pool of any sound. With no `_N` files anywhere this reads
+  `0 with variants (max 1)`.
+- **`2 members unreadable`** — individual files that would not decode, each with
+  its own warning line naming it just above. This is how you find out that
+  `farming_tree_near_5.wav` was never picked up.
+- **`1 fell back to the built-in`** — sounds where your skin held files but none
+  of them decoded, so the game's own sound is what plays.
+
+The last two count different things. One bad file among several moves
+`members unreadable` only, and the sound still works with one variant fewer. A
+sound whose whole pool is bad moves both, and what you hear there is the game's
+own audio rather than yours.
 
 A skin that fails to load when you pick it leaves the previous one selected and
 shows an error in the settings panel. At startup it is different: if the saved

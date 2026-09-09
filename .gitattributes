@@ -9,3 +9,21 @@
 tests/baseline/expected/*.json  text eol=lf
 tests/baseline/expected/*.jsonl text eol=lf
 tests/baseline/expected/*.out   text eol=lf
+
+# The harness inputs need the same treatment as its expected output: the
+# command scripts are replayed byte for byte, and a trailing CR rides into
+# the values the client sends.
+tests/baseline/commands/*.jsonl text eol=lf
+
+# ASCII-hex wire fixtures, compared byte for byte by the codec tests.
+tests/fixtures/wire/*.hex       text eol=lf
+
+# Binary data that git's own detection gets wrong. It calls a file text
+# when there is no NUL byte in the first 8000, which is not true of a Bolo
+# map (data/maps, tests/baseline/maps, the brains' bundled maps) or of a
+# short fuzz seed: "Skew Toy 2.map" holds ten 0x0A bytes and no early NUL,
+# so a Windows checkout under autocrlf rewrote all ten to 0x0D 0x0A and
+# handed the game a corrupt map. Marking the paths binary opts them out of
+# eol conversion whatever the platform's autocrlf setting is.
+*.map                           binary
+tests/fuzz/corpus/**            binary

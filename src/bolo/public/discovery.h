@@ -29,6 +29,7 @@
 #include "gametype.h"      /* gameType */
 #include "client_enums.h"  /* aiType */
 #include "view_policy.h"   /* ViewPolicy — the advertised visibility rules */
+#include "server_voice_mode.h"  /* ServerVoiceMode — the advertised voice mode */
 
 /* Result of a single discoveryPingServer() call. rttMs is the round-trip
  * time in milliseconds when the function returns true; the rest of the
@@ -69,6 +70,9 @@ typedef struct {
   ViewPolicy allyView;
   bool classicMode;
   bool alliesInTrees;
+  /* Voice the server forwards. A server whose INFO predates the flag bits
+   * reports serverVoiceOn, which is what it does. */
+  ServerVoiceMode voiceMode;
 } DiscoveryPingResult;
 
 /* A server discovered via LAN broadcast. Plain data — no wire-format
@@ -115,6 +119,9 @@ typedef struct {
   ViewPolicy     allyView;
   bool           classicMode;
   bool           alliesInTrees;
+  /* Voice the server forwards. A server whose INFO predates the flag bits
+   * reports serverVoiceOn, which is what it does. */
+  ServerVoiceMode voiceMode;
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

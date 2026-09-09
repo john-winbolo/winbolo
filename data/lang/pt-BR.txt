@@ -1490,6 +1490,8 @@ STR_STARTPICK_YOU=você
 STR_STARTPICK_SWAP_WITH=Trocar este início com:
 STR_STARTPICK_ASSIGN_TO=Atribuir início a:
 STR_STARTPICK_SLOT_FALLBACK=(vaga)
+STR_STARTPICK_TIP_OFFSIDE=Início #{number}\nNão está no lado da sua equipe
+STR_STARTPICK_TIP_OFFSIDE_HOST=Início #{number}\nFora da zona para {string1}
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=Jogador IA
 STR_PLATFORM_WINDOWS=Windows
@@ -2001,3 +2003,25 @@ STR_ITEMVIEW_ALLY_NAMED=Visão de tanques aliados — {player}
 STR_DLGBROWSER_VIEWS_LBL=Visões:
 STR_DLGBROWSER_VIEWS_CLASSIC=Clássico
 STR_DLGBROWSER_VIEWS_ALLYTREES=Aliados nas árvores
+
+# Lobby — lado de início da equipe: seletor de cabeçalho, célula de início de linha e ações do menu suspenso
+STR_DLGLOBBY_TEAM_SIDE=Início:
+STR_DLGLOBBY_SIDE_ANY=Indiferente
+STR_DLGLOBBY_SIDE_N=Norte
+STR_DLGLOBBY_SIDE_E=Leste
+STR_DLGLOBBY_SIDE_S=Sul
+STR_DLGLOBBY_SIDE_W=Oeste
+STR_DLGLOBBY_START_SEA=Mar
+STR_DLGLOBBY_START_TEAM_SIDE=Lado da equipe
+STR_DLGLOBBY_START_AUTO=Auto
+STR_DLGLOBBY_START_UNASSIGN=Liberar
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(fora da zona)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} inícios para {number2} jogadores — {number3} começarão no mar.\nMudar de lado reatribui o início de cada jogador.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Todos os inícios que esta equipe pode usar estão ocupados, então este jogador\ncomeçará no mar ao lado do início de um companheiro de equipe.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Fora da zona: este início não está em {string1}, o lado da equipe.\nO anfitrião o escolheu para este jogador.
+
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Colocar as duas equipes em {string1}\n{player} começa {string2}, {other} começa {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Equipes em {string1}. Clique para voltar aos inícios personalizados.
+
+STR_SOUND_LOAD_FAILED=Erro ao carregar efeitos sonoros

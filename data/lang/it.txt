@@ -1492,6 +1492,8 @@ STR_STARTPICK_YOU=tu
 STR_STARTPICK_SWAP_WITH=Scambia questa partenza con:
 STR_STARTPICK_ASSIGN_TO=Assegna la partenza a:
 STR_STARTPICK_SLOT_FALLBACK=(slot)
+STR_STARTPICK_TIP_OFFSIDE=Partenza #{number}\nNon è sul lato della tua squadra
+STR_STARTPICK_TIP_OFFSIDE_HOST=Partenza #{number}\nFuori zona per {string1}
 
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=Giocatore IA
@@ -2005,3 +2007,25 @@ STR_ITEMVIEW_ALLY_NAMED=Vista tank alleati — {player}
 STR_DLGBROWSER_VIEWS_LBL=Viste:
 STR_DLGBROWSER_VIEWS_CLASSIC=Classica
 STR_DLGBROWSER_VIEWS_ALLYTREES=Alleati negli alberi
+
+# Lobby — lato di partenza della squadra: selettore di intestazione, cella di partenza di riga e azioni del menu a discesa
+STR_DLGLOBBY_TEAM_SIDE=Partenza:
+STR_DLGLOBBY_SIDE_ANY=Indifferente
+STR_DLGLOBBY_SIDE_N=Nord
+STR_DLGLOBBY_SIDE_E=Est
+STR_DLGLOBBY_SIDE_S=Sud
+STR_DLGLOBBY_SIDE_W=Ovest
+STR_DLGLOBBY_START_SEA=Mare
+STR_DLGLOBBY_START_TEAM_SIDE=Lato squadra
+STR_DLGLOBBY_START_AUTO=Auto
+STR_DLGLOBBY_START_UNASSIGN=Libera
+STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(fuori zona)
+STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} partenze per {number2} giocatori — {number3} inizieranno in mare.\nCambiare lato riassegna la partenza di ogni giocatore.
+STR_DLGLOBBY_TOOLTIP_START_SEA=Tutte le partenze che questa squadra può usare sono occupate, quindi questo giocatore\ninizierà in mare accanto alla partenza di un compagno di squadra.
+STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Fuori zona: questa partenza non è su {string1}, il lato della squadra.\nL'host l'ha scelta per questo giocatore.
+
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Imposta le due squadre su {string1}\n{player} parte {string2}, {other} parte {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Squadre impostate su {string1}. Fai clic per tornare alle partenze personalizzate.
+
+STR_SOUND_LOAD_FAILED=Errore durante il caricamento degli effetti sonori

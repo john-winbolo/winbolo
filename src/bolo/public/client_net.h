@@ -117,6 +117,14 @@ uint32_t    clientSimGetViewTick(const ClientSim *cs);
 
 /* === Send wrappers === */
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);
+/* Mute or unmute one player for this client: the server stops forwarding
+ * that player's voice and chat. Session-scoped. */
+void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted);
+/* Report this client's own mic status. hasMic is voice enabled with an input
+ * device open; selfMuted is having one but not transmitting. The server keeps
+ * it in the sender's clientFlags and shows it to the players who could hear
+ * that voice. Sent on a change, not per tick. */
+void clientSimNetSendVoiceState(ClientSim *cs, bool hasMic, bool selfMuted);
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName);
 void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer);
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer);
@@ -242,6 +250,7 @@ void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       const char md5Hex[32]);
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
+                                   uint8_t startSide,
                                    const char *name);
 void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId);
 void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
@@ -343,6 +352,37 @@ bool clientSimNetSendRoundLogRequest(ClientSim *cs);
  * to lvEmbedBegin, which takes ownership and frees it itself, including on
  * every refusal. */
 uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen);
+
+/* === Voice ===
+ * Encoded audio frames move as opaque bytes: the caller supplies and
+ * receives whatever the codec produced, and the wire framing stays inside
+ * the transport. Voice does not go through the command queue or the
+ * control-event bus - it is a best-effort payload at the tick rate, and
+ * nothing about it reaches the sim or the event stream. */
+
+/* Largest encoded frame one voice segment can carry. A frame past this is
+ * dropped by the transport rather than split or truncated, so a caller that
+ * wants to notice checks before it sends. Mirrors VOICE_SEG_MAX_OPUS, the
+ * wire-side bound in src/bolo/internal/voice_segment.h, which the client
+ * frontends do not see; transport_udp_client.c sees both and asserts them
+ * equal at compile time, so the two cannot drift apart. */
+#define CLIENT_VOICE_MAX_FRAME_BYTES 125
+
+/* Queue one encoded 20 ms voice frame for the server. flags is the frame's
+ * flags byte, carried to the wire untouched; 0 for an ordinary frame. No-op
+ * for in-process (local) transports, which never carry voice. */
+void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen,
+                           uint8_t flags);
+
+/* Pop one received voice frame. Returns the payload length written to
+ * out, or 0 when nothing is pending. */
+int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
+                             uint8_t *flags, uint8_t *out, int outCap);
+
+/* True when voice sent on this client actually reaches the wire: a UDP
+ * transport is attached. False with no transport and for the in-process
+ * (local) transport single-player uses, which never carries voice. */
+bool clientSimNetHasVoiceTransport(const ClientSim *cs);
 
 /* === Net stats === */
 uint16_t clientSimGetNetPing(const ClientSim *cs);

@@ -48,6 +48,8 @@
 #include "transport_control_codec.h"
 #include "transport_command_codec.h"
 #include "channel_mux.h"
+#include "voice_segment.h"
+#include "voice_talker_select.h"
 #include "bulk_transfer.h"
 #include "spectator_ring.h"
 #include "wbn_key_codec.h"
@@ -549,6 +551,56 @@ static struct {
      * table reads as all-empty (srcAddr 0), so the existing
      * memset(&udpServer, 0, …) is the only reset needed. */
     JoinRateEntry joinRate[JOIN_RL_MAX_SOURCES];
+
+    /* Voice forwarding switched off for this server (the dedicated server's
+     * -no-voice).  Stored negated so a zeroed server forwards voice — every
+     * host that never touches the setter keeps the default. */
+    bool     voiceDisabled;
+
+    /* Cumulative voice segments this server forwarded, meaning unpacked and
+     * re-packed downstream, and segments pass 1 of serverPumpVoice drained
+     * and did not forward.  A segment is dropped when voice is switched off
+     * for the server, when the sender is past VOICE_SEGMENTS_PER_TICK for
+     * the tick, when the sender's map download is not yet complete, when
+     * voiceSegmentUnpackUp rejects it, or when voiceSegmentPackDown fails.
+     * The pre-download drop is expected: a client with voice on while still
+     * taking the map produces a steady drop rate that indicates nothing
+     * wrong.  Both count every slot together: they exist to give an operator
+     * diagnosing a flooding or misbehaving client a number to look at, not
+     * to carry per-slot state. */
+    uint32_t voiceSegsAccepted;
+    uint32_t voiceSegsDropped;
+    /* Forwards withheld from a recipient by the concurrent-talker cap,
+     * counted once per (recipient, frame) pair.  Deliberately not folded into
+     * voiceSegsDropped: those segments were refused on arrival and went
+     * nowhere, these were accepted and forwarded to everyone else. */
+    uint32_t voiceSegsTalkerCapped;
+
+    /* Per-slot voice arrival bookkeeping, in tickCount ticks, feeding the
+     * concurrent-talker cap: the tick this slot's last voice frame landed on,
+     * and the tick its current utterance began.  A gap longer than
+     * VOICE_ONSET_GAP_TICKS makes the next frame a new onset.  Both are
+     * cleared on disconnect so a recycled slot starts silent.
+     *
+     * tickCount rather than the sim's tick because this is a wall-clock
+     * measure of silence and has to keep running in every server state: the
+     * sim's tick stands still for the whole countdown and the whole game-over
+     * hold, and runs at twice the rate inside a game. tickCount advances once
+     * per server frame regardless. Zero means the slot has never spoken, which
+     * tickCount cannot collide with: it is incremented at the top of the frame
+     * and so is at least 1 by the time voice is pumped. */
+    uint32_t voiceLastFrameTick[MAX_TANKS];
+    uint32_t voiceOnsetTick[MAX_TANKS];
+    /* The talking set last sent as CTRL_VOICE_TALKING. Held so the event
+     * goes out only when the set changes: a quiet lobby then costs nothing,
+     * rather than one event per tick per client. */
+    PlayerBitMap voiceTalkingPublished;
+    /* Send the set again even though it has not changed. Someone has left and
+     * the copy every other client holds still names them, so "the value is the
+     * same as last time" and "there is nothing to say" have come apart —
+     * without this the only case that matters, the leaver being the one talker,
+     * computes back to the same empty set and is never sent. */
+    bool voiceTalkingResend;
 } udpServer;
 
 /* The registered round-log source. Held outside udpServer so a transport
@@ -1131,6 +1183,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     case CTRL_VIEW_TARGET:      return "VIEW_TARGET";
+    case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
     default:                    return "<unknown>";
     }
 }
@@ -1217,6 +1270,17 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                           idx, (int)dest, (int)client->playerNum);
                 return;
             }
+        }
+        /* Per-recipient mute, applied after the destination rules so it can
+         * only ever remove a line this client would otherwise have seen.
+         * Guarded on a real player slot: server-source messages arrive with
+         * fromPlayer 0xFF (localized) or 0xFE (raw English) and must stay
+         * unsilenceable — no player may suppress a server announcement. */
+        if (from < MAX_TANKS &&
+            (client->voiceMuteMask & ((PlayerBitMap)1u << from)) != 0) {
+            mpDiagLog("[srv] deliver FILTER slot=%d type=CHAT reason=muted from=%d",
+                      idx, (int)from);
+            return;
         }
     }
     if (evt->type == CTRL_SERVER_TEXT && evt->u.serverText.destTeam != 0) {
@@ -1544,6 +1608,10 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_SPECTATOR_SLOT:
     case CTRL_SPECTATOR_CHAT:
     case CTRL_LOBBY_SYNC_COMPLETE:
+    /* The live scoreboard is public — a viewer can already read captures and
+     * kills off the map, and a spectator whose board never leaves zero looks
+     * broken. */
+    case CTRL_STATS_SEED:
         allow = true;
         break;
     case CTRL_GAME_VOTE_STATE:
@@ -3955,6 +4023,36 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].claimPending = false;
     udpServer.clients[idx].claimDesiredName[0] = '\0';
     udpServer.clients[idx].inboundCmdSeq = 0;
+    /* Slots are recycled: without this a new occupant would inherit the
+     * previous player's mutes. */
+    udpServer.clients[idx].voiceMuteMask = 0;
+    /* The other direction of the same hazard, and the one that is invisible
+     * to the player it hits: everyone who muted THIS player still holds the
+     * bit for this slot, so the next occupant would arrive already muted for
+     * them — no voice, and no chat either, since both read this one bit.
+     * Sweeping the leaver's bit out of every mask is what makes a mute
+     * belong to the player rather than to the slot they sat in. */
+    {
+        const PlayerBitMap leaving = ~((PlayerBitMap)1u << idx);
+        int muter;
+        for (muter = 0; muter < MAX_TANKS; muter++) {
+            udpServer.clients[muter].voiceMuteMask &= leaving;
+        }
+    }
+    /* Same reason: a recycled slot inheriting the previous player's onset
+     * would hand a new joiner talker priority they did not earn. */
+    udpServer.voiceLastFrameTick[idx] = 0;
+    udpServer.voiceOnsetTick[idx] = 0;
+    /* If the set every other client holds names this slot as talking, they go
+     * on showing it until they are told otherwise, and clearing the tick above
+     * is what stops the next pass computing a set that differs from the
+     * published one. Ask for the send explicitly so the leaver goes out of that
+     * set even when what remains is empty — which is exactly the case where
+     * nothing else would send it. A leaver nobody was hearing is not in the
+     * published set and costs no event. */
+    if ((udpServer.voiceTalkingPublished & ((PlayerBitMap)1u << idx)) != 0) {
+        udpServer.voiceTalkingResend = true;
+    }
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
     /* Drop any owed PLAYER_JOIN — the player left before it resolved, so
@@ -4529,6 +4627,9 @@ static void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
          * the cap accessor returns 0 when spectating is disabled. The live
          * spectator_count has no accessor yet, so it stays 0 below. */
         if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
+        /* The voice mode is two bits rather than a flag, in the top of the
+         * same byte. serverVoiceOn packs as zero. */
+        flags |= infoPacketPackVoiceMode(serverSimGetVoiceMode(sim));
         pkt->flags = flags;
     }
     pkt->start_delay = serverSimGetStartDelay(sim);
@@ -4929,6 +5030,11 @@ static bool udpServerResolveWebIdentity(BYTE slot, const char *joinCode,
 static void udpServerApplyWebIdentity(ServerSim *sim, BYTE slot) {
     uint8_t flags = udpServer.clients[slot].clientHints & PLAYER_CLIENT_HINT_MASK;
     flags |= PLAYER_FLAG_WBN_VERIFIED;  /* WEB joiners carry no Steam/supporter */
+    /* Carry the mic bits across the rebuild. The client sends them once when
+     * they change, so anything dropped here is gone for the rest of the
+     * connection rather than re-reported on the next tick. */
+    flags |= (uint8_t)(playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
+                                             slot) & PLAYER_VOICE_FLAG_MASK);
     playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
     udpServer.clients[slot].wbnWasVerified = true;
     playersSetClientType(&serverSimGetGameSim(sim)->plyrs, slot,
@@ -5004,6 +5110,13 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
             flags |= PLAYER_FLAG_WBN_VERIFIED;
             if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
             if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+            /* Carry the mic bits across the rebuild. The client sends them
+             * once when they change, so anything dropped here is gone for
+             * the rest of the connection rather than re-reported on the
+             * next tick. */
+            flags |= (uint8_t)(playersGetClientFlags(
+                                   &serverSimGetGameSim(sim)->plyrs, slot)
+                               & PLAYER_VOICE_FLAG_MASK);
             playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
             /* Keep the durable rekey-gate bit in step with the session flag. */
             udpServer.clients[slot].wbnWasVerified = true;
@@ -5126,6 +5239,44 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum) {
         return NULL;
     }
     return udpServer.clients[playerNum].playerName;
+}
+
+void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
+                                    bool muted) {
+    if (clientSlot >= MAX_TANKS || targetPlayer >= MAX_TANKS) {
+        return;
+    }
+    if (!udpServer.clients[clientSlot].connected) {
+        return;
+    }
+    if (muted) {
+        udpServer.clients[clientSlot].voiceMuteMask |=
+            (PlayerBitMap)1u << targetPlayer;
+    } else {
+        udpServer.clients[clientSlot].voiceMuteMask &=
+            ~((PlayerBitMap)1u << targetPlayer);
+    }
+}
+
+PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot) {
+    if (clientSlot >= MAX_TANKS || !udpServer.clients[clientSlot].connected) {
+        return 0;
+    }
+    return udpServer.clients[clientSlot].voiceMuteMask;
+}
+
+void transportUdpServerSetVoiceEnabled(bool enabled) {
+    udpServer.voiceDisabled = !enabled;
+}
+
+void transportUdpServerGetVoiceStats(uint32_t *outAccepted,
+                                     uint32_t *outDropped,
+                                     uint32_t *outTalkerCapped) {
+    if (outAccepted != NULL) *outAccepted = udpServer.voiceSegsAccepted;
+    if (outDropped != NULL) *outDropped = udpServer.voiceSegsDropped;
+    if (outTalkerCapped != NULL) {
+        *outTalkerCapped = udpServer.voiceSegsTalkerCapped;
+    }
 }
 
 const char *transportUdpServerGetClientCountryCode(BYTE playerNum) {
@@ -6547,8 +6698,10 @@ bool transportUdpServerHasRecvThread(void) {
 /* Drain sim events into per-client reliable queues.
  * Must be called after each serverSimTick() so events survive
  * being cleared at the start of the next tick.
- * EVENT_SOUND events are culled by distance and deduplicated per
- * sound type (only the closest instance of each type is sent). */
+ * The three sound events are culled against SDIST_NONE measured from the
+ * recipient's own tank and deduplicated per sound type — only the closest
+ * instance of each type is sent, and it goes out carrying a near/far tier and
+ * a compass bearing in place of the map square it was raised at. */
 void transportUdpServerDrainEvents(ServerSim *sim) {
     int i, c;
 
@@ -6713,48 +6866,24 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             }
         }
 
-        /* Best-effort fx (sounds/explosions) are culled to the recipient's
-         * tank + owned/allied pillbox viewports, matching the snapshot cull —
-         * fxViewports is the set built at the top of this client's pass. */
+        /* Best-effort explosions are culled to the recipient's tank +
+         * owned/allied pillbox viewports, matching the snapshot cull —
+         * fxViewports is the set built at the top of this client's pass.
+         * Sounds are culled by distance instead, so the rect set has no say in
+         * what a recipient hears. */
 
-        /* Pass 1: find best (closest) sound event per type for this client */
-        #define MAX_SOUND_TYPES 32
-        int bestSoundIdx[MAX_SOUND_TYPES];
-        int bestSoundDist[MAX_SOUND_TYPES];
+        /* Pass 1: the closest sound of each type for this client, shaped as
+         * a tier and a bearing. soundPickOffer holds every rule about who
+         * hears what, shared with the snapshot builder. keepSquare is false
+         * here whatever the slot is flagged: a wire recipient is never trusted
+         * with the square. */
+        SoundPick pick;
         int s;
-        for (s = 0; s < MAX_SOUND_TYPES; s++) {
-            bestSoundIdx[s] = -1;
-            bestSoundDist[s] = 255;
-        }
-
-        for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
-            uint8_t evType = serverSimGetEvents(sim)[i].type;
-            if ((evType == EVENT_SOUND || evType == EVENT_SOUND_TANK_HIT || evType == EVENT_SOUND_SHOOT) && hasPos) {
-                uint8_t soundId = serverSimGetEvents(sim)[i].data[0];
-                uint8_t mx = serverSimGetEvents(sim)[i].data[1];
-                uint8_t my = serverSimGetEvents(sim)[i].data[2];
-                int dx = (clientMX > mx) ? (clientMX - mx) : (mx - clientMX);
-                int dy = (clientMY > my) ? (clientMY - my) : (my - clientMY);
-
-                /* Skip own shoot sound — client plays shootSelf via prediction */
-                if (evType == EVENT_SOUND_SHOOT && serverSimGetEvents(sim)[i].data[3] == (uint8_t)c) {
-                    continue;
-                }
-
-                /* Always send tank hit to the hit player (plays hitTankSelf at full volume) */
-                if (evType == EVENT_SOUND_TANK_HIT && serverSimGetEvents(sim)[i].data[3] == (uint8_t)c) {
-                    /* Skip distance cull */
-                } else if (!inAnyViewport(fxViewports, fxViewportCount, mx, my)) {
-                    /* Cull beyond the recipient's viewports */
-                    continue;
-                }
-
-                /* Keep closest per type */
-                int dist = dx + dy;
-                if (soundId < MAX_SOUND_TYPES && dist < bestSoundDist[soundId]) {
-                    bestSoundIdx[soundId] = i;
-                    bestSoundDist[soundId] = dist;
-                }
+        soundPickInit(&pick);
+        if (hasPos) {
+            for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
+                soundPickOffer(&pick, &serverSimGetEvents(sim)[i], (BYTE)c,
+                               clientMX, clientMY, false);
             }
         }
 
@@ -6764,7 +6893,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
          * (CHANNEL_GAME_EFFECT). Sounds are all best-effort. */
         for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
             uint8_t evType = serverSimGetEvents(sim)[i].type;
-            if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+            if (!soundEventIsSound(evType)) {
                 /* Per-recipient working copy so a non-closest dead base's stock
                  * event can be reshaped (armour-only) without mutating the
                  * shared event; forceReliable promotes that copy to the
@@ -6847,10 +6976,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                 }
             }
         }
-        for (s = 0; s < MAX_SOUND_TYPES; s++) {
-            if (bestSoundIdx[s] >= 0) {
+        for (s = 0; s < SOUND_PICK_TYPES; s++) {
+            if (pick.has[s]) {
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
-                int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[bestSoundIdx[s]]);
+                int evLen = packGameEvent(evBuf, &pick.ev[s]);
                 /* Sounds are ephemeral — best-effort: never blocks, never
                  * disconnects on overflow (drops oldest). */
                 channelSendBestEffort(&udpServer.channelMux[c],
@@ -6858,7 +6987,300 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                                       (uint16_t)evLen);
             }
         }
-        #undef MAX_SOUND_TYPES
+    }
+}
+
+/* Most voice frames a client may have accepted from it in one tick: one is
+ * the steady state at the 20 ms wire cadence, and the second absorbs drift
+ * between the capture clock and the server tick. Anything past that is
+ * drained and dropped so a flooding client cannot buy itself extra
+ * bandwidth or leave a backlog behind. */
+#define VOICE_SEGMENTS_PER_TICK 2
+
+/* Most talkers forwarded to any one recipient at once. Not an MTU limit —
+ * four ~64 B frames on top of a snapshot sit far inside UDP_MAX_PAYLOAD — but
+ * an intelligibility one: nobody can follow more than three or four voices at
+ * the same time, so a crowded channel is kept to the four worth hearing. */
+#define VOICE_MAX_FORWARDED_TALKERS 4
+
+/* Silence longer than this ends an utterance: the next frame from that slot
+ * starts a new one and ranks as a fresh arrival for the cap above. Measured in
+ * udpServer.tickCount, one per 20 ms server frame, so ten ticks is 200 ms in
+ * every server state — long enough to ride out the gaps inside ordinary
+ * speech, short enough that taking a turn to speak counts as one. */
+#define VOICE_ONSET_GAP_TICKS 10
+
+/* One accepted, packed server->client voice segment held between the two
+ * passes of serverPumpVoice: the sender, the sequence number the cap's
+ * tie-break ranks on, and the bytes as they will go out. */
+typedef struct {
+    uint8_t  from;
+    uint8_t  seq;
+    uint16_t len;
+    uint8_t  bytes[CHANNEL_VOICE_SEG];
+} VoiceStagedFrame;
+
+/* Carry voice from each client to the clients allowed to hear it. The
+ * payload is opaque: it arrives encoded, is re-framed with the sender's
+ * player number, and goes back out untouched — the server never decodes.
+ *
+ * Runs once per tick from the send path (while running) and from the
+ * timeout sweep (every other state), ahead of the carriers that put the
+ * channel data on the wire, so a frame is forwarded in the tick it landed. */
+static void serverPumpVoice(ServerSim *sim) {
+    bool inGame = (serverSimGetState(sim) == serverStateRunning);
+    bool voiceOn = !udpServer.voiceDisabled;
+    /* The transport's own tick, not the sim's: this measures how long ago a
+     * frame arrived, and the sim's tick does not advance at a constant rate —
+     * it stands still through the countdown and the game-over hold, and runs
+     * twice per frame inside a game. Both the onset bookkeeping and the
+     * talking set below read it, so they stay on one clock. */
+    uint32_t tick = udpServer.tickCount;
+    /* Every frame accepted this tick, held until pass 2 knows who hears it.
+     * Bounded by the per-sender flood cap, so it cannot overflow. */
+    VoiceStagedFrame staged[MAX_TANKS * VOICE_SEGMENTS_PER_TICK];
+    int stagedCount = 0;
+    /* One entry per sender that staged at least one frame. */
+    VoiceTalkerCandidate talkers[MAX_TANKS];
+    int talkerCount = 0;
+    int from;
+    int to;
+    int s;
+
+    /* ── Pass 1: drain every sender's ring and stage what is accepted ──── */
+    for (from = 0; from < MAX_TANKS; from++) {
+        uint8_t segBuf[CHANNEL_MAX_SEG];
+        uint16_t segLen;
+        int accepted = 0;
+        bool onsetDone = false;
+        bool anyStaged = false;
+        uint8_t newestSeq = 0;
+
+        /* A slot with no live remote client behind it — an empty slot or a
+         * bot — has no voice to forward. */
+        if (!udpServer.clients[from].connected) continue;
+
+        while (channelReceiveBestEffort(&udpServer.channelMux[from],
+                                        CHANNEL_VOICE, segBuf, &segLen)) {
+            uint8_t seq, flags;
+            const uint8_t *opus;
+            int opusLen;
+            uint8_t downBuf[CHANNEL_VOICE_SEG];
+            int downLen;
+
+            /* Voice off for this server: the loop still drains the ring, so
+             * a client that sends anyway cannot fill it and stall behind
+             * frames nobody will read.  Nothing is forwarded and nothing
+             * counts as accepted, but the segment is counted as dropped so
+             * an operator can see traffic arriving at a server that will
+             * not carry it. */
+            if (!voiceOn) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
+
+            if (accepted >= VOICE_SEGMENTS_PER_TICK) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
+            /* Not in the game yet: a client still taking the map is not a
+             * talker, and the same rule keeps it off the receiving end. */
+            if (!udpServer.mapDownload[from].downloadComplete) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
+            if (!voiceSegmentUnpackUp(segBuf, (int)segLen, &seq, &flags,
+                                      &opus, &opusLen)) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
+            /* Counts towards the per-sender flood cap from here, whatever
+             * the pack below does with it. */
+            accepted++;
+
+            downLen = voiceSegmentPackDown(downBuf, (int)sizeof(downBuf),
+                                           (uint8_t)from, seq, flags,
+                                           opus, opusLen);
+            if (downLen <= 0) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
+            udpServer.voiceSegsAccepted++;
+
+            if (stagedCount < (int)(sizeof(staged) / sizeof(staged[0]))) {
+                VoiceStagedFrame *st = &staged[stagedCount];
+                st->from = (uint8_t)from;
+                st->seq  = seq;
+                st->len  = (uint16_t)downLen;
+                memcpy(st->bytes, downBuf, (size_t)downLen);
+                /* The tie-break ranks on the newest sequence number this
+                 * sender staged, compared wrap-safely: seq 3 arriving after
+                 * seq 250 is newer, not older. */
+                if (!anyStaged || (int8_t)(seq - newestSeq) > 0) {
+                    newestSeq = seq;
+                }
+                anyStaged = true;
+                stagedCount++;
+            }
+
+            /* Onset bookkeeping, once per sender per tick: two frames landing
+             * in one tick are one arrival, and the second must not read as a
+             * fresh onset.  A slot that has never spoken has lastFrameTick 0
+             * (zero-initialised, and cleared again on disconnect), which is
+             * an onset rather than the continuation the subtraction below
+             * would otherwise make of it.  That subtraction is unsigned on
+             * purpose: if the tick restarts under this bookkeeping it
+             * underflows to a large gap, which reads as a new onset — the
+             * safe answer. */
+            if (!onsetDone) {
+                if (udpServer.voiceLastFrameTick[from] == 0 ||
+                    tick - udpServer.voiceLastFrameTick[from] >
+                        VOICE_ONSET_GAP_TICKS) {
+                    udpServer.voiceOnsetTick[from] = tick;
+                }
+                udpServer.voiceLastFrameTick[from] = tick;
+                onsetDone = true;
+            }
+        }
+
+        if (anyStaged) {
+            talkers[talkerCount].slot      = (uint8_t)from;
+            talkers[talkerCount].onsetTick = udpServer.voiceOnsetTick[from];
+            talkers[talkerCount].newestSeq = newestSeq;
+            talkerCount++;
+        }
+    }
+
+    /* ── Pass 2: per recipient, choose the talkers, then send their frames ─
+     *
+     * The cap is per recipient, so it cannot be applied while draining: at
+     * the point sender 2's frame is packed there is no way to know how many
+     * senders this recipient will end up hearing, and a running counter would
+     * keep whichever four came first by slot index rather than the four that
+     * started talking most recently. */
+    for (to = 0; to < MAX_TANKS; to++) {
+        VoiceTalkerCandidate audible[MAX_TANKS];
+        uint8_t chosen[VOICE_MAX_FORWARDED_TALKERS];
+        PlayerBitMap audibleMask = 0;
+        PlayerBitMap chosenMask = 0;
+        int audibleCount = 0;
+        int chosenCount;
+        int t, f;
+
+        if (!udpServer.clients[to].connected) continue;
+        if (!udpServer.mapDownload[to].downloadComplete) continue;
+
+        for (t = 0; t < talkerCount; t++) {
+            int talker = talkers[t].slot;
+
+            if (talker == to) continue;
+            /* This recipient has muted the talker. The same bit gates
+             * their chat, so one toggle covers both. */
+            if ((udpServer.clients[to].voiceMuteMask &
+                 ((PlayerBitMap)1u << talker)) != 0) {
+                continue;
+            }
+            /* In game, voice follows the live alliance — so a mid-game
+             * alliance change takes effect on the next frame. Outside a
+             * game everyone hears everyone: the lobby is where teams get
+             * argued out, and scoping voice by team there works against
+             * the room. */
+            if (inGame &&
+                !playersIsAllie(&serverSimGetGameSim(sim)->plyrs,
+                                (BYTE)to, (BYTE)talker)) {
+                continue;
+            }
+            audible[audibleCount++] = talkers[t];
+            audibleMask |= (PlayerBitMap)1u << talker;
+        }
+        if (audibleCount == 0) continue;
+
+        chosenCount = voiceSelectTalkers(audible, audibleCount,
+                                         VOICE_MAX_FORWARDED_TALKERS, chosen);
+        for (t = 0; t < chosenCount; t++) {
+            chosenMask |= (PlayerBitMap)1u << chosen[t];
+        }
+
+        /* Every frame of a chosen talker goes, in the order it was staged: a
+         * talker who survives the cap must not lose their second frame of the
+         * tick. A frame the recipient could not hear anyway is not the cap's
+         * doing and is not counted as suppressed. */
+        for (f = 0; f < stagedCount; f++) {
+            PlayerBitMap bit = (PlayerBitMap)1u << staged[f].from;
+
+            if ((audibleMask & bit) == 0) continue;
+            if ((chosenMask & bit) == 0) {
+                udpServer.voiceSegsTalkerCapped++;
+                continue;
+            }
+            channelSendBestEffort(&udpServer.channelMux[to], CHANNEL_VOICE,
+                                  staged[f].bytes, staged[f].len);
+        }
+    }
+
+    /* A viewer is sent no voice. It watches the game on the anti-ghosting
+     * delay, but voice would arrive live, and a viewer relaying what it
+     * heard would hand out exactly what the delay is there to withhold.
+     *
+     * A viewer sees the whole map, so anything it says would be coaching.
+     * Its voice is forwarded nowhere; draining it keeps the channel's ring
+     * from filling and stalling behind frames nobody will ever read. */
+    for (s = 0; s < MAX_SPECTATORS; s++) {
+        uint8_t segBuf[CHANNEL_MAX_SEG];
+        uint16_t segLen;
+
+        if (!udpServer.spectators[s].connected) continue;
+        while (channelReceiveBestEffort(&udpServer.spectators[s].channelMux,
+                                        CHANNEL_VOICE, segBuf, &segLen)) {
+            /* discarded */
+        }
+    }
+
+    /* ── Tell everyone who is talking ───────────────────────────────────
+     *
+     * A player you have muted is culled above, so nothing of theirs ever
+     * reaches you and nothing local can show that they are speaking. This
+     * set is what lets a client show it; each client intersects it with
+     * its own mute list.
+     *
+     * Lobby and countdown only. There voice is all-talk, so the set says
+     * nothing a listener could not already hear. In a running game voice
+     * follows the alliance, and broadcasting the set would tell a player
+     * that an enemy is speaking — so outside those two states the set is
+     * empty rather than unsent, which sends one final empty set as the
+     * game starts and leaves nobody stuck talking for the round.
+     *
+     * "Talking" is the same utterance the forwarding cap works in: a frame
+     * within VOICE_ONSET_GAP_TICKS of now. Reads the bookkeeping pass 1
+     * has already done this tick, and keeps no clock of its own. */
+    {
+        ServerState state = serverSimGetState(sim);
+        PlayerBitMap talking = 0;
+
+        if (state == serverStateLobby || state == serverStateCountdown) {
+            int slot;
+            for (slot = 0; slot < MAX_TANKS; slot++) {
+                if (udpServer.voiceLastFrameTick[slot] != 0 &&
+                    tick - udpServer.voiceLastFrameTick[slot] <=
+                        VOICE_ONSET_GAP_TICKS) {
+                    talking |= (PlayerBitMap)1u << slot;
+                }
+            }
+        }
+
+        /* Still only on a change, so a quiet lobby costs nothing — plus the
+         * explicit ask a departure leaves behind, which is the one case where
+         * the set has to go out again while comparing equal. */
+        if (talking != udpServer.voiceTalkingPublished ||
+            udpServer.voiceTalkingResend) {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_VOICE_TALKING;
+            evt.u.voiceTalking.talking = talking;
+            serverSimPublishControl(sim, &evt);
+            udpServer.voiceTalkingPublished = talking;
+            udpServer.voiceTalkingResend = false;
+        }
     }
 }
 
@@ -6867,6 +7289,10 @@ void transportUdpServerSend(ServerSim *sim) {
     int i;
 
     if (!udpServer.running) return;
+
+    /* Ahead of the snapshot loop below, so a voice frame received this tick
+     * rides this tick's snapshot trailer rather than waiting for the next. */
+    serverPumpVoice(sim);
 
     /* Broadcast snapshots to connected clients that have finished map download */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -6919,6 +7345,14 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
     int i;
 
     if (!udpServer.running) return;
+
+    /* Outside a running game this is the once-per-tick path, so voice is
+     * carried from here — ahead of the standalone PACKET_CHANNEL frames
+     * built below, which are its only carrier in the lobby. While running,
+     * transportUdpServerSend has already pumped it before the snapshots. */
+    if (serverSimGetState(sim) != serverStateRunning) {
+        serverPumpVoice(sim);
+    }
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;

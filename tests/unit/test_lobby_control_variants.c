@@ -102,6 +102,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.viewDecaySecs[viewCategoryAlly] = 5;
     in.u.lobbySettings.lobbyClassicMode                = true;
     in.u.lobbySettings.lobbyAlliesInTrees              = true;
+    in.u.lobbySettings.voiceMode                       = serverVoiceOff;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -148,13 +149,16 @@ int run_lobby_settings_codec_and_apply(void) {
                   "lobbyClassicMode did not survive codec round-trip");
     UT_ASSERT_MSG(out.u.lobbySettings.lobbyAlliesInTrees == true,
                   "lobbyAlliesInTrees did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.voiceMode == serverVoiceOff,
+                  "voiceMode did not survive codec round-trip (got %d)",
+                  (int)out.u.lobbySettings.voiceMode);
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is eleven bytes shorter (3 policies + 3 u16 decay values +
-     * classic mode + allies in trees). */
+     * that is twelve bytes shorter (3 policies + 3 u16 decay values +
+     * classic mode + allies in trees + voice mode). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -165,7 +169,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 11;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 12;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -182,6 +186,44 @@ int run_lobby_settings_codec_and_apply(void) {
                       "short payload must leave classic mode off");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyAlliesInTrees == false,
                       "short payload must leave allies in trees off");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.voiceMode == serverVoiceOn,
+                      "short payload must leave voice on, got %d",
+                      (int)shortOut.u.lobbySettings.voiceMode);
+    }
+
+    /* The voice mode over the body tables, which is what the reliable
+     * carrier actually calls. Every mode survives, and a byte outside the
+     * enum reads as on rather than silently disabling voice. */
+    {
+        ControlEncodeBodyFn benc =
+            transportControlCodecBodyEncoder(CTRL_LOBBY_SETTINGS);
+        ControlDecodeBodyFn bdec =
+            transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+        UT_ASSERT(benc != NULL && bdec != NULL);
+
+        const ServerVoiceMode modes[] = { serverVoiceOn, serverVoiceOff,
+                                          serverVoiceProximity };
+        for (size_t m = 0; m < sizeof(modes) / sizeof(modes[0]); m++) {
+            uint8_t body[MAX_CONTROL_PACKET];
+            size_t bodyLen = 0;
+            ControlEvent bin = in, bout;
+            bin.u.lobbySettings.voiceMode = modes[m];
+            UT_ASSERT(benc(&bin, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
+            memset(&bout, 0, sizeof(bout));
+            UT_ASSERT_MSG(bdec(body, bodyLen, &bout),
+                          "body decode failed for voice mode %d", (int)modes[m]);
+            UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == modes[m],
+                          "body round-trip lost voice mode %d (got %d)",
+                          (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
+
+            /* The mode is the last byte the encoder writes. */
+            body[bodyLen - 1] = 0x7F;
+            memset(&bout, 0, sizeof(bout));
+            UT_ASSERT(bdec(body, bodyLen, &bout));
+            UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,
+                          "an unknown voice-mode byte must read as on, got %d",
+                          (int)bout.u.lobbySettings.voiceMode);
+        }
     }
 
     ClientSim *cs = fresh_client_sim();
@@ -215,17 +257,22 @@ int run_lobby_settings_codec_and_apply(void) {
                   "classic mode did not reach the client mirror");
     UT_ASSERT_MSG(clientSimGetAlliesInTrees(cs) == true,
                   "allies in trees did not reach the client mirror");
+    UT_ASSERT_MSG(clientSimGetServerVoiceMode(cs) == serverVoiceOff,
+                  "voice mode did not reach the client mirror (got %d)",
+                  (int)clientSimGetServerVoiceMode(cs));
     clientSimDestroy(cs);
     return 0;
 }
 
 /* ================================================================
  * CTRL_LOBBY_TEAM_META — `in_use` is not on the wire; the decoder
- * reconstructs it from (nameLen>0 || color!=0 || pool!=0). Two
- * sub-cases exercise both sides of that branch.
+ * reconstructs it from (nameLen>0 || color!=0 || pool!=0 ||
+ * startSide!=0). Sub-cases exercise both sides of that branch, plus
+ * a team whose only non-default field is its start side.
  * ================================================================ */
 int run_lobby_team_meta_codec_and_apply(void) {
-    /* Populated team: name + color + pool all set → in_use reconstructs to 1 */
+    /* Populated team: name + color + pool + side all set → in_use
+     * reconstructs to 1 */
     ControlEvent in, out;
     memset(&in, 0, sizeof(in));
     in.type = CTRL_LOBBY_TEAM_META;
@@ -233,6 +280,7 @@ int run_lobby_team_meta_codec_and_apply(void) {
     in.u.lobbyTeamMeta.in_use     = 1;
     in.u.lobbyTeamMeta.color      = 5;
     in.u.lobbyTeamMeta.namingPool = 2;
+    in.u.lobbyTeamMeta.startSide  = 3;
     strncpy(in.u.lobbyTeamMeta.name, "Phoenix",
             sizeof(in.u.lobbyTeamMeta.name) - 1);
 
@@ -243,10 +291,11 @@ int run_lobby_team_meta_codec_and_apply(void) {
     UT_ASSERT(out.u.lobbyTeamMeta.in_use     == 1);
     UT_ASSERT(out.u.lobbyTeamMeta.color      == 5);
     UT_ASSERT(out.u.lobbyTeamMeta.namingPool == 2);
+    UT_ASSERT(out.u.lobbyTeamMeta.startSide  == 3);
     UT_ASSERT(strcmp(out.u.lobbyTeamMeta.name, "Phoenix") == 0);
 
-    /* Empty team: name="", color=0, pool=0 → in_use reconstructs to 0
-     * even if the caller had set in_use=1 (it's recomputed). */
+    /* Empty team: name="", color=0, pool=0, side=0 → in_use reconstructs
+     * to 0 even if the caller had set in_use=1 (it's recomputed). */
     ControlEvent empty_in, empty_out;
     memset(&empty_in, 0, sizeof(empty_in));
     empty_in.type = CTRL_LOBBY_TEAM_META;
@@ -257,9 +306,30 @@ int run_lobby_team_meta_codec_and_apply(void) {
                   "codec_roundtrip failed (empty)");
     UT_ASSERT(empty_out.u.lobbyTeamMeta.teamId == 4);
     UT_ASSERT_MSG(empty_out.u.lobbyTeamMeta.in_use == 0,
-                  "decoder should clear in_use when name/color/pool are zero, got %u",
+                  "decoder should clear in_use when name/color/pool/side are zero, got %u",
                   (unsigned)empty_out.u.lobbyTeamMeta.in_use);
     UT_ASSERT(empty_out.u.lobbyTeamMeta.name[0] == '\0');
+    UT_ASSERT(empty_out.u.lobbyTeamMeta.startSide == 0);
+
+    /* Side-only team: name="", color=0, pool=0 but a start side set →
+     * in_use reconstructs to 1, so a team whose only choice is its side
+     * is not dropped back to defaults on the client. */
+    ControlEvent side_in, side_out;
+    memset(&side_in, 0, sizeof(side_in));
+    side_in.type = CTRL_LOBBY_TEAM_META;
+    side_in.u.lobbyTeamMeta.teamId    = 5;
+    side_in.u.lobbyTeamMeta.startSide = 2;
+    UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_TEAM_META,
+                                  &side_in, &side_out) == 0,
+                  "codec_roundtrip failed (side only)");
+    UT_ASSERT(side_out.u.lobbyTeamMeta.teamId    == 5);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.startSide == 2);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.color     == 0);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.namingPool == 0);
+    UT_ASSERT(side_out.u.lobbyTeamMeta.name[0]   == '\0');
+    UT_ASSERT_MSG(side_out.u.lobbyTeamMeta.in_use == 1,
+                  "decoder should set in_use when only startSide is non-zero, got %u",
+                  (unsigned)side_out.u.lobbyTeamMeta.in_use);
 
     /* Apply: the populated event should land on cs->lobbyTeam* arrays. */
     ClientSim *cs = fresh_client_sim();
@@ -268,9 +338,12 @@ int run_lobby_team_meta_codec_and_apply(void) {
     UT_ASSERT(cs->lobbyTeamInUse[3] == 1);
     UT_ASSERT(cs->lobbyTeamColor[3] == 5);
     UT_ASSERT(cs->lobbyTeamPool[3]  == 2);
+    UT_ASSERT(cs->lobbyTeamStartSide[3] == 3);
+    UT_ASSERT(clientSimGetLobbyTeamStartSide(cs, 3) == 3);
     UT_ASSERT(strcmp(cs->lobbyTeamName[3], "Phoenix") == 0);
     /* Untouched neighbour stays zero. */
     UT_ASSERT(cs->lobbyTeamInUse[4] == 0);
+    UT_ASSERT(cs->lobbyTeamStartSide[4] == 0);
     UT_ASSERT(cs->lobbyTeamName[4][0] == '\0');
     clientSimDestroy(cs);
     return 0;

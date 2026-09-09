@@ -142,6 +142,10 @@ struct ServerEntry {
     ViewPolicy allyView;
     bool classicMode;
     bool alliesInTrees;
+    /* Voice the server forwards. Unlike the fields above this one has a
+     * true answer for a server that says nothing: both wires define an
+     * absent value as serverVoiceOn. */
+    ServerVoiceMode voiceMode;
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
@@ -234,6 +238,7 @@ struct PingResult {
     ViewPolicy allyView;
     bool classicMode;
     bool alliesInTrees;
+    ServerVoiceMode voiceMode;
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -313,6 +318,7 @@ static PingResult pingServer(const PingWork &work) {
     res.allyView = viewPolicyAlways;
     res.classicMode = false;
     res.alliesInTrees = false;
+    res.voiceMode = serverVoiceOn;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -340,6 +346,7 @@ static PingResult pingServer(const PingWork &work) {
         res.allyView        = dpr.allyView;
         res.classicMode     = dpr.classicMode;
         res.alliesInTrees   = dpr.alliesInTrees;
+        res.voiceMode       = dpr.voiceMode;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
@@ -462,6 +469,7 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.allyView        = src->allyView;
     e.classicMode     = src->classicMode;
     e.alliesInTrees   = src->alliesInTrees;
+    e.voiceMode       = src->voiceMode;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
      * to minutes the same way the server does (ticks / (50 * 60)). */
@@ -507,6 +515,14 @@ static bool s_refreshIconAttempted = false;
 /* ---- Lock icon (loaded from SVG, white so it can be tinted per state) ---- */
 static SDL_Texture *s_lockIcon = nullptr;
 static bool s_lockIconAttempted = false;
+
+/* ---- Voice icons for the detail pane's voice row (white masks) ----
+ * The plain speaker stands for both On and Proximity; there is no
+ * distance or falloff art in data/ui/, so the word beside it carries
+ * the difference. */
+static SDL_Texture *s_voiceIcon = nullptr;
+static SDL_Texture *s_voiceMutedIcon = nullptr;
+static bool s_voiceIconsAttempted = false;
 
 extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Copy title — the caller passes langGetText() which returns a shared
@@ -773,6 +789,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.allyView = (ViewPolicy)w.allyView;
                         e.classicMode = w.classicMode;
                         e.alliesInTrees = w.alliesInTrees;
+                        e.voiceMode = (ServerVoiceMode)w.voiceMode;
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -886,6 +903,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].allyView        = pr.allyView;
                         servers[pr.index].classicMode     = pr.classicMode;
                         servers[pr.index].alliesInTrees   = pr.alliesInTrees;
+                        servers[pr.index].voiceMode       = pr.voiceMode;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }
@@ -1006,6 +1024,39 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
                 WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Lock icon loaded: %s", s_lockIcon ? "yes" : "no");
+            }
+
+            /* Load the two voice icons on first use, same candidate-path
+             * shape as the lock icon. Either can come back null; the voice
+             * row then draws the word on its own. */
+            if (!s_voiceIconsAttempted) {
+                s_voiceIconsAttempted = true;
+                int iconSize = (int)(24.0f * s);
+                if (iconSize < 16) iconSize = 16;
+
+                const char *names[2] = { "speaker.svg", "speaker-muted.svg" };
+                SDL_Texture **dests[2] = { &s_voiceIcon, &s_voiceMutedIcon };
+                const char *base = SDL_GetBasePath();
+                for (int n = 0; n < 2; n++) {
+                    char relPath[FILENAME_MAX];
+                    char basePathBuf[FILENAME_MAX] = {};
+                    SDL_snprintf(relPath, sizeof(relPath), "data/ui/%s", names[n]);
+                    const char *candidates[2] = { relPath, NULL };
+                    if (base) {
+                        SDL_snprintf(basePathBuf, sizeof(basePathBuf), "%sdata/ui/%s",
+                                     base, names[n]);
+                        candidates[1] = basePathBuf;
+                    }
+                    for (int i = 0; i < 2 && !*dests[n]; i++) {
+                        if (candidates[i]) {
+                            WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Trying voice icon: %s", candidates[i]);
+                            *dests[n] = imguiLoadSvgIconWhite(renderer, candidates[i], iconSize);
+                        }
+                    }
+                }
+                WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Voice icons loaded: %s / %s",
+                             s_voiceIcon ? "yes" : "no",
+                             s_voiceMutedIcon ? "yes" : "no");
             }
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
@@ -1622,6 +1673,33 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::TextUnformatted(langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
                     }
 
+                    /* Voice — drawn for every server, not only rich-info ones
+                     * like the row above. Both the INFO flag bits and the
+                     * WinBolo.net JSON define an absent value as on, so On is
+                     * this server's real answer rather than a stand-in.
+                     * Proximity shares the plain speaker with On; the word
+                     * carries the difference. */
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        label(langGetText(STR_DLGSETTINGS_HOSTING_VOICE));
+                        ImGui::TableSetColumnIndex(1);
+                        SDL_Texture *voiceTex = (sel.voiceMode == serverVoiceOff)
+                                                    ? s_voiceMutedIcon : s_voiceIcon;
+                        if (voiceTex) {
+                            const float glyphH = ImGui::GetTextLineHeight();
+                            ImGui::Image((ImTextureID)voiceTex, ImVec2(glyphH, glyphH));
+                            ImGui::SameLine(0.0f, 4.0f);
+                        }
+                        langid voiceStr = STR_DLGSETTINGS_HOSTING_VOICE_ON;
+                        if (sel.voiceMode == serverVoiceOff) {
+                            voiceStr = STR_DLGSETTINGS_HOSTING_VOICE_OFF;
+                        } else if (sel.voiceMode == serverVoiceProximity) {
+                            voiceStr = STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY;
+                        }
+                        ImGui::TextUnformatted(langGetText(voiceStr));
+                    }
+
                     ImGui::EndTable();
                 }
 
@@ -2035,6 +2113,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     s_refreshIconAttempted = false;
     if (s_lockIcon) { SDL_DestroyTexture(s_lockIcon); s_lockIcon = nullptr; }
     s_lockIconAttempted = false;
+    if (s_voiceIcon) { SDL_DestroyTexture(s_voiceIcon); s_voiceIcon = nullptr; }
+    if (s_voiceMutedIcon) { SDL_DestroyTexture(s_voiceMutedIcon); s_voiceMutedIcon = nullptr; }
+    s_voiceIconsAttempted = false;
 
     /* Tear down ImGui */
     dialogDismissKeyboard(window);

@@ -46,6 +46,9 @@ extern "C" {
 #include "client_net.h"      /* clientSimNetSend* — kick, host transfer, claim start */
 #include "bolo_rand.h"       /* bolo_rand_below — random pool for a team's first bot */
 #include "lobby_bot_pools.h" /* lobbyBotPoolCount / Label / Pick */
+#include "start_sides.h"     /* START_SIDE_* / startSideBits / Accepts / Eligible / IsCentre — team start sides */
+#include "client_command.h"  /* START_CLAIM_TEAM_SIDE — the start dropdown's Team side action */
+#include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot; lobbyTeamSide, lobbySideNameId / CompassId, lobbyClosedMaskForTeam */
 #include "../../../../bolo/public/wire_limits.h"  /* LOBBY_LOCK_* / LST_* */
 #include "../../../lang.h"   /* langGetText / MessageArgs / STR_*; PLAYER_FLAG_* */
 #include "../../../gamefront.h"  /* gameFrontSetChosenBotBrain */
@@ -55,6 +58,10 @@ extern "C" {
 #include "../../flags.h"         /* flagsGetTexture / FLAG_HEIGHT */
 #include "../../map_preview_popup.h"  /* mapPreviewPopupFocusMapSquare */
 #include "../../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning */
+#if defined(WINBOLO_VOICE)
+#include "../../../voice.h"   /* voiceGetTalkingMap — lobby mic icons;
+                               * the own-row voice sub-row's state */
+#endif
 }
 
 /* Player-list state: bot-row expansion, the tab-cycle's forced selection
@@ -62,6 +69,10 @@ extern "C" {
 typedef struct LobbyPlayersState {
     /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
     int expandedBotSlot = -1;
+
+    /* Whether the local player's voice sub-row is open. A bool rather than a
+     * slot index like the bots': there is only ever one own row. */
+    bool voiceRowExpanded = false;
 
     /* Tab the trigger/shoulder tab-cycle wants selected next frame in the
      * tabbed lobby layout, or -1 for "no forced selection". Set from the
@@ -96,6 +107,9 @@ void lobbyPlayersReset(void) {
 /* Forward decl — defined below the team renderer. */
 static void renderBotAiConfig(ClientSim *cs,
                               int slot, int teamId, float s);
+#if defined(WINBOLO_VOICE)
+static void renderOwnVoiceConfig(ClientSim *cs, float s);
+#endif
 
 /* ── Layout A — team-grouped player list ──────────────────────────
  * Renders players grouped under team headers with color tints from
@@ -142,6 +156,66 @@ void lobbyRankedShapeTooltip(const LobbyRankedEligibility &r) {
  * host-identity test uniform across the lobby UI. */
 bool lobbyIsHost(ClientSim *cs, int myPlayerNum) {
     return myPlayerNum >= 0 && myPlayerNum == clientSimGetLobbyHostSlot(cs);
+}
+
+/* ── Team start sides ─────────────────────────────────────────────
+ * The lobby mirror carries each team's START_SIDE_* choice and every
+ * slot's reservation; the map preview cache carries the start positions
+ * and their bounding box. Between them the header selector and the row
+ * start cell can answer the questions the server's lobby start pick
+ * answers, with one gap: the client cannot see which start squares are
+ * deep sea, so "valid" here means on the map's start list and not held
+ * by a connected slot. What the cell shows is a forecast; the server's
+ * answer is the reservation that lands in CTRL_LOBBY_SLOT.
+ *
+ * The side rules themselves — lobbyTeamSide, lobbyClosedMaskForTeam and
+ * the side name and letter ids — are the shared helpers in
+ * lobby_start_markers.h, so the map previews read the same ones; the
+ * cache accessor lobbyStartSideMask lives with the cache in
+ * lobby_map_preview.cpp. */
+
+/* Starts a side would offer a team: for a side, every start it accepts
+ * (its own side plus the centre band); for Any, every start outside the
+ * sides the other teams chose. Holders are not subtracted — this is the
+ * selector tooltip's "N starts for M players" figure. */
+static int lobbyCountSideStarts(ClientSim *cs, int teamId, BYTE side) {
+    const LobbyMapPreviewState *mp = lobbyMapPreview();
+    BYTE closedMask = lobbyClosedMaskForTeam(cs, teamId);
+    int n = 0;
+    for (int k = 1; k <= (int)mp->startCount; k++) {
+        if (startSideEligible(lobbyStartSideMask(k), side, closedMask)) n++;
+    }
+    return n;
+}
+
+/* True while a start the slot could still be placed on is free: on the
+ * cached start list, eligible for its team's side given the other teams'
+ * sides, and held by no connected slot other than this one. */
+static bool lobbyFreeEligibleStartExists(ClientSim *cs, int slot, int teamId) {
+    const LobbyMapPreviewState *mp = lobbyMapPreview();
+    BYTE side       = lobbyTeamSide(cs, teamId);
+    BYTE closedMask = lobbyClosedMaskForTeam(cs, teamId);
+    for (int k = 1; k <= (int)mp->startCount; k++) {
+        if (!startSideEligible(lobbyStartSideMask(k), side, closedMask)) continue;
+        int holder = lobbyStartHolderSlot(cs, k);
+        if (holder < 0 || holder == slot) return true;
+    }
+    return false;
+}
+
+/* Tooltip for a side in the header's Start: selector — the starts that
+ * side offers the team against its member count, how many members that
+ * leaves to start at sea, and that a side change re-picks everyone. */
+static void lobbyTeamSideTooltip(ClientSim *cs, int teamId, BYTE side, int members) {
+    int starts = lobbyCountSideStarts(cs, teamId, side);
+    int sea    = members - starts;
+    if (sea < 0) sea = 0;
+    MessageArgs args = {};
+    SDL_strlcpy(args.string1, langGetText(lobbySideNameId(side)), sizeof(args.string1));
+    args.number  = starts;
+    args.number2 = members;
+    args.number3 = sea;
+    ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_TOOLTIP_TEAM_SIDE, &args));
 }
 
 /* Compact "Allow New Players:  [ ] Now   [ ] During game" row. Host
@@ -787,6 +861,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         const float xBtnW       = 22.0f * s;
         const float gap         = 6.0f * s;
         const float labelW      = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
+        /* The "Start:" side selector, left of Bot Naming in the host group. */
+        const float sideComboW  = 90.0f * s;
+        const float sideLabelW  = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_TEAM_SIDE)).x;
         /* Bots are only addable when the server's AI policy allows it
          * (lobbyAiType != aiNone) AND the server has at least one brain on
          * disk to assign. Both fields are mirrored from the server
@@ -797,6 +874,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         int  humanCount  = memberCount[teamId] - botCount[teamId];
         bool showXBtn    = (teamId >= 3) && (humanCount == 0);
         bool showNaming  = effectiveHost && botsAllowed && botCount[teamId] > 0;
+        /* Side selector: host only, and only when the map has starts. */
+        bool showSide    = effectiveHost && lobbyMapPreview()->startCount > 0;
         bool showJoin    = !spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                            clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId;
         bool showTeamCount = true;
@@ -831,16 +910,17 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         /* Header shed. The host's bot controls are pinned to the panel's
          * right edge, so whatever the left side draws past their left edge
          * ends up underneath them. Measure both sides against the panel's own
-         * content width and give up the optional pieces widest-first — the
-         * Bot Naming pool, then the member count, then Join Team — so a
-         * narrow players column keeps the header readable instead of piling
-         * it on itself. */
+         * content width and give up the optional pieces in order — the Start
+         * side selector, then the Bot Naming pool, then the member count,
+         * then Join Team — so a narrow players column keeps the header
+         * readable instead of piling it on itself. */
         {
             const ImGuiStyle &hs = ImGui::GetStyle();
             float effBotBtnW = botsAllowed ? botBtnW : 0.0f;
             float effBotGap  = botsAllowed ? gap     : 0.0f;
             float groupBaseW = effectiveHost ? (effBotBtnW + effBotGap + xBtnW) : 0.0f;
             float namingW    = labelW + gap + comboW + namingShift;
+            float sideW      = sideLabelW + gap + sideComboW + namingShift;
             float countW     = hs.ItemSpacing.x + ImGui::CalcTextSize(membersLine).x;
             float joinW      = showJoin
                                ? hs.ItemSpacing.x + hs.FramePadding.x * 2.0f
@@ -848,6 +928,11 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                : 0.0f;
             float needW = 6.0f * s + ImGui::CalcTextSize(defaultName).x
                         + groupBaseW + gap;
+            if (showSide && contentW < needW + sideW + (showNaming ? namingW : 0.0f)
+                                       + countW + joinW) {
+                showSide = false;
+            }
+            if (showSide) needW += sideW;
             if (showNaming && contentW < needW + namingW + countW + joinW) {
                 showNaming = false;
             }
@@ -883,7 +968,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         }
 
         /* Per-team "+ Bot" button (always visible to the host) plus an
-         * optional "Bot Naming:" pool dropdown (only when the team has
+         * optional "Start:" side selector (only when the map has starts),
+         * an optional "Bot Naming:" pool dropdown (only when the team has
          * at least one bot — picking a pool before any bot exists has
          * nothing to apply to) and an optional X (clear) button on
          * the right edge.
@@ -906,9 +992,43 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
             float groupW = effBotBtnW + effBotGap + xBtnW
                          + (showNaming
                             ? labelW + gap + comboW + namingShift
+                            : 0)
+                         + (showSide
+                            ? sideLabelW + gap + sideComboW + namingShift
                             : 0);
             ImGui::SameLine();
             ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - groupW);
+            if (showSide) {
+                /* "Start:" side selector — Any / North / East / South /
+                 * West. A pick goes out as a team-meta command through
+                 * lobbySendTeamSide, which reads the team's colour, pool
+                 * and name back first so the side is the only field that
+                 * changes. Hovering the closed combo, or an entry in it,
+                 * names what that side costs the team. */
+                BYTE curSide = clientSimGetLobbyTeamStartSide(cs, (BYTE)(teamId));
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_TEAM_SIDE));
+                ImGui::SameLine(0.0f, gap);
+                char sideId[16];
+                SDL_snprintf(sideId, sizeof(sideId), "##side%d", teamId);
+                ImGui::SetNextItemWidth(sideComboW);
+                if (ImGui::BeginCombo(sideId, langGetText(lobbySideNameId(curSide)))) {
+                    for (int sd = START_SIDE_ANY; sd < START_SIDE_COUNT; sd++) {
+                        bool sel = (sd == (int)curSide);
+                        if (ImGui::Selectable(langGetText(lobbySideNameId((BYTE)sd)), sel)) {
+                            lobbySendTeamSide(cs, (uint8_t)teamId, (uint8_t)sd);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            lobbyTeamSideTooltip(cs, teamId, (BYTE)sd, memberCount[teamId]);
+                        }
+                        if (sel) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                } else if (ImGui::IsItemHovered()) {
+                    lobbyTeamSideTooltip(cs, teamId, curSide, memberCount[teamId]);
+                }
+                ImGui::SameLine(0.0f, namingShift);
+            }
             int curPool = clientSimGetLobbyTeamPool(cs, (BYTE)(teamId));
             if (curPool < 0 || curPool >= lobbyBotPoolCount()) curPool = 0;
             if (showNaming) {
@@ -1102,7 +1222,30 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
          * divider dragged left does, and scaled by s throughout so it lands
          * the same at any DPI. */
         const float kColTankW    = 60.0f * s;
+#if defined(WINBOLO_VOICE)
+        /* The microphone cell follows the badge run, so the icons column
+         * carries one more LOBBY_WBN_ICON_SIZE icon plus the spacing before
+         * it, and the local player's row carries the voice gear after that,
+         * with a spacing of its own. That raises needIconsCol, so the column
+         * sheds at a slightly wider window than it does without voice — the
+         * wider run needs the room, and the whole column still goes at once.
+         * The gear draws on one row, but every team's table takes the width:
+         * the team panels are stacked, so a column one width in your team
+         * and another in the rest would not line up.
+         *
+         * Sized for the form that will draw, which is known here: the
+         * SmallButton in controller mode, the font-sized icon otherwise. */
+        const float kColGearW    = uiShouldUseControllerMode()
+                                 ? ImGui::CalcTextSize(">").x
+                                   + ImGui::GetStyle().FramePadding.x * 2.0f
+                                 : ImGui::GetFontSize();
+        const float kColIconsW   = 96.0f * s + (float)LOBBY_WBN_ICON_SIZE * s
+                                 + ImGui::GetStyle().ItemSpacing.x
+                                 + kColGearW
+                                 + ImGui::GetStyle().ItemSpacing.x;
+#else
         const float kColIconsW   = 96.0f * s;
+#endif
         const float kColPingW    = 50.0f * s;
         const float kColReadyW   = 80.0f * s;
         const float kColXW       = 44.0f * s;
@@ -1129,6 +1272,11 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         const bool showPingCol   = contentW >= needPingCol;
         const bool showStartCol  = contentW >= needStartCol;
         const bool showIconsCol  = contentW >= needIconsCol;
+#if defined(WINBOLO_VOICE)
+        /* Who is producing voice right now, read once for the whole list
+         * rather than per row. */
+        const PlayerBitMap talkingMap = voiceGetTalkingMap();
+#endif
         /* Disabled is the master hide flag — the column takes no width and
          * ImGui skips every widget submitted into it, so the remaining
          * columns get the room back. The row blocks below still guard their
@@ -1396,6 +1544,76 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                          pflags,
                                          clientSimGetLobbySlot(cs, (BYTE)(i))->clientType,
                                          "", false);
+#if defined(WINBOLO_VOICE)
+                        /* Voice state and the mute toggle. Lobby voice
+                         * is all-talk, so this shows for every player. The
+                         * slot's own flags, not pflags: the WBN masking
+                         * above has nothing to say about the microphone.
+                         * The true is what marks this as the lobby: it is
+                         * the one place a player with no microphone is
+                         * drawn, since picking who to play with is when
+                         * knowing they cannot talk matters. */
+                        renderPlayerMicCell(cs, i,
+                                            clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags,
+                                            talkingMap, isSelf,
+                                            (float)LOBBY_WBN_ICON_SIZE, true);
+                        /* Gear beside your own microphone, expanding the
+                         * voice sub-row below. Your row only: nobody else's
+                         * microphone is yours to change. Controller mode
+                         * renders the visible ">"/"v" toggle (the SmallButton
+                         * path below) instead of the invisible icon button,
+                         * so it's reachable by gamepad nav and shows a focus
+                         * ring — A expands the sub-row, whose widgets are
+                         * then navigable like any other dialog control. */
+                        if (isSelf) {
+                            ImGui::SameLine();
+                            if (lobbyIcons()->settings && !uiShouldUseControllerMode()) {
+                                float iconSize = ImGui::GetFontSize();
+                                cyAbs(iconSize);
+                                /* settings.svg renders 5px above / 2px below
+                                 * with pure geometric centering — the gear
+                                 * sits slightly low in the row. Nudge up
+                                 * ~12% of font size (about 1.5px) so it
+                                 * matches the optical center used by the
+                                 * text and tank widgets. */
+                                ImGui::SetCursorPosY(ImGui::GetCursorPosY()
+                                                     - ImGui::GetFontSize() * 0.12f);
+                                ImVec2 iconStart = ImGui::GetCursorScreenPos();
+                                bool clicked = ImGui::InvisibleButton(
+                                    "##voicecfg", ImVec2(iconSize, iconSize));
+                                /* Grey so the gear reads as a secondary
+                                 * action, full white on hover so it lights
+                                 * up under the mouse — the same tint the
+                                 * bot gear uses. */
+                                ImU32 gearTint = ImGui::IsItemHovered()
+                                    ? IM_COL32_WHITE
+                                    : IM_COL32(180, 180, 180, 200);
+                                ImGui::GetWindowDrawList()->AddImage(
+                                    (ImTextureID)lobbyIcons()->settings,
+                                    iconStart,
+                                    ImVec2(iconStart.x + iconSize, iconStart.y + iconSize),
+                                    ImVec2(0, 0), ImVec2(1, 1), gearTint);
+                                if (clicked) {
+                                    s_players.voiceRowExpanded = !s_players.voiceRowExpanded;
+                                }
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("%s",
+                                        langGetText(STR_DLGLOBBY_TOOLTIP_VOICE));
+                                }
+                            } else {
+                                cyAbs(ImGui::GetFrameHeight());
+                                if (ImGui::SmallButton(s_players.voiceRowExpanded
+                                                       ? "v##voicecfg"
+                                                       : ">##voicecfg")) {
+                                    s_players.voiceRowExpanded = !s_players.voiceRowExpanded;
+                                }
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("%s",
+                                        langGetText(STR_DLGLOBBY_TOOLTIP_VOICE));
+                                }
+                            }
+                        }
+#endif
                     }
                 }
 
@@ -1591,16 +1809,62 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 if (showStartCol) {
                     const ClientLobbySlot *cslot = clientSimGetLobbySlot(cs, (BYTE)(i));
                     uint8_t sIdx = cslot->startIdx;
+                    const BYTE teamSide   = lobbyTeamSide(cs, teamId);
+                    const bool hasSide    = startSideBits(teamSide) != 0;
+                    const BYTE closedMask = lobbyClosedMaskForTeam(cs, teamId);
+                    const bool holdsStart = cslot->connected && sIdx != 0xFF &&
+                                            sIdx <= MAX_STARTS &&
+                                            lobbyMapPreview()->startCompassId[sIdx] != 0;
+                    /* An empty slot is placed at game start while a start its
+                     * team can use is still free; once none is, it starts at
+                     * sea beside a teammate. This is a forecast: the client
+                     * cannot see which start squares are deep sea, so "free"
+                     * here means on the map's start list and not held by a
+                     * connected slot. The server's answer is the reservation
+                     * that lands in CTRL_LOBBY_SLOT. */
+                    const bool atSea = cslot->connected && !holdsStart &&
+                                       lobbyMapPreview()->startCount > 0 &&
+                                       !lobbyFreeEligibleStartExists(cs, i, teamId);
+                    /* A held start the team's side rejects is a host override. */
+                    const bool offSide = holdsStart && hasSide &&
+                                         !startSideAccepts(lobbyStartSideMask(sIdx), teamSide);
+                    /* "Sea · N" on a side team, "Sea" on an Any team. */
+                    char seaLbl[32];
+                    if (hasSide) {
+                        SDL_snprintf(seaLbl, sizeof(seaLbl), "%s \xC2\xB7 %s",
+                                     langGetText(STR_DLGLOBBY_START_SEA),
+                                     langGetText(lobbySideCompassId(teamSide)));
+                    } else {
+                        SDL_snprintf(seaLbl, sizeof(seaLbl), "%s",
+                                     langGetText(STR_DLGLOBBY_START_SEA));
+                    }
                     /* A host edits any connected row; a non-host edits only
                      * its own. Everyone else sees the read-only compass.
                      * No optimistic apply — selecting just sends the
                      * command; the marker moves when CTRL_LOBBY_SLOT lands. */
                     bool canEditStart = cslot->connected && (effectiveHost || isMe);
+                    /* Hover text for the cell just drawn: why an empty slot
+                     * reads Sea, that a held start is off-side, or plain
+                     * Unassigned behind the read-only dash. */
+                    auto startCellTooltip = [&]() {
+                        if (!ImGui::IsItemHovered()) return;
+                        if (atSea) {
+                            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_START_SEA));
+                        } else if (offSide) {
+                            MessageArgs args = {};
+                            SDL_strlcpy(args.string1, langGetText(lobbySideNameId(teamSide)),
+                                        sizeof(args.string1));
+                            ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_TOOLTIP_START_OFFSIDE, &args));
+                        } else if (!canEditStart && cslot->connected && !holdsStart) {
+                            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_START_UNASSIGNED));
+                        }
+                    };
                     if (!canEditStart) {
                         const char *startLbl = "—";
-                        if (cslot->connected && sIdx != 0xFF &&
-                            sIdx <= MAX_STARTS && lobbyMapPreview()->startCompassId[sIdx] != 0) {
+                        if (holdsStart) {
                             startLbl = langGetText(lobbyMapPreview()->startCompassId[sIdx]);
+                        } else if (atSea) {
+                            startLbl = seaLbl;
                         }
                         cyTextAbs();
                         if (appliedStartCenterX > 0.0f) {
@@ -1610,13 +1874,15 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                             ImGui::SetCursorScreenPos(sp);
                         }
                         ImGui::TextDisabled("%s", startLbl);
+                        startCellTooltip();
                     } else {
                         char preview[64];
-                        if (sIdx != 0xFF && sIdx <= MAX_STARTS &&
-                            lobbyMapPreview()->startCompassId[sIdx] != 0) {
+                        if (holdsStart) {
                             SDL_snprintf(preview, sizeof(preview),
                                          "#%u \xC2\xB7 %s", (unsigned)sIdx,
                                          langGetText(lobbyMapPreview()->startCompassId[sIdx]));
+                        } else if (atSea) {
+                            SDL_snprintf(preview, sizeof(preview), "%s", seaLbl);
                         } else {
                             SDL_snprintf(preview, sizeof(preview), "%s",
                                          langGetText(STR_DLGLOBBY_START_UNASSIGNED));
@@ -1636,45 +1902,96 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                         char comboId[24];
                         SDL_snprintf(comboId, sizeof(comboId), "##start%d", i);
                         ImGui::SetNextItemWidth(comboW);
-                        if (ImGui::BeginCombo(comboId, preview)) {
-                            for (int k = 1; k <= MAX_STARTS; k++) {
-                                if (lobbyMapPreview()->startCompassId[k] == 0) continue;
-                                /* Connected holder of start k, if any. */
-                                int holder = -1;
-                                for (int h = 0; h < MAX_TANKS; h++) {
-                                    const ClientLobbySlot *hs =
-                                        clientSimGetLobbySlot(cs, (BYTE)h);
-                                    if (hs->connected && hs->startIdx == k) {
-                                        holder = h;
-                                        break;
+                        /* A slot bound for sea reads in the disabled style;
+                         * the colour is popped straight after BeginCombo so
+                         * the entries keep the normal text colour. */
+                        if (atSea) {
+                            ImGui::PushStyleColor(ImGuiCol_Text,
+                                                  ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                        }
+                        bool startOpen = ImGui::BeginCombo(comboId, preview);
+                        if (atSea) ImGui::PopStyleColor();
+                        if (!startOpen) {
+                            startCellTooltip();
+                        } else {
+                            /* Starts in three groups: the starts the team may
+                             * hold on its own side, then the centre band,
+                             * then — host only, after a separator — the
+                             * starts the side rules keep the team off, each
+                             * marked off-side. A player picking for
+                             * themselves never sees that last group: the
+                             * server rejects such a claim with
+                             * CMD_REJECT_INVALID. An Any team has no side of
+                             * its own, so its first group is every start off
+                             * the sides the other teams chose and the centre
+                             * group is empty. */
+                            bool offSideSep = false;
+                            for (int group = 0; group < 3; group++) {
+                                if (group == 2 && !effectiveHost) break;
+                                for (int k = 1; k <= MAX_STARTS; k++) {
+                                    if (lobbyMapPreview()->startCompassId[k] == 0) continue;
+                                    BYTE mask = lobbyStartSideMask(k);
+                                    int kGroup = 0;
+                                    if (lobbyStartOffSideMasked(mask, teamSide, closedMask)) kGroup = 2;
+                                    else if (hasSide && startSideIsCentre(mask))          kGroup = 1;
+                                    if (kGroup != group) continue;
+                                    /* Connected holder of start k, if any. */
+                                    int holder = lobbyStartHolderSlot(cs, k);
+                                    bool occupiedByOther = (holder >= 0 && holder != i);
+                                    /* Non-host self-claim: only free starts + own. */
+                                    if (!effectiveHost && occupiedByOther) continue;
+                                    if (group == 2 && !offSideSep) {
+                                        ImGui::Separator();
+                                        offSideSep = true;
                                     }
+                                    char entry[96];
+                                    if (occupiedByOther) {
+                                        SDL_snprintf(entry, sizeof(entry),
+                                                     "#%u \xC2\xB7 %s (%s)", (unsigned)k,
+                                                     langGetText(lobbyMapPreview()->startCompassId[k]),
+                                                     clientSimGetLobbySlot(cs, (BYTE)holder)->playerName);
+                                    } else {
+                                        SDL_snprintf(entry, sizeof(entry),
+                                                     "#%u \xC2\xB7 %s", (unsigned)k,
+                                                     langGetText(lobbyMapPreview()->startCompassId[k]));
+                                    }
+                                    if (group == 2) {
+                                        size_t used = strlen(entry);
+                                        SDL_snprintf(entry + used, sizeof(entry) - used, " %s",
+                                                     langGetText(STR_DLGLOBBY_START_OFFSIDE_SUFFIX));
+                                    }
+                                    bool selected = (sIdx == (uint8_t)k);
+                                    if (ImGui::Selectable(entry, selected)) {
+                                        clientSimNetSendLobbyClaimStart(cs, (BYTE)i, (BYTE)k);
+                                    }
+                                    /* Outline this start on the preview while its
+                                     * dropdown entry is hovered. */
+                                    if (ImGui::IsItemHovered()) lobbyMapPreview()->hoveredStartChoice = k;
+                                    if (selected) ImGui::SetItemDefaultFocus();
                                 }
-                                bool occupiedByOther = (holder >= 0 && holder != i);
-                                /* Non-host self-claim: only free starts + own. */
-                                if (!effectiveHost && occupiedByOther) continue;
-                                char entry[96];
-                                if (occupiedByOther) {
-                                    SDL_snprintf(entry, sizeof(entry),
-                                                 "#%u \xC2\xB7 %s (%s)", (unsigned)k,
-                                                 langGetText(lobbyMapPreview()->startCompassId[k]),
-                                                 clientSimGetLobbySlot(cs, (BYTE)holder)->playerName);
-                                } else {
-                                    SDL_snprintf(entry, sizeof(entry),
-                                                 "#%u \xC2\xB7 %s", (unsigned)k,
-                                                 langGetText(lobbyMapPreview()->startCompassId[k]));
-                                }
-                                bool selected = (sIdx == (uint8_t)k);
-                                if (ImGui::Selectable(entry, selected)) {
-                                    clientSimNetSendLobbyClaimStart(cs, (BYTE)i, (BYTE)k);
-                                }
-                                /* Outline this start on the preview while its
-                                 * dropdown entry is hovered. */
-                                if (ImGui::IsItemHovered()) lobbyMapPreview()->hoveredStartChoice = k;
-                                if (selected) ImGui::SetItemDefaultFocus();
+                            }
+                            /* Two actions, neither a start. Team side empties
+                             * the slot and the server re-picks it on the
+                             * team's side at once (sea when the side is
+                             * full); Unassign empties it and leaves it free
+                             * until the next lobby event moves reservations.
+                             * Sea is never a pick, only the outcome of a
+                             * full side. */
+                            ImGui::Separator();
+                            char teamSideLbl[48];
+                            if (hasSide) {
+                                SDL_snprintf(teamSideLbl, sizeof(teamSideLbl), "%s \xC2\xB7 %s",
+                                             langGetText(STR_DLGLOBBY_START_TEAM_SIDE),
+                                             langGetText(lobbySideCompassId(teamSide)));
+                            } else {
+                                SDL_snprintf(teamSideLbl, sizeof(teamSideLbl), "%s",
+                                             langGetText(STR_DLGLOBBY_START_AUTO));
+                            }
+                            if (ImGui::Selectable(teamSideLbl, false)) {
+                                clientSimNetSendLobbyClaimStart(cs, (BYTE)i, START_CLAIM_TEAM_SIDE);
                             }
                             bool relSel = (sIdx == 0xFF);
-                            if (ImGui::Selectable(
-                                    langGetText(STR_DLGLOBBY_START_UNASSIGNED), relSel)) {
+                            if (ImGui::Selectable(langGetText(STR_DLGLOBBY_START_UNASSIGN), relSel)) {
                                 clientSimNetSendLobbyClaimStart(cs, (BYTE)i, 0xFF);
                             }
                             if (relSel) ImGui::SetItemDefaultFocus();
@@ -1834,6 +2151,19 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     ImGui::TableSetColumnIndex(0);
                     renderBotAiConfig(cs, i, teamId, s);
                 }
+#if defined(WINBOLO_VOICE)
+                /* Voice sub-row when your own gear is expanded. Built the
+                 * same way as the AiConfig one above: its own table row with
+                 * content in column 0 only, which the NoClip table lets
+                 * spread across the row, and the parent row's stripe so it
+                 * reads as a continuation of your row. */
+                if (isSelf && s_players.voiceRowExpanded) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, rowStripe);
+                    ImGui::TableSetColumnIndex(0);
+                    renderOwnVoiceConfig(cs, s);
+                }
+#endif
             }
             ImGui::EndTable();
         }
@@ -1924,7 +2254,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                     uint8_t color = (uint8_t)((t - 1) & 7);
                     clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
-                        color, 0 /*pool=classic*/, defaultName);
+                        color, 0 /*pool=classic*/, START_SIDE_ANY, defaultName);
                     break;
                 }
             }
@@ -2263,3 +2593,93 @@ static void renderBotAiConfig(ClientSim *cs,
     ImGui::Spacing();
     ImGui::SetWindowFontScale(aicfgOldScale);
 }
+
+#if defined(WINBOLO_VOICE)
+/* ── Layout A — own voice sub-row ─────────────────────────────────
+ * Inline panel under the local player's row: whether this client has
+ * a microphone, the mute toggle, the input level with whether it is
+ * being sent, and which key push to talk is on. Reads and writes the
+ * same voice state the settings dialog does — nothing here picks a
+ * device or a mode. */
+static void renderOwnVoiceConfig(ClientSim *cs, float s) {
+    const ClientLobbySlot *mySlot =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    /* The microphone comes from the slot's published flags, the same
+     * place the mic cell beside this row reads it from, so the row and
+     * the sub-row cannot disagree about whether there is one. */
+    const bool hasMic = mySlot &&
+                        (mySlot->clientFlags & PLAYER_FLAG_HAS_MIC) != 0;
+
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
+
+    /* Read the master switch once: the line below and the
+       BeginDisabled / EndDisabled around the rest have to be told the
+       same answer. The rest still draws, greyed, rather than being
+       left out — what the microphone is doing is worth seeing even
+       when nothing is being sent. */
+    const bool voiceOn = voiceIsEnabled();
+    /* The server dropping voice reads the same way here as the master switch
+       being off: the rest is greyed rather than left out, so the row keeps its
+       shape and the reason is stated instead of being left to guess at. The
+       switch is named first when both apply — it is the one the player can
+       do something about. */
+    const bool serverOff = voiceServerHasVoiceOff();
+    if (!voiceOn) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_VOICE_OFF));
+        ImGui::BeginDisabled();
+    } else if (serverOff) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
+        ImGui::BeginDisabled();
+    } else if (!hasMic) {
+        ImGui::TextDisabled("%s", langGetText(STR_PLAYER_TIP_VOICE_SELF_NOMIC));
+    }
+
+    /* Local, and independent of the mute key: the binding may be unset,
+       and this is the way to mute without one. */
+    bool muted = voiceIsSelfMuted();
+    if (ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_MUTEMIC), &muted)) {
+        voiceSetSelfMuted(muted);
+    }
+
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
+    ImGui::SameLine();
+    ImGui::ProgressBar(voiceGetInputMeter(), ImVec2(200.0f * s, 0.0f));
+    ImGui::SameLine();
+    /* Spelt out both ways rather than a colour that only means something
+       to players who can tell the two greens apart. */
+    if (voiceIsTransmitting()) {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
+                           langGetText(STR_DLGSETTINGS_VOICE_TRANSMITTING));
+    } else {
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING));
+    }
+
+    /* The mode is named, not picked — it is set in the settings dialog,
+       and this row is state and a mute. */
+    const VoiceMode mode = voiceGetMode();
+    langid modeStr = STR_DLGSETTINGS_VOICE_MODE_OFF;
+    if (mode == VOICE_MODE_PTT)       modeStr = STR_DLGSETTINGS_VOICE_MODE_PTT;
+    else if (mode == VOICE_MODE_OPEN) modeStr = STR_DLGSETTINGS_VOICE_MODE_OPEN;
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MODE));
+    ImGui::SameLine();
+    ImGui::TextUnformatted(langGetText(modeStr));
+
+    /* The binding itself is set in Key Setup; showing it here is so the
+       player can see which key push to talk is on without leaving. */
+    if (mode == VOICE_MODE_PTT) {
+        keyItems pttKeys;
+        windowGetKeys(&pttKeys);
+        const char *pttName =
+            SDL_GetScancodeName((SDL_Scancode)pttKeys.kiPushToTalk);
+        if (!pttName || pttName[0] == '\0') {
+            pttName = langGetText(STR_DLGKEYSETUP_NONE_VAL);
+        }
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(pttName);
+    }
+
+    if (!voiceOn || serverOff) ImGui::EndDisabled();
+}
+#endif

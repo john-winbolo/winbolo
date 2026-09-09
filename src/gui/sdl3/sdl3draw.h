@@ -87,6 +87,13 @@ SDL_Texture *sdl3DrawGetTilesTexture(void);
 void sdl3DrawSetOverviewInWindow(bool active);
 bool sdl3DrawIsOverviewInWindow(void);
 struct OverviewView *sdl3DrawOverviewInWindowView(void);
+/* The in-window frame's drawing half. sdl3DrawMainScreen, called inside the
+   frame's client-mutex hold, only prepares the frame in this mode: it fills
+   the render snapshot and the HUD's source frame and returns. The driver
+   calls this after clientMutexRelease and before the ImGui pass to draw the
+   map, the window blit and the HUD from what was prepared. A no-op when no
+   frame is waiting, so it is safe to call every frame in every mode. */
+void sdl3DrawFlushOverviewInWindow(void);
 /* Where the overview was last blitted, in renderer coordinates — which are
    ImGui's coordinates in every mode we ship. False when the mode is off or
    nothing has been drawn yet. */

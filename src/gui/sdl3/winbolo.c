@@ -70,6 +70,13 @@
 #include "build_cursor.h"
 #include "../lang.h"
 #include "../sound.h"
+#include "../voice.h"
+#if defined(WINBOLO_VOICE_AEC)
+#include "voice_aec.h"
+#endif
+#if defined(WB_VOICEDEBUG)
+#include "voice_debug.h"
+#endif
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
@@ -114,8 +121,13 @@ bool soundEffects = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
-/* Master volume (0-100); applied to the audio stream gain */
+/* Sound effects volume (0-100), the MENU / Sound Volume preference; scales the
+ * master volume for the mixer, and does not reach voice */
 int soundVolume = 50;
+
+/* Master volume (0-100), the MENU / Master Volume preference; scales the sound
+ * effects and voice alike */
+int windowMasterVolume = 100;
 
 /* Is Sound Keepalive enabled */
 bool useSoundKeepalive = TRUE;
@@ -212,6 +224,12 @@ static bool s_deckPaused = FALSE;
  * windowTutorialPause. */
 static bool s_tutorialPaused = FALSE;
 
+/* Set while the native save-map dialog is up during a solo game.  Same freeze
+ * as s_overlayPaused, driven by windowSaveMap / windowSaveMapPoll.
+ * Multiplayer keeps running — not blocking the main loop on that dialog is the
+ * whole point of the poll.  See windowSaveDialogPause. */
+static bool s_saveDialogPaused = FALSE;
+
 /* Mute state captured when each pause path engaged, restored verbatim when it
  * releases.  A pause must hand audio back to whatever it found — not force it
  * unmuted — so it doesn't clobber a user mute or another still-active pause's
@@ -221,6 +239,7 @@ static bool s_overlayPrevMuted        = FALSE;
 static bool s_controllerLostPrevMuted = FALSE;
 static bool s_deckPrevMuted           = FALSE;
 static bool s_tutorialPrevMuted       = FALSE;
+static bool s_saveDialogPrevMuted     = FALSE;
 
 /* Tick counters */
 static DWORD oldTick = 0;
@@ -251,6 +270,8 @@ static void windowRunGameTick(ClientSim *cs);
 static void tutorialRespawnPoll(void);
 static void windowUpdateServerPause(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
+static void windowSaveDialogPause(ClientSim *cs, bool active);
+static void windowSaveMapPoll(ClientSim *cs);
 int winboloCC(void);
 
 /* -------------------------------------------------------
@@ -312,6 +333,10 @@ int main(int argc, char *argv[]) {
   char connectArg[FILENAME_MAX];
   bool joinedViaSteam = FALSE;
   ClientSim *cs = NULL;
+#if defined(WB_VOICEDEBUG)
+  const char *voiceRecordDir = NULL;
+  const char *voiceInjectPath = NULL;
+#endif
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
@@ -349,6 +374,37 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[i], "--allow-unsafe-brains") == 0 ||
         strcmp(argv[i], "-allow-unsafe-brains") == 0) {
       luaBrainsSetAllowUnsafe(1);
+      continue;
+    }
+    /* The voice capture-chain recorder. Both switches take a value, and both
+     * consume it in every build: the clause below assigns anything left over
+     * to cmdLine, which would read the value as a map name. */
+    if (strcmp(argv[i], "--voice-record") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--voice-record needs a directory\n");
+        continue;
+      }
+#if defined(WB_VOICEDEBUG)
+      voiceRecordDir = argv[i + 1];
+#else
+      fprintf(stderr,
+              "--voice-record: this build does not carry the voice recorder\n");
+#endif
+      i++;
+      continue;
+    }
+    if (strcmp(argv[i], "--voice-inject") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--voice-inject needs a WAV file\n");
+        continue;
+      }
+#if defined(WB_VOICEDEBUG)
+      voiceInjectPath = argv[i + 1];
+#else
+      fprintf(stderr,
+              "--voice-inject: this build does not carry the voice recorder\n");
+#endif
+      i++;
       continue;
     }
     if (cmdLine[0] == '\0') {
@@ -429,6 +485,35 @@ int main(int argc, char *argv[]) {
    * runs during setup dialogs. Without this, SDL_LockMutex silently
    * no-ops on the NULL handle and the bg game's "lock" is fictional. */
   threadsCreate(FALSE);
+
+  /* Voice runs for the life of the process. It comes up before
+   * gameFrontStart because the pre-game dialogs the first start shows are
+   * blocking loops that already expect it to exist; it brings up the audio
+   * subsystem itself rather than relying on soundSetup's. A device that
+   * will not open is not fatal — voiceInit leaves the module disabled and
+   * every entry point no-ops. */
+  voiceInit();
+
+#if defined(WB_VOICEDEBUG)
+  /* Injecting without recording writes nothing, so the file implies a
+   * directory. The recorder is plain C stdio and does not make the
+   * directory itself, so it is made here. */
+  if (voiceInjectPath != NULL && voiceRecordDir == NULL) {
+    voiceRecordDir = "./voice-rec";
+  }
+  if (voiceRecordDir != NULL) {
+    if (!SDL_CreateDirectory(voiceRecordDir)) {
+      fprintf(stderr, "Voice recorder: cannot create %s: %s\n", voiceRecordDir,
+              SDL_GetError());
+    }
+    if (!voiceDebugStart(voiceRecordDir)) {
+      fprintf(stderr, "Voice recorder: recording did not start\n");
+    }
+  }
+  if (voiceInjectPath != NULL && !voiceDebugInjectOpen(voiceInjectPath)) {
+    fprintf(stderr, "Voice recorder: injection did not start\n");
+  }
+#endif
 
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();
@@ -676,6 +761,10 @@ int main(int argc, char *argv[]) {
           windowRunGameTick(cs);
         }
 
+        /* Voice encode/decode runs here, on the main thread, beside the
+         * game tick — the codec state has no lock of its own. */
+        voiceTick(cs);
+
         /* Detect game-over returning to lobby */
         if (cs && clientSimIsInLobby(cs) &&
             (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
@@ -702,6 +791,9 @@ int main(int argc, char *argv[]) {
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
+          /* The in-window map overview draws from the snapshot the frame
+             above filled, now that the lock is off. */
+          sdl3DrawFlushOverviewInWindow();
           dwSysFrame += (SDL_GetTicks() - tick);
         }
         /* Consume the timer signal so it doesn't accumulate */
@@ -715,6 +807,10 @@ int main(int argc, char *argv[]) {
         }
         frontEndTutorialNotePresentedFrame();
         tutorialRespawnPoll();
+        /* Pick up a native save-map dialog the player has answered. The
+           dialog is asynchronous precisely so this loop — which is what
+           pumps the client transport — keeps running while it is open. */
+        windowSaveMapPoll(cs);
 
         /* Cap to configured frame rate */
         {
@@ -741,6 +837,11 @@ int main(int argc, char *argv[]) {
     }
 
     finishedLoop = TRUE;
+
+    /* Release the remote talkers with the game they belong to — player
+     * numbers are handed out afresh next time, so a stale decoder would be
+     * fed someone else's voice. */
+    voiceReset();
 
     /* Kill Timers */
     SDL_RemoveTimer(timerGameID);
@@ -783,6 +884,7 @@ int main(int argc, char *argv[]) {
    * too), so leaving it live races bgGameDestroy's frees and can crash the
    * audio thread mid-conversion. */
   soundCleanup();
+  voiceCleanup();
   /* Tear down the process-lifetime welcome-screen bg before the renderer
    * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
    * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying
@@ -842,13 +944,14 @@ static void windowRunGameTick(ClientSim *cs) {
   bool brainRunning;
 
   /* App is backgrounded (Deck home button / sleep), the Steam overlay is
-     open, the controller-disconnected dialog is up, or the controller pause
-     menu is open in a solo game — skip all tick work.  The matching resume
-     (windowResumeForeground / windowSteamOverlayActivated /
-     windowControllerLostPause / windowDeckPause) resets the wallclock baseline
+     open, the controller-disconnected dialog is up, the controller pause
+     menu is open, or the native save-map picker is up in a solo game — skip
+     all tick work.  The matching resume (windowResumeForeground /
+     windowSteamOverlayActivated / windowControllerLostPause /
+     windowDeckPause / windowSaveDialogPause) resets the wallclock baseline
      so we don't fast-forward the paused interval. */
   if (s_suspended || s_overlayPaused || s_controllerLostPaused ||
-      s_deckPaused || s_tutorialPaused)
+      s_deckPaused || s_tutorialPaused || s_saveDialogPaused)
     return;
 
   brainRunning = brainHandlerIsBrainRunning();
@@ -984,7 +1087,7 @@ static void windowUpdateServerPause(ClientSim *cs) {
   gameFrontSetServerPaused(windowIsSoloSession(cs) &&
                            (s_suspended || s_overlayPaused ||
                             s_controllerLostPaused || s_deckPaused ||
-                            s_tutorialPaused));
+                            s_tutorialPaused || s_saveDialogPaused));
 }
 
 void windowSuspendBackground(ClientSim *cs) {
@@ -1125,6 +1228,31 @@ void windowTutorialPause(ClientSim *cs, bool active) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
     soundSetMuted(s_tutorialPrevMuted);
+  }
+}
+
+/* Native save-map dialog opened/closed.  Solo sessions only (single-player or
+   tutorial): freeze the client and server sim while the picker is up and
+   rebase the catch-up wallclock on close, mirroring windowTutorialPause.
+   Multiplayer is a no-op — a networked game must keep running underneath the
+   picker, which is exactly what the poll below makes possible. */
+static void windowSaveDialogPause(ClientSim *cs, bool active) {
+  if (active) {
+    if (!windowIsSoloSession(cs)) return;
+    if (s_saveDialogPaused) return;          /* idempotent */
+    s_saveDialogPaused = TRUE;
+    windowUpdateServerPause(cs);
+    s_saveDialogPrevMuted = soundIsMuted();
+    soundSetMuted(TRUE);
+  } else {
+    /* Always clear on close — even if the session changed while the picker
+       was up — so a stale pause can't freeze a later game. */
+    if (!s_saveDialogPaused) return;
+    s_saveDialogPaused = FALSE;
+    windowUpdateServerPause(cs);
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+    soundSetMuted(s_saveDialogPrevMuted);
   }
 }
 
@@ -1595,11 +1723,125 @@ void windowSoundKeepalive(void) {
   }
 }
 
+/* The in-game menu, the macOS menu bar and the settings dialog all come here
+ * for the game sounds. */
 void windowSetSoundVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   soundVolume = pct;
-  soundSetVolume(pct);
+  soundSetEffectsVolume(pct);
+}
+
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * streams and its own gain, and nothing downstream of here covers both. */
+void windowSetMasterVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  windowMasterVolume = pct;
+  soundSetMasterVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
+}
+
+/* -------------------------------------------------------
+ * Voice settings — apply a value to the running voice module
+ * and clamp it to the range the UI offers, in one place, so
+ * the settings dialog and the prefs loader agree.  The voice
+ * module itself holds the value; gameFrontPutPrefs reads it
+ * back out through the getters below at save time.
+ * ------------------------------------------------------- */
+void windowSetVoiceEnabled(bool on) {
+  voiceSetEnabled(on);
+}
+
+bool windowGetVoiceEnabled(void) {
+  return voiceIsEnabled();
+}
+
+void windowSetVoiceMode(int mode) {
+  if (mode < VOICE_MODE_OFF || mode > VOICE_MODE_OPEN) {
+    mode = VOICE_MODE_PTT;
+  }
+  voiceSetMode((VoiceMode)mode);
+}
+
+int windowGetVoiceMode(void) {
+  return (int)voiceGetMode();
+}
+
+void windowSetVoiceMicGain(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 4.0f) gain = 4.0f;
+  voiceSetMicGain(gain);
+}
+
+float windowGetVoiceMicGain(void) {
+  return voiceGetMicGain();
+}
+
+void windowSetVoiceVolume(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 2.0f) gain = 2.0f;
+  voiceSetOutputVolume(gain);
+}
+
+float windowGetVoiceVolume(void) {
+  return voiceGetOutputVolume();
+}
+
+/* The chosen audio devices, by display name, "" for the system default.
+ * Nothing to clamp — the voice module holds the name and truncates it — but
+ * they sit with the rest of the façade so gameFrontPutPrefs reads them back
+ * the same way as everything else here. */
+void windowSetVoiceRecordingDevice(const char *name) {
+  voiceSetRecordingDevice(name);
+}
+
+const char *windowGetVoiceRecordingDevice(void) {
+  return voiceGetRecordingDevice();
+}
+
+void windowSetVoicePlaybackDevice(const char *name) {
+  voiceSetPlaybackDevice(name);
+}
+
+const char *windowGetVoicePlaybackDevice(void) {
+  return voiceGetPlaybackDevice();
+}
+
+#if defined(WINBOLO_VOICE_AEC)
+/* Echo cancellation of the other players' voices out of this microphone.
+ * Same shape as the voice settings above: the canceller module holds the
+ * switch and gameFrontPutPrefs reads it back through the getter. */
+void windowSetVoiceEchoCancel(bool on) {
+  voiceAecSetEnabled(on);
+}
+
+bool windowGetVoiceEchoCancel(void) {
+  return voiceAecIsEnabled();
+}
+
+/* Whether a canceller came up at all, which the getter above cannot say -
+ * it reports the switch, and the switch is the player's either way. */
+bool windowGetVoiceEchoCancelAvailable(void) {
+  return voiceAecIsAvailable();
+}
+
+/* Whether that canceller is the operating system's rather than ours, which
+ * is a different row in Settings: switched off and greyed, because there is
+ * nothing here for the player to switch. */
+bool windowGetVoiceEchoCancelPlatform(void) {
+  return voiceAecIsPlatform();
+}
+#endif
+
+/* Tank-label microphone icons are held by the status renderer that
+ * draws them; same façade shape as the voice settings above. */
+void windowSetShowTankMicIcons(bool on) {
+  sdl3DrawStatusSetShowMicIcons(on);
+}
+
+bool windowGetShowTankMicIcons(void) {
+  return sdl3DrawStatusGetShowMicIcons();
 }
 
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
@@ -1709,12 +1951,26 @@ void windowRedrawAll(ClientSim *cs) {
   clientMutexRelease();
 }
 
-/* Save-map dialog callback state */
+/* Save-map dialog state.  File scope because the dialog is asynchronous: the
+   callback publishes a result that windowSaveMapPoll picks up on a later
+   frame, so the state has to outlive windowSaveMap.  One native save dialog at
+   a time.
+
+   SDL runs the callback on a worker thread on Windows and on the Linux zenity
+   backend, so `done` is the publication point — path and ok are written first
+   and the atomic store releases them to the poll. */
 typedef struct {
   char path[FILENAME_MAX];
-  int done;   /* 0 = waiting, 1 = got result */
-  int ok;     /* 1 = user picked a file */
+  int ok;                  /* 1 = user picked a file (callback side) */
+  SDL_AtomicInt done;      /* 0 = waiting, 1 = path/ok published */
+  bool pending;            /* main thread: a dialog is outstanding */
+  /* The ClientSim the save was asked for.  Compared, never dereferenced: a
+     lost connection tears the sim down and gameFrontStart builds a new one,
+     and a result that lands after that belongs to a game that is gone. */
+  const ClientSim *owner;
 } SaveMapState;
+
+static SaveMapState saveMapState;
 
 static void SDLCALL saveMapCallback(void *userdata,
                                      const char * const *filelist,
@@ -1726,7 +1982,33 @@ static void SDLCALL saveMapCallback(void *userdata,
     st->path[FILENAME_MAX - 1] = '\0';
     st->ok = 1;
   }
-  st->done = 1;
+  /* Published last; the poll reads path and ok only after seeing this. */
+  SDL_SetAtomicInt(&st->done, 1);
+}
+
+/* -------------------------------------------------------
+ * windowSaveMapPoll — pick up an answered save-map dialog
+ *
+ * Called once per frame from the main loop.  The write and its error box run
+ * here rather than in the callback because both touch the sim and ImGui, and
+ * the callback is not guaranteed to be on the main thread.
+ * ------------------------------------------------------- */
+static void windowSaveMapPoll(ClientSim *cs) {
+  if (!saveMapState.pending || !SDL_GetAtomicInt(&saveMapState.done)) {
+    return;
+  }
+  saveMapState.pending = FALSE;
+  windowSaveDialogPause(cs, FALSE);
+
+  /* A result for a sim that has since gone is dropped rather than written
+     against whatever replaced it. */
+  if (saveMapState.owner != cs) {
+    return;
+  }
+  if (saveMapState.ok && clientSaveMap(cs, saveMapState.path) == FALSE) {
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+  }
 }
 
 void windowSaveMap(ClientSim *cs) {
@@ -1777,26 +2059,33 @@ void windowSaveMap(ClientSim *cs) {
     return;
   }
 
-  /* Desktop/mouse path: native save-file dialog. */
-  SaveMapState state;
+  /* Desktop/mouse path: native save-file dialog, shown and returned from
+     immediately.  Waiting here would stop the main loop, and the main loop is
+     what pumps the client transport (clientFrontRunTickStep), so a player
+     browsing for a folder is dropped by the server after
+     CLIENT_TIMEOUT_TICKS — ten seconds.  windowSaveMapPoll picks the answer
+     up on a later frame instead.
+
+     One dialog at a time: the four menu entries that reach here (three in
+     sdl3imgui.cpp, plus File > Save Map on the macOS native bar) stay enabled
+     and simply do nothing while one is open. */
+  if (saveMapState.pending) {
+    return;
+  }
+
   SDL_DialogFileFilter filters[] = {
     { "Map Files", "map" },
   };
 
-  memset(&state, 0, sizeof(state));
+  saveMapState.path[0] = '\0';
+  saveMapState.ok = 0;
+  saveMapState.owner = cs;
+  saveMapState.pending = TRUE;
+  SDL_SetAtomicInt(&saveMapState.done, 0);
 
-  SDL_ShowSaveFileDialog(saveMapCallback, &state, sdl3DrawGetWindow(),
+  windowSaveDialogPause(cs, TRUE);
+  SDL_ShowSaveFileDialog(saveMapCallback, &saveMapState, sdl3DrawGetWindow(),
                          filters, 1, NULL);
-  while (!state.done) {
-    SDL_Event e;
-    SDL_WaitEventTimeout(&e, 100);
-  }
-  if (state.ok) {
-    if (clientSaveMap(cs, state.path) == FALSE) {
-      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
-                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-    }
-  }
 }
 
 void windowButtonAdd(int keyCode) {

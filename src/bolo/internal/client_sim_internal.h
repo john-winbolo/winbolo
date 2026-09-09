@@ -314,6 +314,12 @@ struct ClientSim {
                                          * set TRUE by CTRL_LOBBY_SYNC_COMPLETE.
                                          * Lobby event sounds play only when set,
                                          * so the roster replay burst is silent. */
+    /* Who the server says is producing voice right now, one bit per slot
+     * (CTRL_VOICE_TALKING). Lobby and countdown only — the server stops
+     * sending it once a round starts, and sends one empty set on the way
+     * out, so this is 0 in a running game. Raw: the local mute list is not
+     * folded in here. */
+    PlayerBitMap     voiceTalkingMap;
     char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
     char             lobbyTeamChatHistory[4096]; /* Team-only lobby chat buffer */
 
@@ -339,6 +345,12 @@ struct ClientSim {
                                      * to their allies; raw mirror of the
                                      * lobby-settings event, false until the
                                      * first one lands */
+    ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
+                                       * its clients send it; raw mirror of
+                                       * the lobby-settings event. Zero is
+                                       * serverVoiceOn, so a client that has
+                                       * not been told yet behaves as it did
+                                       * before the server carried the mode */
     /* The client's own copy of the proximity clocks a viewPolicyDecay
      * category runs on, for the local player as the viewer. The server keeps
      * the same clocks and they are what decides which rects it sends; these
@@ -425,6 +437,7 @@ struct ClientSim {
     uint8_t  lobbyTeamInUse[16];
     uint8_t  lobbyTeamColor[16];
     uint8_t  lobbyTeamPool[16];
+    uint8_t  lobbyTeamStartSide[16];    /* START_SIDE_* (start_sides.h) */
     char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
 
     uint8_t  lobbyBotDifficulty[16];
@@ -598,6 +611,10 @@ struct ClientSim {
     /* Steam achievement: per-game death/loss counters (zeroed by memset in clientSimCreate) */
     uint16_t myDeathsThisGame;
     uint16_t myLgmLossesThisGame;
+
+    /* Live per-slot scoreboard, counted from the reliable game-event
+     * stream for every slot (not just ours). Zeroed at CTRL_GAME_PHASE_RUNNING. */
+    ClientPlayerStats liveStats[MAX_TANKS];
 
     /* Steam achievement: player count tracking (ACH_PLAYERS_6/8/16) */
     uint8_t  maxPlayersSeenThisGame;
@@ -819,6 +836,17 @@ void clientErrSmoothDecay(float *errX, float *errY, float *errAngle, float dtMs)
  * this for prediction, brains, or collision reintroduces the
  * asymmetric-state bug the offset exists to avoid. */
 void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle);
+
+/* Build the visible shell list: other players' shells from the projected
+ * layer (or, for a bot, the server snapshots its brain perceives) plus the
+ * local player's own predictions. Squares outside [left,rightExcl) x
+ * [top,bottomExcl) are skipped, and originX/originY are subtracted from the
+ * square written out — pass the viewport and its scroll offset for the
+ * classic 17x17 list, or the whole map and 0,0 for absolute squares. */
+void clientSimBuildShellList(ClientSim *cs, screenBullets *sb,
+                             int left, int rightExcl,
+                             int top, int bottomExcl,
+                             int originX, int originY);
 
 /* Decompress `buf`/`len` into the ClientSim's map/pills/bases/starts,
  * stash the map name, and prime the mine-visibility/render state.

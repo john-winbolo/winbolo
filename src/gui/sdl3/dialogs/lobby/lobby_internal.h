@@ -53,8 +53,8 @@
  *   wasm target's sources.
  * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
  *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
- *   sources, and the save path spins its own SDL event loop waiting on a
- *   native file dialog, which a browser main loop cannot do. */
+ *   sources, and the save path ends in a native file dialog the browser has
+ *   no equivalent of. */
 #define BOLO_REEL_WBN_FETCH 1
 #ifdef __EMSCRIPTEN__
 #define BOLO_REEL_WBN_FETCH_CURL 0
@@ -383,6 +383,7 @@ void lobbySendTeamClear(ClientSim *cs, uint8_t teamId);
 void lobbySendTeamPool(ClientSim *cs,
                        uint8_t teamId, uint8_t namingPool,
                        const char *teamName);
+void lobbySendTeamSide(ClientSim *cs, uint8_t teamId, uint8_t startSide);
 void lobbySendSetting(ClientSim *cs,
                       uint8_t settingType,
                       const uint8_t *value, uint8_t valueLen);
@@ -414,12 +415,27 @@ void lobbyWbnMapsTick(MapChooserState *state, SDL_Renderer *renderer,
 /* mappreview */
 void lobbyMapPreviewReset(void);
 void lobbyRebuildStartCompassCache(const BYTE *data, int len);
+/* Side mask of 1-based start k from the per-start cache; 0 (centre) when k
+ * is off the cached list. */
+BYTE lobbyStartSideMask(int k);
 const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress);
 int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
                             uint8_t *owners, int maxN, uint32_t *outSig);
 void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
                                   ImVec2 imgMin, float previewSize,
                                   int bx0, int by0, int bx1, int by1);
+/* The two-team N/S · E/W compass rose in the preview's bottom-left corner.
+ * Host only, map with starts, exactly two teams with members. Returns true
+ * when the cursor is on it, so the caller skips the start claim/drag layer
+ * and the zoom popup. Call it before lobbyPreviewInteract. */
+/* Hit test only, run BEFORE the start claim/drag layer so the rose keeps
+ * mouse priority: true while the cursor is within the rose's reach. */
+bool lobbyPreviewCompassHot(ClientSim *cs, bool effHostMap,
+                            ImVec2 imgMin, float innerSize, float gapPx, float s);
+/* Draw + tooltip + click, run AFTER the start overlay so the letters paint
+ * on top of any start label pushed into the corner. */
+bool lobbyDrawPreviewCompass(ClientSim *cs, bool effHostMap,
+                             ImVec2 imgMin, float innerSize, float gapPx, float s);
 bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                           ImVec2 imgMin, float innerSize,
                           int bx0, int by0, int bx1, int by1);
@@ -480,6 +496,12 @@ void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
 bool lobbyClipGifButton(const char *id, bool compact);
 float lobbyClipGifButtonWidth(void);
 void lobbyClipGifRender(float s);
+/* The clip export's save picker is asynchronous. The poll writes out a clip
+ * whose picker has been answered and belongs in the lobby's event loop, above
+ * the view switch, so an export survives navigating away from the recap; the
+ * abandon releases one still waiting when the lobby session ends. */
+void lobbyClipGifSavePoll(void);
+void lobbyClipGifSaveAbandon(void);
 #endif
 
 /* rating */

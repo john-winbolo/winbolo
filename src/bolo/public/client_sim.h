@@ -43,6 +43,7 @@
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
+#include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -95,6 +96,20 @@ typedef struct {
     uint8_t clientType;       /* ClientType enum */
     uint8_t clientFlags;      /* PLAYER_FLAG_* bits */
 } ClientSpectatorSlot;
+
+/* Live per-slot scoreboard counters, accumulated on the client from the
+ * reliable game-event stream (clientSimApplyGameEvents). Field names
+ * mirror RoundPlayerSummary so the end-of-round recap and the live board
+ * read the same way; dmgDealt and builds are absent because no client
+ * event carries them. */
+typedef struct {
+    uint16_t kills;
+    uint16_t deaths;
+    uint16_t baseCaptures;
+    uint16_t pillCaptures;
+    uint16_t lgmKills;
+    uint16_t lgmDeaths;
+} ClientPlayerStats;
 
 /* Callback typedefs for new transport message sending.
  *
@@ -597,12 +612,42 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
  * returns NULL for pointer types, false/0 for scalars). */
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
 
+/* Live scoreboard counters for one player slot; out-of-range slot
+ * returns NULL. Zeroed at the start of each game. */
+const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
+                                                 BYTE playerNum);
+
 /* Spectator roster slot mirror; out-of-range idx returns NULL. */
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
 
 /* Count of currently-connected lobby slots (humans + bots).
  * Matches what the lobby UI's player table renders. */
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
+/*********************************************************
+ *NAME:          clientSimGetVoiceTalkingMap
+ *PURPOSE:
+ *  Who the server says is producing voice right now, one
+ *  bit per player slot.
+ *
+ *  Meaningful in the lobby and the countdown only. There
+ *  voice is all-talk, so the set says nothing a listener
+ *  could not already hear. In a running game voice follows
+ *  the alliance and the server does not send the set at
+ *  all, so this reads empty — by design, not because the
+ *  events were missed. The server sends one empty set as
+ *  the round starts, so nobody is left showing as talking.
+ *
+ *  The set is raw: it names everyone talking, including
+ *  players this client has muted. That is the point of it —
+ *  a muted player's voice never arrives, so this is the
+ *  only thing that says they are speaking. Intersecting it
+ *  with the local mute list is the caller's job.
+ *
+ *ARGUMENTS:
+ *  cs - The ClientSim to read
+ *********************************************************/
+PlayerBitMap clientSimGetVoiceTalkingMap(const ClientSim *cs);
+
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
 
@@ -867,9 +912,19 @@ bool        clientSimGetClassicMode(const ClientSim *cs);
  * too — which matches the classic behaviour the option turns off. */
 bool        clientSimGetAlliesInTrees(const ClientSim *cs);
 
+/* What the server does with the voice its clients send it, as last broadcast
+ * in the lobby-settings event. serverVoiceOff means voice sent from here is
+ * dropped, so a client on such a server captures and sends none. Reads back
+ * serverVoiceOn until the first event arrives, which is what every server did
+ * before the setting existed. */
+ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs);
+
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
+/* The team's START_SIDE_* choice as last broadcast; START_SIDE_ANY (0)
+ * until the first team-meta event for that team arrives. */
+uint8_t     clientSimGetLobbyTeamStartSide(const ClientSim *cs, BYTE teamId);
 const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
@@ -1144,6 +1199,74 @@ bool         clientSimIsMyTankAlive(const ClientSim *cs);
    at 0,0. */
 void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
                                       screenLgm *lgms, screenBullets *sb);
+
+/* Everything the map overview's render reads from the sim, as plain data.
+   The host fills it with the client mutex held and draws from it after the
+   mutex is released, so the render's own time — most of it SDL flushing at
+   each render-target switch — is no longer spent inside the lock that a hosted
+   server's timer thread waits on.
+
+   The memory is copied only when the sim's generation counter has moved since
+   the last fill; the entity lists are rebuilt on every fill and have already
+   been through the live-square filter, so they hold exactly what is drawn.
+   Filled from a NULL sim, it reads as no map, nothing alive and no item view.
+   The handle is the host's to create and destroy. */
+typedef struct OverviewSnapshot OverviewSnapshot;
+
+/* One pill or base and the number the views draw on it, at its absolute map
+   square. The snapshot lists every one the sim has; whether a square shows
+   its number is the render's decision, made against the memory's tile and
+   live flag for that square. */
+typedef struct OverviewItemLabel {
+  BYTE mapX;
+  BYTE mapY;
+  BYTE number;   /* the value drawn, already decremented as the views do */
+  bool isBase;
+} OverviewItemLabel;
+
+OverviewSnapshot *overviewSnapshotCreate(void);
+void              overviewSnapshotDestroy(OverviewSnapshot *s);
+
+/* Fill from the live sim. Call with the client mutex held; render from the
+   result with it released. */
+void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s);
+
+/* Readers for the render. Each takes a NULL snapshot as nothing to draw. */
+const OverviewMap   *overviewSnapshotMap(const OverviewSnapshot *s);
+const screenTanks   *overviewSnapshotTanks(const OverviewSnapshot *s);
+const screenLgm     *overviewSnapshotLgms(const OverviewSnapshot *s);
+const screenBullets *overviewSnapshotBullets(const OverviewSnapshot *s);
+/* Whether the local player's own tank survived the filter — the reticle is
+   drawn only when the tank sprite was. */
+bool    overviewSnapshotSelfDrawn(const OverviewSnapshot *s);
+BYTE    overviewSnapshotMyPlayerNum(const OverviewSnapshot *s);
+/* The local tank, on the same terms as clientSimIsMyTankAlive and
+   clientSimGetMyTankMapPosF: dead and waiting to respawn reads as not alive,
+   and the position is written only for a living tank. */
+bool    overviewSnapshotTankAlive(const OverviewSnapshot *s);
+bool    overviewSnapshotTankPos(const OverviewSnapshot *s, float *mapX,
+                                float *mapY);
+bool    overviewSnapshotBlackout(const OverviewSnapshot *s);
+/* The gunsight as clientSimGetGunsightPos reported it: false, with nothing
+   written, when it declined. */
+bool    overviewSnapshotGunsight(const OverviewSnapshot *s, BYTE *mapX,
+                                 BYTE *mapY, BYTE *pixelX, BYTE *pixelY);
+bool    overviewSnapshotInItemView(const OverviewSnapshot *s);
+uint8_t overviewSnapshotViewKind(const OverviewSnapshot *s);
+BYTE    overviewSnapshotViewTarget(const OverviewSnapshot *s);
+/* The square an item view watches — clientSimGetPillViewX / Y at fill time. */
+void    overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
+                                       int *mapY);
+/* The centre of the live block as clientSimGetFogViewCentreF reported it, at
+   sub-square precision: false, with nothing written, where it declined — the
+   experiments that centre their block on the tank, and no live view to read a
+   centre from. A camera that follows the block falls back to the tank there. */
+bool    overviewSnapshotFogViewCentre(const OverviewSnapshot *s, float *mapX,
+                                      float *mapY);
+/* Every pill and base at its square, with the number the classic view puts
+   on it: the first the sim lists at that square, counted from 0. */
+int                      overviewSnapshotItemLabelCount(const OverviewSnapshot *s);
+const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);

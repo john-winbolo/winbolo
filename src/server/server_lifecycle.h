@@ -27,6 +27,7 @@
 
 #include "global.h"  /* GAME_TICK_LENGTH */
 #include "server_sim.h"
+#include "server_voice_mode.h"  /* ServerVoiceMode — the voiceMode field below */
 #include "upload_policy.h"
 
 #define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)
@@ -81,6 +82,16 @@ typedef struct {
                                      (_winbolo._udp.local). Listen-server
                                      hosts set true; dedicated defaults
                                      false (opt in with -mdns). */
+
+  ServerVoiceMode voiceMode;      /* the voice mode the server runs.
+                                     serverVoiceOff forwards no voice at all —
+                                     the server still drains each client's
+                                     voice ring so a client that sends anyway
+                                     cannot stall on it. serverVoiceProximity
+                                     is not implemented and forwards like
+                                     serverVoiceOn. Zero-init =
+                                     serverVoiceOn; the dedicated server sets
+                                     serverVoiceOff from -no-voice. */
 
   /* Operator-controlled handling for client-pushed map uploads.
    * Zero-init = ALLOW + transport defaults (64 files / 8 MiB), so the GUI

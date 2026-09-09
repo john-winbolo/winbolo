@@ -59,6 +59,9 @@ extern "C" {
 #include "../gamefront.h"
 #include "../lang.h"
 #include "../sound.h"  /* soundPlayEffect — lobby game-start jingle (wasm seam) */
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"  /* voiceGetTalkingMap / voiceIsPlayerMuted — mic icons */
+#endif
 }
 
 /* Maps an uppercased alpha-2 code to its localized STR_COUNTRY_* name id
@@ -248,6 +251,31 @@ extern "C" bool showNetworkDebugMessages;
 static SDL_Window   *s_window   = nullptr;
 static SDL_Renderer *s_renderer = nullptr;
 
+/* A texture may only be drawn through the renderer that created it, and the
+ * players pop-out window has its own renderer, so the icon textures and the
+ * flag cache are kept per renderer. Two are enough: the game window, and the
+ * one pop-out that draws textures. The other pop-outs draw only text, so they
+ * never load a slot of their own.
+ *
+ * s_popOutRenderer is the renderer of the pop-out currently being drawn,
+ * set by popOutBeginFrame and cleared by popOutEndFrame; NULL means the game
+ * window is drawing. */
+#define ICON_SLOT_MAIN   0
+#define ICON_SLOT_POPOUT 1
+#define ICON_SLOT_COUNT  2
+static SDL_Renderer *s_popOutRenderer = nullptr;
+
+/* The renderer the current draw goes to. */
+static SDL_Renderer *activeRenderer(void) {
+    if (s_popOutRenderer) return s_popOutRenderer;
+    return s_renderer ? s_renderer : sdl3DrawGetRenderer();
+}
+
+/* Texture slot the current draw reads from. */
+static int activeIconSlot(void) {
+    return s_popOutRenderer ? ICON_SLOT_POPOUT : ICON_SLOT_MAIN;
+}
+
 /* UI scale applied to the main in-game ImGui context (font + style), set in
    sdl3ImguiSetup.  Dialog seed/min sizes and the window minimum multiply by
    this so they track the scaled font.  1.0 until setup runs. */
@@ -264,6 +292,9 @@ static bool s_showNetInfo  = false;
 static bool s_showGameInfo = false;
 static bool s_showSendMsg  = false;
 static bool s_showPlayersPanel = false;
+/* Width one players-panel row needs, measured from the rows drawn last frame
+   and used as the panel's resize minimum. 0 until the panel has drawn once. */
+static float s_playersPanelNeedW = 0.0f;
 
 /* Deferred zoom change — the reconfigure mutates the live renderer, so it must
    not run mid-frame; store the requested value and apply it after the frame
@@ -314,8 +345,8 @@ static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
  * (imguiShieldBadge / imguiDrawSpinningShield) rather than from a texture, so
  * there is no s_iconWbnVerified — the Mac menubar loads its own copy of
  * shield.svg for native Cocoa drawing. */
-static SDL_Texture *s_iconSteam = nullptr;
-static SDL_Texture *s_iconBrain = nullptr;
+static SDL_Texture *s_iconSteam[ICON_SLOT_COUNT] = {};
+static SDL_Texture *s_iconBrain[ICON_SLOT_COUNT] = {};
 /* Large brain rasterization used for tank-label overlays, kept as a surface
  * because the label caches texture it per renderer (main window, pop-out
  * overview). The small s_iconBrain is rasterized at WBN_ICON_SIZE for the
@@ -326,42 +357,233 @@ static SDL_Texture *s_iconBrain = nullptr;
  * the realistic zoom range so the label-side blit is a (sharp) downscale
  * rather than an upscale. */
 static SDL_Surface *s_iconBrainSurf = nullptr;
-static bool s_wbnIconsLoaded = false;
+/* Skull for the players panel's death counter columns. Its own copy of
+ * data/ui/skull.svg rather than the lobby's — that one lives in the lobby's
+ * icon cache behind lobbyIcons(), which is lobby-internal. */
+static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
+#if defined(WINBOLO_VOICE)
+/* Voice state icons for the players panel. Which shape is drawn says which
+ * end the state belongs to: a speaker for the states about playback here —
+ * a remote player idle, talking, or muted by this client — and a microphone
+ * for the states about capture at the other end, no microphone or muted
+ * their own. Talking and idle share the speaker under different tints,
+ * because the difference between them is momentary and a shape change would
+ * read as flicker. */
+static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]          = {};
+static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT]     = {};
+static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]       = {};
+static SDL_Texture *s_iconSpeaker[ICON_SLOT_COUNT]      = {};
+static SDL_Texture *s_iconSpeakerMuted[ICON_SLOT_COUNT] = {};
+/* The local player's slot, read once a frame in sdl3ImguiPumpAndRender — the
+ * only place here with a ClientSim to ask. PLAYER_SELF_UNKNOWN rather than 0
+ * until it has been read: a zero would make slot 0 the local player for a
+ * frame, and at join that is exactly the frame in which a real player sits
+ * there and would have their icon blanked. */
+#define PLAYER_SELF_UNKNOWN 0xFFu
+static unsigned char s_selfPlayerNum = PLAYER_SELF_UNKNOWN;
+/* Voice icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
+ * further down the file because the players panel is rendered above them.
+ * Talking is the only one that has to catch the eye mid-game; the rest sit
+ * back so a panel full of idle rows is not a wall of colour. */
+static const ImVec4 MIC_TINT_NORMAL  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+static const ImVec4 MIC_TINT_TALKING = ImVec4(0.30f, 1.00f, 0.40f, 1.00f);
+static const ImVec4 MIC_TINT_MUTED   = ImVec4(1.00f, 0.35f, 0.35f, 1.00f);
+static const ImVec4 MIC_TINT_DIM     = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
+/* The resting shape only while a player muted here is talking: the same red
+ * held back so the pulsing fill drawn over it has something to show against,
+ * the way the talking speaker's green wells up inside a dim glyph. A muted
+ * player who is silent keeps the flat MIC_TINT_MUTED. Not MIC_TINT_DIM —
+ * that is white, and a red row washing out to white and back as someone
+ * speaks reads as a change of state rather than as an animation. */
+static const ImVec4 MIC_TINT_MUTED_DIM = ImVec4(1.00f, 0.35f, 0.35f, 0.40f);
+/* The two dials for that pulse, if it reads wrong on screen. The period is a
+ * second and a bit, slow enough to carry the rhythm of speech rather than
+ * blink like a warning light. The floor is how empty the glyph gets at the
+ * bottom of each sweep: a fill that reached zero would read as "they have
+ * stopped", which is the one thing this is here to say they have not. */
+static const float MIC_PULSE_PERIOD_SEC = 1.25f;
+static const float MIC_PULSE_FLOOR      = 0.35f;
+/* What sdl3ImguiCreateMicIconSurface will rasterize at. Below the floor the
+ * glyph is unreadable whatever we do; the ceiling is well past the largest
+ * size the game view asks for and stops a degenerate layout turning into a
+ * huge allocation. */
+#define MIC_ICON_MIN_PX 8
+#define MIC_ICON_MAX_PX 256
+#endif
+static bool s_wbnIconsLoaded[ICON_SLOT_COUNT] = {};
 #define WBN_ICON_SIZE 14
 #define WBN_ICON_TANK_LABEL_SIZE 48
 
 static void ensureWbnIconsLoaded(void) {
-    if (s_wbnIconsLoaded) return;
-    s_wbnIconsLoaded = true;
-    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconSteam     = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    s_iconBrain     = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
-    s_iconBrainSurf = imguiLoadSvgIconWhiteSurface("data/ui/brain.svg",
-                                                   WBN_ICON_TANK_LABEL_SIZE);
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainSurf=%p s_renderer=%p drawRenderer=%p",
-            (void *)s_iconSteam,
-            (void *)s_iconBrain, (void *)s_iconBrainSurf,
-            (void *)s_renderer, (void *)sdl3DrawGetRenderer());
+    int slot = activeIconSlot();
+    if (s_wbnIconsLoaded[slot]) return;
+    s_wbnIconsLoaded[slot] = true;
+    SDL_Renderer *r = activeRenderer();
+    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconBrain[slot]   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
+    /* Outside the voice test below: the counter columns that draw this are
+     * not a voice feature and ship in -DWINBOLO_VOICE=OFF builds too. */
+    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
+#if defined(WINBOLO_VOICE)
+    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_SIZE);
+    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_SIZE);
+    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_SIZE);
+    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_SIZE);
+    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_SIZE);
+#endif
+    /* Renderer-free, so they are loaded once for every slot rather than
+     * rasterized again per renderer. */
+    if (!s_iconBrainSurf) {
+        s_iconBrainSurf = imguiLoadSvgIconWhiteSurface("data/ui/brain.svg",
+                                                       WBN_ICON_TANK_LABEL_SIZE);
+    }
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] slot=%d steam=%p brain=%p brainSurf=%p renderer=%p s_renderer=%p drawRenderer=%p",
+            slot, (void *)s_iconSteam[slot],
+            (void *)s_iconBrain[slot], (void *)s_iconBrainSurf,
+            (void *)r, (void *)s_renderer, (void *)sdl3DrawGetRenderer());
+}
+
+/* Skull for the players panel's death counter columns, drawn square at
+ * text height and tinted to the text colour so it sits with the other header
+ * art rather than shouting. Returns false when the asset is missing, which is
+ * the caller's cue to fall back to the column's written label. */
+static bool playersPanelDrawSkull(void) {
+    SDL_Texture *skull = s_iconSkull[activeIconSlot()];
+    if (!skull) return false;
+    float sz = ImGui::GetTextLineHeight();
+    ImGui::ImageWithBg((ImTextureID)skull, ImVec2(sz, sz),
+                       ImVec2(0, 0), ImVec2(1, 1),
+                       ImVec4(0, 0, 0, 0),
+                       ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    return true;
+}
+
+/* A pop-out's own copy of the tile sheet, for the counter-column sprites.
+ * The game's sheet belongs to the game window's renderer and cannot be drawn
+ * through any other, so a pop-out that wants the map art builds its own.
+ * Keyed on the renderer as well as held in a single static: the pop-out icon
+ * slot is shared by every pop-out window, and the textures in it belong to
+ * whichever one built them, so a different pop-out becoming the active
+ * renderer has to rebuild. Keyed on the tiles generation too, so a skin or a
+ * Tile Detail change reaches this copy the same way it reaches the game's own
+ * sheet. The game's sheet scale is deliberately not a key: this copy is built
+ * at a fixed size for icons drawn at text height, not at the size the map is
+ * drawn at, so a scale change has nothing to say about it. Like the overview's
+ * sheet, the keys are recorded before the build is attempted, so a build that
+ * failed is not retried every frame. */
+static SDL_Texture  *s_tilesPopOut         = nullptr;
+static SDL_Renderer *s_tilesPopOutRenderer = nullptr;
+static unsigned int  s_tilesPopOutGen      = 0;
+
+/* The tile sheet the current draw can read from: the game's own while the
+ * game window is drawing, the pop-out's copy otherwise. NULL when there is no
+ * sheet at all, which is the caller's cue to print written labels instead.
+ *
+ * The copy is built at twice the 1x tile size so the sprites are a downscale
+ * at the text heights they are drawn at rather than a blow-up. Source coords
+ * stay in 1x units either way: UVs normalised against the 1x reference size
+ * (TILE_FILE_X/Y) address a sheet assembled at any scale. */
+static SDL_Texture *activeTilesTexture(void) {
+    if (!s_popOutRenderer) return sdl3DrawGetTilesTexture();
+
+    unsigned int gen = sdl3DrawGetTilesGeneration();
+    if (s_tilesPopOutRenderer == s_popOutRenderer && s_tilesPopOutGen == gen) {
+        return s_tilesPopOut;
+    }
+
+    if (s_tilesPopOut) {
+        SDL_DestroyTexture(s_tilesPopOut);
+        s_tilesPopOut = nullptr;
+    }
+    s_tilesPopOutRenderer = s_popOutRenderer;
+    s_tilesPopOutGen      = gen;
+
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * 2);
+    if (!sheet) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[PopOut] tileLoaderBuildSheet failed");
+        return nullptr;
+    }
+    s_tilesPopOut = SDL_CreateTextureFromSurface(s_popOutRenderer, sheet);
+    SDL_DestroySurface(sheet);
+    if (!s_tilesPopOut) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[PopOut] SDL_CreateTextureFromSurface failed: %s",
+                     SDL_GetError());
+        return nullptr;
+    }
+    SDL_SetTextureBlendMode(s_tilesPopOut, SDL_BLENDMODE_BLEND);
+    return s_tilesPopOut;
+}
+
+/* imguiDrawAtlasIcon against a sheet the caller names. Same inline sprite at
+ * text height, keeping the source aspect so a sprite that is not square (the
+ * 3x4 LGM) is not stretched; the shared helper reads the game window's sheet
+ * directly, which is the one thing a pop-out cannot do. Source coords and
+ * extents are in 1x units, normalised against the 1x reference size, so the
+ * game's sheet and the pop-out's are addressed the same way whatever scale
+ * each was assembled at.
+ *
+ * The nearest-sampling bracket is the shared helper's, for the same two
+ * reasons: the icons are pixel art at text height, and the game's live sheet
+ * would otherwise keep whatever sampler the backend last bound it with. */
+static void drawAtlasIconFrom(SDL_Texture *tex, int srcX, int srcY,
+                              int srcW, int srcH) {
+    if (!tex || srcW <= 0 || srcH <= 0) return;
+    float h = ImGui::GetTextLineHeight();
+    float w = h * (float)srcW / (float)srcH;
+    ImVec2 uv0((float)srcX / TILE_FILE_X, (float)srcY / TILE_FILE_Y);
+    ImVec2 uv1((float)(srcX + srcW) / TILE_FILE_X,
+               (float)(srcY + srcH) / TILE_FILE_Y);
+    imguiPushNearestSampling();
+    ImGui::Image((ImTextureID)tex, ImVec2(w, h), uv0, uv1);
+    imguiPopNearestSampling();
 }
 
 /* Platform icon textures, indexed by ClientType. UNKNOWN slot stays NULL. */
-static SDL_Texture *s_iconPlatform[CLIENT_TYPE_COUNT] = {};
-static bool s_platformIconsLoaded = false;
+static SDL_Texture *s_iconPlatform[ICON_SLOT_COUNT][CLIENT_TYPE_COUNT] = {};
+static bool s_platformIconsLoaded[ICON_SLOT_COUNT] = {};
 
 static void ensurePlatformIconsLoaded(void) {
-    if (s_platformIconsLoaded) return;
-    s_platformIconsLoaded = true;
-    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
+    int slot = activeIconSlot();
+    if (s_platformIconsLoaded[slot]) return;
+    s_platformIconsLoaded[slot] = true;
+    SDL_Renderer *r = activeRenderer();
     /* Force white so platform icons read against the dark ImGui background
      * regardless of each SVG's authored fill (mac.svg=#888, windows.svg=#000…). */
-    s_iconPlatform[CLIENT_TYPE_UNKNOWN]   = nullptr;
-    s_iconPlatform[CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_UNKNOWN]   = nullptr;
+    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+}
+
+/* Free one renderer's copies of every icon and let them be loaded again.
+ * Must run while that renderer is still alive. */
+static void destroyIconSlot(int slot) {
+    if (s_iconSteam[slot]) { SDL_DestroyTexture(s_iconSteam[slot]); s_iconSteam[slot] = nullptr; }
+    if (s_iconBrain[slot]) { SDL_DestroyTexture(s_iconBrain[slot]); s_iconBrain[slot] = nullptr; }
+    if (s_iconSkull[slot]) { SDL_DestroyTexture(s_iconSkull[slot]); s_iconSkull[slot] = nullptr; }
+#if defined(WINBOLO_VOICE)
+    if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
+    if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
+    if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
+    if (s_iconSpeaker[slot]) { SDL_DestroyTexture(s_iconSpeaker[slot]); s_iconSpeaker[slot] = nullptr; }
+    if (s_iconSpeakerMuted[slot]) { SDL_DestroyTexture(s_iconSpeakerMuted[slot]); s_iconSpeakerMuted[slot] = nullptr; }
+#endif
+    s_wbnIconsLoaded[slot] = false;
+    for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
+        /* Entry may alias another (e.g. WEB → globe.svg), but each load returns a
+         * distinct SDL_Texture so destroying every one is safe. */
+        if (s_iconPlatform[slot][i]) {
+            SDL_DestroyTexture(s_iconPlatform[slot][i]);
+            s_iconPlatform[slot][i] = nullptr;
+        }
+    }
+    s_platformIconsLoaded[slot] = false;
 }
 
 /* Settings panel state */
@@ -476,6 +698,7 @@ static PopOutWindow s_popSysInfo     = {};
 static PopOutWindow s_popNetInfo     = {};
 static PopOutWindow s_popGameInfo    = {};
 static PopOutWindow s_popSendMsg     = {};
+static PopOutWindow s_popPlayers     = {};
 static PopOutWindow s_popMapOverview = {};
 
 /* Every site that treats the pop-outs as a set — event routing, the
@@ -483,7 +706,8 @@ static PopOutWindow s_popMapOverview = {};
  * adding it here and nowhere else. The per-frame pump stays unrolled
  * because each pop-out draws different content. */
 static PopOutWindow *const s_popOuts[] = {
-    &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg, &s_popMapOverview
+    &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg,
+    &s_popPlayers, &s_popMapOverview
 };
 #define POPOUT_COUNT ((int)(sizeof(s_popOuts) / sizeof(s_popOuts[0])))
 
@@ -496,6 +720,9 @@ static ImGuiContext *s_mainImguiCtx = nullptr;
    scale. Both this and the view are torn down in sdl3ImguiCleanup, ahead of
    the renderer they were made on. */
 static OverviewView *s_overviewView          = nullptr;
+/* What the render reads from the sim, filled under the client mutex and
+   drawn from after it is released. Made and torn down with the view. */
+static OverviewSnapshot *s_overviewSnapshot  = nullptr;
 static SDL_Texture  *s_overviewTiles         = nullptr;
 static SDL_Renderer *s_overviewTilesRenderer = nullptr;
 static int           s_overviewTilesScale    = 0;
@@ -723,6 +950,11 @@ static bool overviewSavedGeometryUsable(int x, int y, int w, int h) {
 static bool popOutBeginFrame(PopOutWindow *pw) {
     if (!pw->open || !pw->window) return false;
 
+    /* Everything drawn from here to popOutEndFrame goes to this renderer, so
+     * the icon loaders and the flag cache use its slot rather than the game
+     * window's. */
+    s_popOutRenderer = pw->renderer;
+
     ImGui::SetCurrentContext(pw->imguiCtx);
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -752,6 +984,7 @@ static void popOutEndFrame(PopOutWindow *pw) {
     SDL_RenderClear(pw->renderer);
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), pw->renderer);
     SDL_RenderPresent(pw->renderer);
+    s_popOutRenderer = nullptr;
 }
 
 static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
@@ -2074,38 +2307,7 @@ static bool localCanAnswerGameVote(ClientSim *cs,
  * Players panel (standalone window for tablet mode)
  * ------------------------------------------------------- */
 
-static void renderPlayersPanel(ClientSim *cs) {
-    if (!s_showPlayersPanel) return;
-
-    if (uiModeIsTablet()) {
-        ImGuiIO &io = ImGui::GetIO();
-        float w = io.DisplaySize.x * 0.8f;
-        float h = io.DisplaySize.y * 0.8f;
-        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    } else {
-        /* Cap the panel to the viewport work area so a large font (or a
-         * small game window) can't push it taller than the screen and clip
-         * the bottom off-screen; ImGui then shows a scrollbar for overflow.
-         * The default size is also clamped so it never opens oversized. */
-        const ImGuiViewport *vp = ImGui::GetMainViewport();
-        float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
-        ImGui::SetNextWindowSize(ImVec2(SDL_min(340 * s_uiScale, maxW),
-                                        SDL_min(420 * s_uiScale, maxH)),
-                                 ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                            ImVec2(maxW, maxH));
-    }
-    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
-    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
-    char title[128];
-    snprintf(title, sizeof(title), "%s###playerspanel", langGetText(STR_DLGPLAYERS_TITLE));
-    if (!ImGui::Begin(title, pOpen, flags)) {
-        ImGui::End();
-        return;
-    }
-
+static void renderPlayersContent(ClientSim *cs) {
     /* Selection helpers */
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    clientSimCheckAllNonePlayers(cs, true);
     imguiHandOnHover();
@@ -2134,6 +2336,17 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
     }
 
+    /* Outside the voice guard below: the counter columns' skull comes from
+     * here too, and it is drawn in every build. Idempotent. */
+    ensureWbnIconsLoaded();
+
+#if defined(WINBOLO_VOICE)
+    /* Who is producing voice right now. Derived locally from frames
+     * arriving, so it only ever names players this client can actually
+     * hear; read once for the whole panel rather than per row. */
+    PlayerBitMap talkingMap = voiceGetTalkingMap();
+#endif
+
     /* Collect enabled player indices */
     int enabledPlayers[MAX_PLAYERS];
     int enabledCount = 0;
@@ -2142,6 +2355,169 @@ static void renderPlayersPanel(ClientSim *cs) {
             enabledPlayers[enabledCount++] = i;
         }
     }
+
+    /* ── Live counter columns ────────────────────────────────────────
+     * The end-of-round recap's counters, counted live and drawn on each
+     * player's own row between the name and the ping: same columns, same
+     * header art, minus damage dealt and builds, which no client-side
+     * event carries. Single column only — two half-width columns cannot
+     * hold a name and six numbers, so the tablet branch below keeps
+     * drawing bare rows and the touch layout is a later slice's problem. */
+    const bool showStats = !(uiModeIsTablet() && enabledCount > 1);
+
+    /* One read of the counters per slot. A slot the sim has no stats for
+     * reads as zeroes, so an enabled row still prints a full set of
+     * numbers instead of dropping out of columns the row above has. */
+    ClientPlayerStats slotStats[MAX_PLAYERS] = {};
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        const ClientPlayerStats *ps =
+            cs ? clientSimGetPlayerStats(cs, (BYTE)i) : NULL;
+        if (ps) slotStats[i] = *ps;
+    }
+
+    /* Column order is the recap's: kills, deaths, base captures, pill
+     * captures, LGM kills, LGM deaths. */
+    auto slotStatValue = [&](int slot, int c) -> unsigned {
+        const ClientPlayerStats *p = &slotStats[slot];
+        switch (c) {
+            case 0:  return p->kills;
+            case 1:  return p->deaths;
+            case 2:  return p->baseCaptures;
+            case 3:  return p->pillCaptures;
+            case 4:  return p->lgmKills;
+            default: return p->lgmDeaths;
+        }
+    };
+    const langid statColStr[6] = {
+        STR_DLGLOBBY_LASTROUND_COL_KILLS,
+        STR_DLGLOBBY_LASTROUND_COL_DEATHS,
+        STR_DLGLOBBY_LASTROUND_COL_BASE,
+        STR_DLGLOBBY_LASTROUND_COL_PILL,
+        STR_DLGLOBBY_LASTROUND_COL_LGMK,
+        STR_DLGLOBBY_LASTROUND_COL_LGMD,
+    };
+
+    /* Rows the single-column list draws: every enabled slot, plus any slot
+     * that is no longer enabled but still carries counters from this game.
+     * A player who leaves keeps their line, blank, so nothing below them
+     * moves up mid-round. The sim goes on counting a slot after its player
+     * goes and zeroes every slot at the start of a game, so the counters
+     * are the whole test — no extra state to keep and none to clear.
+     *
+     * Two consequences, neither of them fixed here:
+     *  - a player who leaves having scored nothing leaves no gap, because
+     *    nothing distinguishes their slot from one nobody ever used;
+     *  - a new player taking that slot over inherits the previous
+     *    occupant's numbers until the mid-game re-seed lands. */
+    int panelRows[MAX_PLAYERS];
+    bool panelRowBlank[MAX_PLAYERS];
+    int panelRowCount = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        bool blank = false;
+        if (!s_playerEnabled[i]) {
+            bool scored = false;
+            for (int c = 0; c < 6 && !scored; c++)
+                if (slotStatValue(i, c) != 0) scored = true;
+            if (!scored) continue;
+            blank = true;
+        }
+        panelRowBlank[panelRowCount] = blank;
+        panelRows[panelRowCount++] = i;
+    }
+
+    /* Column widths, computed once for the whole panel rather than per row,
+     * which is what makes the numbers line up down it: each column is as
+     * wide as the widest number it will actually print this round or its
+     * header sprite, whichever is more. Sprites are text-height tall and
+     * keep their source aspect, so this follows the UI scale without a
+     * hard-coded pixel anywhere. */
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float iconH = ImGui::GetTextLineHeight();
+    const float lgmW  = iconH * (float)LGM_WIDTH / (float)LGM_HEIGHT;
+    const float statIconW[6] = {
+        iconH, iconH, iconH, iconH, lgmW,
+        /* LGM deaths heads with the man and the skull side by side. */
+        lgmW + sty.ItemInnerSpacing.x + iconH,
+    };
+    float statW[6], statOffX[6];
+    float statTotal = 0.0f;
+    for (int c = 0; c < 6; c++) {
+        unsigned widest = 0;
+        for (int r = 0; r < panelRowCount; r++) {
+            if (panelRowBlank[r]) continue;
+            unsigned v = slotStatValue(panelRows[r], c);
+            if (v > widest) widest = v;
+        }
+        char buf[16];
+        SDL_snprintf(buf, sizeof(buf), "%u", widest);
+        float w = ImGui::CalcTextSize(buf).x;
+        if (statIconW[c] > w) w = statIconW[c];
+        /* One pixel of slop on top of the padding: a sprite sized to
+         * exactly fill the column would otherwise be at the mercy of
+         * rounding at the edge. */
+        statW[c] = w + sty.CellPadding.x * 2.0f + 1.0f;
+        statOffX[c] = statTotal;
+        statTotal += statW[c];
+    }
+
+    /* Widest ping the panel will print. The ping itself stays right-aligned
+     * on its own width, but the columns to its left have to start at the
+     * same x on every row, so they are laid out against this instead. */
+    float pingColW = 0.0f;
+    for (int r = 0; r < panelRowCount; r++) {
+        if (panelRowBlank[r]) continue;
+        int slot = panelRows[r];
+        char buf[16];
+        if (s_playerPing[slot] > 0)
+            SDL_snprintf(buf, sizeof(buf), "%dms", (int)s_playerPing[slot]);
+        else
+            SDL_snprintf(buf, sizeof(buf), "---");
+        float w = ImGui::CalcTextSize(buf).x;
+        if (w > pingColW) pingColW = w;
+    }
+
+    /* SameLine() offsets are measured from the window's left edge, while
+     * GetContentRegionAvail() inside the row is measured from the cursor —
+     * which by then has moved past the alliance mark and the flag, by a
+     * different amount on every row. Read one window-relative right edge
+     * here, at the start of a line, so the columns and the ping land on the
+     * same x in every row. */
+    const float rowRightX =
+        ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+    const float statRightX = rowRightX - pingColW - sty.ItemSpacing.x;
+
+    /* x at which content of width w sits right-aligned in column c. */
+    auto statContentX = [&](int c, float w) -> float {
+        return statRightX - statTotal + statOffX[c] + statW[c] -
+               sty.CellPadding.x - w;
+    };
+
+    /* An absolute SameLine offset behind the cursor moves the cursor
+     * backwards, and the cell is drawn over the one before it. Every column
+     * here is placed that way, so a long name, a large font or a narrow
+     * panel puts the counters and the ping on top of the name. Push right
+     * instead and let the window clip: a column that will not fit is better
+     * cut off than printed over its neighbour. */
+    auto sameLineNoBack = [&](float x) {
+        /* Corrected in screen coordinates after the fact rather than by
+         * converting x first: a SameLine offset is measured from the window's
+         * left edge plus the current group and column offsets, and neither of
+         * those is readable through the public API. Placing the cursor with
+         * SameLine and then pushing it forward is right inside the table the
+         * tablet list draws into as well as in the plain window the desktop
+         * list uses. */
+        float after = ImGui::GetItemRectMax().x + sty.ItemSpacing.x;
+        ImGui::SameLine(x);
+        ImVec2 at = ImGui::GetCursorScreenPos();
+        if (at.x < after) ImGui::SetCursorScreenPos(ImVec2(after, at.y));
+    };
+
+    /* Widest row drawn this frame, for the panel's minimum width: the x the
+     * name starts at, and the width of the name itself. Everything in front
+     * of the name is a fixed width, so those two are the whole measurement.
+     * Declared out here so renderPlayerRow can add to them. */
+    float widestNameX = 0.0f;
+    float widestNameW = 0.0f;
 
     /* Render a single player row */
     auto renderPlayerRow = [&](int i) {
@@ -2185,6 +2561,31 @@ static void renderPlayersPanel(ClientSim *cs) {
         float fullWidth = ImGui::GetContentRegionAvail().x;
         float pingWidth = ImGui::CalcTextSize(pingStr).x;
         float spacing = ImGui::GetStyle().ItemSpacing.x;
+#if defined(WINBOLO_VOICE)
+        /* Width the mic icon takes out of the row, icon plus its trailing
+         * spacing, so the name Selectable gives it room the same way it
+         * already does for the checkbox. */
+        float micWidth = (float)WBN_ICON_SIZE;
+        float micColumn = micWidth + spacing;
+        /* Room the per-player volume slider takes, slider plus its trailing
+         * spacing. Reserved separately from the mic rather than folded into
+         * it: they are two cells with two widths, and the subtraction below
+         * reads as the list of things in front of the name. Reserved on the
+         * local player's row too, which draws a blank there, or the name
+         * would start at a different x on that one row. */
+        float volWidth  = ImGui::GetFrameHeight() * 3.0f;
+        float volColumn = volWidth + spacing;
+#else
+        const float micColumn = 0.0f;
+        const float volColumn = 0.0f;
+#endif
+        /* Room the counter columns take out of the row, block plus the gap
+         * that separates it from the name — reserved the same way the ping
+         * and the mic are. The ping is reserved at the width of the widest
+         * one in the panel, not this row's, so the block starts at a fixed
+         * x while the ping stays hard right on its own width. */
+        float statBlock   = showStats ? statTotal + spacing : 0.0f;
+        float pingReserve = showStats ? pingColW : pingWidth;
 
         /* Checkbox + selectable name */
         if (i != self) {
@@ -2197,18 +2598,89 @@ static void renderPlayersPanel(ClientSim *cs) {
             ImGui::SameLine();
         }
 
+#if defined(WINBOLO_VOICE)
+        /* Voice state, between the checkbox and the name. */
+        renderPlayerMicCell(cs, i, s_playerFlags[i], talkingMap,
+                            i == self, micWidth, false);
+        ImGui::SameLine();
+
+        /* How loud that player is played here, beside their speaker. Local
+         * playback only: nothing is sent, and it lasts until they leave. */
+        if (i == self) {
+            /* Nothing to set for yourself, but the width is held all the
+             * same so every name starts at the same x. */
+            ImGui::Dummy(ImVec2(volWidth, ImGui::GetTextLineHeight()));
+        } else {
+            char volLabel[64];
+            snprintf(volLabel, sizeof(volLabel), "##vol%d", i);
+            float gain = voiceGetPlayerVolume(i);
+            /* A bot sends no audio, so there is no volume to set on it. The
+             * slider is still drawn, at the width every other row's takes,
+             * but greyed and not draggable. */
+            bool botRow = (s_playerFlags[i] & PLAYER_FLAG_BOT) != 0;
+            if (botRow) ImGui::BeginDisabled();
+            ImGui::SetNextItemWidth(volWidth);
+            /* Zero FramePadding for the reason the mic button has it: the
+             * default padding would make this taller than the Selectable
+             * beside it and leave a dead strip down the row. No value
+             * printed in it either — at this width it would be unreadable,
+             * and the grab says where the volume is. */
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+            if (ImGui::SliderFloat(volLabel, &gain, 0.0f,
+                                   VOICE_PLAYER_VOLUME_MAX, "")) {
+                voiceSetPlayerVolume(i, gain);
+            }
+            ImGui::PopStyleVar();
+            imguiHelpTooltip(langGetText(STR_PLAYER_TIP_VOICE_VOLUME));
+            if (botRow) ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+#endif
+
         char selectLabel[64];
         snprintf(selectLabel, sizeof(selectLabel), "%s##psel%d", label, i);
+        float nameW = fullWidth - pingReserve - spacing - statBlock - micColumn -
+                      volColumn -
+                      (i != self ? ImGui::GetFrameHeight() + spacing : 0);
+        /* A Selectable given zero or less collapses and the row loses its
+         * name. Four characters is enough to tell two players apart; the
+         * columns after it are pushed right by the clamp above rather than
+         * drawn over it. */
+        float nameMin = ImGui::CalcTextSize("MMMM").x;
+        if (nameW < nameMin) nameW = nameMin;
+
+        /* What this row wants, for the panel's minimum width. The cursor is
+         * at the name now, so its x carries the alliance mark, the flag, the
+         * icons, the checkbox, the voice cell and the volume slider — and
+         * the window's left padding with them. */
+        float nameStartX = ImGui::GetCursorPosX();
+        float nameTextW  = ImGui::CalcTextSize(label).x;
+        if (nameStartX > widestNameX) widestNameX = nameStartX;
+        if (nameTextW  > widestNameW) widestNameW = nameTextW;
+
         if (ImGui::Selectable(selectLabel, s_playerChecked[i],
                               ImGuiSelectableFlags_DontClosePopups,
-                              ImVec2(fullWidth - pingWidth - spacing -
-                                     (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
+                              ImVec2(nameW, 0))) {
             if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
         imguiHandOnHover();
 
-        /* Right-aligned ping */
-        ImGui::SameLine(fullWidth - pingWidth);
+        /* Live counters, right-aligned in their columns so the digits line
+         * up as counts reach two figures. */
+        if (showStats) {
+            for (int c = 0; c < 6; c++) {
+                char numBuf[16];
+                SDL_snprintf(numBuf, sizeof(numBuf), "%u", slotStatValue(i, c));
+                sameLineNoBack(statContentX(c, ImGui::CalcTextSize(numBuf).x));
+                ImGui::TextUnformatted(numBuf);
+            }
+        }
+
+        /* Right-aligned ping. The single-column path measures from the
+         * window-relative right edge so the ping does not shift row to row
+         * with the width of the icons in front of the name — the counter
+         * columns beside it would shift with it. */
+        sameLineNoBack((showStats ? rowRightX : fullWidth) - pingWidth);
         ImVec4 pingColor = imguiPingBandColor(
             cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
                : pingBandClassify(s_playerPing[i]));
@@ -2216,6 +2688,68 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::TextUnformatted(pingStr);
         ImGui::PopStyleColor();
     };
+
+    /* Header line for the counter columns: the map's own art for what each
+     * one counts, drawn at the same x offsets the rows use so every sprite
+     * sits over its column, with the written column name on the tooltip.
+     * The name region is left empty. */
+    if (showStats && panelRowCount > 0) {
+        /* The sheet this window can draw from: the game's own, or the
+         * pop-out's copy of it. With neither there is no map art to mark the
+         * columns with, and the draw below would silently do nothing — it
+         * cannot report a texture it never had — so the whole line prints its
+         * written names instead, all six of them, rather than mixing sprites
+         * and words. */
+        SDL_Texture *headerTiles = activeTilesTexture();
+        const bool headerAsText = (headerTiles == nullptr);
+        ImGui::Dummy(ImVec2(1.0f, iconH));
+        for (int c = 0; c < 6; c++) {
+            const char *label = langGetText(statColStr[c]);
+            sameLineNoBack(statContentX(c, statIconW[c]));
+            if (headerAsText) {
+                ImGui::TextUnformatted(label);
+                imguiHelpTooltip(label);
+                continue;
+            }
+            bool drewIcon = true;
+            switch (c) {
+                case 0:
+                    drawAtlasIconFrom(headerTiles, TANK_SELF_0_X, TANK_SELF_0_Y,
+                                      TILE_SIZE_X, TILE_SIZE_Y);
+                    break;
+                case 1:
+                    drewIcon = playersPanelDrawSkull();
+                    break;
+                case 2:
+                    drawAtlasIconFrom(headerTiles, BASE_GOOD_X, BASE_GOOD_Y,
+                                      TILE_SIZE_X, TILE_SIZE_Y);
+                    break;
+                case 3:
+                    drawAtlasIconFrom(headerTiles, PILL_EVIL15_X, PILL_EVIL15_Y,
+                                      TILE_SIZE_X, TILE_SIZE_Y);
+                    break;
+                case 4:
+                    drawAtlasIconFrom(headerTiles, LGM0_X, LGM0_Y,
+                                      LGM_WIDTH, LGM_HEIGHT);
+                    break;
+                default:
+                    /* Man then skull — the pair reads as "little men lost",
+                     * against the previous column's bare man for the ones
+                     * you killed. Without the skull the pair is ambiguous,
+                     * so that case falls back to the written label. */
+                    drawAtlasIconFrom(headerTiles, LGM0_X, LGM0_Y,
+                                      LGM_WIDTH, LGM_HEIGHT);
+                    imguiHelpTooltip(label);
+                    ImGui::SameLine(0.0f, sty.ItemInnerSpacing.x);
+                    drewIcon = playersPanelDrawSkull();
+                    break;
+            }
+            /* No sprite means no column marker at all, so the written name
+             * stands in for it even though it is wider than the column. */
+            if (drewIcon) imguiHelpTooltip(label);
+            else          ImGui::TextUnformatted(label);
+        }
+    }
 
     /* Player list — 2 columns on tablet, single column on desktop */
     if (uiModeIsTablet() && enabledCount > 1) {
@@ -2230,8 +2764,31 @@ static void renderPlayersPanel(ClientSim *cs) {
             ImGui::EndTable();
         }
     } else {
-        for (int idx = 0; idx < enabledCount; idx++)
-            renderPlayerRow(enabledPlayers[idx]);
+        for (int r = 0; r < panelRowCount; r++) {
+            if (panelRowBlank[r]) {
+                /* Slot whose player left mid-round: an empty line the height
+                 * of a row, so the lines below it stay where they were. */
+                ImGui::Dummy(ImVec2(1.0f, ImGui::GetFrameHeight()));
+            } else {
+                renderPlayerRow(panelRows[r]);
+            }
+        }
+    }
+
+    /* What one row actually needs, measured rather than guessed: everything
+     * in front of the name is a fixed width, so the widest name start plus
+     * the widest name, the counter block, the ping and the window's own
+     * padding is the width below which the row starts colliding.
+     * renderPlayersPanel reads it on the next frame. Not published while
+     * drawing into a pop-out, whose width has nothing to say about the
+     * docked panel's. */
+    if (!s_popOutRenderer) {
+        /* The left padding is already inside the recorded cursor x, so only
+         * the right one is added here — plus the scrollbar, so a list long
+         * enough to scroll does not lose a column to the bar. */
+        s_playersPanelNeedW = widestNameX + widestNameW + sty.ItemSpacing.x +
+                              (showStats ? statTotal + sty.ItemSpacing.x : 0.0f) +
+                              pingColW + sty.WindowPadding.x + sty.ScrollbarSize;
     }
 
     /* Alliance actions */
@@ -2383,7 +2940,57 @@ static void renderPlayersPanel(ClientSim *cs) {
         if (ImGui::Checkbox(langGetText(STR_ALLOW_NEW_PLAYERS), &anp))
             windowMenuAllowNewPlayers_toggle(cs);
     }
+}
 
+static void renderPlayersPanel(ClientSim *cs) {
+    if (!s_showPlayersPanel || s_popPlayers.open) return;
+
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        float h = io.DisplaySize.y * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    } else {
+        /* Cap the panel to the viewport work area so a large font (or a
+         * small game window) can't push it taller than the screen and clip
+         * the bottom off-screen; ImGui then shows a scrollbar for overflow.
+         * The default size is also clamped so it never opens oversized. */
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
+        /* Every cell in a row except the name is reserved at a fixed width -
+         * alliance mark, flags, icons, checkbox, voice cell, volume slider,
+         * six counter columns and the ping - so 760 is what leaves the name
+         * room rather than a few squeezed characters. Opening at 90% of the
+         * work area instead of all of it keeps some of the map in view when
+         * the game window is small. */
+        ImGui::SetNextWindowSize(ImVec2(SDL_min(760 * s_uiScale, maxW * 0.9f),
+                                        SDL_min(560 * s_uiScale, maxH * 0.9f)),
+                                 ImGuiCond_FirstUseEver);
+        /* Floor the width at what a row measured last frame, so the panel
+         * cannot be dragged down to where the columns start running into the
+         * name. The measurement is applied here rather than to the size
+         * above because ImGuiCond_FirstUseEver applies on the frame the
+         * window is created, before any row has been drawn, so a floor under
+         * the opening size would never see it; constraints are applied every
+         * frame. Capped at the work area so it can never pin the panel wider
+         * than the screen. */
+        float minW = 420 * s_uiScale;
+        if (s_playersPanelNeedW > minW) minW = s_playersPanelNeedW;
+        if (minW > maxW) minW = maxW;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(minW, 200 * s_uiScale),
+                                            ImVec2(maxW, maxH));
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
+    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
+    char title[128];
+    snprintf(title, sizeof(title), "%s###playerspanel", langGetText(STR_DLGPLAYERS_TITLE));
+    if (!ImGui::Begin(title, pOpen, flags)) {
+        ImGui::End();
+        return;
+    }
+    renderPlayersContent(cs);
     ImGui::End();
 }
 
@@ -3166,12 +3773,13 @@ static void renderSettingsPanel(ClientSim *cs) {
        where the pad is hidden from SDL) step through the tabs, wrapping at the
        ends.  Every in-game tab is present except Hosting in the web build,
        where a browser tab can't listen for connections. */
-    enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+    enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
     static int s_igActiveTab = STAB_GENERAL;
     static int s_igForceTab  = -1;
     bool present[STAB_COUNT];
     present[STAB_GENERAL]  = true;
     present[STAB_DISPLAY]  = true;
+    present[STAB_SOUND]    = true;
     present[STAB_CONTROLS] = true;
     present[STAB_GAMEHUD]  = true;
 #if defined(__EMSCRIPTEN__)
@@ -3211,11 +3819,19 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_DISPLAYSOUND), nullptr,
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_DISPLAY), nullptr,
                 s_igForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_DISPLAY;
             ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
-            imguiSettingsRenderDisplaySoundTab(&ctx);
+            imguiSettingsRenderDisplayTab(&ctx);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_SOUND), nullptr,
+                s_igForceTab == STAB_SOUND ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_SOUND;
+            ImGui::BeginChild("##soundPanelIG", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+            imguiSettingsRenderSoundTab(&ctx);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -3620,6 +4236,20 @@ static void renderMenuBar(ClientSim *cs) {
                 s_showSendMsg = !s_showSendMsg;
                 if (s_showSendMsg) { s_sendMsgFocusInput = true; s_closeMenuPopups = true; }
             }
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+        }
+#endif
+        /* Show-and-raise, never a toggle, matching the native item in
+           mac_menubar.mm; checked while the desktop pop-out is up. */
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+        if (!uiModeIsTablet()) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P",
+                                s_popPlayers.open))
+                sdl3ImguiShowPlayersPanel(true);
+        } else {
+#endif
+            if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P"))
+                sdl3ImguiShowPlayersPanel(true);
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
@@ -4571,7 +5201,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 windowSetTankLabelLen(cs, lblLong);
                 continue;
             case SDL_SCANCODE_P:
-                windowShowPillLabels_toggle(cs);
+                /* This switch gates on KMOD_PRIMARY only, so the shift-modified
+                   form has to be separated here rather than by its own case. */
+                if (ev.key.mod & SDL_KMOD_SHIFT) sdl3ImguiShowPlayersPanel(true);
+                else                             windowShowPillLabels_toggle(cs);
                 continue;
             case SDL_SCANCODE_B:
                 windowShowBaseLabels_toggle(cs);
@@ -5234,6 +5867,15 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     s_classicMode = (cs != nullptr && !clientSimIsSpectator(cs) &&
                      clientSimGetClassicMode(cs));
 
+#if defined(WINBOLO_VOICE)
+    /* Which slot is ours, for the drawers that have no ClientSim of their own
+       — the tank labels. Back to not-known without one, so nothing outside a
+       game reads the last game's slot as still ours. */
+    s_selfPlayerNum = (cs != nullptr)
+                          ? (unsigned char)clientSimGetMyPlayerNum(cs)
+                          : (unsigned char)PLAYER_SELF_UNKNOWN;
+#endif
+
     /* Sync Steam Input action set to current gameplay context.  Must
        run before any consumer of action data (edge triggers below
        and the input wiring downstream). */
@@ -5359,6 +6001,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_wasInLobby = nowInLobby;
 
         if (nowInLobby) {
+#if defined(WINBOLO_VOICE)
+            /* The lobby's push-to-talk poll, which the blocking modal runs in
+               its own loop. This host ticks voice earlier in the frame, so the
+               answer reaches the runtime on the next one; what matters is that
+               it is written every frame, so a key held as the game ended does
+               not leave the microphone open across the lobby. */
+            imguiLobbyPushToTalkPoll();
+#endif
             if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
                 /* Confirmed Leave: drop the connection, then go wherever
                    this host goes when a game ends. The disconnect alone
@@ -5723,6 +6373,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             popOutEndContent(&s_popSendMsg);
             popOutEndFrame(&s_popSendMsg);
         }
+        if (popOutBeginFrame(&s_popPlayers)) {
+            popOutBeginContent();
+            renderPlayersContent(cs);
+            popOutEndContent(&s_popPlayers);
+            popOutEndFrame(&s_popPlayers);
+        }
         /* The overview shows what this game has revealed, so it goes away
            with the game rather than sitting over the lobby. Hidden, not
            destroyed — see popOutHide. That hide leaves
@@ -5763,31 +6419,35 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                     cam->follow = gameFrontOverviewFollow;
                 }
             }
+            if (!s_overviewSnapshot) {
+                s_overviewSnapshot = overviewSnapshotCreate();
+            }
             SDL_Texture *ovTiles = overviewEnsureTiles(s_popMapOverview.renderer);
             SDL_Texture *ovCross =
                 overviewEnsureCrosshair(s_popMapOverview.renderer);
-            /* The render reads the fog memory, the local tank and the
+            /* The fill reads the fog memory, the local tank and the
                per-frame entity lists straight out of the ClientSim, and the
                host server's timer thread writes into those as it dispatches
                a tick to in-process subscribers. The main view's draw takes
                the same lock around the same kind of read in winbolo.c.
                Nothing is held on entry — winbolo.c releases before calling
-               the pump, and nothing inside the render takes a lock of its
+               the pump, and nothing inside the fill takes a lock of its
                own — so there is no ordering here to invert. The two
                texture-ensure calls above build from assets and touch no sim
                state, so they stay outside.
 
-               The cost is that the lock now spans the whole visible-tile
-               loop, which at 0.5x zoom on a large window is far more squares
-               than the main view's 15x15. Start here if frame times
-               regress with the overview open. */
+               Only the fill is under the lock. The render draws from the
+               snapshot after the release, so its render-target switches and
+               the flushes they force never hold up the server's tick. */
             clientMutexWaitFor();
+            clientSimFillOverviewSnapshot(cs, s_overviewSnapshot);
+            clientMutexRelease();
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
                                         ovTiles, s_overviewTilesScale, ovCross,
                                         s_popMapOverview.width,
-                                        s_popMapOverview.height, cs, false);
-            clientMutexRelease();
+                                        s_popMapOverview.height,
+                                        s_overviewSnapshot, false);
         }
         if (popOutBeginFrame(&s_popMapOverview)) {
             /* The map fills the window edge to edge: the image is exactly
@@ -6145,6 +6805,35 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
 }
 
 void sdl3ImguiShowPlayersPanel(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    /* Mouse/keyboard desktop: the draggable pop-out window.  Controller mode
+       stays on the in-window panel — the pop-out has its own ImGui context and
+       receives neither gamepad events nor Steam-nav B/Escape, so a pad user
+       could open it and never close it (see sdl3ImguiShowSendMsg). */
+    if (!uiModeIsTablet() && !uiShouldUseControllerMode()) {
+        if (open) {
+            /* popOutCreate re-shows and raises a window it made earlier, so
+               opening an already-open pop-out raises it.
+               Opened at the size the docked panel opens at, so the two agree
+               on the room a row needs: the counter columns and the ping fit
+               beside a name rather than squeezing it. The numbers are in the
+               units popOutCreate is given — window size, not the ImGui
+               coordinates the docked panel scales by s_uiScale.
+               Resizable so the window can be dragged to another size, which
+               is also what leaves it its minimize and maximize boxes. */
+            if (popOutCreate(&s_popPlayers, langGetText(STR_DLGPLAYERS_TITLE), 760, 560,
+                             SDL_WINDOW_RESIZABLE)) {
+                /* The rows draw country flags, which have to be rasterized
+                   against this window's own renderer. Idempotent, so the
+                   re-show path above costs nothing. */
+                flagsCreate(s_popPlayers.renderer);
+            }
+        } else {
+            if (s_popPlayers.open) popOutHide(&s_popPlayers);
+        }
+        return;
+    }
+#endif
     s_showPlayersPanel = open;
     if (open) s_closeMenuPopups = true;
 #if BOLO_MOBILE
@@ -6156,6 +6845,12 @@ void sdl3ImguiShowPlayersPanel(bool open) {
 }
 
 void sdl3ImguiTogglePlayersPanel(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet() && !uiShouldUseControllerMode()) {
+        sdl3ImguiShowPlayersPanel(!s_popPlayers.open);
+        return;
+    }
+#endif
     sdl3ImguiShowPlayersPanel(!s_showPlayersPanel);
 }
 
@@ -6261,6 +6956,15 @@ const char *sdl3ImguiGetPlayerName(unsigned char playerNum) {
 
 void sdl3ImguiClearPlayer(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return;
+#if defined(WINBOLO_VOICE)
+    /* The slot is empty, so nothing of the last occupant's may be carried
+     * into it: slots are recycled, and a mute left behind would silence the
+     * next joiner here (and their chat, server-side) while the panel showed
+     * "muted by you" for a player this client never muted. Hooked here
+     * because this is where both frontEndClearPlayer implementations that
+     * build voice — desktop and wasm — converge. */
+    voiceForgetPlayer((int)playerNum);
+#endif
     s_playerName[playerNum][0] = '\0';
     s_playerCountry[playerNum][0] = '\0';
     s_playerEnabled[playerNum] = false;
@@ -6292,7 +6996,7 @@ void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
 
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
-    return s_iconSteam;
+    return s_iconSteam[activeIconSlot()];
 }
 
 SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
@@ -6305,6 +7009,42 @@ SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
     return s_iconBrainSurf;
 }
 
+#if defined(WINBOLO_VOICE)
+SDL_Surface *sdl3ImguiCreateMicIconSurface(MicIconGlyph glyph, int size) {
+    /* Rasterized to order rather than cached: the game view's mute indicator
+     * and the on-map tank labels both draw at a size that follows the window
+     * and the HUD's scale, and an icon scaled at draw time loses the barred
+     * glyphs' slash, whose gaps are about a unit wide in the SVG's 24-unit
+     * viewBox. The caller owns what comes back. */
+    const char *path;
+    switch (glyph) {
+        case MIC_GLYPH_MIC_MUTED:     path = "data/ui/mic-muted.svg";     break;
+        case MIC_GLYPH_SPEAKER:       path = "data/ui/speaker.svg";       break;
+        case MIC_GLYPH_SPEAKER_MUTED: path = "data/ui/speaker-muted.svg"; break;
+        case MIC_GLYPH_MIC:
+        default:                      path = "data/ui/mic.svg";           break;
+    }
+    if (size < MIC_ICON_MIN_PX) size = MIC_ICON_MIN_PX;
+    if (size > MIC_ICON_MAX_PX) size = MIC_ICON_MAX_PX;
+    return imguiLoadSvgIconWhiteSurface(path, size);
+}
+
+/* The next two stay inside the voice test, and not because they are about
+ * voice: the log viewer compiles tank_label.c, their only caller, and answers
+ * its sdl3imgui calls with its own stubs in src/logviewer/bolo_shim.c. It
+ * defines no WINBOLO_VOICE, so a guarded accessor needs no stub there. Tidying
+ * the guard away would leave the log viewer without one. */
+uint8_t sdl3ImguiPlayerFlags(unsigned char playerNum) {
+    if (playerNum >= MAX_PLAYERS) return 0;
+    return s_playerFlags[playerNum];
+}
+
+bool sdl3ImguiPlayerIsSelf(unsigned char playerNum) {
+    if (s_selfPlayerNum == PLAYER_SELF_UNKNOWN) return false;
+    return playerNum == s_selfPlayerNum;
+}
+#endif
+
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return false;
     return (s_playerFlags[playerNum] & PLAYER_FLAG_BOT) != 0;
@@ -6313,7 +7053,7 @@ bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
 SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType) {
     ensurePlatformIconsLoaded();
     if (clientType >= CLIENT_TYPE_COUNT) return nullptr;
-    return s_iconPlatform[clientType];
+    return s_iconPlatform[activeIconSlot()][clientType];
 }
 
 /* Gold tint for supporters; white = no tint (passthrough). */
@@ -6340,7 +7080,7 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     char up[3] = { (char)toupper((unsigned char)countryCode[0]),
                    (char)toupper((unsigned char)countryCode[1]), '\0' };
     if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
-    SDL_Texture *flagTex = flagsGetTexture(countryCode);
+    SDL_Texture *flagTex = flagsGetTextureFor(activeRenderer(), countryCode);
     if (!flagTex) return false;
     ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
     if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
@@ -6357,10 +7097,11 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
     ensurePlatformIconsLoaded();
     ensureWbnIconsLoaded();
-    if ((flags & PLAYER_FLAG_BOT) && s_iconBrain) {
+    const int iconSlot = activeIconSlot();
+    if ((flags & PLAYER_FLAG_BOT) && s_iconBrain[iconSlot]) {
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
-        ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::Image((ImTextureID)s_iconBrain[iconSlot], ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
         imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
@@ -6394,9 +7135,9 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
-        if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
+        if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam[iconSlot]) {
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-            ImGui::ImageWithBg((ImTextureID)s_iconSteam,
+            ImGui::ImageWithBg((ImTextureID)s_iconSteam[iconSlot],
                                ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
@@ -6415,12 +7156,220 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         ImGui::TextUnformatted(name);
         if (showCountry && countryCode && countryCode[0] != '\0' &&
             !(countryCode[0] == 'X' && countryCode[1] == 'X') &&
-            flagsGetTexture(countryCode)) {
+            flagsGetTextureFor(activeRenderer(), countryCode)) {
             ImGui::SameLine();
             drawCountryFlagWithTip(countryCode);
         }
     }
 }
+
+#if defined(WINBOLO_VOICE)
+/* Draws the icon again over the bottom of itself, as far up as the fill it
+ * is given: the dim glyph underneath is the shape, the tinted redraw over
+ * the bottom of it is the fill. Source rows and destination rows are cut
+ * together, so the fill takes the glyph's own shape rather than sitting over
+ * it as a rectangle — the same way the game view's own microphone indicator
+ * draws its capture level.
+ *
+ * How far up, and in what colour, is the caller's to say. A player who is
+ * talking fills the speaker with their decoded level; a player muted here
+ * fills the barred speaker with micTalkPulse(), because nothing arrives from
+ * them to measure.
+ *
+ * Call it straight after the widget that drew the icon: the rect comes from
+ * that item, and this only adds to the draw list, so the cell is exactly the
+ * size an unfilled icon is and the row cannot move.
+ *
+ * One fill and no peak band above it — voiceGetPlayerLevel already returns
+ * the held peak, and at this icon size a band would be a pixel or two. The
+ * game view has both because it draws at 32-43 px.
+ *
+ * Never runs on the local player's own row from a decoded level: the talking
+ * map carries no self bit, so the caller's talking branch is unreachable
+ * there. */
+static void micDrawLevelFill(SDL_Texture *micTex, float level, ImVec4 tint) {
+    if (level <= 0.0f) return;
+    if (level > 1.0f) level = 1.0f;   /* over 1 would sample off the texture */
+
+    ImVec2 mn  = ImGui::GetItemRectMin();
+    ImVec2 mx  = ImGui::GetItemRectMax();
+    float  top = mx.y - (mx.y - mn.y) * level;
+    ImGui::GetWindowDrawList()->AddImage((ImTextureID)micTex,
+                                         ImVec2(mn.x, top), mx,
+                                         ImVec2(0.0f, 1.0f - level),
+                                         ImVec2(1.0f, 1.0f),
+                                         ImGui::GetColorU32(tint));
+}
+
+/* How full to draw the glyph for a player who is talking but muted here.
+ * There is no level and there cannot be one: the server drops a muted talker
+ * before it sends and this client drops them again on arrival, so no audio
+ * ever reaches us. The fill is therefore a sweep on the clock rather than a
+ * meter, and it says only that they are speaking. */
+static float micTalkPulse(void) {
+    /* Reduced to one period in double before it is narrowed: ImGui's clock
+     * is seconds since startup, and a float taken straight from it would
+     * coarsen into steps once a client had been up for days. */
+    double periods = ImGui::GetTime() / (double)MIC_PULSE_PERIOD_SEC;
+    float  phase   = (float)(periods - (double)(long long)periods);
+    /* A raised cosine: slowest at the top and the bottom of the sweep and
+     * quickest between them, so it swells and falls instead of ramping to a
+     * corner and snapping back. */
+    float  wave    = 0.5f - 0.5f * ImCos(phase * 2.0f * IM_PI);
+    return MIC_PULSE_FLOOR + (1.0f - MIC_PULSE_FLOOR) * wave;
+}
+
+void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
+                         PlayerBitMap talkingMap, bool isSelf, float size,
+                         bool inLobby) {
+    ensureWbnIconsLoaded();
+    const int iconSlot = activeIconSlot();
+
+    /* Resolved in precedence order: muting someone is this client's own
+     * doing, so it outranks whatever their microphone is doing — you have to
+     * be able to see that you muted them, and to undo it, whatever their
+     * state. */
+    bool mutedByMe = voiceIsPlayerMuted(playerNum);
+    bool hasMic    = (clientFlags & PLAYER_FLAG_HAS_MIC) != 0;
+    bool selfMuted = (clientFlags & PLAYER_FLAG_VOICE_MUTED) != 0;
+    bool talking   = (talkingMap & ((PlayerBitMap)1u << playerNum)) != 0;
+    bool isBot     = (clientFlags & PLAYER_FLAG_BOT) != 0;
+
+    /* The own row renders from local truth: s_playerFlags[] is only ever
+       written from server-published state, so a click would not move the icon
+       until it round-tripped, and never at all on a connection that carries no
+       voice. */
+    if (isSelf) selfMuted = voiceIsSelfMuted();
+
+    if (!inLobby && !isSelf && !hasMic && !mutedByMe) {
+        /* In game, a remote player who has no microphone is not worth a
+         * glyph — the state never changes and the row is read at a glance.
+         * The cell still holds its width, or the name and ping shift
+         * between rows. Muted by this client is checked first and still
+         * draws, so a player you muted stays visible and clickable. */
+        ImGui::Dummy(ImVec2(size, size));
+        return;
+    }
+
+    /* The shape says which end the state belongs to. A speaker for the
+     * states about playback here — idle, talking, and muted by this client,
+     * which is what the click changes — and a microphone for the two about
+     * capture at the other end. Every state on the own row is about this
+     * client's own capture, so that row stays on microphones. */
+    SDL_Texture *micTex;
+    ImVec4       micTint;
+    langid       micTip;
+    bool         micLevelFill = false;
+    bool         micPulseFill = false;
+    if (mutedByMe) {
+        /* Their voice never arrives, so the server's own set of who is
+         * talking is the only thing that can say they are speaking. It is
+         * empty in a running game by design — voice there is alliance-only
+         * and publishing the set would say that an enemy is talking — so
+         * this lights in the lobby and the countdown and nowhere else. */
+        bool mutedTalking = (clientSimGetVoiceTalkingMap(cs) &
+                             ((PlayerBitMap)1u << playerNum)) != 0;
+        micTex  = s_iconSpeakerMuted[iconSlot];
+        micTint = mutedTalking ? MIC_TINT_MUTED_DIM : MIC_TINT_MUTED;
+        micTip  = mutedTalking ? STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING
+                               : STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
+        micPulseFill = mutedTalking;
+    } else if (!hasMic) {
+        micTex  = s_iconMicOff[iconSlot];
+        micTint = MIC_TINT_DIM;
+        micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_NOMIC
+                         : STR_PLAYER_TIP_VOICE_NOMIC;
+    } else if (talking) {
+        /* Dim, because the fill drawn over it carries the talking colour:
+         * the glyph is the meter, as it is in the game view's own microphone
+         * indicator. */
+        micTex       = s_iconSpeaker[iconSlot];
+        micTint      = MIC_TINT_DIM;
+        micTip       = STR_PLAYER_TIP_VOICE_TALKING;
+        micLevelFill = true;
+    } else if (selfMuted) {
+        /* The barred microphone, not the barred speaker: the far end
+         * stopped sending, which is theirs to undo, where the barred
+         * speaker means this client stopped listening. */
+        micTex  = s_iconMicMuted[iconSlot];
+        micTint = MIC_TINT_DIM;
+        micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
+                         : STR_PLAYER_TIP_VOICE_SELFMUTED;
+    } else {
+        micTex  = isSelf ? s_iconMic[iconSlot] : s_iconSpeaker[iconSlot];
+        micTint = isSelf ? MIC_TINT_NORMAL : MIC_TINT_DIM;
+        micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
+                         : STR_PLAYER_TIP_VOICE_IDLE;
+    }
+
+    /* A bot has no microphone and nothing to play back, so its cell is drawn
+     * but not live: the glyph greys out and the click that would mute a
+     * player does nothing. Tested here rather than at the two call sites,
+     * which both pass flags carrying PLAYER_FLAG_BOT. The early return above
+     * needs no pair — it draws a Dummy, which looks the same either way. */
+    if (isBot) ImGui::BeginDisabled();
+    if (!micTex) {
+        /* An SVG that would not load must still hold the column, or
+         * the name and ping shift between rows. */
+        ImGui::Dummy(ImVec2(size, size));
+    } else if (isSelf && !hasMic) {
+        /* Not clickable without a microphone: there is nothing to gate.
+         * The clickable branch below toggles a local transmit gate, not
+         * the mute the server rejects against yourself. */
+        ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(size, size),
+                           ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0, 0, 0, 0), micTint);
+        if (micLevelFill) {
+            micDrawLevelFill(micTex, voiceGetPlayerLevel(playerNum),
+                             MIC_TINT_TALKING);
+        } else if (micPulseFill) {
+            micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        }
+        imguiHelpTooltip(langGetText(micTip));
+    } else {
+        char micLabel[64];
+        snprintf(micLabel, sizeof(micLabel), "##mic%d", playerNum);
+        /* Zero FramePadding so the button is exactly the icon: the
+         * default padding would make this cell taller than the
+         * Selectable beside it and leave a dead strip in the row. */
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.15f));
+        bool micClicked = ImGui::ImageButton(micLabel, (ImTextureID)micTex,
+                                             ImVec2(size, size),
+                                             ImVec2(0, 0), ImVec2(1, 1),
+                                             ImVec4(0, 0, 0, 0), micTint);
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
+        /* Still the button's rect: the pops above changed no item. */
+        if (micLevelFill) {
+            micDrawLevelFill(micTex, voiceGetPlayerLevel(playerNum),
+                             MIC_TINT_TALKING);
+        } else if (micPulseFill) {
+            micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        }
+        imguiHelpTooltip(langGetText(micTip));
+        imguiHandOnHover();
+        if (micClicked) {
+            if (isSelf) {
+                /* A local transmit gate — no server round trip, and the
+                 * server would reject a mute against yourself anyway.
+                 * The state reaches the other players on the next tick,
+                 * from the report voice already publishes on change. */
+                voiceSetSelfMuted(!voiceIsSelfMuted());
+            } else {
+                /* Both legs, always: the local one covers the round trip
+                 * while the server is being told, and the server is the
+                 * authority — it also stops that player's chat. */
+                voiceSetPlayerMuted(playerNum, !voiceIsPlayerMuted(playerNum));
+                clientSimNetSendPlayerMute(cs, (BYTE)playerNum, voiceIsPlayerMuted(playerNum));
+            }
+        }
+    }
+    if (isBot) ImGui::EndDisabled();
+}
+#endif
 
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {
     if (playerNum >= MAX_PLAYERS) return;
@@ -6453,6 +7402,8 @@ void sdl3ImguiCleanup(void) {
        renderer, which popOutDestroy tears down. */
     overviewViewDestroy(s_overviewView);
     s_overviewView = nullptr;
+    overviewSnapshotDestroy(s_overviewSnapshot);
+    s_overviewSnapshot = nullptr;
     if (s_overviewTiles) {
         SDL_DestroyTexture(s_overviewTiles);
         s_overviewTiles = nullptr;
@@ -6464,18 +7415,20 @@ void sdl3ImguiCleanup(void) {
         s_overviewCrosshair = nullptr;
     }
     s_overviewCrosshairRenderer = nullptr;
-    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
-    flagsDestroy();
-    if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
-    if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
-    if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
-    s_wbnIconsLoaded = false;
-    for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
-        /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a
-         * distinct SDL_Texture so destroying every slot is safe. */
-        if (s_iconPlatform[i]) { SDL_DestroyTexture(s_iconPlatform[i]); s_iconPlatform[i] = nullptr; }
+    /* Textures die with the renderer that made them, so the pop-out's copies
+     * and its flag cache go before popOutDestroy takes its renderer down —
+     * SDL_DestroyTexture afterwards would be running against freed state. */
+    if (s_tilesPopOut) {
+        SDL_DestroyTexture(s_tilesPopOut);
+        s_tilesPopOut = nullptr;
     }
-    s_platformIconsLoaded = false;
+    s_tilesPopOutRenderer = nullptr;
+    destroyIconSlot(ICON_SLOT_POPOUT);
+    flagsDestroy();
+    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
+    destroyIconSlot(ICON_SLOT_MAIN);
+    /* Renderer-free, so they outlive both slots and are freed once here. */
+    if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;

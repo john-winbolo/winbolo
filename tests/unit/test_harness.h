@@ -88,11 +88,18 @@ int run_lobby_claim_start_non_host_occupied_rejected(void);
 int run_lobby_claim_start_non_host_other_slot_rejected(void);
 int run_lobby_claim_start_self_free_and_release(void);
 int run_lobby_claim_start_validation(void);
+int run_player_mute_mask_roundtrip(void);
 int run_command_codec_cmdseq_slot(void);
 int run_command_codec_bounds_checks(void);
 int run_command_rejected_parks_name_codes(void);
 int run_command_rejected_ignores_other_slot(void);
 int run_command_rejected_clear_resets_both_fields(void);
+int run_live_stats_kill_credits_killer_and_victim(void);
+int run_live_stats_suicide_counts_death_only(void);
+int run_live_stats_lgm_loss_splits_victim_and_killer(void);
+int run_live_stats_captures_credit_new_owner(void);
+int run_live_stats_out_of_range_slot_ignored(void);
+int run_live_stats_cleared_on_running_phase(void);
 int run_shell_death_codec_roundtrip(void);
 int run_shell_death_culls_matching_predicted_shell(void);
 int run_shell_death_rejected_culls_without_impact(void);
@@ -388,6 +395,12 @@ int run_spectator_slot_codec(void);
  * rejections. */
 int run_spectator_chat_codec(void);
 
+/* CTRL_STATS_SEED body-codec round-trip (test_stats_seed_codec.c): the
+ * mid-round live-scoreboard seed encodes/decodes through the body tables, with
+ * a full MAX_TANKS roster, the zero-row minimum, and the short / truncated /
+ * out-of-range-slot rejections plus the over-count clamp. */
+int run_stats_seed_codec(void);
+
 /* Spectator-chat routing (test_spectator_chat_routing.c): a published
  * CTRL_SPECTATOR_CHAT reaches a player bus subscriber and a live spectator
  * (allowlist); broadcast CTRL_CHAT reaches the spectator; team/unicast chat
@@ -657,6 +670,60 @@ int run_starts_batch_teams_cluster_and_separate(void);
 int run_starts_batch_team_anchor_jitter_varies(void);
 int run_starts_open_ideal_friendly_pill_eligible(void);
 
+/* Start side classification (test_start_sides.c). The integer sector test
+ * in start_sides.h that puts a start on N/E/S/W (two bits for a diagonal,
+ * none for the centre band), and the eligibility rule that keeps a team
+ * with no side off the sides other teams chose. */
+int run_start_side_mask_sectors(void);
+int run_start_side_mask_degenerate_bbox(void);
+int run_start_side_eligible_closed_mask(void);
+
+/* Lobby map-preview compass axis (test_lobby_side_axis.c). The pure
+ * helpers in lobby_side_axis.h behind the preview's N/S · E/W rose:
+ * exactly two populated teams, which axis a pair of team sides forms,
+ * and what a click on an axis has to send. */
+int run_lobby_side_axis_two_team_pair(void);
+int run_lobby_side_axis_pair_classification(void);
+int run_lobby_side_axis_click_targets(void);
+
+/* Spawn scatter separation (test_starts_scatter_separation.c). The
+ * spiral in startsScatterFind keeps a new tank START_SPAWN_SEPARATION
+ * squares from every other live tank, and drops that rule on a second
+ * pass when no square within reach can satisfy it. */
+int run_starts_scatter_avoids_existing_tanks(void);
+int run_starts_scatter_falls_back_when_crowded(void);
+
+/* Team start sides in startsAssignBatch (test_starts_team_side.c). A team
+ * with a side stays on it, a team with none is kept off the chosen sides,
+ * a quota is capped at what the side can hold, and the slots left over
+ * ride a start beside their own side instead of going unplaced. */
+int run_starts_side_team_stays_on_its_side(void);
+int run_starts_side_overflow_rides_own_side(void);
+int run_starts_side_never_crosses_when_opposite_free(void);
+int run_starts_side_any_matches_legacy(void);
+int run_starts_side_reservation_beats_side(void);
+int run_starts_side_empty_side_falls_back(void);
+int run_starts_side_quota_capped_by_eligible(void);
+int run_starts_side_any_team_kept_off_chosen_side(void);
+
+/* Team start sides on the lobby server (test_lobby_team_side_dispatch.c).
+ * The team-meta side clamp and its client mirror, the re-pick of every
+ * reservation on a side change, the Unassign and Team side claims, the
+ * departure and map-change backfills, and the side check on a non-host's
+ * own claim. */
+int run_lobby_team_side_clamps_and_rejects_non_host(void);
+int run_lobby_side_change_repicks_everyone(void);
+int run_lobby_unassign_and_team_side_claims(void);
+int run_lobby_map_change_releases_off_side(void);
+int run_lobby_non_host_off_side_claim_rejected(void);
+int run_lobby_any_team_claim_kept_off_chosen_side(void);
+
+/* Team start sides end to end (test_starts_side_integration.c): lobby
+ * reservations, the batch's side table and the spawn scatter put a north
+ * team's tanks north and a larger south team's tanks south, on distinct
+ * squares. */
+int run_starts_side_end_to_end_four_v_twelve(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */
@@ -807,6 +874,25 @@ int run_edge_send_predicate(void);
  * closest-base selection (enemy exclusion, in-range, post-flip inclusion) and
  * the per-recipient full-sync stock cull in serverSimBuildSnapshot (real stock
  * only for the recipient's own closest base; other bases zeroed, owner kept). */
+/* Mic-status visibility (test_voice_flags.c): serverSimBuildSnapshot shows
+ * PLAYER_FLAG_HAS_MIC / PLAYER_FLAG_VOICE_MUTED only to the recipients that
+ * player's voice could reach — everyone outside a running game, allies
+ * inside one — and masks nothing but PLAYER_VOICE_FLAG_MASK. */
+int run_voice_flags_snapshot_masking(void);
+
+/* CTRL_VOICE_TALKING body-codec round-trip (test_voice_talking_codec.c):
+ * the talking bitmap encodes/decodes through the body tables — empty, one
+ * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
+int run_voice_talking_codec(void);
+
+/* The lobby's talking set over the loopback transport (test_voice_talking_set.c),
+ * read off the watching client's mirror of it: a talker who goes quiet after the
+ * countdown has begun still ages out of the set (the silence is measured on a
+ * clock that keeps running while the sim's tick does not), and the only talker
+ * leaving empties the set on every other client rather than leaving them lit. */
+int run_voice_talking_stops_in_countdown(void);
+int run_voice_talking_clears_on_leave(void);
+
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
@@ -817,6 +903,26 @@ int run_two_clients_full_sync_independent(void);
  * pillbox screen, so an fx near an owned pillbox but off the tank screen is
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
+
+/* Viewport extent (test_fx_viewport_cull.c): a recipient's own tank rect
+ * reaches SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN squares on every
+ * side and corner, covers the block the overview reveals round a tank, and
+ * stops one square past the extent. */
+int run_viewport_floor(void);
+
+/* Sound events (test_sound_delivery.c): the three sound events round-trip
+ * through packGameEvent / unpackGameEvent with their four-byte payload intact
+ * and nothing past it; serverSimBuildSnapshot's sound block culls by distance
+ * at SDIST_NONE, skips a recipient's own shot, sends bubbles only to the player
+ * losing the ammo, sends a tank hit to the player hit at any range, and drops
+ * manLayingMineNear once its tier is far; and the delivered payload carries a
+ * tier and a compass direction for a human recipient — never the sound's map
+ * square, in or out of its viewport rects — while a bot keeps the square, and
+ * so does a local slot flagged through serverSimSetSoundSquares until the flag
+ * is cleared. */
+int run_sound_event_codec(void);
+int run_sound_delivery_builder(void);
+int run_sound_payload_shape(void);
 
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
@@ -1089,6 +1195,46 @@ int run_overview_gunsight(void);
  * leaves the caller's out-params alone when it fails. */
 int run_tank_pos_dead(void);
 
+/* Overview render snapshot (test_overview_snapshot.c): what
+ * clientSimFillOverviewSnapshot copies out of the sim under the client mutex
+ * for the render to draw from after it. The snapshot's map is byte for byte
+ * the live memory and every scalar matches the accessor it came from, across
+ * a living tank, a shown gunsight, an item view, a dead tank and a fill from
+ * no sim; a write to the live memory after a fill, direct or through a
+ * display tick, leaves the snapshot alone until the next fill; the entity
+ * lists match what the renderer's own filter produced from the whole-map
+ * lists, entry for entry; and a fill on an unchanged generation still hands
+ * out the live map without copying it again. */
+int run_overview_snapshot_mirror(void);
+int run_overview_snapshot_isolation(void);
+int run_overview_snapshot_filter(void);
+int run_overview_snapshot_generation(void);
+
+/* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
+ * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic
+ * view at a whole-number zoom and the overview at its 0.5x-4x ladder. At an
+ * integer scale it gives the classic formula's positions, spelled out; at
+ * every rung it matches what the overview's former sixteen-steps-per-pixel
+ * path drew, within a sixteenth of a pixel; a shell's direction frame comes
+ * back by its tip pixel times the scale and an explosion frame does not; and
+ * the LGM centring snaps to a whole game pixel from the base under Classic
+ * and Match pixelation while Smooth leaves it where the centring put it. */
+int run_mapview_sprite_classic(void);
+int run_mapview_sprite_ladder(void);
+int run_mapview_sprite_shell_tip(void);
+int run_mapview_sprite_lgm_snap(void);
+
+/* The entity overlay's placements (test_mapview_overlay.c): the gunsight's
+ * top-left is the classic view's formula at an integer scale and the
+ * overview's at every rung; a tank's name sits one square to the right of
+ * its sprite with no extra offset and is held at the clip's left edge; the
+ * build cursor lands on its square at every rung; and the pill and base
+ * numbers sit on their square and are withheld below the minimum scale. */
+int run_mapview_overlay_gunsight(void);
+int run_mapview_overlay_tank_label(void);
+int run_mapview_overlay_cursor(void);
+int run_mapview_overlay_item_labels(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
@@ -1109,6 +1255,14 @@ int run_catchup_ignores_redundant_duplicates(void);
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
+
+/* Shared shell list builder (test_screen_bullets_build.c): the classic
+ * viewport list with the scroll origin and the overview's whole-map list with
+ * origin 0 come out of clientSimBuildShellList entry for entry as each view
+ * used to build them; a shell outside the viewport is only on the whole-map
+ * list, an expired prediction on neither, and a bot's list reads the server
+ * snapshots instead of the projected layer. */
+int run_screen_bullets_build(void);
 
 /* Ping RTT smoothers (test_ping_smoother.c): the min-over-window and EWMA
  * primitives — window-minimum tracking as samples slide out, EWMA constant
@@ -1296,6 +1450,19 @@ int run_pill_shadow_withheld_crc_matches(void);
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
 
+/* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
+ * recipient whose only viewport rect is its own tank screen, both delivery
+ * paths carry a sound 30 squares away and neither carries one at 45, a
+ * delivered sound arrives with a tier and a bearing rather than its map
+ * square, a far manLayingMineNear is dropped, and a tank hit on the recipient
+ * arrives from 60 squares out. */
+int run_sound_delivery_wire_cull(void);
+
+/* What the client plays for a sound the wire delivered
+ * (test_sound_delivery_wire.c): the near variant at 10 squares, the far
+ * variant at 30, and manLayingMineNear at 10. */
+int run_sound_tier_playback(void);
+
 /* Ally view over the loopback transport (test_view_ally_loopback.c): under
  * viewPolicyKey, with an allied in-process player parked outside every rect
  * the wire client has and absent from the client's interpolation mask, the
@@ -1408,6 +1575,67 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
+ * decoded frame by frame stays inside the per-frame byte budget (the
+ * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps
+ * its signal level, and conceals a dropped packet. */
+int run_voice_core_roundtrip(void);
+
+/* Saved audio device name matching (test_voice_device.c): a name that is
+ * present resolves to its index wherever it sits in the list, and every way
+ * of being absent - not there, empty, NULL, an empty list, a prefix rather
+ * than the whole name - answers -1, which the caller reads as the system
+ * default. A hole in the list is stepped over. */
+int run_voice_device_resolve(void);
+
+/* Level meter peak (test_voice_peak.c): a spike sets the peak, it stands for
+ * the hold with the clock driven straight through the argument, then falls
+ * until it reaches the live level and follows it rather than dropping through
+ * it. A louder reading mid-fall replaces the peak and re-arms the hold, and a
+ * level from outside 0..1 is clamped before it reaches the state. */
+int run_voice_peak(void);
+
+/* Voice segment framing (test_voice_segment.c): fields survive both
+ * directions with the payload left pointing into the caller's buffer, and
+ * every short, oversized, or out-of-range segment is refused. */
+int run_voice_segment_roundtrip(void);
+int run_voice_segment_rejects_malformed(void);
+
+/* Per-speaker jitter buffer (test_voice_jitter.c): frames play in sequence
+ * order however they arrive, gaps are concealed, sequence numbers compare
+ * correctly across the 256 wrap, a talker who stops stops playback, and a
+ * later utterance at an unrelated sequence number resumes it. */
+int run_voice_jitter_ordering_and_plc(void);
+
+/* Frames that arrive but will not decode (test_voice_jitter.c): each is
+ * concealed and consumed like a missing one, a run of them ends playback
+ * instead of concealing indefinitely, and the end-of-utterance flag is
+ * honoured on a frame that failed to decode. */
+int run_voice_jitter_undecodable_run(void);
+
+/* Jitter buffer under adverse arrival (test_voice_jitter_loss.c): a generated
+ * loss / reorder / burst-outage pattern is pushed a tick at a time, and the
+ * per-speaker counters are used to check that concealment matches what was
+ * lost, that no frame is played twice or vanishes, that added latency stays
+ * bounded, and that playback recovers from an outage. Also prints the
+ * concealment and latency table the jitter constants are tuned from. */
+int run_voice_jitter_under_loss(void);
+
+/* Per-client voice flood cap (test_voice_flood_cap.c): over the loopback
+ * transport, a burst queued inside one client tick is forwarded only up to
+ * VOICE_SEGMENTS_PER_TICK with the remainder drained and counted as dropped,
+ * while a steady one-frame-per-tick talker loses nothing and the separate
+ * concurrent-talker cap never fires on them. */
+int run_voice_flood_cap_enforced(void);
+
+/* Concurrent-talker selection (test_voice_talker_select.c): the per-recipient
+ * cap keeps the most recently started talkers rather than the lowest-numbered
+ * slots, breaks an onset tie on the newer sequence number across the 256 wrap,
+ * is stable for inputs tied on both, and holds its bounds at and below the
+ * cap and on degenerate input. */
+int run_voice_talker_select_ranks_recent(void);
+int run_voice_talker_select_bounds(void);
+
 /* Skin asset reads out of a directory vs a zip (test_skin_source.c). */
 int run_skin_source_dir_and_zip(void);
 
@@ -1421,6 +1649,14 @@ int run_skin_workshop_id_roundtrip(void);
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */
 int run_skin_density_scan(void);
+int run_sheet_bleed_edges(void);
+int run_sheet_no_key_under_alpha(void);
+int run_bmp_sheet_no_key_under_alpha(void);
+
+/* Which <name>_N.wav members a source holds, and the compaction that
+   keeps a decoded pool contiguous (test_sound_variants.c). */
+int run_sound_variant_pool_names(void);
+int run_sound_variant_load_compaction(void);
 
 /* Bolo pascal-string reader, both copies of it (test_pascal_string.c). */
 int run_pascal_string_lengths(void);
@@ -1453,6 +1689,14 @@ int run_netdebug_error_offset_clamped(void);
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
 struct ServerSim *ut_make_running_sim(const char *player_name);
+
+/* The sounds frontEndPlaySound was handed, recorded by the stub in
+ * test_stubs.c so a test can assert which variant the client played.
+ * ut_sound_get returns the sndEffects value at that index, or -1 past the
+ * end. The recorder is bounded; sounds past its cap are not kept. */
+void ut_sound_reset(void);
+int  ut_sound_count(void);
+int  ut_sound_get(int index);
 
 #ifdef __cplusplus
 }

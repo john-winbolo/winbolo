@@ -197,10 +197,24 @@ void startsGetStart(struct GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTY
 *  fill the remaining free starts. Duplicate reservations honor
 *  the first; an out-of-range reservation is treated as none.
 *  NULL means no reservations (original behaviour).
+*
+*  teamStartSide (optional, may be NULL) is indexed by team
+*  number 0..MAX_TANKS (entry 0 unused) and holds each team's
+*  START_SIDE_* choice. A team with a side is anchored on that
+*  side and takes only starts its side accepts; a chosen side
+*  is closed to the teams that did not choose it and to solos.
+*  NULL means no sides anywhere (every team START_SIDE_ANY).
+*
+*  A connected slot the placement leaves without a start of
+*  its own rides one already taken — a teammate's where it has
+*  one — so two slots may share an index; the tank-aware
+*  scatter spreads them out at spawn. MAX_STARTS is emitted
+*  only when no start on the map is valid.
 *********************************************************/
 void startsAssignBatch(struct GameSim *sim, starts *value,
                        const bool *connected, const BYTE *teamNumber,
-                       BYTE *outStartIdx, const BYTE *reservedStartIdx0);
+                       BYTE *outStartIdx, const BYTE *reservedStartIdx0,
+                       const BYTE *teamStartSide);
 
 /*********************************************************
 *NAME:          startsPickIncremental
@@ -208,16 +222,27 @@ void startsAssignBatch(struct GameSim *sim, starts *value,
 *  Picks one free start for a single joiner, 0-based in/out.
 *  taken[] is 0-based per start (TRUE = already reserved).
 *  teammateStarts0[] lists the 0-based start indices reserved
-*  by the joiner's teammates (teammateCount may be 0). With
-*  teammates, returns the free valid start with the smallest
-*  distance to the nearest teammate reservation (cluster);
-*  otherwise returns the free valid start maximising the min
-*  distance to every taken start (farthest-first). Returns
-*  MAX_STARTS when no free valid start exists.
+*  by the joiner's teammates (teammateCount may be 0).
+*
+*  side is the joiner's team START_SIDE_*; closedMask is the
+*  union of the START_SIDE_BIT_* the other teams chose. Only
+*  starts startSideEligible allows are candidates, ranked in
+*  tiers: starts on the joiner's side alone, starts on its
+*  side another team's side also covers, then the centre;
+*  the first tier holding a free start wins. With no side
+*  every candidate is in the first tier.
+*
+*  Within a tier: with teammate reservations the side
+*  accepts, returns the free valid start with the smallest
+*  distance to the nearest of them (cluster); otherwise
+*  returns the free valid start maximising the min distance
+*  to every taken start (farthest-first). Returns MAX_STARTS
+*  when no free valid start the rules allow exists.
 *********************************************************/
 BYTE startsPickIncremental(struct GameSim *sim, starts *value,
                            const bool *taken,
-                           const BYTE *teammateStarts0, int teammateCount);
+                           const BYTE *teammateStarts0, int teammateCount,
+                           BYTE side, BYTE closedMask);
 
 /*********************************************************
 *NAME:          startsGetRandStart

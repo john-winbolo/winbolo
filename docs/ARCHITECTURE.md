@@ -36,7 +36,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links three leaf `src/gui/sdl3` geometry files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources". |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links four leaf `src/gui/sdl3` geometry files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources". |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -992,21 +992,37 @@ only source of truth for "byte-identical".
 ### Recipe — adding a new event type
 
 1. **Define the event.** Add a variant to `ControlEventType` in
-   `src/bolo/public/control_event.h` and the corresponding union
-   member to `ControlEvent.u`. If a typed populate helper makes
-   call sites cleaner, add a `serverSimFill<Name>Event` function
-   on `server_sim.h`.
+   `src/bolo/public/control_event.h`, **before the
+   `CTRL_EVENT_TYPE_COUNT` sentinel, which must stay last**, and the
+   corresponding union member to `ControlEvent.u`. If a typed populate
+   helper makes call sites cleaner, add a `serverSimFill<Name>Event`
+   function on `server_sim.h`.
 
-2. **Define the wire form (if any).** Add an encoder and a decoder
-   in `src/bolo/transport_control_codec.c`. Wire the encoder into
-   `s_encoders[]` (keyed by `ControlEventType`) and the decoder
-   into `transportControlCodecDecoder` (keyed by wire packet type).
-   The encoder receives a per-recipient `UdpServerClient *recipient`
-   it can ignore for fan-to-all variants or use for filtering
-   single-target events — though the established precedent is to
-   keep the codec recipient-agnostic and put the slot check in
+2. **Define the wire form.** Add `encode<Name>Body` and
+   `decode<Name>Body` in `src/bolo/transport_control_codec.c` and
+   register them in `s_bodyEncoders[]` and `s_bodyDecoders[]`, both
+   keyed by `ControlEventType`. That is the whole of it for a new
+   event: the reliable carrier calls these through
+   `transportControlCodecBodyEncoder` / `…BodyDecoder`, which is how
+   every control event on `CHANNEL_CONTROL` is carried.
+
+   **Do not add to `s_encoders[]` or `transportControlCodecDecoder`.**
+   Those are the pre-channel-mux full-packet path, keyed by wire packet
+   type, and they exist only for the events that still have a legacy
+   `PACKET_*` type. `transportControlCodecEncoder` — the accessor for
+   `s_encoders[]` — has no callers outside the codec file itself.
+   Every event added since the carrier landed is body-only:
+   `CTRL_VIEW_TARGET`, `CTRL_SPECTATOR_CHAT`, `CTRL_ROUND_RATING_POSTED`,
+   `CTRL_STATS_SEED`, `CTRL_VOICE_TALKING`.
+
+   The encoder receives a per-recipient `UdpServerClient *recipient`.
+   **Ignore it** — mark the function `/* recipient: safe — ignored. */`
+   and `(void)recipient;`, as its neighbours do. The codec is
+   recipient-agnostic by design: the bytes are identical for every
+   recipient and per-recipient filtering belongs in
    `udpClientDeliverControl` (`CTRL_ALLIANCE_REQUEST`'s target check
-   lives there).
+   lives there). A payload computed per recipient breaks the caching
+   and retransmission the carrier does on those bytes.
 
 3. **Publish from the server-side handler:**
    ```c
@@ -1026,7 +1042,36 @@ only source of truth for "byte-identical".
    in `clientSimApplyControl` (`src/bolo/client_sim_control.c`) —
    the dispatcher covers SP, bots, and network in one place.
 
-5. **Send wrapper (if client-originated).** A client-originated event
+5. **Register it everywhere else.** Steps 1–4 make the event work;
+   these make it debuggable, and each is easy to miss:
+
+   - `mpDiagCtrlName` in **both** `src/server/transport_udp_server.c`
+     and `src/bolo/transport_udp_client.c` — the name the MP diag log
+     prints. Without it the event logs as `<unknown>` on that side.
+   - `src/headless/headless_main.c` — the type name and, if the payload
+     is worth seeing, a case in the event logger.
+
+   The reliable way to find the rest is to sweep an existing event of a
+   similar shape: `rg -n "CTRL_ALLIANCE_RESET" src` names every site one
+   bitmap-carrying event touches. Some sites are deliberate non-entries
+   — `serverSpectatorDeliverControl`'s allowlist is drop-by-default, so
+   adding an event there is a decision about what spectators may see,
+   not a registration.
+
+6. **Add a body-codec round-trip test.** One file per event, following
+   `tests/unit/test_view_target_codec.c`: resolve the functions through
+   `transportControlCodecBodyEncoder` / `…BodyDecoder` the way the live
+   path does, encode, decode, and assert the payload survives. Cover the
+   boundaries the field can lose — the top bit of a bitmap, an empty
+   value, a short body being rejected.
+
+   **A new test file registers in four places**, all required:
+   `tests/unit/test_harness.h` (the `run_<name>` declaration), the
+   `s_tests[]` table in `tests/unit/test_main.c`, `WINBOLO_UNITTESTS_SOURCES`
+   in `CMakeLists.txt`, and `_unit_test_names` in `CMakeLists.txt`. Miss
+   the fourth and the build is green while the case never runs.
+
+7. **Send wrapper (if client-originated).** A client-originated event
    means there's a corresponding `CMD_*` command. See "Adding a new
    client→server command" below for the recipe. Briefly: add a
    `clientSimNetSend<Name>` wrapper on `client_net.h` that builds a
@@ -1970,35 +2015,42 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Three `src/gui/sdl3` files —
-`overview_camera.cpp`, `overview_fog.cpp` and
-`overview_hud_layout.cpp` — are compiled *into* `WinBoloUnitTests`,
-the only files from a renderer directory that are. They hold the map
-overview's camera maths, its fog mask and its in-window HUD geometry,
-and `test_overview_camera.cpp`, `test_overview_fog.cpp` and
-`test_overview_hud_layout.cpp` call them directly.
+same target, and it is not a T2 grant. Nine `src/gui/sdl3` files are
+compiled *into* `WinBoloUnitTests`, the only files from a renderer
+directory that are: `skin_source.c`, `tileloader.c`, `sdl_bmp.c`,
+`sound_variants.c`, `overview_camera.cpp`, `overview_fog.cpp`,
+`overview_hud_layout.cpp`, `sprite_positions.c` and
+`gfx_settings.c`. Between them they hold skin lookup, the tile sheet
+builder, the BMP sheet reader, the sound variant naming, the map
+overview's camera maths, its fog mask, its in-window HUD geometry
+and the sprite placement arithmetic behind `mapview.c`'s drawers.
+The first eight are each called directly by a test beside them;
+`gfx_settings.c` is here because `tileloader.c` calls it, and is the
+one file on the list no test drives on its own.
 
 They do not borrow the target's T2 access. They keep the `gui`
-profile's public-only rule: between them they include `types.h` and
-`overview_types.h` from `public/`, two GUI-local geometry headers,
-and the C++ standard library — nothing else. That is the rule which
-qualifies a file for this list: **arithmetic over plain structs, with
-no ImGui, no `SDL_Renderer`, and no window or device state — geometry
-a test can call with no display attached.** The drawing half of the
-overview (`overview_view.cpp`) does not qualify and stays out.
+profile's public-only rule. That is the rule which qualifies a file
+for this list: **a leaf a test can call with no display attached —
+no ImGui, and no window, renderer or audio device of its own.**
+Nothing here creates or holds one. `sdl_bmp.c` marks where the
+boundary runs: its upload calls take an `SDL_Renderer *` they are
+handed, and the surface-level half the tests use needs none, so the
+file goes in while a file that opened a renderer would not. The
+drawing half of the overview (`overview_view.cpp`) does not qualify
+and stays out.
 
-The alternative was moving the maths into `src/bolo/`, which would
-put pixel, zoom and panel-layout concerns onto the sim purely to buy
-testability. Keeping them in the renderer and linking three leaf
-files is the smaller distortion of the two.
+The alternative, for the geometry files, was moving the maths into
+`src/bolo/`, which would put pixel, zoom and panel-layout concerns
+onto the sim purely to buy testability. Keeping them in the renderer
+and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the three still meeting that rule, so it is
+**Rests on** each of the nine still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
-or renderer include has left the category, and the answer is to
-split the geometry back out — the link break is the signal, not a
-build problem to route around by widening the test binary. A fourth
-file joins only on the same test: leaf geometry, or it does not go
-in.
+include, or that opens a renderer or a device of its own, has left
+the category, and the answer is to split the leaf back out — the
+link break is the signal, not a build problem to route around by
+widening the test binary. A tenth file joins only on the same test:
+callable with no display attached, or it does not go in.
 
 ### Adding a new exception
 

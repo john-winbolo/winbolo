@@ -75,6 +75,12 @@ static TTF_Font     *gFallbackFontLabel = NULL;
 static int           gCurrentEdgeX  = 0;
 static int           gCurrentEdgeY  = 0;
 
+#if defined(WINBOLO_VOICE)
+/* Tank-label microphone icons; on unless the player turns them off in
+ * Settings.  Persisted by gamefront.c through the winbolo.c wrappers. */
+static bool          gShowMicIcons  = true;
+#endif
+
 static SDL_Texture  *gTankBarsTex   = NULL;
 static SDL_Texture  *gBaseBarsTex   = NULL;
 
@@ -687,6 +693,18 @@ TTF_Font *sdl3DrawGetMessageFont(void) {
   return gFontMsg;
 }
 
+TankLabelCache *sdl3DrawGetTankLabelCache(void) {
+  return &gLabelCache;
+}
+
+TTF_Font *sdl3DrawGetLabelFont(void) {
+  return gFontLabel;
+}
+
+TTF_Font *sdl3DrawGetTinyFont(void) {
+  return gFontTiny;
+}
+
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
   (void)x; (void)y;
   /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
@@ -721,10 +739,9 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
   }
   int tileW   = TILE_SIZE_X   * gZoomFactor;
   int tileH   = TILE_SIZE_Y   * gZoomFactor;
-  int apx = (int)px + 2;
-  int apy = (int)py + 2;
-  int bbx = (int)mx * TILE_SIZE_X + apx;
-  int bby = (int)my * TILE_SIZE_Y + apy;
+  /* The sprite's own game pixel, as mapViewDrawTanks draws it. */
+  int bbx = (int)mx * TILE_SIZE_X + (int)px;
+  int bby = (int)my * TILE_SIZE_Y + (int)py;
   float sx = (float)(originX - tileW + bbx * gZoomFactor - gCurrentEdgeX);
   float sy = (float)(originY - tileH + bby * gZoomFactor - gCurrentEdgeY);
 
@@ -739,6 +756,16 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
   tankLabelDraw(&gLabelCache, gRenderer, gFontMsg, str, playerNum,
                 sx, sy, 1.0f);
 }
+
+#if defined(WINBOLO_VOICE)
+void sdl3DrawStatusSetShowMicIcons(bool on) {
+  gShowMicIcons = on;
+}
+
+bool sdl3DrawStatusGetShowMicIcons(void) {
+  return gShowMicIcons;
+}
+#endif
 
 void sdl3DrawStatusGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
   *shells = gCachedTankShells;

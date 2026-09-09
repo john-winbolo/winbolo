@@ -15,20 +15,24 @@
 /*********************************************************
  * Name:          sprite_positions.h
  * Purpose:
- *   Tile-number -> atlas-coordinate lookup tables. Split
- *   out of mapview.h so modules that only need the table
- *   (e.g. the log viewer) can include it without pulling
- *   in bolo screen / sprite-list typedefs that conflict
- *   with their own equivalents.
+ *   Tile-number -> atlas-coordinate lookup tables, and the
+ *   arithmetic that puts a sprite on screen. Split out of
+ *   mapview.h so modules that only need the table (e.g.
+ *   the log viewer) can include it without pulling in bolo
+ *   screen / sprite-list typedefs that conflict with their
+ *   own equivalents, and so the position maths can be
+ *   linked into the unit tests with no renderer behind it.
  *
  *   The tables are populated by mapViewInit(), defined in
- *   mapview.c. Values are atlas pixel offsets at scale 1;
- *   callers multiply by their atlas sheet scale at blit
- *   time.
+ *   sprite_positions.c. Values are atlas pixel offsets at
+ *   scale 1; callers multiply by their atlas sheet scale
+ *   at blit time.
  *********************************************************/
 
 #ifndef SPRITE_POSITIONS_H
 #define SPRITE_POSITIONS_H
+
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,6 +44,58 @@ extern int mapViewPosY[256];
 /* Populate mapViewPosX/Y. Idempotent — safe to call from multiple
  * subsystems' setup paths. */
 void mapViewInit(void);
+
+/* Offset of a sprite from the map origin, in screen pixels. `square` is the
+   map square on this axis, `pixelOff` its 0..15 game-pixel offset and
+   `worldOff` its 0..255 world offset inside the square. `scale` is screen
+   pixels per game pixel, `mode` a GfxAnimSmoothness value and `sheetScale`
+   the atlas scale Match pixelation snaps to. */
+float spritePositionOffset(int mode, float scale, int sheetScale,
+                           int square, int pixelOff, int worldOff);
+
+/* Shell top-left, including the tip anchoring that puts the leading pixel on
+   the shell's world position. frame is the raw screenBullets frame; when it
+   is outside SHELL_DIR0..SHELL_DIR15 no anchoring is applied. baseX/baseY is
+   where the lists' square 0,0 lands on screen: the drawers' originX - tileW
+   - edgeX. */
+void spritePositionShell(float baseX, float baseY, int mode, float scale,
+                         int sheetScale, int mx, int my, int px, int py,
+                         int wx, int wy, int frame,
+                         float *outX, float *outY);
+
+/* LGM top-left, including the (1.5, 2.0) game-pixel centring and the
+   whole-game-pixel display snap that every mode but Smooth applies. Both
+   are for the on-foot frames LGM0..LGM2; any other frame is the helicopter,
+   drawn from its own top-left. The snap is relative to baseX/baseY, so the
+   base has to be the same one the tanks are placed from. */
+void spritePositionLgm(float baseX, float baseY, int mode, float scale,
+                       int sheetScale, int mx, int my, int px, int py,
+                       int wx, int wy, int frame,
+                       float *outX, float *outY);
+
+/* The overlay's placements, on the same base and scale. These are whole
+   game pixels whatever the animation mode: the cursor and the item numbers
+   sit on squares, and the gunsight and the tank labels have always been
+   placed from the square and pixel alone. */
+
+/* Top-left of a whole square: where the build cursor goes, and the box an
+   item number is drawn in. */
+float spritePositionSquare(float base, float scale, int square);
+
+/* Top-left of the gunsight sprite: the tank formula at the sight's game
+   pixel, so a crosshair one pixel wider than a tile has its centre pixel
+   on the aim point. */
+float spritePositionGunsight(float base, float scale, int square, int pixelOff);
+
+/* Top-left of a tank's name: one square to the right of the sprite's game
+   pixel, and held inside the clip's left edge so a name is never cut off
+   on the left. */
+void spritePositionTankLabel(float baseX, float baseY, float scale,
+                             int mx, int my, int px, int py, float clipLeft,
+                             float *outX, float *outY);
+
+/* Whether the pill and base numbers are drawn at this scale. */
+bool spritePositionItemLabelShown(float scale, float minScale);
 
 #ifdef __cplusplus
 }

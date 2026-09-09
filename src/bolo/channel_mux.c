@@ -47,6 +47,38 @@ static uint32_t channelMin32(uint32_t a, uint32_t b) {
     return a < b ? a : b;
 }
 
+/* How far past the delivery cursor a best-effort segment may claim to sit and
+ * still be followed on its own say-so, in multiples of that channel's own
+ * window. This covers the everyday case — a short burst of loss leaves the
+ * sender a few windows ahead — and it is deliberately small, because it is
+ * also the furthest a single datagram can shift the cursor. Anything beyond it
+ * needs a second segment to agree before the cursor moves (see the refusal
+ * path in channelApplySegment), so the bound no longer has to be generous
+ * enough to cover a long outage: being wrong out there is now temporary, and
+ * the cost of guessing low is one segment while the two-segment resync runs. */
+#define CHANNEL_BEST_EFFORT_JUMP_WINDOWS 4u
+
+static uint32_t channelBestEffortMaxAhead(const ChannelState *c) {
+    return c->window * CHANNEL_BEST_EFFORT_JUMP_WINDOWS;
+}
+
+/* Two sequence numbers close enough to be from the same sender at the same
+ * moment: everything a best-effort sender has in flight spans less than one
+ * window, since that is all its ring holds. */
+static bool channelSeqAgrees(uint32_t a, uint32_t b, uint32_t window) {
+    return (a - b) < window || (b - a) < window;
+}
+
+/* Indexing a ring by (seq % window) only stays consistent across the wrap at
+ * 0xFFFFFFFF when the window divides 2^32, and the best-effort channels are the
+ * ones expected to run that far: nothing acks them, so their sequence space
+ * only ever climbs. */
+BOLO_STATIC_ASSERT((CHANNEL_VOICE_WINDOW & (CHANNEL_VOICE_WINDOW - 1)) == 0,
+                   voice_window_power_of_two);
+BOLO_STATIC_ASSERT((CHANNEL_GAME_EFFECT_WINDOW &
+                    (CHANNEL_GAME_EFFECT_WINDOW - 1)) == 0,
+                   game_effect_window_power_of_two);
+
 /* Retransmit timeout in ticks, derived from the RTT estimate. At the 50 Hz
  * tick (20 ms/tick) rttMs/10 is roughly two round trips; floored at 2 ticks
  * so a zero/unknown RTT still backs off rather than resending every tick. */
@@ -109,6 +141,16 @@ void channelMuxInit(ChannelMux *m) {
     gameEffect->recvPresent = m->gameEffectRecvPresent;
     gameEffect->recvLen = m->gameEffectRecvLen;
     gameEffect->recvData = &m->gameEffectRecvData[0][0];
+
+    ChannelState *voice = &m->ch[CHANNEL_VOICE];
+    voice->window = CHANNEL_VOICE_WINDOW;
+    voice->segSize = CHANNEL_VOICE_SEG;
+    voice->bestEffort = true;
+    voice->sendLen = m->voiceSendLen;
+    voice->sendData = &m->voiceSendData[0][0];
+    voice->recvPresent = m->voiceRecvPresent;
+    voice->recvLen = m->voiceRecvLen;
+    voice->recvData = &m->voiceRecvData[0][0];
 }
 
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
@@ -344,20 +386,61 @@ static void channelApplySegment(ChannelMux *m, uint8_t ch, uint32_t seq,
                                 const uint8_t *payload, uint16_t slen) {
     ChannelState *c = &m->ch[ch];
     if (c->bestEffort) {
-        /* No ack for best-effort. Deliver-on-arrival with no reorder hold. */
-        if (seq < c->expectedSeq) {
-            return; /* stale / already delivered */
+        /* No ack for best-effort. Deliver-on-arrival with no reorder hold.
+         * Everything below is a distance, never a sum: (seq - expectedSeq) on
+         * uint32_t is exact across the wrap at 0xFFFFFFFF, while a sum like
+         * expectedSeq + window collapses to a small number once the cursor
+         * nears the top and every comparison against it then reads backwards —
+         * one segment claiming a seq up there would wedge the channel for the
+         * rest of the connection, with no reset to recover it. */
+        uint32_t ahead = seq - c->expectedSeq;
+        uint32_t behind = c->expectedSeq - seq;
+        if (ahead >= c->window && behind <= c->window) {
+            /* Just behind the cursor: already delivered, or skipped past while
+             * it moved on. Everything the sender has in flight spans less than
+             * a window, so a reordered or duplicated copy of it lands here —
+             * dropped quietly, with no effect on anything below. */
+            return;
         }
-        if (seq >= c->expectedSeq + c->window) {
-            /* Jumped beyond the window — drop the oldest to make room rather
-             * than wait (best-effort never stalls on a gap). */
-            uint32_t newExpected = seq - c->window + 1;
-            uint32_t s;
-            for (s = c->expectedSeq;
-                 s < newExpected && s < c->expectedSeq + c->window; s++) {
-                c->recvPresent[s % c->window] = false;
+        if (ahead >= channelBestEffortMaxAhead(c)) {
+            /* Too far from the cursor in either direction to be the sender we
+             * are tracking (a seq behind the cursor reads as a distance just
+             * under 2^32, so one test covers both sides). One datagram is not
+             * evidence of anything: remember the number and drop the segment.
+             * A forgery is ignored entirely, because nothing corroborates it. */
+            if (!c->refusedValid ||
+                !channelSeqAgrees(seq, c->refusedSeq, c->window)) {
+                c->refusedSeq = seq;
+                c->refusedValid = true;
+                return;
             }
-            c->expectedSeq = newExpected;
+            /* A second refusal agreeing with the first: two segments from the
+             * same place, and that place is not where the cursor is. The cursor
+             * is what is wrong then — it ran ahead of a sender that fell behind
+             * (or was pushed there), or the sender ran ahead of it — so
+             * resynchronise onto the traffic. No cursor position is permanent,
+             * which is what keeps one bad segment from owning the channel.
+             * Nothing buffered belongs to the new position. */
+            uint32_t s;
+            for (s = 0; s < c->window; s++) {
+                c->recvPresent[s] = false;
+            }
+            c->expectedSeq = seq;
+            ahead = 0;
+        }
+        c->refusedValid = false; /* an accepted segment vouches for the cursor */
+        if (ahead >= c->window) {
+            /* Jumped beyond the window — drop the oldest to make room rather
+             * than wait (best-effort never stalls on a gap). The cursor lands
+             * at seq - window + 1; only a window of slots can hold anything, so
+             * the clear stops there however far the cursor moves. */
+            uint32_t advance = ahead - c->window + 1;
+            uint32_t clear = channelMin32(advance, c->window);
+            uint32_t n;
+            for (n = 0; n < clear; n++) {
+                c->recvPresent[(c->expectedSeq + n) % c->window] = false;
+            }
+            c->expectedSeq += advance;
         }
         uint32_t idx = seq % c->window;
         if (c->recvPresent[idx]) {
@@ -483,9 +566,14 @@ bool channelReceiveBestEffort(ChannelMux *m, uint8_t ch, uint8_t *out,
         return false; /* usage error: not a best-effort channel */
     }
     /* Return the lowest buffered seq at or above the cursor, advancing past
-     * any skipped (never-arrived) seqs below it — no waiting on a gap. */
-    uint32_t seq;
-    for (seq = c->expectedSeq; seq < c->expectedSeq + c->window; seq++) {
+     * any skipped (never-arrived) seqs below it — no waiting on a gap. The
+     * loop counts slots instead of stopping at expectedSeq + window: that sum
+     * wraps to a value below the cursor once it nears the top of the sequence
+     * space, which would end the loop before its first slot and leave the
+     * channel unable to deliver anything again. */
+    uint32_t n;
+    for (n = 0; n < c->window; n++) {
+        uint32_t seq = c->expectedSeq + n;
         uint32_t idx = seq % c->window;
         if (c->recvPresent[idx]) {
             *outLen = c->recvLen[idx];

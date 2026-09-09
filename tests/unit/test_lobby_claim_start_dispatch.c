@@ -86,21 +86,27 @@ int run_lobby_claim_start_host_swaps_occupied(void) {
 }
 
 /* A host assigning an occupied start to a slot whose own start is "none"
- * (0xFF) leaves the displaced holder with 0xFF — the swap is clean even
- * when the assignee held nothing. */
+ * (0xFF) displaces the holder, which would otherwise inherit "none"; the
+ * displaced holder is given a fresh free start instead of being left
+ * without one. */
 int run_lobby_claim_start_host_swap_into_none(void) {
     ServerSim *sim = make_two_player_lobby();
     UT_ASSERT(sim != NULL);
     UT_ASSERT(startsGetNumStarts(&sim->sim.ss) >= 2);
+    BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
 
     serverSimSetLobbyStartIdx(sim, 0, 0xFF);  /* host holds nothing */
     serverSimSetLobbyStartIdx(sim, 1, 2);
 
     UT_ASSERT(apply_claim(sim, 0, 0, 2) == CMD_OK);
     UT_ASSERT(start_of(sim, 0) == 2);
-    UT_ASSERT_MSG(start_of(sim, 1) == 0xFF,
-                  "displaced holder inherits 'none', got %u",
-                  (unsigned)start_of(sim, 1));
+    UT_ASSERT_MSG(start_of(sim, 1) != 2,
+                  "displaced holder still holds the assigned start 2");
+    UT_ASSERT_MSG(start_of(sim, 1) != 0xFF,
+                  "displaced holder was left with 'none' instead of a fresh start");
+    UT_ASSERT_MSG(start_of(sim, 1) >= 1 && start_of(sim, 1) <= numStarts,
+                  "displaced holder re-picked out of range: %u of %u starts",
+                  (unsigned)start_of(sim, 1), (unsigned)numStarts);
 
     serverSimDestroy(sim);
     return 0;
@@ -170,8 +176,9 @@ int run_lobby_claim_start_validation(void) {
     ServerSim *sim = make_two_player_lobby();
     UT_ASSERT(sim != NULL);
 
-    /* startIdx > numStarts (0xFE is not the 0xFF release sentinel). */
-    UT_ASSERT(apply_claim(sim, 0, 0, 0xFE) == CMD_REJECT_INVALID);
+    /* startIdx > numStarts: 0xFD is above any start count and is not one
+     * of the claim sentinels, so only the range guard can refuse it. */
+    UT_ASSERT(apply_claim(sim, 0, 0, 0xFD) == CMD_REJECT_INVALID);
     /* Target slot 5 is not connected. */
     UT_ASSERT(apply_claim(sim, 0, 5, 1) == CMD_REJECT_INVALID);
 

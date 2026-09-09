@@ -33,42 +33,11 @@
 
 #include <string.h>
 
-/* mapViewPosX/Y and mapViewInit() moved to sprite_positions.{c,h} so the
+/* mapViewPosX/Y and mapViewInit() live in sprite_positions.{c,h} so the
  * log viewer can link the table without dragging in the bolo screen
- * dependencies that mapview's draw helpers below need. */
-
-
-/* Offset of a sprite from the map origin, in screen pixels. `square` is the
-   map square on this axis, `pixelOff` its 0..15 game-pixel offset and
-   `worldOff` its 0..255 world offset inside the square. */
-static float mapViewSpriteOffset(const MapViewCtx *ctx, int mode,
-                                 int square, int pixelOff, int worldOff) {
-  if (mode == GFX_ANIM_SMOOTH || mode == GFX_ANIM_MATCH_PIXELATION) {
-    /* 256 world units to a square, 16 to a game pixel. When
-       worldOff == pixelOff << 4 this works out to the same value Classic
-       gives, so a sprite carrying nothing finer than its game pixel does
-       not move differently here. */
-    float smooth =
-        ((float)(square * 256 + worldOff) / 16.0f) * (float)ctx->zoomFactor;
-    if (mode == GFX_ANIM_SMOOTH) {
-      return smooth;
-    }
-    /* Match pixelation: snap to the size of one sheet texel on screen, which
-       covers zoomFactor / sheetScale screen pixels. With the sheet built at
-       sheetScale == zoomFactor that is a whole screen pixel, a step between
-       Classic's whole game pixels and Smooth's continuous motion. */
-    {
-      int ss = ctx->sheetScale < 1 ? 1 : ctx->sheetScale;
-      float step = (float)ctx->zoomFactor / (float)ss;
-      return SDL_floorf(smooth / step + 0.5f) * step;
-    }
-  }
-  /* Classic, and anything unrecognised. Whole game pixels, worked out in
-     integers and cast once, so the result is the position the game drew
-     before this setting existed. */
-  return (float)((square * TILE_SIZE_X + pixelOff) * ctx->zoomFactor);
-}
-
+ * dependencies that mapview's draw helpers below need. The sprite placement
+ * arithmetic (spritePositionOffset / Shell / Lgm) is there too, so the unit
+ * tests can call it with no renderer behind it. */
 
 /*********************************************************
  * mapViewDrawTiles — blit the tile buffer to the renderer.
@@ -120,8 +89,8 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
  * mapViewDrawShells — moved from sdl3DrawShells.
  *********************************************************/
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
-                       int originX, int originY, int tileW, int tileH,
-                       int edgeX, int edgeY) {
+                       float originX, float originY, float tileW, float tileH,
+                       float edgeX, float edgeY) {
   /* Shells are small and fast, so quantised motion shows on them most and
      sub-pixel blur least. That is why the smooth-shells setting overrides
      the mode here and in no other draw. */
@@ -165,45 +134,14 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       default: continue;
     }
 
-    float sx = (float)(originX - tileW - edgeX) +
-               mapViewSpriteOffset(ctx, mode, (int)mx, (int)px, (int)wx);
-    float sy = (float)(originY - tileH - edgeY) +
-               mapViewSpriteOffset(ctx, mode, (int)my, (int)py, (int)wy);
-
-    /* Anchor-pixel positioning: place the sprite so its leading pixel lands
-     * exactly on the shell's world position (the collision point).
-     *
-     * Each entry is the (col, row) of the tip pixel within that direction's
-     * sprite, read directly from the sprite shapes in tile.bmp.  We subtract
-     * these from the top-left position so the tip — not the top-left corner —
-     * sits at the shell coordinate.
-     *
-     * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
-     *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
-    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
-      /* Symmetric diamond, matching brains/GoalHunter/init.lua's
-       * draw_shell_hitbox_viz mirror. Game-pixel offsets in 0..4
-       * range (4 = right/bottom edge of the 4-px sprite). Float so
-       * sub-pixel anchoring works at zoomFactor > 1. */
-      static const float kTipCol[16] = {
-        1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
-        4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
-        1.5f, 0.0f, 0.0f, 0.0f,    /* S   SSW  SW   WSW  */
-        0.0f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
-      };
-      static const float kTipRow[16] = {
-        0.0f, 0.0f, 0.0f, 0.0f,    /* N   NNE  NE   ENE  */
-        1.5f, 3.0f, 4.0f, 4.0f,    /* E   ESE  SE   SSE  */
-        4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
-        1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
-      };
-      int dir = frame - SHELL_DIR0;
-      sx -= kTipCol[dir] * (float)ctx->zoomFactor;
-      sy -= kTipRow[dir] * (float)ctx->zoomFactor;
-    }
+    float sx = 0.0f, sy = 0.0f;
+    spritePositionShell(originX - tileW - edgeX, originY - tileH - edgeY,
+                        mode, ctx->scale, ctx->sheetScale,
+                        (int)mx, (int)my, (int)px, (int)py, (int)wx, (int)wy,
+                        (int)frame, &sx, &sy);
 
     SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, srcW, srcH, ctx->sheetScale);
-    SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
+    SDL_FRect dstR = { sx, sy, (float)srcW * ctx->scale, (float)srcH * ctx->scale };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
 }
@@ -214,8 +152,8 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
  * which stay in sdl3draw.c).
  *********************************************************/
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
-                      int originX, int originY, int tileW, int tileH,
-                      int edgeX, int edgeY) {
+                      float originX, float originY, float tileW, float tileH,
+                      float edgeX, float edgeY) {
   int mode = (int)gfxGetAnimSmoothness();
   BYTE total = screenTanksGetNumEntries(tks);
   for (BYTE count = 1; count <= total; count++) {
@@ -329,10 +267,12 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     /* Win32 adds 2 to px/py before computing position */
     int apx = (int)px;// + 2;
     int apy = (int)py;// + 2;
-    float sx = (float)(originX - tileW - edgeX) +
-               mapViewSpriteOffset(ctx, mode, (int)mx, apx, (int)wx);
-    float sy = (float)(originY - tileH - edgeY) +
-               mapViewSpriteOffset(ctx, mode, (int)my, apy, (int)wy);
+    float sx = originX - tileW - edgeX +
+               spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
+                                    (int)mx, apx, (int)wx);
+    float sy = originY - tileH - edgeY +
+               spritePositionOffset(mode, ctx->scale, ctx->sheetScale,
+                                    (int)my, apy, (int)wy);
 
     /* A rotating skin's tank can instead be drawn from its north sprite and
        turned here by the tank's full angle, for 256 steps rather than the
@@ -348,7 +288,7 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     {
       SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, TILE_SIZE_X, TILE_SIZE_Y,
                                        ctx->sheetScale);
-      SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
+      SDL_FRect dstR = { sx, sy, tileW, tileH };
 #if WB_SKIN_DRAWTIME_ROTATION
       if (rotated) {
         /* angle is 0..255 over a whole turn and the sheet build turns frame
@@ -373,8 +313,8 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
  * mapViewDrawLGMs — moved from sdl3DrawLGMs.
  *********************************************************/
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
-                     int originX, int originY, int tileW, int tileH,
-                     int edgeX, int edgeY) {
+                     float originX, float originY, float tileW, float tileH,
+                     float edgeX, float edgeY) {
   int mode = (int)gfxGetAnimSmoothness();
   BYTE total = screenLgmGetNumEntries(lgms);
   for (BYTE count = 1; count <= total; count++) {
@@ -395,39 +335,20 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
         srcX=LGM_HELICOPTER_X; srcY=LGM_HELICOPTER_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
     }
 
-    float baseX = (float)(originX - tileW - edgeX);
-    float baseY = (float)(originY - tileH - edgeY);
-    float sx = baseX + mapViewSpriteOffset(ctx, mode, (int)mx, (int)px, (int)wx);
-    float sy = baseY + mapViewSpriteOffset(ctx, mode, (int)my, (int)py, (int)wy);
-
-    /* Centre the LGM sprite on its authoritative hit pixel. LGM_WIDTH=3,
-     * LGM_HEIGHT=4, so the precise sub-pixel centre is (1.5, 2.0) game
-     * pixels — kept as the internal model (the sim's hit position stays
-     * sub-pixel precise). But 1.5*zoom is a half pixel at 1x / odd zoom,
-     * which renders the sprite off the game-pixel grid every other sprite
-     * sits on. So compute the precise centre, then snap only the DISPLAYED
-     * position to the nearest whole game pixel — rounded relative to the
-     * scroll origin so the LGM stays in lockstep with smoothly-scrolling
-     * sprites instead of snapping to an absolute grid.
-     *
-     * Smooth drops the snap: motion finer than a game pixel is the whole
-     * point of that mode, and the grid it lines up with is the one Smooth
-     * has already left. Classic and Match pixelation keep it. The (1.5, 2.0)
-     * centre applies in all three. */
-    if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
-      float z = (float)ctx->zoomFactor;
-      sx -= 1.5f * z;   /* precise sub-pixel centre */
-      sy -= 2.0f * z;
-      if (mode != GFX_ANIM_SMOOTH) {
-        sx = baseX + SDL_floorf((sx - baseX) / z + 0.5f) * z;  /* display snaps to a pixel */
-        sy = baseY + SDL_floorf((sy - baseY) / z + 0.5f) * z;
-      }
-    }
+    /* On-foot frames are centred on their hit pixel and snapped to a whole
+       game pixel from the scroll origin in every mode but Smooth; the
+       helicopter draws from its own top-left. spritePositionLgm has the
+       reasoning. */
+    float sx = 0.0f, sy = 0.0f;
+    spritePositionLgm(originX - tileW - edgeX, originY - tileH - edgeY,
+                      mode, ctx->scale, ctx->sheetScale,
+                      (int)mx, (int)my, (int)px, (int)py, (int)wx, (int)wy,
+                      (int)frame, &sx, &sy);
 
     {
       SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, srcW, srcH,
                                        ctx->sheetScale);
-      SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
+      SDL_FRect dstR = { sx, sy, (float)srcW * ctx->scale, (float)srcH * ctx->scale };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
   }

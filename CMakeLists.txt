@@ -163,6 +163,24 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+FetchContent_Declare(
+    opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG        v1.5.2
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+FetchContent_Declare(
+    speexdsp
+    GIT_REPOSITORY https://github.com/xiph/speexdsp.git
+    # Pinned to a commit rather than a release: the newest tag (SpeexDSP-1.2.1)
+    # ships autotools only, and the CMake build lives on main.  A commit hash
+    # rules out GIT_SHALLOW, which needs a branch or tag name.
+    GIT_TAG        ba75b509fb1c5940ea07fa2ba5552e44f3a3576b
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 # curl is only built from source on Windows (uses Schannel for SSL).
 # On Linux/macOS, the system libcurl is used via find_package().
 if(WIN32)
@@ -429,6 +447,28 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MAXMINDDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(libmaxminddb)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE}" CACHE BOOL "" FORCE)
+
+    # libopus — voice codec, forced static
+    set(BUILD_SHARED_LIBS_SAVE3 "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(opus)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
+
+    # SpeexDSP — the acoustic echo canceller in the voice capture path, forced
+    # static.  Its CMake build declares no test or program targets, so there is
+    # nothing of that kind to switch off; the one option it does carry picks
+    # fixed- over floating-point arithmetic, and every platform we build for
+    # has an FPU.
+    set(BUILD_SHARED_LIBS_SAVE4 "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(speexdsp)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE4}" CACHE BOOL "" FORCE)
 endif()
 
 # cJSON — force static.  Outside the guard above: the iOS target compiles
@@ -776,12 +816,14 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
+    src/gui/sdl3/mapview_overlay.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
+    src/gui/sdl3/sound_variants.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
@@ -1101,6 +1143,15 @@ if(WB_NETDEBUG)
     add_compile_definitions(WB_NETDEBUG=1)
 endif()
 
+# Voice capture-chain recorder: WAV taps at each stage of the capture chain,
+# the two CSVs, and the WAV injection path (src/client_frontend/voice_debug.c).
+# OFF in every shipping build. The source is on the WinBolo target only, which
+# is the only target that compiles voice_client.c.
+option(WB_VOICEDEBUG "Build the voice capture-chain recorder" OFF)
+if(WB_VOICEDEBUG)
+    add_compile_definitions(WB_VOICEDEBUG=1)
+endif()
+
 # Fuzzing: libFuzzer targets over the wire parsers and the server packet
 # dispatcher (hardening plan §1.2). Linux + Clang only. This is a DEDICATED
 # build config, not mixed with a normal build: when ON, the whole build is
@@ -1418,14 +1469,17 @@ set(CLIENT_SOURCES
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
+    src/client_frontend/voice_core.c
+    src/client_frontend/voice_client.c
+    src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
     # sits on the chooser + wbn_map_source stack the standalone MapEditor
@@ -1620,6 +1674,26 @@ endif()
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
     nanosvg stb_image utf8proc cjson)
+
+# Voice capture/playback (src/gui/sdl3/voice.c + src/client_frontend/voice_core.c).
+# WINBOLO_VOICE gates the settings-dialog controls, which also compile into
+# targets that do not build the voice sources.
+target_link_libraries(WinBolo PRIVATE Opus::opus)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE=1)
+
+# Acoustic echo cancellation of remote voice out of the microphone
+# (src/client_frontend/voice_aec.c).  This target only: the browser build uses
+# getUserMedia's own canceller and never sees SpeexDSP, and no other target
+# compiles the voice sources at all.
+target_sources(WinBolo PRIVATE src/client_frontend/voice_aec.c)
+target_link_libraries(WinBolo PRIVATE speexdsp)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE_AEC=1)
+
+# The capture-chain recorder (WB_VOICEDEBUG above). This target only: it is
+# called from voice_client.c and winbolo.c, which nothing else compiles.
+if(WB_VOICEDEBUG)
+    target_sources(WinBolo PRIVATE src/client_frontend/voice_debug.c)
+endif()
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
@@ -3125,6 +3199,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_claim_start_dispatch.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_live_player_stats.c
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
@@ -3214,11 +3289,21 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
+    tests/unit/test_start_sides.c
+    tests/unit/test_lobby_side_axis.c
+    tests/unit/test_starts_scatter_separation.c
+    tests/unit/test_starts_team_side.c
+    tests/unit/test_lobby_team_side_dispatch.c
+    tests/unit/test_starts_side_integration.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_voice_flags.c
+    tests/unit/test_voice_talking_codec.c
+    tests/unit/test_voice_talking_set.c
     tests/unit/test_fx_viewport_cull.c
+    tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
@@ -3234,9 +3319,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_sight.c
+    tests/unit/test_overview_snapshot.c
+    tests/unit/test_mapview_sprite_scale.c
+    tests/unit/test_mapview_overlay.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
     tests/unit/test_interp_render.c
@@ -3253,11 +3342,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_channel.c
+    tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_map_cull.c
+    tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
     tests/unit/test_loopback_upload.c
     tests/unit/test_gate1_integration.c
@@ -3317,6 +3408,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lobby-chat event through the body tables, including the empty/max-length
     # messages and the out-of-range specIdx / msgLen-overrun rejections.
     tests/unit/test_spectator_chat_codec.c
+    # CTRL_STATS_SEED body-codec round-trip: encode/decode the mid-round live
+    # scoreboard seed through the body tables, including the full roster, the
+    # zero-row minimum, and the truncated / bad-slot rejections and the clamp.
+    tests/unit/test_stats_seed_codec.c
     # Spectator-chat routing: a published CTRL_SPECTATOR_CHAT reaches a player
     # bus subscriber and a live spectator (allowlist); broadcast CTRL_CHAT
     # reaches the spectator; team/unicast CTRL_CHAT does not.
@@ -3416,6 +3511,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Needs the tile loader itself, which no other unit test pulls in.
     tests/unit/test_skin_density.c
     src/gui/sdl3/tileloader.c
+    # The colour left under the built sheet's transparency, and the bleed
+    # that takes it out. Runs on the real data/svg art beside the binary.
+    tests/unit/test_sheet_bleed.c
+    src/gui/sdl3/sdl_bmp.c
+    # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
+    # and the compaction that leaves the members which decoded contiguous.
+    # Name arithmetic only: no audio device, and it opens no file.
+    tests/unit/test_sound_variants.c
+    src/gui/sdl3/sound_variants.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -3431,18 +3535,27 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
-    # The overview's camera maths, its fog mask and the in-window HUD
-    # geometry. The only src/gui/sdl3 files in this target: all three are
-    # arithmetic over plain structs with no ImGui and no SDL_Renderer include,
-    # so they link into a binary that has neither, and test_overview_camera.cpp
-    # / test_overview_fog.cpp / test_overview_hud_layout.cpp exercise them
-    # directly. The drawing half (overview_view.cpp) stays out. They keep the
-    # gui profile's public-only access rather than borrowing this target's T2;
+    # The overview's camera maths, its fog mask, the in-window HUD geometry
+    # and the sprite placement arithmetic behind mapview.c's drawers, with
+    # test_overview_camera.cpp / test_overview_fog.cpp /
+    # test_overview_hud_layout.cpp / test_mapview_sprite_scale.c exercising
+    # them directly. Like the other src/gui/sdl3 files in this target they
+    # are leaves a test can call with no display attached: no ImGui, and no
+    # window, renderer or device of their own. The drawing halves
+    # (overview_view.cpp, mapview.c) stay out. They keep the gui profile's
+    # public-only access rather than borrowing this target's T2;
     # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
     # meet to be added here, and when the exception lapses.
+    #
+    # sprite_positions.c qualifies on the same footing as the other three:
+    # its includes are the tile atlas coordinates, tilenum.h, global.h and the
+    # GfxAnimSmoothness enum, and its functions are float arithmetic over
+    # their arguments. It is the file the log viewer already links on its
+    # own for the atlas table.
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
+    src/gui/sdl3/sprite_positions.c
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -3567,7 +3680,18 @@ endif()
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c
-    tests/unit/test_bot_name_pools.c)
+    tests/unit/test_bot_name_pools.c
+    src/client_frontend/voice_core.c
+    tests/unit/test_voice_core.c
+    tests/unit/test_voice_device.c
+    tests/unit/test_voice_peak.c
+    tests/unit/test_voice_jitter.c
+    tests/unit/test_voice_jitter_loss.c
+    tests/unit/test_voice_flood_cap.c
+    src/bolo/voice_segment.c
+    tests/unit/test_voice_segment.c
+    src/bolo/voice_talker_select.c
+    tests/unit/test_voice_talker_select.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -3625,7 +3749,9 @@ target_link_libraries(WinBoloUnitTests PRIVATE
     # mdns is header-only; linked for its include dir so test_mdns_discovery.c
     # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
     # so the include dir doesn't propagate transitively).
-    mdns)
+    mdns
+    # voice_core.c is compiled into this target for the codec round-trip test.
+    Opus::opus)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -3687,6 +3813,12 @@ set(_unit_test_names
     command_rejected_parks_name_codes
     command_rejected_ignores_other_slot
     command_rejected_clear_resets_both_fields
+    live_stats_kill_credits_killer_and_victim
+    live_stats_suicide_counts_death_only
+    live_stats_lgm_loss_splits_victim_and_killer
+    live_stats_captures_credit_new_owner
+    live_stats_out_of_range_slot_ignored
+    live_stats_cleared_on_running_phase
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact
@@ -3944,12 +4076,43 @@ set(_unit_test_names
     starts_batch_teams_cluster_and_separate
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
+    start_side_mask_sectors
+    start_side_mask_degenerate_bbox
+    start_side_eligible_closed_mask
+    lobby_side_axis_two_team_pair
+    lobby_side_axis_pair_classification
+    lobby_side_axis_click_targets
+    starts_scatter_avoids_existing_tanks
+    starts_scatter_falls_back_when_crowded
+    starts_side_team_stays_on_its_side
+    starts_side_overflow_rides_own_side
+    starts_side_never_crosses_when_opposite_free
+    starts_side_any_matches_legacy
+    starts_side_reservation_beats_side
+    starts_side_empty_side_falls_back
+    starts_side_quota_capped_by_eligible
+    starts_side_any_team_kept_off_chosen_side
+    lobby_team_side_clamps_and_rejects_non_host
+    lobby_side_change_repicks_everyone
+    lobby_unassign_and_team_side_claims
+    lobby_map_change_releases_off_side
+    lobby_non_host_off_side_claim_rejected
+    lobby_any_team_claim_kept_off_chosen_side
+    starts_side_end_to_end_four_v_twelve
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
     base_armour_fog_of_war
     two_clients_full_sync_independent
+    voice_flags_snapshot_masking
+    voice_talking_codec
+    voice_talking_stops_in_countdown
+    voice_talking_clears_on_leave
     fx_viewport_cull
+    viewport_floor
+    sound_event_codec
+    sound_delivery_builder
+    sound_payload_shape
     view_rects_default_baseline
     view_rects_always_base_ally
     view_rects_off
@@ -4010,6 +4173,18 @@ set(_unit_test_names
     overview_entities
     overview_gunsight
     tank_pos_dead
+    overview_snapshot_mirror
+    overview_snapshot_isolation
+    overview_snapshot_filter
+    overview_snapshot_generation
+    mapview_sprite_classic
+    mapview_sprite_ladder
+    mapview_sprite_shell_tip
+    mapview_sprite_lgm_snap
+    mapview_overlay_gunsight
+    mapview_overlay_tank_label
+    mapview_overlay_cursor
+    mapview_overlay_item_labels
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -4021,6 +4196,7 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     jitter_buffer_grow
     shell_projection
+    screen_bullets_build
     ping_smoother
     client_timing
     interp_render
@@ -4037,6 +4213,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_channel
+    player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
     loopback_map_upload
@@ -4082,6 +4259,8 @@ set(_unit_test_names
     pill_shadow_withheld_crc_matches
     loopback_map_cull
     loopback_map_cull_resync
+    sound_delivery_wire_cull
+    sound_tier_playback
     view_ally_loopback
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
@@ -4101,6 +4280,7 @@ set(_unit_test_names
     spectator_roster_publish
     spectator_slot_codec
     spectator_chat_codec
+    stats_seed_codec
     spectator_chat_routing
     spectator_chat_log
     spectator_chat_catchup
@@ -4202,12 +4382,28 @@ set(_unit_test_names
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
+    voice_core_roundtrip
+    voice_device_resolve
+    voice_peak
+    voice_segment_roundtrip
+    voice_segment_rejects_malformed
+    voice_jitter_ordering_and_plc
+    voice_jitter_undecodable_run
+    voice_jitter_under_loss
+    voice_flood_cap_enforced
+    voice_talker_select_ranks_recent
+    voice_talker_select_bounds
     active_sim_armed_on_lobby_tick
     active_sim_cleared_on_cross_thread_destroy
     skin_source_dir_and_zip
     skin_active_vs_requested
     skin_workshop_id_roundtrip
     skin_density_scan
+    sheet_bleed_edges
+    sheet_no_key_under_alpha
+    bmp_sheet_no_key_under_alpha
+    sound_variant_pool_names
+    sound_variant_load_compaction
     pascal_string_lengths
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip
@@ -4280,6 +4476,22 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_channel_frame> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/channel_frame ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.channel_frame PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the voice segment parsers (voiceSegmentUnpackUp / UnpackDown),
+    # the parse sites for everything carried on the best-effort CHANNEL_VOICE:
+    # nothing upstream validates a voice segment, and the opus slice each parse
+    # returns points into the caller's buffer. bolo_static only, like the wire
+    # codecs.
+    add_executable(fuzz_voice_segment tests/fuzz/fuzz_voice_segment.c)
+    bolo_apply_include_rules(fuzz_voice_segment unittests)
+    target_link_libraries(fuzz_voice_segment PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    target_compile_options(fuzz_voice_segment PRIVATE -fcommon)
+    target_link_options(fuzz_voice_segment PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_voice_segment "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.voice_segment
+             COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview

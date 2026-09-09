@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Speaker: back plate, cone and two sound waves. Drawn as one filled
+     silhouette because imguiLoadSvgIconWhite rasterises it to a white alpha
+     mask and tints it, so nothing here may depend on colour to be read. The
+     waves are filled crescents rather than strokes for the same reason the
+     mic's slash is a filled bar - the icon lands at 14 px in the players
+     panel, where a one-unit stroke of this 24-unit viewBox disappears. The
+     body is its own subpath so speaker-muted.svg can reuse it unchanged. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path d="M3.5 9.5H8L13 4.5v15L8 14.5H3.5z"/>
+  <path d="M14.72 9.79A2.8 2.8 0 0 1 14.72 14.21L15.71 15.47A4.4 4.4 0 0 0 15.71 8.53z"/>
+  <path d="M16.82 7.11A6.2 6.2 0 0 1 16.82 16.89L17.8 18.15A7.8 7.8 0 0 0 17.8 5.85z"/>
+</svg>

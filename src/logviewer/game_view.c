@@ -263,10 +263,10 @@ static SDL_Texture *gv_loadBackground(SDL_Renderer *renderer) {
   if (base) {
     char path[1024];
     SDL_snprintf(path, sizeof(path), "%sdata/background.bmp", base);
-    tex = sdlLoadBmpAsTexture(renderer, path, false);
+    tex = sdlLoadBmpAsTexture(renderer, path);
   }
   if (!tex) {
-    tex = sdlLoadBmpAsTexture(renderer, "data/background.bmp", false);
+    tex = sdlLoadBmpAsTexture(renderer, "data/background.bmp");
   }
   if (tex) {
     SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
@@ -680,6 +680,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   ctx.tilesTex   = lv_drawGetTilesTexture();
   ctx.zoomFactor = zf;
   ctx.sheetScale = lv_drawGetSheetScale();
+  ctx.scale      = (float)zf;
 
   /* Set clip rect so the map render stays within the main view (no
    * spillover into the surrounding chrome from the 1-tile mapView

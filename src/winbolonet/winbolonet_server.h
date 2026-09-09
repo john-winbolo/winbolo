@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "global.h"
+#include "server_voice_mode.h"  /* ServerVoiceMode — the voiceMode field below */
 
 /* Forward declaration — defined in server_sim.h */
 #ifndef BALANCEPROPOSAL_TYPEDEF
@@ -80,6 +81,9 @@ typedef struct {
   uint16_t pillViewDecay;            /* Pillbox decay seconds (viewPolicyDecay) */
   uint16_t baseViewDecay;            /* Base decay seconds (viewPolicyDecay) */
   uint16_t allyViewDecay;            /* Allied tank decay seconds (viewPolicyDecay) */
+  ServerVoiceMode voiceMode;         /* Voice the server forwards: 0 on, 1 off,
+                                      * 2 proximity. Proximity is not implemented
+                                      * and forwards the same as on. */
 } WbnLobbyInfo;
 
 /*********************************************************

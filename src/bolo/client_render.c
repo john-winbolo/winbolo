@@ -440,93 +440,13 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
       gs.mapX = NO_GUNSIGHT;
     }
 
-    /* Other players' shells. Humans draw the forward-projected layer so
-     * incoming shells appear at their true present position rather than
-     * ~RTT/2 in the past; bots (e.g. BrainTest overlay) draw the raw
-     * serverShellSnaps the brain perceives. Own shells are filtered during
-     * snapshot sync, so neither source contains them. */
-    if (clientSimIsBot(csPtr)) {
-      int si;
-      BYTE myPlayer = clientSimGetInterpCtx(csPtr)->localPlayer;
-      for (si = 0; si < clientSimGetServerShellCount(csPtr); si++) {
-        BYTE smx = (BYTE)(clientSimGetServerShellSnaps(csPtr)[si].worldX >> TANK_SHIFT_MAPSIZE);
-        BYTE smy = (BYTE)(clientSimGetServerShellSnaps(csPtr)[si].worldY >> TANK_SHIFT_MAPSIZE);
-        if (clientSimGetServerShellSnaps(csPtr)[si].owner == myPlayer) {
-          continue;
-        }
-        if (smx >= clientSimGetXOffset(csPtr) && smx < (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1) &&
-            smy >= clientSimGetYOffset(csPtr) && smy < (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
-          WORLD conv;
-          BYTE spx, spy, swx, swy, sframe;
-          swx = (BYTE)clientSimGetServerShellSnaps(csPtr)[si].worldX;
-          swy = (BYTE)clientSimGetServerShellSnaps(csPtr)[si].worldY;
-          conv = clientSimGetServerShellSnaps(csPtr)[si].worldX;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          spx = (BYTE)conv;
-          conv = clientSimGetServerShellSnaps(csPtr)[si].worldY;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          spy = (BYTE)conv;
-          sframe = (BYTE)(utilGetDir((TURNTYPE)clientSimGetServerShellSnaps(csPtr)[si].angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe, swx, swy);
-        }
-      }
-    } else {
-      int si;
-      BYTE myPlayer = clientSimGetInterpCtx(csPtr)->localPlayer;
-      for (si = 0; si < clientSimGetProjectedShellCount(csPtr); si++) {
-        const ProjectedShell *ps = &clientSimGetProjectedShells(csPtr)[si];
-        WORLD sx = (WORLD)(int)ps->fx;
-        WORLD sy = (WORLD)(int)ps->fy;
-        BYTE smx = (BYTE)(sx >> TANK_SHIFT_MAPSIZE);
-        BYTE smy = (BYTE)(sy >> TANK_SHIFT_MAPSIZE);
-        if (ps->owner == myPlayer) {
-          continue;
-        }
-        if (smx >= clientSimGetXOffset(csPtr) && smx < (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1) &&
-            smy >= clientSimGetYOffset(csPtr) && smy < (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
-          WORLD conv;
-          BYTE spx, spy, sframe;
-          conv = sx;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          spx = (BYTE)conv;
-          conv = sy;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          spy = (BYTE)conv;
-          sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe, (BYTE)sx, (BYTE)sy);
-        }
-      }
-    }
-    /* Client-predicted shells (local player only) */
-    {
-      int pi;
-      for (pi = 0; pi < clientSimGetPredictedShellCount(csPtr); pi++) {
-        const PredictedShell *ps = &clientSimGetPredictedShells(csPtr)[pi];
-        /* Don't render shells that have expired — prevents ghost frame alongside explosion */
-        if (ps->length <= SHELL_DEATH) continue;
-        BYTE pmx = (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE);
-        BYTE pmy = (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE);
-        if (pmx >= clientSimGetXOffset(csPtr) && pmx < (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1) &&
-            pmy >= clientSimGetYOffset(csPtr) && pmy < (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
-          WORLD conv;
-          BYTE ppx, ppy, pframe;
-          conv = ps->x;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          ppx = (BYTE)conv;
-          conv = ps->y;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          ppy = (BYTE)conv;
-          pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(pmx - clientSimGetXOffset(csPtr)), (BYTE)(pmy - clientSimGetYOffset(csPtr)), ppx, ppy, pframe, (BYTE)ps->x, (BYTE)ps->y);
-        }
-      }
-    }
+    clientSimBuildShellList(csPtr, &sBullets,
+                            clientSimGetXOffset(csPtr),
+                            (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1),
+                            clientSimGetYOffset(csPtr),
+                            (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1),
+                            clientSimGetXOffset(csPtr),
+                            clientSimGetYOffset(csPtr));
     /* Nothing moving is drawn on a square the player cannot see into. The view
      * fill above decided which squares those are; with sight off none of them
      * is, and the three lists go through untouched. */

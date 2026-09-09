@@ -74,7 +74,9 @@ typedef enum {
     CMD_LOBBY_CLAIM_START,
     CMD_RATING_POSTED,
     CMD_VIEW_STATE,
-    CMD_VIEW_CYCLE
+    CMD_VIEW_CYCLE,
+    CMD_PLAYER_MUTE,
+    CMD_VOICE_STATE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -118,9 +120,14 @@ typedef struct {
 } CmdTeamSet;
 
 /* CMD_LOBBY_CLAIM_START — set a slot's reserved start. targetSlot ==
- * senderSlot is a self-claim (target start must be free or 0xFF release);
- * targetSlot != senderSlot is host-only (lobbyClientMayEdit) and swaps when
- * the target start is occupied. startIdx is 1-based (0xFF = release). */
+ * senderSlot is a self-claim (target start must be free and one the
+ * sender's team side accepts, or a sentinel below); targetSlot != senderSlot
+ * is host-only (lobbyClientMayEdit) and swaps when the target start is
+ * occupied. startIdx is 1-based; 0xFF releases the slot's start and leaves
+ * it empty until the next lobby event moves reservations, while
+ * START_CLAIM_TEAM_SIDE releases it and picks a fresh start on the slot's
+ * team side at once (0xFF when the side is full). */
+#define START_CLAIM_TEAM_SIDE 0xFE
 typedef struct {
     uint8_t targetSlot;
     uint8_t startIdx;
@@ -146,13 +153,14 @@ typedef struct {
     char    name[PACKET_MAX_PLAYER_NAME];
 } CmdLobbyBotConfig;
 
-/* CMD_LOBBY_TEAM_META — set color, naming pool, and optional name
- * for a team. nameLen == 0 means "no name set". teamId is 1..MAX_TANKS-1
- * (team 0 is unassigned). */
+/* CMD_LOBBY_TEAM_META — set color, naming pool, start side, and
+ * optional name for a team. nameLen == 0 means "no name set". teamId is
+ * 1..MAX_TANKS-1 (team 0 is unassigned). */
 typedef struct {
     uint8_t teamId;
     uint8_t color;
     uint8_t namingPool;
+    uint8_t startSide;   /* START_SIDE_* (start_sides.h) */
     uint8_t nameLen;
     char    name[LOBBY_TEAM_NAME_LEN];
 } CmdLobbyTeamMeta;
@@ -336,6 +344,22 @@ typedef struct {
 typedef struct {
     char key[ROUND_STATS_LOGKEY_LEN];
 } CmdRatingPosted;
+/* CMD_PLAYER_MUTE — mute or unmute one player for the sending client
+ * only. The server stops forwarding that player's voice and chat to the
+ * sender. Session-scoped: nothing is persisted, and the mask is cleared
+ * when the sender's slot is released. */
+typedef struct {
+    uint8_t targetPlayer;
+    uint8_t muted;        /* 0 = unmute, non-zero = mute */
+} CmdPlayerMute;
+
+/* CMD_VOICE_STATE — the sender's own mic status. Sent when it changes,
+ * not per tick. Self-reported and untrusted, like the client hint bits:
+ * a client lying about its own mic costs nothing. */
+typedef struct {
+    uint8_t hasMic;      /* 0/1 — voice enabled and an input device opened */
+    uint8_t selfMuted;   /* 0/1 — has a mic but is not transmitting */
+} CmdVoiceState;
 
 /* CmdViewState.kind — which kind of thing the sender is looking
  * through. Values are on the wire, so they are fixed. */
@@ -424,6 +448,8 @@ typedef struct ClientCommand {
         CmdRatingPosted        ratingPosted;
         CmdViewState           viewState;
         CmdViewCycle           viewCycle;
+        CmdPlayerMute          playerMute;
+        CmdVoiceState          voiceState;
     } u;
 } ClientCommand;
 

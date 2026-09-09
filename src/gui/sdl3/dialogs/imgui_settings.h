@@ -44,13 +44,18 @@ typedef struct SettingsRenderCtx {
                                    gameFrontReloadSkins() after the frame */
 } SettingsRenderCtx;
 
-/* Render the shared Display & Sound tab (frame rate, window size, UI scale,
- * letterbox, full screen, skin).  Window size and UI scale only apply in-game;
- * their results are returned via ctx->pendingZoom / ctx->wantAtlasRebuild for
- * the shell to act on after the frame, the full screen pick likewise via
+/* Render the shared Display tab (frame rate, window size, UI scale, letterbox,
+ * full screen, skin).  Window size and UI scale only apply in-game; their
+ * results are returned via ctx->pendingZoom / ctx->wantAtlasRebuild for the
+ * shell to act on after the frame, the full screen pick likewise via
  * ctx->pendingFullScreen — the window must not be moved mid-frame — and a skin
  * pick via ctx->wantSkinReload. */
-void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
+void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx);
+
+/* Render the shared Sound tab (sound toggles, volume, and the voice section).
+ * Every control applies through its own setter as it is changed, so the shell
+ * has nothing to act on afterwards. */
+void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx);
 
 /* Render the shared Game/HUD tab (scrolling behaviour, gunsight).  ctx->cs is
  * NULL pre-game; the toggles tolerate it. */

@@ -25,29 +25,35 @@ static const float kMaxShare  = 0.30f; /* of the width the column may take */
 static const int kColumn[] = {
     OVERVIEW_HUD_MANSTATUS, OVERVIEW_HUD_KILLSDEATHS,
     OVERVIEW_HUD_TANKS, OVERVIEW_HUD_PILLS, OVERVIEW_HUD_BASES,
-    OVERVIEW_HUD_BASEBARS, OVERVIEW_HUD_TANKBARS
+    OVERVIEW_HUD_BASEBARS, OVERVIEW_HUD_TANKBARS, OVERVIEW_HUD_VOICE
 };
 #define COLUMN_LEN ((int)(sizeof(kColumn) / sizeof(kColumn[0])))
 
 static const char *kNames[OVERVIEW_HUD_COUNT] = {
     "man status", "kills/deaths", "tanks", "pills", "bases",
-    "base bars", "tank bars", "build select", "newswire"
+    "base bars", "tank bars", "build select", "newswire", "voice"
 };
 
 static int maxInt(int a, int b) { return (a > b) ? a : b; }
 
 /* The column's source height, re-derived from the rows the mockup stacks: the
  * LGM pair, the three grids, the base bars, the divider ridge in its own slot,
- * then the tank bars, with a gap between every row. */
+ * then the tank bars, with a gap between every row. The microphone follows
+ * them on the same gap when it was asked for; a layout without it is that row
+ * shorter, which is what its zero source height says here. */
 static int columnSrcHeight(const OverviewHudLayout *lay) {
-    return maxInt(lay->el[OVERVIEW_HUD_MANSTATUS].srcH,
-                  lay->el[OVERVIEW_HUD_KILLSDEATHS].srcH) + kGap
-         + lay->el[OVERVIEW_HUD_TANKS].srcH    + kGap
-         + lay->el[OVERVIEW_HUD_PILLS].srcH    + kGap
-         + lay->el[OVERVIEW_HUD_BASES].srcH    + kGap
-         + lay->el[OVERVIEW_HUD_BASEBARS].srcH + kGap
-         + kDividerH                           + kGap
-         + lay->el[OVERVIEW_HUD_TANKBARS].srcH;
+    int h = maxInt(lay->el[OVERVIEW_HUD_MANSTATUS].srcH,
+                   lay->el[OVERVIEW_HUD_KILLSDEATHS].srcH) + kGap
+          + lay->el[OVERVIEW_HUD_TANKS].srcH    + kGap
+          + lay->el[OVERVIEW_HUD_PILLS].srcH    + kGap
+          + lay->el[OVERVIEW_HUD_BASES].srcH    + kGap
+          + lay->el[OVERVIEW_HUD_BASEBARS].srcH + kGap
+          + kDividerH                           + kGap
+          + lay->el[OVERVIEW_HUD_TANKBARS].srcH;
+    if (lay->el[OVERVIEW_HUD_VOICE].srcH > 0) {
+        h += kGap + lay->el[OVERVIEW_HUD_VOICE].srcH;
+    }
+    return h;
 }
 
 /* The widest row wins: the LGM pair is as wide as both pieces plus the gap,
@@ -98,7 +104,7 @@ static int hud_layout_fits_1080p(void) {
     const int viewH = 1058;
     OverviewHudLayout lay;
 
-    UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, &lay),
+    UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, true, &lay),
                   "%dx%d should hold a legible column", viewW, viewH);
 
     float want = expectedScale(&lay, viewW, viewH);
@@ -124,7 +130,7 @@ static int hud_layout_fits_deck(void) {
     const int viewH = 800;
     OverviewHudLayout lay;
 
-    UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, &lay),
+    UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, true, &lay),
                   "%dx%d should hold a legible column", viewW, viewH);
 
     float want = expectedScale(&lay, viewW, viewH);
@@ -140,7 +146,7 @@ static int hud_layout_fits_deck(void) {
 /* Top to bottom in the mockup's order, with the LGM pair side by side. */
 static int hud_layout_stacks_in_order(void) {
     OverviewHudLayout lay;
-    UT_ASSERT(overviewHudLayout(1920, 1058, &lay));
+    UT_ASSERT(overviewHudLayout(1920, 1058, true, &lay));
 
     static const int kDown[] = {
         OVERVIEW_HUD_TANKS, OVERVIEW_HUD_PILLS,
@@ -186,7 +192,7 @@ static int hud_layout_column_never_overlaps(void) {
 
     for (int s = 0; s < (int)(sizeof(kSizes) / sizeof(kSizes[0])); s++) {
         OverviewHudLayout lay;
-        UT_ASSERT_MSG(overviewHudLayout(kSizes[s].w, kSizes[s].h, &lay),
+        UT_ASSERT_MSG(overviewHudLayout(kSizes[s].w, kSizes[s].h, true, &lay),
                       "%dx%d should hold a legible column",
                       kSizes[s].w, kSizes[s].h);
 
@@ -234,7 +240,7 @@ static int hud_layout_backing_contains_column(void) {
     const int viewW = 1920;
     const int viewH = 1058;
     OverviewHudLayout lay;
-    UT_ASSERT(overviewHudLayout(viewW, viewH, &lay));
+    UT_ASSERT(overviewHudLayout(viewW, viewH, true, &lay));
 
     UT_ASSERT_MSG(rectInside(lay.columnX, lay.columnY, lay.columnW, lay.columnH,
                              0.0f, 0.0f, (float)viewW, (float)viewH),
@@ -268,7 +274,7 @@ static int hud_layout_build_strip(void) {
         const int viewW = kSizes[s].w;
         const int viewH = kSizes[s].h;
         OverviewHudLayout lay;
-        UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, &lay),
+        UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, true, &lay),
                       "%dx%d should hold a legible column", viewW, viewH);
 
         UT_ASSERT_MSG(nearly(lay.buildX, (float)kMargin),
@@ -323,7 +329,7 @@ static int hud_layout_build_items(void) {
     const int viewW = 1920;
     const int viewH = 1058;
     OverviewHudLayout lay;
-    UT_ASSERT(overviewHudLayout(viewW, viewH, &lay));
+    UT_ASSERT(overviewHudLayout(viewW, viewH, true, &lay));
 
     float x[5], y[5], w[5], h[5];
     for (int i = 0; i < 5; i++) {
@@ -372,7 +378,7 @@ static int hud_layout_newswire_strip(void) {
         const int viewW = kSizes[s].w;
         const int viewH = kSizes[s].h;
         OverviewHudLayout lay;
-        UT_ASSERT(overviewHudLayout(viewW, viewH, &lay));
+        UT_ASSERT(overviewHudLayout(viewW, viewH, true, &lay));
 
         const OverviewHudElement *news = &lay.el[OVERVIEW_HUD_NEWSWIRE];
         UT_ASSERT_MSG(nearly(lay.newswireX,
@@ -421,7 +427,7 @@ static int hud_layout_rejects_tiny_window(void) {
     lay.columnX = lay.columnY = lay.columnW = lay.columnH = -1.0f;
     lay.newswireX = lay.newswireY = lay.newswireW = lay.newswireH = -1.0f;
 
-    UT_ASSERT_MSG(!overviewHudLayout(320, 200, &lay),
+    UT_ASSERT_MSG(!overviewHudLayout(320, 200, false, &lay),
                   "320x200 is far too small for a legible column");
     UT_ASSERT_MSG(lay.scale == -1.0f && lay.columnW == -1.0f &&
                       lay.newswireW == -1.0f,
@@ -430,17 +436,114 @@ static int hud_layout_rejects_tiny_window(void) {
                   (double)lay.scale, (double)lay.columnW,
                   (double)lay.newswireW);
 
-    UT_ASSERT_MSG(!overviewHudLayout(1920, 1058, NULL),
+    /* The microphone row only makes the column taller, so a size the shorter
+       column cannot hold is refused with it too. */
+    UT_ASSERT_MSG(!overviewHudLayout(320, 200, true, &lay),
+                  "320x200 is far too small for a legible column, microphone "
+                  "row or not");
+
+    UT_ASSERT_MSG(!overviewHudLayout(1920, 1058, false, NULL),
                   "a NULL out pointer should be refused");
-    UT_ASSERT_MSG(!overviewHudLayout(0, 0, &lay),
+    UT_ASSERT_MSG(!overviewHudLayout(0, 0, false, &lay),
                   "a degenerate view size should be refused");
+    return 0;
+}
+
+/* The microphone row: a square at the foot of the column, clear of the tank
+ * bars above it and centred like them. */
+static int hud_layout_voice_row(void) {
+    const int viewW = 1920;
+    const int viewH = 1058;
+    OverviewHudLayout lay;
+    UT_ASSERT(overviewHudLayout(viewW, viewH, true, &lay));
+
+    const OverviewHudElement *voice = &lay.el[OVERVIEW_HUD_VOICE];
+    const OverviewHudElement *bars  = &lay.el[OVERVIEW_HUD_TANKBARS];
+
+    UT_ASSERT_MSG(nearly(voice->dstW, voice->dstH),
+                  "the microphone is %.2f x %.2f, not square",
+                  (double)voice->dstW, (double)voice->dstH);
+    UT_ASSERT_MSG(nearly(voice->dstW,
+                         (float)voice->srcW * lay.scale),
+                  "the microphone is %.2f px wide, not its %d source pixels "
+                  "at the column's scale (%.2f)",
+                  (double)voice->dstW, voice->srcW,
+                  (double)((float)voice->srcW * lay.scale));
+
+    UT_ASSERT_MSG(voice->dstY > bars->dstY,
+                  "the microphone at y %.2f is not below the tank bars at "
+                  "y %.2f",
+                  (double)voice->dstY, (double)bars->dstY);
+    UT_ASSERT_MSG(rectsApart(voice->dstX, voice->dstY, voice->dstW, voice->dstH,
+                             bars->dstX, bars->dstY, bars->dstW, bars->dstH),
+                  "the microphone (%.2f,%.2f %.2fx%.2f) overlaps the tank bars "
+                  "(%.2f,%.2f %.2fx%.2f)",
+                  (double)voice->dstX, (double)voice->dstY,
+                  (double)voice->dstW, (double)voice->dstH,
+                  (double)bars->dstX, (double)bars->dstY,
+                  (double)bars->dstW, (double)bars->dstH);
+
+    UT_ASSERT_MSG(rectInside(voice->dstX, voice->dstY, voice->dstW, voice->dstH,
+                             lay.columnX, lay.columnY,
+                             lay.columnW, lay.columnH),
+                  "the microphone (%.2f,%.2f %.2fx%.2f) leaves the column "
+                  "backing (%.2f,%.2f %.2fx%.2f)",
+                  (double)voice->dstX, (double)voice->dstY,
+                  (double)voice->dstW, (double)voice->dstH,
+                  (double)lay.columnX, (double)lay.columnY,
+                  (double)lay.columnW, (double)lay.columnH);
+
+    /* Centred to within the odd source pixel the integer halving leaves over,
+       the same allowance the tank bars above it get. */
+    float leftGap  = voice->dstX - lay.columnX;
+    float rightGap = (lay.columnX + lay.columnW) - (voice->dstX + voice->dstW);
+    UT_ASSERT_MSG(fabsf(leftGap - rightGap) <= lay.scale + 0.01f,
+                  "the microphone is not centred in the column: %.2f px clear "
+                  "to its left, %.2f px to its right",
+                  (double)leftGap, (double)rightGap);
+    return 0;
+}
+
+/* Without it the element carries nothing at all, and the column is laid out to
+ * the shorter stack rather than keeping the row's space empty. */
+static int hud_layout_voice_absent(void) {
+    const int viewW = 1920;
+    const int viewH = 1058;
+    OverviewHudLayout lay;
+    UT_ASSERT(overviewHudLayout(viewW, viewH, false, &lay));
+
+    const OverviewHudElement *voice = &lay.el[OVERVIEW_HUD_VOICE];
+    UT_ASSERT_MSG(voice->srcX == 0 && voice->srcY == 0 &&
+                      voice->srcW == 0 && voice->srcH == 0,
+                  "an unwanted microphone kept a source rect (%d,%d %dx%d)",
+                  voice->srcX, voice->srcY, voice->srcW, voice->srcH);
+    UT_ASSERT_MSG(voice->dstX == 0.0f && voice->dstY == 0.0f &&
+                      voice->dstW == 0.0f && voice->dstH == 0.0f,
+                  "an unwanted microphone kept a destination rect "
+                  "(%.2f,%.2f %.2fx%.2f)",
+                  (double)voice->dstX, (double)voice->dstY,
+                  (double)voice->dstW, (double)voice->dstH);
+
+    float want = expectedScale(&lay, viewW, viewH);
+    UT_ASSERT_MSG(nearly(lay.scale, want),
+                  "scale %.4f, expected the shorter column's height fit %.4f",
+                  (double)lay.scale, (double)want);
+
+    /* The same view with the row asked for has to fit at a smaller scale, or
+       the row was never counted into the column. */
+    OverviewHudLayout withVoice;
+    UT_ASSERT(overviewHudLayout(viewW, viewH, true, &withVoice));
+    UT_ASSERT_MSG(withVoice.scale < lay.scale,
+                  "the microphone row left the scale at %.4f, the same as the "
+                  "column without it (%.4f)",
+                  (double)withVoice.scale, (double)lay.scale);
     return 0;
 }
 
 /* Every slice is cut from inside the 515x325 classic layout. */
 static int hud_layout_source_rects_in_bounds(void) {
     OverviewHudLayout lay;
-    UT_ASSERT(overviewHudLayout(1920, 1058, &lay));
+    UT_ASSERT(overviewHudLayout(1920, 1058, true, &lay));
 
     for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
         const OverviewHudElement *e = &lay.el[i];
@@ -469,5 +572,7 @@ extern "C" int run_overview_hud_layout(void) {
     rc = hud_layout_newswire_strip();         if (rc) return rc;
     rc = hud_layout_rejects_tiny_window();    if (rc) return rc;
     rc = hud_layout_source_rects_in_bounds(); if (rc) return rc;
+    rc = hud_layout_voice_row();              if (rc) return rc;
+    rc = hud_layout_voice_absent();           if (rc) return rc;
     return 0;
 }

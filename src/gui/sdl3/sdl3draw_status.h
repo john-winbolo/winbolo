@@ -138,6 +138,14 @@ void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
    when a zoom change reopens the fonts; the label caches treat that as a
    flush. */
 TTF_Font *sdl3DrawGetMessageFont(void);
+/* The classic view's tank-label cache, for the shared overlay pass. */
+struct TankLabelCache *sdl3DrawGetTankLabelCache(void);
+/* The faces the pill and base numbers are drawn in — the label font for
+   pills, the tiny font for bases — opened at the main window's zoom. The
+   overview reads them through here and scales what they render to its own
+   zoom. */
+TTF_Font *sdl3DrawGetLabelFont(void);
+TTF_Font *sdl3DrawGetTinyFont(void);
 /* When the newswire text last changed (SDL_GetTicks ms), 0 for never since
    the last reset. The full screen map uses it to slide its newswire strip
    on and off; the classic frame ignores it. */
@@ -145,6 +153,15 @@ Uint64 sdl3DrawGetMessageActivityTick(void);
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py);
+
+#if defined(WINBOLO_VOICE)
+/* Whether sdl3DrawTankLabel draws a microphone icon beside the label
+ * of a player whose voice is being heard. Owned here, by the module
+ * that reads it, the way the voice module owns the other voice
+ * settings; winbolo.c wraps it for the settings dialog and prefs. */
+void sdl3DrawStatusSetShowMicIcons(bool on);
+bool sdl3DrawStatusGetShowMicIcons(void);
+#endif
 
 /* Lifted from static — flushes the message-line + kills/deaths text
  * caches into the current render target. */

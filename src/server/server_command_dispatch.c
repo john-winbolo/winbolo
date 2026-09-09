@@ -27,12 +27,15 @@
 #include "playername_validate.h"      /* playerNameValidate, playerNameCompare */
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
+#include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
+#include "start_sides.h"              /* startSideEligible — the claim command's side check */
 #include "threads.h"
 #include "../common/wb_log.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
                                          transportUdpServerSetBotName,
-                                         transportUdpServerKickPlayer */
+                                         transportUdpServerKickPlayer,
+                                         transportUdpServerSetVoiceMute */
 #include "../winbolonet/winbolonet_server.h" /* winboloNetIsPlayerParticipant */
 #include "../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning */
 
@@ -40,6 +43,25 @@
  * lobby command handlers in transport_udp_server.c, where the function
  * is defined. */
 extern bool lobbyClientMayEdit(ServerSim *sim, int clientIdx);
+
+/* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
+static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
+    const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
+    BYTE t = lp ? lp->teamNumber : 0;
+    if (t == 0 || t >= MAX_TANKS) return START_SIDE_ANY;
+    return sim->teams[t].startSide;
+}
+
+/* Whether a slot may hold a 1-based start under the side rules: the same
+ * question the lobby pick, the map-change release and the batch placement
+ * ask, so a claim can never land a slot on a start the next lobby event
+ * would take away again. A side team takes what its side accepts; a slot
+ * with no side stays off the sides the other teams present chose. */
+static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
+    return startSideEligible(serverSimLobbyStartSideMask(sim, idx1),
+                             lobbySlotStartSide(sim, slot),
+                             serverSimLobbyClosedMaskFor(sim, slot));
+}
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                    const ClientCommand *cmd) {
@@ -77,12 +99,28 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (target >= MAX_TANKS || !serverSimIsPlayerConnected(sim, target)) {
             return CMD_REJECT_INVALID;
         }
-        if (idx != 0xFF && (idx < 1 || idx > numStarts)) {
+        if (idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
+            (idx < 1 || idx > numStarts)) {
             return CMD_REJECT_INVALID;
         }
         bool isHost = lobbyClientMayEdit(sim, senderSlot);
         if ((int)target != senderSlot && !isHost) {
             return CMD_REJECT_NOT_HOST;
+        }
+        /* A player picking for themselves may take only a start the side
+         * rules let their slot hold; the host may hand anyone any start. */
+        if (!isHost && idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
+            !lobbySlotMayHoldStart(sim, target, idx)) {
+            return CMD_REJECT_INVALID;
+        }
+        if (idx == START_CLAIM_TEAM_SIDE) {
+            /* Team side: drop the reservation and pick a fresh start on
+             * the slot's side at once; 0xFF when the side is full. */
+            serverSimSetLobbyStartIdx(sim, target, 0xFF);
+            serverSimAssignLobbyStartOnJoin(sim, target);
+            serverSimPublishLobbySlot(sim, target);
+            lobbyAutoUnreadyOnChange(sim);
+            return CMD_OK;
         }
         /* Connected slot currently holding idx (none when idx == 0xFF). */
         BYTE holder = 0xFF;
@@ -100,6 +138,12 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             BYTE oldTarget = tlp ? tlp->startIdx : 0xFF;
             serverSimSetLobbyStartIdx(sim, target, idx);
             serverSimSetLobbyStartIdx(sim, holder, oldTarget);
+            /* The displaced holder inherits the assignee's old start. When
+             * that is none, or one the holder's side rules reject, pick the
+             * holder a fresh start now instead. */
+            if (oldTarget == 0xFF || !lobbySlotMayHoldStart(sim, holder, oldTarget)) {
+                serverSimAssignLobbyStartOnJoin(sim, holder);
+            }
             serverSimPublishLobbySlot(sim, target);
             serverSimPublishLobbySlot(sim, holder);
         } else {
@@ -181,6 +225,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         serverSimSetTeamMeta(sim, p->teamId, p->color, p->namingPool,
+                             p->startSide,
                              (const uint8_t *)p->name, p->nameLen);
         return CMD_OK;
     }
@@ -276,6 +321,48 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         memcpy(evt.u.ratingPosted.key, p->key, sizeof(evt.u.ratingPosted.key));
         evt.u.ratingPosted.key[sizeof(evt.u.ratingPosted.key) - 1] = '\0';
         serverSimPublishControl(sim, &evt);
+        return CMD_OK;
+    }
+    case CMD_PLAYER_MUTE: {
+        const CmdPlayerMute *p = &cmd->u.playerMute;
+        if (p->targetPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Muting yourself is meaningless — you never receive your own
+         * voice or chat. */
+        if ((int)p->targetPlayer == senderSlot) return CMD_REJECT_INVALID;
+        transportUdpServerSetVoiceMute((BYTE)senderSlot, p->targetPlayer,
+                                       p->muted != 0);
+        /* No control event: the mute is private to the muting client.
+         * Broadcasting it would tell the muted player they were muted. */
+        return CMD_OK;
+    }
+    case CMD_VOICE_STATE: {
+        const CmdVoiceState *p = &cmd->u.voiceState;
+        GameSim *gs = serverSimGetGameSim(sim);
+        uint8_t oldFlags = playersGetClientFlags(&gs->plyrs, (BYTE)senderSlot);
+        uint8_t flags = oldFlags;
+        flags &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
+        if (p->hasMic) {
+            flags |= PLAYER_FLAG_HAS_MIC;
+            /* Muted only means anything with a mic. Never setting the two
+             * together leaves the receiving end a clean three states — no
+             * mic, muted, live — rather than four with a nonsense one. */
+            if (p->selfMuted) flags |= PLAYER_FLAG_VOICE_MUTED;
+        }
+        /* A client packs many commands into one PACKET_COMMAND_TICK, and
+         * a re-send of the state the slot already holds is not a change.
+         * Publishing it anyway would fan one reliable lobby-slot control
+         * event per command to every client. */
+        if (flags == oldFlags) return CMD_OK;
+        playersSetClientFlags(&gs->plyrs, (BYTE)senderSlot, flags);
+        /* During a running game the snapshot carries clientFlags every
+         * tick, so the new bits reach every client on their own. The lobby
+         * slot only goes out when it is published, so a change made while
+         * clients are looking at the lobby has to publish it here. Same
+         * gate as the lobby-slot heartbeat in server_lifecycle.c. */
+        if (serverSimGetState(sim) == serverStateLobby ||
+            serverSimGetState(sim) == serverStateCountdown) {
+            serverSimPublishLobbySlot(sim, (BYTE)senderSlot);
+        }
         return CMD_OK;
     }
     case CMD_VIEW_STATE: {

@@ -58,7 +58,8 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
-int  soundVolume = 50;
+int  soundVolume = 50;         /* MENU / Sound Volume — the game sounds */
+int  windowMasterVolume = 100; /* MENU / Master Volume — sounds and voice */
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -462,6 +463,9 @@ int main(int argc, char *argv[]) {
       clientRenderFrame(cs, redraw);
     }
     clientMutexRelease();
+    /* The in-window map overview draws from the snapshot the frame above
+       filled, now that the lock is off. */
+    sdl3DrawFlushOverviewInWindow();
     dwSysFrame += (SDL_GetTicks() - tick);
 
     /* Touch overlay + ImGui + present */
