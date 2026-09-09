@@ -1486,6 +1486,8 @@ STR_STARTPICK_TIP_FREE_HOST=Старт #{number}\nНатисніть, щоб в�
 STR_STARTPICK_TIP_FREE=Старт #{number}\nНатисніть, щоб вибрати цей старт
 STR_STARTPICK_TIP_HELD_HOST=Старт #{number} — {player}\nПеретягніть, щоб перемістити; правий клік — призначити іншому
 STR_STARTPICK_TIP_HELD=Старт #{number} — {player}
+STR_STARTPICK_TIP_HELD_JOIN=Старт #{number} — {player}\nНатисніть, щоб стартувати тут само
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Старт #{number} — {player}\nНатисніть, щоб стартувати тут само; перетягніть, щоб перемістити; правий клік — призначити іншому
 STR_STARTPICK_YOU=ви
 STR_STARTPICK_SWAP_WITH=Поміняти цей старт із:
 STR_STARTPICK_ASSIGN_TO=Призначити старт:
@@ -2022,4 +2024,33 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} стартів для {number
 STR_DLGLOBBY_TOOLTIP_START_SEA=Усі старти, доступні цій команді, зайняті, тож цей гравець\nпочне в морі поруч зі стартом товариша по команді.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Поза стороною: цей старт не належить до {string1}, сторони команди.\nХост обрав його для цього гравця.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Поставити обидві команди на {string1}\n{player} починає {string2}, {other} починає {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Команди на {string1}. Натисніть, щоб повернутися до власних стартів.
+
 STR_SOUND_LOAD_FAILED=Помилка завантаження звукових ефектів
+
+# Розумний пінг (кругове меню)
+MESSAGE_PING_STANDARD={player}: Пінг!
+MESSAGE_PING_CAUTION={player}: Увага!
+MESSAGE_PING_ASSIST={player}: Допоможіть!
+MESSAGE_PING_ATTACK={player}: Атака!
+MESSAGE_PING_ON_MY_WAY={player}: Вже йду!
+MESSAGE_PING_BOT_COMMAND={player}: Команда боту
+STR_PING_STANDARD=Пінг
+STR_PING_CAUTION=Увага
+STR_PING_ASSIST=Допоможіть
+STR_PING_ATTACK=Атака
+STR_PING_ON_MY_WAY=Вже йду
+STR_PING_BOT_COMMAND=Команда боту
+STR_DLGKEYSETUP_PING=Розумний пінг
+STR_DLGKEYSETUP_PING_SLOT=Пінг {number}
+STR_DLGKEYSETUP_PRESSACHORD=Натисніть клавішу або кнопку миші
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Ліва кнопка миші
+STR_PING_MOUSE_MIDDLE=Середня кнопка миші
+STR_PING_MOUSE_RIGHT=Права кнопка миші
+STR_PING_MOUSE_X1=Миша 4
+STR_PING_MOUSE_X2=Миша 5

@@ -510,6 +510,9 @@
 #define STR_STARTPICK_SLOT_FALLBACK         1519
 #define STR_STARTPICK_TIP_OFFSIDE           2044
 #define STR_STARTPICK_TIP_OFFSIDE_HOST      2045
+/* Held start you may join (LOBBY_SHARED_STARTS): non-host / host */
+#define STR_STARTPICK_TIP_HELD_JOIN         2049
+#define STR_STARTPICK_TIP_HELD_JOIN_HOST    2050
 
 /* Player-row badge tooltips */
 #define STR_PLAYER_TIP_AI                   1520
@@ -1610,6 +1613,9 @@
 #define STR_DLGLOBBY_TOOLTIP_TEAM_SIDE      2041
 #define STR_DLGLOBBY_TOOLTIP_START_SEA      2042
 #define STR_DLGLOBBY_TOOLTIP_START_OFFSIDE  2043
+/* Map-preview compass: the two-team N/S or E/W shortcut hover text */
+#define STR_DLGLOBBY_TOOLTIP_COMPASS_SET    2047
+#define STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR  2048
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468
@@ -2131,10 +2137,38 @@
 #define STR_WEB_JOIN_NO_RESPONSE            1873
 /* 1874..1920 are already taken by blocks defined elsewhere in this
  * file (e.g. STR_DLGLOBBY_LASTROUND_*) — IDs are not sequential here. */
-#define STR_DLGGAMESETUP_RADIO4             1987
+#define STR_DLGGAMESETUP_RADIO4             2099   /* was 1987: collided with STR_MENU_MAP_OVERVIEW after the #269 merge */
 
 /* Sound setup: message box when no sound effect at all could be loaded */
 #define STR_SOUND_LOAD_FAILED               2046
+
+/* Smart ping (League-style pie menu). The six MESSAGE_PING_* lines are the
+ * newswire text a received ping posts; the six STR_PING_* names label the
+ * pie's slices and the key-setup rows; the rest name the binding chord
+ * pieces the key-setup field shows. */
+#define MESSAGE_PING_STANDARD               2051
+#define MESSAGE_PING_CAUTION                2052
+#define MESSAGE_PING_ASSIST                 2053
+#define MESSAGE_PING_ATTACK                 2054
+#define MESSAGE_PING_ON_MY_WAY              2055
+#define MESSAGE_PING_BOT_COMMAND            2056
+#define STR_PING_STANDARD                   2057
+#define STR_PING_CAUTION                    2058
+#define STR_PING_ASSIST                     2059
+#define STR_PING_ATTACK                     2060
+#define STR_PING_ON_MY_WAY                  2061
+#define STR_PING_BOT_COMMAND                2062
+#define STR_DLGKEYSETUP_PING                2063
+#define STR_DLGKEYSETUP_PING_SLOT           2064
+#define STR_DLGKEYSETUP_PRESSACHORD         2065
+#define STR_PING_MOD_CTRL                   2066
+#define STR_PING_MOD_ALT                    2067
+#define STR_PING_MOD_SHIFT                  2068
+#define STR_PING_MOUSE_LEFT                 2069
+#define STR_PING_MOUSE_MIDDLE               2070
+#define STR_PING_MOUSE_RIGHT                2071
+#define STR_PING_MOUSE_X1                   2072
+#define STR_PING_MOUSE_X2                   2073
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

@@ -1003,6 +1003,8 @@ STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlikni pro výběr; pravým tlačí
 STR_STARTPICK_TIP_FREE=Start #{number}\nKlikni pro výběr tohoto startu
 STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nPřetáhni pro přesun; pravým tlačítkem přiřaď jinému hráči
 STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nKlikni, aby ses přidal na tento start
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nKlikni, aby ses přidal na tento start; přetáhni pro přesun; pravým tlačítkem přiřaď jinému hráči
 STR_STARTPICK_YOU=ty
 STR_STARTPICK_SWAP_WITH=Vyměnit tento start s:
 STR_STARTPICK_ASSIGN_TO=Přiřadit start hráči:
@@ -2020,4 +2022,33 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startů pro {number2} hráč�
 STR_DLGLOBBY_TOOLTIP_START_SEA=Všechny starty, které tento tým může použít, jsou obsazené, takže\ntento hráč začne na moři vedle startu spoluhráče.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Ofsajd: tento start neleží na {string1}, straně týmu.\nHostitel ho vybral pro tohoto hráče.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Nastavit oba týmy na {string1}\n{player} startuje {string2}, {other} startuje {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Týmy nastaveny na {string1}. Kliknutím se vrátíte k vlastním startům.
+
 STR_SOUND_LOAD_FAILED=Chyba při načítání zvukových efektů
+
+# Chytrý ping (kruhové menu)
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Pozor!
+MESSAGE_PING_ASSIST={player}: Pomoz mi!
+MESSAGE_PING_ATTACK={player}: Útok!
+MESSAGE_PING_ON_MY_WAY={player}: Už jdu!
+MESSAGE_PING_BOT_COMMAND={player}: Příkaz pro bota
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Pozor
+STR_PING_ASSIST=Pomoz mi
+STR_PING_ATTACK=Útok
+STR_PING_ON_MY_WAY=Už jdu
+STR_PING_BOT_COMMAND=Příkaz pro bota
+STR_DLGKEYSETUP_PING=Chytrý ping
+STR_DLGKEYSETUP_PING_SLOT=Ping {number}
+STR_DLGKEYSETUP_PRESSACHORD=Stiskněte klávesu nebo tlačítko myši
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Levé tlačítko myši
+STR_PING_MOUSE_MIDDLE=Prostřední tlačítko myši
+STR_PING_MOUSE_RIGHT=Pravé tlačítko myši
+STR_PING_MOUSE_X1=Myš 4
+STR_PING_MOUSE_X2=Myš 5

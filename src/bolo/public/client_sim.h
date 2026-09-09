@@ -134,6 +134,23 @@ typedef void (*ControlObserverCb)(void *ctx, const struct ControlEvent *evt);
  * cachedEvents). */
 #define MAX_BRAIN_EVENTS 512
 
+/* Received smart pings this client is still drawing. Small: a ping lives
+ * PING_DISPLAY_MS and the server rate-limits each sender, so a full team
+ * cannot keep more than a handful alive at once. Oldest is overwritten when
+ * it fills — a flood should push the stale ones off, not drop the new ones. */
+#define MAX_CLIENT_PINGS 16
+
+/* One received ping, in the shape the renderer wants: who sent it, which
+ * kind, where in WORLD units, and the SDL_GetTicks() millisecond it landed
+ * so the drawer can age it without knowing anything about sim ticks. */
+typedef struct {
+    uint8_t  sender;
+    uint8_t  kind;      /* PING_KIND_* */
+    uint16_t worldX;
+    uint16_t worldY;
+    uint32_t recvMs;
+} ClientPing;
+
 /* A client-side predicted shell, created instantly on fire input
  * and removed once the server has processed the fire tick. */
 typedef struct {
@@ -696,6 +713,21 @@ const ShellSnapshot  *clientSimGetServerShellSnaps(const ClientSim *cs);
 const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs);
 const ProjectedShell *clientSimGetProjectedShells(const ClientSim *cs);
 const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
+
+/* Copy out the smart pings this client is still showing, newest last, and
+ * drop the ones older than PING_DISPLAY_MS on the way. nowMs is the caller's
+ * SDL_GetTicks() reading — the ping ring is written from the network thread
+ * and read from the render thread, so the clock comes from the caller rather
+ * than being sampled twice. Returns how many entries were written into `out`
+ * (never more than maxOut, never more than MAX_CLIENT_PINGS). */
+int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
+                      ClientPing *out, int maxOut);
+
+/* Record a ping this client should draw. Called by the EVENT_PING arm of the
+ * snapshot ingest; a local echo has no separate path, because the server
+ * sends the sender its own ping back like everyone else's. */
+void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
+                      uint16_t worldX, uint16_t worldY, uint32_t nowMs);
 
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained

@@ -42,6 +42,7 @@
 #include "util.h"
 #include "gametype.h"
 #include "start_sides.h"
+#include "lobby_shared_starts.h"  /* lobbySharedStartsEnabled — duplicate reservations */
 
 /* Distance thresholds in map squares */
 #define START_TANK_RANGE 1
@@ -823,6 +824,9 @@ static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
 *                 per slot, 0-based (MAX_STARTS = none), or NULL
 *                 for no reservations. A reserved slot locks its
 *                 exact start and is excluded from placement.
+*                 Several slots may name the same start when
+*                 LOBBY_SHARED_STARTS is on; they all come out
+*                 on it.
 *  teamStartSide - [MAX_TANKS + 1] START_SIDE_* per team number
 *                 (entry 0 unused), or NULL for no sides anywhere;
 *                 a NULL table treats every team as START_SIDE_ANY.
@@ -881,10 +885,12 @@ void startsAssignBatch(GameSim *sim, starts *value,
   }
   numStarts = (*value)->numStarts;
 
-  /* Decide which reservations to honor. A connected slot with a valid,
-   * not-yet-claimed 0-based reservation is honored; duplicates keep the
-   * first claimant and the rest fall through to ordinary placement, as
-   * does an out-of-range (stale) reservation. */
+  /* Decide which reservations to honor. A connected slot with a valid
+   * 0-based reservation is honored; an out-of-range (stale) reservation
+   * falls through to ordinary placement. Duplicates depend on the shared
+   * starts flag: with it on every slot naming a start keeps it and they
+   * all spawn there (the tank-aware scatter spreads them out), with it
+   * off the first claimant keeps it and the rest are placed normally. */
   for (i = 0; i < MAX_TANKS; i++) slotReserved[i] = FALSE;
   for (i = 0; i < MAX_STARTS; i++) reservedLocked[i] = FALSE;
   if (reservedStartIdx0 != NULL) {
@@ -893,7 +899,9 @@ void startsAssignBatch(GameSim *sim, starts *value,
       if (!connected[i]) continue;
       r = reservedStartIdx0[i];
       if (r >= numStarts) continue;       /* MAX_STARTS sentinel or stale index */
-      if (reservedLocked[r]) continue;     /* duplicate: honor the first */
+      if (reservedLocked[r] && !lobbySharedStartsEnabled()) {
+        continue;                          /* duplicate: honor the first */
+      }
       reservedLocked[r] = TRUE;
       slotReserved[i] = TRUE;
     }
@@ -986,7 +994,9 @@ void startsAssignBatch(GameSim *sim, starts *value,
 
   /* Accumulate each team group's reserved-start centroid so the anchor
    * override below can pull its unreserved members near their locked
-   * teammates. Reserved solo slots (team 0) have no group and are skipped. */
+   * teammates. Reserved solo slots (team 0) have no group and are skipped.
+   * Slots sharing one start each add it, so a start two teammates picked
+   * pulls the anchor toward it twice — which is where the team is. */
   for (g = 0; g < numGroups; g++) {
     reservedSumX[g] = 0;
     reservedSumY[g] = 0;
@@ -1220,13 +1230,16 @@ void startsAssignBatch(GameSim *sim, starts *value,
     }
     /* Lock honored reservations: pre-claim each reserved start for its slot
      * so the placement passes below skip it; Step 6 emits the slot's
-     * outStartIdx from startToPlayer for free. */
+     * outStartIdx from startToPlayer for free. When several slots share a
+     * start the lowest of them stands for it here — startToPlayer names one
+     * slot per start, and the rider passes below read it for the team a
+     * start belongs to; Step 6 emits the rest from their reservations. */
     for (i = 0; i < MAX_TANKS; i++) {
       BYTE r;
       if (!connected[i] || !slotReserved[i]) continue;
       r = reservedStartIdx0[i];
       startClaimed[r] = TRUE;
-      startToPlayer[r] = i;
+      if (startToPlayer[r] >= MAX_TANKS) startToPlayer[r] = i;
     }
     /* Count what is left to hand out, in total and per team. */
     for (i = 0; i < numStarts; i++) {
@@ -1411,6 +1424,16 @@ void startsAssignBatch(GameSim *sim, starts *value,
     pl = startToPlayer[i];
     if (pl >= MAX_TANKS) continue;
     outStartIdx[pl] = i;
+  }
+  /* Every honored reservation emits its own start, not just the slot
+   * startToPlayer remembers for it — that is how slots sharing a start all
+   * come out on it. With one slot per start this repeats what the loop
+   * above already wrote. */
+  if (reservedStartIdx0 != NULL) {
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (!connected[i] || !slotReserved[i]) continue;
+      outStartIdx[i] = reservedStartIdx0[i];
+    }
   }
 
   /* Step 7: every connected slot still without a start rides one. Free

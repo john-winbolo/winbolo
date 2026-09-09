@@ -31,6 +31,7 @@
 #include <string.h>
 
 #include "global.h"
+#include "input_packet.h"   /* PING_KIND_* — log_Ping's kind byte */
 #include "log.h"
 #include "server_sim.h"
 #include "unzip.h"
@@ -94,6 +95,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_GameVoteCast:     return 3;
         case log_GameVoteEnd:      return 2;
         case log_GameSettings:     return -1;  /* 0 + pstr */
+        case log_Ping:             return 6;   /* sender, kind, x (BE u16), y (BE u16) */
         default:                   return -2;  /* unknown */
     }
 }
@@ -492,6 +494,69 @@ int run_log_roundtrip_basic(void) {
                       i, (unsigned)settings.bytes[i + 1],
                       (unsigned)wantSettings[i]);
     }
+    return 0;
+}
+
+/* log_Ping carries a sub-map-square position, so its two coordinates are
+ * big-endian u16 rather than the map bytes most world events use. The six
+ * payload bytes have to come back in that exact order, or the replay draws
+ * the marker somewhere the sender never clicked. */
+int run_log_roundtrip_ping(void) {
+    char fname[64];
+    /* Values chosen so a byte swap, a truncation to 8 bits or a swapped
+       coordinate pair all show up as a mismatch rather than matching by
+       luck: every byte is distinct and none is zero. */
+    const uint8_t wantSender = 3;
+    const uint8_t wantKind   = PING_KIND_ON_MY_WAY;
+    const uint16_t wantX     = 0x1234;
+    const uint16_t wantY     = 0xABCD;
+
+    mkTempPath(fname, sizeof(fname), "ping");
+    remove(fname);
+
+    ServerSim *sim = startTestLog(fname);
+    UT_ASSERT_MSG(sim != NULL, "startTestLog failed");
+
+    /* The same call the dispatcher makes: the x halves ride opt3/opt4 and
+       the whole y rides short1. */
+    logAddEvent(log_Ping, wantSender, wantKind,
+                (BYTE)(wantX >> 8), (BYTE)(wantX & 0xFF), wantY, NULL);
+    logWriteTick();
+
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   len = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &len), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, len, &blockStart, &version),
+                  "header parse failed");
+
+    uint8_t got[8];
+    int     nGot  = 0;
+    int     nSnap = 0;
+    eventPayloadCapture ping;
+    ping.code = log_Ping;
+    ping.len  = -1;
+    int rc = walkLog(buf, len, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, &ping);
+    free(buf);
+    remove(fname);
+
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(nGot == 1, "expected 1 event, got %d", nGot);
+    UT_ASSERT(got[0] == log_Ping);
+    UT_ASSERT_MSG(ping.len == 6, "ping payload len = %d (want 6)", ping.len);
+    UT_ASSERT_MSG(ping.bytes[0] == wantSender, "sender = %d", ping.bytes[0]);
+    UT_ASSERT_MSG(ping.bytes[1] == wantKind,   "kind = %d", ping.bytes[1]);
+    UT_ASSERT_MSG(((ping.bytes[2] << 8) | ping.bytes[3]) == wantX,
+                  "worldX = 0x%02X%02X", ping.bytes[2], ping.bytes[3]);
+    UT_ASSERT_MSG(((ping.bytes[4] << 8) | ping.bytes[5]) == wantY,
+                  "worldY = 0x%02X%02X", ping.bytes[4], ping.bytes[5]);
     return 0;
 }
 

@@ -235,6 +235,13 @@ struct ClientSim {
     uint8_t    lastServerArmour;    /* Previous server snapshot armour for death detection */
     uint8_t    brainLastAssistMsg;  /* ASSIST_MSG_* or 0 */
 
+    /* Smart pings this client has been sent and is still drawing. Written by
+     * the EVENT_PING arm in client_snapshot.c, read by the GUI overlay
+     * through clientSimGetPings. A plain array with a write cursor: entries
+     * are expired by age at read time, so nothing has to tick it. */
+    ClientPing  pings[MAX_CLIENT_PINGS];
+    int         pingWriteIdx;
+
     /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
     BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 

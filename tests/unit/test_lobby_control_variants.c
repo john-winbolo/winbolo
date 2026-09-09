@@ -165,7 +165,11 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 11;
+        /* winbolo2: the scenario layer appends its own tail AFTER main's view
+         * fields (scenarioMap(1) + scenarioExtraTeams(1) + desc length(1), the
+         * desc itself being empty here), so the eleven-byte cut has to start
+         * past those three bytes to land on the view tail as main's test does. */
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 11 - 3;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,

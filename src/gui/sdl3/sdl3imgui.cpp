@@ -75,6 +75,7 @@ extern "C" {
 #include "luabrainshandler.h"
 #include "flags.h"
 #include "glyphs.h"
+#include "ping_overlay.h"
 #include "dialogs/imgui_keycap.h"
 
 extern "C" {
@@ -4514,6 +4515,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
 #endif
 
+        /* Mouse half of the Key Setup modal's smart-ping chord capture: a
+         * ping binding can be a mouse button, and the scancode hook below
+         * cannot carry one. Before that hook so the two arms read in the
+         * order the player uses them. */
+        if (imguiKeySetupIsCapturingInGamePing() &&
+            ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+            imguiKeySetupHandleInGamePingMouse((int)ev.button.button);
+            continue;
+        }
+
         /* Key capture for the Key Setup modal — intercept before the
          * game sees it. State + the actual binding write live in
          * imgui_keysetup.cpp now; we just feed it the scancode. */
@@ -4653,8 +4664,11 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 
         /* Mouse wheel adjusts gunsight range while in-game. Reaches here
          * only when ImGui isn't capturing the mouse (the swallow block
-         * above continues out for wheel events over UI panels). */
-        if (ev.type == SDL_EVENT_MOUSE_WHEEL &&
+         * above continues out for wheel events over UI panels), and not at
+         * all while the smart-ping pie is open — the wheel is under the same
+         * hand that is holding the menu, and a nudge while choosing a ping
+         * should not also re-range the gun. */
+        if (ev.type == SDL_EVENT_MOUSE_WHEEL && !pingOverlayIsMenuOpen() &&
             cs && clientSimGetNetStatus(cs) == netRunning) {
             if (ev.wheel.y > 0.0f) {
                 inputBumpGunsight(+1);
@@ -5353,6 +5367,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
             deckPauseOpen();
         }
+    }
+
+    /* Smart-ping menu and markers. Drawn before the tablet controls and the
+       menu bar so a control the player is holding stays on top of a ping
+       marker that happens to land under it, and in both UI modes because a
+       received ping has to show wherever the game is being played. */
+    if (cs && !clientSimIsInLobby(cs)) {
+        pingOverlayDraw(cs);
     }
 
     if (uiModeIsTablet()) {

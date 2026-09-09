@@ -1488,6 +1488,8 @@ STR_STARTPICK_TIP_FREE_HOST=Partenza #{number}\nClic per scegliere; clic destro 
 STR_STARTPICK_TIP_FREE=Partenza #{number}\nClic per scegliere questa partenza
 STR_STARTPICK_TIP_HELD_HOST=Partenza #{number} - {player}\nTrascina per spostare; clic destro per assegnare a qualcun altro
 STR_STARTPICK_TIP_HELD=Partenza #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Partenza #{number} - {player}\nClic per partire anche qui
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Partenza #{number} - {player}\nClic per partire anche qui; trascina per spostare; clic destro per assegnare a qualcun altro
 STR_STARTPICK_YOU=tu
 STR_STARTPICK_SWAP_WITH=Scambia questa partenza con:
 STR_STARTPICK_ASSIGN_TO=Assegna la partenza a:
@@ -2024,4 +2026,33 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} partenze per {number2} giocat
 STR_DLGLOBBY_TOOLTIP_START_SEA=Tutte le partenze che questa squadra può usare sono occupate, quindi questo giocatore\ninizierà in mare accanto alla partenza di un compagno di squadra.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Fuori zona: questa partenza non è su {string1}, il lato della squadra.\nL'host l'ha scelta per questo giocatore.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Imposta le due squadre su {string1}\n{player} parte {string2}, {other} parte {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Squadre impostate su {string1}. Fai clic per tornare alle partenze personalizzate.
+
 STR_SOUND_LOAD_FAILED=Errore durante il caricamento degli effetti sonori
+
+# Ping intelligente (menu circolare)
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Attenzione!
+MESSAGE_PING_ASSIST={player}: Aiutami!
+MESSAGE_PING_ATTACK={player}: All'attacco!
+MESSAGE_PING_ON_MY_WAY={player}: Sto arrivando!
+MESSAGE_PING_BOT_COMMAND={player}: Comando bot
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Attenzione
+STR_PING_ASSIST=Aiutami
+STR_PING_ATTACK=Attacca
+STR_PING_ON_MY_WAY=Sto arrivando
+STR_PING_BOT_COMMAND=Comando bot
+STR_DLGKEYSETUP_PING=Ping intelligente
+STR_DLGKEYSETUP_PING_SLOT=Ping {number}
+STR_DLGKEYSETUP_PRESSACHORD=Premi un tasto o un pulsante del mouse
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Maiusc
+STR_PING_MOUSE_LEFT=Tasto sinistro
+STR_PING_MOUSE_MIDDLE=Tasto centrale
+STR_PING_MOUSE_RIGHT=Tasto destro
+STR_PING_MOUSE_X1=Mouse 4
+STR_PING_MOUSE_X2=Mouse 5

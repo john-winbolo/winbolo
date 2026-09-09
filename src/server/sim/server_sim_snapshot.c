@@ -1288,6 +1288,14 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                         continue;
                     }
                 }
+                /* A ping is a team signal: the sender, its team and its
+                 * allies get it, nobody else. */
+                if (evType == EVENT_PING) {
+                    if (!serverSimPingReachesClient(sim, (BYTE)clientIdx,
+                                                    sim->events[i].data[0])) {
+                        continue;
+                    }
+                }
                 /* Viewport-cull explosion events */
                 if (evType == EVENT_EXPLOSION) {
                     if (!inAnyViewport(viewports, numViewports, sim->events[i].data[0], sim->events[i].data[1])) {

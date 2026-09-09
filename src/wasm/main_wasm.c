@@ -663,6 +663,10 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
     keys.kiQuickWall    = prefInt(k, "Quick Wall",     keys.kiQuickWall);
     keys.kiQuickPillbox = prefInt(k, "Quick Pillbox",  keys.kiQuickPillbox);
     keys.kiQuickMine    = prefInt(k, "Quick Mine",     keys.kiQuickMine);
+    keys.kiPing[0]      = prefInt(k, "Ping 1",         keys.kiPing[0]);
+    keys.kiPing[1]      = prefInt(k, "Ping 2",         keys.kiPing[1]);
+    keys.kiPing[2]      = prefInt(k, "Ping 3",         keys.kiPing[2]);
+    keys.kiPing[3]      = prefInt(k, "Ping 4",         keys.kiPing[3]);
   }
 
   cJSON *m = cJSON_GetObjectItemCaseSensitive(root, "MENU");

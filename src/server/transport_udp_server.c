@@ -6792,6 +6792,15 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                         }
                     }
                 }
+                /* A ping is a team signal: the sender, its team and its
+                 * allies get it, nobody else. Same predicate the per-client
+                 * snapshot build uses. */
+                if (evType == EVENT_PING) {
+                    if (!serverSimPingReachesClient(sim, (BYTE)c,
+                            serverSimGetEvents(sim)[i].data[0])) {
+                        continue;
+                    }
+                }
                 /* Distance-cull explosion events */
                 if (evType == EVENT_EXPLOSION && hasPos) {
                     if (!inAnyViewport(fxViewports, fxViewportCount,

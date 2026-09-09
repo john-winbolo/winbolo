@@ -74,7 +74,8 @@ typedef enum {
     CMD_LOBBY_CLAIM_START,
     CMD_RATING_POSTED,
     CMD_VIEW_STATE,
-    CMD_VIEW_CYCLE
+    CMD_VIEW_CYCLE,
+    CMD_PING
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -388,6 +389,18 @@ typedef struct {
     uint8_t from;
 } CmdViewCycle;
 
+/* CMD_PING — place a smart ping on the map for the sender's team. kind is
+ * a PING_KIND_* (input_packet.h); worldX/worldY are WORLD units (256 per map
+ * tile), so the marker sits where the cursor was, not on a tile centre. The
+ * server checks the game is running, the sender holds a tank, the kind is
+ * known and the point is on the map, then rate-limits before turning it into
+ * an EVENT_PING. */
+typedef struct {
+    uint8_t  kind;
+    uint16_t worldX;
+    uint16_t worldY;
+} CmdPing;
+
 /* ClientCommand — variant tag + payload that travels client→server.
  *
  * cmdSeq: per-command sequence number assigned by the client; used
@@ -430,6 +443,7 @@ typedef struct ClientCommand {
         CmdRatingPosted        ratingPosted;
         CmdViewState           viewState;
         CmdViewCycle           viewCycle;
+        CmdPing                ping;
     } u;
 } ClientCommand;
 

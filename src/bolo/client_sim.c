@@ -2081,6 +2081,46 @@ const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
   return cs->brainEvents;
 }
 
+void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
+                      uint16_t worldX, uint16_t worldY, uint32_t nowMs) {
+  ClientPing *slot;
+  if (cs == NULL) {
+    return;
+  }
+  /* The write cursor wraps, so a burst overwrites the oldest entries rather
+     than being dropped at the door — a player who has just been pinged six
+     times wants the six newest. */
+  slot = &cs->pings[cs->pingWriteIdx];
+  slot->sender = sender;
+  slot->kind   = kind;
+  slot->worldX = worldX;
+  slot->worldY = worldY;
+  slot->recvMs = nowMs;
+  cs->pingWriteIdx = (cs->pingWriteIdx + 1) % MAX_CLIENT_PINGS;
+}
+
+int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
+                      ClientPing *out, int maxOut) {
+  int i;
+  int count = 0;
+  if (cs == NULL || out == NULL || maxOut <= 0) {
+    return 0;
+  }
+  /* Walk from the oldest slot forward so the copy comes out in arrival
+     order: the newest ping draws last and therefore on top. */
+  for (i = 0; i < MAX_CLIENT_PINGS && count < maxOut; i++) {
+    const ClientPing *p = &cs->pings[(cs->pingWriteIdx + i) % MAX_CLIENT_PINGS];
+    if (p->recvMs == 0) {
+      continue;   /* never written */
+    }
+    if (nowMs < p->recvMs || nowMs - p->recvMs >= (uint32_t)PING_DISPLAY_MS) {
+      continue;   /* expired, or a clock that went backwards */
+    }
+    out[count++] = *p;
+  }
+  return count;
+}
+
 const OverviewMap *clientSimGetOverviewMap(const ClientSim *cs) {
   if (cs == NULL) {
     return NULL;

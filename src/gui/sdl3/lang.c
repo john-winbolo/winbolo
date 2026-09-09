@@ -1455,12 +1455,27 @@ static const LangEntry langTable[] = {
     {2041, "{string1}: {number} starts for {number2} players \xE2\x80\x94 {number3} will start at sea.\nChanging a side re-picks every player's start."},
     {2042, "Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start."},
     {2043, "Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player."},
+
+    /* Map-preview compass, shown to the host when exactly two teams have
+     * members. Hovering an axis of the rose offers to put both teams on
+     * it, or, when they are already on it, to clear both back to Any.
+     * {string1} = the axis, "N/S" or "E/W"; {player} / {other} = the two
+     * team names; {string2} / {string3} = the side each would take. */
+    {2047, "Set the two teams to {string1}\n{player} starts {string2}, {other} starts {string3}"},
+    {2048, "Teams set to {string1}. Click to go back to custom starts."},
     /* Map-preview start-picker tooltips over a start the viewer's own
      * team side rejects: 2044 for a player who cannot take it, 2045 for
      * the host, who still can. {number} = start; 2045: {string1} = the
      * host's team. */
     {2044, "Start #{number}\nNot on your team's side"},
     {2045, "Start #{number}\nOff-side for {string1}"},
+
+    /* Map-preview start-picker tooltips over a start somebody else holds
+     * that the viewer may join (LOBBY_SHARED_STARTS): 2049 for a player,
+     * 2050 for the host, who can still drag and assign. {number} = start;
+     * {player} = the holder, or every holder comma-joined. */
+    {2049, "Start #{number} - {player}\nClick to start here too"},
+    {2050, "Start #{number} - {player}\nClick to start here too; drag to move; right-click to assign to someone else"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
@@ -1965,7 +1980,33 @@ static const LangEntry langTable[] = {
     {1986, "(recommended)"},
 
     /* Game Setup game-type radio 4: scenario (scripted) maps. */
-    {1987, "Scenario"},
+    {2099, "Scenario"},
+
+    /* Smart ping: newswire lines, slice names, and the key-setup chord
+       vocabulary. */
+    {2051, "{player}: Ping!"},
+    {2052, "{player}: Caution!"},
+    {2053, "{player}: Assist me!"},
+    {2054, "{player}: Attack!"},
+    {2055, "{player}: On my way!"},
+    {2056, "{player}: Bot command"},
+    {2057, "Ping"},
+    {2058, "Caution"},
+    {2059, "Assist Me"},
+    {2060, "Attack"},
+    {2061, "On My Way"},
+    {2062, "Bot Command"},
+    {2063, "Smart Ping"},
+    {2064, "Ping {number}"},
+    {2065, "Press a key or mouse button"},
+    {2066, "Ctrl"},
+    {2067, "Alt"},
+    {2068, "Shift"},
+    {2069, "Left Mouse"},
+    {2070, "Middle Mouse"},
+    {2071, "Right Mouse"},
+    {2072, "Mouse 4"},
+    {2073, "Mouse 5"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -170,6 +170,17 @@ void brainCoreRegisterConstants(lua_State *L) {
   lua_pushinteger(L, EVENT_LGM_LOST);        lua_setglobal(L, "EVENT_LGM_LOST");
   lua_pushinteger(L, EVENT_SOUND_TANK_HIT);  lua_setglobal(L, "EVENT_SOUND_TANK_HIT");
   lua_pushinteger(L, EVENT_SOUND_SHOOT);     lua_setglobal(L, "EVENT_SOUND_SHOOT");
+  lua_pushinteger(L, EVENT_PING);            lua_setglobal(L, "EVENT_PING");
+
+  /* Smart-ping kinds. A brain reads them off an EVENT_PING's data[2] — the
+     event carries [sender, kind, xHi, xLo, yHi, yLo] in WORLD units — so a
+     bot can act on the Bot Command ping its team sends it. */
+  lua_pushinteger(L, PING_KIND_STANDARD);    lua_setglobal(L, "PING_KIND_STANDARD");
+  lua_pushinteger(L, PING_KIND_CAUTION);     lua_setglobal(L, "PING_KIND_CAUTION");
+  lua_pushinteger(L, PING_KIND_ASSIST);      lua_setglobal(L, "PING_KIND_ASSIST");
+  lua_pushinteger(L, PING_KIND_ATTACK);      lua_setglobal(L, "PING_KIND_ATTACK");
+  lua_pushinteger(L, PING_KIND_ON_MY_WAY);   lua_setglobal(L, "PING_KIND_ON_MY_WAY");
+  lua_pushinteger(L, PING_KIND_BOT_COMMAND); lua_setglobal(L, "PING_KIND_BOT_COMMAND");
 
   /* Assistant message ID constants */
   lua_pushinteger(L, ASSIST_MSG_MAN_DEAD);           lua_setglobal(L, "ASSIST_MSG_MAN_DEAD");

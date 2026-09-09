@@ -729,6 +729,19 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
     break;
+  case log_Ping:
+    /* sender + kind + worldX (big-endian u16) + worldY (big-endian u16).
+       The two coordinate halves ride opt3/opt4 and short1 respectively, so
+       the ping lands in the replay at the same sub-tile point the sender
+       clicked rather than snapped to a map square. */
+    out[off++] = log_Ping;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
+    break;
   case log_SpectatorChat:
     /* Format-reserved (no emitter yet): sender spectator slot + pascal-string
        message. Mirrors log_MessageAll so the on-disk shape is locked now. */

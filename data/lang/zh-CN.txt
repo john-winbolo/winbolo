@@ -1486,6 +1486,8 @@ STR_STARTPICK_TIP_FREE_HOST=出生点 #{number}\n点击选择；右键分配给�
 STR_STARTPICK_TIP_FREE=出生点 #{number}\n点击选择此出生点
 STR_STARTPICK_TIP_HELD_HOST=出生点 #{number} - {player}\n拖动以移动；右键分配给其他玩家
 STR_STARTPICK_TIP_HELD=出生点 #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=出生点 #{number} - {player}\n点击也从此处出生
+STR_STARTPICK_TIP_HELD_JOIN_HOST=出生点 #{number} - {player}\n点击也从此处出生；拖动以移动；右键分配给其他玩家
 STR_STARTPICK_YOU=你
 STR_STARTPICK_SWAP_WITH=将此出生点与以下位置对调：
 STR_STARTPICK_ASSIGN_TO=将出生点分配给：
@@ -2020,4 +2022,33 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}：{number2}名玩家对应{number}个�
 STR_DLGLOBBY_TOOLTIP_START_SEA=该队伍可用的出生点已全部被占用，因此该玩家\n将在队友出生点旁的海上开始游戏。
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=越位：此出生点不在{string1}（队伍一侧）范围内。\n主机为该玩家选择了此出生点。
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=将两队设为 {string1}\n{player} 从 {string2} 出发，{other} 从 {string3} 出发
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=两队已设为 {string1}。点击可恢复自定义出生点。
+
 STR_SOUND_LOAD_FAILED=加载音效失败
+
+# 智能标记（环形菜单）
+MESSAGE_PING_STANDARD={player}：标记！
+MESSAGE_PING_CAUTION={player}：小心！
+MESSAGE_PING_ASSIST={player}：支援我！
+MESSAGE_PING_ATTACK={player}：进攻！
+MESSAGE_PING_ON_MY_WAY={player}：我马上到！
+MESSAGE_PING_BOT_COMMAND={player}：机器人指令
+STR_PING_STANDARD=标记
+STR_PING_CAUTION=小心
+STR_PING_ASSIST=支援我
+STR_PING_ATTACK=进攻
+STR_PING_ON_MY_WAY=我马上到
+STR_PING_BOT_COMMAND=机器人指令
+STR_DLGKEYSETUP_PING=智能标记
+STR_DLGKEYSETUP_PING_SLOT=标记 {number}
+STR_DLGKEYSETUP_PRESSACHORD=请按一个按键或鼠标按钮
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=鼠标左键
+STR_PING_MOUSE_MIDDLE=鼠标中键
+STR_PING_MOUSE_RIGHT=鼠标右键
+STR_PING_MOUSE_X1=鼠标 4
+STR_PING_MOUSE_X2=鼠标 5

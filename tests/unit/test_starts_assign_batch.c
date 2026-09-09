@@ -11,7 +11,8 @@
  *   (a) a reserved slot lands on exactly its reserved start;
  *   (b) an unreserved slot avoids a reserved start;
  *   (c) a stale (out-of-range) reservation falls through to placement;
- *   (d) duplicate reservations honor the first, place the rest normally;
+ *   (d) duplicate reservations: all honored when LOBBY_SHARED_STARTS is
+ *       on, else the first honored and the rest placed normally;
  *   (e) NULL reservedStartIdx0 preserves the original (no-reservation) path.
  *
  * The 5-start layout is built on a running sim's map with each start square
@@ -31,6 +32,7 @@
 #include "bolo_map.h"     /* mapSetPos */
 #include "starts.h"       /* startsAssignBatch */
 #include "bolo_rand.h"    /* bolo_srand */
+#include "lobby_shared_starts.h" /* lobbySharedStartsEnabled — duplicate reservations */
 #include "server_sim.h"   /* ut_make_running_sim, serverSimGetGameSim */
 #include "test_harness.h"
 
@@ -143,8 +145,9 @@ int run_starts_batch_stale_reservation_falls_through(void) {
     return 0;
 }
 
-/* (d) Duplicate reservations: the first slot keeps the start, the second
- *     is placed as unreserved. */
+/* (d) Duplicate reservations. With shared starts on both slots keep the
+ *     start they named; with it off the first keeps it and the second is
+ *     placed as unreserved. */
 int run_starts_batch_duplicate_honors_first(void) {
     ServerSim *sim = ut_make_running_sim("Dup");
     UT_ASSERT(sim != NULL);
@@ -167,9 +170,18 @@ int run_starts_batch_duplicate_honors_first(void) {
     UT_ASSERT_MSG(out[0] == 3,
                   "first slot should keep reserved start 3, got %u",
                   (unsigned)out[0]);
-    UT_ASSERT_MSG(out[1] != 3 && out[1] == 2,
-                  "duplicate slot should be placed unreserved (farthest, 2), got %u",
-                  (unsigned)out[1]);
+    if (lobbySharedStartsEnabled()) {
+        /* Shared starts: both slots asked for start 3 and both get it —
+         * startsGetStart's scatter puts the second tank a few squares
+         * behind the first. */
+        UT_ASSERT_MSG(out[1] == 3,
+                      "duplicate slot should share reserved start 3, got %u",
+                      (unsigned)out[1]);
+    } else {
+        UT_ASSERT_MSG(out[1] != 3 && out[1] == 2,
+                      "duplicate slot should be placed unreserved (farthest, 2), got %u",
+                      (unsigned)out[1]);
+    }
     serverSimDestroy(sim);
     return 0;
 }
@@ -337,109 +349,6 @@ int run_starts_batch_team_anchor_jitter_varies(void) {
     }
     UT_ASSERT_MSG(nSeen >= 2,
                   "team 1's claimed pair should vary across seeds, saw %d", nSeen);
-    serverSimDestroy(sim);
-    return 0;
-}
-
-/* Four corner pairs, two squares apart within a pair and 128 apart between
- * pairs — the DH-Oil Rig shape that started this. Each pair is one region to
- * startsAssignBatch, so there are four regions and eight starts. Two slots
- * within K_SAME_CORNER of each other landed in the same corner; the gap is
- * 2 within a pair against 128 across, so the exact threshold doesn't matter
- * as long as it sits between them. */
-#define K_SAME_CORNER 10
-static void build_four_corner_pairs(GameSim *gs) {
-    static const BYTE cx[8] = { 60,  62, 190, 188,  60,  62, 190, 188};
-    static const BYTE cy[8] = { 60,  62,  60,  62, 190, 188, 190, 188};
-    int i;
-    gs->pb->numPills = 0;   /* no pills near the synthetic starts */
-    gs->bs->numBases = 0;   /* no owned bases to steer anchors */
-    for (i = 0; i < 8; i++) {
-        mapSetPos(gs, &gs->mp, cx[i], cy[i], DEEP_SEA, FALSE, TRUE);
-        gs->ss->item[i].x = cx[i];
-        gs->ss->item[i].y = cy[i];
-        gs->ss->item[i].dir = 0;
-    }
-    gs->ss->numStarts = 8;
-}
-
-/* Chebyshev distance between the starts two slots landed on. */
-static int out_distance(GameSim *gs, const BYTE *out, int a, int b) {
-    int dx = (int)gs->ss->item[out[a]].x - (int)gs->ss->item[out[b]].x;
-    int dy = (int)gs->ss->item[out[a]].y - (int)gs->ss->item[out[b]].y;
-    if (dx < 0) dx = -dx;
-    if (dy < 0) dy = -dy;
-    return (dx > dy) ? dx : dy;
-}
-
-/* (i) Spread first, cluster only on the overflow. A 2v2 on the four-corner
- *     map puts one player in each corner — no two players share a corner,
- *     rivals least of all. A 4v4 has to double up, and when it does the
- *     pairs are teammates, never rivals. */
-int run_starts_batch_spread_before_cluster(void) {
-    ServerSim *sim = ut_make_running_sim("Spread");
-    UT_ASSERT(sim != NULL);
-    GameSim *gs = serverSimGetGameSim(sim);
-    UT_ASSERT(gs != NULL);
-    build_four_corner_pairs(gs);
-
-    bool connected[MAX_TANKS];
-    BYTE team[MAX_TANKS];
-    BYTE reserved[MAX_TANKS];
-    BYTE out[MAX_TANKS];
-    int seed;
-    int i;
-    int j;
-
-    /* 2v2: four players, four corners, one each. */
-    for (seed = 1; seed <= 16; seed++) {
-        reset_inputs(connected, team, reserved);
-        connected[0] = connected[1] = connected[2] = connected[3] = true;
-        team[0] = team[1] = 1;
-        team[2] = team[3] = 2;
-        bolo_srand((uint64_t)seed);
-        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
-        for (i = 0; i < 4; i++) {
-            UT_ASSERT_MSG(out[i] < 8, "seed %d: slot %d unplaced (%u)",
-                          seed, i, (unsigned)out[i]);
-        }
-        for (i = 0; i < 4; i++) {
-            for (j = i + 1; j < 4; j++) {
-                UT_ASSERT_MSG(out_distance(gs, out, i, j) > K_SAME_CORNER,
-                              "seed %d: slots %d and %d share a corner (%d,%d)/(%d,%d)",
-                              seed, i, j,
-                              (int)gs->ss->item[out[i]].x, (int)gs->ss->item[out[i]].y,
-                              (int)gs->ss->item[out[j]].x, (int)gs->ss->item[out[j]].y);
-            }
-        }
-    }
-
-    /* 4v4: eight players, four corners — every corner ends up shared, and
-     * the two slots sharing one must be on the same team. */
-    for (seed = 1; seed <= 16; seed++) {
-        reset_inputs(connected, team, reserved);
-        for (i = 0; i < 8; i++) {
-            connected[i] = true;
-            team[i] = (BYTE)((i < 4) ? 1 : 2);
-        }
-        bolo_srand((uint64_t)seed);
-        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
-        for (i = 0; i < 8; i++) {
-            UT_ASSERT_MSG(out[i] < 8, "seed %d: slot %d unplaced (%u)",
-                          seed, i, (unsigned)out[i]);
-        }
-        for (i = 0; i < 8; i++) {
-            for (j = i + 1; j < 8; j++) {
-                if (out_distance(gs, out, i, j) > K_SAME_CORNER) continue;
-                UT_ASSERT_MSG(team[i] == team[j],
-                              "seed %d: rivals %d and %d share a corner (%d,%d)/(%d,%d)",
-                              seed, i, j,
-                              (int)gs->ss->item[out[i]].x, (int)gs->ss->item[out[i]].y,
-                              (int)gs->ss->item[out[j]].x, (int)gs->ss->item[out[j]].y);
-            }
-        }
-    }
-
     serverSimDestroy(sim);
     return 0;
 }

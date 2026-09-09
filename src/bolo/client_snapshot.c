@@ -57,6 +57,7 @@
 #include "screenbullet.h"
 #include "frontend.h"
 #include "../gui/lang.h"
+#include "../gui/ping_kinds.h"   /* pingKindMessageId — the newswire line a ping posts */
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"
@@ -285,6 +286,7 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
       case EVENT_BASE_UPDATE:
       case EVENT_BASE_STOCK:
       case EVENT_EXPLOSION:
+      case EVENT_PING:
         if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
           csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
         }
@@ -610,6 +612,29 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         minesAddItem(&csPtr->sim.mns, events[i].data[0], events[i].data[1]);
         clientSimRecalc(csPtr);
         break;
+      case EVENT_PING: {
+        /* data: [sender, kind, xHi, xLo, yHi, yLo] — a teammate's smart
+           ping. The server has already decided this client is entitled to
+           see it, including the sender's own copy, so there is nothing to
+           filter here. Held in a ring the GUI overlay draws from; bots get
+           it through the brain event buffer above and act on it themselves. */
+        uint8_t  kind = events[i].data[1];
+        uint16_t px = (uint16_t)((events[i].data[2] << 8) | events[i].data[3]);
+        uint16_t py = (uint16_t)((events[i].data[4] << 8) | events[i].data[5]);
+        clientSimAddPing(csPtr, events[i].data[0], kind, px, py, SDL_GetTicks());
+        if (isHuman) {
+          MessageArgs args;
+          memset(&args, 0, sizeof(args));
+          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
+                               args.playerName, sizeof(args.playerName), FALSE);
+          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
+          csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
+                                          newsWireMessage, MESSAGE_NEWSWIRE,
+                                          pingKindMessageId(kind), &args);
+        }
+        break;
+      }
       default:
         break;
       }

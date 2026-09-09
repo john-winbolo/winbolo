@@ -1486,6 +1486,8 @@ STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlicka för att välja; högerklick
 STR_STARTPICK_TIP_FREE=Start #{number}\nKlicka för att välja den här startplatsen
 STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nDra för att flytta; högerklicka för att tilldela till någon annan
 STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nKlicka för att starta här också
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nKlicka för att starta här också; dra för att flytta; högerklicka för att tilldela till någon annan
 STR_STARTPICK_YOU=du
 STR_STARTPICK_SWAP_WITH=Byt den här startplatsen med:
 STR_STARTPICK_ASSIGN_TO=Tilldela startplats till:
@@ -2022,4 +2024,33 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startplatser för {number2} s
 STR_DLGLOBBY_TOOLTIP_START_SEA=Alla starter det här laget kan använda är upptagna, så den här\nspelaren börjar till havs bredvid en lagkamrats start.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Offside: den här starten ligger inte på {string1}, lagets sida.\nVärden valde den åt den här spelaren.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Sätt båda lagen till {string1}\n{player} startar {string2}, {other} startar {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Lagen satta till {string1}. Klicka för att gå tillbaka till egna startpunkter.
+
 STR_SOUND_LOAD_FAILED=Fel vid inläsning av ljudeffekter
+
+# Smart ping (cirkelmeny)
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Se upp!
+MESSAGE_PING_ASSIST={player}: Hjälp mig!
+MESSAGE_PING_ATTACK={player}: Anfall!
+MESSAGE_PING_ON_MY_WAY={player}: Jag är på väg!
+MESSAGE_PING_BOT_COMMAND={player}: Botorder
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Se upp
+STR_PING_ASSIST=Hjälp mig
+STR_PING_ATTACK=Anfall
+STR_PING_ON_MY_WAY=På väg
+STR_PING_BOT_COMMAND=Botorder
+STR_DLGKEYSETUP_PING=Smart ping
+STR_DLGKEYSETUP_PING_SLOT=Ping {number}
+STR_DLGKEYSETUP_PRESSACHORD=Tryck på en tangent eller musknapp
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Skift
+STR_PING_MOUSE_LEFT=Vänster musknapp
+STR_PING_MOUSE_MIDDLE=Mittenknapp
+STR_PING_MOUSE_RIGHT=Höger musknapp
+STR_PING_MOUSE_X1=Mus 4
+STR_PING_MOUSE_X2=Mus 5

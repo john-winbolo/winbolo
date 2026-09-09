@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Smart ping: Bot Command. A robot head — the antenna and knob above a
+     rounded box with two eyes cut out of it by fill-rule="evenodd". The
+     antenna stops exactly on the top of the head rather than overlapping it,
+     because an evenodd overlap would punch a notch out instead of joining.
+     Authored solid black and used as an alpha mask; see standard.svg. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path fill-rule="evenodd" d="M12 0.4 A1.7 1.7 0 1 1 12 3.8 A1.7 1.7 0 1 1 12 0.4 Z M11 3.8 L13 3.8 L13 6 L11 6 Z M4 6 L20 6 A2.4 2.4 0 0 1 22.4 8.4 L22.4 18.6 A2.4 2.4 0 0 1 20 21 L4 21 A2.4 2.4 0 0 1 1.6 18.6 L1.6 8.4 A2.4 2.4 0 0 1 4 6 Z M8.2 11 A2.2 2.2 0 1 1 8.2 15.4 A2.2 2.2 0 1 1 8.2 11 Z M15.8 11 A2.2 2.2 0 1 1 15.8 15.4 A2.2 2.2 0 1 1 15.8 11 Z"/>
+</svg>

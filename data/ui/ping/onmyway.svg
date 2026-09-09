@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Smart ping: On My Way. A fat arrow. It points straight up rather than
+     towards the ping: the marker is drawn at the spot itself, so an arrow
+     that tried to indicate direction would be pointing at its own feet.
+     One filled shape, no strokes. Authored solid black and used as an alpha
+     mask; see standard.svg. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path d="M12 1 L22.5 12.4 L16.6 12.4 L16.6 23 L7.4 23 L7.4 12.4 L1.5 12.4 Z"/>
+</svg>

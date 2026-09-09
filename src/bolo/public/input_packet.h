@@ -243,6 +243,27 @@ typedef struct {
 #define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
 #define EVENT_TK_EXPLOSION   18 /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator] — tank fireball spawn */
 #define EVENT_BASE_STOCK   19  /* data: [baseIndex, armour, shells, mines] — best-effort, culled to recipient's closest base */
+#define EVENT_PING         20  /* data: [senderPlayer, kind, xHi, xLo, yHi, yLo] — map ping, world coords, team-only */
+
+/* PING_KIND_* — which smart ping was sent. On the wire (EVENT_PING data[1],
+ * CmdPing.kind and the replay's log_Ping), so the values are fixed. The
+ * standard ping is the pie menu's centre; the other five are its sectors,
+ * clockwise from the top. Colours and icons for each live in one table in
+ * src/gui/ping_kinds.h — add a kind here and there together. */
+#define PING_KIND_STANDARD    0
+#define PING_KIND_CAUTION     1
+#define PING_KIND_ASSIST      2
+#define PING_KIND_ATTACK      3
+#define PING_KIND_ON_MY_WAY   4
+#define PING_KIND_BOT_COMMAND 5
+#define PING_KIND_COUNT       6
+
+/* How long a received ping is shown, and how much of the tail of that is
+ * spent fading out. Here rather than with the drawing code because the
+ * client's ping ring expires entries on the same clock the drawers fade
+ * them on, and the replay viewer has to match both. */
+#define PING_DISPLAY_MS  5000
+#define PING_FADE_MS     1000
 
 /* True if this game event must arrive (rides the reliable game channel);
  * false if it is ephemeral and rides the best-effort channel. Single source
@@ -256,6 +277,7 @@ static inline bool gameEventIsReliable(uint8_t type) {
     case EVENT_LGM_LOST:      /* one-shot newswire */
     case EVENT_MINE_VISIBLE:  /* gameplay-critical reveal */
     case EVENT_BASE_UPDATE:   /* base owner (colour) change must arrive */
+    case EVENT_PING:          /* one-shot player signal; a dropped ping is gone */
         return true;
     /* EVENT_PILL_UPDATE and EVENT_BASE_STOCK are best-effort: they fire
      * continuously as pill armour/reload and base stock change under combat (a
@@ -302,6 +324,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_TANK_KILLED:    return 4;
     case EVENT_MINE_VISIBLE:   return 3;
     case EVENT_TK_EXPLOSION:   return 8;
+    case EVENT_PING:           return 6;
     default:                   return GAME_EVENT_MAX_DATA;
     }
 }

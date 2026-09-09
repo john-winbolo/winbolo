@@ -83,7 +83,11 @@ int run_command_codec_view_state(void);
 /* CMD_VIEW_CYCLE codec round-trip: kind + direction + from survive the wire,
  * including from == 0xFF, and the fixed body length is enforced. */
 int run_command_codec_view_cycle(void);
+/* CMD_PING's fixed five-byte body: kind plus two big-endian u16 WORLD
+ * coordinates, both extremes of the range, and the length refusals. */
+int run_command_codec_ping(void);
 int run_lobby_claim_start_host_swaps_occupied(void);
+int run_lobby_claim_start_host_assign_onto_own(void);
 int run_lobby_claim_start_host_swap_into_none(void);
 int run_lobby_claim_start_non_host_occupied_rejected(void);
 int run_lobby_claim_start_non_host_other_slot_rejected(void);
@@ -703,9 +707,6 @@ int run_starts_batch_null_reservations_place_normally(void);
 int run_starts_batch_solo_random_seed(void);
 int run_starts_batch_teams_cluster_and_separate(void);
 int run_starts_batch_team_anchor_jitter_varies(void);
-/* Spread before cluster: on a four-corner-pair map a 2v2 gets a corner
- * each, and only the overflow of a 4v4 doubles up — with teammates. */
-int run_starts_batch_spread_before_cluster(void);
 int run_starts_open_ideal_friendly_pill_eligible(void);
 
 /* Start side classification (test_start_sides.c). The integer sector test
@@ -715,6 +716,24 @@ int run_starts_open_ideal_friendly_pill_eligible(void);
 int run_start_side_mask_sectors(void);
 int run_start_side_mask_degenerate_bbox(void);
 int run_start_side_eligible_closed_mask(void);
+
+/* Lobby map-preview compass axis (test_lobby_side_axis.c). The pure
+ * helpers in lobby_side_axis.h behind the preview's N/S · E/W rose:
+ * exactly two populated teams, which axis a pair of team sides forms,
+ * and what a click on an axis has to send. */
+int run_lobby_side_axis_two_team_pair(void);
+int run_lobby_side_axis_pair_classification(void);
+int run_lobby_side_axis_click_targets(void);
+
+/* Shared lobby starts (test_lobby_start_shared.c). The pure helpers in
+ * lobby_start_shared.h behind a start several players reserve: the
+ * minimal unique name prefixes, the comma-joined holder labels the mini
+ * map and the tooltips show, and the one ownership class a start with
+ * several holders reads as. */
+int run_lobby_start_shared_prefix_len(void);
+int run_lobby_start_shared_prefix_label(void);
+int run_lobby_start_shared_name_label(void);
+int run_lobby_start_shared_owner_fold(void);
 
 /* Spawn scatter separation (test_starts_scatter_separation.c). The
  * spiral in startsScatterFind keeps a new tank START_SPAWN_SEPARATION
@@ -767,6 +786,9 @@ int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
+/* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
+ * coordinates, byte for byte through the writer and back. */
+int run_log_roundtrip_ping(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
@@ -1473,6 +1495,29 @@ int run_packet_type_names(void);
 int run_screencalc_river_road_counts_as_water(void);
 int run_screencalc_river_arms_of_road_centred_cross(void);
 int run_screencalc_river_copies_agree(void);
+
+/* Smart-ping pure headers and wire shape (test_ping.c): the chord packing
+ * and its exact-modifier match rule, the pie's slice selection including the
+ * wrap at the top and the dead zone, the off-screen edge marker on all four
+ * borders and at a corner, and EVENT_PING's data size / reliability. */
+int run_ping_binding_encode_decode(void);
+int run_ping_binding_match(void);
+int run_ping_binding_format(void);
+int run_ping_pie_slices(void);
+int run_ping_edge_sides(void);
+int run_ping_edge_corner(void);
+int run_ping_event_wire(void);
+
+/* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's
+ * running-game / has-a-tank / known-kind gates, the per-player rate limit,
+ * the GameEvent an accepted ping turns into, and the team-only delivery
+ * predicate both copies of the snapshot filter call. */
+int run_ping_dispatch_accepts_and_builds_event(void);
+int run_ping_dispatch_rejects_lobby(void);
+int run_ping_dispatch_rejects_tankless_and_spectator(void);
+int run_ping_dispatch_rejects_bad_kind(void);
+int run_ping_dispatch_rate_limit(void);
+int run_ping_reaches_team_only(void);
 
 /* Generated lang-name lookup table pin (test_lang_name_table.c): the
  * K_LANG_NAME_TABLE_SIZE macro matches the real kLangNameTable[] length,

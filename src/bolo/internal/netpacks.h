@@ -645,6 +645,18 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               arrives mid-window is muted
                                               too. */
 
+#define PACKET_MAP_PING                217  /* client → server
+                                              { kind 1, worldX 2, worldY 2 } —
+                                              a smart ping the sender wants
+                                              placed on the map for its team.
+                                              kind is a PING_KIND_*
+                                              (input_packet.h) and the position
+                                              is in WORLD units (256 per map
+                                              tile), big-endian like every
+                                              other u16 on this bus. Named
+                                              MAP_PING because PACKET_PING is
+                                              already the latency probe. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

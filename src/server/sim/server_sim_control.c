@@ -40,6 +40,24 @@
 #include "../../common/mp_diag_log.h"
 #include "../../common/wb_log.h"   /* WB_LOG_INFO — the newswire-mute flip trace */
 
+/* A ping is a team signal. The sender always sees its own (its client draws
+ * nothing until the server echoes it back, so this is the only copy it gets);
+ * everyone on the sender's lobby team, and anyone allied with the sender,
+ * sees it too. Team 0 means "unassigned" rather than "team zero", so a
+ * teamless sender pings for itself alone. */
+bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
+    const LobbyPlayer *sLp;
+    const LobbyPlayer *rLp;
+    if (sim == NULL) return false;
+    if (recipient >= MAX_TANKS || sender >= MAX_TANKS) return false;
+    if (recipient == sender) return true;
+    if (playersIsAllie(&sim->sim.plyrs, recipient, sender)) return true;
+    sLp = serverSimGetLobbyPlayer(sim, sender);
+    rLp = serverSimGetLobbyPlayer(sim, recipient);
+    if (sLp == NULL || rLp == NULL) return false;
+    if (sLp->teamNumber == 0) return false;
+    return sLp->teamNumber == rLp->teamNumber;
+}
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
