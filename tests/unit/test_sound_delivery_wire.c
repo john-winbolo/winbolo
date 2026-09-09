@@ -292,15 +292,9 @@ int run_sound_delivery_wire_cull(void) {
     }
 
     /* Put every sound on the recipient's row, on whichever side of it has room
-     * for the longest gap. */
+     * for the longest gap. One side always has room: the map is 256 squares
+     * across and the gap is under half of that. */
     dir = ((int)listenMX + SND_GAP_FAR <= 255) ? 1 : -1;
-    if ((int)listenMX + dir * SND_GAP_FAR < 0 ||
-        (int)listenMX + dir * SND_GAP_FAR > 255) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("the tank at %u,%u has no room for a sound %d squares away on "
-                "either side", (unsigned)listenMX, (unsigned)listenMY,
-                SND_GAP_FAR);
-    }
 
     /* ---- Outside the rect, inside the sound model ------------------------ */
     /* The range parity: both paths deliver this one, and the rect stops well
@@ -408,7 +402,10 @@ int run_sound_delivery_wire_cull(void) {
 
     /* ---- A tank hit on the recipient, past every rect -------------------- */
     /* The drain sends a hit to the player hit whatever the range, so this one
-     * arrives from 60 squares out — past SDIST_NONE as well as past the rect. */
+     * arrives from 60 squares out — past SDIST_NONE as well as past the rect.
+     * First, the same hit on the other player from the same square: neither
+     * path carries that one, which is what makes the exemption the player's
+     * own and not a hole in the range cull. */
     if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
         loopbackHarnessStop(&h);
         UT_FAIL("lost the server-side tank position before the tank-hit arm");
@@ -422,6 +419,36 @@ int run_sound_delivery_wire_cull(void) {
                 (unsigned)soundMX, (unsigned)listenMY, SND_GAP_FAR,
                 (unsigned)listenMX, (unsigned)listenMY, n);
     }
+    clientSimSetBrainEventCount(h.cs, 0);
+    sndStage(&h, slot, EVENT_SOUND_TANK_HIT, (uint8_t)hitTankNear, soundMX,
+             listenMY, other, builderEv, &builderCount);
+
+    if (sndInBuild(builderEv, builderCount, EVENT_SOUND_TANK_HIT,
+                   (uint8_t)hitTankNear)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the in-process builder delivered a hit on another player at "
+                "%u,%u, %d squares from the tank at %u,%u and past SDIST_NONE "
+                "%d — only a hit on the recipient itself skips the range cull",
+                (unsigned)soundMX, (unsigned)listenMY, SND_GAP_FAR,
+                (unsigned)listenMX, (unsigned)listenMY, SDIST_NONE);
+    }
+
+    loopbackHarnessPumpUntil(&h, SND_QUIET_PUMPS, NULL, NULL);
+    if (sndArrived(&h, EVENT_SOUND_TANK_HIT, (uint8_t)hitTankNear)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a hit on another player at %u,%u, %d squares from the tank at "
+                "%u,%u and past SDIST_NONE %d, reached the wire client over %d "
+                "pumps — only a hit on the recipient itself skips the range "
+                "cull", (unsigned)soundMX, (unsigned)listenMY, SND_GAP_FAR,
+                (unsigned)listenMX, (unsigned)listenMY, SDIST_NONE,
+                SND_QUIET_PUMPS);
+    }
+
+    if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("lost the server-side tank position before the self-hit arm");
+    }
+    soundMX = (BYTE)((int)listenMX + dir * SND_GAP_FAR);
     clientSimSetBrainEventCount(h.cs, 0);
     sndStage(&h, slot, EVENT_SOUND_TANK_HIT, (uint8_t)hitTankNear, soundMX,
              listenMY, slot, NULL, NULL);
@@ -516,6 +543,9 @@ int run_sound_delivery_wire_cull(void) {
                         (unsigned)got->data[1], SOUND_TIER_NEAR,
                         SOUND_TIER_FAR);
             }
+            /* The staged square is above the largest bearing, checked before
+             * the stage, so the two range checks above already rule out the
+             * square reaching the client in either byte. */
             if (got->data[2] > SOUND_DIR_NW) {
                 loopbackHarnessStop(&h);
                 UT_FAIL("the sound staged at %u,%u arrived with data[2] = %u, "
@@ -523,11 +553,6 @@ int run_sound_delivery_wire_cull(void) {
                         (unsigned)soundMX, (unsigned)listenMY,
                         (unsigned)got->data[2], SOUND_DIR_CENTRE,
                         SOUND_DIR_NW);
-            }
-            if (got->data[1] == soundMX) {
-                loopbackHarnessStop(&h);
-                UT_FAIL("the sound staged at %u,%u arrived carrying its own map "
-                        "X in data[1]", (unsigned)soundMX, (unsigned)listenMY);
             }
         }
     }
@@ -640,15 +665,9 @@ int run_sound_tier_playback(void) {
     threadsReleaseMutex();
 
     /* Put every sound on the recipient's row, on whichever side of it has room
-     * for the longest gap. */
+     * for the longest gap. One side always has room: the map is 256 squares
+     * across and the gap is under half of that. */
     dir = ((int)listenMX + SND_GAP_OUTSIDE <= 255) ? 1 : -1;
-    if ((int)listenMX + dir * SND_GAP_OUTSIDE < 0 ||
-        (int)listenMX + dir * SND_GAP_OUTSIDE > 255) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("the tank at %u,%u has no room for a sound %d squares away on "
-                "either side", (unsigned)listenMX, (unsigned)listenMY,
-                SND_GAP_OUTSIDE);
-    }
 
     for (k = 0; k < 3; k++) {
         if (!sndListenerSquare(&h, slot, &listenMX, &listenMY)) {

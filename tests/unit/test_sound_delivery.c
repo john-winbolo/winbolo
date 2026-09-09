@@ -315,16 +315,20 @@ int run_sound_delivery_builder(void) {
     }
 
     /* ---- A tank hit reaches the player hit at any range ------------------ */
-    /* Both hits are SD_GAP_FAR squares away, past SDIST_NONE. The one on slot 0
-     * skips the distance cull because slot 0 is the player hit; the one on slot
-     * 1 does not. */
+    /* Both hits are past SDIST_NONE. The one on slot 0 skips the distance cull
+     * because slot 0 is the player hit; the one on slot 1 does not. Slot 1's
+     * sits nearer, at SD_GAP_SILENT, so if the cull were missing it would win
+     * the closest-per-type dedup and the sender check below would fail rather
+     * than the dedup quietly picking the right one anyway. Then slot 1's hit is
+     * built on its own, to show it is dropped and not merely outvoted. */
     {
         const BYTE farMX = (BYTE)(SD_LISTENER_MX + SD_GAP_FAR);
+        const BYTE otherMX = (BYTE)(SD_LISTENER_MX + SD_GAP_SILENT);
 
         sdResetEvents(sim);
         sdAddSound(sim, EVENT_SOUND_TANK_HIT, (uint8_t)hitTankNear, farMX,
                    SD_LISTENER_MY, 0);
-        sdAddSound(sim, EVENT_SOUND_TANK_HIT, (uint8_t)hitTankNear, farMX,
+        sdAddSound(sim, EVENT_SOUND_TANK_HIT, (uint8_t)hitTankNear, otherMX,
                    SD_LISTENER_MY, 1);
         n = sdBuild(sim, 0, ev);
 
@@ -344,6 +348,17 @@ int run_sound_delivery_builder(void) {
         UT_ASSERT_MSG(sdCountSounds(ev, n) == 1,
                       "expected exactly 1 tank-hit sound for slot 0, got %d of "
                       "%d event(s)", sdCountSounds(ev, n), n);
+
+        sdResetEvents(sim);
+        sdAddSound(sim, EVENT_SOUND_TANK_HIT, (uint8_t)hitTankNear, otherMX,
+                   SD_LISTENER_MY, 1);
+        n = sdBuild(sim, 0, ev);
+        UT_ASSERT_MSG(sdCountSounds(ev, n) == 0,
+                      "slot 0 was sent the hit on player 1 at %u,%u, %d squares "
+                      "away and past SDIST_NONE %d, with no nearer hit to "
+                      "outvote it — a hit on another player does not skip the "
+                      "distance cull", (unsigned)otherMX,
+                      (unsigned)SD_LISTENER_MY, SD_GAP_SILENT, SDIST_NONE);
     }
 
     /* ---- manLayingMineNear reaches the near tier only -------------------- */
