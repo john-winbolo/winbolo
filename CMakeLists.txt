@@ -3102,6 +3102,42 @@ endif()
 
 enable_testing()
 
+# ---------------------------------------------------------------------------
+# warmup.* — pay each test binary's first-execution cost before anything timed
+#
+# macOS assesses a newly written executable the first time it runs, and the
+# assessment is not cheap: a freshly linked WinBoloDS takes ~1.05s to reach
+# -help with only ~0.04s of that on CPU, against ~0.50s once the result is
+# cached. Every dylib it pulls in (SDL3, onnxruntime, sentry) is assessed on
+# first load too.
+#
+# That lands squarely on the UDP baseline scenarios. tests/baseline/run.sh
+# waits a fixed 0.5s for the DS to come up and then schedules client commands
+# against server tick counts, so on the first run after a build the server is
+# still being assessed when the clients connect and the commands land at the
+# wrong ticks. The captures diverge, the run reports a broad set of failures,
+# and rerunning the identical tree passes — which makes the failures look
+# flaky rather than mechanical.
+#
+# Running each binary once with a flag that loads it and exits pays that cost
+# outside any timed window. FIXTURES_SETUP makes CTest schedule these first
+# and only once, including when a subset is selected with -R.
+#
+# WinBoloUnitTests takes --list, not --help: test_main.c only recognises
+# --list and --test, and anything else falls through to running all 600-odd
+# tests in one process — including the *_capture tests that are kept out of
+# CTest precisely because they rewrite committed fixtures. Getting this flag
+# wrong does not just make the fixture slow, it dirties the working tree.
+#
+# Not guarded on APPLE: the cost elsewhere is three sub-second process starts,
+# it warms the page cache on every platform, and a binary too broken to print
+# its own usage is worth catching before 600-odd tests try to use it.
+add_test(NAME warmup.headless  COMMAND $<TARGET_FILE:WinBoloHeadless> --help)
+add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -help)
+add_test(NAME warmup.unittests COMMAND $<TARGET_FILE:WinBoloUnitTests> --list)
+set_tests_properties(warmup.headless warmup.ds warmup.unittests
+                     PROPERTIES FIXTURES_SETUP warm_binaries TIMEOUT 60)
+
 # Per-scenario CTest entries. Scenario names must stay in sync with the
 # dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
 # no shared state and parallelize freely. UDP scenarios share a hardcoded
@@ -3154,7 +3190,9 @@ foreach(_name IN LISTS _baseline_fast)
                           --scenario ${_name}
                           $<TARGET_FILE:WinBoloHeadless>
                           $<TARGET_FILE:WinBoloDS>)
-    set_tests_properties(baseline.${_name} PROPERTIES TIMEOUT 60)
+    set_tests_properties(baseline.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
@@ -3166,7 +3204,8 @@ foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
                               $<TARGET_FILE:WinBoloDS>)
         set_tests_properties(baseline.${_name} PROPERTIES
                              TIMEOUT 60
-                             RESOURCE_LOCK "udp_${_port}")
+                             RESOURCE_LOCK "udp_${_port}"
+                             FIXTURES_REQUIRED warm_binaries)
     endforeach()
 endforeach()
 
@@ -4428,14 +4467,18 @@ set(_unit_test_names
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
-    set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
+    set_tests_properties(unit.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 if(WB_NETDEBUG)
     foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss netdebug_error_offset_clamped)
         add_test(NAME netdebug.${_name}
                  COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
-        set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)
+        set_tests_properties(netdebug.${_name} PROPERTIES
+                             TIMEOUT 60
+                             FIXTURES_REQUIRED warm_binaries)
     endforeach()
 endif()
 

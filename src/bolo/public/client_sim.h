@@ -537,6 +537,18 @@ BYTE         clientSimGetViewTarget(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
+
+/* Monotonic count of installed maps this client has discarded because a
+ * re-accept armed a fresh download (a mid-lobby map change, or a
+ * return-to-lobby). The initial join does not count — nothing was installed
+ * to discard. Never decreases.
+ *
+ * Sample it before triggering a map change and compare afterwards to
+ * establish that the change really did invalidate the installed map. The
+ * invalidation itself is a transient — the old map is gone only until the
+ * new one lands — so an observer polling clientSimGetServerMapData for NULL
+ * can step over the whole window and see nothing. */
+uint32_t     clientSimGetMapInvalidateCount(const ClientSim *cs);
 /* Map-download progress as 0..100. Returns 100 for the local transport
  * (no download needed) and 0 when no transport is bound. UDP path reads
  * mapDownloadReceived/Total from the transport. */
