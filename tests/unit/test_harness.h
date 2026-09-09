@@ -888,6 +888,26 @@ int run_two_clients_full_sync_independent(void);
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
 
+/* Viewport extent (test_fx_viewport_cull.c): a recipient's own tank rect
+ * reaches SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN squares on every
+ * side and corner, covers the block the overview reveals round a tank, and
+ * stops one square past the extent. */
+int run_viewport_floor(void);
+
+/* Sound events (test_sound_delivery.c): the three sound events round-trip
+ * through packGameEvent / unpackGameEvent with their four-byte payload intact
+ * and nothing past it; serverSimBuildSnapshot's sound block culls by distance
+ * at SDIST_NONE, skips a recipient's own shot, sends bubbles only to the player
+ * losing the ammo, sends a tank hit to the player hit at any range, and drops
+ * manLayingMineNear once its tier is far; and the delivered payload carries a
+ * tier and a compass direction for a human recipient — never the sound's map
+ * square, in or out of its viewport rects — while a bot keeps the square, and
+ * so does a local slot flagged through serverSimSetSoundSquares until the flag
+ * is cleared. */
+int run_sound_event_codec(void);
+int run_sound_delivery_builder(void);
+int run_sound_payload_shape(void);
+
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
  * bases and tanks each grant a screen under always, nothing under off (and
@@ -1398,6 +1418,19 @@ int run_pill_shadow_withheld_crc_matches(void);
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
 
+/* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
+ * recipient whose only viewport rect is its own tank screen, both delivery
+ * paths carry a sound 30 squares away and neither carries one at 45, a
+ * delivered sound arrives with a tier and a bearing rather than its map
+ * square, a far manLayingMineNear is dropped, and a tank hit on the recipient
+ * arrives from 60 squares out. */
+int run_sound_delivery_wire_cull(void);
+
+/* What the client plays for a sound the wire delivered
+ * (test_sound_delivery_wire.c): the near variant at 10 squares, the far
+ * variant at 30, and manLayingMineNear at 10. */
+int run_sound_tier_playback(void);
+
 /* Ally view over the loopback transport (test_view_ally_loopback.c): under
  * viewPolicyKey, with an allied in-process player parked outside every rect
  * the wire client has and absent from the client's interpolation mask, the
@@ -1624,6 +1657,14 @@ int run_netdebug_error_offset_clamped(void);
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
 struct ServerSim *ut_make_running_sim(const char *player_name);
+
+/* The sounds frontEndPlaySound was handed, recorded by the stub in
+ * test_stubs.c so a test can assert which variant the client played.
+ * ut_sound_get returns the sndEffects value at that index, or -1 past the
+ * end. The recorder is bounded; sounds past its cap are not kept. */
+void ut_sound_reset(void);
+int  ut_sound_count(void);
+int  ut_sound_get(int index);
 
 #ifdef __cplusplus
 }

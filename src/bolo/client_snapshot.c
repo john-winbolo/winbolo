@@ -325,11 +325,15 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         }
         break;
       case EVENT_SOUND:
-        /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
-         * Sounds are server-authoritative (isPredicting suppresses prediction-side
-         * sounds). Bubbles and tank-sink are gated to the local player only:
-         * they're tied to the player's own boat/drown event and would otherwise
-         * play whenever any remote tank within distance went into water. */
+        /* data: [soundId, tier, direction, sourcePlayer] — play the variant the
+         * tier names. The server measured the sound against this recipient's
+         * tank and dropped anything out of earshot, so there is no distance
+         * work left here. Sounds are server-authoritative (isPredicting
+         * suppresses prediction-side sounds). Bubbles and tank-sink are
+         * restricted to the local player: they're tied to the player's own
+         * boat/drown event and would otherwise play whenever any remote tank
+         * within distance went into water. The server drops those too; keeping
+         * the check here also covers a replay. */
         if (isHuman) {
           sndEffects sid = (sndEffects)events[i].data[0];
           bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
@@ -339,13 +343,13 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         }
         break;
       case EVENT_SOUND_SHOOT:
-        /* data: [soundId, mx, my, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
+        /* data: [soundId, tier, direction, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
         if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
           clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_TANK_HIT:
-        /* data: [soundId, mx, my, hitPlayer] */
+        /* data: [soundId, tier, direction, hitPlayer] */
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(csPtr, hitTankSelf);

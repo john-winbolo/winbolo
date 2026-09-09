@@ -114,7 +114,7 @@ static void csCallbackMessageAdd(void *ctx, messageType msgType,
 static void csCallbackSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
   ClientSim *cs = (ClientSim *)ctx;
   if (cs->sim.isPredicting) return;
-  clientSoundDist(&cs->sim, value, mx, my);
+  clientSoundDistLocal(&cs->sim, value, mx, my);
 }
 
 static void csCallbackCenterTank(void *ctx) {

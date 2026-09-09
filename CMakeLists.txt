@@ -3301,6 +3301,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_fx_viewport_cull.c
+    tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
@@ -3344,6 +3345,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_map_cull.c
+    tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
     tests/unit/test_loopback_upload.c
     tests/unit/test_gate1_integration.c
@@ -4099,6 +4101,10 @@ set(_unit_test_names
     voice_flags_snapshot_masking
     voice_talking_codec
     fx_viewport_cull
+    viewport_floor
+    sound_event_codec
+    sound_delivery_builder
+    sound_payload_shape
     view_rects_default_baseline
     view_rects_always_base_ally
     view_rects_off
@@ -4244,6 +4250,8 @@ set(_unit_test_names
     pill_shadow_withheld_crc_matches
     loopback_map_cull
     loopback_map_cull_resync
+    sound_delivery_wire_cull
+    sound_tier_playback
     view_ally_loopback
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen

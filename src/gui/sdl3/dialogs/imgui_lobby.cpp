@@ -231,6 +231,14 @@ extern "C" void imguiLobbyFrameReset(void) {
      * past the lobby session. */
     lobbyReelEnd();
 #endif
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+    /* A clip export waiting on its save picker holds the whole encoded GIF,
+     * and nothing polls it once the lobby is gone. Deliberately not folded
+     * into lobbyReelEnd above: that also runs mid-session when the countdown
+     * clears the summary, which must not throw away a clip the player is
+     * still naming. */
+    lobbyClipGifSaveAbandon();
+#endif
 #if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
     /* Release the rating fetch and everything it filled in. The star textures
      * stay: they belong to the WBN browser as much as to the recap, and the
@@ -2484,6 +2492,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * lobby voice neither plays nor sends, and the mic-state command
          * does not reach the server until the game starts. */
         voiceTick(cs);
+#endif
+
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+        /* Write out a clip export whose save picker has been answered. Here
+         * rather than in the recap that started it: the picker is asynchronous
+         * so this loop keeps ticking the transport underneath it, and a player
+         * who switches away from the recap while it is open must still get
+         * their file. Outside the ImGui frame, because a failed write puts up
+         * a message box that runs a loop of its own. */
+        lobbyClipGifSavePoll();
 #endif
 
         /* Check for game start */

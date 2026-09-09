@@ -53,8 +53,8 @@
  *   wasm target's sources.
  * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
  *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
- *   sources, and the save path spins its own SDL event loop waiting on a
- *   native file dialog, which a browser main loop cannot do. */
+ *   sources, and the save path ends in a native file dialog the browser has
+ *   no equivalent of. */
 #define BOLO_REEL_WBN_FETCH 1
 #ifdef __EMSCRIPTEN__
 #define BOLO_REEL_WBN_FETCH_CURL 0
@@ -484,6 +484,12 @@ void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
 bool lobbyClipGifButton(const char *id, bool compact);
 float lobbyClipGifButtonWidth(void);
 void lobbyClipGifRender(float s);
+/* The clip export's save picker is asynchronous. The poll writes out a clip
+ * whose picker has been answered and belongs in the lobby's event loop, above
+ * the view switch, so an export survives navigating away from the recap; the
+ * abandon releases one still waiting when the lobby session ends. */
+void lobbyClipGifSavePoll(void);
+void lobbyClipGifSaveAbandon(void);
 #endif
 
 /* rating */

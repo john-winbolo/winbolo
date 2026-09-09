@@ -7,6 +7,10 @@
  * screen — must still be deliverable, so the pillbox's surroundings have to be
  * part of the viewport set. This test places a tank and a far-away owned pill
  * and asserts both regions are covered while a point between them is not.
+ *
+ * run_viewport_floor below pins how far a rect reaches, so a change to
+ * SNAPSHOT_VIEWPORT_MARGIN fails here with a message that says what moved
+ * rather than obscurely in the fixtures that assume the extent.
  */
 
 #include <string.h>
@@ -17,6 +21,7 @@
 #include "game_sim.h"
 #include "tank.h"
 #include "pillbox.h"
+#include "view_policy.h"           /* viewPolicyOff — leave only the tank rect */
 #include "test_harness.h"
 
 int run_fx_viewport_cull(void) {
@@ -59,6 +64,98 @@ int run_fx_viewport_cull(void) {
     /* A point midway between, beyond halfView of both, is in neither. */
     UT_ASSERT_MSG(!inAnyViewport(vps, n, 125, 125),
                   "midpoint (125,125) should be outside both viewports");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* How far a tank's rect reaches, in map squares.
+ *
+ * VF_FLOOR is OVERVIEW_TANK_HALF, the half-width of the block the overview
+ * reveals round a tank. A client cannot draw ground it was never sent, so the
+ * server has to cover at least this much whatever else changes.
+ *
+ * VF_LAST_IN and VF_FIRST_OUT are the extent itself, which is
+ * SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN. The numbers are written
+ * out rather than derived so that moving the margin fails this case: the
+ * overview header is client-side and the snapshot builder does not include it.
+ */
+#define VF_FLOOR      14
+#define VF_LAST_IN    19
+#define VF_FIRST_OUT  20
+
+/* Somewhere with VF_FIRST_OUT squares of map on every side. */
+#define VF_TANK_MX   128
+#define VF_TANK_MY   128
+
+/* Each side and each corner, so an extent that is wrong on one axis only, or
+ * in one direction only, is still caught. */
+static const struct {
+    int         dx;
+    int         dy;
+    const char *name;
+} vfDirs[] = {
+    { -1,  0, "west" },       {  1,  0, "east" },
+    {  0, -1, "north" },      {  0,  1, "south" },
+    { -1, -1, "north-west" }, {  1, -1, "north-east" },
+    { -1,  1, "south-west" }, {  1,  1, "south-east" },
+};
+
+/* The extent of a recipient's own tank rect, pinned on all eight directions:
+ * the overview's reveal block is inside it, the last square of the extent is
+ * inside it, and one square further out is not. */
+int run_viewport_floor(void) {
+    ServerSim *sim = ut_make_running_sim("Vf");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid for positioning");
+
+    /* Nothing but the tank may grant a rect, so a square outside the extent is
+     * outside every rect the recipient has whatever the map ships with. */
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+
+    /* The cull measures from wx >> 8, so the square centre puts the tank
+     * exactly on VF_TANK_MX/MY. */
+    WORLD wx = (WORLD)((VF_TANK_MX << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+    WORLD wy = (WORLD)((VF_TANK_MY << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE);
+    tankSetWorld(gs, &gs->tanks[0], wx, wy, 0, false);
+
+    WORLD lwx = 0, lwy = 0;
+    UT_ASSERT_MSG(serverSimGetTankState(sim, 0, &lwx, &lwy),
+                  "no tank state for slot 0");
+    UT_ASSERT_MSG((int)(lwx >> 8) == VF_TANK_MX && (int)(lwy >> 8) == VF_TANK_MY,
+                  "tank sits at %d,%d, expected %d,%d",
+                  (int)(lwx >> 8), (int)(lwy >> 8), VF_TANK_MX, VF_TANK_MY);
+
+    ViewportRect vps[MAX_VIEWPORTS];
+    int n = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
+    UT_ASSERT_MSG(n == 1, "expected the tank rect alone, got %d", n);
+
+    for (size_t d = 0; d < sizeof(vfDirs) / sizeof(vfDirs[0]); d++) {
+        int fx = VF_TANK_MX + vfDirs[d].dx * VF_FLOOR;
+        int fy = VF_TANK_MY + vfDirs[d].dy * VF_FLOOR;
+        int ix = VF_TANK_MX + vfDirs[d].dx * VF_LAST_IN;
+        int iy = VF_TANK_MY + vfDirs[d].dy * VF_LAST_IN;
+        int ox = VF_TANK_MX + vfDirs[d].dx * VF_FIRST_OUT;
+        int oy = VF_TANK_MY + vfDirs[d].dy * VF_FIRST_OUT;
+
+        UT_ASSERT_MSG(inAnyViewport(vps, n, fx, fy),
+                      "(%d,%d), %d squares %s of the tank, is outside the rect "
+                      "— the overview reveals that ground, so the server has to "
+                      "send it", fx, fy, VF_FLOOR, vfDirs[d].name);
+        UT_ASSERT_MSG(inAnyViewport(vps, n, ix, iy),
+                      "(%d,%d), %d squares %s of the tank, is outside the rect "
+                      "— the extent has shrunk", ix, iy, VF_LAST_IN,
+                      vfDirs[d].name);
+        UT_ASSERT_MSG(!inAnyViewport(vps, n, ox, oy),
+                      "(%d,%d), %d squares %s of the tank, is inside the rect "
+                      "— the extent has grown", ox, oy, VF_FIRST_OUT,
+                      vfDirs[d].name);
+    }
 
     serverSimDestroy(sim);
     return 0;

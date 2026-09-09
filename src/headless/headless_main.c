@@ -1799,6 +1799,11 @@ static bool fastModeSetupGame(void) {
   }
   clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
+  /* The brain this harness drives reads each sound's map square. The slot is
+   * an ordinary local player, not a bot-manager bot, so without this the
+   * server would send it a near/far tier and a bearing instead. */
+  serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
+                           true);
 
   /* Legacy subscriber handle — connect's auto-subscriber registration
    * supersedes the explicit headlessControlSub bookkeeping. Keep the
@@ -1902,6 +1907,11 @@ static int runFastMode(void) {
   }
   clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
+  /* The brain this harness drives reads each sound's map square. The slot is
+   * an ordinary local player, not a bot-manager bot, so without this the
+   * server would send it a near/far tier and a bearing instead. */
+  serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
+                           true);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   if (!optQuiet) {
