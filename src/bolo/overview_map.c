@@ -1073,13 +1073,27 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * map for the frontend: the fog samples it several times across each square
    * to draw a straight edge, where the per-square flags can only say yes or no.
    * The tank's block is the extent the mask covers. Zeroed whole, so a frontend
-   * can compare it byte for byte to decide the beam has not moved. */
-  memset(&om->beam, 0, sizeof(om->beam));
-  if (ownBlocks > 0 && overviewIsHeadlights(in->experiment) == TRUE) {
-    om->beam = overviewBeamFromHeading(in->heading);
-    om->beam.originX = useMX;
-    om->beam.originY = useMY;
-    om->beam.block = om->live[ownBlocks - 1];
+   * can compare it byte for byte to decide the beam has not moved.
+   *
+   * A moved beam is a change in its own right. The mask samples it across each
+   * square, so a tank turning on the spot moves the edge it draws without
+   * moving a rect or flipping a single flag byte. A frontend reading the map
+   * through a copy taken only when the generation moves would go on drawing the
+   * edge it last built, so the beam has to count towards that generation. */
+  {
+    OverviewBeam nextBeam; /* The beam this update wants */
+
+    memset(&nextBeam, 0, sizeof(nextBeam));
+    if (ownBlocks > 0 && overviewIsHeadlights(in->experiment) == TRUE) {
+      nextBeam = overviewBeamFromHeading(in->heading);
+      nextBeam.originX = useMX;
+      nextBeam.originY = useMY;
+      nextBeam.block = om->live[ownBlocks - 1];
+    }
+    if (memcmp(&om->beam, &nextBeam, sizeof(om->beam)) != 0) {
+      changed = TRUE;
+    }
+    om->beam = nextBeam;
   }
 
   for (i = 0; i < om->liveCount; i++) {

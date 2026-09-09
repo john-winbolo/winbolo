@@ -388,6 +388,46 @@ int run_overview_regions(void) {
                       om->liveCount);
         ASSERT_RECT(om->live[0], 93, 93, 107, 107);
 
+        /* The generation is what a frontend copying the map keys off, so a
+         * turn has to move it and an update that changed nothing must not.
+         *
+         * The turn arm passes on the flags alone today: every heading step
+         * tried, down to one bradian, moves at least one square across the
+         * beam's edge, so the per-square pass reports the change whatever the
+         * beam does. It is here for the contract rather than as a regression
+         * test — the beam is compared into the generation as well, because the
+         * mask samples it across each square and an edge that moves inside a
+         * square is a redraw the flags cannot ask for.
+         *
+         * The no-op arm does discriminate: the beam is compared byte for byte,
+         * so a struct whose padding did not settle would move the generation
+         * every frame and the copy would be taken every frame. */
+        {
+            uint32_t genStill; /* Generation after an update that changed nothing */
+            uint32_t genTurned; /* Generation after the tank turned */
+
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
+            fog.heading = BRADIANS_EAST;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+
+            genStill = om->generation;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->generation == genStill,
+                          "an update with nothing changed moved the generation "
+                          "from %u to %u", (unsigned)genStill,
+                          (unsigned)om->generation);
+
+            fog.heading = (TURNTYPE)(BRADIANS_EAST + 1);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            genTurned = om->generation;
+            UT_ASSERT_MSG(genTurned != genStill,
+                          "the tank turned one bradian off east and the "
+                          "generation stayed at %u, so the beam moved without "
+                          "saying so", (unsigned)genTurned);
+        }
+
         /* A block over an edge is trimmed to the map, not wrapped through it,
          * the way every other block is. */
         overviewMapReset(om);
