@@ -317,6 +317,8 @@ static const char *logEventsTypeName(int type) {
     case CTRL_BALANCE_FAILED:        return "CTRL_BALANCE_FAILED";
     case CTRL_ROUND_STATS:           return "CTRL_ROUND_STATS";
     case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
+    case CTRL_STATS_SEED:            return "CTRL_STATS_SEED";
+    case CTRL_VOICE_TALKING:         return "CTRL_VOICE_TALKING";
     case CTRL_NEWSWIRE_MUTE:         return "CTRL_NEWSWIRE_MUTE";
     default:                         return NULL;
   }
@@ -594,6 +596,16 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       fprintf(f, ",\"fromPlayer\":%u,\"keyPrefix\":",
               (unsigned)evt->u.ratingPosted.fromPlayer);
       logEventsJsonStr(f, evt->u.ratingPosted.key, 6);
+      break;
+
+    case CTRL_STATS_SEED:
+      fprintf(f, ",\"playerCount\":%u",
+              (unsigned)evt->u.statsSeed.playerCount);
+      break;
+
+    case CTRL_VOICE_TALKING:
+      fprintf(f, ",\"talking\":%u",
+              (unsigned)evt->u.voiceTalking.talking);
       break;
 
     case CTRL_NEWSWIRE_MUTE:
@@ -1796,6 +1808,11 @@ static bool fastModeSetupGame(void) {
   }
   clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
+  /* The brain this harness drives reads each sound's map square. The slot is
+   * an ordinary local player, not a bot-manager bot, so without this the
+   * server would send it a near/far tier and a bearing instead. */
+  serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
+                           true);
 
   /* Legacy subscriber handle — connect's auto-subscriber registration
    * supersedes the explicit headlessControlSub bookkeeping. Keep the
@@ -1899,6 +1916,11 @@ static int runFastMode(void) {
   }
   clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
+  /* The brain this harness drives reads each sound's map square. The slot is
+   * an ordinary local player, not a bot-manager bot, so without this the
+   * server would send it a near/far tier and a bearing instead. */
+  serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
+                           true);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   if (!optQuiet) {

@@ -93,11 +93,18 @@ int run_lobby_claim_start_non_host_occupied_rejected(void);
 int run_lobby_claim_start_non_host_other_slot_rejected(void);
 int run_lobby_claim_start_self_free_and_release(void);
 int run_lobby_claim_start_validation(void);
+int run_player_mute_mask_roundtrip(void);
 int run_command_codec_cmdseq_slot(void);
 int run_command_codec_bounds_checks(void);
 int run_command_rejected_parks_name_codes(void);
 int run_command_rejected_ignores_other_slot(void);
 int run_command_rejected_clear_resets_both_fields(void);
+int run_live_stats_kill_credits_killer_and_victim(void);
+int run_live_stats_suicide_counts_death_only(void);
+int run_live_stats_lgm_loss_splits_victim_and_killer(void);
+int run_live_stats_captures_credit_new_owner(void);
+int run_live_stats_out_of_range_slot_ignored(void);
+int run_live_stats_cleared_on_running_phase(void);
 int run_shell_death_codec_roundtrip(void);
 int run_shell_death_culls_matching_predicted_shell(void);
 int run_shell_death_rejected_culls_without_impact(void);
@@ -410,6 +417,12 @@ int run_spectator_slot_codec(void);
  * the empty/max-length messages and the out-of-range specIdx / overrun
  * rejections. */
 int run_spectator_chat_codec(void);
+
+/* CTRL_STATS_SEED body-codec round-trip (test_stats_seed_codec.c): the
+ * mid-round live-scoreboard seed encodes/decodes through the body tables, with
+ * a full MAX_TANKS roster, the zero-row minimum, and the short / truncated /
+ * out-of-range-slot rejections plus the over-count clamp. */
+int run_stats_seed_codec(void);
 
 /* Spectator-chat routing (test_spectator_chat_routing.c): a published
  * CTRL_SPECTATOR_CHAT reaches a player bus subscriber and a live spectator
@@ -926,6 +939,17 @@ int run_edge_send_predicate(void);
  * closest-base selection (enemy exclusion, in-range, post-flip inclusion) and
  * the per-recipient full-sync stock cull in serverSimBuildSnapshot (real stock
  * only for the recipient's own closest base; other bases zeroed, owner kept). */
+/* Mic-status visibility (test_voice_flags.c): serverSimBuildSnapshot shows
+ * PLAYER_FLAG_HAS_MIC / PLAYER_FLAG_VOICE_MUTED only to the recipients that
+ * player's voice could reach — everyone outside a running game, allies
+ * inside one — and masks nothing but PLAYER_VOICE_FLAG_MASK. */
+int run_voice_flags_snapshot_masking(void);
+
+/* CTRL_VOICE_TALKING body-codec round-trip (test_voice_talking_codec.c):
+ * the talking bitmap encodes/decodes through the body tables — empty, one
+ * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
+int run_voice_talking_codec(void);
+
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
@@ -936,6 +960,26 @@ int run_two_clients_full_sync_independent(void);
  * pillbox screen, so an fx near an owned pillbox but off the tank screen is
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
+
+/* Viewport extent (test_fx_viewport_cull.c): a recipient's own tank rect
+ * reaches SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN squares on every
+ * side and corner, covers the block the overview reveals round a tank, and
+ * stops one square past the extent. */
+int run_viewport_floor(void);
+
+/* Sound events (test_sound_delivery.c): the three sound events round-trip
+ * through packGameEvent / unpackGameEvent with their four-byte payload intact
+ * and nothing past it; serverSimBuildSnapshot's sound block culls by distance
+ * at SDIST_NONE, skips a recipient's own shot, sends bubbles only to the player
+ * losing the ammo, sends a tank hit to the player hit at any range, and drops
+ * manLayingMineNear once its tier is far; and the delivered payload carries a
+ * tier and a compass direction for a human recipient — never the sound's map
+ * square, in or out of its viewport rects — while a bot keeps the square, and
+ * so does a local slot flagged through serverSimSetSoundSquares until the flag
+ * is cleared. */
+int run_sound_event_codec(void);
+int run_sound_delivery_builder(void);
+int run_sound_payload_shape(void);
 
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
@@ -1447,6 +1491,19 @@ int run_pill_shadow_withheld_crc_matches(void);
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
 
+/* Sound culling over the loopback transport (test_sound_delivery_wire.c): for a
+ * recipient whose only viewport rect is its own tank screen, both delivery
+ * paths carry a sound 30 squares away and neither carries one at 45, a
+ * delivered sound arrives with a tier and a bearing rather than its map
+ * square, a far manLayingMineNear is dropped, and a tank hit on the recipient
+ * arrives from 60 squares out. */
+int run_sound_delivery_wire_cull(void);
+
+/* What the client plays for a sound the wire delivered
+ * (test_sound_delivery_wire.c): the near variant at 10 squares, the far
+ * variant at 30, and manLayingMineNear at 10. */
+int run_sound_tier_playback(void);
+
 /* Ally view over the loopback transport (test_view_ally_loopback.c): under
  * viewPolicyKey, with an allied in-process player parked outside every rect
  * the wire client has and absent from the client's interpolation mask, the
@@ -1585,6 +1642,67 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
+ * decoded frame by frame stays inside the per-frame byte budget (the
+ * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps
+ * its signal level, and conceals a dropped packet. */
+int run_voice_core_roundtrip(void);
+
+/* Saved audio device name matching (test_voice_device.c): a name that is
+ * present resolves to its index wherever it sits in the list, and every way
+ * of being absent - not there, empty, NULL, an empty list, a prefix rather
+ * than the whole name - answers -1, which the caller reads as the system
+ * default. A hole in the list is stepped over. */
+int run_voice_device_resolve(void);
+
+/* Level meter peak (test_voice_peak.c): a spike sets the peak, it stands for
+ * the hold with the clock driven straight through the argument, then falls
+ * until it reaches the live level and follows it rather than dropping through
+ * it. A louder reading mid-fall replaces the peak and re-arms the hold, and a
+ * level from outside 0..1 is clamped before it reaches the state. */
+int run_voice_peak(void);
+
+/* Voice segment framing (test_voice_segment.c): fields survive both
+ * directions with the payload left pointing into the caller's buffer, and
+ * every short, oversized, or out-of-range segment is refused. */
+int run_voice_segment_roundtrip(void);
+int run_voice_segment_rejects_malformed(void);
+
+/* Per-speaker jitter buffer (test_voice_jitter.c): frames play in sequence
+ * order however they arrive, gaps are concealed, sequence numbers compare
+ * correctly across the 256 wrap, a talker who stops stops playback, and a
+ * later utterance at an unrelated sequence number resumes it. */
+int run_voice_jitter_ordering_and_plc(void);
+
+/* Frames that arrive but will not decode (test_voice_jitter.c): each is
+ * concealed and consumed like a missing one, a run of them ends playback
+ * instead of concealing indefinitely, and the end-of-utterance flag is
+ * honoured on a frame that failed to decode. */
+int run_voice_jitter_undecodable_run(void);
+
+/* Jitter buffer under adverse arrival (test_voice_jitter_loss.c): a generated
+ * loss / reorder / burst-outage pattern is pushed a tick at a time, and the
+ * per-speaker counters are used to check that concealment matches what was
+ * lost, that no frame is played twice or vanishes, that added latency stays
+ * bounded, and that playback recovers from an outage. Also prints the
+ * concealment and latency table the jitter constants are tuned from. */
+int run_voice_jitter_under_loss(void);
+
+/* Per-client voice flood cap (test_voice_flood_cap.c): over the loopback
+ * transport, a burst queued inside one client tick is forwarded only up to
+ * VOICE_SEGMENTS_PER_TICK with the remainder drained and counted as dropped,
+ * while a steady one-frame-per-tick talker loses nothing and the separate
+ * concurrent-talker cap never fires on them. */
+int run_voice_flood_cap_enforced(void);
+
+/* Concurrent-talker selection (test_voice_talker_select.c): the per-recipient
+ * cap keeps the most recently started talkers rather than the lowest-numbered
+ * slots, breaks an onset tie on the newer sequence number across the 256 wrap,
+ * is stable for inputs tied on both, and holds its bounds at and below the
+ * cap and on degenerate input. */
+int run_voice_talker_select_ranks_recent(void);
+int run_voice_talker_select_bounds(void);
+
 /* Skin asset reads out of a directory vs a zip (test_skin_source.c). */
 int run_skin_source_dir_and_zip(void);
 
@@ -1638,6 +1756,14 @@ int run_netdebug_error_offset_clamped(void);
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
 struct ServerSim *ut_make_running_sim(const char *player_name);
+
+/* The sounds frontEndPlaySound was handed, recorded by the stub in
+ * test_stubs.c so a test can assert which variant the client played.
+ * ut_sound_get returns the sndEffects value at that index, or -1 past the
+ * end. The recorder is bounded; sounds past its cap are not kept. */
+void ut_sound_reset(void);
+int  ut_sound_count(void);
+int  ut_sound_get(int index);
 
 #ifdef __cplusplus
 }

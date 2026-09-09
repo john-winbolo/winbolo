@@ -69,6 +69,23 @@ tankButton inputGetKeys(struct ClientSim *cs, keyItems *setKeys, bool isMenu);
 void inputScroll(struct ClientSim *cs, keyItems *setKeys, bool isMenu);
 
 /*********************************************************
+*NAME:          inputPushToTalkPoll
+*PURPOSE:
+*  Tells the voice runtime whether the push-to-talk key is
+*  held. Called once per turn of whichever loop is reading
+*  the keyboard — the in-game key polls above, and the lobby,
+*  which reads no keys of its own. Callers that are not
+*  reading input this turn pass active FALSE rather than
+*  skipping the call, so a key held as a loop hands over
+*  cannot leave the microphone open behind it.
+*
+*ARGUMENTS:
+*  setKeys - Structure that holds the key settings
+*  active  - FALSE when this poll is not reading input
+*********************************************************/
+void inputPushToTalkPoll(keyItems *setKeys, bool active);
+
+/*********************************************************
 *NAME:          inputIsFireKeyPressed
 *PURPOSE:
 *  Returns whether the fire key is pressed

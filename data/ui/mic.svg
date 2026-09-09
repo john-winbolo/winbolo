@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Microphone: capsule, cradle and stand. Drawn as one filled silhouette
+     because imguiLoadSvgIconWhite rasterises it to a white alpha mask and
+     tints it, so nothing here may depend on colour to be read. The three
+     subpaths do not overlap, which is what lets mic-muted.svg reuse the
+     same geometry with fill-rule="evenodd" to knock its slash through. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+  <path d="M5 10v1a7 7 0 0 0 14 0v-1h-2v1a5 5 0 0 1-10 0v-1H5z"/>
+  <path d="M11 18h2v2h3v2H8v-2h3v-2z"/>
+</svg>

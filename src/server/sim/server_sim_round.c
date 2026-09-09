@@ -468,6 +468,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
     info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);
+    info.voiceMode       = serverSimGetVoiceMode(sim);
     winbolonetSetLobbyInfo(&info);
 }
 

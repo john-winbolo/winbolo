@@ -57,10 +57,6 @@ void lv_soundDist(sndEffects value, BYTE mx, BYTE my) {
     return;
   }
 
-  if (mineExplosionNear == value) {
-    gapY = 0;
-  }
-
   /* Get gap */
   if ((tankX - mx) < 0) {
     gapX = mx - tankX;
@@ -151,7 +147,7 @@ void lv_soundDist(sndEffects value, BYTE mx, BYTE my) {
       }
       break;
     case manLayingMineNear:
-      if (gapX <= SDIST_SOFT || gapY <= SDIST_SOFT) {
+      if (gapX <= SDIST_SOFT && gapY <= SDIST_SOFT) {
         lv_frontEndPlaySound(manLayingMineNear);
       }
       break;

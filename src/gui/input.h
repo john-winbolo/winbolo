@@ -73,6 +73,8 @@ typedef struct {
   int kiQuickWall;
   int kiQuickPillbox;
   int kiQuickMine;
+  int kiPushToTalk;  /* Hold to transmit voice */
+  int kiMuteMic;     /* Toggle your own microphone off and on */
   /* Smart ping. Not scancodes: each slot is a packed chord (modifiers plus a
      key OR a mouse button) — see ping_binding.h. Unbound slots are 0, which
      matches nothing, so the array is always safe to walk in full.

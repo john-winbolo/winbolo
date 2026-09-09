@@ -75,6 +75,8 @@ typedef enum {
     CMD_RATING_POSTED,
     CMD_VIEW_STATE,
     CMD_VIEW_CYCLE,
+    CMD_PLAYER_MUTE,
+    CMD_VOICE_STATE,
     CMD_PING
 } ClientCommandType;
 
@@ -343,6 +345,22 @@ typedef struct {
 typedef struct {
     char key[ROUND_STATS_LOGKEY_LEN];
 } CmdRatingPosted;
+/* CMD_PLAYER_MUTE — mute or unmute one player for the sending client
+ * only. The server stops forwarding that player's voice and chat to the
+ * sender. Session-scoped: nothing is persisted, and the mask is cleared
+ * when the sender's slot is released. */
+typedef struct {
+    uint8_t targetPlayer;
+    uint8_t muted;        /* 0 = unmute, non-zero = mute */
+} CmdPlayerMute;
+
+/* CMD_VOICE_STATE — the sender's own mic status. Sent when it changes,
+ * not per tick. Self-reported and untrusted, like the client hint bits:
+ * a client lying about its own mic costs nothing. */
+typedef struct {
+    uint8_t hasMic;      /* 0/1 — voice enabled and an input device opened */
+    uint8_t selfMuted;   /* 0/1 — has a mic but is not transmitting */
+} CmdVoiceState;
 
 /* CmdViewState.kind — which kind of thing the sender is looking
  * through. Values are on the wire, so they are fixed. */
@@ -443,6 +461,8 @@ typedef struct ClientCommand {
         CmdRatingPosted        ratingPosted;
         CmdViewState           viewState;
         CmdViewCycle           viewCycle;
+        CmdPlayerMute          playerMute;
+        CmdVoiceState          voiceState;
         CmdPing                ping;
     } u;
 } ClientCommand;

@@ -686,6 +686,16 @@ bool serverSimGetAlliesInTrees(const ServerSim *sim) {
     return sim ? sim->alliesInTrees : false;
 }
 
+void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {
+    if (sim == NULL) return;
+    if ((int)mode < serverVoiceOn || (int)mode > serverVoiceProximity) return;
+    sim->voiceMode = mode;
+}
+
+ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim) {
+    return sim ? sim->voiceMode : serverVoiceOn;
+}
+
 uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {
     if (sim == NULL) return VIEW_DECAY_DEFAULT_SECS;
     if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {

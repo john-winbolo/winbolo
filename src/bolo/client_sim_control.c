@@ -510,6 +510,35 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     cs->lastRoundStats.wbnLogKey);
         break;
 
+    case CTRL_STATS_SEED: {
+        /* Mid-round join (or a re-join of one): the server's running per-slot
+         * counters replace the accumulator wholesale rather than adding to
+         * it, so seeding twice leaves the same board a single seed would.
+         * Only the six counters this client can keep current from the
+         * game-event stream are taken — the row also carries dmgDealt and
+         * builds, which no client-side event maintains, and a number frozen
+         * at its join-time value would be worse than none. */
+        uint8_t n = evt->u.statsSeed.playerCount;
+        uint8_t i;
+        if (n > MAX_TANKS) n = MAX_TANKS;
+        memset(cs->liveStats, 0, sizeof(cs->liveStats));
+        for (i = 0; i < n; i++) {
+            const RoundPlayerSummary *row = &evt->u.statsSeed.players[i];
+            ClientPlayerStats *dst;
+            /* The wire decoder rejects an out-of-range slot, but the
+             * in-process bus hands events over without passing through it. */
+            if (row->slot >= MAX_TANKS) continue;
+            dst = &cs->liveStats[row->slot];
+            dst->kills        = row->kills;
+            dst->deaths       = row->deaths;
+            dst->baseCaptures = row->baseCaptures;
+            dst->pillCaptures = row->pillCaptures;
+            dst->lgmKills     = row->lgmKills;
+            dst->lgmDeaths    = row->lgmDeaths;
+        }
+        break;
+    }
+
     case CTRL_ROUND_RATING_POSTED: {
         const char *key = evt->u.ratingPosted.key;
         /* The poster's own client re-armed its fetch when its POST returned,
@@ -767,6 +796,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyChatHistory[0] = '\0';
         cs->lobbyTeamChatHistory[0] = '\0';
         cs->lobbyHostSlotKnown = false;
+        /* The talking set belongs to the lobby we just left. The server
+         * sends an empty one as it leaves too, but this does not depend on
+         * that event to stop a talker showing for the whole round. */
+        cs->voiceTalkingMap = 0;
         /* Wipe per-game client state that a ClientSim surviving the lobby
          * cycle would otherwise carry into the new game. None of this is
          * refreshed wholesale by the snapshot apply, so without an explicit
@@ -779,6 +812,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * flawless / no-LGM-loss achievements for the rest of the session. */
         cs->myDeathsThisGame = 0;
         cs->myLgmLossesThisGame = 0;
+        /* Live per-slot scoreboard — counted from the game-event stream,
+         * so it would otherwise carry the previous round's totals. */
+        memset(cs->liveStats, 0, sizeof(cs->liveStats));
         cs->hasAnyBaseCaptured = false;
         cs->hasAnyPillCaptured = false;
         cs->maxPlayersSeenThisGame = 0;
@@ -1081,6 +1117,17 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
     }
+
+    case CTRL_VOICE_TALKING:
+        /* Raw mirror of the server's set, kept as it arrived. Which of
+         * those slots we have muted is the reader's business, not this
+         * dispatcher's — the mute list lives in the voice client, and
+         * folding it in here would leave no way to tell a talker we can
+         * hear from one we cannot. The server sends this in the lobby and
+         * the countdown only, and sends one empty set on the way out of
+         * them, so nothing is needed here to age it out. */
+        cs->voiceTalkingMap = evt->u.voiceTalking.talking;
+        break;
 
     case CTRL_SHELL_DEATH: {
         /* Server closure for one of our predicted shells: cull the ghost so

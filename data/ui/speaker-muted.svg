@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Speaker with a slash: speaker.svg's back plate and cone, without the
+     sound waves - nothing is coming out - plus a diagonal bar, all in one
+     path with fill-rule="evenodd". The bar is solid where it crosses empty
+     canvas and cuts a gap where it crosses the speaker, which is how a slash
+     reads on a single-colour silhouette - two colours are not available to
+     draw it over the top. Same bar as mic-muted.svg, so the two read as one
+     family whichever the cell is showing. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path fill-rule="evenodd" d="M3.5 9.5H8L13 4.5v15L8 14.5H3.5z
+                               M3.87 1.33L22.67 20.13L20.13 22.67L1.33 3.87z"/>
+</svg>

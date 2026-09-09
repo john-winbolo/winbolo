@@ -45,6 +45,7 @@ extern "C" {
 #include "client_enums.h"  /* labelLen */
 #include "upload_policy.h"  /* UploadPolicy — map-upload combo */
 #include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
+#include "server_voice_mode.h"  /* ServerVoiceMode — hosting voice combo */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../skin_source.h"
@@ -58,6 +59,10 @@ extern "C" {
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
 #include "imgui_news.h"
+#if defined(WINBOLO_VOICE)
+#include "../../voice.h"
+#include "voice_core.h"  /* VOICE_DEVICE_NAME_MAX — the device name buffers */
+#endif
 }
 
 /* Frame-rate / zoom constants (mirrors winbolo.h values) */
@@ -93,6 +98,7 @@ extern "C" {
   extern bool backgroundSound;
   extern bool useSoundKeepalive;
   extern int  soundVolume;
+  extern int  windowMasterVolume;
   extern bool showNewswireMessages;
   extern bool showAssistantMessages;
   extern bool showAIMessages;
@@ -110,6 +116,23 @@ extern "C" {
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
   void windowSetSoundVolume(int pct);
+  void windowSetMasterVolume(int pct);
+#if defined(WINBOLO_VOICE)
+  /* Voice apply/persist helpers — winbolo.c on the desktop, main_wasm.c in
+     the browser build, both beside windowSetSoundVolume. */
+  void windowSetVoiceEnabled(bool on);
+  void windowSetVoiceMode(int mode);
+  void windowSetVoiceMicGain(float gain);
+  void windowSetVoiceVolume(float gain);
+  void windowSetShowTankMicIcons(bool on);
+  bool windowGetShowTankMicIcons(void);
+#if defined(WINBOLO_VOICE_AEC)
+  void windowSetVoiceEchoCancel(bool on);
+  bool windowGetVoiceEchoCancel(void);
+  bool windowGetVoiceEchoCancelAvailable(void);
+  bool windowGetVoiceEchoCancelPlatform(void);
+#endif
+#endif
   void windowMenuNewswire_toggle(struct ClientSim *cs);
   void windowMenuAssistant_toggle(struct ClientSim *cs);
   void windowMenuAI_toggle(struct ClientSim *cs);
@@ -653,17 +676,57 @@ static bool skinPublishStart(void) {
 }
 #endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
 
+#if defined(WINBOLO_VOICE)
+/* The audio devices offered by the two combos in the voice section.
+ *
+ * Enumerating asks the driver what is plugged in, which is far too much to do
+ * on every frame of a dialog that redraws continuously, so the lists are held
+ * here and refreshed when the section comes back on screen.  "Came back" is
+ * read off the frame the section last drew on: it draws every frame while it
+ * is visible, so any gap in that run is it having been away.  Deriving it that
+ * way rather than seeding the lists when the dialog opens is what makes both
+ * ways into this tab — the pre-game dialog and the in-game overlay — refresh
+ * without either of them having to ask.
+ *
+ * Names are copied rather than pointed at: the voice module's own list is only
+ * good until the next count, and this one is read for the whole frame.  The
+ * cap is the same order as the backend's; a machine with more devices than
+ * this plugged in shows the first of them. */
+#define VOICE_DEVICE_LIST_CAP 32
+static int  s_voiceMicCount = 0;
+static int  s_voiceOutCount = 0;
+static char s_voiceMicNames[VOICE_DEVICE_LIST_CAP][VOICE_DEVICE_NAME_MAX];
+static char s_voiceOutNames[VOICE_DEVICE_LIST_CAP][VOICE_DEVICE_NAME_MAX];
+static int  s_voiceDeviceFrame = -1;
+
+/* Refills one list from the voice module, capped at what there is room for. */
+static int voiceFillDeviceNames(bool recording,
+                                char names[][VOICE_DEVICE_NAME_MAX]) {
+    int count = recording ? voiceRecordingDeviceCount()
+                          : voicePlaybackDeviceCount();
+    if (count > VOICE_DEVICE_LIST_CAP) count = VOICE_DEVICE_LIST_CAP;
+    for (int i = 0; i < count; i++) {
+        const char *name = recording ? voiceRecordingDeviceName(i)
+                                     : voicePlaybackDeviceName(i);
+        SDL_strlcpy(names[i], name ? name : "", VOICE_DEVICE_NAME_MAX);
+    }
+    return count;
+}
+#endif
+
 /* -------------------------------------------------------
- * Display & Sound tab — the display and sound controls shared by
- * the pre-game dialog and the in-game overlay.  Frame rate,
- * letterbox, Skin and Sound apply in both; window size and UI scale
- * only apply in-game (ctx->inGame), and their results are returned
- * via ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
- * to apply after the frame.  A skin pick applies at once but needs
- * the tile sheet and sound set rebuilt, which the shell does after
- * the frame off ctx->wantSkinReload.  The Sound section renders last.
+ * Display tab — the display controls shared by the pre-game dialog
+ * and the in-game overlay: frame rate, window size, UI scale, full
+ * screen, letterbox, the map HUD panels and Skin.  Frame rate,
+ * letterbox and Skin apply in both; window size and UI scale only
+ * apply in-game (ctx->inGame), and their results are returned via
+ * ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell to
+ * apply after the frame, the full screen pick likewise via
+ * ctx->pendingFullScreen.  A skin pick applies at once but needs the
+ * tile sheet and sound set rebuilt, which the shell does after the
+ * frame off ctx->wantSkinReload.
  * ------------------------------------------------------- */
-extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
+extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     /* ---- Frame rate ---- */
     if (!uiModeIsTablet()) {
         const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
@@ -1416,7 +1479,18 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             imguiHelpTooltip(langGetText(STR_DLGSKIN_TEXFILTER_TIP));
         }
     }
+}
 
+/* -------------------------------------------------------
+ * Sound tab — the audio controls shared by the pre-game dialog and
+ * the in-game overlay: the sound effect, background sound and
+ * keepalive toggles, the volume slider, and the voice section
+ * (mode, the push to talk key, devices, microphone gain and test,
+ * echo cancelling and playback volume).  Each control applies
+ * through its own setter as it is changed, so nothing here is
+ * returned to the shell on ctx.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     /* ---- Sound ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
     {
@@ -1433,11 +1507,259 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_KEEPALIVE), &sk)) windowSoundKeepalive();
     }
 #endif
+    /* The three volume rows read label, slider, value, so the sliders have to
+       start at a common x or the group looks ragged.  Widest of the labels
+       this build draws, measured once. */
+    float volLabelW = ImGui::CalcTextSize(langGetText(STR_DLGSETTINGS_MASTER_VOLUME)).x;
+    {
+        float w = ImGui::CalcTextSize(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME)).x;
+        if (w > volLabelW) volLabelW = w;
+    }
+#if defined(WINBOLO_VOICE)
+    {
+        float w = ImGui::CalcTextSize(langGetText(STR_DLGSETTINGS_VOICE_VOLUME)).x;
+        if (w > volLabelW) volLabelW = w;
+    }
+#endif
+    const float volSliderX = volLabelW + ImGui::GetStyle().ItemSpacing.x;
+    {
+        int vol = windowMasterVolume;
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MASTER_VOLUME));
+        ImGui::SameLine(volSliderX);
+        ImGui::SetNextItemWidth(200.0f);
+        /* Empty format, and a ## id, so the slider draws neither the value
+           inside itself nor a label after it; both go beside it instead. */
+        if (ImGui::SliderInt("##mastervolume", &vol, 0, 100, "")) windowSetMasterVolume(vol);
+        ImGui::SameLine();
+        ImGui::Text("%d%%", vol);
+    }
     {
         int vol = soundVolume;
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME));
+        ImGui::SameLine(volSliderX);
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+        if (ImGui::SliderInt("##effectsvolume", &vol, 0, 100, "")) windowSetSoundVolume(vol);
+        ImGui::SameLine();
+        ImGui::Text("%d%%", vol);
     }
+#if defined(WINBOLO_VOICE)
+    /* The third of the three, drawn here rather than down in the voice
+       section so all of them read as one group.  Its own disable, since it is
+       outside the one that section puts around itself. */
+    {
+        bool voiceOnForVolume = voiceIsEnabled();
+        float vol = voiceGetOutputVolume();
+        /* The disable takes in the label and the value as well as the slider,
+           so the row greys out as one. */
+        if (!voiceOnForVolume) ImGui::BeginDisabled();
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_VOLUME));
+        ImGui::SameLine(volSliderX);
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderFloat("##voicevolume", &vol, 0.0f, 2.0f, "")) {
+            windowSetVoiceVolume(vol);
+        }
+        ImGui::SameLine();
+        ImGui::Text("%.2fx", vol);
+        if (!voiceOnForVolume) ImGui::EndDisabled();
+    }
+
+    /* ---- Voice ---- */
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
+    /* Ahead of every control below, so the microphone is held open for the
+       whole of this frame: the input meter further down needs a live level to
+       show, and the controls in between can reach into the voice module,
+       which decides there and then whether anything still wants the device.
+       Not drawing this section is what gives the hold up again — the voice
+       tick takes it back — so only the pre-game dialog, whose exit stops the
+       ticking, says so explicitly when it closes. */
+    voiceSettingsSectionDrawn();
+    /* Read the master switch once: the checkbox below writes it, and
+       BeginDisabled / EndDisabled have to be told the same answer. */
+    bool voiceOn = voiceIsEnabled();
+    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ENABLE), &voiceOn)) {
+        windowSetVoiceEnabled(voiceOn);
+    }
+    if (!voiceOn) ImGui::BeginDisabled();
+    {
+        const char *voiceModeLabels[] = {
+            langGetText(STR_DLGSETTINGS_VOICE_MODE_OFF),
+            langGetText(STR_DLGSETTINGS_VOICE_MODE_PTT),
+            langGetText(STR_DLGSETTINGS_VOICE_MODE_OPEN),
+        };
+        int curModeIdx = (int)voiceGetMode();
+        if (curModeIdx < 0 || curModeIdx > 2) curModeIdx = 0;
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MODE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::BeginCombo("##voicemode", voiceModeLabels[curModeIdx])) {
+            for (int i = 0; i < 3; i++) {
+                if (ImGui::Selectable(voiceModeLabels[i], curModeIdx == i)) {
+                    windowSetVoiceMode(i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+    /* The binding itself is set in Key Setup; showing it here is so the
+       player can see which key push to talk is on without leaving. */
+    if (voiceGetMode() == VOICE_MODE_PTT) {
+        keyItems pttKeys;
+        windowGetKeys(&pttKeys);
+        const char *pttName =
+            SDL_GetScancodeName((SDL_Scancode)pttKeys.kiPushToTalk);
+        if (!pttName || pttName[0] == '\0') {
+            pttName = langGetText(STR_DLGKEYSETUP_NONE_VAL);
+        }
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(pttName);
+    }
+    {
+        int frame = ImGui::GetFrameCount();
+        if (frame != s_voiceDeviceFrame + 1) {
+            s_voiceMicCount = voiceFillDeviceNames(true, s_voiceMicNames);
+            s_voiceOutCount = voiceFillDeviceNames(false, s_voiceOutNames);
+        }
+        s_voiceDeviceFrame = frame;
+    }
+    /* Left out entirely where there is nothing to choose between — the web
+       build has the browser pick — rather than drawn as an empty control. */
+    if (s_voiceMicCount > 0) {
+        /* Copied because picking an entry rewrites what the getter returns,
+           and the rest of the list is compared against it after that. */
+        char wanted[VOICE_DEVICE_NAME_MAX];
+        SDL_strlcpy(wanted, voiceGetRecordingDevice(), sizeof(wanted));
+        /* The closed combo names the chosen device even when it is not
+           plugged in, so an absent headset still reads as the choice rather
+           than silently as the default it is running on. */
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MICDEVICE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(240);
+        if (ImGui::BeginCombo("##voicemicdev",
+                              wanted[0] != '\0'
+                                  ? wanted
+                                  : langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT))) {
+            if (ImGui::Selectable(langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT),
+                                  wanted[0] == '\0')) {
+                voiceSetRecordingDevice("");
+            }
+            for (int i = 0; i < s_voiceMicCount; i++) {
+                /* Scoped by index: two devices can carry the same name. */
+                ImGui::PushID(i);
+                if (ImGui::Selectable(s_voiceMicNames[i],
+                                      strcmp(s_voiceMicNames[i], wanted) == 0)) {
+                    voiceSetRecordingDevice(s_voiceMicNames[i]);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    if (s_voiceOutCount > 0) {
+        char wanted[VOICE_DEVICE_NAME_MAX];
+        SDL_strlcpy(wanted, voiceGetPlaybackDevice(), sizeof(wanted));
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_OUTDEVICE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(240);
+        if (ImGui::BeginCombo("##voiceoutdev",
+                              wanted[0] != '\0'
+                                  ? wanted
+                                  : langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT))) {
+            if (ImGui::Selectable(langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT),
+                                  wanted[0] == '\0')) {
+                voiceSetPlaybackDevice("");
+            }
+            for (int i = 0; i < s_voiceOutCount; i++) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(s_voiceOutNames[i],
+                                      strcmp(s_voiceOutNames[i], wanted) == 0)) {
+                    voiceSetPlaybackDevice(s_voiceOutNames[i]);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    {
+        float gain = voiceGetMicGain();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_MICGAIN), &gain,
+                               0.0f, 4.0f, "%.2fx")) {
+            windowSetVoiceMicGain(gain);
+        }
+    }
+    {
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
+        ImGui::SameLine();
+        ImGui::ProgressBar(voiceGetInputMeter(), ImVec2(200.0f, 0.0f));
+        ImGui::SameLine();
+        /* Spelt out both ways rather than a colour that only means something
+           to players who can tell the two greens apart. */
+        if (voiceIsTransmitting()) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
+                               langGetText(STR_DLGSETTINGS_VOICE_TRANSMITTING));
+        } else {
+            ImGui::TextDisabled("%s",
+                                langGetText(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING));
+        }
+    }
+    {
+        /* Records first and plays back after, rather than monitoring live:
+           on laptop speakers a live monitor is a feedback loop that howls.
+           Scoped, because the cancel shares its label with the buttons the
+           in-game overlay puts in this same window. */
+        ImGui::PushID("voiceMicTest");
+        VoiceMicTestState micTest = voiceMicTestGetState();
+        if (micTest == VOICE_MICTEST_IDLE) {
+            if (ImGui::Button(langGetText(STR_DLGSETTINGS_VOICE_LOOPBACK))) {
+                voiceMicTestStart();
+            }
+        } else {
+            if (ImGui::Button(langGetText(STR_CANCEL))) {
+                voiceMicTestCancel();
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(
+                langGetText(micTest == VOICE_MICTEST_RECORDING
+                                ? STR_DLGSETTINGS_VOICE_MICTEST_RECORDING
+                                : STR_DLGSETTINGS_VOICE_MICTEST_PLAYING));
+            ImGui::SameLine();
+            ImGui::ProgressBar(voiceMicTestProgress(), ImVec2(200.0f, 0.0f));
+        }
+        ImGui::PopID();
+    }
+#if defined(WINBOLO_VOICE_AEC)
+    {
+        /* Three states, and the checkbox shows the saved preference in all
+           of them: the setting is saved either way, so the row reports who
+           is cancelling rather than taking the player's choice away.  Greyed
+           when the system is doing the work, because then there is nothing
+           here to switch, and greyed when no canceller came up at all. */
+        bool aecPlatform = windowGetVoiceEchoCancelPlatform();
+        bool aecOurs = !aecPlatform && windowGetVoiceEchoCancelAvailable();
+        bool echoCancel = windowGetVoiceEchoCancel();
+        if (!aecOurs) ImGui::BeginDisabled();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ECHOCANCEL),
+                            &echoCancel)) {
+            windowSetVoiceEchoCancel(echoCancel);
+        }
+        if (!aecOurs) {
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", langGetText(
+                aecPlatform ? STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM
+                            : STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE));
+        }
+    }
+#endif
+    {
+        bool micIcons = windowGetShowTankMicIcons();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_TANKICONS), &micIcons)) {
+            windowSetShowTankMicIcons(micIcons);
+        }
+    }
+    if (!voiceOn) ImGui::EndDisabled();
+#endif
 }
 
 /* -------------------------------------------------------
@@ -1755,6 +2077,37 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         }
     }
 
+    /* ---- Voice chat ----
+     * What the hosted server does with the voice its clients send it.
+     * Fixed when the server starts, so this is read at host time and there
+     * is no lobby control for it. */
+    {
+        /* Combo display order is On / Off / Proximity, and the enum values
+         * happen to run ON=0, OFF=1, PROXIMITY=2 — map explicitly anyway so
+         * a later reordering of either list cannot silently mismatch. */
+        static const int kVoiceByIndex[3] = {
+            serverVoiceOn, serverVoiceOff, serverVoiceProximity
+        };
+        const char *voiceItems[3] = {
+            langGetText(STR_DLGSETTINGS_HOSTING_VOICE_ON),
+            langGetText(STR_DLGSETTINGS_HOSTING_VOICE_OFF),
+            langGetText(STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY)
+        };
+        int idx = 0;  /* default On */
+        for (int i = 0; i < 3; ++i) {
+            if (kVoiceByIndex[i] == gameFrontHostingVoiceMode) { idx = i; break; }
+        }
+        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_VOICE),
+                         &idx, voiceItems, 3)) {
+            gameFrontSetHostingVoiceMode(kVoiceByIndex[idx]);
+        }
+        /* Proximity is stored and sent but nothing acts on it yet, so say so
+         * rather than let a host think picking it changed anything. */
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_HOSTING_VOICE_TIP));
+        }
+    }
+
     /* ---- Visibility ----
      * The pill / base / allied-tank view rules a game hosted from here
      * starts with; the host can still change them from the lobby once the
@@ -1919,6 +2272,16 @@ extern "C" void imguiSettingsShow(void) {
             lastTickTime = SDL_GetTicks();
         }
 
+#if defined(WINBOLO_VOICE)
+        /* This dialog owns the event loop while it is up, so the voice pump
+         * the in-game loop normally runs has to happen here too — otherwise
+         * the loopback test is silent whenever settings are opened before a
+         * game starts. NULL because this is the pre-game dialog: it has no
+         * client (its own SettingsRenderCtx sets cs to null), so only the
+         * local loopback path runs. */
+        voiceTick(NULL);
+#endif
+
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         dialogResetTextInputArea(window);
@@ -1990,12 +2353,13 @@ extern "C" void imguiSettingsShow(void) {
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
            tabs, skipping any that aren't present and wrapping at the ends. */
-        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_SOUND, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
         static int s_pgActiveTab = STAB_GENERAL;
         static int s_pgForceTab  = -1;
         bool present[STAB_COUNT];
         present[STAB_GENERAL] = true;
         present[STAB_DISPLAY] = true;
+        present[STAB_SOUND]   = true;
         present[STAB_GAMEHUD] = true;
         /* Mobile can host too; a browser tab can't listen for connections. */
 #if defined(__EMSCRIPTEN__)
@@ -2058,11 +2422,19 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_DISPLAYSOUND), nullptr,
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_DISPLAY), nullptr,
                     s_pgForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_DISPLAY;
                 ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
-                imguiSettingsRenderDisplaySoundTab(&ctx);
+                imguiSettingsRenderDisplayTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_SOUND), nullptr,
+                    s_pgForceTab == STAB_SOUND ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_SOUND;
+                ImGui::BeginChild("##soundPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsRenderSoundTab(&ctx);
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
@@ -2283,6 +2655,16 @@ extern "C" void imguiSettingsShow(void) {
         }
 #endif
     }
+
+#if defined(WINBOLO_VOICE)
+    /* The Sound tab holds the microphone open for its level meter, and that
+     * hold is otherwise given up by the voice tick this loop was running.
+     * Nothing ticks voice at the menu we are handing back to, so the release
+     * has to happen here or the recording device runs on with no-one draining
+     * it. The in-game overlay needs no such call: the game loop keeps
+     * ticking. */
+    voiceSettingsSectionClosed();
+#endif
 
     /* Flush the in-memory settings (player name, address/ports, language,
      * keys, tank options, ...) into the prefs document now the dialog has

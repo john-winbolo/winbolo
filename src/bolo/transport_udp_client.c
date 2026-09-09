@@ -40,6 +40,7 @@
 #include "transport_control_codec.h"
 #include "transport_command_codec.h"
 #include "channel_mux.h"
+#include "voice_segment.h"
 #include "bulk_transfer.h"
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
@@ -77,6 +78,20 @@ typedef struct {
     ClientCommand cmd;          /* cmd.cmdSeq matches this entry's seq */
     uint32_t lastSentMs;        /* 0 = never sent yet; eager send sets it */
 } OutCmdEntry;
+
+/* Voice frames received from the server wait here until the frontend pops
+ * them.  One tick's worth of talkers is a handful of frames, so the ring is
+ * sized well past that and drops its oldest entry if the frontend somehow
+ * falls behind — a stale voice frame has no value once its moment passed. */
+#define CLIENT_VOICE_RX_RING 16
+
+typedef struct {
+    uint8_t  fromPlayer;
+    uint8_t  seq;
+    uint8_t  flags;
+    uint16_t len;
+    uint8_t  data[VOICE_SEG_MAX_OPUS];
+} VoiceRxFrame;
 
 typedef struct {
     SOCKET sock;
@@ -333,6 +348,16 @@ typedef struct {
     /* Count of channel frames consumed (trailer + standalone), for test
      * observability of the otherwise-silent parallel layer. */
     uint32_t   channelFramesRx;
+
+    /* Voice (CHANNEL_VOICE). voiceSeq stamps outgoing frames and wraps at
+     * 256, which is what the receiver's jitter buffer orders on. Inbound
+     * frames are parsed off the channel as they arrive and wait in the ring
+     * for the frontend to pop them. */
+    uint8_t      voiceSeq;
+    VoiceRxFrame voiceRx[CLIENT_VOICE_RX_RING];
+    uint32_t     voiceRxHead;   /* index of the oldest pending frame */
+    uint32_t     voiceRxCount;  /* frames pending, <= CLIENT_VOICE_RX_RING */
+
     /* Reassembly state machine for sized blobs arriving on CHANNEL_BULK (map
      * preview today). Fed from the stream fragments channelReceive pops; on a
      * completed transfer it dispatches by kind into the client preview state. */
@@ -822,6 +847,44 @@ static void clientDrainBulk(TransportUdpClientCtx *c) {
     }
 }
 
+/* Drain every voice frame waiting on CHANNEL_VOICE into the receive ring,
+ * where clientSimNetReceiveVoice pops them.  A segment that will not parse
+ * is dropped and the drain continues: voice is best-effort and unvalidated
+ * on arrival, so a malformed one costs a frame of audio, never the
+ * connection. */
+static void clientDrainVoice(TransportUdpClientCtx *c) {
+    uint8_t chanBuf[CHANNEL_MAX_SEG];
+    uint16_t chanLen;
+
+    while (channelReceiveBestEffort(&c->channelMux, CHANNEL_VOICE,
+                                    chanBuf, &chanLen)) {
+        uint8_t fromPlayer, seq, flags;
+        const uint8_t *opus;
+        int opusLen;
+        uint32_t idx;
+        VoiceRxFrame *slot;
+
+        if (!voiceSegmentUnpackDown(chanBuf, (int)chanLen, &fromPlayer, &seq,
+                                    &flags, &opus, &opusLen)) {
+            continue;
+        }
+
+        if (c->voiceRxCount == CLIENT_VOICE_RX_RING) {
+            /* Full — retire the oldest to make room for the newest. */
+            c->voiceRxHead = (c->voiceRxHead + 1) % CLIENT_VOICE_RX_RING;
+            c->voiceRxCount--;
+        }
+        idx = (c->voiceRxHead + c->voiceRxCount) % CLIENT_VOICE_RX_RING;
+        slot = &c->voiceRx[idx];
+        slot->fromPlayer = fromPlayer;
+        slot->seq = seq;
+        slot->flags = flags;
+        slot->len = (uint16_t)opusLen;
+        memcpy(slot->data, opus, (size_t)opusLen);
+        c->voiceRxCount++;
+    }
+}
+
 /* PACKET_LOBBY_MAP_PREVIEW_ERR — server couldn't read the map. Wire:
  * [header 8] [pathLen 1] [path N] [code 1]. Flags the request failed
  * so the chooser shows "no preview" instead of spinning. */
@@ -954,6 +1017,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
+    case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
     case CTRL_NEWSWIRE_MUTE:    return "NEWSWIRE_MUTE";
     default:                    return "<unknown>";
     }
@@ -2259,6 +2323,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             channelRecvFrame(&c->channelMux, buf + pos, len - pos) >= 0) {
             c->channelFramesRx++;
         }
+        /* Voice is pulled off the channel here rather than with the game
+         * events below, so it keeps flowing while the map-install gate is
+         * holding this snapshot back. */
+        clientDrainVoice(c);
         if (c->clientSim != NULL) {
             uint8_t ctlBuf[CHANNEL_MAX_SEG];
             uint16_t ctlLen;
@@ -2418,6 +2486,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         if (channelRecvFrame(&c->channelMux, buf + PACKET_HEADER_SIZE,
                              len - PACKET_HEADER_SIZE) >= 0) {
             c->channelFramesRx++;
+            /* This is the carrier voice rides in the lobby, where no
+             * snapshot flows. */
+            clientDrainVoice(c);
             /* Drain reliable control events from channel 2 first, then game
              * (channel 0) and map (channel 1) events, applying them directly.
              * Control is applied ordered ahead of game/map to match the
@@ -4360,6 +4431,72 @@ void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
     udpClientSendWbnReauth(c);
+}
+
+/* ── Voice (CHANNEL_VOICE) ───────────────────────────────────────── */
+
+/* client_net.h states the largest frame a voice segment can carry as a
+ * plain number, because the client frontends cannot see the wire bound it
+ * mirrors. This is the one translation unit that sees both, so it is where
+ * the two are held together: a change to CHANNEL_VOICE_SEG that leaves
+ * CLIENT_VOICE_MAX_FRAME_BYTES behind fails to compile here rather than
+ * silently costing frames at run time. */
+BOLO_STATIC_ASSERT(CLIENT_VOICE_MAX_FRAME_BYTES == VOICE_SEG_MAX_OPUS,
+                   client_voice_max_frame_bytes_drift);
+
+void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
+                                 int opusLen, uint8_t flags) {
+    TransportUdpClientCtx *c;
+    uint8_t seg[CHANNEL_VOICE_SEG];
+    int segLen;
+
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    /* The caller's flags byte goes out as it stands.  The only bit defined
+     * is VOICE_FLAG_END_OF_UTTERANCE, which the sender sets on the frame
+     * that ends a run of speech and the server forwards untouched. */
+    segLen = voiceSegmentPackUp(seg, (int)sizeof(seg), c->voiceSeq, flags,
+                                opus, opusLen);
+    if (segLen <= 0) return;
+    c->voiceSeq++;
+
+    /* The queued segment goes out on whichever carrier runs next — the
+     * input-packet trailer while playing, a standalone frame otherwise. */
+    channelSendBestEffort(&c->channelMux, CHANNEL_VOICE, seg,
+                          (uint16_t)segLen);
+}
+
+int transportUdpClientReceiveVoice(Transport *t, uint8_t *fromPlayer,
+                                   uint8_t *seq, uint8_t *flags,
+                                   uint8_t *out, int outCap) {
+    TransportUdpClientCtx *c;
+    const VoiceRxFrame *frame;
+
+    if (t == NULL || t->ctx == NULL || fromPlayer == NULL || seq == NULL ||
+        flags == NULL || out == NULL) {
+        return 0;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->voiceRxCount == 0) return 0;
+
+    frame = &c->voiceRx[c->voiceRxHead];
+    if ((int)frame->len > outCap) {
+        /* Caller's buffer cannot hold it — discard rather than stall the
+         * ring behind a frame that will never fit. */
+        c->voiceRxHead = (c->voiceRxHead + 1) % CLIENT_VOICE_RX_RING;
+        c->voiceRxCount--;
+        return 0;
+    }
+
+    *fromPlayer = frame->fromPlayer;
+    *seq = frame->seq;
+    *flags = frame->flags;
+    memcpy(out, frame->data, frame->len);
+    c->voiceRxHead = (c->voiceRxHead + 1) % CLIENT_VOICE_RX_RING;
+    c->voiceRxCount--;
+    return (int)frame->len;
 }
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */

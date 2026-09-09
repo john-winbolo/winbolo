@@ -58,7 +58,8 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
-int  soundVolume = 50;
+int  soundVolume = 50;         /* MENU / Sound Volume — the game sounds */
+int  windowMasterVolume = 100; /* MENU / Master Volume — sounds and voice */
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;

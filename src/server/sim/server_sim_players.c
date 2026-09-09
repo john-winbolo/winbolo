@@ -97,6 +97,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
+    sim->soundSquares[playerNum] = false;
     {
         uint8_t defaultTeam = 1;
         if (playerNum == 0) {
@@ -511,6 +512,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
     sim->mapSkipVotes[playerNum] = false;
+    sim->soundSquares[playerNum] = false;
 
     /* The leaver's start is free again: re-pick every slot still without
      * one, humans before bots, and publish the slots that move. No-op

@@ -34,6 +34,7 @@
 #include "client_command.h"    /* ClientCommand / CmdResult — serverSimApplyCommand */
 #include "attribution_track.h" /* AttrSlotIdentity — track accessors below */
 #include "view_policy.h"       /* ViewPolicy / ViewCategory — view-policy accessors below */
+#include "server_voice_mode.h" /* ServerVoiceMode — voice-mode accessors below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -507,6 +508,13 @@ void serverSimBotTick(ServerSim *sim, aiType ai);
 BYTE   serverSimGetNumBots(ServerSim *sim);
 bool   serverSimHasAnyBot(ServerSim *sim);
 bool   serverSimIsBot(ServerSim *sim, BYTE playerNum);
+/* Mark a slot whose in-process consumer reads the map square a sound was
+ * raised at — the gym agent, the headless brain harness. A human client is
+ * sent a near/far tier and a bearing in place of the square; a bot-manager
+ * bot keeps the square without being marked. Only the process that owns the
+ * ServerSim can call this, so the wire cannot claim it. Cleared when the slot
+ * is joined or freed. */
+void   serverSimSetSoundSquares(ServerSim *sim, BYTE playerNum, bool keep);
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum);
 bool   serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out);
 void   serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out);
@@ -1739,6 +1747,15 @@ bool        serverSimGetClassicMode(const ServerSim *sim);
  * turning classic mode on forces it off. */
 void        serverSimSetAlliesInTrees(ServerSim *sim, bool on);
 bool        serverSimGetAlliesInTrees(const ServerSim *sim);
+
+/* Voice mode — how the server handles the voice its clients send it.
+ * serverVoiceOff forwards nothing; serverVoiceProximity is not
+ * implemented and forwards like serverVoiceOn. Set once from
+ * ServerInstanceConfig.voiceMode at startup and not changed after; there
+ * is no lobby setting for it. The setter ignores an out-of-range mode,
+ * and the getter returns serverVoiceOn for a NULL sim. */
+void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
+ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */

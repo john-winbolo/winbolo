@@ -231,15 +231,15 @@ typedef struct {
 #define CAPTURE_CLASS_ALLY    2  /* from an ally — tracked for nobody */
 
 #define EVENT_MAP_CHANGE    7  /* data: [mx, my, newTerrain] */
-#define EVENT_SOUND         8  /* data: [soundId, mx, my, sourcePlayer] */
+#define EVENT_SOUND         8  /* data: [soundId, tier or mx, direction or my, sourcePlayer] — see Sound event payloads below */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */
 #define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, armourInTank] */
 #define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner] — owner change (reliable) */
 #define EVENT_PLAYER_LEAVE 12  /* data: [playerNum] */
 #define EVENT_ASSISTANT_MSG 13 /* data: [targetPlayer, msgId] — player-specific assistant message */
 #define EVENT_LGM_LOST     14 /* data: [victim, killer] — builder killed, broadcast newswire */
-#define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, mx, my, hitPlayer] */
-#define EVENT_SOUND_SHOOT    16 /* data: [soundId, mx, my, firingPlayer] */
+#define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, tier or mx, direction or my, hitPlayer] — see Sound event payloads below */
+#define EVENT_SOUND_SHOOT    16 /* data: [soundId, tier or mx, direction or my, firingPlayer] — see Sound event payloads below */
 #define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
 #define EVENT_TK_EXPLOSION   18 /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator] — tank fireball spawn */
 #define EVENT_BASE_STOCK   19  /* data: [baseIndex, armour, shells, mines] — best-effort, culled to recipient's closest base */
@@ -264,6 +264,38 @@ typedef struct {
  * them on, and the replay viewer has to match both. */
 #define PING_DISPLAY_MS  5000
 #define PING_FADE_MS     1000
+
+/* Sound event payloads. EVENT_SOUND, EVENT_SOUND_TANK_HIT and
+ * EVENT_SOUND_SHOOT each carry four bytes, and the middle two carry one of two
+ * shapes:
+ *
+ *   to a human: [soundId, tier, direction, sourcePlayer]
+ *   to a bot:   [soundId, mx, my, sourcePlayer]
+ *
+ * Nothing on the wire says which. A recipient tells them apart by knowing its
+ * own client type: the server works the tier and direction out against the
+ * human recipient's own tank and sends those instead of the square, while a bot
+ * keeps the square its observation builder reads. "Bot" here means a
+ * bot-manager bot or a local slot the host marked with
+ * serverSimSetSoundSquares (the gym agent, the headless brain harness). A
+ * wire client is always sent the tier and direction.
+ *
+ * The direction is map-absolute — north is decreasing map Y — and is not
+ * relative to where the listener is facing. The main view is north-up, so the
+ * map axis and the screen axis are the same one, and a stereo panner can read
+ * the direction as its pan axis. */
+#define SOUND_TIER_NEAR 0
+#define SOUND_TIER_FAR  1
+
+#define SOUND_DIR_CENTRE 0
+#define SOUND_DIR_N      1
+#define SOUND_DIR_NE     2
+#define SOUND_DIR_E      3
+#define SOUND_DIR_SE     4
+#define SOUND_DIR_S      5
+#define SOUND_DIR_SW     6
+#define SOUND_DIR_W      7
+#define SOUND_DIR_NW     8
 
 /* True if this game event must arrive (rides the reliable game channel);
  * false if it is ephemeral and rides the best-effort channel. Single source

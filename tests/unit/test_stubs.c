@@ -19,6 +19,7 @@
 #include "luabrainshandler.h"
 #include "lang_message.h"
 #include "nat_portmap.h"
+#include "test_harness.h"  /* ut_sound_* — the played-sound recorder below */
 
 bool isInMenu = FALSE;
 
@@ -126,8 +127,34 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
   (void)cs; (void)shells; (void)mines; (void)armour;
 }
 
+/* What frontEndPlaySound was handed, so a test can assert which variant of a
+   sound the client played. Bounded: once the array is full, further sounds are
+   neither stored nor counted. */
+#define UT_SOUND_MAX 64
+static int s_ut_sounds[UT_SOUND_MAX];
+static int s_ut_sound_count;
+
+void ut_sound_reset(void) {
+  s_ut_sound_count = 0;
+}
+
+int ut_sound_count(void) {
+  return s_ut_sound_count;
+}
+
+int ut_sound_get(int index) {
+  if (index < 0 || index >= s_ut_sound_count) {
+    return -1;
+  }
+  return s_ut_sounds[index];
+}
+
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
-  (void)cs; (void)value;
+  (void)cs;
+  if (s_ut_sound_count < UT_SOUND_MAX) {
+    s_ut_sounds[s_ut_sound_count] = (int)value;
+    s_ut_sound_count++;
+  }
 }
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,

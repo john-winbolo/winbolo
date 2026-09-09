@@ -58,6 +58,12 @@ typedef struct OverviewHudElement {
     float dstX, dstY, dstW, dstH;   /* window pixels, relative to the map rect */
 } OverviewHudElement;
 
+/* OVERVIEW_HUD_VOICE is the one entry that is not a slice of the classic
+   515x325 art: it is an icon of its own, so srcX/srcY are unused and left at
+   zero, and srcW/srcH carry the icon's size in classic-layout pixels purely so
+   the column's one scale applies to it like any other row. The drawing code
+   gives it its own draw call rather than a special case in the atlas copy
+   loop. */
 typedef enum {
     OVERVIEW_HUD_MANSTATUS = 0,
     OVERVIEW_HUD_KILLSDEATHS,
@@ -68,6 +74,7 @@ typedef enum {
     OVERVIEW_HUD_TANKBARS,
     OVERVIEW_HUD_BUILDSELECT,
     OVERVIEW_HUD_NEWSWIRE,
+    OVERVIEW_HUD_VOICE,
     OVERVIEW_HUD_COUNT
 } OverviewHudElementId;
 
@@ -82,8 +89,14 @@ typedef struct OverviewHudLayout {
 
 /* Lay the column out for a map rect of viewW x viewH window pixels. Returns
    false and leaves *out untouched when the rect is too small to hold a
-   legible column, in which case the caller draws no HUD. */
-bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out);
+   legible column, in which case the caller draws no HUD.
+
+   wantVoice adds the voice element as the column's last row. False leaves
+   every number of that element zero and shortens the column by that row, so
+   nothing is reserved for it and no stale rect is left to draw; the caller
+   passes false when voice is off or the connection carries none. */
+bool overviewHudLayout(int viewW, int viewH, bool wantVoice,
+                       OverviewHudLayout *out);
 
 /* The on-screen rect of one build-select item, 0..4 top to bottom, matching
    the buildSelect enum. False for an out-of-range index. Coordinates are

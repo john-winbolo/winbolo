@@ -139,6 +139,11 @@ static void gymSetupGame(WinBoloGym *g) {
     clientSimCreate(g->clientSim);
     clientSimConnectLocal(g->clientSim, g->serverSim, "GymAgent", "", 0, 0);
     clientSimSetAiType(g->clientSim, aiYes);
+    /* The observation reads each sound's map square as a relative position.
+     * The agent is an ordinary local slot, not a bot-manager bot, so without
+     * this the server would send it a near/far tier and a bearing instead. */
+    serverSimSetSoundSquares(g->serverSim,
+                             clientSimGetMyPlayerNum(g->clientSim), true);
 
     /* Register a second (observe-only) subscriber for gym telemetry. The
      * auto-subscriber that clientSimConnectLocal registered is the one
