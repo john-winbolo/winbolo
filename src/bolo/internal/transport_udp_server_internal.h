@@ -472,7 +472,6 @@ bool     serverChooseUnverifiedSuffix(const char *baseName, int excludeSlot,
 /* Reached by the join cluster above but still defined in
  * src/server/transport_udp_server.c, which owns them. */
 void serverDisconnectClient(struct ServerSim *sim, int idx, bool graceful);
-void serverInitMapDownload(int slot);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
@@ -480,8 +479,30 @@ void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
 void transportUdpServerFlushChannel(int clientIdx);
 void transportUdpServerSendWbnRekey(UdpServerClient *c);
 void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
-void udpServerResetMapReaskLimit(int idx);
 void udpServerResetRoundLogLimits(int idx);
+
+/* Map movement in both directions between the transport and one client: the
+ * compressed map streamed down to a joining or resyncing client on
+ * CHANNEL_BULK, and the lobby map upload reassembled back off it. Owned by
+ * src/server/udp/udp_server_maptransfer.c.
+ * src/server/transport_udp_server.c calls these from the packet handler, the
+ * disconnect and map-change paths and the per-tick send path;
+ * src/server/udp/udp_server_join.c arms a joiner's download through
+ * serverInitMapDownload and clears its re-ask limit at join.
+ * lobbyClientMayEdit is the lobby authority check the upload handlers share.
+ * It has no other header declaration: server_command_dispatch.c, over in
+ * server_sim_static, carries its own extern, and server_stubs.c stubs it for
+ * the targets that link neither file. The two remaining helpers in the same
+ * translation unit, lobbyAnyOtherUploadActive and uploadFilenameIsSafe, are
+ * declared in transport_udp.h so the unit tests can reach them. */
+bool lobbyClientMayEdit(struct ServerSim *sim, int clientIdx);
+void serverCleanupMapDownload(int slot);
+void serverDrainBulk(struct ServerSim *sim, int clientIdx);
+void serverInitMapDownload(int slot);
+void serverRebaseBulkAndRearmDownload(int i);
+void serverServiceMapTransfer(int slot);
+void udpServerClearClientUploadState(int idx);
+void udpServerResetMapReaskLimit(int idx);
 
 /* Tankless spectator support. Owned by
  * src/server/udp/udp_server_spectator.c.
