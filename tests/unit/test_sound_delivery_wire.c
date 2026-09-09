@@ -74,7 +74,7 @@
 
 /* Gaps from the recipient's tank, in map squares. 10 and 30 are both inside
  * SDIST_NONE (40), so both are audible; 45 is past it and silent. 30 also sits
- * outside the viewport rect's 27-square half-extent
+ * outside the viewport rect's 19-square half-extent
  * (SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN), which is what makes it
  * the range arm: it is audible while sitting outside every rect the recipient
  * has. 60 is past everything, and only a tank hit on the recipient itself

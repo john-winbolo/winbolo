@@ -103,7 +103,7 @@ static void serverSimLogSound(sndEffects value, BYTE mx, BYTE my) {
 
         case shotBuildingNear:
         case shotBuildingFar:
-//            logMessageType = log_SoundHit;
+            /* No log entry: the format has no shot-building record. */
             break;
 
         case hitTankNear:
