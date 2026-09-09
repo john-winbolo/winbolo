@@ -364,4 +364,25 @@ extern UdpServerState udpServer;
 void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
                          struct sockaddr_in *fromAddr);
 
+/* Outbound datagram wrapper every server->peer send routes through, so the
+ * outbound impairment layer can delay/drop/reorder it. Owned by
+ * src/server/transport_udp_server.c, which holds the impairment state it
+ * reads. */
+void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
+
+/* Fill an INFO_PACKET from the current sim state, shared by the info-request
+ * reply and the tracker update. Owned by
+ * src/server/transport_udp_server.c. */
+void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
+
+/* Public-address override advertised in place of the internal port and a zero
+ * address once a UPnP/NAT-PMP/PCP mapping is negotiated. Owned by
+ * src/server/udp/udp_server_tracker.c. */
+extern char           udpServerPublicIp[64];
+extern unsigned short udpServerPublicPort;
+
+/* Pending hole-punch bursts, one slot per joiner. Owned by
+ * src/server/udp/udp_server_tracker.c. */
+extern PunchQueueEntry punchQueue[PUNCH_QUEUE_SIZE];
+
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */

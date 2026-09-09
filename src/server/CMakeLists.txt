@@ -118,6 +118,7 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     server_lifecycle.c
     transport_udp_server.c
     udp/udp_server_test_hooks.c
+    udp/udp_server_tracker.c
     mdns_advertise.c
     server_dedicated_log.c
     server_dedicated_log_path.c
