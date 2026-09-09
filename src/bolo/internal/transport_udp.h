@@ -402,6 +402,12 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched);
  * outLen receives the length of the compressed data. */
 const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
 
+/* Monotonic count of installed maps discarded by a re-accept arming a fresh
+ * download. Never decreases, so a caller can latch "the map was invalidated"
+ * by comparing against an earlier sample — the invalidation itself is a
+ * transient that a polling observer can step over. */
+uint32_t transportUdpClientGetMapInvalidateCount(Transport *t);
+
 /* Returns map-download progress as 0..100. Returns 100 when nothing is
  * in flight (no buffer allocated yet, or zero-sized total — neither
  * happens in practice). */
