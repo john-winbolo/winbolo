@@ -463,8 +463,16 @@ void     serverPreemptRename(struct ServerSim *sim, int victimSlot,
 bool     serverChooseUnverifiedSuffix(const char *baseName, int excludeSlot,
                                       char *out, size_t outLen);
 
-/* Reached by the join cluster above but still defined in
- * src/server/transport_udp_server.c, which owns them. */
+/* What a host or a console does to a connected player, as opposed to the
+ * per-tick flow: tearing one client down and draining the removals other paths
+ * defer, kicking, disconnecting everyone, the server lock, ping enforcement,
+ * server-originated messages, status reporting, bot naming and the background
+ * team-balance request. Owned by src/server/udp/udp_server_admin.c.
+ * Only these three are reached from elsewhere in src/server/:
+ * src/server/transport_udp_server.c calls serverDisconnectClient from the QUIT
+ * handler and the timeout sweep, and src/server/udp/udp_server_join.c sends the
+ * rename notice and the join chat line through the two broadcast helpers. The
+ * rest of the file is public API and is declared in transport_udp.h. */
 void serverDisconnectClient(struct ServerSim *sim, int idx, bool graceful);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
