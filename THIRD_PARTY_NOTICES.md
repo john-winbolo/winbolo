@@ -5,7 +5,7 @@ WinBolo uses the following third-party libraries and code.
 ## FetchContent Dependencies (downloaded at build time)
 
 ### SDL3 (Simple DirectMedia Layer)
-- Version: 3.4.2
+- Version: 3.4.14
 - License: Zlib
 - https://github.com/libsdl-org/SDL
 
@@ -16,7 +16,7 @@ WinBolo uses the following third-party libraries and code.
 - Pulls in FreeType (FreeType License) and HarfBuzz (MIT)
 
 ### Dear ImGui
-- Branch: docking
+- Version: v1.92.9b-docking (the wasm client and log viewer track the docking branch)
 - License: MIT
 - https://github.com/ocornut/imgui
 
@@ -24,6 +24,13 @@ WinBolo uses the following third-party libraries and code.
 - Version: 5.4.7
 - License: MIT
 - https://github.com/walterschell/Lua
+
+### LuaJIT (default on desktop; -DWINBOLO_LUAJIT=OFF builds PUC-Lua 5.4 instead)
+- Version: v2.1 branch, commit faaf663340347a78b22ed94c63c24fe090bd9784
+- License: MIT
+- https://github.com/LuaJIT/LuaJIT
+- Author: Mike Pall
+- Runs the bot brains. Not available on wasm or iOS.
 
 ### zlib (includes minizip)
 - Version: 1.3.1
@@ -34,6 +41,18 @@ WinBolo uses the following third-party libraries and code.
 - Version: 1.7.18
 - License: MIT
 - https://github.com/DaveGamble/cJSON
+
+### libopus
+- Version: 1.5.2
+- License: BSD 3-Clause, with the royalty-free patent licenses listed in its COPYING
+- https://github.com/xiph/opus
+- The voice chat codec, in the desktop and wasm clients. The dedicated server forwards encoded frames without decoding them and does not link it.
+
+### SpeexDSP
+- Version: 1.2.1, commit ba75b509fb1c5940ea07fa2ba5552e44f3a3576b (pinned to a commit because the newest release tag ships autotools only; the CMake build lives on main)
+- License: BSD 3-Clause
+- https://github.com/xiph/speexdsp
+- Echo cancellation, noise suppression and automatic gain control on captured voice. Desktop client only — the browser gets these from getUserMedia.
 
 ### curl (Windows only; Linux/macOS use system libcurl)
 - Version: 8.12.1
@@ -49,6 +68,22 @@ WinBolo uses the following third-party libraries and code.
 - Version: 1.22.0
 - License: MIT
 - https://github.com/microsoft/onnxruntime
+
+### libplum (optional, BOLO_PORTMAP; not built on iOS or wasm)
+- Version: 0.5.3
+- License: Mozilla Public License 2.0
+- https://github.com/paullouisageneau/libplum
+- UPnP / NAT-PMP / PCP port mapping for hosted servers
+
+### sentry-native (optional, ENABLE_SENTRY; desktop)
+- Version: 0.14.2
+- License: MIT
+- https://github.com/getsentry/sentry-native
+
+### sentry-cocoa (optional, ENABLE_SENTRY; iOS)
+- Version: 9.8.0
+- License: MIT
+- https://github.com/getsentry/sentry-cocoa
 
 ## Vendored Source
 
