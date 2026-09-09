@@ -107,7 +107,6 @@ static const char *kFogExperimentNames[FOG_EXPERIMENT_COUNT] = {
   "Lens",
   "Headlights, envelope",
   "Headlights, lens",
-  "Halo",
   "Afterimage"
 };
 
@@ -116,7 +115,6 @@ static const char *kFogExperimentBlurbs[FOG_EXPERIMENT_COUNT] = {
   "The classic window, moved by autoscroll and the scroll keys",
   "Two squares round you and a wedge to the envelope edge",
   "Two squares round you and a wedge to the lens edge",
-  "Ground all round, enemies only where you look",
   "What you scrolled over lingers, then fades"
 };
 
@@ -179,8 +177,7 @@ static bool overviewIsHeadlights(uint8_t experiment) {
 }
 
 bool overviewFogBlockFollowsView(FogExperiment e) {
-  return e == fogExperimentLens || e == fogExperimentHalo ||
-         e == fogExperimentAfterimage;
+  return e == fogExperimentLens || e == fogExperimentAfterimage;
 }
 
 /* How long the beam vector is: 256ths of a square, which is the scale the
@@ -326,12 +323,9 @@ static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
  * else may touch it, or the memory stops being a record of what was seen.
  * Returns TRUE if any byte came out different.
  *
- * A live rect grants sight with the ground unless it is terrain-only, which is
- * the halo: its squares are close enough to read the ground on and not close
- * enough to make out what is moving there. The flags are assigned rather than
- * merged, so the last rect stamped over a square decides both bits, and a
- * square the halo and the lens both cover keeps sight because the lens is
- * stamped second.
+ * A live rect grants sight along with the ground. The flags are assigned
+ * rather than merged, so the last rect stamped over a square decides both
+ * bits.
  *
  * vis is the rect's sight mask - one byte per square, indexed over this rect
  * the way sight.h describes - and NULL for a rect nothing blocks sight in. A
@@ -354,8 +348,7 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
 
   liveBits = 0;
   if (setLive == TRUE) {
-    liveBits = (BYTE)(OVERVIEW_F_LIVE |
-                      (r->terrainOnly == 0 ? OVERVIEW_F_SIGHT : 0));
+    liveBits = (BYTE)(OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT);
   }
   stride = r->right - r->left + 1;
 
@@ -477,8 +470,7 @@ static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r,
 /* TRUE when the two region sets are not the same rects in the same order.
  * Alpha counts: a region a tick further into its fade is a region the map has
  * to be redrawn for, so a tick that only moves the fade still reports a
- * change. So does terrainOnly, or a rect that had swapped one kind for the
- * other over the same squares would report a build that had not moved. */
+ * change. */
 static bool overviewRegionsDiffer(const OverviewRect *a, int aCount,
                                   const OverviewRect *b, int bCount) {
   int i; /* Looping variable */
@@ -489,7 +481,7 @@ static bool overviewRegionsDiffer(const OverviewRect *a, int aCount,
   for (i = 0; i < aCount; i++) {
     if (a[i].left != b[i].left || a[i].top != b[i].top ||
         a[i].right != b[i].right || a[i].bottom != b[i].bottom ||
-        a[i].alpha != b[i].alpha || a[i].terrainOnly != b[i].terrainOnly) {
+        a[i].alpha != b[i].alpha) {
       return TRUE;
     }
   }
@@ -511,7 +503,6 @@ void overviewMapReset(OverviewMap *om) {
   om->liveCount = 0;
   memset(om->prevLive, 0, sizeof(om->prevLive));
   om->prevLiveCount = 0;
-  om->haloWasLive = FALSE;
   om->tankWasLive = FALSE;
   om->lastTankMX = 0;
   om->lastTankMY = 0;
@@ -706,12 +697,11 @@ static bool overviewKeyViewLive(struct GameSim *sim, BYTE myPlayerNum,
 
 int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
                             const OverviewViewInputs *in,
-                            const OverviewRect *haloRect,
                             const OverviewRect *tankRect, OverviewRect *out,
                             int maxOut) {
   int count;     /* Rects written so far */
   bool keyView;  /* Is the player watching an item that closes the tank's own
-                    blocks */
+                    block */
   BYTE alpha;    /* How bright the item under test is */
   BYTE numPills; /* Pills on the map */
   BYTE numBases; /* Bases on the map */
@@ -722,14 +712,8 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
     return 0;
   }
 
-  /* Watching an item closes both blocks round the tank, not just the one the
-   * player sees things moving in. */
+  /* Watching an item closes the block round the tank. */
   keyView = overviewKeyViewLive(sim, myPlayerNum, in);
-
-  if (haloRect != NULL && count < maxOut && keyView == FALSE) {
-    out[count] = *haloRect;
-    count++;
-  }
 
   if (tankRect != NULL && count < maxOut && keyView == FALSE) {
     out[count] = *tankRect;
@@ -846,11 +830,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY) {
   bool tankLive; /* Is there a tank region this update */
-  bool haloLive; /* Is there a halo region round it as well */
   BYTE useMX;    /* Square that region is placed from */
   BYTE useMY;    /* Square that region is placed from */
   OverviewRect tankRect;   /* The region itself, once placed */
-  OverviewRect haloRect;   /* The ground round it, under Halo */
   OverviewViewInputs held; /* in, with the view a dead tank last had */
   const OverviewViewInputs *blockIn; /* Which of the two places the block */
   bool changed;  /* Did anything move this update */
@@ -919,34 +901,20 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   }
   overviewTankBlock(blockIn, useMX, useMY, &tankRect);
 
-  /* Watching an item under viewPolicyKey closes the blocks round the tank, so
+  /* Watching an item under viewPolicyKey closes the block round the tank, so
    * the map shows the one thing being watched. Asked here as well so
-   * tankWasLive and haloWasLive record what was actually built and the farewell
-   * replay below stays paired with the regions that produced its rects. */
+   * tankWasLive records what was actually built and the farewell replay below
+   * stays paired with the regions that produced its rects. */
   if (overviewKeyViewLive(sim, myPlayerNum, in) == TRUE) {
     tankLive = FALSE;
-  }
-
-  /* Halo puts a second, wider block under the first: live ground that grants no
-   * sight, at half fog, so the player reads the terrain all round while what is
-   * moving on it still only shows where they are looking. It goes round the
-   * tank rather than round the block the player is looking through - the ground
-   * they can make out is the ground they are standing in the middle of, and the
-   * lens travels over it. */
-  haloLive = (tankLive == TRUE &&
-              in->experiment == (uint8_t)fogExperimentHalo);
-  if (haloLive == TRUE) {
-    haloRect = overviewRectAround((int)useMX, (int)useMY, OVERVIEW_HALO_HALF);
-    haloRect.alpha = OVERVIEW_HALO_ALPHA;
-    haloRect.terrainOnly = 1;
   }
 
   memcpy(om->prevLive, om->live, sizeof(om->prevLive));
   om->prevLiveCount = om->liveCount;
 
   om->liveCount = overviewMapBuildRegions(
-      sim, myPlayerNum, in, (haloLive == TRUE) ? &haloRect : NULL,
-      (tankLive == TRUE) ? &tankRect : NULL, om->live, OVERVIEW_MAX_REGIONS);
+      sim, myPlayerNum, in, (tankLive == TRUE) ? &tankRect : NULL, om->live,
+      OVERVIEW_MAX_REGIONS);
   changed = overviewRegionsDiffer(om->live, om->liveCount, om->prevLive,
                                   om->prevLiveCount);
 
@@ -956,13 +924,13 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * that has changed hands freezes in the new one, and an ally that has died
    * or left freezes on the ground they were last standing on rather than a
    * tick stale. A decay clock running out ends a region the same way.
-   * overviewMapBuildRegions emits the halo rect first when there is one, then
-   * the tank rect, then pills, bases and allied tanks each in ascending index,
-   * so walking the same order over last update's owners pairs each stale rect
-   * with the region that produced it. The order is contractual: position on
-   * the list is the only thing tying a stale rect to its region.
+   * overviewMapBuildRegions emits the tank rect first when there is one, then
+   * pills, bases and allied tanks each in ascending index, so walking the same
+   * order over last update's owners pairs each stale rect with the region that
+   * produced it. The order is contractual: position on the list is the only
+   * thing tying a stale rect to its region.
    *
-   * The two blocks round the tank take the mask they were stamped under, so
+   * The block round the tank takes the mask it was stamped under, so
    * ground the player could not see into stays as they last saw it on the way
    * out as well as on the way in. Watched items never carry one, here as in the
    * live stamp. om->hiddenActive is still last update's value at this point -
@@ -970,17 +938,6 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * rects came from, so this is the flag to read. Moving that assignment above
    * here would quietly take the mask away. */
   idx = 0;
-  if (om->haloWasLive == TRUE) {
-    if (haloLive == FALSE && idx < om->prevLiveCount) {
-      visPtr = overviewFarewellMask(om, sim, in, sightRule, &om->prevLive[idx],
-                                    vis);
-      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
-                            visPtr) == TRUE) {
-        changed = TRUE;
-      }
-    }
-    idx++;
-  }
   if (om->tankWasLive == TRUE) {
     if (tankLive == FALSE && idx < om->prevLiveCount) {
       visPtr = overviewFarewellMask(om, sim, in, sightRule, &om->prevLive[idx],
@@ -1094,34 +1051,29 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * and under either Headlights everything outside the near squares and the
    * beam is dark as well; an item view looks out of the pillbox, base or allied
    * tank it is watching, and neither what is in the way of the tank nor which
-   * way it points is anything to it. The build writes the halo first when there
-   * is one and the tank block after it, so those are the rects at the head of
-   * the list.
+   * way it points is anything to it. The build writes the tank block first, so
+   * that is the rect at the head of the list.
    *
-   * Each block is masked over its own extent rather than one mask being shared:
-   * the halo is centred on the tank while the lens sits wherever the classic
-   * view has scrolled to, so either can reach squares the other does not. The
-   * origin is the square the blocks were placed from, which for a tank that has
-   * died and is holding its block is where it died. */
+   * The block is masked over its own extent. The origin is the square it was
+   * placed from, which for a tank that has died and is holding its block is
+   * where it died. */
   hideOn = (tankLive == TRUE &&
             (in->sightMode != (uint8_t)fogSightOff ||
              overviewIsHeadlights(in->experiment) == TRUE));
   ownBlocks = 0;
   if (hideOn == TRUE) {
-    ownBlocks = ((haloLive == TRUE) ? 1 : 0) + 1;
+    ownBlocks = 1;
     if (ownBlocks > om->liveCount) {
       ownBlocks = om->liveCount;
     }
   }
   om->hiddenActive = (ownBlocks > 0);
 
-  /* The beam the stamp below is about to mask those blocks with, left on the
+  /* The beam the stamp below is about to mask that block with, left on the
    * map for the frontend: the fog samples it several times across each square
    * to draw a straight edge, where the per-square flags can only say yes or no.
-   * The tank's block is the last of the own blocks - the halo is written first
-   * when there is one - so that is the extent the mask covers. Zeroed whole,
-   * so a frontend can compare it byte for byte to decide the beam has not
-   * moved. */
+   * The tank's block is the extent the mask covers. Zeroed whole, so a frontend
+   * can compare it byte for byte to decide the beam has not moved. */
   memset(&om->beam, 0, sizeof(om->beam));
   if (ownBlocks > 0 && overviewIsHeadlights(in->experiment) == TRUE) {
     om->beam = overviewBeamFromHeading(in->heading);
@@ -1169,7 +1121,6 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   /* What produced a region this update, for the replay above to walk next
    * time. Recorded from the same predicates the build just used, so the two
    * cannot come apart. */
-  om->haloWasLive = haloLive;
   om->tankWasLive = tankLive;
   for (i = 0; i < MAX_PILLS; i++) {
     om->pillWasLive[i] = overviewPillLive(sim, myPlayerNum, in, (BYTE)i,

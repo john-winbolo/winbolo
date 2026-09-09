@@ -861,17 +861,15 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
  * covers. A playtest aid over the drawing alone — nothing about the regions
  * moves for it.
  *
- * Colour says what a rect is. The build emits the halo first when there is one,
- * and that is the only terrain-only rect it makes; the block round the player's
- * own tank comes next when the build made one, and the pills, bases and allied
- * tanks after it. Watching an item closes both blocks round the tank, so
- * whether there is a tank block at all is read from the map's own record of
- * what it built rather than from a fixed position on the list.
+ * Colour says what a rect is. The build emits the block round the player's own
+ * tank first when it made one, and the pills, bases and allied tanks after it.
+ * Watching an item closes the block round the tank, so whether there is one at
+ * all is read from the map's own record of what it built rather than from a
+ * fixed position on the list.
  *
- * Magenta for the ground-only block Halo puts under the lens, white for the
- * block the player sees things moving in, and a dimmer cyan for a watched pill,
- * base or allied tank. All three read against grass and water, and none of them
- * is the item view border's yellow.
+ * White for the block the player sees things moving in, and a dimmer cyan for a
+ * watched pill, base or allied tank. Both read against grass and water, and
+ * neither is the item view border's yellow.
  *
  * Rectangle fills only — no texture and no font — so it is valid on either
  * host's renderer, and every colour is at alpha 255, so whatever blend mode the
@@ -884,16 +882,13 @@ static void overviewViewDrawRegionOutlines(SDL_Renderer *r,
     if (weight < OVERVIEW_REGION_LINE_MIN) weight = OVERVIEW_REGION_LINE_MIN;
     if (weight > OVERVIEW_REGION_LINE_MAX) weight = OVERVIEW_REGION_LINE_MAX;
 
-    bool haveHalo = (om->liveCount > 0 && om->live[0].terrainOnly != 0);
-    int  tankIdx  = om->tankWasLive ? (haveHalo ? 1 : 0) : -1;
+    int tankIdx = om->tankWasLive ? 0 : -1;
 
     for (int i = 0; i < om->liveCount; i++) {
         const OverviewRect *rect = &om->live[i];
         Uint8 cr, cg, cb;
 
-        if (rect->terrainOnly != 0) {
-            cr = 255; cg = 80;  cb = 220;
-        } else if (i == tankIdx) {
+        if (i == tankIdx) {
             cr = 255; cg = 255; cb = 255;
         } else {
             cr = 110; cg = 195; cb = 210;

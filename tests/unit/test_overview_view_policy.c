@@ -144,7 +144,7 @@ static int vpBuild(GameSim *gs, const OverviewViewInputs *in,
     tank.top    = VP_TANK_MY - OVERVIEW_TANK_HALF;
     tank.right  = VP_TANK_MX + OVERVIEW_TANK_HALF;
     tank.bottom = VP_TANK_MY + OVERVIEW_TANK_HALF;
-    return overviewMapBuildRegions(gs, 0, in, NULL, &tank, out,
+    return overviewMapBuildRegions(gs, 0, in, &tank, out,
                                    OVERVIEW_MAX_REGIONS);
 }
 

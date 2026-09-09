@@ -40,8 +40,10 @@
 #define OVERVIEW_F_MINE      0x01   /* mine was visible on the square when last seen */
 #define OVERVIEW_F_LIVE      0x02   /* inside a live region on the latest update */
 /* Close enough to see things moving on the square, not just the ground under
- * them. Every region but a terrain-only one grants it, so under every
- * experiment but Halo it is set wherever OVERVIEW_F_LIVE is. */
+ * them. Every region grants it, so it is set wherever OVERVIEW_F_LIVE is. Kept
+ * as its own bit because sight and liveness are separate questions to a
+ * frontend, and a region that stamps ground without granting sight is the
+ * obvious next thing to want. */
 #define OVERVIEW_F_SIGHT     0x04
 /* Inside a live region and not seen from the tank all the same - behind a
  * building, or outside the Headlights beam. The square keeps the tile it last
@@ -59,13 +61,6 @@
  * narrow the tank's region down to. Same number as the item block and a
  * different thing, so tuning one never moves the other. */
 #define OVERVIEW_LENS_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
-/* Halo's outer block of ground: the same width as the scroll envelope and a
- * different thing, so tuning one never moves the other. The alpha is what puts
- * that block at half fog, through the rect's own alpha, so the fog builder
- * needs nothing added to it. */
-#define OVERVIEW_HALO_HALF   (MAIN_SCREEN_SIZE_X - 1)   /* 14 -> 29x29 */
-#define OVERVIEW_HALO_ALPHA  128
-
 /* How far round the tank the Headlights blocks stay live whichever way it is
  * pointing, as a half-width: 2 is the 5x5 the tank sits in the middle of. */
 #define OVERVIEW_HEADLIGHT_NEAR 2
@@ -80,16 +75,13 @@
 #define OVERVIEW_HEADLIGHT_COS2_ONE 10000
 #define OVERVIEW_HEADLIGHT_COS2     9330
 
-/* Two round the player's own tank, because Halo puts a block of ground round
- * the block they can see things moving on; every other experiment builds one
- * and leaves the second slot empty. */
-#define OVERVIEW_MAX_REGIONS (2 + MAX_PILLS + MAX_BASES + MAX_TANKS)
+/* One round the player's own tank, and one for each item a view policy grants
+ * a block to. */
+#define OVERVIEW_MAX_REGIONS (1 + MAX_PILLS + MAX_BASES + MAX_TANKS)
 
 /* Inclusive on all four edges, clamped to 0..255. alpha is 255 for a region
  * the player holds outright and ramps down over the last VIEW_DECAY_FADE_SECS
- * of a decay window, reaching 0 as the window runs out. terrainOnly is a
- * region that stamps the ground and grants no sight, so what is moving on it
- * is not drawn.
+ * of a decay window, reaching 0 as the window runs out.
  *
  * The frontend compares stored rects byte for byte to decide it can reuse a
  * fog mask, so every rect has to be zeroed whole when it is built rather than
@@ -97,7 +89,6 @@
 typedef struct OverviewRect {
     int  left, top, right, bottom;
     BYTE alpha;
-    BYTE terrainOnly;
 } OverviewRect;
 
 /* The Headlights beam the latest update built, or active false when it built
@@ -204,7 +195,6 @@ typedef struct OverviewMap {
     int          liveCount;
     OverviewRect prevLive[OVERVIEW_MAX_REGIONS];         /* regions used by the update before it */
     int          prevLiveCount;
-    bool         haloWasLive;                            /* the halo region existed last update */
     bool         tankWasLive;                            /* the tank region existed last update */
     /* A tank waiting to respawn reports the map origin instead of the square
      * it died on, so the square it last had a block on has to be kept here:
