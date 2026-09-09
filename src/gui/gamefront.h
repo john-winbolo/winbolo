@@ -79,6 +79,13 @@
 #define DEFAULT_SCROLL_GUNDECREASE  40   /* SDL_SCANCODE_RETURN */
 #define DEFAULT_SCROLL_PILLVIEW     10   /* SDL_SCANCODE_G */
 
+/* Voice — both bound to nothing else, and both under the left hand. Q sits
+   beside the movement keys (E/D/S/F) because push to talk is held while
+   driving; Z is a corner away because the mute toggle is pressed once and
+   wants to be hard to hit by accident. */
+#define DEFAULT_PUSHTOTALK   20   /* SDL_SCANCODE_Q */
+#define DEFAULT_MUTEMIC      29   /* SDL_SCANCODE_Z */
+
 #define PREFERENCE_FILE "WinBolo.ini"
 
 #define TRACKER_ADDRESS "tracker.winbolo.com"
@@ -977,6 +984,11 @@ extern bool           gameFrontHostingServeReplays;    /* default Yes   */
                                * ask for it. Yes leaves the serve policy at
                                * ROUND_LOG_SERVE_AUTO, which serves unless
                                * WinBolo.net is running; No forces it off. */
+extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
+                              /* How the hosted server handles the voice its
+                               * clients send it. Holds a ServerVoiceMode.
+                               * serverVoiceProximity is not implemented and
+                               * forwards the same as serverVoiceOn. */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
@@ -988,6 +1000,7 @@ void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
+void gameFrontSetHostingVoiceMode(int mode);
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Read by gameFrontGetPrefs and pushed onto the sim with

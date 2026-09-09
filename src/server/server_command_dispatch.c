@@ -35,7 +35,8 @@
 #include "../common/wb_log.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
                                          transportUdpServerSetBotName,
-                                         transportUdpServerKickPlayer */
+                                         transportUdpServerKickPlayer,
+                                         transportUdpServerSetVoiceMute */
 #include "../winbolonet/winbolonet_server.h" /* winboloNetIsPlayerParticipant */
 #include "../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning */
 
@@ -329,6 +330,48 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         memcpy(evt.u.ratingPosted.key, p->key, sizeof(evt.u.ratingPosted.key));
         evt.u.ratingPosted.key[sizeof(evt.u.ratingPosted.key) - 1] = '\0';
         serverSimPublishControl(sim, &evt);
+        return CMD_OK;
+    }
+    case CMD_PLAYER_MUTE: {
+        const CmdPlayerMute *p = &cmd->u.playerMute;
+        if (p->targetPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Muting yourself is meaningless — you never receive your own
+         * voice or chat. */
+        if ((int)p->targetPlayer == senderSlot) return CMD_REJECT_INVALID;
+        transportUdpServerSetVoiceMute((BYTE)senderSlot, p->targetPlayer,
+                                       p->muted != 0);
+        /* No control event: the mute is private to the muting client.
+         * Broadcasting it would tell the muted player they were muted. */
+        return CMD_OK;
+    }
+    case CMD_VOICE_STATE: {
+        const CmdVoiceState *p = &cmd->u.voiceState;
+        GameSim *gs = serverSimGetGameSim(sim);
+        uint8_t oldFlags = playersGetClientFlags(&gs->plyrs, (BYTE)senderSlot);
+        uint8_t flags = oldFlags;
+        flags &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
+        if (p->hasMic) {
+            flags |= PLAYER_FLAG_HAS_MIC;
+            /* Muted only means anything with a mic. Never setting the two
+             * together leaves the receiving end a clean three states — no
+             * mic, muted, live — rather than four with a nonsense one. */
+            if (p->selfMuted) flags |= PLAYER_FLAG_VOICE_MUTED;
+        }
+        /* A client packs many commands into one PACKET_COMMAND_TICK, and
+         * a re-send of the state the slot already holds is not a change.
+         * Publishing it anyway would fan one reliable lobby-slot control
+         * event per command to every client. */
+        if (flags == oldFlags) return CMD_OK;
+        playersSetClientFlags(&gs->plyrs, (BYTE)senderSlot, flags);
+        /* During a running game the snapshot carries clientFlags every
+         * tick, so the new bits reach every client on their own. The lobby
+         * slot only goes out when it is published, so a change made while
+         * clients are looking at the lobby has to publish it here. Same
+         * gate as the lobby-slot heartbeat in server_lifecycle.c. */
+        if (serverSimGetState(sim) == serverStateLobby ||
+            serverSimGetState(sim) == serverStateCountdown) {
+            serverSimPublishLobbySlot(sim, (BYTE)senderSlot);
+        }
         return CMD_OK;
     }
     case CMD_VIEW_STATE: {

@@ -682,6 +682,12 @@ void printArgs() {
   fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
   fprintf(stderr, "-mdns         - Advertise the game on the local network via mDNS\n");
   fprintf(stderr, "                (_winbolo._udp.local); off by default for dedicated servers\n");
+  fprintf(stderr, "-voice <M>    - Voice chat forwarding: on (default), off, proximity.\n");
+  fprintf(stderr, "                \"off\" drops the segments a client sends anyway rather\n");
+  fprintf(stderr, "                than carrying them to anyone. \"proximity\" is not\n");
+  fprintf(stderr, "                implemented and forwards the same as \"on\".\n");
+  fprintf(stderr, "                An unrecognised mode warns and falls back to on.\n");
+  fprintf(stderr, "-no-voice     - Alias for -voice off. Wins when both are given.\n");
 
   fprintf(stderr, "\nLifecycle & shutdown:\n");
   fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
@@ -1843,6 +1849,38 @@ int main(int argc, char **argv) {
     /* LAN mDNS advertising is opt-in for dedicated servers (the memset
      * above leaves it false by default); -mdns turns it on. */
     instCfg.mdnsAdvertise = (argExist(argc, argv, "mdns") == TRUE);
+    /* Voice is forwarded by default (the memset above leaves the mode
+     * serverVoiceOn, so no switch at all needs no code here). -voice <mode>
+     * names one of the three modes; an unknown word warns and leaves it on,
+     * the same shape -pillview uses. serverVoiceProximity is not
+     * implemented: a server set to it forwards voice exactly as "on" does. */
+    {
+      int voiceNum = findArg(argc, argv, "voice");
+      if (voiceNum != ARG_NOT_FOUND) {
+        char voiceStr[32];
+        strncpy(voiceStr, (char *)argv[voiceNum], sizeof(voiceStr) - 1);
+        voiceStr[sizeof(voiceStr) - 1] = '\0';
+        strlower(voiceStr);
+        if (strcmp(voiceStr, "off") == 0) {
+          instCfg.voiceMode = serverVoiceOff;
+        } else if (strcmp(voiceStr, "on") == 0) {
+          instCfg.voiceMode = serverVoiceOn;
+        } else if (strcmp(voiceStr, "proximity") == 0) {
+          instCfg.voiceMode = serverVoiceProximity;
+        } else {
+          fprintf(stderr, "Unknown -voice '%s'; using on\n", voiceStr);
+          instCfg.voiceMode = serverVoiceOn;
+        }
+      }
+      /* -no-voice (either dash form) is the older spelling of -voice off.
+       * Read after -voice so it wins when both are on the command line: it
+       * is the narrower statement, and the one an existing script is most
+       * likely to be carrying. */
+      if (argExist(argc, argv, "no-voice") == TRUE ||
+          argExist(argc, argv, "-no-voice") == TRUE) {
+        instCfg.voiceMode = serverVoiceOff;
+      }
+    }
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       serverSimDestroy(serverSim);

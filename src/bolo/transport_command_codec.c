@@ -884,6 +884,20 @@ static bool commandEncodeRatingPosted(const ClientCommand *cmd,
     return true;
 }
 
+/* CMD_PLAYER_MUTE — PACKET_PLAYER_MUTE
+ * Wire: [header 8] [targetPlayer 1] [muted 1] */
+static bool commandEncodePlayerMute(const ClientCommand *cmd,
+                                    uint8_t *buf, size_t bufCap,
+                                    size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_PLAYER_MUTE, 0);
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.playerMute.targetPlayer;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.playerMute.muted ? 1 : 0;
+    *outLen = needed;
+    return true;
+}
+
 static bool commandDecodeRatingPosted(const uint8_t *buf, size_t len,
                                       ClientCommand *cmd) {
     /* Fixed-length body: anything shorter or longer is not this command. */
@@ -892,6 +906,40 @@ static bool commandDecodeRatingPosted(const uint8_t *buf, size_t len,
     memcpy(cmd->u.ratingPosted.key, buf + CMD_PACKET_BODY_OFFSET,
            RATING_POSTED_KEY_WIRE);
     cmd->u.ratingPosted.key[RATING_POSTED_KEY_WIRE] = '\0';
+    return true;
+}
+
+static bool commandDecodePlayerMute(const uint8_t *buf, size_t len,
+                                    ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
+    uint8_t targetPlayer = buf[CMD_PACKET_BODY_OFFSET];
+    if (targetPlayer >= MAX_TANKS) return false;
+    cmd->type = CMD_PLAYER_MUTE;
+    cmd->u.playerMute.targetPlayer = targetPlayer;
+    cmd->u.playerMute.muted = buf[CMD_PACKET_BODY_OFFSET + 1] ? 1 : 0;
+    return true;
+}
+
+/* CMD_VOICE_STATE — PACKET_VOICE_STATE
+ * Wire: [header 8] [hasMic 1] [selfMuted 1] */
+static bool commandEncodeVoiceState(const ClientCommand *cmd,
+                                    uint8_t *buf, size_t bufCap,
+                                    size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_VOICE_STATE, 0);
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.voiceState.hasMic ? 1 : 0;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.voiceState.selfMuted ? 1 : 0;
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodeVoiceState(const uint8_t *buf, size_t len,
+                                    ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
+    cmd->type = CMD_VOICE_STATE;
+    cmd->u.voiceState.hasMic    = buf[CMD_PACKET_BODY_OFFSET] ? 1 : 0;
+    cmd->u.voiceState.selfMuted = buf[CMD_PACKET_BODY_OFFSET + 1] ? 1 : 0;
     return true;
 }
 
@@ -988,6 +1036,8 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_BALANCE_DISMISS:       ok = commandEncodeBalanceDismiss(cmd, buf, bufCap, outLen); break;
         case CMD_WBN_REAUTH:            ok = commandEncodeWbnReauth(cmd, buf, bufCap, outLen); break;
         case CMD_RATING_POSTED:         ok = commandEncodeRatingPosted(cmd, buf, bufCap, outLen); break;
+        case CMD_PLAYER_MUTE:           ok = commandEncodePlayerMute(cmd, buf, bufCap, outLen); break;
+        case CMD_VOICE_STATE:           ok = commandEncodeVoiceState(cmd, buf, bufCap, outLen); break;
         case CMD_VIEW_STATE:            ok = commandEncodeViewState(cmd, buf, bufCap, outLen); break;
         case CMD_VIEW_CYCLE:            ok = commandEncodeViewCycle(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
@@ -1036,6 +1086,8 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_BALANCE_DISMISS:       return commandDecodeBalanceDismiss(buf, len, cmd);
         case PACKET_WBN_REAUTH:            return commandDecodeWbnReauth(buf, len, cmd);
         case PACKET_RATING_POSTED:         return commandDecodeRatingPosted(buf, len, cmd);
+        case PACKET_PLAYER_MUTE:           return commandDecodePlayerMute(buf, len, cmd);
+        case PACKET_VOICE_STATE:           return commandDecodeVoiceState(buf, len, cmd);
         case PACKET_VIEW_STATE:            return commandDecodeViewState(buf, len, cmd);
         case PACKET_VIEW_CYCLE:            return commandDecodeViewCycle(buf, len, cmd);
         default:                           return false;

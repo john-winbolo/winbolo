@@ -368,6 +368,21 @@ void udpClientHandleLobbyMapPreviewErr(struct ClientSim *cs,
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
 
+/* ── Voice (CHANNEL_VOICE) ───────────────────────────────────────── */
+
+/* Frame one encoded 20 ms audio frame and queue it on the best-effort
+ * voice channel, stamped with this connection's next voice sequence
+ * number and the caller's flags byte. Dropped silently when the client is
+ * not connected or the frame is too large for one segment. */
+void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
+                                 int opusLen, uint8_t flags);
+
+/* Pop the oldest voice frame received from the server, writing its payload
+ * to out. Returns the payload length, or 0 when none is pending. */
+int transportUdpClientReceiveVoice(Transport *t, uint8_t *fromPlayer,
+                                   uint8_t *seq, uint8_t *flags,
+                                   uint8_t *out, int outCap);
+
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
@@ -386,6 +401,12 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched);
  * Returns NULL if no map has been downloaded yet.
  * outLen receives the length of the compressed data. */
 const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
+
+/* Monotonic count of installed maps discarded by a re-accept arming a fresh
+ * download. Never decreases, so a caller can latch "the map was invalidated"
+ * by comparing against an earlier sample — the invalidation itself is a
+ * transient that a polling observer can step over. */
+uint32_t transportUdpClientGetMapInvalidateCount(Transport *t);
 
 /* Returns map-download progress as 0..100. Returns 100 when nothing is
  * in flight (no buffer allocated yet, or zero-sized total — neither
@@ -493,6 +514,10 @@ typedef struct UdpServerClient {
     char wbnWebName[PACKET_MAX_PLAYER_NAME];    /* cached WBN player_name */
     char wbnWebCountry[3];                      /* cached ISO-2 + NUL */
     int  wbnWebUserId;                          /* cached user_id, -1 when null */
+    /* Bit N set = this client has muted player N. Both voice fan-out and
+     * CTRL_CHAT delivery consult it. Slots are recycled, so it is cleared on
+     * disconnect. */
+    PlayerBitMap voiceMuteMask;
     SubscriberHandle controlSub; /* per-client subscription on the server's
                                   * control-event bus; the deliver callback
                                   * encodes via the codec table and unicasts
@@ -708,6 +733,40 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name);
 
 /* Get a connected client's player name (NULL if slot invalid/disconnected). */
 const char *transportUdpServerGetPlayerName(BYTE playerNum);
+
+/* Set or clear clientSlot's mute bit for targetPlayer. Both indices are
+ * bounds-checked against MAX_TANKS; a slot with no connected client is a
+ * no-op. The mute is private to clientSlot — nothing about it is sent on
+ * to the muted player. */
+void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
+                                    bool muted);
+
+/* Read clientSlot's mute bitmask (0 for an invalid or disconnected slot).
+ * Exists for the unit test — the fan-out and delivery paths read the field
+ * directly. */
+PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot);
+
+/* Turn voice forwarding on or off for the whole server. Off still drains
+ * every client's voice ring — a client that sends anyway must not fill its
+ * ring and stall — but forwards nothing and accepts nothing. Set once at
+ * startup from ServerInstanceConfig.voiceMode, which turns it off only for
+ * serverVoiceOff; a server that never calls this forwards voice. */
+void transportUdpServerSetVoiceEnabled(bool enabled);
+
+/* Read the cumulative voice segment counts: forwarded, dropped by the
+ * per-tick per-client flood cap, and withheld from a recipient by the
+ * concurrent-talker cap. Any out-param may be NULL. All are totals over every
+ * slot, for measurement and for an operator diagnosing a client flooding the
+ * voice channel.
+ *
+ * The last two count different events and are deliberately separate: a
+ * dropped segment was refused on arrival and reached nobody, while a
+ * talker-capped one was accepted and forwarded — just not to the recipients
+ * already hearing their limit of simultaneous voices. It is therefore counted
+ * once per recipient it was withheld from, not once per segment. */
+void transportUdpServerGetVoiceStats(uint32_t *outAccepted,
+                                     uint32_t *outDropped,
+                                     uint32_t *outTalkerCapped);
 
 /* Get a connected client's 2-char ISO country code (NULL if slot invalid
  * or disconnected). The pointer is into the transport's per-slot storage

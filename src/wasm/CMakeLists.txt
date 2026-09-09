@@ -63,6 +63,13 @@ FetchContent_Declare(cjson
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+FetchContent_Declare(opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG        v1.5.2
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 
 # Disable all test/example targets from dependencies
 set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -74,7 +81,27 @@ set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
 set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
 set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib cjson)
+# libopus — voice codec, static only (Emscripten has no shared libs anyway).
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+# Emscripten's toolchain reports CMAKE_SYSTEM_PROCESSOR=x86 (it advertises a
+# 32-bit host so projects can detect bitness), which puts Opus on its x86
+# branch: it probes for SSE/AVX intrinsics and, if it finds any, compiles the
+# runtime CPU-detection path that calls cpuid. wasm has neither, so pin every
+# x86 path off and take the plain C implementation.
+set(OPUS_X86_MAY_HAVE_SSE OFF CACHE BOOL "" FORCE)
+set(OPUS_X86_MAY_HAVE_SSE2 OFF CACHE BOOL "" FORCE)
+set(OPUS_X86_MAY_HAVE_SSE4_1 OFF CACHE BOOL "" FORCE)
+set(OPUS_X86_MAY_HAVE_AVX2 OFF CACHE BOOL "" FORCE)
+set(OPUS_X86_PRESUME_SSE OFF CACHE BOOL "" FORCE)
+set(OPUS_X86_PRESUME_SSE2 OFF CACHE BOOL "" FORCE)
+set(OPUS_X86_PRESUME_SSE4_1 OFF CACHE BOOL "" FORCE)
+set(OPUS_X86_PRESUME_AVX2 OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib cjson opus)
 
 ###
 # nanosvg — header-only SVG parser/rasterizer (vendored)
@@ -332,6 +359,12 @@ set(WASM_SOURCES
     ${SRC_ROOT}/client_frontend/client_frontend_connect.c
     ${SRC_ROOT}/client_frontend/client_frontend_tick.c
     ${SRC_ROOT}/client_frontend/client_frontend_common.c
+    # Voice: the Opus wrappers and the client voice runtime, shared with the
+    # desktop build. voice_wasm.c is this platform's half of voice_backend.h,
+    # standing in for gui/sdl3/voice.c.
+    ${SRC_ROOT}/client_frontend/voice_core.c
+    ${SRC_ROOT}/client_frontend/voice_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/voice_wasm.c
 )
 
 ###
@@ -387,6 +420,9 @@ target_compile_definitions(winbolo PRIVATE
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    # Lights up the settings dialog's voice block, which compiles into this
+    # target too.
+    WINBOLO_VOICE=1
 )
 target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
@@ -402,6 +438,7 @@ target_link_libraries(winbolo PRIVATE
     stb_image
     utf8proc
     cjson
+    Opus::opus
 )
 
 ###

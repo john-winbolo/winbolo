@@ -64,9 +64,19 @@ static bool pred_connected(LoopbackHarness *h, void *user) {
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
 }
 
-static bool pred_dl_incomplete(LoopbackHarness *h, void *user) {
-    (void)user;
-    return !clientSimIsMapDownloadComplete(h->cs);
+/* Latches once the map change has discarded the installed map. u points at
+ * the invalidate count sampled before the change.
+ *
+ * Replaces a predicate that waited to observe !clientSimIsMapDownloadComplete.
+ * That is a transient — incomplete only until the new map lands — and
+ * loopbackHarnessPumpUntil samples only between pumps, so it is missable in
+ * principle. It has not been seen to fail here (0/25 measured), because a
+ * player's full map re-download spans many pumps and a sample always falls
+ * inside; the same shape one layer over, in the spectator lobby test, has a
+ * window about one pump wide and failed ~24-36% of runs. Latch a monotonic
+ * counter instead so this one does not depend on that margin either. */
+static bool pred_dl_invalidated(LoopbackHarness *h, void *user) {
+    return clientSimGetMapInvalidateCount(h->cs) > *(const uint32_t *)user;
 }
 
 static bool pred_reconverged(LoopbackHarness *h, void *user) {
@@ -83,6 +93,7 @@ static bool pred_reconverged(LoopbackHarness *h, void *user) {
 static int mc_change_and_reconverge(LoopbackHarness *h, const char *tag) {
     BYTE emap[6000] = E_MAP;
     int noticedAt, recoveredAt;
+    uint32_t invalidatesBefore = clientSimGetMapInvalidateCount(h->cs);
 
     if (!serverSimReloadCompressedInMemory(h->sim, emap, 5097,
                                            "Everard Island")) {
@@ -90,7 +101,7 @@ static int mc_change_and_reconverge(LoopbackHarness *h, const char *tag) {
         return 1;
     }
     noticedAt = loopbackHarnessPumpUntil(h, MC_NOTICE_MAX,
-                                         pred_dl_incomplete, NULL);
+                                         pred_dl_invalidated, &invalidatesBefore);
     if (noticedAt < 0) {
         fprintf(stderr, "  map change (%s): never noticed within %d pumps\n",
                 tag, MC_NOTICE_MAX);

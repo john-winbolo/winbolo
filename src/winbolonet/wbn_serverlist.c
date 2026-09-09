@@ -22,6 +22,7 @@
 #include "cJSON.h"
 #include "http.h"
 #include "view_policy.h"   /* the view-policy defaults for absent fields */
+#include "server_voice_mode.h"  /* serverVoiceOn — the default for an absent "voice" */
 
 /* Copy a JSON string item into a fixed buffer, truncating to fit.
  * Non-string / NULL items leave dst as an empty string. */
@@ -110,6 +111,10 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
                                          VIEW_DECAY_DEFAULT_SECS);
     dst->allyViewDecay = readIntFieldDef(src, "allyviewdecay",
                                          VIEW_DECAY_DEFAULT_SECS);
+
+    /* A tracker that has not learned this field yet leaves the mode at on,
+     * which is what every server did before the field existed. */
+    dst->voiceMode = readIntFieldDef(src, "voice", serverVoiceOn);
 
     dst->mines           = readBoolField(src, "mines");
     dst->password        = readBoolField(src, "password");
