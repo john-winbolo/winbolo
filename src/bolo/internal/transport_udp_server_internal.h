@@ -396,12 +396,6 @@ void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
  * src/server/transport_udp_server.c. */
 void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
 
-/* Short name for a ControlEventType, for diagnostic logging only. Owned by
- * src/server/transport_udp_server.c, whose per-client deliver callback logs
- * through it; the spectator deliver callback in
- * src/server/udp/udp_server_spectator.c logs the same way. */
-const char *mpDiagCtrlName(int type);
-
 /* Public-address override advertised in place of the internal port and a zero
  * address once a UPnP/NAT-PMP/PCP mapping is negotiated. Owned by
  * src/server/udp/udp_server_tracker.c. */
@@ -476,10 +470,21 @@ void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
                              const char *const args[]);
-void transportUdpServerFlushChannel(int clientIdx);
 void transportUdpServerSendWbnRekey(UdpServerClient *c);
-void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
 void udpServerResetRoundLogLimits(int idx);
+
+/* Control-event delivery to one connected player: the per-recipient filter
+ * that decides what a client is allowed to see, the queueing of an accepted
+ * event onto that client's control channel, and the immediate flush of that
+ * channel. Owned by src/server/udp/udp_server_control.c.
+ * src/server/udp/udp_server_join.c hands udpClientDeliverControl to
+ * serverSimRegisterSubscriber and flushes the replay burst that follows;
+ * src/server/udp/udp_server_spectator.c calls udpClientDeliverControl to
+ * deliver a player-addressed event, and its own deliver callback logs through
+ * mpDiagCtrlName. */
+const char *mpDiagCtrlName(int type);
+void transportUdpServerFlushChannel(int clientIdx);
+void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
 
 /* Map movement in both directions between the transport and one client: the
  * compressed map streamed down to a joining or resyncing client on
