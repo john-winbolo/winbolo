@@ -29,7 +29,8 @@
 
 #include "global.h"
 #include "client_enums.h"  /* tankButton */
-#include "sdl3/ping_binding.h"  /* PING_BIND_SLOTS — the smart-ping chord slots */
+#include "sdl3/ping_binding.h"  /* PING_BIND_SLOTS / PING_BIND_DIRECT_SLOTS —
+                                   the smart-ping chord slots */
 
 /* The declarations below are defined in input.c, so a C++ includer that
    forgot to wrap this header would give them C++ linkage and fail to
@@ -74,8 +75,14 @@ typedef struct {
   int kiQuickMine;
   /* Smart ping. Not scancodes: each slot is a packed chord (modifiers plus a
      key OR a mouse button) — see ping_binding.h. Unbound slots are 0, which
-     matches nothing, so the array is always safe to walk in full. */
+     matches nothing, so the array is always safe to walk in full.
+
+     kiPing opens the pie menu. kiPingDirect is one slot per ping kind, all
+     unbound by default: a chord there sends that kind straight away with no
+     menu, and beats a kiPing slot carrying the same chord. Indexed by
+     PING_KIND_*, so the slot's index is the kind it sends. */
   int kiPing[PING_BIND_SLOTS];
+  int kiPingDirect[PING_BIND_DIRECT_SLOTS];
 } keyItems;
 
 

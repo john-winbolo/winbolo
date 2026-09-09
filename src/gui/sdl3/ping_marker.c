@@ -128,6 +128,14 @@ void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
        or snow. Both see-through: this is a hint on the ground, not a sprite. */
     pmFillCircle(renderer, cx, cy, tileW * 0.45f, 0, 0, 0, pmAlpha(a * 0.5f));
     tex = pingIconTexture(kind);
+    /* The icons belong to one renderer at a time (ping_icons.c), and the map
+       overview's pop-out draws through a renderer of its own. A texture from
+       another renderer would simply fail to draw, so it is dropped here and
+       the marker falls back to the coloured dot below — the square, the rim
+       and the pulse are all still that renderer's own geometry. */
+    if (tex != NULL && SDL_GetRendererFromTexture(tex) != renderer) {
+        tex = NULL;
+    }
     if (tex) {
         float iconPx = tileW * 0.8f;
         SDL_FRect dst = { cx - iconPx * 0.5f, cy - iconPx * 0.5f, iconPx, iconPx };

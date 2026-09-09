@@ -40,6 +40,7 @@ extern "C" {
 #include "../glyphs.h"
 #include "../input.h"
 #include "../ping_binding.h"   /* the smart-ping chord slots */
+#include "../../ping_kinds.h"  /* pingKindNameId — the direct rows' labels */
 #include "../input_gamepad.h"  /* GamepadBindings — controller tab */
 #include "../build_cursor.h"   /* build-cursor behaviour option flags */
 #include "../../winbolo.h"
@@ -174,12 +175,29 @@ static void keyRow(const char *label, KeySetupField field) {
 /* -------------------------------------------------------
  * Smart-ping chord rows.
  *
- * These four slots do not hold a scancode like every row above them: a ping
+ * These slots do not hold a scancode like every row above them: a ping
  * binding is modifiers plus a key OR a mouse button, packed into one int by
  * ping_binding.h. So they get their own row renderer, their own capture arm,
  * and a capture that also accepts a mouse button.
+ *
+ * Two groups, one after the other and numbered as one list so a single
+ * "which row is armed" index covers both:
+ *
+ *   0 .. PING_BIND_SLOTS-1   the chords that open the pie menu
+ *   then one per ping kind   the direct pings, which send that kind with no
+ *                            menu at all
  * ------------------------------------------------------- */
-static int s_pingWaitSlot = -1;      /* index into keyItems::kiPing, or -1 */
+#define PING_CHORD_ROWS (PING_BIND_SLOTS + PING_BIND_DIRECT_SLOTS)
+
+static int s_pingWaitSlot = -1;      /* index into the row list above, or -1 */
+
+/* The working copy's binding for one row of that list, or nullptr when the
+ * index is out of range. */
+static int *pingChordPtr(int row) {
+    if (row < 0 || row >= PING_CHORD_ROWS) return nullptr;
+    if (row < PING_BIND_SLOTS) return &s_keys.kiPing[row];
+    return &s_keys.kiPingDirect[row - PING_BIND_SLOTS];
+}
 
 /* True while the capture is looking for a chord, so the mouse path in the
  * event pump knows a click belongs to the dialog rather than to the game. */
@@ -212,8 +230,9 @@ static int pingCaptureMods(void) {
 /* Commit a captured code (a scancode, or pingBindingMouseCode of a button)
  * into the armed slot, with whatever modifiers are down at that moment. */
 static void pingAssignCaptured(int code) {
-    if (s_pingWaitSlot < 0 || s_pingWaitSlot >= PING_BIND_SLOTS) return;
-    s_keys.kiPing[s_pingWaitSlot] = pingBindingEncode(pingCaptureMods(), code);
+    int *slot = pingChordPtr(s_pingWaitSlot);
+    if (slot == nullptr) return;
+    *slot = pingBindingEncode(pingCaptureMods(), code);
     s_pingWaitSlot = -1;
 }
 
@@ -245,42 +264,43 @@ static void pingBindingLabel(int binding, char *out, size_t outLen) {
                       out, outLen);
 }
 
-/* One ping slot's row. Same three columns as keyRow — label, current value,
- * Change/X — but no keycap glyph: a chord has no single cap to draw. */
-static void pingRow(int slot) {
+/* One chord row. Same three columns as keyRow — label, current value,
+ * Change/X — but no keycap glyph: a chord has no single cap to draw. `row`
+ * indexes the combined list above, so the same renderer serves the menu
+ * chords and the direct pings. */
+static void pingRow(int row, langid label) {
     char value[96];
-    bool waiting = (s_pingWaitSlot == slot);
-    MessageArgs args;
+    bool waiting = (s_pingWaitSlot == row);
+    int *slot    = pingChordPtr(row);
 
-    memset(&args, 0, sizeof(args));
-    args.number = slot + 1;
+    if (slot == nullptr) return;
 
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
-    ImGui::TextUnformatted(langGetTextFmt(STR_DLGKEYSETUP_PING_SLOT, &args));
+    ImGui::TextUnformatted(langGetText(label));
 
     ImGui::TableSetColumnIndex(1);
     if (waiting) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
                            langGetText(STR_DLGKEYSETUP_PRESSACHORD));
     } else {
-        pingBindingLabel(s_keys.kiPing[slot], value, sizeof(value));
+        pingBindingLabel(*slot, value, sizeof(value));
         ImGui::TextUnformatted(value);
     }
 
     ImGui::TableSetColumnIndex(2);
-    ImGui::PushID(1000 + slot);
+    ImGui::PushID(1000 + row);
     if (waiting) {
         if (ImGui::SmallButton(langGetText(STR_CANCEL))) s_pingWaitSlot = -1;
         imguiHandOnHover();
     } else {
         if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
-            s_pingWaitSlot = slot;
+            s_pingWaitSlot = row;
         }
         imguiHandOnHover();
         ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
         if (ImGui::SmallButton("X")) {
-            s_keys.kiPing[slot] = PING_BIND_NONE;
+            *slot = PING_BIND_NONE;
         }
         imguiHandOnHover();
         imguiHelpTooltip("Clear");
@@ -567,7 +587,18 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             endSection();
 
             section(langGetText(STR_DLGKEYSETUP_PING));
-            for (int pi = 0; pi < PING_BIND_SLOTS; pi++) pingRow(pi);
+            /* The three chords that open the pie, then one row per kind for
+               the direct pings — same order the kinds are numbered in, so the
+               standard ping heads the list the way it is the pie's centre.
+               A chord on a direct row wins over the same chord on a menu row
+               (pingBindingDirectKind). */
+            pingRow(0, STR_DLGKEYSETUP_PING);
+            pingRow(1, STR_DLGKEYSETUP_PING_ALT);
+            pingRow(2, STR_DLGKEYSETUP_PING_ALT2);
+            for (int pk = 0; pk < PING_BIND_DIRECT_SLOTS; pk++) {
+                pingRow(PING_BIND_SLOTS + pk,
+                        pingKindNameId((unsigned char)pk));
+            }
             endSection();
             ImGui::EndTabItem();
         }
@@ -644,6 +675,16 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             controllerRow(langGetText(STR_GP_ACTION_VIEW_PLAYERS),        GP_ACT_VIEW_PLAYERS);
             controllerRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
             controllerRow(langGetText(STR_GP_ACTION_PAUSE),               GP_ACT_PAUSE);
+            /* Smart ping, same order as the keyboard tab: the held chord that
+               opens the pie (the right stick or the d-pad then picks a sector
+               and letting go sends it), then one row per kind that sends
+               straight away. All unbound until the player binds them, and all
+               aimed at the build cursor's square — a pad has no pointer. */
+            controllerRow(langGetText(STR_DLGKEYSETUP_PING),               GP_ACT_PING_MENU);
+            for (int pk = 0; pk < PING_BIND_DIRECT_SLOTS; pk++) {
+                controllerRow(langGetText(pingKindNameId((unsigned char)pk)),
+                              (GamepadAction)(GP_ACT_PING_DIRECT_FIRST + pk));
+            }
             ImGui::EndTable();
           }
             /* Build-cursor behaviour options, shared by both paths, below the

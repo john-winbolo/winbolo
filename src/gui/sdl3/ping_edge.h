@@ -27,6 +27,43 @@
 extern "C" {
 #endif
 
+/* A screen rectangle, for the callers that pass one around rather than four
+ * loose floats. */
+typedef struct {
+    float x, y, w, h;
+} PingRect;
+
+/* The part of a rectangle that nothing is drawn over: the rect less the strip
+ * each edge is covered by. The map overview keeps exactly those four numbers
+ * (OverviewCamera::insetL/T/R/B — the status column, the build strip and the
+ * newswire in full screen), so an edge marker laid along the result sits on
+ * map the player can see instead of under a panel.
+ *
+ * A negative inset is read as none. Insets that would leave nothing writes the
+ * rectangle back unshrunk and returns false: a bar somewhere is better than no
+ * bar at all, and the caller can tell the difference if it cares. A degenerate
+ * rectangle on the way in is refused the same way. */
+static inline bool pingRectInset(float x, float y, float w, float h,
+                                 float insetL, float insetT,
+                                 float insetR, float insetB,
+                                 PingRect *out) {
+    float nx, ny, nw, nh;
+    if (out == NULL) return false;
+    out->x = x; out->y = y; out->w = w; out->h = h;
+    if (w <= 0.0f || h <= 0.0f) return false;
+    if (insetL < 0.0f) insetL = 0.0f;
+    if (insetT < 0.0f) insetT = 0.0f;
+    if (insetR < 0.0f) insetR = 0.0f;
+    if (insetB < 0.0f) insetB = 0.0f;
+    nx = x + insetL;
+    ny = y + insetT;
+    nw = w - insetL - insetR;
+    nh = h - insetT - insetB;
+    if (nw <= 0.0f || nh <= 0.0f) return false;
+    out->x = nx; out->y = ny; out->w = nw; out->h = nh;
+    return true;
+}
+
 /* Which border the marker sits on. Reported so a caller can pick the arrow
  * or the rounding it wants without re-deriving it from the coordinates. */
 typedef enum {

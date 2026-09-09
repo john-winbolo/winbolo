@@ -1987,7 +1987,7 @@ static const LangEntry langTable[] = {
     {2061, "On My Way"},
     {2062, "Bot Command"},
     {2063, "Smart Ping"},
-    {2064, "Ping {number}"},
+    {2064, "Smart Ping Alternate Keys"},
     {2065, "Press a key or mouse button"},
     {2066, "Ctrl"},
     {2067, "Alt"},
@@ -1997,6 +1997,7 @@ static const LangEntry langTable[] = {
     {2071, "Right Mouse"},
     {2072, "Mouse 4"},
     {2073, "Mouse 5"},
+    {2074, "Smart Ping Alternate Keys 2"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

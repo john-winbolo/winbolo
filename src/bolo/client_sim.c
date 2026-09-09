@@ -3103,6 +3103,12 @@ struct OverviewSnapshot {
    * them. Rebuilt on every fill; nothing is filtered here. */
   OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
   int               itemLabelCount;
+
+  /* The smart pings still on their clock, oldest first, taken with the rest
+   * of the frame's reads so the render half never touches the ping ring the
+   * network thread writes. */
+  ClientPing        pings[MAX_CLIENT_PINGS];
+  int               pingCount;
 };
 
 /* Whether an entity standing on (mapX, mapY) may be drawn: only a square the
@@ -3225,8 +3231,15 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->pillViewX     = 0;
   s->pillViewY     = 0;
   s->itemLabelCount = 0;
+  s->pingCount     = 0;
   s->haveMap       = (cs != NULL);
   if (cs == NULL) return;
+
+  /* The pings, on the clock the drawer ages them against. Sampled here rather
+   * than in the render so the ring — written from the network thread — is
+   * only ever read under the same lock the rest of this fill runs under. */
+  s->pingCount = clientSimGetPings(cs, (uint32_t)SDL_GetTicks(), s->pings,
+                                   MAX_CLIENT_PINGS);
 
   /* Generation 0 only exists between a round reset and the seed that follows
    * it, so a match on 0 can be a snapshot filled in that same window a round
@@ -3371,6 +3384,14 @@ void overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
 
 int overviewSnapshotItemLabelCount(const OverviewSnapshot *s) {
   return s ? s->itemLabelCount : 0;
+}
+
+const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s) {
+  return s ? &s->pings[0] : NULL;
+}
+
+int overviewSnapshotPingCount(const OverviewSnapshot *s) {
+  return s ? s->pingCount : 0;
 }
 
 const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s) {

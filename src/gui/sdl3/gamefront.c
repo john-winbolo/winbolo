@@ -3074,12 +3074,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
-  /* Smart ping — four chord slots. Stored as the same packed int the rest of
-     the section uses, so an older build reading a newer file just sees a
-     number it does not recognise in a key it does not know. */
+  /* Smart ping — three menu chord slots and one per ping kind for the direct
+     pings. Stored as the same packed int the rest of the section uses, so an
+     older build reading a newer file just sees a number it does not recognise
+     in a key it does not know. A file written by the four-slot build still
+     loads: "Ping 4" is simply never read. */
   {
     static const int pingDefaults[PING_BIND_SLOTS] = {
-      DEFAULT_PING1, DEFAULT_PING2, DEFAULT_PING3, DEFAULT_PING4
+      DEFAULT_PING1, DEFAULT_PING2, DEFAULT_PING3
     };
     int pi;
     for (pi = 0; pi < PING_BIND_SLOTS; pi++) {
@@ -3088,6 +3090,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       intToStr(pingDefaults[pi], def, sizeof(def));
       prefsGetString("KEYS", name, def, buff, FILENAME_MAX);
       keys->kiPing[pi] = atoi(buff);
+    }
+    for (pi = 0; pi < PING_BIND_DIRECT_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping Direct %d", pi + 1);
+      prefsGetString("KEYS", name, "0", buff, FILENAME_MAX);
+      keys->kiPingDirect[pi] = atoi(buff);
     }
   }
 
@@ -3610,13 +3618,19 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(keys->kiQuickMine, buff, sizeof(buff));
   prefsSetString("KEYS", "Quick Mine", buff);
 
-  /* Smart ping — four chord slots. */
+  /* Smart ping — the menu chords, then the per-kind direct ones. */
   {
     int pi;
     for (pi = 0; pi < PING_BIND_SLOTS; pi++) {
       char name[32];
       snprintf(name, sizeof(name), "Ping %d", pi + 1);
       intToStr(keys->kiPing[pi], buff, sizeof(buff));
+      prefsSetString("KEYS", name, buff);
+    }
+    for (pi = 0; pi < PING_BIND_DIRECT_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping Direct %d", pi + 1);
+      intToStr(keys->kiPingDirect[pi], buff, sizeof(buff));
       prefsSetString("KEYS", name, buff);
     }
   }

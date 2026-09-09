@@ -1094,12 +1094,13 @@ bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
   return true;
 }
 
+/* The smart-ping pie is not offered events here. It gets them at the top of
+   sdl3ImguiProcessEvents, ahead of ImGui itself, because the map overview's
+   pan item would otherwise take the chord press first and the capture-flag
+   block would then drop the event before it ever reached this function. An
+   event the pie takes never gets this far. */
 void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   if (!ev) return;
-  /* The smart-ping pie menu gets first refusal. While it is open it owns the
-     pointer, and the press that opens it must not also build or shoot — so
-     an event it takes is finished here. */
-  if (pingOverlayHandleEvent(cs, ev)) return;
   switch (ev->type) {
     case SDL_EVENT_MOUSE_MOTION: {
       /* The classic 15x15 mapping means nothing while the overview owns the
