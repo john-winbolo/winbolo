@@ -510,9 +510,9 @@
 #define STR_STARTPICK_SLOT_FALLBACK         1519
 #define STR_STARTPICK_TIP_OFFSIDE           2044
 #define STR_STARTPICK_TIP_OFFSIDE_HOST      2045
-/* Held start you may join (LOBBY_SHARED_STARTS): non-host / host */
-#define STR_STARTPICK_TIP_HELD_JOIN         2049
-#define STR_STARTPICK_TIP_HELD_JOIN_HOST    2050
+/* Held start you may join (LOBBY_SHARED_STARTS): non-host / host. Above 2125 so they clear the voice-chat branch. */
+#define STR_STARTPICK_TIP_HELD_JOIN         2126
+#define STR_STARTPICK_TIP_HELD_JOIN_HOST    2127
 
 /* Player-row badge tooltips */
 #define STR_PLAYER_TIP_AI                   1520
