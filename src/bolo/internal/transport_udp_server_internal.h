@@ -470,8 +470,6 @@ void serverSendServerEnglishBroadcast(struct ServerSim *sim,
                                       const char *message);
 void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
                              const char *const args[]);
-void transportUdpServerSendWbnRekey(UdpServerClient *c);
-void udpServerResetRoundLogLimits(int idx);
 
 /* Control-event delivery to one connected player: the per-recipient filter
  * that decides what a client is allowed to see, the queueing of an accepted
@@ -530,5 +528,29 @@ int  serverFindSpectator(const struct sockaddr_in *addr);
 void serverSendSpectatorAccept(int s, struct ServerSim *sim,
                                const struct sockaddr_in *addr);
 void serverServiceSpectators(struct ServerSim *sim);
+
+/* The server's WinBolo.net-facing work: the session rekey sent to one client
+ * and to every slot verified last round, the web join-code identity stamped
+ * onto a slot, the reauth that follows a rekey, and the registered source a
+ * completed round's log is served from. Owned by
+ * src/server/udp/udp_server_wbn.c.
+ * src/server/transport_udp_server.c reads the round-log source and calls
+ * serverSendRoundLogErr from its PACKET_ROUND_LOG_REQ handler, and clears a
+ * slot's request limits at disconnect and at game start;
+ * src/server/udp/udp_server_join.c sends a joiner its first rekey and clears
+ * the same limits at join. transportUdpServerSetRoundLogSource,
+ * transportUdpServerBroadcastWbnRekey and transportUdpServerHandleWbnReauth
+ * are public API and are declared in transport_udp.h.
+ *
+ * s_roundLogSource and s_roundLogSourceSet are file-scope in the owning
+ * translation unit rather than fields of UdpServerState, so that a transport
+ * create/destroy cycle does not drop the recorder's registration; the packet
+ * handler reaches them through these externs. */
+extern RoundLogSource s_roundLogSource;
+extern bool           s_roundLogSourceSet;
+void serverSendRoundLogErr(uint32_t reqSeq, uint8_t code,
+                           const struct sockaddr_in *toAddr);
+void transportUdpServerSendWbnRekey(UdpServerClient *c);
+void udpServerResetRoundLogLimits(int idx);
 
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */
