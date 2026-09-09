@@ -2022,4 +2022,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} Startpunkte für {number2} Sp
 STR_DLGLOBBY_TOOLTIP_START_SEA=Alle Startpunkte, die dieses Team nutzen kann, sind belegt, daher\nstartet dieser Spieler auf See neben dem Start eines Teamkollegen.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Abseits: Dieser Start liegt nicht auf {string1}, der Teamseite.\nDer Gastgeber hat ihn für diesen Spieler ausgewählt.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Beide Teams auf {string1} setzen\n{player} startet {string2}, {other} startet {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Teams auf {string1} gesetzt. Klicken, um zu eigenen Starts zurückzukehren.
+
 STR_SOUND_LOAD_FAILED=Fehler beim Laden der Soundeffekte

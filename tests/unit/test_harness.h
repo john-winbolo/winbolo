@@ -665,6 +665,14 @@ int run_start_side_mask_sectors(void);
 int run_start_side_mask_degenerate_bbox(void);
 int run_start_side_eligible_closed_mask(void);
 
+/* Lobby map-preview compass axis (test_lobby_side_axis.c). The pure
+ * helpers in lobby_side_axis.h behind the preview's N/S · E/W rose:
+ * exactly two populated teams, which axis a pair of team sides forms,
+ * and what a click on an axis has to send. */
+int run_lobby_side_axis_two_team_pair(void);
+int run_lobby_side_axis_pair_classification(void);
+int run_lobby_side_axis_click_targets(void);
+
 /* Spawn scatter separation (test_starts_scatter_separation.c). The
  * spiral in startsScatterFind keeps a new tank START_SPAWN_SEPARATION
  * squares from every other live tank, and drops that rule on a second

@@ -1610,6 +1610,9 @@
 #define STR_DLGLOBBY_TOOLTIP_TEAM_SIDE      2041
 #define STR_DLGLOBBY_TOOLTIP_START_SEA      2042
 #define STR_DLGLOBBY_TOOLTIP_START_OFFSIDE  2043
+/* Map-preview compass: the two-team N/S or E/W shortcut hover text */
+#define STR_DLGLOBBY_TOOLTIP_COMPASS_SET    2047
+#define STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR  2048
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468
