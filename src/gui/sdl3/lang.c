@@ -1971,6 +1971,32 @@ static const LangEntry langTable[] = {
     {1984, "This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it."},
     {1985, "Recommended filter:"},
     {1986, "(recommended)"},
+
+    /* Smart ping: newswire lines, slice names, and the key-setup chord
+       vocabulary. */
+    {2051, "{player}: Ping!"},
+    {2052, "{player}: Caution!"},
+    {2053, "{player}: Assist me!"},
+    {2054, "{player}: Attack!"},
+    {2055, "{player}: On my way!"},
+    {2056, "{player}: Bot command"},
+    {2057, "Ping"},
+    {2058, "Caution"},
+    {2059, "Assist Me"},
+    {2060, "Attack"},
+    {2061, "On My Way"},
+    {2062, "Bot Command"},
+    {2063, "Smart Ping"},
+    {2064, "Ping {number}"},
+    {2065, "Press a key or mouse button"},
+    {2066, "Ctrl"},
+    {2067, "Alt"},
+    {2068, "Shift"},
+    {2069, "Left Mouse"},
+    {2070, "Middle Mouse"},
+    {2071, "Right Mouse"},
+    {2072, "Mouse 4"},
+    {2073, "Mouse 5"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

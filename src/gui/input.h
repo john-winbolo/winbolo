@@ -29,6 +29,7 @@
 
 #include "global.h"
 #include "client_enums.h"  /* tankButton */
+#include "sdl3/ping_binding.h"  /* PING_BIND_SLOTS — the smart-ping chord slots */
 
 /* The declarations below are defined in input.c, so a C++ includer that
    forgot to wrap this header would give them C++ linkage and fail to
@@ -71,6 +72,10 @@ typedef struct {
   int kiQuickWall;
   int kiQuickPillbox;
   int kiQuickMine;
+  /* Smart ping. Not scancodes: each slot is a packed chord (modifiers plus a
+     key OR a mouse button) — see ping_binding.h. Unbound slots are 0, which
+     matches nothing, so the array is always safe to walk in full. */
+  int kiPing[PING_BIND_SLOTS];
 } keyItems;
 
 

@@ -175,6 +175,38 @@ void sdl3DrawDisableLogicalPresentation(void);
 void sdl3DrawRestoreLogicalPresentation(void);
 
 /*********************************************************
+*NAME:          sdl3DrawGameToWindowCoords
+*PURPOSE:
+*  Game logical coordinates -> window pixels. The inverse of
+*  the window->game transform the event handler uses, for
+*  overlays drawn by ImGui (window pixels) but positioned
+*  from game state. Points outside the game area map too.
+*
+*ARGUMENTS:
+*  gameX/gameY - point in game logical coordinates
+*  winX/winY   - receive the window-pixel position
+*********************************************************/
+bool sdl3DrawGameToWindowCoords(float gameX, float gameY,
+                                float *winX, float *winY);
+
+/*********************************************************
+*NAME:          sdl3DrawGetMainViewGameRect
+*PURPOSE:
+*  The 15x15 main view rectangle in game logical coordinates
+*  and the pixel size of one map square in it. Hides the
+*  desktop / tablet difference in where the view sits and how
+*  far it is zoomed. Returns false when there is no view.
+*
+*ARGUMENTS:
+*  outX/outY         - receive the view's top-left
+*  outW/outH         - receive the view's size
+*  outTileW/outTileH - receive one map square's size
+*********************************************************/
+bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
+                                 float *outW, float *outH,
+                                 float *outTileW, float *outTileH);
+
+/*********************************************************
 *NAME:          sdl3DrawHandleEvent
 *PURPOSE:
 *  Handle SDL events that affect draw-layer state —

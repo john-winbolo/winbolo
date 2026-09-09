@@ -18,7 +18,15 @@
    Every field of keyItems is compared — a field added there and not added
    here is a key the game owns and a second window silently steals. */
 static inline bool keyIsClaimedByGame(const keyItems *k, int scancode) {
+    int i;
     if (!k || scancode <= 0) return false;
+    /* The ping slots hold chords, not scancodes: a slot bound to a key claims
+       that key whatever modifiers ride with it (a second window has no idea
+       which modifiers were down when the player learned the binding), and a
+       slot bound to a mouse button claims no key at all. */
+    for (i = 0; i < PING_BIND_SLOTS; i++) {
+        if (pingBindingScancode(k->kiPing[i]) == scancode) return true;
+    }
     return scancode == k->kiForward      || scancode == k->kiBackward     ||
            scancode == k->kiLeft         || scancode == k->kiRight        ||
            scancode == k->kiShoot        || scancode == k->kiLayMine      ||

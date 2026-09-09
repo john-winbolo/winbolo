@@ -82,6 +82,9 @@ int run_command_codec_view_state(void);
 /* CMD_VIEW_CYCLE codec round-trip: kind + direction + from survive the wire,
  * including from == 0xFF, and the fixed body length is enforced. */
 int run_command_codec_view_cycle(void);
+/* CMD_PING's fixed five-byte body: kind plus two big-endian u16 WORLD
+ * coordinates, both extremes of the range, and the length refusals. */
+int run_command_codec_ping(void);
 int run_lobby_claim_start_host_swaps_occupied(void);
 int run_lobby_claim_start_host_swap_into_none(void);
 int run_lobby_claim_start_non_host_occupied_rejected(void);
@@ -724,6 +727,9 @@ int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
+/* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
+ * coordinates, byte for byte through the writer and back. */
+int run_log_roundtrip_ping(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
@@ -1463,6 +1469,29 @@ int run_packet_type_names(void);
 int run_screencalc_river_road_counts_as_water(void);
 int run_screencalc_river_arms_of_road_centred_cross(void);
 int run_screencalc_river_copies_agree(void);
+
+/* Smart-ping pure headers and wire shape (test_ping.c): the chord packing
+ * and its exact-modifier match rule, the pie's slice selection including the
+ * wrap at the top and the dead zone, the off-screen edge marker on all four
+ * borders and at a corner, and EVENT_PING's data size / reliability. */
+int run_ping_binding_encode_decode(void);
+int run_ping_binding_match(void);
+int run_ping_binding_format(void);
+int run_ping_pie_slices(void);
+int run_ping_edge_sides(void);
+int run_ping_edge_corner(void);
+int run_ping_event_wire(void);
+
+/* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's
+ * running-game / has-a-tank / known-kind gates, the per-player rate limit,
+ * the GameEvent an accepted ping turns into, and the team-only delivery
+ * predicate both copies of the snapshot filter call. */
+int run_ping_dispatch_accepts_and_builds_event(void);
+int run_ping_dispatch_rejects_lobby(void);
+int run_ping_dispatch_rejects_tankless_and_spectator(void);
+int run_ping_dispatch_rejects_bad_kind(void);
+int run_ping_dispatch_rate_limit(void);
+int run_ping_reaches_team_only(void);
 
 /* Generated lang-name lookup table pin (test_lang_name_table.c): the
  * K_LANG_NAME_TABLE_SIZE macro matches the real kLangNameTable[] length,

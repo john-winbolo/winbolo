@@ -3074,6 +3074,23 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
+  /* Smart ping — four chord slots. Stored as the same packed int the rest of
+     the section uses, so an older build reading a newer file just sees a
+     number it does not recognise in a key it does not know. */
+  {
+    static const int pingDefaults[PING_BIND_SLOTS] = {
+      DEFAULT_PING1, DEFAULT_PING2, DEFAULT_PING3, DEFAULT_PING4
+    };
+    int pi;
+    for (pi = 0; pi < PING_BIND_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping %d", pi + 1);
+      intToStr(pingDefaults[pi], def, sizeof(def));
+      prefsGetString("KEYS", name, def, buff, FILENAME_MAX);
+      keys->kiPing[pi] = atoi(buff);
+    }
+  }
+
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
   prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);
   {
@@ -3592,6 +3609,17 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "Quick Pillbox", buff);
   intToStr(keys->kiQuickMine, buff, sizeof(buff));
   prefsSetString("KEYS", "Quick Mine", buff);
+
+  /* Smart ping — four chord slots. */
+  {
+    int pi;
+    for (pi = 0; pi < PING_BIND_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping %d", pi + 1);
+      intToStr(keys->kiPing[pi], buff, sizeof(buff));
+      prefsSetString("KEYS", name, buff);
+    }
+  }
 
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);

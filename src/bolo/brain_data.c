@@ -251,6 +251,7 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
       case EVENT_SOUND_SHOOT:
       case EVENT_SOUND_TANK_HIT:
       case EVENT_ASSISTANT_MSG:
+      case EVENT_PING:
         buf[filtered++] = *e;
         break;
       case EVENT_PILL_UPDATE:

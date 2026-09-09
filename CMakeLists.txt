@@ -734,6 +734,9 @@ file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
+# The smart-ping glyphs sit in their own folder, so the flat data/ui glob
+# above does not reach them.
+file(GLOB IOS_DATA_UI_PING "${CMAKE_SOURCE_DIR}/data/ui/ping/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
 # About-box markdown docs that live at the repo root but ship in data/
 set(IOS_ABOUT_DOCS
@@ -788,6 +791,9 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
     src/gui/sdl3/minimap_render.c
+    src/gui/sdl3/ping_overlay.cpp
+    src/gui/sdl3/ping_icons.c
+    src/gui/sdl3/ping_marker.c
     src/gui/sdl3/flags.c
     src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/input.c
@@ -883,6 +889,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_SOUNDS}
     ${IOS_DATA_SVG}
     ${IOS_DATA_UI}
+    ${IOS_DATA_UI_PING}
     ${IOS_LANG_FILES}
     ${IOS_ABOUT_DOCS}
     ${IOS_ASSET_CATALOG}
@@ -915,6 +922,9 @@ set_source_files_properties(${IOS_DATA_SVG} PROPERTIES
 set_source_files_properties(${IOS_DATA_UI} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/ui"
 )
+set_source_files_properties(${IOS_DATA_UI_PING} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/ui/ping"
+)
 set_source_files_properties(${IOS_LANG_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/lang"
 )
@@ -932,7 +942,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 )
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES})
@@ -1419,6 +1429,10 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    # Smart-ping pie menu and the markers for pings that have arrived.
+    src/gui/sdl3/ping_overlay.cpp
+    src/gui/sdl3/ping_icons.c
+    src/gui/sdl3/ping_marker.c
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
@@ -2191,6 +2205,10 @@ add_executable(LogViewer
     src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
+    # The replay draws the same smart-ping glyphs the game does, out of the
+    # same loose files.
+    src/gui/sdl3/ping_icons.c
+    src/gui/sdl3/ping_marker.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
@@ -3399,6 +3417,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
+    # Smart-ping pure headers — the chord packing and its exact-modifier
+    # match rule, the pie's slice selection (dead zone and the wrap at the
+    # top), and the off-screen edge marker on all four borders and at a
+    # corner. No SDL window, no game.
+    tests/unit/test_ping.c
+    # The CMD_PING arm in server_command_dispatch.c: its state and range
+    # gates, the per-player rate limit, the GameEvent it builds, and the
+    # team-only delivery predicate both snapshot filters share.
+    tests/unit/test_ping_dispatch.c
     # Generated lang-name table: K_LANG_NAME_TABLE_SIZE vs the real array
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.

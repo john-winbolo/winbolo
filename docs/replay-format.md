@@ -90,6 +90,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 31 | `log_SaveMap` | the host saved the map mid-game |
 | 32–33 | `log_LostMan`, `log_KillPlayer` | man lost / player killed |
 | 53 | `log_GameSettings` | Pascal-form blob of every lobby setting (below) |
+| 54 | `log_Ping` | Smart ping: sender, kind, world x/y (below) |
 
 ### `log_GameSettings` payload
 
@@ -115,6 +116,27 @@ never recorded. The event is written by `src/server/server_dedicated_log.c` when
 the lobby opens, when the round starts, and when a lobby edit changes any of
 these values, so a recording seeked to the middle needs the earlier events to
 know the current settings.
+
+### `log_Ping` payload
+
+A smart ping — the League-style pie-menu marker a player drops on the map for
+their team. Six bytes, no Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Sender | Player slot |
+| 1 | Kind | `PING_KIND_*` (`src/bolo/public/input_packet.h`) — 0 standard, 1 caution, 2 assist me, 3 attack, 4 on my way, 5 bot command |
+| 2–3 | World X | Big-endian |
+| 4–5 | World Y | Big-endian |
+
+The position is in WORLD units — 256 per map square, the same units the tank
+positions in a snapshot use — rather than a map square, so the marker lands
+where the sender's cursor was rather than snapped to a tile.
+
+In a live game a ping is delivered only to the sender's own team and allies;
+the recording is not filtered that way, because a replay is watched from
+outside and has no team to be on. The viewer draws every ping in the file, in
+the kind's colour, for `PING_DISPLAY_MS` of playback time.
 
 ## Snapshot body
 

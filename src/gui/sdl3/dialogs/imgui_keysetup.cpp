@@ -39,6 +39,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "../glyphs.h"
 #include "../input.h"
+#include "../ping_binding.h"   /* the smart-ping chord slots */
 #include "../input_gamepad.h"  /* GamepadBindings — controller tab */
 #include "../build_cursor.h"   /* build-cursor behaviour option flags */
 #include "../../winbolo.h"
@@ -163,6 +164,123 @@ static void keyRow(const char *label, KeySetupField field) {
         ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
         if (ImGui::SmallButton("X")) {
             *ptr = 0;   /* SDL_SCANCODE_UNKNOWN — unbound */
+        }
+        imguiHandOnHover();
+        imguiHelpTooltip("Clear");
+    }
+    ImGui::PopID();
+}
+
+/* -------------------------------------------------------
+ * Smart-ping chord rows.
+ *
+ * These four slots do not hold a scancode like every row above them: a ping
+ * binding is modifiers plus a key OR a mouse button, packed into one int by
+ * ping_binding.h. So they get their own row renderer, their own capture arm,
+ * and a capture that also accepts a mouse button.
+ * ------------------------------------------------------- */
+static int s_pingWaitSlot = -1;      /* index into keyItems::kiPing, or -1 */
+
+/* True while the capture is looking for a chord, so the mouse path in the
+ * event pump knows a click belongs to the dialog rather than to the game. */
+static bool pingCapturing(void) { return s_pingWaitSlot >= 0; }
+
+/* Is this scancode one of the modifiers a chord is built from? Those must not
+ * end the capture — the player presses Ctrl on the way to pressing the key
+ * that the chord is actually for. */
+static bool isChordModifier(int scancode) {
+    switch (scancode) {
+        case SDL_SCANCODE_LCTRL:  case SDL_SCANCODE_RCTRL:
+        case SDL_SCANCODE_LALT:   case SDL_SCANCODE_RALT:
+        case SDL_SCANCODE_LSHIFT: case SDL_SCANCODE_RSHIFT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* Which modifiers are held right now, in ping_binding's vocabulary. */
+static int pingCaptureMods(void) {
+    SDL_Keymod km = SDL_GetModState();
+    int mods = 0;
+    if (km & SDL_KMOD_CTRL)  mods |= PING_BIND_MOD_CTRL;
+    if (km & SDL_KMOD_ALT)   mods |= PING_BIND_MOD_ALT;
+    if (km & SDL_KMOD_SHIFT) mods |= PING_BIND_MOD_SHIFT;
+    return mods;
+}
+
+/* Commit a captured code (a scancode, or pingBindingMouseCode of a button)
+ * into the armed slot, with whatever modifiers are down at that moment. */
+static void pingAssignCaptured(int code) {
+    if (s_pingWaitSlot < 0 || s_pingWaitSlot >= PING_BIND_SLOTS) return;
+    s_keys.kiPing[s_pingWaitSlot] = pingBindingEncode(pingCaptureMods(), code);
+    s_pingWaitSlot = -1;
+}
+
+/* The chord as display text: the modifier words and the key or button name,
+ * all through the lang system. */
+static void pingBindingLabel(int binding, char *out, size_t outLen) {
+    const char *codeName = nullptr;
+    if (pingBindingIsMouse(binding)) {
+        switch (pingBindingMouseButton(binding)) {
+            case SDL_BUTTON_LEFT:   codeName = langGetText(STR_PING_MOUSE_LEFT);   break;
+            case SDL_BUTTON_MIDDLE: codeName = langGetText(STR_PING_MOUSE_MIDDLE); break;
+            case SDL_BUTTON_RIGHT:  codeName = langGetText(STR_PING_MOUSE_RIGHT);  break;
+            case SDL_BUTTON_X1:     codeName = langGetText(STR_PING_MOUSE_X1);     break;
+            case SDL_BUTTON_X2:     codeName = langGetText(STR_PING_MOUSE_X2);     break;
+            default:                codeName = langGetText(STR_DLGKEYSETUP_NONE_VAL); break;
+        }
+    } else if (pingBindingScancode(binding) != 0) {
+        codeName = SDL_GetScancodeName((SDL_Scancode)pingBindingScancode(binding));
+        if (codeName == nullptr || codeName[0] == '\0') {
+            codeName = langGetText(STR_DLGKEYSETUP_NONE_VAL);
+        }
+    }
+    pingBindingFormat(binding,
+                      langGetText(STR_PING_MOD_CTRL),
+                      langGetText(STR_PING_MOD_ALT),
+                      langGetText(STR_PING_MOD_SHIFT),
+                      codeName,
+                      langGetText(STR_DLGKEYSETUP_NONE_VAL),
+                      out, outLen);
+}
+
+/* One ping slot's row. Same three columns as keyRow — label, current value,
+ * Change/X — but no keycap glyph: a chord has no single cap to draw. */
+static void pingRow(int slot) {
+    char value[96];
+    bool waiting = (s_pingWaitSlot == slot);
+    MessageArgs args;
+
+    memset(&args, 0, sizeof(args));
+    args.number = slot + 1;
+
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextUnformatted(langGetTextFmt(STR_DLGKEYSETUP_PING_SLOT, &args));
+
+    ImGui::TableSetColumnIndex(1);
+    if (waiting) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_DLGKEYSETUP_PRESSACHORD));
+    } else {
+        pingBindingLabel(s_keys.kiPing[slot], value, sizeof(value));
+        ImGui::TextUnformatted(value);
+    }
+
+    ImGui::TableSetColumnIndex(2);
+    ImGui::PushID(1000 + slot);
+    if (waiting) {
+        if (ImGui::SmallButton(langGetText(STR_CANCEL))) s_pingWaitSlot = -1;
+        imguiHandOnHover();
+    } else {
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+            s_pingWaitSlot = slot;
+        }
+        imguiHandOnHover();
+        ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+        if (ImGui::SmallButton("X")) {
+            s_keys.kiPing[slot] = PING_BIND_NONE;
         }
         imguiHandOnHover();
         imguiHelpTooltip("Clear");
@@ -384,7 +502,8 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
        (e.g. assigning L1/RT) clears s_padWaitAction the same frame ImGui still
        reports that button's edge, which would otherwise tab us out of the
        Controller tab the instant the bind is set. */
-    bool capturing = (s_waiting != ksNone) || (s_padWaitAction != -1);
+    bool capturing = (s_waiting != ksNone) || (s_padWaitAction != -1) ||
+                     pingCapturing();
     static bool s_wasCapturing = false;
     bool suppressTabCycle = capturing || s_wasCapturing;
     s_wasCapturing = capturing;
@@ -445,6 +564,10 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             keyRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
             keyRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
             keyRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
+            endSection();
+
+            section(langGetText(STR_DLGKEYSETUP_PING));
+            for (int pi = 0; pi < PING_BIND_SLOTS; pi++) pingRow(pi);
             endSection();
             ImGui::EndTabItem();
         }
@@ -565,7 +688,8 @@ static int renderFormBody(struct ClientSim *cs) {
      * dialog can't get stuck "busy" with the Controller tab gone. */
     if (s_padWaitAction != -1 && !inputGamepadIsConnected()) s_padWaitAction = -1;
 
-    bool busy = (s_waiting != ksNone) || (s_padWaitAction != -1);
+    bool busy = (s_waiting != ksNone) || (s_padWaitAction != -1) ||
+                pingCapturing();
 
     /* Plain-text input-path indicator, always visible while a controller is
      * connected (not relying on colour to convey it). */
@@ -681,6 +805,7 @@ extern "C" int imguiKeySetupShow(void) {
     s_autoGunsight = useAutohide;
     s_waiting = ksNone;
     s_padWaitAction = -1;
+    s_pingWaitSlot = -1;
 
     /* Background game */
     BgGame *bg = bgGameGetShared();
@@ -694,6 +819,27 @@ extern "C" int imguiKeySetupShow(void) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+            /* Smart-ping chord capture — a key or a mouse button, with
+               whatever modifiers are down. Before the scancode arm below so
+               an armed ping row wins the keystroke, and it must ignore the
+               modifier keys themselves: the player presses Ctrl on the way to
+               the key the chord is for. */
+            if (pingCapturing()) {
+                if (ev.type == SDL_EVENT_KEY_DOWN &&
+                    ev.key.windowID == SDL_GetWindowID(window)) {
+                    if (ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                        s_pingWaitSlot = -1;
+                    } else if (!isChordModifier((int)ev.key.scancode)) {
+                        pingAssignCaptured((int)ev.key.scancode);
+                    }
+                    continue;
+                }
+                if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                    pingAssignCaptured(pingBindingMouseCode(ev.button.button));
+                    continue;
+                }
+            }
+
             /* Key capture — intercept before ImGui sees it */
             if (s_waiting != ksNone && ev.type == SDL_EVENT_KEY_DOWN &&
                 ev.key.windowID == SDL_GetWindowID(window)) {
@@ -906,6 +1052,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
         s_autoSlowdown = cs ? clientSimGetTankAutoSlowdown(cs) : useAutoslow;
         s_autoGunsight = cs ? clientSimGetTankAutoHideGunsight(cs) : useAutohide;
         s_waiting      = ksNone;
+        s_pingWaitSlot = -1;
     }
 
     ImGuiIO &io = ImGui::GetIO();
@@ -941,10 +1088,20 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
 }
 
 extern "C" bool imguiKeySetupIsCapturingInGameKey(void) {
-    return s_waiting != ksNone;
+    /* The ping rows capture keys too, so the event pump has to route a
+       keystroke here while one of them is armed as well. */
+    return s_waiting != ksNone || pingCapturing();
 }
 
 extern "C" void imguiKeySetupHandleInGameScancode(int scancode) {
+    if (pingCapturing()) {
+        if (scancode == SDL_SCANCODE_ESCAPE) {
+            s_pingWaitSlot = -1;
+        } else if (!isChordModifier(scancode)) {
+            pingAssignCaptured(scancode);
+        }
+        return;
+    }
     if (s_waiting == ksNone) return;
     if (scancode == SDL_SCANCODE_ESCAPE) {
         s_waiting = ksNone;
@@ -953,6 +1110,17 @@ extern "C" void imguiKeySetupHandleInGameScancode(int scancode) {
     int *ptr = fieldPtr(s_waiting, &s_keys);
     if (ptr) *ptr = scancode;
     s_waiting = ksNone;
+}
+
+/* Mouse half of the in-game ping capture. Keys arrive through the scancode
+ * hook above; a mouse button has no equivalent, so the event pump asks
+ * whether a click belongs to the dialog and hands the button over if so. */
+extern "C" bool imguiKeySetupIsCapturingInGamePing(void) {
+    return pingCapturing();
+}
+
+extern "C" void imguiKeySetupHandleInGamePingMouse(int sdlMouseButton) {
+    pingAssignCaptured(pingBindingMouseCode(sdlMouseButton));
 }
 
 /* In-game controller-binding capture — mirror of the scancode hooks above.
@@ -991,6 +1159,7 @@ extern "C" void imguiKeySetupBeginEmbedded(void) {
     s_autoSlowdown = useAutoslow;
     s_autoGunsight = useAutohide;
     s_waiting      = ksNone;
+    s_pingWaitSlot = -1;
 }
 
 extern "C" void imguiKeySetupRenderEmbedded(float reserveBottom) {

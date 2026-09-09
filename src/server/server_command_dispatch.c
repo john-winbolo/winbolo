@@ -808,6 +808,70 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                           cmd->u.wbnReauth.token);
         return CMD_OK;
     }
+    case CMD_PING: {
+        /* A ping is a game-time signal drawn on the map, so it needs a
+         * running game and a sender that holds a player slot in it: a lobby
+         * sender has no map to point at, and an empty slot is somebody who
+         * has left. Being dead is fine — a player waiting to respawn has as
+         * much to say about the map as anyone. */
+        const CmdPing *p = &cmd->u.ping;
+        BYTE slot = (BYTE)senderSlot;
+        uint32_t now = sim->tick;
+        uint32_t oldest;
+        if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!playersIsInUse(&sim->sim.plyrs, slot)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (p->kind >= PING_KIND_COUNT) {
+            return CMD_REJECT_INVALID;
+        }
+        /* World units are 256 per map square over a 256x256 map, so the
+         * whole u16 range is on the map and only the sentinel-free bound
+         * matters. Checked anyway so the arm still reads as a range check if
+         * either constant ever changes. */
+        if ((p->worldX >> M_W_SHIFT_SIZE) >= MAP_ARRAY_SIZE ||
+            (p->worldY >> M_W_SHIFT_SIZE) >= MAP_ARRAY_SIZE) {
+            return CMD_REJECT_INVALID;
+        }
+        /* Rate limit: a minimum gap, and a burst cap on top of it. Both are
+         * measured in sim ticks, which only advance while the game runs — the
+         * only state this arm accepts. Both stores hold tick+1 so that 0 can
+         * mean "never", because tick 0 is itself a real tick. */
+        if (sim->pingLastTick[slot] != 0 &&
+            now + 1 - sim->pingLastTick[slot] < PING_RATE_MIN_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        oldest = sim->pingBurstTicks[slot][sim->pingBurstIdx[slot]];
+        if (oldest != 0 && now + 1 - oldest < PING_RATE_WINDOW_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->pingLastTick[slot] = now + 1;
+        sim->pingBurstTicks[slot][sim->pingBurstIdx[slot]] = now + 1;
+        sim->pingBurstIdx[slot] =
+            (uint8_t)((sim->pingBurstIdx[slot] + 1) % PING_RATE_BURST);
+
+        {
+            GameEvent ev;
+            memset(&ev, 0, sizeof(ev));
+            ev.type = EVENT_PING;
+            ev.data[0] = slot;
+            ev.data[1] = p->kind;
+            ev.data[2] = (BYTE)(p->worldX >> 8);
+            ev.data[3] = (BYTE)(p->worldX & 0xFF);
+            ev.data[4] = (BYTE)(p->worldY >> 8);
+            ev.data[5] = (BYTE)(p->worldY & 0xFF);
+            serverSimAddEvent(sim, &ev);
+        }
+        /* Recorded whole so a replay can draw the marker where the sender
+         * put it; the viewer culls nothing, since a replay watches every
+         * team at once. */
+        logAddEvent(log_Ping, slot, p->kind,
+                    (BYTE)(p->worldX >> 8), (BYTE)(p->worldX & 0xFF),
+                    p->worldY, NULL);
+        return CMD_OK;
+    }
     case CMD_NONE:
     default:
         return CMD_REJECT_BAD_STATE;

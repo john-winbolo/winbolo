@@ -156,6 +156,9 @@ add_executable(logviewer
     ${LV_IMGUI_SOURCES}
     ${LV_WASM_SOURCES}
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
+    # The replay's smart-ping markers load their glyphs through this, the
+    # same loader the game's overlay uses.
+    ${SRC_ROOT}/gui/sdl3/ping_icons.c
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
     ${SRC_ROOT}/gui/sdl3/skin_source.c

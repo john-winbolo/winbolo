@@ -297,6 +297,12 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiQuickWall    = DEFAULT_QUICKWALL;
   keys->kiQuickPillbox = DEFAULT_QUICKPILLBOX;
   keys->kiQuickMine    = DEFAULT_QUICKMINE;
+  /* Smart-ping chord slots. The web client has no pie menu yet, but the
+     defaults are seeded so a shared prefs file round-trips unchanged. */
+  keys->kiPing[0]      = DEFAULT_PING1;
+  keys->kiPing[1]      = DEFAULT_PING2;
+  keys->kiPing[2]      = DEFAULT_PING3;
+  keys->kiPing[3]      = DEFAULT_PING4;
 }
 
 /* Outbound control-event callbacks. Desktop wires these in gamefront.c; the

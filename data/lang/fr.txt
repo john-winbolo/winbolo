@@ -2027,3 +2027,28 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Placer les deux équipes sur {string1}\n{player
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Équipes placées sur {string1}. Cliquez pour revenir aux départs personnalisés.
 
 STR_SOUND_LOAD_FAILED=Erreur lors du chargement des effets sonores
+
+# Ping intelligent (menu circulaire)
+MESSAGE_PING_STANDARD={player} : Ping !
+MESSAGE_PING_CAUTION={player} : Attention !
+MESSAGE_PING_ASSIST={player} : À l'aide !
+MESSAGE_PING_ATTACK={player} : Attaquez !
+MESSAGE_PING_ON_MY_WAY={player} : J'arrive !
+MESSAGE_PING_BOT_COMMAND={player} : Ordre au bot
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Attention
+STR_PING_ASSIST=À l'aide
+STR_PING_ATTACK=Attaquer
+STR_PING_ON_MY_WAY=J'arrive
+STR_PING_BOT_COMMAND=Ordre au bot
+STR_DLGKEYSETUP_PING=Ping intelligent
+STR_DLGKEYSETUP_PING_SLOT=Ping {number}
+STR_DLGKEYSETUP_PRESSACHORD=Appuyez sur une touche ou un bouton de souris
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Maj
+STR_PING_MOUSE_LEFT=Clic gauche
+STR_PING_MOUSE_MIDDLE=Clic milieu
+STR_PING_MOUSE_RIGHT=Clic droit
+STR_PING_MOUSE_X1=Souris 4
+STR_PING_MOUSE_X2=Souris 5
