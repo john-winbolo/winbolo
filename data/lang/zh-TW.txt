@@ -2020,4 +2020,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}：{number2}名玩家對應{number}個�
 STR_DLGLOBBY_TOOLTIP_START_SEA=該隊伍可用的起始點已全部被佔用，因此該玩家\n將在隊友起始點旁的海上開始遊戲。
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=越位：此起始點不在{string1}（隊伍一側）範圍內。\n主機為該玩家選擇了此起始點。
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=將兩隊設為 {string1}\n{player} 從 {string2} 出發，{other} 從 {string3} 出發
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=兩隊已設為 {string1}。點擊可恢復自訂出生點。
+
 STR_SOUND_LOAD_FAILED=音效效果載入失敗

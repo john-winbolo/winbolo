@@ -1540,6 +1540,10 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} starts for {number2} players 
 STR_DLGLOBBY_TOOLTIP_START_SEA=Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Set the two teams to {string1}\n{player} starts {string2}, {other} starts {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Teams set to {string1}. Click to go back to custom starts.
+
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller
 STR_GP_REBIND_PROMPT=Press a button or pull a trigger...

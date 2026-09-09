@@ -2022,4 +2022,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startposities voor {number2} 
 STR_DLGLOBBY_TOOLTIP_START_SEA=Alle starts die dit team kan gebruiken zijn bezet, dus deze speler\nbegint op zee naast de start van een teamgenoot.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Buitenspel: deze start ligt niet aan {string1}, de kant van het team.\nDe host koos die voor deze speler.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Zet beide teams op {string1}\n{player} start {string2}, {other} start {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Teams op {string1} gezet. Klik om terug te gaan naar eigen startpunten.
+
 STR_SOUND_LOAD_FAILED=Fout bij het laden van geluidseffecten

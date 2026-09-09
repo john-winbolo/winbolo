@@ -2023,4 +2023,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} inicios para {number2} jugado
 STR_DLGLOBBY_TOOLTIP_START_SEA=Todos los inicios que este equipo puede usar están ocupados, así que este jugador\nempezará en el mar junto al inicio de un compañero de equipo.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Fuera de zona: este inicio no está en {string1}, el lado del equipo.\nEl anfitrión lo eligió para este jugador.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Poner los dos equipos en {string1}\n{player} empieza {string2}, {other} empieza {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Equipos en {string1}. Haz clic para volver a los inicios personalizados.
+
 STR_SOUND_LOAD_FAILED=Error al cargar los efectos de sonido

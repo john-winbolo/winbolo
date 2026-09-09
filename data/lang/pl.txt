@@ -2016,4 +2016,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startów dla {number2} graczy
 STR_DLGLOBBY_TOOLTIP_START_SEA=Wszystkie starty dostępne dla tej drużyny są zajęte, więc ten gracz\nzacznie w morzu obok startu kolegi z drużyny.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Poza stroną: ten start nie znajduje się na {string1}, stronie drużyny.\nGospodarz wybrał go dla tego gracza.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Ustaw obie drużyny na {string1}\n{player} startuje {string2}, {other} startuje {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Drużyny ustawione na {string1}. Kliknij, aby wrócić do własnych startów.
+
 STR_SOUND_LOAD_FAILED=Błąd ładowania efektów dźwiękowych

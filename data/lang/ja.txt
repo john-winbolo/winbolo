@@ -2022,4 +2022,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: プレイヤー{number2}人に対し�
 STR_DLGLOBBY_TOOLTIP_START_SEA=このチームが使えるスタートはすべて埋まっているため、このプレイヤーは\nチームメイトのスタートの隣の海からスタートします。
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=オフサイド: このスタートは{string1}（チーム側）にありません。\nホストがこのプレイヤーのために選びました。
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=2つのチームを {string1} に設定\n{player} は {string2}、{other} は {string3} からスタート
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=チームを {string1} に設定しました。クリックするとカスタムスタートに戻ります。
+
 STR_SOUND_LOAD_FAILED=サウンドエフェクトの読み込みに失敗しました

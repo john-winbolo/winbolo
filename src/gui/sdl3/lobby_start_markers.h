@@ -39,6 +39,7 @@
 #include "client_sim.h"   /* ClientSim, ClientLobbySlot, clientSimGetLobbySlot, team side / name */
 #include "global.h"       /* MAX_TANKS */
 #include "start_sides.h"  /* startSideMaskFor / Accepts / Bits — side mask and the side rules */
+#include "lobby_side_axis.h"  /* lobbySideTwoTeamPair / lobbySideAxisOfPair — the compass axis rules */
 #include "../lang.h"      /* STR_DLGLOBBY_SIDE_* / STR_COMPASS_* / STR_STARTPICK_TIP_OFFSIDE* */
 
 /* Ownership of a start relative to the local player. */
@@ -210,6 +211,29 @@ static inline bool lobbyStartOffSideMasked(BYTE mask, BYTE side, BYTE closedMask
 static inline bool lobbyStartOffSide(ClientSim *cs, int teamId, BYTE mask) {
     return lobbyStartOffSideMasked(mask, lobbyTeamSide(cs, teamId),
                                    lobbyClosedMaskForTeam(cs, teamId));
+}
+
+/* Exactly two teams with members? Counts connected slots, bots included,
+ * the same way the player panel counts a team for its Side combo row, so
+ * the map preview's compass appears for exactly the rosters that show two
+ * Side combos. On true, *outA is the lower team id and *outB the higher. */
+static inline bool lobbyTwoTeamPair(ClientSim *cs, int *outA, int *outB) {
+    int counts[MAX_TANKS];
+    memset(counts, 0, sizeof(counts));
+    for (int k = 0; k < MAX_TANKS; k++) {
+        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+        if (!sl || !sl->connected) continue;
+        int t = sl->teamNumber;
+        if (t > 0 && t < MAX_TANKS) counts[t]++;
+    }
+    return lobbySideTwoTeamPair(counts, MAX_TANKS, outA, outB);
+}
+
+/* The compass axis two teams' chosen sides form, or LOBBY_SIDE_AXIS_NONE
+ * when they are not a complementary pair (one side unset, both on the
+ * same side, or on sides that do not face each other). */
+static inline int lobbyTeamPairAxis(ClientSim *cs, int teamA, int teamB) {
+    return lobbySideAxisOfPair(lobbyTeamSide(cs, teamA), lobbyTeamSide(cs, teamB));
 }
 
 /* Lang id of a side's full name — the selector's entries. */

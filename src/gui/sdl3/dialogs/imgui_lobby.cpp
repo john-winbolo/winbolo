@@ -1064,11 +1064,19 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
                         imguiPopNearestSampling();
                         ImVec2 miniMin = ImGui::GetItemRectMin();
-                        bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
+                        /* The two-team compass sits over the image, so it
+                         * gets the mouse first; when it has it, the start
+                         * claim/drag layer and the zoom popup stay out. */
+                        bool compassHot = lobbyPreviewCompassHot(cs, effHostMap,
+                                                miniMin, innerSize, gapPx, s);
+                        bool miniConsumed = compassHot ||
+                                            lobbyPreviewInteract(cs, (int)myPlayerNum,
                                                 effHostMap, miniMin, innerSize,
                                                 bx0, by0, bx1, by1);
                         lobbyDrawPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                                      bx0, by0, bx1, by1);
+                        /* Painted last so the rose sits over any start label in its corner. */
+                        lobbyDrawPreviewCompass(cs, effHostMap, miniMin, innerSize, gapPx, s);
                         /* Controller-reachable entry to the start picker: a
                          * focusable activation over the preview that opens the
                          * popup (which in controller mode shows the start list).
@@ -1917,11 +1925,19 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
                 imguiPopNearestSampling();
                 ImVec2 miniMin = ImGui::GetItemRectMin();
-                bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
+                /* The two-team compass sits over the image, so it gets the
+                 * mouse first; when it has it, the start claim/drag layer
+                 * and the zoom popup stay out. */
+                bool compassHot = lobbyPreviewCompassHot(cs, effHostMap,
+                                        miniMin, innerSize, gapPx, s);
+                bool miniConsumed = compassHot ||
+                                    lobbyPreviewInteract(cs, (int)myPlayerNum,
                                         effHostMap, miniMin, innerSize,
                                         bx0, by0, bx1, by1);
                 lobbyDrawPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                              bx0, by0, bx1, by1);
+                /* Painted last so the rose sits over any start label in its corner. */
+                lobbyDrawPreviewCompass(cs, effHostMap, miniMin, innerSize, gapPx, s);
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
                 /* A click that didn't land on a start opens the zoomed popup

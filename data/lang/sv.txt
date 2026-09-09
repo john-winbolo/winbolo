@@ -2022,4 +2022,8 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startplatser för {number2} s
 STR_DLGLOBBY_TOOLTIP_START_SEA=Alla starter det här laget kan använda är upptagna, så den här\nspelaren börjar till havs bredvid en lagkamrats start.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Offside: den här starten ligger inte på {string1}, lagets sida.\nVärden valde den åt den här spelaren.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Sätt båda lagen till {string1}\n{player} startar {string2}, {other} startar {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Lagen satta till {string1}. Klicka för att gå tillbaka till egna startpunkter.
+
 STR_SOUND_LOAD_FAILED=Fel vid inläsning av ljudeffekter
