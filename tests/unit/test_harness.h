@@ -83,6 +83,7 @@ int run_command_codec_view_state(void);
  * including from == 0xFF, and the fixed body length is enforced. */
 int run_command_codec_view_cycle(void);
 int run_lobby_claim_start_host_swaps_occupied(void);
+int run_lobby_claim_start_host_assign_onto_own(void);
 int run_lobby_claim_start_host_swap_into_none(void);
 int run_lobby_claim_start_non_host_occupied_rejected(void);
 int run_lobby_claim_start_non_host_other_slot_rejected(void);
@@ -672,6 +673,16 @@ int run_start_side_eligible_closed_mask(void);
 int run_lobby_side_axis_two_team_pair(void);
 int run_lobby_side_axis_pair_classification(void);
 int run_lobby_side_axis_click_targets(void);
+
+/* Shared lobby starts (test_lobby_start_shared.c). The pure helpers in
+ * lobby_start_shared.h behind a start several players reserve: the
+ * minimal unique name prefixes, the comma-joined holder labels the mini
+ * map and the tooltips show, and the one ownership class a start with
+ * several holders reads as. */
+int run_lobby_start_shared_prefix_len(void);
+int run_lobby_start_shared_prefix_label(void);
+int run_lobby_start_shared_name_label(void);
+int run_lobby_start_shared_owner_fold(void);
 
 /* Spawn scatter separation (test_starts_scatter_separation.c). The
  * spiral in startsScatterFind keeps a new tank START_SPAWN_SEPARATION

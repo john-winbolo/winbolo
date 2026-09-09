@@ -3218,6 +3218,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_open_ideal.c
     tests/unit/test_start_sides.c
     tests/unit/test_lobby_side_axis.c
+    tests/unit/test_lobby_start_shared.c
     tests/unit/test_starts_scatter_separation.c
     tests/unit/test_starts_team_side.c
     tests/unit/test_lobby_team_side_dispatch.c
@@ -3708,6 +3709,7 @@ set(_unit_test_names
     command_codec_view_state
     command_codec_view_cycle
     lobby_claim_start_host_swaps_occupied
+    lobby_claim_start_host_assign_onto_own
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected
     lobby_claim_start_non_host_other_slot_rejected
@@ -3981,6 +3983,10 @@ set(_unit_test_names
     lobby_side_axis_two_team_pair
     lobby_side_axis_pair_classification
     lobby_side_axis_click_targets
+    lobby_start_shared_prefix_len
+    lobby_start_shared_prefix_label
+    lobby_start_shared_name_label
+    lobby_start_shared_owner_fold
     starts_scatter_avoids_existing_tanks
     starts_scatter_falls_back_when_crowded
     starts_side_team_stays_on_its_side

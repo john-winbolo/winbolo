@@ -19,9 +19,9 @@
  *                previews (the small inline ##MapPanel and
  *                the full-screen popup).
  *
- *                Pure helpers only — ownership colour,
- *                compass-direction label placement,
- *                minimal-unique-prefix disambiguation, and
+ *                Pure helpers only — ownership colour (for
+ *                one holder or several), compass-direction
+ *                label placement, holder lookup, and
  *                the team start-side rules (which team a
  *                start is off-side for, and the tooltip
  *                that says so) — so both call sites and the
@@ -39,15 +39,18 @@
 #include "client_sim.h"   /* ClientSim, ClientLobbySlot, clientSimGetLobbySlot, team side / name */
 #include "global.h"       /* MAX_TANKS */
 #include "start_sides.h"  /* startSideMaskFor / Accepts / Bits — side mask and the side rules */
+#include "lobby_shared_starts.h"  /* lobbySharedStartsEnabled — several players per start */
 #include "lobby_side_axis.h"  /* lobbySideTwoTeamPair / lobbySideAxisOfPair — the compass axis rules */
+#include "lobby_start_shared.h"  /* holder-list label, ownership fold, unique prefixes */
 #include "../lang.h"      /* STR_DLGLOBBY_SIDE_* / STR_COMPASS_* / STR_STARTPICK_TIP_OFFSIDE* */
 
-/* Ownership of a start relative to the local player. */
+/* Ownership of a start relative to the local player. The values come from
+ * lobby_start_shared.h so a folded multi-holder class is the same thing. */
 enum LobbyStartOwner {
-    LSO_UNCLAIMED = 0,
-    LSO_SELF,
-    LSO_ALLY,
-    LSO_ENEMY
+    LSO_UNCLAIMED = LOBBY_START_OWNER_UNCLAIMED,
+    LSO_SELF      = LOBBY_START_OWNER_SELF,
+    LSO_ALLY      = LOBBY_START_OWNER_ALLY,
+    LSO_ENEMY     = LOBBY_START_OWNER_ENEMY
 };
 
 /* Eight compass octants plus centre, mirroring lobbyStartCompassStr. */
@@ -64,6 +67,23 @@ static inline int lobbyStartHolderSlot(ClientSim *cs, int startIdx1) {
     return -1;
 }
 
+/* Every connected slot holding 1-based start i, in slot order, written to
+ * out[] (up to max entries); returns the count. With LOBBY_SHARED_STARTS
+ * off there is never more than one, so callers need no second code path.
+ * out may be NULL to count only. */
+static inline int lobbyStartHolders(ClientSim *cs, int startIdx1,
+                                    int *out, int max) {
+    int n = 0;
+    for (int k = 0; k < MAX_TANKS; k++) {
+        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+        if (!sl || !sl->connected || sl->startIdx != (uint8_t)startIdx1) continue;
+        if (out && n < max) out[n] = k;
+        n++;
+        if (!lobbySharedStartsEnabled()) break;   /* one holder per start */
+    }
+    return (out && n > max) ? max : n;
+}
+
 /* Classify a holder slot (<0 == unclaimed) relative to the local player. */
 static inline LobbyStartOwner lobbyStartClassify(ClientSim *cs, int holderSlot,
                                                  int myPlayerNum) {
@@ -75,6 +95,37 @@ static inline LobbyStartOwner lobbyStartClassify(ClientSim *cs, int holderSlot,
         if (myTeam != 0 && hTeam == myTeam) return LSO_ALLY;
     }
     return LSO_ENEMY;
+}
+
+/* The one ownership class a start reads as, holders looked up here: enemy
+ * when any holder is an enemy, self when the viewer is among them, ally
+ * otherwise, unclaimed when nobody holds it. This is what every surface
+ * colours a start by, so a shared start reads the same on the mini map,
+ * the popup and the start list. */
+static inline LobbyStartOwner lobbyStartClassifyShared(ClientSim *cs,
+                                                       int startIdx1,
+                                                       int myPlayerNum) {
+    int holders[MAX_TANKS];
+    int owners[MAX_TANKS];
+    int n = lobbyStartHolders(cs, startIdx1, holders, MAX_TANKS);
+    for (int k = 0; k < n; k++) {
+        owners[k] = (int)lobbyStartClassify(cs, holders[k], myPlayerNum);
+    }
+    return (LobbyStartOwner)lobbyStartFoldOwners(owners, n);
+}
+
+/* The holders of a start as one "Alice, Bob" string of full names — the
+ * {player} argument of the held-start tooltips. Empty when the start is
+ * free. Returns the number of names written. */
+static inline int lobbyStartHolderNames(ClientSim *cs, int startIdx1,
+                                        char *buf, size_t bufLen) {
+    int holders[MAX_TANKS];
+    const char *names[MAX_TANKS];
+    int n = lobbyStartHolders(cs, startIdx1, holders, MAX_TANKS);
+    for (int k = 0; k < n; k++) {
+        names[k] = clientSimGetLobbySlot(cs, (BYTE)holders[k])->playerName;
+    }
+    return lobbyStartHolderNameLabel(names, n, buf, bufLen);
 }
 
 /* Marker / label colour for an ownership class. Self is a darker forest
@@ -133,30 +184,9 @@ static inline void lobbyCompassOffset(LobbyCompassDir d, float *ox, float *oy) {
     }
 }
 
-/* Minimal number of leading chars of names[idx] needed to tell it apart
- * from every other name in the set. 1 char if already unique, more until
- * disambiguated; capped at the name's length (when another name is a
- * prefix of this one, or they're identical, the full name is returned). */
-static inline int lobbyStartUniquePrefixLen(const char *const *names,
-                                            int count, int idx) {
-    const char *a = names[idx];
-    if (!a || !a[0]) return 0;
-    int need = 1;
-    for (int j = 0; j < count; j++) {
-        if (j == idx || !names[j]) continue;
-        const char *b = names[j];
-        int c = 0;
-        while (a[c] && b[c] && a[c] == b[c]) c++;
-        /* Need one char past the shared prefix to differ from b. If b
-         * matches a all the way, prefixes can't separate them. */
-        int cand = c + 1;
-        if (cand > need) need = cand;
-    }
-    int la = (int)strlen(a);
-    if (need > la) need = la;
-    if (need < 1) need = 1;
-    return need;
-}
+/* lobbyStartUniquePrefixLen and the holder-list label builders live in
+ * lobby_start_shared.h, which has no ImGui or ClientSim so the unit tests
+ * compile them. */
 
 /* ── Team start sides ─────────────────────────────────────────────
  * The lobby mirror carries each team's START_SIDE_* choice; start_sides.h

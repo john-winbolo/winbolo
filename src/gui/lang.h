@@ -510,6 +510,9 @@
 #define STR_STARTPICK_SLOT_FALLBACK         1519
 #define STR_STARTPICK_TIP_OFFSIDE           2044
 #define STR_STARTPICK_TIP_OFFSIDE_HOST      2045
+/* Held start you may join (LOBBY_SHARED_STARTS): non-host / host */
+#define STR_STARTPICK_TIP_HELD_JOIN         2049
+#define STR_STARTPICK_TIP_HELD_JOIN_HOST    2050
 
 /* Player-row badge tooltips */
 #define STR_PLAYER_TIP_AI                   1520

@@ -1469,6 +1469,13 @@ static const LangEntry langTable[] = {
      * host's team. */
     {2044, "Start #{number}\nNot on your team's side"},
     {2045, "Start #{number}\nOff-side for {string1}"},
+
+    /* Map-preview start-picker tooltips over a start somebody else holds
+     * that the viewer may join (LOBBY_SHARED_STARTS): 2049 for a player,
+     * 2050 for the host, who can still drag and assign. {number} = start;
+     * {player} = the holder, or every holder comma-joined. */
+    {2049, "Start #{number} - {player}\nClick to start here too"},
+    {2050, "Start #{number} - {player}\nClick to start here too; drag to move; right-click to assign to someone else"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
