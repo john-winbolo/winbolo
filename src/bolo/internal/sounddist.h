@@ -44,22 +44,16 @@
 
 /* Prototypes */
 
-/*********************************************************
-*NAME:          soundDistLog
-*AUTHOR:        John Morrison
-*CREATION DATE: 05/05/01
-*LAST MODIFIED: 05/05/01
-*PURPOSE:
-*  Calculates the item to be logged
-*
-*ARGUMENTS:
-*  value - Sound effect to be played
-*  mx    - Map X co-ordinatate for the sound origin
-*  my    - Map Y co-ordinatate for the sound origin
-*********************************************************/
-void soundDistLog(sndEffects value, BYTE mx, BYTE my);
+/* Play the variant `tier` names for a sound the server delivered. `dir` is
+   the map-absolute bearing from input_packet.h, carried for a future stereo
+   panner and not read yet. */
+void clientSoundDist(struct GameSim *sim, sndEffects value, BYTE tier,
+                     BYTE dir);
 
-void clientSoundDist(struct GameSim *sim, sndEffects value, BYTE mx, BYTE my);
+/* A sound this client's own sim raised, which still has its real square:
+   work the tier out from the listener's tank and play it. */
+void clientSoundDistLocal(struct GameSim *sim, sndEffects value, BYTE mx,
+                          BYTE my);
 
 #endif /* _SOUNDDIST_H */
 

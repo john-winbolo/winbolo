@@ -507,6 +507,13 @@ void serverSimBotTick(ServerSim *sim, aiType ai);
 BYTE   serverSimGetNumBots(ServerSim *sim);
 bool   serverSimHasAnyBot(ServerSim *sim);
 bool   serverSimIsBot(ServerSim *sim, BYTE playerNum);
+/* Mark a slot whose in-process consumer reads the map square a sound was
+ * raised at — the gym agent, the headless brain harness. A human client is
+ * sent a near/far tier and a bearing in place of the square; a bot-manager
+ * bot keeps the square without being marked. Only the process that owns the
+ * ServerSim can call this, so the wire cannot claim it. Cleared when the slot
+ * is joined or freed. */
+void   serverSimSetSoundSquares(ServerSim *sim, BYTE playerNum, bool keep);
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum);
 bool   serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out);
 void   serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out);
