@@ -41,6 +41,7 @@
 #include "lobby_internal.h"
 #include "dialog_footer.h"   /* WBUI cancel styling + CancelKeyPressed */
 #include "imgui_keysetup.h"  /* imguiKeySetupOpenInGame — the push-to-talk row's Change button */
+#include "imgui_settings.h"  /* imguiSettingsVoice* — the shared voice controls */
 #include "../../wb_theme.h"  /* g_theme / wbThemeColor — team tints, tag pills */
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, BrainList, PingBand */
@@ -64,6 +65,16 @@ extern "C" {
                                * the own-row voice sub-row's state */
 #endif
 }
+
+#if defined(WINBOLO_VOICE)
+extern "C" {
+  /* Voice apply/persist helpers — winbolo.c on the desktop, main_wasm.c in the
+     browser build. No header declares them; each caller names the ones it
+     uses, the same way imgui_settings.cpp does. */
+  void windowSetVoiceEnabled(bool on);
+  void windowSetVoiceVolume(float gain);
+}
+#endif
 
 /* Player-list state: bot-row expansion, the tab-cycle's forced selection
  * and the two per-row confirm dialogs. */
@@ -109,7 +120,7 @@ void lobbyPlayersReset(void) {
 static void renderBotAiConfig(ClientSim *cs,
                               int slot, int teamId, float s);
 #if defined(WINBOLO_VOICE)
-static void renderOwnVoiceConfig(ClientSim *cs, float s);
+static void renderOwnVoiceConfig(ClientSim *cs, float s, float contentW);
 #endif
 
 /* ── Layout A — team-grouped player list ──────────────────────────
@@ -2162,7 +2173,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     ImGui::TableNextRow();
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, rowStripe);
                     ImGui::TableSetColumnIndex(0);
-                    renderOwnVoiceConfig(cs, s);
+                    renderOwnVoiceConfig(cs, s, contentW);
                 }
 #endif
             }
@@ -2597,12 +2608,20 @@ static void renderBotAiConfig(ClientSim *cs,
 
 #if defined(WINBOLO_VOICE)
 /* ── Layout A — own voice sub-row ─────────────────────────────────
- * Inline panel under the local player's row: whether this client has
- * a microphone, the mute toggle, the input level with whether it is
- * being sent, and which key push to talk is on. Reads and writes the
- * same voice state the settings dialog does — nothing here picks a
- * device or a mode. */
-static void renderOwnVoiceConfig(ClientSim *cs, float s) {
+ * Inline panel under the local player's row, holding the voice controls in
+ * three columns: the master switch, mute, microphone gain and the input
+ * level on the left; the two device pickers in the middle; the mode, the
+ * push-to-talk key, the microphone test and the output volume on the right.
+ * A lobby cannot open the application settings dialog, so a control that is
+ * not here cannot be reached from a lobby at all. Reads and writes the same
+ * voice state that dialog does, through the same helpers. */
+static void renderOwnVoiceConfig(ClientSim *cs, float s, float contentW) {
+    /* First, and on every frame the sub-row is open: this is what holds the
+       recording device open for the frame, so the level meter has a live
+       level to show and the microphone test has a device to run on. The
+       voice tick takes the hold back on any frame this is not called. */
+    voiceSettingsSectionDrawn();
+
     const ClientLobbySlot *mySlot =
         clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
     /* The microphone comes from the slot's published flags, the same
@@ -2613,79 +2632,145 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s) {
 
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
 
-    /* Read the master switch once: the line below and the
-       BeginDisabled / EndDisabled around the rest have to be told the
-       same answer. The rest still draws, greyed, rather than being
+    /* Read the master switch once: the line below, the checkbox that writes
+       it and the BeginDisabled / EndDisabled around the rest all have to be
+       told the same answer. The rest still draws, greyed, rather than being
        left out — what the microphone is doing is worth seeing even
        when nothing is being sent. */
-    const bool voiceOn = voiceIsEnabled();
+    bool voiceOn = voiceIsEnabled();
     /* The server dropping voice reads the same way here as the master switch
        being off: the rest is greyed rather than left out, so the row keeps its
        shape and the reason is stated instead of being left to guess at. The
        switch is named first when both apply — it is the one the player can
        do something about. */
     const bool serverOff = voiceServerHasVoiceOff();
+    /* Everything but the master switch itself is greyed by these two; the
+       switch stays live, or voice could never be turned back on from here. */
+    const bool greyed = !voiceOn || serverOff;
     if (!voiceOn) {
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_VOICE_OFF));
-        ImGui::BeginDisabled();
     } else if (serverOff) {
         ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
-        ImGui::BeginDisabled();
     } else if (!hasMic) {
         ImGui::TextDisabled("%s", langGetText(STR_PLAYER_TIP_VOICE_SELF_NOMIC));
     }
 
-    /* Local, and independent of the mute key: the binding may be unset,
-       and this is the way to mute without one. */
-    bool muted = voiceIsSelfMuted();
-    if (ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_MUTEMIC), &muted)) {
-        voiceSetSelfMuted(muted);
+    /* Three columns, and three however narrow the window gets: dropping to
+       two would change this row's height, and every player below it would
+       move. The controls get small instead. The panel's width is passed in
+       because the sub-row draws in the table's first column — the width
+       available here is that column's, not the panel's. */
+    const float gap = ImGui::GetStyle().ItemSpacing.x * 3.0f;
+    const float avail = contentW - ImGui::GetStyle().CellPadding.x * 2.0f;
+    float colW = (avail - gap * 2.0f) / 3.0f;
+    if (colW < 110.0f * s) colW = 110.0f * s;
+    /* A control gets its column less whatever is drawn beside it on the same
+       line, and the space between the two. */
+    auto ctrlW = [colW, s](float besideW) {
+        float w = colW - besideW - ImGui::GetStyle().ItemSpacing.x;
+        return w < 60.0f * s ? 60.0f * s : w;
+    };
+    auto textW = [](langid id) {
+        return ImGui::CalcTextSize(langGetText(id)).x;
+    };
+
+    /* ── Column 1: the switch, mute, gain, level ────────────────── */
+    ImGui::BeginGroup();
+    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ENABLE), &voiceOn)) {
+        windowSetVoiceEnabled(voiceOn);
     }
-
-    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
-    ImGui::SameLine();
-    ImGui::ProgressBar(voiceGetInputMeter(), ImVec2(200.0f * s, 0.0f));
-    ImGui::SameLine();
-    /* Spelt out both ways rather than a colour that only means something
-       to players who can tell the two greens apart. */
-    if (voiceIsTransmitting()) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
-                           langGetText(STR_DLGSETTINGS_VOICE_TRANSMITTING));
-    } else {
-        ImGui::TextDisabled("%s",
-                            langGetText(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING));
-    }
-
-    /* The mode is named, not picked — it is set in the settings dialog,
-       and this row is state and a mute. */
-    const VoiceMode mode = voiceGetMode();
-    langid modeStr = STR_DLGSETTINGS_VOICE_MODE_OFF;
-    if (mode == VOICE_MODE_PTT)       modeStr = STR_DLGSETTINGS_VOICE_MODE_PTT;
-    else if (mode == VOICE_MODE_OPEN) modeStr = STR_DLGSETTINGS_VOICE_MODE_OPEN;
-    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MODE));
-    ImGui::SameLine();
-    ImGui::TextUnformatted(langGetText(modeStr));
-
-    /* Which key push to talk is on, and the way to change it — Key Setup
-       opens over the lobby, so the commonest reason voice does nothing can
-       be fixed without leaving. */
-    if (mode == VOICE_MODE_PTT) {
-        keyItems pttKeys;
-        windowGetKeys(&pttKeys);
-        const char *pttName =
-            SDL_GetScancodeName((SDL_Scancode)pttKeys.kiPushToTalk);
-        if (!pttName || pttName[0] == '\0') {
-            pttName = langGetText(STR_DLGKEYSETUP_NONE_VAL);
+    if (greyed) ImGui::BeginDisabled();
+    {
+        /* Local, and independent of the mute key: the binding may be unset,
+           and this is the way to mute without one. */
+        bool muted = voiceIsSelfMuted();
+        if (ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_MUTEMIC), &muted)) {
+            voiceSetSelfMuted(muted);
         }
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
-        ImGui::SameLine();
-        ImGui::TextUnformatted(pttName);
-        ImGui::SameLine();
-        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
-            imguiKeySetupOpenInGame();
-        }
+        imguiSettingsVoiceMicGainSlider(
+            ctrlW(textW(STR_DLGSETTINGS_VOICE_MICGAIN)));
+        /* The meter ends on one of two words, and the column keeps room for
+           the wider of them either way, so the columns beside it do not shift
+           as transmission starts and stops. */
+        const float txW = textW(STR_DLGSETTINGS_VOICE_TRANSMITTING);
+        const float noTxW = textW(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING);
+        imguiSettingsVoiceLevelMeter(
+            ctrlW(textW(STR_DLGSETTINGS_VOICE_LEVEL)
+                  + (txW > noTxW ? txW : noTxW)
+                  + ImGui::GetStyle().ItemSpacing.x));
     }
+    if (greyed) ImGui::EndDisabled();
+    ImGui::EndGroup();
 
-    if (!voiceOn || serverOff) ImGui::EndDisabled();
+    /* ── Column 2: the devices ──────────────────────────────────── */
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginGroup();
+    if (greyed) ImGui::BeginDisabled();
+    /* Both draw nothing where there is no device to choose between, and the
+       column is then empty — there is nothing else that belongs in it. */
+    imguiSettingsVoiceDeviceCombo(true,
+        ctrlW(textW(STR_DLGSETTINGS_VOICE_MICDEVICE)));
+    imguiSettingsVoiceDeviceCombo(false,
+        ctrlW(textW(STR_DLGSETTINGS_VOICE_OUTDEVICE)));
+    if (greyed) ImGui::EndDisabled();
+    ImGui::EndGroup();
+
+    /* ── Column 3: mode, the key, the test, output volume ───────── */
+    ImGui::SameLine(0.0f, gap);
+    ImGui::BeginGroup();
+    if (greyed) ImGui::BeginDisabled();
+    {
+        imguiSettingsVoiceModeCombo(ctrlW(textW(STR_DLGSETTINGS_VOICE_MODE)));
+
+        /* Which key push to talk is on, and the way to change it — Key Setup
+           opens over the lobby, so the commonest reason voice does nothing can
+           be fixed without leaving. */
+        if (voiceGetMode() == VOICE_MODE_PTT) {
+            keyItems pttKeys;
+            windowGetKeys(&pttKeys);
+            const char *pttName =
+                SDL_GetScancodeName((SDL_Scancode)pttKeys.kiPushToTalk);
+            if (!pttName || pttName[0] == '\0') {
+                pttName = langGetText(STR_DLGKEYSETUP_NONE_VAL);
+            }
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
+            ImGui::SameLine();
+            ImGui::TextUnformatted(pttName);
+            ImGui::SameLine();
+            if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+                imguiKeySetupOpenInGame();
+            }
+        }
+
+        /* The test grows a Cancel button and a word beside its bar while it
+           runs, so the bar is sized for that state; the idle button stands
+           on its own and does not need the room. */
+        const float recW = textW(STR_DLGSETTINGS_VOICE_MICTEST_RECORDING);
+        const float playW = textW(STR_DLGSETTINGS_VOICE_MICTEST_PLAYING);
+        imguiSettingsVoiceMicTest(
+            ctrlW(ImGui::CalcTextSize(langGetText(STR_CANCEL)).x
+                  + ImGui::GetStyle().FramePadding.x * 2.0f
+                  + (recW > playW ? recW : playW)
+                  + ImGui::GetStyle().ItemSpacing.x));
+
+        float vol = voiceGetOutputVolume();
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_VOLUME));
+        ImGui::SameLine();
+        /* Room kept for the readout at its widest, so the slider does not
+           resize as the value is dragged. */
+        ImGui::SetNextItemWidth(
+            ctrlW(textW(STR_DLGSETTINGS_VOICE_VOLUME)
+                  + ImGui::CalcTextSize("0.00x").x
+                  + ImGui::GetStyle().ItemSpacing.x));
+        /* Empty format, and a ## id, so the slider draws neither the value
+           inside itself nor a label after it; both go beside it instead. */
+        if (ImGui::SliderFloat("##voicevolume", &vol, 0.0f, 2.0f, "")) {
+            windowSetVoiceVolume(vol);
+        }
+        ImGui::SameLine();
+        ImGui::Text("%.2fx", vol);
+    }
+    if (greyed) ImGui::EndDisabled();
+    ImGui::EndGroup();
 }
 #endif
