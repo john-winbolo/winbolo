@@ -302,7 +302,14 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiPing[0]      = DEFAULT_PING1;
   keys->kiPing[1]      = DEFAULT_PING2;
   keys->kiPing[2]      = DEFAULT_PING3;
-  keys->kiPing[3]      = DEFAULT_PING4;
+  /* The direct pings are all unbound out of the box, on the desktop and
+     here alike. */
+  {
+    int pi;
+    for (pi = 0; pi < PING_BIND_DIRECT_SLOTS; pi++) {
+      keys->kiPingDirect[pi] = 0;
+    }
+  }
 }
 
 /* Outbound control-event callbacks. Desktop wires these in gamefront.c; the

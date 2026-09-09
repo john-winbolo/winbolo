@@ -1843,6 +1843,12 @@ static bool overviewHudRectHit(ImVec2 mouse, float originX, float originY,
  * a click from a panel or dialog on top of it. */
 static void renderOverviewInWindow(ClientSim *cs) {
     if (!sdl3DrawIsOverviewInWindow()) return;
+
+    /* Cleared before anything can bail out below, and set again once the map
+       really is up: a frame that never gets as far as the hit-test must not
+       leave the ping pie pointing at a surface that is no longer there. */
+    pingOverlayClearSurface();
+
     OverviewView *view = sdl3DrawOverviewInWindowView();
     if (!view) return;
     float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
@@ -1946,6 +1952,14 @@ static void renderOverviewInWindow(ClientSim *cs) {
         windowGetKeys(&keys);
         overviewViewHandleInput(view, hovered && !overHud,
                                 (int)rw, (int)rh, cs, &keys, true);
+
+        /* The map the ping pie opens on this frame, recorded for the event
+           hook — which runs before ImGui and so has no hover test of its own.
+           The same hovered && !overHud the view itself is driven by, so a
+           chord on a HUD panel is no more a ping than it is a build. */
+        pingOverlaySetOverviewSurface(rx, ry, rw, rh, hovered && !overHud,
+                                      overviewViewCamera(view),
+                                      (int)rw, (int)rh);
 
         /* Zoom and follow state along the top of the map — the pop-out puts the
            same readout bottom-left, but here the bottom of the window is where
@@ -4180,6 +4194,29 @@ void sdl3ImguiResetFrameState(void) {
     ImGui::EndFrame();
 }
 
+/* Did this pointer or key event happen in the main game window? Pop-outs have
+   their own windows and their own ImGui contexts, and the loop below routes
+   their events to them; anything read off the main window's coordinates has
+   to check first or it will read a pop-out's pixels as the game's. Events
+   that name no window (quit, drops, gamepad) are the application's and count
+   as the main window's. */
+static bool eventBelongsToMainWindow(const SDL_Event *ev) {
+    SDL_WindowID id = s_window ? SDL_GetWindowID(s_window) : 0;
+    if (id == 0) return false;
+    switch (ev->type) {
+        case SDL_EVENT_MOUSE_MOTION:      return ev->motion.windowID == id;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:   return ev->button.windowID == id;
+        case SDL_EVENT_MOUSE_WHEEL:       return ev->wheel.windowID  == id;
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:            return ev->key.windowID    == id;
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                                          return ev->window.windowID == id;
+        default:                          return true;
+    }
+}
+
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
 #ifdef __APPLE__
@@ -4194,14 +4231,41 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (s_renderer) {
             SDL_ConvertEventToRenderCoordinates(s_renderer, &ev);
         }
-        ImGui_ImplSDL3_ProcessEvent(&ev);
-
         /* Track which input device the player most recently used so
          * tutorial dialogs can pick keyboard vs gamepad glyphs.  Sits
          * here because every poll iteration runs this exactly once,
          * before any subsystem-specific continue/break, regardless of
-         * whether the event is later swallowed by ImGui or a popup. */
+         * whether the event is later swallowed by ImGui, a popup or the
+         * ping pie below. */
         inputSourceUpdate(&ev);
+
+        /* The smart-ping chord gets first refusal, ahead of ImGui itself.
+           It has to: the map overview lays an InvisibleButton over its
+           picture to catch a right-drag as a pan, so handing ImGui the press
+           first starts a pan, and the capture-flag block further down then
+           drops the event before the game handler ever sees it — which is
+           exactly why Ctrl+right click did nothing but pan in full-screen map
+           mode.
+           Running first means io.WantCaptureMouse cannot be consulted, so
+           "over the map and not over a panel" is answered from what the
+           frame just drawn recorded (pingOverlaySetClassicSurface /
+           pingOverlaySetOverviewSurface).
+           A pop-out window's own events are not the game's — the overview
+           pop-out keeps its pan and opens no pie — so they are held back
+           here and left to the pop-out routing below.
+           Skipped entirely while Key Setup is learning a chord: the whole
+           point of that press is to become the binding, and its capture hook
+           sits further down the loop.
+           Given the RAW event, not the render-converted one: the rects the
+           pie is tested against come from sdl3DrawGameToWindowCoords, which
+           is window pixels. */
+        if (!imguiKeySetupIsCapturingInGameKey() &&
+            eventBelongsToMainWindow(&rawEv) &&
+            pingOverlayHandleEvent(cs, &rawEv)) {
+            continue;
+        }
+
+        ImGui_ImplSDL3_ProcessEvent(&ev);
 
         /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
         if (uiModeIsTablet()) {
@@ -5374,7 +5438,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        marker that happens to land under it, and in both UI modes because a
        received ping has to show wherever the game is being played. */
     if (cs && !clientSimIsInLobby(cs)) {
+        /* Where a ping chord may land next poll. The overview records its own
+           surface in renderOverviewInWindow, earlier in this frame; this is
+           the classic view's turn. It has no item of its own to hover-test,
+           so "not over a panel" is ImGui's own capture flag — which was
+           settled from the previous frame's hit-test, which is exactly the
+           frame the next event will be answered against. */
+        if (!sdl3DrawIsOverviewInWindow()) {
+            pingOverlaySetClassicSurface(!ImGui::GetIO().WantCaptureMouse);
+        }
         pingOverlayDraw(cs);
+    } else {
+        pingOverlayClearSurface();
     }
 
     if (uiModeIsTablet()) {

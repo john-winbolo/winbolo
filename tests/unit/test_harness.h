@@ -1499,13 +1499,16 @@ int run_screencalc_river_copies_agree(void);
 /* Smart-ping pure headers and wire shape (test_ping.c): the chord packing
  * and its exact-modifier match rule, the pie's slice selection including the
  * wrap at the top and the dead zone, the off-screen edge marker on all four
- * borders and at a corner, and EVENT_PING's data size / reliability. */
+ * borders and at a corner, the rectangle inset that keeps a bar off the map
+ * overview's HUD panels, and EVENT_PING's data size / reliability. */
 int run_ping_binding_encode_decode(void);
 int run_ping_binding_match(void);
+int run_ping_binding_direct(void);
 int run_ping_binding_format(void);
 int run_ping_pie_slices(void);
 int run_ping_edge_sides(void);
 int run_ping_edge_corner(void);
+int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
 
 /* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's

@@ -1199,6 +1199,13 @@ void    overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
 int                      overviewSnapshotItemLabelCount(const OverviewSnapshot *s);
 const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
 
+/* The smart pings the overview draws on the ground, oldest first — the same
+   list clientSimGetPings hands the classic view, taken at fill time so the
+   render half never reads the ring the network thread writes. Always a valid
+   pointer for a non-NULL snapshot; the count is what matters. */
+const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s);
+int               overviewSnapshotPingCount(const OverviewSnapshot *s);
+
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
 

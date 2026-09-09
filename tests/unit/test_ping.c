@@ -125,12 +125,11 @@ int run_ping_binding_match(void) {
     UT_ASSERT(!pingBindingMatches(PING_BIND_NONE, 0, 0));
     UT_ASSERT(!pingBindingMatches(PING_BIND_NONE, rmbCode, 0));
 
-    /* The whole four-slot array: the first slot that fires wins, and an
+    /* The whole menu-slot array: the first slot that fires wins, and an
      * array of unbound slots reports nothing. */
     slots[0] = ctrlRmb;
     slots[1] = altRmb;
     slots[2] = PING_BIND_NONE;
-    slots[3] = PING_BIND_NONE;
     UT_ASSERT(pingBindingMatchAny(slots, PING_BIND_SLOTS, rmbCode,
                                   PING_BIND_MOD_CTRL) == 0);
     UT_ASSERT(pingBindingMatchAny(slots, PING_BIND_SLOTS, rmbCode,
@@ -139,6 +138,67 @@ int run_ping_binding_match(void) {
                                   PING_BIND_MOD_SHIFT) < 0);
     memset(slots, 0, sizeof(slots));
     UT_ASSERT(pingBindingMatchAny(slots, PING_BIND_SLOTS, rmbCode, 0) < 0);
+    return 0;
+}
+
+int run_ping_binding_direct(void) {
+    int direct[PING_BIND_DIRECT_SLOTS];
+    int menu[PING_BIND_SLOTS];
+    int rmbCode = pingBindingMouseCode(PT_MOUSE_RIGHT);
+    int ctrlRmb = pingBindingEncode(PING_BIND_MOD_CTRL, rmbCode);
+    int i;
+
+    /* The direct array is indexed by the kind itself, which is the only
+     * reason a lookup can return the kind rather than a slot number. A kind
+     * added to the wire without a slot added here would silently lose its
+     * row. */
+    UT_ASSERT_MSG(PING_BIND_DIRECT_SLOTS == PING_KIND_COUNT,
+                  "PING_BIND_DIRECT_SLOTS = %d but PING_KIND_COUNT = %d",
+                  PING_BIND_DIRECT_SLOTS, PING_KIND_COUNT);
+
+    /* All unbound is the shipped state: nothing fires. */
+    memset(direct, 0, sizeof(direct));
+    UT_ASSERT(pingBindingDirectKind(direct, PING_BIND_DIRECT_SLOTS,
+                                    rmbCode, 0) < 0);
+    UT_ASSERT(pingBindingDirectKind(direct, PING_BIND_DIRECT_SLOTS,
+                                    PT_SCANCODE_V, PING_BIND_MOD_CTRL) < 0);
+
+    /* Each slot answers with its own kind, and with the same exact-modifier
+     * rule the menu slots use. */
+    for (i = 0; i < PING_BIND_DIRECT_SLOTS; i++) {
+        memset(direct, 0, sizeof(direct));
+        direct[i] = pingBindingEncode(PING_BIND_MOD_SHIFT, PT_SCANCODE_V);
+        UT_ASSERT_MSG(pingBindingDirectKind(direct, PING_BIND_DIRECT_SLOTS,
+                                            PT_SCANCODE_V,
+                                            PING_BIND_MOD_SHIFT) == i,
+                      "slot %d did not answer with its own kind", i);
+        UT_ASSERT(pingBindingDirectKind(direct, PING_BIND_DIRECT_SLOTS,
+                                        PT_SCANCODE_V, 0) < 0);
+        UT_ASSERT(pingBindingDirectKind(direct, PING_BIND_DIRECT_SLOTS,
+                                        PT_SCANCODE_V,
+                                        PING_BIND_MOD_SHIFT |
+                                        PING_BIND_MOD_CTRL) < 0);
+    }
+
+    /* The standard ping is slot 0, so the first row of the direct group is
+     * the plain marker — the same thing the pie's centre sends. */
+    memset(direct, 0, sizeof(direct));
+    direct[PING_KIND_STANDARD] = ctrlRmb;
+    UT_ASSERT(pingBindingDirectKind(direct, PING_BIND_DIRECT_SLOTS, rmbCode,
+                                    PING_BIND_MOD_CTRL) == PING_KIND_STANDARD);
+
+    /* A chord on a direct slot AND a menu slot: both report a match, and the
+     * caller is required to ask the direct one first, so that is the one that
+     * sends. This pins that both answers really are available — the
+     * precedence itself lives in ping_overlay.cpp. */
+    memset(menu, 0, sizeof(menu));
+    menu[0] = ctrlRmb;
+    direct[PING_KIND_ATTACK] = ctrlRmb;
+    direct[PING_KIND_STANDARD] = PING_BIND_NONE;
+    UT_ASSERT(pingBindingDirectKind(direct, PING_BIND_DIRECT_SLOTS, rmbCode,
+                                    PING_BIND_MOD_CTRL) == PING_KIND_ATTACK);
+    UT_ASSERT(pingBindingMatchAny(menu, PING_BIND_SLOTS, rmbCode,
+                                  PING_BIND_MOD_CTRL) == 0);
     return 0;
 }
 
@@ -332,6 +392,63 @@ int run_ping_edge_corner(void) {
                               PE_TX + 100.0f, PE_TY, PE_BAR, &m));
     UT_ASSERT(!pingEdgeMarker(PE_RX, PE_RY, PE_RW, PE_RH, PE_TX, PE_TY,
                               PE_TX + 100.0f, PE_TY, PE_BAR, NULL));
+    return 0;
+}
+
+int run_ping_rect_inset(void) {
+    PingRect r;
+
+    /* Nothing over the map: the rectangle comes back as it went in. */
+    UT_ASSERT(pingRectInset(PE_RX, PE_RY, PE_RW, PE_RH, 0.0f, 0.0f, 0.0f, 0.0f,
+                            &r));
+    UT_ASSERT(r.x == PE_RX && r.y == PE_RY);
+    UT_ASSERT(r.w == PE_RW && r.h == PE_RH);
+
+    /* The overview's four panels, each eating its own edge. The origin moves
+     * by the left and top strips only; the size loses both sides. */
+    UT_ASSERT(pingRectInset(PE_RX, PE_RY, PE_RW, PE_RH,
+                            30.0f, 10.0f, 50.0f, 20.0f, &r));
+    UT_ASSERT_MSG(r.x == PE_RX + 30.0f, "x = %f", (double)r.x);
+    UT_ASSERT_MSG(r.y == PE_RY + 10.0f, "y = %f", (double)r.y);
+    UT_ASSERT_MSG(r.w == PE_RW - 80.0f, "w = %f", (double)r.w);
+    UT_ASSERT_MSG(r.h == PE_RH - 30.0f, "h = %f", (double)r.h);
+
+    /* A negative inset is read as none rather than growing the rectangle out
+     * over the chrome. */
+    UT_ASSERT(pingRectInset(PE_RX, PE_RY, PE_RW, PE_RH,
+                            -40.0f, 0.0f, 0.0f, -5.0f, &r));
+    UT_ASSERT(r.x == PE_RX && r.w == PE_RW);
+    UT_ASSERT(r.y == PE_RY && r.h == PE_RH);
+
+    /* Insets that would leave nothing: refused, and the rectangle is handed
+     * back unshrunk so a bar somewhere still beats no bar at all. */
+    UT_ASSERT(!pingRectInset(PE_RX, PE_RY, PE_RW, PE_RH,
+                             PE_RW, 0.0f, PE_RW, 0.0f, &r));
+    UT_ASSERT(r.x == PE_RX && r.w == PE_RW);
+    UT_ASSERT(!pingRectInset(PE_RX, PE_RY, PE_RW, PE_RH,
+                             0.0f, PE_RH * 0.6f, 0.0f, PE_RH * 0.6f, &r));
+    UT_ASSERT(r.y == PE_RY && r.h == PE_RH);
+
+    /* A degenerate rectangle, and no output at all. */
+    UT_ASSERT(!pingRectInset(PE_RX, PE_RY, 0.0f, PE_RH, 0.0f, 0.0f, 0.0f, 0.0f,
+                             &r));
+    UT_ASSERT(!pingRectInset(PE_RX, PE_RY, PE_RW, PE_RH, 0.0f, 0.0f, 0.0f,
+                             0.0f, NULL));
+
+    /* The shrunk rectangle is what an edge marker is then laid along, so a
+     * ping that is on the picture but under a panel still gets a bar. */
+    {
+        PingEdgeMarker m;
+        UT_ASSERT(pingRectInset(PE_RX, PE_RY, PE_RW, PE_RH,
+                                0.0f, 0.0f, 100.0f, 0.0f, &r));
+        UT_ASSERT(pingEdgeMarker(r.x, r.y, r.w, r.h,
+                                 r.x + r.w * 0.5f, r.y + r.h * 0.5f,
+                                 PE_RX + PE_RW - 10.0f, PE_TY, PE_BAR, &m));
+        UT_ASSERT_MSG(m.side == PING_EDGE_RIGHT, "side = %d", (int)m.side);
+        UT_ASSERT_MSG(m.x0 == r.x + r.w,
+                      "bar at %f, wanted the inset border %f",
+                      (double)m.x0, (double)(r.x + r.w));
+    }
     return 0;
 }
 

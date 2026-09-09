@@ -44,9 +44,21 @@
 extern "C" {
 #endif
 
-/* How many bindings one ping action may hold. The two defaults (Ctrl and Alt
- * with the right mouse button) take the first two; the rest start unbound. */
-#define PING_BIND_SLOTS 4
+/* How many chords open the pie menu. The two defaults (Ctrl and Alt with the
+ * right mouse button) take the first two; the third starts unbound. Key Setup
+ * shows them as "Smart Ping", "Smart Ping Alternate Keys" and "Smart Ping
+ * Alternate Keys 2". */
+#define PING_BIND_SLOTS 3
+
+/* One binding slot per ping kind, for the direct pings that send without
+ * opening the menu at all. The array is indexed by PING_KIND_* itself, so the
+ * slot index a lookup returns IS the kind to send — that is the whole reason
+ * it is laid out this way rather than as a list of (chord, kind) pairs.
+ *
+ * The count is spelled out here rather than taken from input_packet.h so this
+ * header stays free of the wire headers; run_ping_binding_direct in
+ * tests/unit/test_ping.c pins it to PING_KIND_COUNT. */
+#define PING_BIND_DIRECT_SLOTS 6
 
 #define PING_BIND_CODE_MASK   0xFFFF
 #define PING_BIND_MOUSE_BASE  512      /* one past SDL_SCANCODE_COUNT */
@@ -135,6 +147,19 @@ static inline int pingBindingMatchAny(const int *bindings, int count,
         if (pingBindingMatches(bindings[i], eventCode, heldMods)) return i;
     }
     return -1;
+}
+
+/* Which direct ping this event fires, or -1 for none. `direct` is the
+ * per-kind array (PING_BIND_DIRECT_SLOTS long); the value returned is the
+ * slot index, which is the PING_KIND_* to send.
+ *
+ * A chord the player has put on both a direct slot and a menu slot sends the
+ * direct ping: the caller asks this first and only opens the pie when it
+ * comes back -1. The direct slot is the more specific of the two — the player
+ * named a kind rather than asking to choose one — so it wins. */
+static inline int pingBindingDirectKind(const int *direct, int count,
+                                        int eventCode, int heldMods) {
+    return pingBindingMatchAny(direct, count, eventCode, heldMods);
 }
 
 /* Write the chord as display text: the modifiers in a fixed order joined by

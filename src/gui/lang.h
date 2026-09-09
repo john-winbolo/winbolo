@@ -2144,8 +2144,10 @@
 
 /* Smart ping (League-style pie menu). The six MESSAGE_PING_* lines are the
  * newswire text a received ping posts; the six STR_PING_* names label the
- * pie's slices and the key-setup rows; the rest name the binding chord
- * pieces the key-setup field shows. */
+ * pie's slices, and the direct-ping rows in Key Setup; STR_DLGKEYSETUP_PING
+ * heads that section and labels its first chord row, with the two _ALT names
+ * for the other two; the rest name the binding chord pieces the key-setup
+ * field shows. */
 #define MESSAGE_PING_STANDARD               2051
 #define MESSAGE_PING_CAUTION                2052
 #define MESSAGE_PING_ASSIST                 2053
@@ -2159,7 +2161,7 @@
 #define STR_PING_ON_MY_WAY                  2061
 #define STR_PING_BOT_COMMAND                2062
 #define STR_DLGKEYSETUP_PING                2063
-#define STR_DLGKEYSETUP_PING_SLOT           2064
+#define STR_DLGKEYSETUP_PING_ALT            2064
 #define STR_DLGKEYSETUP_PRESSACHORD         2065
 #define STR_PING_MOD_CTRL                   2066
 #define STR_PING_MOD_ALT                    2067
@@ -2169,6 +2171,7 @@
 #define STR_PING_MOUSE_RIGHT                2071
 #define STR_PING_MOUSE_X1                   2072
 #define STR_PING_MOUSE_X2                   2073
+#define STR_DLGKEYSETUP_PING_ALT2           2074
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

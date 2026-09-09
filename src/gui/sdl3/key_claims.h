@@ -27,6 +27,11 @@ static inline bool keyIsClaimedByGame(const keyItems *k, int scancode) {
     for (i = 0; i < PING_BIND_SLOTS; i++) {
         if (pingBindingScancode(k->kiPing[i]) == scancode) return true;
     }
+    /* The direct pings are chords on the same terms — one slot per kind, all
+       unbound until the player binds one — so they claim their keys too. */
+    for (i = 0; i < PING_BIND_DIRECT_SLOTS; i++) {
+        if (pingBindingScancode(k->kiPingDirect[i]) == scancode) return true;
+    }
     return scancode == k->kiForward      || scancode == k->kiBackward     ||
            scancode == k->kiLeft         || scancode == k->kiRight        ||
            scancode == k->kiShoot        || scancode == k->kiLayMine      ||
