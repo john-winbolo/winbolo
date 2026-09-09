@@ -1,5 +1,5 @@
 /*
- * INFO_PACKET view-policy byte.
+ * INFO_PACKET view-policy byte, and the voice mode in the flags byte.
  *
  * The browser advertisement grew a trailing byte carrying the server's
  * three visibility rules, two bits each, plus the classic-mode flag in
@@ -9,6 +9,11 @@
  * decoder uses — an advertisement that stops before the new byte must
  * report the built-in defaults rather than whatever the short read
  * left behind.
+ *
+ * The voice mode is packed into the top two bits of the separate flags
+ * byte, which the single-bit INFO_FLAG_* values share. Two encodings in
+ * one byte is the third thing that can break quietly, so the cases below
+ * check each side leaves the other alone.
  */
 
 #include <stddef.h>
@@ -18,6 +23,7 @@
 #include "global.h"
 #include "netpacks.h"
 #include "view_policy.h"
+#include "server_voice_mode.h"
 #include "test_harness.h"
 
 int run_info_packet_view_policy_layout(void) {
@@ -73,6 +79,47 @@ int run_info_packet_view_policy_layout(void) {
         UT_ASSERT_MSG(ally == viewPolicyOff, "ally = %d, want off", (int)ally);
         UT_ASSERT(classic);
         UT_ASSERT(alliesInTrees);
+    }
+
+    /* The voice mode owns bits 6-7 of the flags byte. On packs as zero,
+     * so a server that never sent these bits reads as on. */
+    UT_ASSERT(infoPacketPackVoiceMode(serverVoiceOn) == 0x00);
+    UT_ASSERT(infoPacketPackVoiceMode(serverVoiceOff) == 0x40);
+    UT_ASSERT(infoPacketPackVoiceMode(serverVoiceProximity) == 0x80);
+    UT_ASSERT(infoPacketReadVoiceMode(0x00) == serverVoiceOn);
+    UT_ASSERT(infoPacketReadVoiceMode(0x40) == serverVoiceOff);
+    UT_ASSERT(infoPacketReadVoiceMode(0x80) == serverVoiceProximity);
+
+    /* The fourth value the two bits can hold is not a mode; it reads as
+     * on rather than as something the enum does not name. */
+    UT_ASSERT_MSG(infoPacketReadVoiceMode(0xC0) == serverVoiceOn,
+                  "reserved voice value read back as %d, want on (%d)",
+                  (int)infoPacketReadVoiceMode(0xC0), (int)serverVoiceOn);
+
+    /* The two encodings share one byte, so neither may disturb the other:
+     * every INFO_FLAG_* bit set alongside a mode still reads that mode
+     * back, and packing a mode leaves those flags exactly as they were. */
+    {
+        const BYTE otherFlags = (BYTE)(INFO_FLAG_ALLOW_NEW_PLAYERS |
+                                       INFO_FLAG_LOCKED |
+                                       INFO_FLAG_RANKED |
+                                       INFO_FLAG_RANDOM_MAP |
+                                       INFO_FLAG_ALLOW_SPECTATORS |
+                                       INFO_FLAG_IN_LOBBY);
+        for (int m = (int)serverVoiceOn; m <= (int)serverVoiceProximity; m++) {
+            BYTE packed = infoPacketPackVoiceMode((ServerVoiceMode)m);
+            BYTE flags  = (BYTE)(otherFlags | packed);
+            UT_ASSERT_MSG((packed & otherFlags) == 0,
+                          "voice %d packed 0x%02X into a bit another flag owns",
+                          m, (unsigned)packed);
+            UT_ASSERT_MSG((BYTE)(flags & ~INFO_FLAG_VOICE_MASK) == otherFlags,
+                          "packing voice %d left the other flags as 0x%02X, want 0x%02X",
+                          m, (unsigned)(flags & ~INFO_FLAG_VOICE_MASK),
+                          (unsigned)otherFlags);
+            UT_ASSERT_MSG((int)infoPacketReadVoiceMode(flags) == m,
+                          "voice %d read back as %d with every other flag set",
+                          m, (int)infoPacketReadVoiceMode(flags));
+        }
     }
     return 0;
 }

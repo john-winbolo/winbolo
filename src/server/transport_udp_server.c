@@ -4608,6 +4608,9 @@ static void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
          * the cap accessor returns 0 when spectating is disabled. The live
          * spectator_count has no accessor yet, so it stays 0 below. */
         if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
+        /* The voice mode is two bits rather than a flag, in the top of the
+         * same byte. serverVoiceOn packs as zero. */
+        flags |= infoPacketPackVoiceMode(serverSimGetVoiceMode(sim));
         pkt->flags = flags;
     }
     pkt->start_delay = serverSimGetStartDelay(sim);
