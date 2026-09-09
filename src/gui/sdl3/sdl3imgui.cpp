@@ -5872,6 +5872,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_wasInLobby = nowInLobby;
 
         if (nowInLobby) {
+#if defined(WINBOLO_VOICE)
+            /* The lobby's push-to-talk poll, which the blocking modal runs in
+               its own loop. This host ticks voice earlier in the frame, so the
+               answer reaches the runtime on the next one; what matters is that
+               it is written every frame, so a key held as the game ended does
+               not leave the microphone open across the lobby. */
+            imguiLobbyPushToTalkPoll();
+#endif
             if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
                 /* Confirmed Leave: drop the connection, then go wherever
                    this host goes when a game ends. The disconnect alone

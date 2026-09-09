@@ -135,7 +135,7 @@ static bool overviewOwnsScrollKeys(void) {
 }
 
 /*********************************************************
-*NAME:          pushToTalkPoll
+*NAME:          inputPushToTalkPoll
 *PURPOSE:
 *  Tells the voice runtime whether the push-to-talk key is
 *  held, once per poll of the keyboard.  Both key-reading
@@ -145,6 +145,13 @@ static bool overviewOwnsScrollKeys(void) {
 *  dialog takes the keyboard or the window loses focus
 *  cannot latch the microphone open.
 *
+*  The lobby calls it as well, from whichever loop is running
+*  the lobby: those loops read no keys otherwise, so a key
+*  held as the game ended would stay held for the whole
+*  lobby.  Each caller answers "am I reading input" for
+*  itself — the windows and the dialogs differ — but what
+*  held means stays here, said once.
+*
 *  An unbound key is scancode 0, which keyDown never reports
 *  as held, so an unbound push-to-talk simply never
 *  transmits.
@@ -153,7 +160,7 @@ static bool overviewOwnsScrollKeys(void) {
 *  setKeys - Structure that holds the key settings
 *  active  - FALSE when this poll is not reading input
 *********************************************************/
-static void pushToTalkPoll(keyItems *setKeys, bool active) {
+void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 #if defined(WINBOLO_VOICE)
   voiceSetPushToTalkHeld(active && KEY_DOWN(setKeys->kiPushToTalk));
 #else
@@ -171,10 +178,12 @@ static void pushToTalkPoll(keyItems *setKeys, bool active) {
 *  level-triggered it would flip on every poll the key was
 *  held down for.
 *
-*  Called from the same places as pushToTalkPoll, with the
-*  same inactive polls, so a key held while a dialog owns
-*  the keyboard or the window has no focus does not toggle
-*  anything, and is not still down when focus returns.
+*  Called from the same two key polls as
+*  inputPushToTalkPoll, with the same inactive polls, so a
+*  key held while a dialog owns the keyboard or the window
+*  has no focus does not toggle anything, and is not still
+*  down when focus returns.  It stays in-game only: the mute
+*  in the lobby is a checkbox there.
 *
 *ARGUMENTS:
 *  setKeys - Structure that holds the key settings
@@ -570,11 +579,11 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   buildSelect curSelect;
 
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
-    pushToTalkPoll(setKeys, FALSE);
+    inputPushToTalkPoll(setKeys, FALSE);
     muteMicPoll(setKeys, FALSE);
     return TNONE;
   }
-  pushToTalkPoll(setKeys, TRUE);
+  inputPushToTalkPoll(setKeys, TRUE);
   muteMicPoll(setKeys, TRUE);
 
   tb = TNONE;
@@ -864,13 +873,13 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 *********************************************************/
 void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
-    pushToTalkPoll(setKeys, FALSE);
+    inputPushToTalkPoll(setKeys, FALSE);
     muteMicPoll(setKeys, FALSE);
     return;
   }
   /* This is the key-reading path while a brain drives the tank; without it
      push to talk would stop working the moment the player handed over. */
-  pushToTalkPoll(setKeys, TRUE);
+  inputPushToTalkPoll(setKeys, TRUE);
   muteMicPoll(setKeys, TRUE);
 
   /* An item view consumes the scroll keys (and the view keys) to step between
