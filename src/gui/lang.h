@@ -1747,7 +1747,7 @@
 #define STR_DLGLOBBY_VOICE_OFF                  2096
 
 /* Lobby chat — said once when somebody else is heard and voice is off here */
-#define STR_DLGLOBBY_VOICE_HINT                 2127
+#define STR_DLGLOBBY_VOICE_HINT                 2129
 
 /* Players panel — a player muted here who is talking anyway */
 #define STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING 2097
