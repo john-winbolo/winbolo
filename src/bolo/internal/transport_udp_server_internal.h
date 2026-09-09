@@ -358,4 +358,10 @@ typedef struct UdpServerState {
 
 extern UdpServerState udpServer;
 
+/* Handle one received datagram. Owned by
+ * src/server/transport_udp_server.c, which drives it from both the
+ * polled fallback and the recv-thread drain path. */
+void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
+                         struct sockaddr_in *fromAddr);
+
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */
