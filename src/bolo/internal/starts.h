@@ -194,8 +194,12 @@ void startsGetStart(struct GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTY
 *  slot with a valid reservation locks that exact start: it is
 *  excluded from the cluster/farthest-first placement and emitted
 *  at its reserved index, leaving only the unreserved slots to
-*  fill the remaining free starts. Duplicate reservations honor
-*  the first; an out-of-range reservation is treated as none.
+*  fill the remaining free starts. Duplicate reservations are
+*  all honored when LOBBY_SHARED_STARTS is on — every slot that
+*  named the start comes out on it and the spawn scatter spreads
+*  them — and honor only the first when it is off, the rest
+*  falling through to ordinary placement. An out-of-range
+*  reservation is treated as none.
 *  NULL means no reservations (original behaviour).
 *
 *  teamStartSide (optional, may be NULL) is indexed by team
