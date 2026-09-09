@@ -11,7 +11,8 @@
  *   (a) a reserved slot lands on exactly its reserved start;
  *   (b) an unreserved slot avoids a reserved start;
  *   (c) a stale (out-of-range) reservation falls through to placement;
- *   (d) duplicate reservations honor the first, place the rest normally;
+ *   (d) duplicate reservations: all honored when LOBBY_SHARED_STARTS is
+ *       on, else the first honored and the rest placed normally;
  *   (e) NULL reservedStartIdx0 preserves the original (no-reservation) path.
  *
  * The 5-start layout is built on a running sim's map with each start square
@@ -31,6 +32,7 @@
 #include "bolo_map.h"     /* mapSetPos */
 #include "starts.h"       /* startsAssignBatch */
 #include "bolo_rand.h"    /* bolo_srand */
+#include "lobby_shared_starts.h" /* lobbySharedStartsEnabled — duplicate reservations */
 #include "server_sim.h"   /* ut_make_running_sim, serverSimGetGameSim */
 #include "test_harness.h"
 
@@ -143,8 +145,9 @@ int run_starts_batch_stale_reservation_falls_through(void) {
     return 0;
 }
 
-/* (d) Duplicate reservations: the first slot keeps the start, the second
- *     is placed as unreserved. */
+/* (d) Duplicate reservations. With shared starts on both slots keep the
+ *     start they named; with it off the first keeps it and the second is
+ *     placed as unreserved. */
 int run_starts_batch_duplicate_honors_first(void) {
     ServerSim *sim = ut_make_running_sim("Dup");
     UT_ASSERT(sim != NULL);
@@ -167,9 +170,18 @@ int run_starts_batch_duplicate_honors_first(void) {
     UT_ASSERT_MSG(out[0] == 3,
                   "first slot should keep reserved start 3, got %u",
                   (unsigned)out[0]);
-    UT_ASSERT_MSG(out[1] != 3 && out[1] == 2,
-                  "duplicate slot should be placed unreserved (farthest, 2), got %u",
-                  (unsigned)out[1]);
+    if (lobbySharedStartsEnabled()) {
+        /* Shared starts: both slots asked for start 3 and both get it —
+         * startsGetStart's scatter puts the second tank a few squares
+         * behind the first. */
+        UT_ASSERT_MSG(out[1] == 3,
+                      "duplicate slot should share reserved start 3, got %u",
+                      (unsigned)out[1]);
+    } else {
+        UT_ASSERT_MSG(out[1] != 3 && out[1] == 2,
+                      "duplicate slot should be placed unreserved (farthest, 2), got %u",
+                      (unsigned)out[1]);
+    }
     serverSimDestroy(sim);
     return 0;
 }

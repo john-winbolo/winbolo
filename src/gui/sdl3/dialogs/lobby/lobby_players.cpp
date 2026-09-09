@@ -1935,21 +1935,39 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                     if (lobbyStartOffSideMasked(mask, teamSide, closedMask)) kGroup = 2;
                                     else if (hasSide && startSideIsCentre(mask))          kGroup = 1;
                                     if (kGroup != group) continue;
-                                    /* Connected holder of start k, if any. */
-                                    int holder = lobbyStartHolderSlot(cs, k);
-                                    bool occupiedByOther = (holder >= 0 && holder != i);
-                                    /* Non-host self-claim: only free starts + own. */
-                                    if (!effectiveHost && occupiedByOther) continue;
+                                    /* Connected holders of start k, if any,
+                                     * and their names — everyone but this
+                                     * row, since "(Name)" says who else is
+                                     * already there. */
+                                    int holders[MAX_TANKS];
+                                    int nHold = lobbyStartHolders(cs, k, holders, MAX_TANKS);
+                                    const char *others[MAX_TANKS];
+                                    int nOthers = 0;
+                                    for (int h = 0; h < nHold; h++) {
+                                        if (holders[h] == i) continue;
+                                        others[nOthers++] =
+                                            clientSimGetLobbySlot(cs, (BYTE)holders[h])->playerName;
+                                    }
+                                    bool occupiedByOther = (nOthers > 0);
+                                    /* Non-host self-claim: only free starts
+                                     * + own, unless starts can be shared —
+                                     * then joining someone is an ordinary
+                                     * pick and the server allows it. */
+                                    if (!effectiveHost && occupiedByOther &&
+                                        !lobbySharedStartsEnabled()) continue;
                                     if (group == 2 && !offSideSep) {
                                         ImGui::Separator();
                                         offSideSep = true;
                                     }
-                                    char entry[96];
+                                    char entry[160];
                                     if (occupiedByOther) {
+                                        char who[96];
+                                        lobbyStartHolderNameLabel(others, nOthers,
+                                                                  who, sizeof(who));
                                         SDL_snprintf(entry, sizeof(entry),
                                                      "#%u \xC2\xB7 %s (%s)", (unsigned)k,
                                                      langGetText(lobbyMapPreview()->startCompassId[k]),
-                                                     clientSimGetLobbySlot(cs, (BYTE)holder)->playerName);
+                                                     who);
                                     } else {
                                         SDL_snprintf(entry, sizeof(entry),
                                                      "#%u \xC2\xB7 %s", (unsigned)k,
