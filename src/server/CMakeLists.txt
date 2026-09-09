@@ -119,6 +119,7 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     transport_udp_server.c
     udp/udp_server_join.c
     udp/udp_server_recv.c
+    udp/udp_server_spectator.c
     udp/udp_server_test_hooks.c
     udp/udp_server_tracker.c
     udp/udp_server_voice.c

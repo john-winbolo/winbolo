@@ -48,6 +48,16 @@
  * (direct-IP / not signed in / WBN unreachable).  ~5 s @ 50 Hz. */
 #define WBN_JOIN_REGISTER_GRACE_TICKS 250
 
+/* Standalone PACKET_CHANNEL frames a downloading client gets per tick while
+ * snapshots are gated (no snapshot trailer to carry the bulk stream). One
+ * frame carries ~5 segments under the datagram budget, so this clears a full
+ * CHANNEL_BULK window (96 segments) in a tick rather than throttling the map to
+ * ~one frame/tick; the unacked window then bounds bytes in flight.
+ *
+ * Read by the per-client carrier in src/server/transport_udp_server.c and by
+ * the spectator carrier in src/server/udp/udp_server_spectator.c. */
+#define MAP_DOWNLOAD_FRAMES_PER_TICK 24
+
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
     int     len;
@@ -386,6 +396,12 @@ void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
  * src/server/transport_udp_server.c. */
 void buildInfoPacket(struct ServerSim *sim, INFO_PACKET *pkt);
 
+/* Short name for a ControlEventType, for diagnostic logging only. Owned by
+ * src/server/transport_udp_server.c, whose per-client deliver callback logs
+ * through it; the spectator deliver callback in
+ * src/server/udp/udp_server_spectator.c logs the same way. */
+const char *mpDiagCtrlName(int type);
+
 /* Public-address override advertised in place of the internal port and a zero
  * address once a UPnP/NAT-PMP/PCP mapping is negotiated. Owned by
  * src/server/udp/udp_server_tracker.c. */
@@ -455,12 +471,6 @@ bool     serverChooseUnverifiedSuffix(const char *baseName, int excludeSlot,
 
 /* Reached by the join cluster above but still defined in
  * src/server/transport_udp_server.c, which owns them. */
-void serverAcceptSpectator(struct ServerSim *sim,
-                           const struct sockaddr_in *fromAddr,
-                           const char *name,
-                           uint8_t clientType, uint8_t clientHints,
-                           const char *spectatorKey, uint8_t wbnFlags,
-                           const char *country);
 void serverDisconnectClient(struct ServerSim *sim, int idx, bool graceful);
 void serverInitMapDownload(int slot);
 void serverSendServerEnglishBroadcast(struct ServerSim *sim,
@@ -472,5 +482,27 @@ void transportUdpServerSendWbnRekey(UdpServerClient *c);
 void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
 void udpServerResetMapReaskLimit(int idx);
 void udpServerResetRoundLogLimits(int idx);
+
+/* Tankless spectator support. Owned by
+ * src/server/udp/udp_server_spectator.c.
+ * src/server/transport_udp_server.c calls these from the packet handler, the
+ * map-change and return-to-lobby paths, the per-tick send path and the timeout
+ * sweep; serverEnumSpectatorRoster is not called directly, it is handed to
+ * serverSimSetSpectatorRosterEnumerator in transportUdpServerCreate. */
+void serverAcceptSpectator(struct ServerSim *sim,
+                           const struct sockaddr_in *fromAddr,
+                           const char *name,
+                           uint8_t clientType, uint8_t clientHints,
+                           const char *spectatorKey, uint8_t wbnFlags,
+                           const char *country);
+void serverArmSpectatorLobbyMap(int s, bool resetChannel);
+void serverDisconnectSpectator(struct ServerSim *sim, int s, bool graceful);
+void serverEnumSpectatorRoster(void *enumCtx,
+                               void (*deliver)(void *, const ControlEvent *),
+                               void *deliverCtx);
+int  serverFindSpectator(const struct sockaddr_in *addr);
+void serverSendSpectatorAccept(int s, struct ServerSim *sim,
+                               const struct sockaddr_in *addr);
+void serverServiceSpectators(struct ServerSim *sim);
 
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */
