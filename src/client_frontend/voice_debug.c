@@ -446,8 +446,8 @@ bool voiceDebugStart(const char *dir) {
     }
 
     framesCsv = csvOpen("frames.csv",
-                        "frame,ms,inputLevel,rmsPostAec,clipped,micOpen,"
-                        "sending,encodedLen,overWireLimit,bandwidth,"
+                        "frame,ms,inputLevel,rmsPostAec,rmsPostGain,clipped,"
+                        "micOpen,sending,encodedLen,overWireLimit,bandwidth,"
                         "selfMuted,carriesVoice");
     speakersCsv = csvOpen("speakers.csv",
                           "ms,player,played,concealed,lateDropped,evicted,"
@@ -589,11 +589,20 @@ void voiceDebugTap(VoiceTap tap, int player, const int16_t *pcm) {
 *  the player's own mute, or a connection that carries no
 *  voice.
 *
+*  rmsPostAec and rmsPostGain are the same frame either side
+*  of the automatic gain, and the pair is what the open-mic
+*  threshold is re-measured from: the threshold is compared
+*  against the first, while the second says how far the gain
+*  lifted the room the first was read in.
+*
 *ARGUMENTS:
 *  nowMs         - the backend clock, wall clock rather than
 *                  audio time
 *  inputLevel    - the meter's 0..1 reading after mic gain
-*  rmsPostAec    - the reading the open-mic decision uses
+*  rmsPostAec    - the reading the open-mic decision uses,
+*                  cancelled and not yet gain controlled
+*  rmsPostGain   - the same frame once the automatic gain has
+*                  had it, which is what the encoder is given
 *  clipped       - samples the mic gain pushed out of range
 *  micOpen       - whether the microphone counted as open
 *  sending       - whether the frame was being transmitted
@@ -604,17 +613,17 @@ void voiceDebugTap(VoiceTap tap, int player, const int16_t *pcm) {
 *                  voice at all
 *********************************************************/
 void voiceDebugFrameStats(uint32_t nowMs, float inputLevel, float rmsPostAec,
-                          int clipped, bool micOpen, bool sending,
-                          int encodedLen, bool overWireLimit, bool selfMuted,
-                          bool carriesVoice) {
+                          float rmsPostGain, int clipped, bool micOpen,
+                          bool sending, int encodedLen, bool overWireLimit,
+                          bool selfMuted, bool carriesVoice) {
     if (!recording || framesCsv == NULL) {
         return;
     }
-    fprintf(framesCsv, "%u,%u,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%d\n",
+    fprintf(framesCsv, "%u,%u,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%d\n",
             framesCaptured, nowMs, (double)inputLevel, (double)rmsPostAec,
-            clipped, micOpen ? 1 : 0, sending ? 1 : 0, encodedLen,
-            overWireLimit ? 1 : 0, frameBandwidthKhz, selfMuted ? 1 : 0,
-            carriesVoice ? 1 : 0);
+            (double)rmsPostGain, clipped, micOpen ? 1 : 0, sending ? 1 : 0,
+            encodedLen, overWireLimit ? 1 : 0, frameBandwidthKhz,
+            selfMuted ? 1 : 0, carriesVoice ? 1 : 0);
     frameBandwidthKhz = 0;
     framesCaptured++;
     if (encodedLen > 0) {

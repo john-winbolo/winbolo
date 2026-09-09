@@ -58,6 +58,16 @@
  *   at all. Without them a run that never sends a frame
  *   reads the same either way, and the two want different
  *   fixes.
+ *
+ *   Three level columns, deliberately different numbers.
+ *   inputLevel is the microphone after mic gain, which is
+ *   what the meter shows the player. rmsPostAec is that with
+ *   the echo taken out and the automatic gain not yet on,
+ *   which is what the open-mic threshold is compared against.
+ *   rmsPostGain is the frame the encoder is handed, after the
+ *   gain has driven it towards its target - so a quiet room
+ *   reads low in the middle column and high in the last one,
+ *   and comparing the two is how the threshold is measured.
  *********************************************************/
 
 #ifndef VOICE_DEBUG_H
@@ -97,9 +107,9 @@ void voiceDebugTap(VoiceTap tap, int player, const int16_t *pcm);
 
 /* One frames.csv row per captured frame. */
 void voiceDebugFrameStats(uint32_t nowMs, float inputLevel, float rmsPostAec,
-                          int clipped, bool micOpen, bool sending,
-                          int encodedLen, bool overWireLimit, bool selfMuted,
-                          bool carriesVoice);
+                          float rmsPostGain, int clipped, bool micOpen,
+                          bool sending, int encodedLen, bool overWireLimit,
+                          bool selfMuted, bool carriesVoice);
 
 /* Decodes the frame just encoded through the recorder's own decoder and
  * writes it to VOICE_TAP_ROUNDTRIP. */

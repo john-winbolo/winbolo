@@ -66,11 +66,17 @@
  * arbitrarily deep backlog in one go. */
 #define VOICE_PLAYBACK_MAX_POPS_PER_CALL 4
 
-/* Open mic: the 0..1 frame RMS, measured after mic gain, at which the
- * open-mic decision counts what it hears as speech.  0.013, about -38 dBFS,
- * was measured rather than picked: onsets were being lost at 0.0131, and
- * room noise in the same recording topped out at 0.0100 across 431 quiet
- * frames.
+/* Open mic: the 0..1 frame RMS at which the open-mic decision counts what it
+ * hears as speech.  0.013, about -38 dBFS, was measured rather than picked:
+ * onsets were being lost at 0.0131, and room noise in the same recording
+ * topped out at 0.0100 across 431 quiet frames.
+ *
+ * The signal it applies to is the microphone after mic gain and after the
+ * echo canceller, and before the preprocessor's automatic gain - which is
+ * what voiceAecProcess hands back, and is the signal the numbers above were
+ * measured on.  Not the frame that comes out of it: the automatic gain aims
+ * every frame at a fixed target, so downstream of it a quiet room and a
+ * talker read alike and no absolute number tells them apart.
  *
  * It costs open-microphone time.  At 0.02 the microphone was open for 34%
  * of that recording; at 0.013 it is open for 54%, because every low-level
@@ -1887,6 +1893,9 @@ void voiceTick(struct ClientSim *cs) {
     /* Samples the mic gain pushed out of the int16 range, counted per frame
      * before the clamp writes them back. */
     int clipped = 0;
+    /* What the frame reads once the automatic gain has had it - the level
+     * the encoder sees, recorded so a run shows it against the gate's. */
+    float gainedLevel = 0.0f;
 #endif
 
     if (!isInitialised) {
@@ -2026,15 +2035,17 @@ void voiceTick(struct ClientSim *cs) {
         gateLevel = inputLevel;
 #if defined(WINBOLO_VOICE_AEC)
         /* Below the level meter, which reports the microphone as it is, and
-         * above both consumers of the cleaned signal - the open-mic gate and
-         * the encoder.  Above the transmit test too: every captured frame
-         * goes through, sent or not, because the filter tracks the room
-         * continuously and a frame it never sees is a hole in that. */
-        voiceAecProcess(pcm, pcm);
-
-        /* The gate's own reading, taken off the frame the canceller has just
-         * cleaned rather than off the meter's. */
-        gateLevel = voiceFrameRms(pcm, VOICE_FRAME_SAMPLES);
+         * above the encoder, which wants the frame cleaned and brought up to
+         * a level listeners can hear.  Above the transmit test too: every
+         * captured frame goes through, sent or not, because the filter tracks
+         * the room continuously and a frame it never sees is a hole in that.
+         *
+         * The gate's reading comes back out of the call rather than off the
+         * frame it wrote.  Echo the canceller is about to remove must not
+         * open the microphone, and the automatic gain that runs in the same
+         * call would leave any reading taken afterwards saying only that the
+         * gain had reached its target. */
+        gateLevel = voiceAecProcess(pcm, pcm);
 #endif
 
 #if defined(WB_VOICEDEBUG)
@@ -2042,13 +2053,18 @@ void voiceTick(struct ClientSim *cs) {
          * the same frame as gained, and writing it anyway keeps the set of
          * files the same shape either way. */
         voiceDebugTap(VOICE_TAP_CLEANED, 0, pcm);
+        /* The gained level beside the gate's, so a recording shows what the
+         * automatic gain did to the frame the decision is no longer read
+         * off.  Where no canceller is built the two are the same number. */
+        gainedLevel = voiceFrameRms(pcm, VOICE_FRAME_SAMPLES);
 #endif
 
-        /* Open mic decides on the signal that will actually be sent, not on
-         * what the meter reports, so echo the canceller has just taken out
-         * cannot open the microphone.  Over the threshold opens the gate and
-         * re-arms the hangover, under it counts the hangover down so the tail
-         * of a word is not cut off. */
+        /* Open mic decides on the cancelled signal rather than on what the
+         * meter reports, so echo the canceller has just taken out cannot open
+         * the microphone, and on it before the automatic gain, so a quiet
+         * room stays a quiet room to the decision.  Over the threshold opens
+         * the gate and re-arms the hangover, under it counts the hangover
+         * down so the tail of a word is not cut off. */
         if (voiceMode == VOICE_MODE_OPEN) {
             if (gateLevel >= VOICE_OPEN_MIC_RMS_THRESHOLD) {
                 gateOpen = true;
@@ -2118,8 +2134,9 @@ void voiceTick(struct ClientSim *cs) {
             /* Recorded before the frame is dropped: a frame that would not
              * encode is one a hole in the audio is found in. */
             voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
-                                 clipped, gateOpen, sending, 0, false,
-                                 selfMuteRequested, connectionCarriesVoice);
+                                 gainedLevel, clipped, gateOpen, sending, 0,
+                                 false, selfMuteRequested,
+                                 connectionCarriesVoice);
 #endif
             continue;
         }
@@ -2147,7 +2164,8 @@ void voiceTick(struct ClientSim *cs) {
 
 #if defined(WB_VOICEDEBUG)
         voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
-                             clipped, gateOpen, sending, encodedLen,
+                             gainedLevel, clipped, gateOpen, sending,
+                             encodedLen,
                              encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES,
                              selfMuteRequested, connectionCarriesVoice);
 #endif
