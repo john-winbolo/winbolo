@@ -103,6 +103,12 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->teams[2].namingPool = 0;
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
     memset(sim->botConfigs, 0, sizeof(sim->botConfigs));
+    /* Difficulty's default is Hard, not the memset's 0 (= Easy) — same
+     * reasoning as serverSimInit: every difficulty plays like Hard for now,
+     * so Hard is the honest label on a fresh bot's lobby row. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->botConfigs[i].difficulty = BOT_DIFFICULTY_HARD;
+    }
     memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
 
     /* Unlock the lobby to new players: clear both the host-toggled

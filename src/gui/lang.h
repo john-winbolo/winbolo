@@ -1510,8 +1510,19 @@
 #define STR_DLGLOBBY_BOTCFG_DEFENSIVE       1342
 #define STR_DLGLOBBY_BOTCFG_SNIPER          1343
 #define STR_DLGLOBBY_BOTCFG_DONE            1344
-/* Gear-hover tooltip: "Currently: <brain code name>" ({string1} = name). */
+/* Gear-hover tooltip: "Currently: <bot name> . <difficulty>" ({string1}). */
 #define STR_DLGLOBBY_BOTCFG_CURRENTLY       1847
+
+/* Middle bot difficulty (wire value 1; Easy / Hard reuse 1337 / 1339). */
+#define STR_DLGLOBBY_BOTCFG_MEDIUM          2154
+
+/* Bot difficulty blurbs: tagline (leading token coloured) + description. */
+#define STR_BOT_DIFF_TAG_EASY               2155
+#define STR_BOT_DIFF_TAG_MEDIUM             2156
+#define STR_BOT_DIFF_TAG_HARD               2157
+#define STR_BOT_DIFF_DESC_EASY              2158
+#define STR_BOT_DIFF_DESC_MEDIUM            2159
+#define STR_BOT_DIFF_DESC_HARD              2160
 
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */

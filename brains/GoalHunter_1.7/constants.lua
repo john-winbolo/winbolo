@@ -7,6 +7,18 @@ local M = {}
 M.BRAIN_NAME = "GoalHunter"
 M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbose)
 
+-- How hard this bot is asked to play: "easy", "medium" or "hard". Set from
+-- the host's per-bot lobby choice, which arrives as a "difficulty=<word>"
+-- token in BRAIN_INIT_ARG (see the init-arg block in init.lua); also
+-- settable directly with cfg=DIFFICULTY=easy for a bench.
+--
+-- NOTHING READS THIS YET. Every difficulty runs exactly this code, which is
+-- what "hard" means, so the default is "hard" and the knobs that make easy
+-- and medium actually easier come later. It is stored (and echoed in the
+-- init-arg log, and on state.difficulty) so the plumbing can be trusted
+-- before any behaviour hangs off it.
+M.DIFFICULTY = "hard"
+
 M.TWO_PI = 2 * math.pi
 M.MAP_W  = 256
 M.WU     = 256   -- world-units per map square; centre = +0x80

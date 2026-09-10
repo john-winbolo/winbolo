@@ -136,16 +136,9 @@ bool serverSimApplyLobbySetting(ServerSim *sim,
                                 uint8_t lst,
                                 const uint8_t *value, size_t len);
 
-/* Apply a bot-config change atomically — write difficulty / personality
- * to the slot, optionally rename the bot (when validatedName is
- * non-NULL and non-empty), publish CTRL_LOBBY_BOT_CONFIG +
- * CTRL_LOBBY_SLOT, and clear humans' ready state. Callers (UDP
- * PACKET_LOBBY_BOT_CONFIG handler, SP-host clientSimNetSendLobbyBotConfig)
- * must validate the name beforehand — see lobbyBotNameAcceptable.
- * Pass NULL or an empty string to leave the name unchanged. */
-void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
-                            uint8_t difficulty, uint8_t personality,
-                            const char *validatedName);
+/* serverSimSetBotConfig lives on public/server_sim.h — the SP-host GUI
+ * (gamefront.c) writes a bot's difficulty through it before creating the
+ * bot, and the GUI only sees public/. */
 
 /* Apply a team-metadata change atomically — write color, naming pool
  * (with the in-use-pool rewrite when another team owns the requested

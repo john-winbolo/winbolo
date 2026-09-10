@@ -5,16 +5,16 @@
 # binary that links luabrainshandler.c links this library to pull in
 # the per-tick registrations and bot-specific header search paths.
 # ONE brain's c/ directory is compiled: WINBOLO_BRAIN_C_DIR (default the
-# active GoalHunter). The frozen older brains (1.5, 1.6) carry their own
-# c/ copies with the SAME symbol names (naShieldStampRegister,
-# naThreatRegister, ...). Globbing every version compiled them all into
-# this lib, the linker kept the FIRST copy (LNK4006 "second definition
-# ignored") and silently dropped the rest -- so every brain, including the
-# active one, was running GoalHunter_1.5's bindings, and an edit to the
-# active version's c/ never reached the binary. The older brains' Lua
-# calls the same API and never passed the newer optional arguments, so
-# linking the active copy for all of them is what was effectively
-# happening anyway, now made explicit.
+# active GoalHunter). Only one brain version ships now, so the glob has a
+# single candidate -- but the variable stays, and stays a single directory,
+# because of what happened when several versions were in the tree: each
+# frozen older brain carried its own c/ copy with the SAME symbol names
+# (naShieldStampRegister, naThreatRegister, ...). Globbing every version
+# compiled them all into this lib, the linker kept the FIRST copy (LNK4006
+# "second definition ignored") and silently dropped the rest -- so every
+# brain, including the active one, ran the oldest version's bindings, and an
+# edit to the active version's c/ never reached the binary. Anyone who
+# freezes a second brain tree again must keep this one-directory rule.
 set(WINBOLO_BRAIN_C_DIR "GoalHunter_1.7" CACHE STRING
     "brains/<dir>/c is the one set of brain C bindings compiled and linked (all brain versions share it)")
 

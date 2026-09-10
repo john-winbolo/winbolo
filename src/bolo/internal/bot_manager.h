@@ -344,6 +344,35 @@ int  botManagerGetThreads(const struct ServerSim *sim);
  *********************************************************/
 int  botManagerGetPendingThreads(const struct ServerSim *sim);
 
+/* ── Bot difficulty ──────────────────────────────────────────────
+ * LobbyBotConfig.difficulty is 0/1/2 on the wire (server_sim.h). These
+ * turn it into the word the brain reads out of its BRAIN_INIT_ARG, and
+ * back again for the dedicated server's -difficulty flag. Every
+ * difficulty currently runs the same brain code — the token is
+ * plumbing, so the brain can start honouring it without another
+ * protocol change. */
+
+/* botDifficultyName / botDifficultyFromName are declared on
+ * public/server_sim.h — the GUI and the dedicated server's argument parse
+ * both need them, and they are implemented in bot_manager.c alongside the
+ * token assembly below. */
+
+/*********************************************************
+ *NAME:          botInitArgAppendToken
+ *PURPOSE:
+ *  Appends one ';'-separated token to a BRAIN_INIT_ARG string
+ *  (no separator when the buffer is empty). Whole-token or
+ *  nothing: if the token would not fit in argSz it is dropped
+ *  and false is returned, because half a token is a silently
+ *  different bot, not a shorter one.
+ *
+ *ARGUMENTS:
+ *  arg   - NUL-terminated buffer holding the arg so far
+ *  argSz - full size of that buffer (BRAIN_INIT_ARG_MAX)
+ *  token - token to append, e.g. "difficulty=hard"
+ *********************************************************/
+bool botInitArgAppendToken(char *arg, size_t argSz, const char *token);
+
 /*********************************************************
  *NAME:          botManagerAddBot
  *PURPOSE:

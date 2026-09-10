@@ -194,16 +194,17 @@ static bool findBrainPath(char *out, size_t outLen) {
     return false;
 }
 
-/* Single-player default-bot skill guess. Returns the brain dir name for an
- * auto-seeded SP bot: the harder "GoalHunter_1.7" only when the player is
- * signed in to WinBolo.net with more than 5 games on record; otherwise the
- * gentler "GoalHunter_1.0" (the default for everyone not signed in). */
-static const char *gameFrontGuessSpBotBrain(void) {
-    /* Gospel: if the player has ever explicitly picked a brain from the lobby
-     * wrench dropdown, honour that from then on, ignoring the skill guess. */
-    static char chosen[64];
-    gameFrontGetChosenBotBrain(chosen, sizeof(chosen));
-    if (chosen[0] != '\0') return chosen;
+/* Single-player default-bot skill guess. Returns the DIFFICULTY an
+ * auto-seeded SP bot gets: Hard only when the player is signed in to
+ * WinBolo.net with more than 5 games on record, otherwise Easy (what
+ * everyone not signed in gets). One brain plays every difficulty, so this
+ * used to pick between brain directories (1.7 vs 1.0) and now picks the
+ * per-bot difficulty instead — the same rule, a different knob. */
+uint8_t gameFrontSpBotDifficulty(void) {
+    /* Gospel: if the player has ever explicitly picked a difficulty from the
+     * lobby wrench dropdown, honour that from then on, skill guess ignored. */
+    uint8_t chosen;
+    if (gameFrontGetChosenBotDifficulty(&chosen)) return chosen;
 
     WbnStats st;
     gameFrontGetWinbolonetStats(&st);
@@ -213,9 +214,9 @@ static const char *gameFrontGuessSpBotBrain(void) {
         for (int i = 0; i < 3; i++) {
             if (modes[i]->numGames > 0) games += modes[i]->numGames;
         }
-        if (games > 5) return "GoalHunter_1.7";
+        if (games > 5) return BOT_DIFFICULTY_HARD;
     }
-    return "GoalHunter_1.0";
+    return BOT_DIFFICULTY_EASY;
 }
 
 /* -------------------------------------------------------
@@ -1876,24 +1877,17 @@ bool gameFrontSetDlgState(openingStates newState) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
                 snprintf(botName, sizeof(botName), "Bot %d", slot);
-                /* Use per-bot brain path if set; otherwise pick the default by
-                 * a single-player skill guess (WinBolo.net signed-in with more
-                 * than 5 games → the harder 1.5, else the gentler 1.0). */
+                /* One brain now, so the brain is just spBrainPath (the per-bot
+                 * override is still honoured if some caller ever sets one).
+                 * What the single-player skill guess picks is the bot's
+                 * DIFFICULTY, written into the slot's lobby config before the
+                 * bot is created so the brain is handed the difficulty= token
+                 * on its very first load. */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
-                if (botBrain[0] == '\0') {
-                  botBrain = spBrainPath;  /* fallback if the guess isn't in the catalogue */
-                  const char *guess = gameFrontGuessSpBotBrain();
-                  const BrainList *gbl = serverSimGetBrainList(spServerSim);
-                  if (gbl) {
-                    for (int k = 0; k < gbl->count; k++) {
-                      if (SDL_strcasecmp(gbl->entries[k].name, guess) == 0) {
-                        const char *gp = serverSimGetBrainPathForIdx(spServerSim, (uint8_t)k);
-                        if (gp) botBrain = gp;
-                        break;
-                      }
-                    }
-                  }
-                }
+                if (botBrain[0] == '\0') botBrain = spBrainPath;
+                serverSimSetBotConfig(spServerSim, slot,
+                                      gameFrontSpBotDifficulty(),
+                                      0 /* personality: normal */, NULL);
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy, spGameType, hiddenMines);
                 /* serverSimCreateBot loads the brain from the path but leaves
                  * the lobby brain-INDEX at the 0xFF "default" sentinel, so the
@@ -2726,17 +2720,31 @@ void gameFrontSetOnboardingComplete(void) {
   prefsSetString("SETTINGS", "Onboarding Complete", "Yes");
 }
 
-/* The bot brain the player last explicitly chose from the lobby wrench
- * dropdown. This is the player's own difficulty preference and overrides the
- * automatic single-player skill guess from then on. Empty until first chosen
- * (the default on a fresh install). */
-void gameFrontSetChosenBotBrain(const char *name) {
-  prefsSetString("BOT", "Chosen Brain", name ? name : "");
+/* The bot difficulty the player last explicitly chose from the lobby wrench
+ * dropdown. This is the player's own preference and overrides the automatic
+ * single-player skill guess from then on. Unset until first chosen (the
+ * default on a fresh install), which is what the false return means.
+ *
+ * Stored as the word, not the number, so the prefs file stays readable and a
+ * future difficulty doesn't have to reuse an index. */
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty) {
+  prefsSetString("BOT", "Chosen Difficulty", botDifficultyName(difficulty));
 }
 
-void gameFrontGetChosenBotBrain(char *out, size_t outLen) {
-  if (!out || outLen == 0) return;
-  prefsGetString("BOT", "Chosen Brain", "", out, (int)outLen);
+bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
+  char buff[32];
+  if (!out) return false;
+  prefsGetString("BOT", "Chosen Difficulty", "", buff, (int)sizeof(buff));
+  if (buff[0] != '\0' && botDifficultyFromName(buff, out)) return true;
+  /* Migration from the pre-difficulty pref, which named a brain directory:
+   * the one gentle brain was GoalHunter_1.0, everything else was a hard
+   * one. Read-only — the new key is written the next time the player picks
+   * a difficulty, and until then the old choice keeps being honoured. */
+  prefsGetString("BOT", "Chosen Brain", "", buff, (int)sizeof(buff));
+  if (buff[0] == '\0') return false;
+  *out = (SDL_strcasecmp(buff, "GoalHunter_1.0") == 0) ? BOT_DIFFICULTY_EASY
+                                                       : BOT_DIFFICULTY_HARD;
+  return true;
 }
 
 

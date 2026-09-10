@@ -673,7 +673,14 @@ void printArgs() {
   fprintf(stderr, "-maxbots <N>  - Maximum number of AI bots that can be in the lobby\n");
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
-  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
+  fprintf(stderr, "                first of Brains/GoalHunter_1.7/init.lua,\n");
+  fprintf(stderr, "                brains/GoalHunter_1.7/init.lua,\n");
+  fprintf(stderr, "                data/Brains/GoalHunter_1.7/init.lua that exists)\n");
+  fprintf(stderr, "-difficulty <easy|medium|hard> - Difficulty for the -bots bots\n");
+  fprintf(stderr, "                (default hard). Handed to the brain as a\n");
+  fprintf(stderr, "                'difficulty=<word>' BRAIN_INIT_ARG token; every\n");
+  fprintf(stderr, "                setting plays the same way for now.\n");
   fprintf(stderr, "-bot-init <spec> - Per-bot brain paths by player id: 'range=path[arg],...'\n");
   fprintf(stderr, "                where range is 'a-b' or 'n' and the optional [arg] becomes\n");
   fprintf(stderr, "                that bot's BRAIN_INIT_ARG Lua global. Ids not listed use\n");
@@ -2379,6 +2386,24 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Warning: -teams overrides -allybots\n");
         allyTeam = 0;
       }
+      /* -difficulty easy|medium|hard: the difficulty every -bots bot is
+       * created with. Defaults to hard, which is what the shipping brain
+       * plays like and what a lobby bot left on Hard gets. The value lands
+       * in the slot's LobbyBotConfig before the brain is created, so the
+       * brain sees it as a "difficulty=<word>" BRAIN_INIT_ARG token. */
+      uint8_t botDifficulty = BOT_DIFFICULTY_HARD;
+      if (argExist(argc, argv, "difficulty") == TRUE) {
+        int dArg = findArg(argc, argv, "difficulty");
+        if (dArg != ARG_NOT_FOUND && argv[dArg][0] != '-') {
+          if (!botDifficultyFromName((const char *)argv[dArg], &botDifficulty)) {
+            fprintf(stderr, "Warning: -difficulty '%s' is not easy/medium/hard; using hard\n",
+                    (const char *)argv[dArg]);
+            botDifficulty = BOT_DIFFICULTY_HARD;
+          }
+        } else {
+          fprintf(stderr, "Warning: -difficulty given with no value; using hard\n");
+        }
+      }
       /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
        * id defaults to the shared brainPath with no arg; the spec overrides the
        * ids it names. Shared parser/semantics with BrainTest. */
@@ -2442,6 +2467,11 @@ int main(int argc, char **argv) {
           fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
                   botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
         }
+        /* Difficulty has to be in the slot's config BEFORE the brain is
+         * created: botManagerAddBot reads it from there to build the
+         * difficulty= token it appends to the staged arg above. */
+        serverSimSetBotConfig(serverSim, (BYTE)i, botDifficulty,
+                              0 /* personality: normal */, NULL);
         if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {

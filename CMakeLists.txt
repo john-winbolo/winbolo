@@ -1899,12 +1899,7 @@ add_custom_command(TARGET WinBolo POST_BUILD
         -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
         -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.7
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts (GoalHunter_1.7 + _1.0) to output Brains/ directory (excludes *.md)"
+    COMMENT "Copying brain scripts (GoalHunter_1.7) to output Brains/ directory (excludes *.md)"
 )
 
 # Steam Input action manifest + per-controller binding files — Steam reads
@@ -2203,9 +2198,6 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
         "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.7"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.0"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
 
@@ -2520,9 +2512,6 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
         "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.7"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.0"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -2770,9 +2759,6 @@ add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
         "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.7"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.0"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
@@ -3130,11 +3116,6 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
         -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.7
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.0"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.0
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
@@ -3636,6 +3617,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
+    # assembly (whole-token-or-nothing when the buffer is tight) and the
+    # difficulty <-> word round trip -difficulty and the preference share.
+    tests/unit/test_bot_init_arg.c
     # River tile lookup: ROAD must read as "the river continues" in all four
     # RIVER_END arms (a bridge on a river cross drew corner pieces), plus the
     # game vs log-viewer copies of screenCalcRiver never disagreeing.

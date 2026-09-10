@@ -142,12 +142,22 @@ typedef struct {
   char    name[LOBBY_TEAM_NAME_LEN];
 } TeamMetadata;
 
+/* Bot difficulty, as carried on the wire (CTRL_/PACKET_LOBBY_BOT_CONFIG)
+ * and shown in the lobby. The values are frozen: 1 was labelled "normal"
+ * before it was labelled "Medium". botDifficultyName (bot_manager.h) turns
+ * one of these into the "difficulty=<word>" token handed to the brain. */
+#define BOT_DIFFICULTY_EASY    0
+#define BOT_DIFFICULTY_MEDIUM  1
+#define BOT_DIFFICULTY_HARD    2
+#define BOT_DIFFICULTY_MAX     2
+
 /* Per-bot config — extends bot identity with difficulty + personality
- * the Layout A AiConfig sub-panel writes. Brain consumption is deferred
- * (GoalHunter accepts the values via brain.set_config but ignores
- * them in v1). Indexed by slot (matches bot's playerNum). */
+ * the Layout A AiConfig sub-panel writes. difficulty reaches the brain as
+ * a BRAIN_INIT_ARG token at bot-brain creation (bot_manager.c); the brain
+ * stores it and behaves the same at every setting for now. personality is
+ * still unconsumed. Indexed by slot (matches bot's playerNum). */
 typedef struct {
-  uint8_t difficulty;   /* 0=easy, 1=normal, 2=hard */
+  uint8_t difficulty;   /* BOT_DIFFICULTY_* — 0=easy, 1=medium, 2=hard */
   uint8_t personality;  /* 0=normal, 1=aggressive, 2=defensive, 3=sniper */
 } LobbyBotConfig;
 
@@ -1617,6 +1627,32 @@ GameSim *serverSimGetGameSim(ServerSim *sim);
  * brain". Set via PACKET_LOBBY_SET_BOT_BRAIN. */
 void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
                                        uint8_t brainIdx);
+
+/* Apply a bot-config change atomically — write difficulty / personality
+ * to the slot, optionally rename the bot (when validatedName is
+ * non-NULL and non-empty), publish CTRL_LOBBY_BOT_CONFIG +
+ * CTRL_LOBBY_SLOT, and clear humans' ready state. Callers (UDP
+ * PACKET_LOBBY_BOT_CONFIG handler, SP-host clientSimNetSendLobbyBotConfig)
+ * must validate the name beforehand — see lobbyBotNameAcceptable.
+ * Pass NULL or an empty string to leave the name unchanged.
+ *
+ * Safe to call on a slot with no bot in it yet, and the SP-host and the
+ * dedicated server both do: the difficulty has to be in the slot's config
+ * BEFORE the bot's brain is created, because that is where bot_manager
+ * reads it to build the brain's "difficulty=" init token. */
+void        serverSimSetBotConfig(ServerSim *sim, BYTE slot,
+                                  uint8_t difficulty, uint8_t personality,
+                                  const char *validatedName);
+
+/* Difficulty <-> word. "easy" / "medium" / "hard" is what the brain is
+ * handed in its BRAIN_INIT_ARG, what -difficulty accepts on the dedicated
+ * server's command line, and what the "Chosen Difficulty" preference
+ * stores. botDifficultyName never returns NULL: an out-of-range value
+ * reads as "hard". botDifficultyFromName is case-insensitive, takes
+ * "normal" as an alias for "medium" (its former label), and returns false
+ * without touching *out on anything else. Implemented in bot_manager.c. */
+const char *botDifficultyName(uint8_t difficulty);
+bool        botDifficultyFromName(const char *name, uint8_t *out);
 
 /* Resolve a catalogue index back to its disk path. Returns the
  * CLI-configured default path for brainIdx == 0xFF, NULL when the

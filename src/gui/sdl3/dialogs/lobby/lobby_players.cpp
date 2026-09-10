@@ -53,7 +53,7 @@ extern "C" {
 #include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot; lobbyTeamSide, lobbySideNameId / CompassId, lobbyClosedMaskForTeam */
 #include "../../../../bolo/public/wire_limits.h"  /* LOBBY_LOCK_* / LST_* */
 #include "../../../lang.h"   /* langGetText / MessageArgs / STR_*; PLAYER_FLAG_* */
-#include "../../../gamefront.h"  /* gameFrontSetChosenBotBrain */
+#include "../../../gamefront.h"  /* gameFrontSetChosenBotDifficulty */
 #include "../../../ui_mode.h"    /* uiShouldUseControllerMode */
 #include "../../sdl3draw.h"      /* sdl3DrawGetRenderer */
 #include "../../sdl3imgui.h"     /* renderPlayerName / drawCountryFlagWithTip */
@@ -1634,6 +1634,21 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                 }
 
+                /* A bot's two extra name tags: which bot it is and how hard
+                 * it plays. Both come from lobby state the server already
+                 * syncs to every client (the brain catalogue + index, and
+                 * LobbyBotConfig.difficulty), so joiners see the same pair
+                 * the host does. Computed before the name is truncated
+                 * because the truncation has to reserve room for them. */
+                char botBrainTag[BRAIN_LIST_NAME_LEN] = "";
+                const char *botDiffTag = "";
+                uint8_t botDiff = BOT_DIFFICULTY_HARD;
+                if (isBot) {
+                    lobbyBotBrainBaseName(cs, i, botBrainTag, sizeof(botBrainTag));
+                    botDiff = clientSimGetLobbyBotDifficulty(cs, (BYTE)(i));
+                    botDiffTag = langGetText(lobbyBotDifficultyLabelId(botDiff));
+                }
+
                 /* ── Column 2: name + inline tags ────────────────── */
                 ImGui::TableSetColumnIndex(2);
                 rowTopY = ImGui::GetCursorPosY();
@@ -1648,6 +1663,20 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                      & PLAYER_FLAG_ADMIN)));
                     float nameAvail  = ImGui::GetContentRegionAvail().x;
                     float tagReserve = rowHasTag ? kNameTagW : 0.0f;
+                    /* A bot row carries three tags, not one: BOT, the bot's
+                     * name ("GoalHunter") and its difficulty. Reserve what
+                     * they actually measure so the name gives up the room
+                     * instead of the tags spilling into the start dropdown.
+                     * Same recipe drawNameTag uses below: 70% font, 6px pad
+                     * each side, 6px gap before each pill. */
+                    if (showNameTags && isBot) {
+                        const char *extra[2] = { botBrainTag, botDiffTag };
+                        for (int t = 0; t < 2; t++) {
+                            if (!extra[t] || !extra[t][0]) continue;
+                            tagReserve += ImGui::CalcTextSize(extra[t]).x * 0.70f
+                                        + 12.0f * s + 6.0f * s;
+                        }
+                    }
                     char nameBuf[64];
                     lobbyTruncateName(clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
                                       nameAvail - tagReserve, nameBuf, sizeof(nameBuf));
@@ -1726,6 +1755,33 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                 g_theme->botTagBg,
                                 g_theme->botTagText,
                                 g_theme->botTagBorder);
+                    /* Which bot, then how hard. Both wear the BOT tag's
+                     * themed colours so the run reads as one group; the
+                     * difficulty is the one that changes, so it goes last
+                     * where the eye lands after the name. */
+                    if (botBrainTag[0]) {
+                        drawNameTag(botBrainTag,
+                                    g_theme->brainTagBg,
+                                    g_theme->brainTagText,
+                                    g_theme->brainTagBorder);
+                    }
+                    if (botDiffTag[0]) {
+                        /* Green / amber / red by level, the same reading the
+                         * Easy./Medium./Hard. tagline token gives. */
+                        ImU32 dBg = g_theme->diffHardTagBg;
+                        ImU32 dFg = g_theme->diffHardTagText;
+                        ImU32 dBd = g_theme->diffHardTagBorder;
+                        if (botDiff == BOT_DIFFICULTY_EASY) {
+                            dBg = g_theme->diffEasyTagBg;
+                            dFg = g_theme->diffEasyTagText;
+                            dBd = g_theme->diffEasyTagBorder;
+                        } else if (botDiff == BOT_DIFFICULTY_MEDIUM) {
+                            dBg = g_theme->diffMediumTagBg;
+                            dFg = g_theme->diffMediumTagText;
+                            dBd = g_theme->diffMediumTagBorder;
+                        }
+                        drawNameTag(botDiffTag, dBg, dFg, dBd);
+                    }
                 }
                 /* Track the rightmost name/tag edge across all rows so the
                  * start dropdowns can line up in a shared column. The last
@@ -2467,8 +2523,16 @@ static void renderBotAiConfig(ClientSim *cs,
     float nameGroupRightX = ImGui::GetItemRectMax().x;
     float nameGroupBottomY = ImGui::GetItemRectMax().y;
 
-    /* Bot Code group, right of the Name group at the same anchor Y. */
-    bool  botCodeShown  = (bl->count > 0);
+    /* Bot Code group, right of the Name group at the same anchor Y.
+     * Hidden when the catalogue holds a single brain: there is nothing to
+     * choose, and a one-entry dropdown just invites the question "what else
+     * is there?". A dev tree that has frozen a second brain alongside the
+     * shipping one still gets the combo. */
+    bool  botCodeShown  = (bl->count > 1);
+    /* Right edge / bottom of the last group placed on the form's top row,
+     * so the next group can sit beside it and the form can size to the
+     * tallest. Starts at the Name group. */
+    float lastGroupRightX  = nameGroupRightX;
     const float comboW  = 240.0f * s;
     if (botCodeShown) {
         float bcX = nameGroupRightX + 24.0f * s;
@@ -2516,6 +2580,53 @@ static void renderBotAiConfig(ClientSim *cs,
             ImGui::EndCombo();
         }
         ImGui::EndGroup();
+        lastGroupRightX = ImGui::GetItemRectMax().x;
+    }
+
+    /* ── Difficulty group ─────────────────────────────────────────
+     * Easy / Medium / Hard, sitting where Bot Code used to be the
+     * interesting control. Wire values stay 0/1/2 (Medium is the old
+     * "normal"), and the chosen difficulty's description is printed under
+     * the dropdown so the player can read what they are picking without
+     * hunting for a tooltip. Every setting plays the same way for now;
+     * only the wording and the token handed to the brain differ. */
+    float diffGroupBottomY = 0.0f;
+    {
+        float dfX = lastGroupRightX + 24.0f * s;
+        ImGui::SetCursorScreenPos(ImVec2(dfX, formAnchor.y));
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
+        const char *diffItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_EASY),
+                                    langGetText(STR_DLGLOBBY_BOTCFG_MEDIUM),
+                                    langGetText(STR_DLGLOBBY_BOTCFG_HARD) };
+        int diff = clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot));
+        if (diff < 0 || diff > BOT_DIFFICULTY_MAX) diff = BOT_DIFFICULTY_HARD;
+        ImGui::SetNextItemWidth(110.0f * s);
+        if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
+            lobbySendBotConfig(cs, (uint8_t)slot,
+                (uint8_t)diff, clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
+                clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
+            /* An explicit pick here is the player's standing preference —
+             * persist it so it becomes the default on every future launch
+             * (gospel; overrides the single-player skill guess). This is the
+             * role the Bot Code dropdown used to play. */
+            gameFrontSetChosenBotDifficulty((uint8_t)diff);
+        }
+        /* Description of the CURRENT difficulty. Wrapped to whatever is
+         * left between this group and the Done button on the form's right
+         * edge, capped so it doesn't turn into one very long line on a wide
+         * window and floored so a narrow one still gets a readable column
+         * (the text goes taller instead, which the row height follows). */
+        const float doneReserve = 100.0f * s;
+        float winRightX = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
+        float descWrapW = (winRightX - doneReserve) - dfX;
+        if (descWrapW > 300.0f * s) descWrapW = 300.0f * s;
+        if (descWrapW < 140.0f * s) descWrapW = 140.0f * s;
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + descWrapW);
+        ImGui::TextDisabled("%s", langGetText(lobbyBotDifficultyDescId((uint8_t)diff)));
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        diffGroupBottomY = ImGui::GetItemRectMax().y;
     }
 
     if (diceClicked) {
@@ -2538,40 +2649,20 @@ static void renderBotAiConfig(ClientSim *cs,
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
         /* Stash as the sticky default so subsequent Add Bot clicks inherit
-         * this choice. A manual pick from the wrench dropdown is also the
-         * player's explicit difficulty preference — persist it so it becomes
-         * the default on every future launch (gospel; overrides the SP skill
-         * guess). Empty until the player first chooses here. */
+         * this choice. Only reachable on a dev tree with more than one brain
+         * (the combo is hidden otherwise); the persisted player preference is
+         * the DIFFICULTY, written by the dropdown above, not the brain. */
         *lobbyBrainLastChosenIdx() = (uint8_t)pendingBrainPick;
-        gameFrontSetChosenBotBrain(bl->entries[pendingBrainPick].name);
         lobbySendSetBotBrain(cs, (uint8_t)slot,
                              (uint8_t)pendingBrainPick);
     }
 
-    /* Difficulty / Personality dropdowns are hidden for now — the
-     * brain doesn't yet honor either field. Kept in the code (and
-     * still wired through lobbySendBotConfig) so flipping this
-     * flag to true is the only thing needed to re-enable the UI
-     * once the brain consumes the values. */
+    /* The Personality dropdown stays hidden — nothing consumes the field
+     * yet. Kept in the code (and still wired through lobbySendBotConfig)
+     * so flipping this flag to true is the only thing needed to show it
+     * once the brain honours it. Difficulty graduated out of here: it is
+     * its own group above. */
     const bool kShowAiOptions = false;
-
-    /* ── Difficulty dropdown ──────────────────────────────────── */
-    if (kShowAiOptions) {
-        ImGui::SameLine(0.0f, 16.0f * s);
-        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
-        ImGui::SameLine();
-        const char *diffItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_EASY),
-                                    langGetText(STR_DLGLOBBY_BOTCFG_NORMAL),
-                                    langGetText(STR_DLGLOBBY_BOTCFG_HARD) };
-        int diff = clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot));
-        if (diff < 0 || diff > 2) diff = 1;
-        ImGui::SetNextItemWidth(90.0f * s);
-        if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
-            lobbySendBotConfig(cs, (uint8_t)slot,
-                (uint8_t)diff, clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
-                clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
-        }
-    }
 
     /* ── Personality dropdown ─────────────────────────────────── */
     if (kShowAiOptions) {
@@ -2627,6 +2718,10 @@ static void renderBotAiConfig(ClientSim *cs,
     float bottomY = nameGroupBottomY;
     float curBotBottom = ImGui::GetItemRectMax().y;
     if (curBotBottom > bottomY) bottomY = curBotBottom;
+    /* The difficulty group carries the wrapped description, so it is
+     * usually the tallest of the three — the form has to reserve its
+     * height or the description bleeds into the row below. */
+    if (diffGroupBottomY > bottomY) bottomY = diffGroupBottomY;
     ImGui::SetCursorScreenPos(
         ImVec2(formAnchor.x,
                bottomY - kFormNudgeY + ImGui::GetStyle().ItemSpacing.y));
