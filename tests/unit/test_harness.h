@@ -1536,6 +1536,7 @@ int run_ping_event_wire(void);
 int run_ping_dispatch_accepts_and_builds_event(void);
 int run_ping_dispatch_rejects_lobby(void);
 int run_ping_dispatch_rejects_empty_slot_and_out_of_range(void);
+int run_ping_dispatch_map_range_bound(void);
 int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
 int run_ping_dispatch_new_round_clears_rate_limit(void);

@@ -665,6 +665,7 @@ static const UnitTestEntry s_tests[] = {
     { "ping_dispatch_rejects_lobby",             run_ping_dispatch_rejects_lobby             },
     { "ping_dispatch_rejects_empty_slot_and_out_of_range",
                                                  run_ping_dispatch_rejects_empty_slot_and_out_of_range },
+    { "ping_dispatch_map_range_bound",           run_ping_dispatch_map_range_bound           },
     { "ping_dispatch_rejects_bad_kind",          run_ping_dispatch_rejects_bad_kind          },
     { "ping_dispatch_rate_limit",                run_ping_dispatch_rate_limit                },
     { "ping_dispatch_new_round_clears_rate_limit",

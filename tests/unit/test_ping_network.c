@@ -32,10 +32,13 @@
  *      wire. This is the tightest repro of the drain-ordering bug: no alliance
  *      needed, since serverSimPingReachesClient(sender, sender) is always true.
  *
- *   2. Teammate delivery. Two players on the same team; one pings, and the
- *      OTHER must receive it over the wire — the scenario the feature exists
- *      for. Pins that the team-only reach filter passes an ally on the real
- *      drain path, not just in the predicate's own unit test.
+ *   2. Teammate delivery, and the opponent who must not see it. Three players:
+ *      two on one team, one on another. The first pings; the teammate must
+ *      receive it over the wire — the scenario the feature exists for — and
+ *      the opponent must still hold no ping at all once the exchange has run
+ *      on. Pins both directions of the team-only reach filter on the real
+ *      drain path, not just in the predicate's own unit test: a filter that
+ *      was dropped or inverted there fails one half or the other.
  */
 
 #include <stdint.h>
@@ -151,10 +154,20 @@ static int run_ping_self_echo(void) {
     return 0;
 }
 
-/* ── Case 2: one teammate pings, the other receives it over the wire. ─────── */
+/* How many pings are in this client's ring at all, of any sender or kind. A
+ * client on another team must finish the exchange with none: the team filter
+ * lives on the server's drain path, so an opponent should never be handed the
+ * event to ingest in the first place. */
+static int client_ping_count(ClientSim *cs) {
+    ClientPing pings[MAX_CLIENT_PINGS];
+    return clientSimGetPings(cs, (uint32_t)SDL_GetTicks(), pings,
+                             MAX_CLIENT_PINGS);
+}
 
-/* A second real UDP client sharing the harness's server + port. The harness
- * owns only one; this one is stood up and torn down here. */
+/* ── Case 2: one teammate pings; the other receives it, an opponent does not. */
+
+/* An extra real UDP client sharing the harness's server + port. The harness
+ * owns only one; these are stood up and torn down here. */
 typedef struct {
     ClientSim *cs;
     bool       up;
@@ -186,76 +199,115 @@ static void second_stop(SecondClient *b) {
     b->up = false;
 }
 
-/* One tick for both clients and the server. Mirrors loopbackHarnessPump but
- * ticks the second client too, so both endpoints drain the same server frame.
+/* B, the teammate, and C, the opponent. */
+#define PN_EXTRAS 2
+
+/* One tick for every client and the server. Mirrors loopbackHarnessPump but
+ * ticks the extra clients too, so all endpoints drain the same server frame.
  * The 1ms yield lets the server's background recv thread deliver this pump's
  * datagrams before serverInstanceTick drains the queue (same reason as the
  * harness pump). */
-static void pump_two(LoopbackHarness *h, SecondClient *b) {
+static void pump_all(LoopbackHarness *h, SecondClient *extra, int n) {
+    int i;
     if (h->clientUp) clientSimNetTick(h->cs);
-    if (b->up)       clientSimNetTick(b->cs);
+    for (i = 0; i < n; i++) {
+        if (extra[i].up) clientSimNetTick(extra[i].cs);
+    }
     SDL_Delay(1);
     if (h->serverUp) serverInstanceTick(h->sim);
 }
 
+/* Once the harness and the extra clients are up, no failure may return
+ * straight out of the test: that would leak two ClientSims and their UDP
+ * sockets, and leave a server bound to the harness's port for whatever runs
+ * next. So a failure is recorded here and the test jumps to the single
+ * teardown at `done`, which prints it after everything is stopped. */
+static char pn_fail[512];
+
+#define PN_FAIL(fmt, ...)                                                   \
+    do {                                                                    \
+        snprintf(pn_fail, sizeof(pn_fail), "%s:%d: " fmt,                   \
+                 __FILE__, __LINE__, ##__VA_ARGS__);                        \
+        goto done;                                                          \
+    } while (0)
+
+/* How long to keep pumping after B has the ping, before asking whether C got
+ * one too. A ping that is wrongly drained to C rides the very next server
+ * frame, so this only has to outlast the wire, not a timeout. */
+#define PN_SETTLE 120
+
 static int run_ping_teammate_delivery(void) {
     LoopbackHarness h;
-    SecondClient b;
-    uint8_t slotA, slotB;
+    SecondClient extra[PN_EXTRAS];
+    SecondClient *b = &extra[0];   /* PingerB — A's teammate */
+    SecondClient *c = &extra[1];   /* PingerC — the other team */
+    uint8_t slotA = 0, slotB = 0, slotC = 0;
     bool got = false;
+    int cPings = 0;
     int i;
+
+    pn_fail[0] = '\0';
+    memset(extra, 0, sizeof(extra));
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "PingerA", /*lobbyMode*/ false,
                                        /*impairSpec*/ NULL, /*seed*/ 0x7EA33u),
                   "harness start (teammate) failed");
     if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("client A never reached CONNECTED within %d pumps", CONNECT_MAX);
+        PN_FAIL("client A never reached CONNECTED within %d pumps", CONNECT_MAX);
     }
 
-    if (!second_connect(&b, &h, "PingerB")) {
-        second_stop(&b);
-        loopbackHarnessStop(&h);
-        UT_FAIL("second client connect failed");
-    }
+    if (!second_connect(b, &h, "PingerB")) PN_FAIL("client B connect failed");
+    if (!second_connect(c, &h, "PingerC")) PN_FAIL("client C connect failed");
 
-    /* Pump both until B is connected and both slots have finished downloading —
-     * the producer will only drain to a slot the server has marked complete. */
+    /* Pump all three until B and C are connected and every slot has finished
+     * downloading — the producer will only drain to a slot the server has
+     * marked complete. */
     for (i = 1; i <= CONNECT_MAX; i++) {
-        pump_two(&h, &b);
-        if (clientSimGetConnectState(b.cs) == CLIENT_CONNECT_CONNECTED) break;
+        pump_all(&h, extra, PN_EXTRAS);
+        if (clientSimGetConnectState(b->cs) == CLIENT_CONNECT_CONNECTED &&
+            clientSimGetConnectState(c->cs) == CLIENT_CONNECT_CONNECTED) {
+            break;
+        }
     }
-    if (clientSimGetConnectState(b.cs) != CLIENT_CONNECT_CONNECTED) {
-        second_stop(&b);
-        loopbackHarnessStop(&h);
-        UT_FAIL("client B never reached CONNECTED within %d pumps", CONNECT_MAX);
+    if (clientSimGetConnectState(b->cs) != CLIENT_CONNECT_CONNECTED) {
+        PN_FAIL("client B never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    if (clientSimGetConnectState(c->cs) != CLIENT_CONNECT_CONNECTED) {
+        PN_FAIL("client C never reached CONNECTED within %d pumps", CONNECT_MAX);
     }
 
     slotA = clientSimGetMyPlayerNum(h.cs);
-    slotB = clientSimGetMyPlayerNum(b.cs);
-    UT_ASSERT_MSG(slotA < MAX_TANKS && slotB < MAX_TANKS && slotA != slotB,
-                  "unexpected slots A=%u B=%u", (unsigned)slotA, (unsigned)slotB);
+    slotB = clientSimGetMyPlayerNum(b->cs);
+    slotC = clientSimGetMyPlayerNum(c->cs);
+    if (!(slotA < MAX_TANKS && slotB < MAX_TANKS && slotC < MAX_TANKS &&
+          slotA != slotB && slotA != slotC && slotB != slotC)) {
+        PN_FAIL("unexpected slots A=%u B=%u C=%u",
+                (unsigned)slotA, (unsigned)slotB, (unsigned)slotC);
+    }
 
     for (i = 1; i <= CONNECT_MAX; i++) {
-        pump_two(&h, &b);
+        pump_all(&h, extra, PN_EXTRAS);
         if (transportUdpServerTestDownloadComplete(slotA) &&
-            transportUdpServerTestDownloadComplete(slotB)) break;
+            transportUdpServerTestDownloadComplete(slotB) &&
+            transportUdpServerTestDownloadComplete(slotC)) {
+            break;
+        }
     }
     if (!transportUdpServerTestDownloadComplete(slotA) ||
-        !transportUdpServerTestDownloadComplete(slotB)) {
-        second_stop(&b);
-        loopbackHarnessStop(&h);
-        UT_FAIL("both slots never finished the join download within %d pumps",
-                CONNECT_MAX);
+        !transportUdpServerTestDownloadComplete(slotB) ||
+        !transportUdpServerTestDownloadComplete(slotC)) {
+        PN_FAIL("the three slots never finished the join download within %d "
+                "pumps", CONNECT_MAX);
     }
 
-    /* Put both on the same team and reconcile alliances once, so the reach
-     * predicate passes B for A's ping. The batch form + a single reapply is
-     * what the lobby's multi-slot paths use (see test_ping_dispatch.c's
-     * run_ping_reaches_team_only for why one-at-a-time would mis-ally). */
+    /* A and B share a team, C gets its own, and alliances are reconciled once.
+     * The batch form + a single reapply is what the lobby's multi-slot paths
+     * use (see test_ping_dispatch.c's run_ping_reaches_team_only for why
+     * one-at-a-time would mis-ally the slots on the way through). */
     threadsWaitForMutex();
     serverSimSetTeamBatch(h.sim, slotA, 1);
     serverSimSetTeamBatch(h.sim, slotB, 1);
+    serverSimSetTeamBatch(h.sim, slotC, 2);
     serverSimReapplyTeamAlliances(h.sim);
     threadsReleaseMutex();
 
@@ -263,33 +315,46 @@ static int run_ping_teammate_delivery(void) {
     clientSimNetSendPing(h.cs, PING_KIND_ASSIST, PN_WORLD_X, PN_WORLD_Y);
 
     for (i = 1; i <= PING_MAX; i++) {
-        pump_two(&h, &b);
-        if (client_has_ping(b.cs, slotA, PING_KIND_ASSIST)) {
+        pump_all(&h, extra, PN_EXTRAS);
+        if (client_has_ping(b->cs, slotA, PING_KIND_ASSIST)) {
             got = true;
             break;
         }
     }
 
-    fprintf(stderr, "  ping teammate delivery: A slot=%u -> B slot=%u received=%d "
-                    "after %d pump(s)\n",
-            (unsigned)slotA, (unsigned)slotB, (int)got, i);
+    /* Keep the exchange running a while longer. C's copy, if the server were
+     * to send one, arrives on the same frames B's did — so this is where a
+     * missing team filter on the drain path would show up. */
+    for (i = 1; i <= PN_SETTLE; i++) pump_all(&h, extra, PN_EXTRAS);
+    cPings = client_ping_count(c->cs);
+
+    fprintf(stderr, "  ping teammate delivery: A slot=%u -> B slot=%u received=%d, "
+                    "off-team C slot=%u holds %d ping(s)\n",
+            (unsigned)slotA, (unsigned)slotB, (int)got,
+            (unsigned)slotC, cPings);
 
     if (!got) {
-        second_stop(&b);
-        loopbackHarnessStop(&h);
-        UT_FAIL("a teammate's ping never reached the other client over the wire "
+        PN_FAIL("a teammate's ping never reached the other client over the wire "
                 "within %d pumps — the EVENT_PING is cleared by serverSimTick "
                 "before transportUdpServerDrainEvents runs", PING_MAX);
     }
+    if (cPings != 0) {
+        PN_FAIL("a client on another team received %d ping(s) over the wire; "
+                "the team filter on the drain path is not holding", cPings);
+    }
     if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED ||
-        clientSimGetConnectState(b.cs) != CLIENT_CONNECT_CONNECTED) {
-        second_stop(&b);
-        loopbackHarnessStop(&h);
-        UT_FAIL("a client dropped during the teammate-delivery exchange");
+        clientSimGetConnectState(b->cs) != CLIENT_CONNECT_CONNECTED ||
+        clientSimGetConnectState(c->cs) != CLIENT_CONNECT_CONNECTED) {
+        PN_FAIL("a client dropped during the teammate-delivery exchange");
     }
 
-    second_stop(&b);
+done:
+    for (i = 0; i < PN_EXTRAS; i++) second_stop(&extra[i]);
     loopbackHarnessStop(&h);
+    if (pn_fail[0] != '\0') {
+        fprintf(stderr, "FAIL %s\n", pn_fail);
+        return 1;
+    }
     return 0;
 }
 

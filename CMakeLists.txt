@@ -3872,6 +3872,7 @@ set(_unit_test_names
     command_codec_rating_posted
     command_codec_view_state
     command_codec_view_cycle
+    command_codec_ping
     lobby_claim_start_host_swaps_occupied
     lobby_claim_start_host_assign_onto_own
     lobby_claim_start_host_swap_into_none
@@ -4097,6 +4098,7 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    log_roundtrip_ping
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
@@ -4380,7 +4382,24 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    ping_binding_encode_decode
+    ping_binding_match
+    ping_binding_direct
+    ping_binding_format
+    ping_pie_slices
+    ping_edge_sides
+    ping_edge_corner
+    ping_rect_inset
+    ping_event_wire
+    ping_dispatch_accepts_and_builds_event
+    ping_dispatch_rejects_lobby
+    ping_dispatch_rejects_empty_slot_and_out_of_range
+    ping_dispatch_map_range_bound
+    ping_dispatch_rejects_bad_kind
+    ping_dispatch_rate_limit
     ping_dispatch_new_round_clears_rate_limit
+    ping_reaches_team_only
+    ping_network
     lang_name_table
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross

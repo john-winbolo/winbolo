@@ -275,6 +275,65 @@ int run_ping_dispatch_rejects_empty_slot_and_out_of_range(void) {
     return 0;
 }
 
+/* The arm's map-range check, and why no ping can fail it today.
+ *
+ * CmdPing carries worldX/worldY as uint16_t, and a world unit is 1/256th of a
+ * map square (M_W_SHIFT_SIZE), so the largest coordinate a client can express,
+ * 0xFFFF, is square 255 — the last square of a 256x256 map (MAP_ARRAY_SIZE).
+ * The whole u16 range is therefore on the map and the range check can never
+ * fire: there is no off-map value to send. That is what this test pins. The
+ * corner is accepted on both axes, and the arithmetic the guard performs is
+ * asserted directly over the extremes, so if either constant moves — a wider
+ * coordinate, a bigger world unit, a smaller map — this test fails and says
+ * that an off-map ping has become reachable and now needs a reject case. */
+int run_ping_dispatch_map_range_bound(void) {
+    ServerSim *sim = ut_make_running_sim("Pinger");
+    UT_ASSERT(sim != NULL);
+    pd_clear_events(sim);
+
+    /* The guard's own expression, over the widest coordinate a CmdPing can
+     * hold. Computed in unsigned int so a wider future field still overflows
+     * the map rather than the type. */
+    UT_ASSERT_MSG((((unsigned)UINT16_MAX) >> M_W_SHIFT_SIZE) < MAP_ARRAY_SIZE,
+                  "the largest CmdPing coordinate now lands off the map: "
+                  "square %u of %d. The dispatch arm's range check has become "
+                  "reachable and needs a rejection test of its own.",
+                  ((unsigned)UINT16_MAX) >> M_W_SHIFT_SIZE, MAP_ARRAY_SIZE);
+
+    /* And the last valid square really is accepted, on X and on Y, so the
+     * check is not quietly refusing the map's own edge. Each send needs its
+     * own cooldown window. */
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, UINT16_MAX, PD_WORLD_Y)
+                      == CMD_OK,
+                  "the last valid square on X was refused");
+    UT_ASSERT_MSG(pd_has_pending(sim, 0), "an accepted ping was not recorded");
+    pd_clear_events(sim);
+
+    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, UINT16_MAX)
+                      == CMD_OK,
+                  "the last valid square on Y was refused");
+    UT_ASSERT_MSG(pd_has_pending(sim, 0), "an accepted ping was not recorded");
+    pd_clear_events(sim);
+
+    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, UINT16_MAX, UINT16_MAX)
+                      == CMD_OK,
+                  "the map's far corner was refused");
+    UT_ASSERT_MSG(pd_has_pending(sim, 0), "an accepted ping was not recorded");
+
+    /* Nothing off-map to reject, but the origin must not be mistaken for one
+     * either — 0 is square 0, a real square, not a "no position" sentinel. */
+    pd_clear_events(sim);
+    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, 0, 0) == CMD_OK,
+                  "the map's origin was refused");
+    UT_ASSERT_MSG(pd_has_pending(sim, 0), "an accepted ping was not recorded");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 int run_ping_dispatch_rejects_bad_kind(void) {
     ServerSim *sim = ut_make_running_sim("Pinger");
     UT_ASSERT(sim != NULL);
