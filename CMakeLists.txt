@@ -4144,6 +4144,8 @@ set(_unit_test_names
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event
     alliance_reset_apply_rebuilds_alliances
+    alliance_reset_bots_synced_after_inplace_start
+    alliance_reset_bots_synced_after_countdown_start
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour
