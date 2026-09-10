@@ -104,7 +104,13 @@ static void pmDrawName(SDL_Renderer *renderer, const PingMarkerLabel *label,
     char  shown[PING_NAME_DISPLAY_MAX];
     if (label == NULL || label->cache == NULL || label->font == NULL) return;
     if (label->name == NULL || label->name[0] == '\0') return;
+    /* Smaller than the tank labels around it, at PING_NAME_SCALE of whatever
+     * size the host asked for: the scale is a draw-time multiplier on the
+     * cached texture, not part of what the cache is keyed on, so this costs
+     * nothing and cannot make the ping names and the tank labels rebuild each
+     * other's texture. */
     scale = (label->scale > 0.0f) ? label->scale : 1.0f;
+    scale *= PING_NAME_SCALE;
     /* Shortened to PING_NAME_MAX_CHARS with a real U+2026: these faces are the
      * Sarasa TTFs and every one of them carries that glyph. The cache below is
      * keyed on the slot and rebuilds when the string changes, so it has to be
@@ -114,7 +120,7 @@ static void pmDrawName(SDL_Renderer *renderer, const PingMarkerLabel *label,
     tankLabelDrawNameCentred(label->cache, renderer, label->font, shown,
                              (BYTE)label->slot, cx,
                              cy + tileH * (0.5f + PING_MARKER_NAME_GAP),
-                             scale, alpha);
+                             scale, alpha, (Uint8)PING_NAME_GREY);
 }
 
 void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
