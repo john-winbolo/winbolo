@@ -38,7 +38,7 @@
 #include "input_packet.h"
 #include "viewport.h"            /* viewportCalcSquarePure — which square a terrain flip moves */
 #include "bolo_map.h"            /* mapGetPos / mapSetPos */
-#include "tank.h"                /* tankSetArmour */
+#include "tank.h"                /* tankSetArmour, tankSetDestroyed */
 #include "pillbox.h"
 #include "players.h"
 #include "allience.h"
@@ -606,7 +606,7 @@ int run_overview_snapshot_mirror(void) {
     /* Dead and waiting to respawn, which is what the server leaves behind for
      * the whole of deathWait: nothing alive, no position, no sight, no tank on
      * the picture. */
-    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    tankSetDestroyed(&f.gs->tanks[f.me], TRUE);
     clientSimFillOverviewSnapshot(f.cs, f.snap);
     UT_ASSERT_MSG(overviewSnapshotTankAlive(f.snap) == FALSE,
                   "a dead tank reads as alive through the snapshot");
@@ -638,6 +638,7 @@ int run_overview_snapshot_mirror(void) {
     /* Respawned: the same fill answers again, so a death is not a one-way
      * door. */
     tankSetArmour(&f.gs->tanks[f.me], (BYTE)TANK_FULL_ARMOUR);
+    tankSetDestroyed(&f.gs->tanks[f.me], FALSE);
     clientSimFillOverviewSnapshot(f.cs, f.snap);
     UT_ASSERT_MSG(overviewSnapshotTankAlive(f.snap) == TRUE,
                   "a respawned tank still reads as dead");
@@ -816,7 +817,7 @@ int run_overview_snapshot_filter(void) {
     /* The player's own tank, dead and waiting to respawn: it reads as sitting
      * on the map origin, so it goes before its square is tested, and the
      * reticle goes with it. */
-    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    tankSetDestroyed(&f.gs->tanks[f.me], TRUE);
     clientSimFillOverviewSnapshot(f.cs, f.snap);
     err = snapListsMatch(&f);
     UT_ASSERT_MSG(err == NULL, "%s", err);

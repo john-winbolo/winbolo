@@ -30,6 +30,8 @@ is the default because it needs no external driver.
 | `fuzz_server_dispatch` (tier 2) | The full `serverProcessPacket` switch and the hand-written count-loops / chunk reassembly codegen did **not** touch (COMMAND_TICK, MAP_ACK, the reliable event loops, lobby/map handlers) — the highest remaining over-read surface. Runs socket-free and thread-free via the `WB_FUZZ`-gated seam. |
 | `fuzz_client_snapshot` | The client `PACKET_STATE_SNAPSHOT` decoder — specifically the count-driven reliable-event loop and its `unpackGameEvent` call (the suspected over-read at `transport_udp_client.c:~1550`). Input is the snapshot body; the seam frames a header and feeds it on an exact-size, ASan-guarded buffer. |
 | `fuzz_join_accept` | The client `PACKET_JOIN_ACCEPT` handler — the join handshake (server-assigned slot, mapSize/connId parsing), a path the snapshot target can't reach (it starts already CONNECTED). Input is the accept body. |
+| `fuzz_map_load` | `mapLoadCompressedMap` — the parser every map that arrives over the network lands in: three fixed-size struct memcpys for the bases, pillboxes and starts, then an LZW decode of the terrain into the 256x256 array. Input is the whole compressed blob, copied onto an exact-size heap buffer so ASan catches an over-read past `inputLen`. Covers the LZW decoder and the reject paths; it almost never reaches a successful load, because a mutated stream rarely decodes to exactly 65536 bytes. |
+| `fuzz_map_fields` | The same loader, past the LZW gate. Takes the struct region straight from the fuzzer, fills the terrain from the rest of the input, compresses it with the writer's own `lzwencoding`, and hands the result to the real `mapLoadCompressedMap`, so every input loads. This is what exercises `basesValidate` / `pillsValidate` / `startsValidate` and the terrain values the nibble-packed file format cannot express. Each input costs a full compress and decompress, so it runs far slower than `fuzz_map_load` and saturates within seconds. |
 
 ## Build
 
@@ -37,7 +39,7 @@ is the default because it needs no external driver.
 cmake -B build-fuzz -DWB_FUZZ=ON \
       -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 # Build just the fuzz targets (pulls only their library deps, not the whole game):
-cmake --build build-fuzz --target fuzz_wire_codec fuzz_channel_frame fuzz_voice_segment fuzz_bulk_transfer fuzz_server_dispatch fuzz_client_snapshot fuzz_join_accept
+cmake --build build-fuzz --target fuzz_wire_codec fuzz_channel_frame fuzz_voice_segment fuzz_bulk_transfer fuzz_server_dispatch fuzz_client_snapshot fuzz_join_accept fuzz_map_load fuzz_map_fields
 ```
 
 `WB_FUZZ` is a **dedicated build config** — when ON the whole build is
@@ -69,6 +71,20 @@ log stays small over a multi-hour run and still reports the total executions.
 `run_discovery.sh` passes `-print_final_stats=1`; the count is on the
 `stat::number_of_executed_units:` line, and libFuzzer also prints periodic
 `#<n> ... exec/s` pulses and a closing `Done <n> runs`.
+
+### If a target crawls at single-digit exec/s
+
+The sanitizer symbolizes each newly covered function by starting
+`llvm-symbolizer`. Where only a versioned `llvm-symbolizer-N` is on PATH that
+start fails, the reply pipe never reaches EOF, and the run stalls about 90
+seconds per attempt — `Done 22 runs in 90 second(s)` at 0% CPU, with the main
+thread in `pipe_read`. It hits the targets linking the most code hardest.
+
+`run_discovery.sh` detects this and sets `ASAN_OPTIONS=symbolize=0`. macOS is
+not affected, since its runtime falls back to `atos`, so the guard leaves it
+alone. Setting `ASAN_SYMBOLIZER_PATH` does *not* help, and neither does
+libFuzzer's `-symbolize=0`. Replaying an artifact symbolizes fine, so leave
+the variable unset when you replay one and you still get named frames.
 
 ### Long unattended runs (parallel)
 
@@ -124,6 +140,16 @@ ls <repo>/tests/fuzz/crashes/
   pinned near the JOIN gate. To enrich these seeds with real post-JOIN traffic,
   capture the client→server datagrams a loopback session produces and drop them
   here as whole datagrams (the seam replays one datagram per input).
+- `corpus/map_load/` — the real Everard Island blob (the first 5097 bytes of
+  `E_MAP` in `everard_map.h`, the length every caller passes), a struct region
+  with no terrain at the exact minimum the length guard accepts, one byte under
+  that minimum, and a blob with all three counts at their maxima. Everard is
+  the only seed that loads; the rest pin the reject paths.
+- `corpus/map_fields/` — struct-region-plus-terrain inputs for the compressing
+  target: a plain map with no objects and uniform terrain, one with all three
+  counts at their maxima and every base field set to 200 (past the owner and
+  stock clamps) over terrain of 200, and a terrain mix spanning legal tiles,
+  `DEEP_SEA` (255) and nothing in between. All load, by construction.
 - `crashes/` — minimized regressions. A crash found in discovery lands here and
   is replayed by the ctest on every build. Commit new crash inputs alongside
   the fix.

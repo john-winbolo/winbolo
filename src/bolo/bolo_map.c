@@ -45,6 +45,7 @@
 #include "sounddist.h"
 #include "floodfill.h"
 #include "log.h"
+#include "../common/wb_log.h"
 #include "screenbrainmap.h"
 #include "bolo_map_validate.h"
 
@@ -1542,6 +1543,19 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 
   returnValue = TRUE;
 
+  /* Each of the four world structures arrives as a pointer to its handle, so
+   * either level can be NULL when the game is torn down under a caller that is
+   * still holding it. Nothing below checks: the three compress setters and the
+   * (*value)->mapItem reads all dereference straight away. Refuse instead, so
+   * the caller gets its FALSE rather than a crash inside the loader. */
+  if (value == NULL || *value == NULL ||
+      pb == NULL || *pb == NULL ||
+      bs == NULL || *bs == NULL ||
+      ss == NULL || *ss == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_MAP, "mapLoadCompressedMap: null world handle");
+    return FALSE;
+  }
+
   /* Reject input too short to hold the fixed header before any struct read:
    * basesSetBaseCompressData/pillsSetPillCompressData/startsSetStartCompressData
    * each memcpy their full SIZEOF_* below regardless of inputLen, so a truncated
@@ -1584,6 +1598,16 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
   startsSetStartCompressData(ss, ptr, SIZEOF_STARTS);
   inputLen -= SIZEOF_STARTS;
   ptr += SIZEOF_STARTS;
+
+  /* The three setters above memcpy the wire structs wholesale, so none of the
+   * per-field clamps that basesSetBase/pillsSetPill/startsSetStart apply on
+   * the file-load path have run. Everything downstream — the terrain fixups
+   * below included — reads these values, and a map arrives from whatever
+   * server the player joined. Clamp here, once, so the rest of the codebase
+   * can trust the fields rather than each consumer having to re-check. */
+  basesValidate(bs);
+  pillsValidate(pb);
+  startsValidate(ss);
 
   /* Map */
   ptr2 = (BYTE *) (*value)->mapItem;

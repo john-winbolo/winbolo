@@ -901,7 +901,7 @@ static void logStateVerbose(int tickNum) {
     double sy = (double)bi.tanky / 256.0;
     int tx = bi.tankx >> 8;
     int ty = bi.tanky >> 8;
-    bool dead = bi.armour > TANK_FULL_ARMOUR;
+    bool dead = bi.destroyed != 0;
     unsigned armor = dead ? 0 : (unsigned)bi.armour;
     fprintf(f, ",\"tank\":{\"x\":%.2f,\"y\":%.2f,\"tx\":%d,\"ty\":%d"
                ",\"dir\":%u,\"speed\":%u"
@@ -1218,7 +1218,7 @@ static void logStateBinary(int tickNum) {
   selfPlayer = (BYTE)bi.player_number;
   alliesBits = bi.allies ? *(bi.allies) : 0;
 
-  bool dead = bi.armour > TANK_FULL_ARMOUR;
+  bool dead = bi.destroyed != 0;
   int tank_tx = bi.tankx >> 8;
   int tank_ty = bi.tanky >> 8;
 

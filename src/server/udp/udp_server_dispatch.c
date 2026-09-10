@@ -200,6 +200,12 @@ static void handleCommandTick(ServerSim *sim, uint8_t *buf, int len,
         return;
     }
     UdpServerClient *client = &udpServer.clients[clientIdx];
+    /* A command datagram is traffic like an input or a ping, so refresh the
+     * liveness clock here — before the length check, so a packet that fails to
+     * parse still counts as the client being alive. Without it a client whose
+     * only traffic is commands ages toward the timeout while it is talking to
+     * us. Same placement as the spectator branch above. */
+    client->lastReceivedTick = udpServer.tickCount;
     if (len < PACKET_HEADER_SIZE + 1) return;
     uint8_t count = buf[PACKET_HEADER_SIZE];
     size_t pos = PACKET_HEADER_SIZE + 1;

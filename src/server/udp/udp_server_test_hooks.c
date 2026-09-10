@@ -78,6 +78,12 @@ bool transportUdpServerTestPendingRemove(int slot) {
     return udpServer.pendingSimRemove[slot];
 }
 
+uint32_t transportUdpServerTestLastReceivedTick(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    if (!udpServer.clients[slot].connected) return 0;
+    return udpServer.clients[slot].lastReceivedTick;
+}
+
 const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
                                                   uint8_t *outKind) {
     SpectatorConn *sp;
@@ -167,6 +173,15 @@ uint32_t transportUdpServerTestMapQueueCount(int slot) {
     /* Seq 1 is the first event a slot is ever assigned (the join resets both
      * ends of the queue to 1), so nextSeq - 1 is how many it has been given. */
     return udpServer.mapEventQueues[slot].nextSeq - 1u;
+}
+
+uint32_t transportUdpServerTestMapQueueOutstanding(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    /* What the snapshot drain still owes the channel: the cumulative ack only
+     * advances on a successful channelSend, so this is what a full window is
+     * holding back. Zero means the queue has been handed over in full. */
+    return udpServer.mapEventQueues[slot].nextSeq -
+           udpServer.mapEventQueues[slot].ackedSeq;
 }
 
 bool transportUdpServerTestMapQueueHasSquare(int slot, uint8_t x, uint8_t y) {

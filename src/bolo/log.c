@@ -57,6 +57,17 @@ bool logLastEmpty; /* Was the last log empty? */
 
 logTanks logCheckTanks;
 
+/* Last stock values written per tank, so log_TankSetStock only goes out when
+ * one of the four changed. Same shape and lifetime as logCheckTanks: cleared
+ * in logStart, and when a spectator ring attaches with no .wbv recording. */
+typedef struct {
+  BYTE shells;
+  BYTE mines;
+  BYTE armour;
+  BYTE trees;
+} logTankStock;
+static logTankStock logCheckTankStocks[MAX_TANKS];
+
 /* Thread that owns the log writer. Captured at logStart. Every mutating
  * entry point bails if called from any other thread.
  *
@@ -110,6 +121,7 @@ static bool logitemMutatesWorld(logitem itemNum) {
     case log_KillPlayer:
     case log_PlayerDied:
     case log_PlayerRejoin:
+    case log_TankSetStock:
       return TRUE;
     default:
       return FALSE;
@@ -151,6 +163,10 @@ void logSetSpectatorRing(SpectatorRing *ring, ServerSim *sim) {
       logCheckTanks.item[count].my = 0;
       logCheckTanks.item[count].pxy = 0;
       logCheckTanks.item[count].opt = 0;
+      logCheckTankStocks[count].shells = 0;
+      logCheckTankStocks[count].mines = 0;
+      logCheckTankStocks[count].armour = 0;
+      logCheckTankStocks[count].trees = 0;
     }
   }
 }
@@ -594,6 +610,9 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt2;
     break;
   case log_PlayerLocation:
+  case log_TankSetStock:
+    /* Five bytes either way: position (player, mx, my, pixel nibbles, dir/boat
+       nibbles) or stocks (player, shells, mines, armour, trees). */
     out[off++] = itemNum;
     out[off++] = opt1;
     out[off++] = opt2;
@@ -767,6 +786,38 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
 }
 
 /*********************************************************
+*NAME:          logCheckTankStockSame
+*PURPOSE:
+* Checks whether a tank's four stock values are the same as the last ones
+* written for it, updating the cache when they are not. The per-tick emit
+* pass offers a record for every connected tank, so this is what keeps
+* log_TankSetStock down to one record per tank per change.
+*
+*ARGUMENTS:
+* playerNum - Player number to check
+* shells    - Tank shells
+* mines     - Tank mines
+* armour    - Tank armour
+* trees     - Tank trees
+*********************************************************/
+static bool logCheckTankStockSame(BYTE playerNum, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+  if (playerNum >= MAX_TANKS) {
+    return FALSE;
+  }
+  if (logCheckTankStocks[playerNum].shells != shells ||
+      logCheckTankStocks[playerNum].mines != mines ||
+      logCheckTankStocks[playerNum].armour != armour ||
+      logCheckTankStocks[playerNum].trees != trees) {
+    logCheckTankStocks[playerNum].shells = shells;
+    logCheckTankStocks[playerNum].mines = mines;
+    logCheckTankStocks[playerNum].armour = armour;
+    logCheckTankStocks[playerNum].trees = trees;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          logAddEvent
 *AUTHOR:        John Morrison
 *CREATION DATE: 5/5/01
@@ -817,6 +868,12 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
      no bytes, no event count change, no key rotation. */
   if (itemNum == log_PlayerLocation &&
       logCheckTankSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
+    return;
+  }
+  /* Same rule for the tank's stocks: the tick pass offers one for every
+     connected tank, and only a change is worth a record. */
+  if (itemNum == log_TankSetStock &&
+      logCheckTankStockSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
     return;
   }
   eventLen = logSerializeEvent(itemNum, opt1, opt2, opt3, opt4, short1, words, event);
@@ -1087,6 +1144,10 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
     logCheckTanks.item[count].my = 0;
     logCheckTanks.item[count].pxy = 0;
     logCheckTanks.item[count].opt = 0;
+    logCheckTankStocks[count].shells = 0;
+    logCheckTankStocks[count].mines = 0;
+    logCheckTankStocks[count].armour = 0;
+    logCheckTankStocks[count].trees = 0;
     count++;
   }
 

@@ -94,9 +94,26 @@ static void pmStrokeRect(SDL_Renderer *renderer, float x0, float y0,
     }
 }
 
+/* The sender's name under the square, centred on it. Nothing to place around:
+ * every view that draws a marker clips to its own map area, so a name that
+ * runs past the edge is cut there rather than smeared over the panels — the
+ * same treatment a tank label at the edge of the view gets. */
+static void pmDrawName(SDL_Renderer *renderer, const PingMarkerLabel *label,
+                       float cx, float cy, float tileH, float alpha) {
+    float scale;
+    if (label == NULL || label->cache == NULL || label->font == NULL) return;
+    if (label->name == NULL || label->name[0] == '\0') return;
+    scale = (label->scale > 0.0f) ? label->scale : 1.0f;
+    tankLabelDrawNameCentred(label->cache, renderer, label->font, label->name,
+                             (BYTE)label->slot, cx,
+                             cy + tileH * (0.5f + PING_MARKER_NAME_GAP),
+                             scale, alpha);
+}
+
 void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
                     float cx, float cy, float tileW, float tileH,
-                    unsigned int ageMs, float alpha) {
+                    unsigned int ageMs, float alpha,
+                    const PingMarkerLabel *label) {
     const PingKindStyle *style = pingKindStyle(kind);
     float hx = tileW * 0.5f, hy = tileH * 0.5f;
     int   line = (tileW >= 24.0f) ? 2 : 1;
@@ -147,4 +164,10 @@ void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
         pmFillCircle(renderer, cx, cy, tileW * 0.2f,
                      style->r, style->g, style->b, pmAlpha(a));
     }
+
+    /* The name at the marker's own fade rather than the dimmed PING_MARKER_ALPHA
+       the square and the icon are drawn at: a name is only worth putting on
+       the map if it can be read, and it is text over its own shadow, not a
+       wash of colour over the ground. */
+    pmDrawName(renderer, label, cx, cy, tileH, alpha);
 }

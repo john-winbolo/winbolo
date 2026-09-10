@@ -854,6 +854,12 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
 bool transportUdpServerChannelTestSend(int slot, uint8_t ch,
                                        const uint8_t *msg, uint16_t len);
 bool transportUdpServerTestPendingRemove(int slot);
+/* Read a slot's liveness clock — the transport tick at which the server last
+ * received anything from that client, which transportUdpServerCheckTimeouts
+ * measures the disconnect against. A test watches it across a known-quiet
+ * window to tell which inbound packets refresh it. 0 for an out-of-range or
+ * unconnected slot, so a dropped slot is distinguishable from a stale one. */
+uint32_t transportUdpServerTestLastReceivedTick(int slot);
 /* Read a slot's server-side join-download-complete flag. The client reports
  * CONNECTED once it has the full map, but the server only flips this once the
  * download's bytes are acked back on CHANNEL_BULK — a round-trip later. A test
@@ -874,6 +880,10 @@ bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
  * it still answers for events already sent and acked. */
 uint32_t transportUdpServerTestMapQueueCount(int slot);
 bool transportUdpServerTestMapQueueHasSquare(int slot, uint8_t x, uint8_t y);
+/* How much of that queue the snapshot drain still owes the map channel. The
+ * count above is cumulative (everything the slot was ever given); this is the
+ * live depth, which a full send window holds above zero until acks free it. */
+uint32_t transportUdpServerTestMapQueueOutstanding(int slot);
 /* Queue one whole game event on a slot's reliable game channel (CHANNEL_GAME),
  * as the real producer does — lets a test stage a distinguishable ch0 event
  * (e.g. one left unacked across game start). False on a bad slot/event or a
@@ -901,6 +911,13 @@ void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
  * installedMapGen as the harness pumps. Returns false if one is already
  * outstanding. */
 bool transportUdpClientTestBeginResync(Transport *t);
+/* Overwrite the map-event ack the client stamps into every InputPacket. A
+ * real client leaves it at its initial 1 for the life of the connection —
+ * map events ride CHANNEL_MAP with their own acks — so the only way to put
+ * any other value on the wire is this seam. A test uses it to prove the
+ * server's hold-buffer cursor is owned by its own drain and not by whatever
+ * a client claims. */
+void transportUdpClientTestSetMapEventAck(Transport *t, uint32_t ack);
 /* Read installedMapGen (the generation gate floor) and mapResyncCount
  * (cumulative successful installs). */
 void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,

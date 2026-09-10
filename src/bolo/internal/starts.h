@@ -342,6 +342,9 @@ void startsGetMaxs(starts *value, int *leftPos, int *rightPos, int *topPos, int 
 void startsMoveAll(starts *value, int moveX, int moveY);
 
 void startsSetStartCompressData(starts *value, BYTE *buff, int dataLen);
+/* Clamps every start field a map can supply. See basesValidate. */
+void startsValidate(starts *value);
+
 
 #endif /* STARTS_H */
 

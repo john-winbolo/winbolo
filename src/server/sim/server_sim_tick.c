@@ -125,6 +125,16 @@ static void serverSimLogTick(ServerSim *sim) {
                                           lgmGetPY(&sim->sim.lgmen[count])),
                             0, NULL);
             }
+
+            /* Tank stocks, so a shot fired or a refill shows at the tick it
+               happens rather than at the next snapshot. logAddEvent drops the
+               record when none of the four changed since the last one written
+               for this tank, so a still tank costs nothing. */
+            logAddEvent(log_TankSetStock, count,
+                        tankGetShells(&sim->sim.tanks[count]),
+                        tankGetMines(&sim->sim.tanks[count]),
+                        tankGetArmour(&sim->sim.tanks[count]),
+                        tankGetTrees(&sim->sim.tanks[count]), NULL);
         }
     }
 
@@ -290,9 +300,31 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
             }
             if (sim->pendingHarvestBuildAction[count] != 0 &&
                 applied.buildAction == 0) {
-                applied.buildAction = sim->pendingHarvestBuildAction[count];
-                applied.buildX      = sim->pendingHarvestBuildX[count];
-                applied.buildY      = sim->pendingHarvestBuildY[count];
+                /* Only replay the harvested build if its frozen target
+                 * would still be accepted against the current map — the same
+                 * question lgmAddRequest asks, put to lgmCheckNewRequest
+                 * without acting or messaging. A stale replay onto changed
+                 * terrain would dispatch a bogus request and nag the player
+                 * about an order they did not just issue. Either way the
+                 * pending slot is consumed exactly once.
+                 *
+                 * Ask only when the man is idle, because only then does
+                 * lgmAddRequest act on the order now. A busy man has it
+                 * queued as his next order and checked when he gets back in
+                 * the tank, with whatever the tank holds by then — testing
+                 * it now against a tank whose wood is out with the man would
+                 * throw away an order that was going to succeed. */
+                if (!lgmIsIdle(&sim->sim.lgmen[count]) ||
+                    lgmRequestIsValid(
+                        &sim->sim, &sim->sim.lgmen[count],
+                        &sim->sim.tanks[count],
+                        sim->pendingHarvestBuildX[count],
+                        sim->pendingHarvestBuildY[count],
+                        (BYTE)(sim->pendingHarvestBuildAction[count] - 1))) {
+                    applied.buildAction = sim->pendingHarvestBuildAction[count];
+                    applied.buildX      = sim->pendingHarvestBuildX[count];
+                    applied.buildY      = sim->pendingHarvestBuildY[count];
+                }
                 sim->pendingHarvestBuildAction[count] = 0;
                 sim->pendingHarvestBuildX[count] = 0;
                 sim->pendingHarvestBuildY[count] = 0;
@@ -772,7 +804,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 posHistoryRecord(&sim->posHistory[count],
                                  (*sim->sim.tanks[count]).x,
                                  (*sim->sim.tanks[count]).y,
-                                 (*sim->sim.tanks[count]).armour <= TANK_FULL_ARMOUR);
+                                 !tankIsDestroyed(&sim->sim.tanks[count]));
             }
         }
 
@@ -806,7 +838,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 if (!sim->playerConnected[count] || sim->sim.tanks[count] == NULL) {
                     continue;
                 }
-                if (tankGetArmour(&sim->sim.tanks[count]) > TANK_FULL_ARMOUR) {
+                if (tankIsDestroyed(&sim->sim.tanks[count])) {
                     continue;
                 }
                 tankGetWorld(&sim->sim.tanks[count], &twx, &twy);

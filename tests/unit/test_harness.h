@@ -774,6 +774,10 @@ int run_alliance_reset_codec_roundtrip(void);
 int run_alliance_reset_decoder_rejects_short(void);
 int run_alliance_reset_reapply_publishes_one_event(void);
 int run_alliance_reset_apply_rebuilds_alliances(void);
+/* Bot ClientSim alliance matrices agree with the server's after a game
+ * start, on both start paths (bot re-arm before vs after the reapply). */
+int run_alliance_reset_bots_synced_after_inplace_start(void);
+int run_alliance_reset_bots_synced_after_countdown_start(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
@@ -783,6 +787,35 @@ int run_log_roundtrip_lobby_mode_drops_world_events(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);
+/* A snapshot's player block ends with the tank's shells, mines, armour and
+ * trees for a slot in use, and a slot that is not in use stays the 2-byte
+ * stub. */
+int run_log_roundtrip_snapshot_tank_stocks(void);
+/* log_TankSetStock carries the player and the four values, and is written only
+ * when one of them changed since the last record for that tank. */
+int run_log_roundtrip_tank_stock_record(void);
+
+/* Record-and-decode round trip (test_replay_roundtrip.c, on the
+ * replay_harness fixture): records a round in which a terrain cell, a base's
+ * owner and stock, a pillbox's owner and a tank's stocks all change, replays
+ * the .wbv through the production viewer and requires the replayed world to
+ * be the recorded one. Every change lands after the opening snapshot and the
+ * round is far shorter than the interval between snapshots, so only the
+ * per-change events can carry them. */
+int run_replay_roundtrip_world(void);
+/* Same fixture: a base moved by basesMigrate (its owner left the game) is on
+ * the same base, with the same new owner, after replay. */
+int run_replay_roundtrip_base_migrate(void);
+
+/* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
+ * snapshot bodies and forward records through lv_specSeedLoad /
+ * lv_specRecordPump. Covers the four bytes on the end of a player block, a
+ * block written before they existed (no stocks, and the fields in front of them
+ * still decode), a not-in-use slot, the log_TankSetStock record, and an unknown
+ * record type skipped by its framed length. */
+int run_lv_tank_stocks_from_snapshot(void);
+int run_lv_tank_stocks_snapshot_without_tail(void);
+int run_lv_tank_stocks_from_record(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
@@ -942,7 +975,37 @@ int run_voice_talking_clears_on_leave(void);
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
+int run_base_armour_reveal_in_range(void);
 int run_two_clients_full_sync_independent(void);
+
+/* Base-death prediction (test_base_death_prediction.c): the collision path
+ * resolves a base our own predicted shell is about to kill against the tick
+ * being replayed, so a reconciliation replay spanning the hit sees a wall
+ * before it and open ground after. */
+int run_base_death_prediction_replay_tick(void);
+/* Authoritative armour settles the stamp by the server's processed input
+ * tick: kept while still ahead and one hit from dead, dropped once disproved,
+ * and a landing that was waiting on an earlier hit's armour is armed. */
+int run_base_death_prediction_authority(void);
+
+/* Tank destroyed state (test_tank_death_state.c): armour is a plain
+ * 0..TANK_FULL_ARMOUR value that clamps at zero and the destroyed state is
+ * stored on the tank, so a hit greater than the armour remaining destroys it
+ * while a hit that exactly empties the armour leaves it alive at zero. A
+ * destroyed tank still reads as destroyed after a snapshot round trip. */
+int run_tank_damage_exact_armour_survives(void);
+int run_tank_damage_overkill_destroys(void);
+int run_tank_damage_partial_survives(void);
+int run_tank_destroyed_snapshot_round_trip(void);
+
+/* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
+ * carries TANK_STATUS_DEAD (in the respawn wait) and TANK_STATUS_DESTROYED
+ * (destroyed, not yet respawned) to every recipient, and armour is a plain
+ * 0..TANK_FULL_ARMOUR value with no death sentinel. The round trip holds a
+ * tank destroyed with its wait over — the state only the destroyed bit can
+ * carry — and checks the client reads it as dead, then alive again. */
+int run_tank_status_wire_bits(void);
+int run_tank_status_wire_start_find_round_trip(void);
 
 /* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
  * inAnyViewport cover the recipient's tank screen and each owned/allied
@@ -1280,6 +1343,22 @@ int run_stall_long_dry_advances(void);
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
 
+/* Stale build-order harvest (test_build_harvest_stale.c): a build commanded on
+ * a stall-substituted tick is stashed with its target tile frozen, so the
+ * replay must re-check that tile against the current map — a now-invalid one is
+ * dropped instead of nagging the player, a still-valid one still dispatches,
+ * and one that folds while the man is out is queued unchecked as his next
+ * order. */
+int run_build_harvest_stale(void);
+int run_build_harvest_valid(void);
+int run_build_harvest_busy_queues(void);
+
+/* Build-request validity (test_lgm_request_valid.c): lgmCheckNewRequest's
+ * verdicts over terrain and tank stores, and lgmRequestIsValid asking for one
+ * without dispatching, spending or messaging the player. */
+int run_lgm_request_valid(void);
+int run_lgm_request_quiet(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
@@ -1335,6 +1414,9 @@ int run_loopback_lobby_running_loss(void);
 /* Quiet-lobby reliable control delivery under loss with no input flowing:
  * proves control acks ride the standalone PACKET_CHANNEL trailer. */
 int run_loopback_quiet_lobby_control_loss(void);
+/* A command packet refreshes the sending client's server-side liveness clock:
+ * watched directly across a window in which nothing else is refreshing it. */
+int run_loopback_command_liveness(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
@@ -1421,6 +1503,7 @@ int run_map_compress_roundtrip_stock(void);
 int run_map_compress_capacity_refuses(void);
 int run_map_compress_incompressible(void);
 int run_map_compress_roundtrip_mutated(void);
+int run_map_compress_rejects_null_handles(void);
 int run_map_checksum_ignores_mines(void);
 int run_map_resync_base_crater_converges(void);
 
@@ -1554,6 +1637,8 @@ int run_ping_binding_format(void);
 int run_ping_pie_slices(void);
 int run_ping_edge_sides(void);
 int run_ping_edge_corner(void);
+int run_ping_edge_size_from_distance(void);
+int run_ping_edge_name_anchor(void);
 int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
 
@@ -1615,6 +1700,15 @@ int run_client_type_name_round_trips(void);
 int run_client_slot_reassign_carries_tank_and_lgm(void);
 int run_client_slot_reassign_same_slot_is_stable(void);
 int run_client_slot_reassign_back_to_zero(void);
+
+/* Downloaded-map clamps (test_map_load_validate.c): mapLoadCompressedMap
+ * memcpys the wire bases/pillboxes/starts wholesale, so none of the per-field
+ * clamps the file-load setters apply have run. Asserts a hostile blob cannot
+ * leave an out-of-range owner, base stock, pill armour or speed, or start dir
+ * in live game state. */
+int run_map_load_clamps_base_fields(void);
+int run_map_load_clamps_pill_fields(void);
+int run_map_load_clamps_start_dir(void);
 int run_players_oob_index_safe(void);
 int run_control_oob_player_dropped(void);
 
@@ -1738,6 +1832,13 @@ int run_skin_density_scan(void);
 int run_sheet_bleed_edges(void);
 int run_sheet_no_key_under_alpha(void);
 int run_bmp_sheet_no_key_under_alpha(void);
+
+/* The ring of texels around a sprite slot, on the padded atlas the tank,
+ * shell and LGM drawers sample and on the packed sheet it is copied out
+ * of (test_sprite_atlas.c). */
+int run_sprite_atlas_isolated(void);
+int run_sprite_atlas_lookup(void);
+int run_sprite_atlas_packed_sheet_unsafe(void);
 
 /* Which <name>_N.wav members a source holds, and the compaction that
    keeps a decoded pool contiguous (test_sound_variants.c). */

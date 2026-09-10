@@ -166,7 +166,11 @@ typedef enum {
 struct tankObj {
   WORLD x;            /* World Co-ordinates */
   WORLD y;
-  BYTE armour;        /* Amount of armour in tank. Maximum value 45 */
+  BYTE armour;        /* Amount of armour in tank, 0..TANK_FULL_ARMOUR. Never wraps. */
+  bool destroyed;     /* TRUE once the tank has been destroyed. Set where damage
+                       * exceeds the armour remaining, cleared on respawn. Ask
+                       * tankIsDestroyed() rather than comparing armour: a live
+                       * tank can legitimately sit at zero armour. */
   BYTE shells;        /* Amount of shells in tank. Maximum value 45 */
   BYTE mines;         /* Amount of mines in tank. Maximum value 45 */
   SPEEDTYPE speed;    /* Tank speed */

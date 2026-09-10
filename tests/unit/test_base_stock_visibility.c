@@ -288,6 +288,97 @@ int run_base_armour_fog_of_war(void) {
     return 0;
 }
 
+/* 3b. The proximity arm of the armour cull: a live enemy base reads
+ *     BASE_FULL_ARMOUR from across the map, its true armour once the
+ *     recipient's tank is inside BASE_PREDICT_REVEAL_RANGE, and masked again
+ *     at the range boundary. Their client needs the real value to work out
+ *     for itself when its own shell drops the base to MIN_ARMOUR_CAPTURE; the
+ *     tile stays solid on the client for a round trip otherwise. The reveal is
+ *     armour only — the ammo reserve stays hidden at every distance. */
+int run_base_armour_reveal_in_range(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(basesGetNumBases(&gs->bs) >= 2,
+                  "Everard map has < 2 bases (%u)", basesGetNumBases(&gs->bs));
+    UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid for positioning");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) != TRUE,
+                  "players 0 and 1 allied by default — breaks the enemy case");
+
+    const BYTE a = 0, b = 1;
+    WORLD aCx = bv_base_world((*gs->bs).item[a].x);
+    WORLD aCy = bv_base_world((*gs->bs).item[a].y);
+    WORLD bCx = bv_base_world((*gs->bs).item[b].x);
+    WORLD bCy = bv_base_world((*gs->bs).item[b].y);
+
+    /* Base b enemy and healthy throughout — only the tank's distance moves. */
+    (*gs->bs).item[b].owner  = 1;
+    (*gs->bs).item[b].armour = 50;
+    (*gs->bs).item[b].shells = 31;
+    (*gs->bs).item[b].mines  = 41;
+
+    SnapshotHeader hdr;
+    TankSnapshot tk[MAX_TANKS];
+    ShellSnapshot sh[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot te[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot bo[MAX_SNAPSHOT_BASES];
+    PillSnapshot po[MAX_SNAPSHOT_PILLS];
+    GameEvent ev[MAX_SNAPSHOT_EVENTS];
+
+    #define BV_BUILD0() do { memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick)); \
+        serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS, \
+            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES, \
+            po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false); } while (0)
+
+    /* Far away (base a's square, which the fog-of-war test already relies on
+     * being out of range of base b) — masked. */
+    tankSetWorld(gs, &gs->tanks[0], aCx, aCy, 0, false);
+    BV_BUILD0();
+    UT_ASSERT_MSG(bo[b].armour == BASE_FULL_ARMOUR,
+                  "out of range: live enemy base must read BASE_FULL_ARMOUR, got %u",
+                  bo[b].armour);
+
+    /* Standing on it — revealed, with the ammo reserve still hidden. */
+    tankSetWorld(gs, &gs->tanks[0], bCx, bCy, 0, false);
+    BV_BUILD0();
+    UT_ASSERT_MSG(bo[b].armour == 50,
+                  "in range: live enemy base must read its true armour (50), got %u",
+                  bo[b].armour);
+    UT_ASSERT_MSG(bo[b].shells == 0 && bo[b].mines == 0,
+                  "in range: the reveal is armour only — ammo must stay zeroed (%u/%u)",
+                  bo[b].shells, bo[b].mines);
+    UT_ASSERT_MSG(bo[b].owner == 1, "owner must be kept, got %u", bo[b].owner);
+
+    /* Exactly BASE_PREDICT_REVEAL_RANGE away on one axis — the ceiling is
+     * exclusive, so this is masked again. Offset whichever way stays on map. */
+    {
+        WORLD edgeX = (bCx > (WORLD)BASE_PREDICT_REVEAL_RANGE)
+                          ? (WORLD)(bCx - BASE_PREDICT_REVEAL_RANGE)
+                          : (WORLD)(bCx + BASE_PREDICT_REVEAL_RANGE);
+        tankSetWorld(gs, &gs->tanks[0], edgeX, bCy, 0, false);
+        BV_BUILD0();
+        UT_ASSERT_MSG(bo[b].armour == BASE_FULL_ARMOUR,
+                      "at the range boundary the base must be masked again, got %u",
+                      bo[b].armour);
+    }
+
+    /* A dead enemy base is public at any distance — the pre-existing rule the
+     * proximity arm must not have displaced. */
+    tankSetWorld(gs, &gs->tanks[0], aCx, aCy, 0, false);
+    (*gs->bs).item[b].armour = 5;
+    BV_BUILD0();
+    UT_ASSERT_MSG(bo[b].armour == 5,
+                  "a dead enemy base must read its true value at any range, got %u",
+                  bo[b].armour);
+
+    #undef BV_BUILD0
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* 4. Per-client full-sync clock: two recipients each receive their own full
  *    base sync on the same tick. The full-sync cadence is tracked per client
  *    in lastFullSyncTick[MAX_TANKS]; before that it was a single shared scalar

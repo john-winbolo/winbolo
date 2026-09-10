@@ -1165,6 +1165,7 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     /* The drop count belongs to this connection, so a client taking over the
      * slot does not inherit the previous occupant's drops. */
     udpServer.mapEventQueueDrops[slot] = 0;
+    udpServer.mapChannelStalled[slot] = false;
     udpServer.mapGen[slot] = 0;
 
     /* Bring up this slot's parallel channel mux alongside the queues. */

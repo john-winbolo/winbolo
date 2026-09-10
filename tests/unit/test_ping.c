@@ -21,6 +21,11 @@
  *                    ping leaves the game rectangle, and the bar laid along
  *                    that border. All four sides, a corner, and the
  *                    on-screen case that must produce no marker at all.
+ *                    Then how big that bar is for a ping that far away, and
+ *                    where the sender's name goes beside it: the placement
+ *                    has to keep the name inside the view on every border
+ *                    and in every corner, because a name half off the screen
+ *                    is the one thing the indicator exists to say.
  *
  *   input_packet.h - EVENT_PING's data size and reliability, which the
  *                    server's writer and the client's reader both read out
@@ -392,6 +397,212 @@ int run_ping_edge_corner(void) {
                               PE_TX + 100.0f, PE_TY, PE_BAR, &m));
     UT_ASSERT(!pingEdgeMarker(PE_RX, PE_RY, PE_RW, PE_RH, PE_TX, PE_TY,
                               PE_TX + 100.0f, PE_TY, PE_BAR, NULL));
+    return 0;
+}
+
+/* The size an edge marker is drawn at, from how far away the ping is. The
+ * knobs themselves live in ping_kinds.h; what is pinned here is the shape of
+ * the ramp between them, which is what makes a near ping read as near. */
+int run_ping_edge_size_from_distance(void) {
+    float nearF, farF, midF, len;
+
+    /* At or inside the near distance it is full size, at or past the far one
+     * it is the minimum, and neither end runs past its knob. */
+    nearF = pingEdgeSizeFactor(0.0f, PING_EDGE_NEAR_TILES, PING_EDGE_FAR_TILES);
+    UT_ASSERT_MSG(nearF == 1.0f, "on top of the tank: %f", (double)nearF);
+    nearF = pingEdgeSizeFactor(PING_EDGE_NEAR_TILES, PING_EDGE_NEAR_TILES,
+                               PING_EDGE_FAR_TILES);
+    UT_ASSERT_MSG(nearF == 1.0f, "at the near knob: %f", (double)nearF);
+    farF = pingEdgeSizeFactor(PING_EDGE_FAR_TILES, PING_EDGE_NEAR_TILES,
+                              PING_EDGE_FAR_TILES);
+    UT_ASSERT_MSG(farF == 0.0f, "at the far knob: %f", (double)farF);
+    farF = pingEdgeSizeFactor(10000.0f, PING_EDGE_NEAR_TILES,
+                              PING_EDGE_FAR_TILES);
+    UT_ASSERT_MSG(farF == 0.0f, "off the map: %f", (double)farF);
+
+    /* In between it falls, and never rises with distance. */
+    midF = pingEdgeSizeFactor((PING_EDGE_NEAR_TILES + PING_EDGE_FAR_TILES) *
+                              0.5f, PING_EDGE_NEAR_TILES, PING_EDGE_FAR_TILES);
+    UT_ASSERT_MSG(midF > 0.0f && midF < 1.0f, "mid = %f", (double)midF);
+    {
+        float prev = 1.0f;
+        float d;
+        for (d = 0.0f; d <= 80.0f; d += 1.0f) {
+            float f = pingEdgeSizeFactor(d, PING_EDGE_NEAR_TILES,
+                                         PING_EDGE_FAR_TILES);
+            UT_ASSERT_MSG(f <= prev + 1e-6f,
+                          "size went up at %f tiles: %f after %f",
+                          (double)d, (double)f, (double)prev);
+            prev = f;
+        }
+    }
+
+    /* The ramp is not a straight line: half way out in distance is already
+     * well under half size, so the difference between "just off the view" and
+     * "across the map" is spent where the player can see it. */
+    UT_ASSERT_MSG(midF < 0.5f, "mid should be past halfway down: %f",
+                  (double)midF);
+
+    /* A near/far pair the wrong way round is refused into full size rather
+     * than dividing by nothing. */
+    UT_ASSERT(pingEdgeSizeFactor(50.0f, 64.0f, 64.0f) == 1.0f);
+    UT_ASSERT(pingEdgeSizeFactor(50.0f, 64.0f, 8.0f) == 1.0f);
+
+    /* Pixels for a fraction: the two ends are the knobs themselves, a
+     * fraction between them lands between them, and an out-of-range fraction
+     * is clamped rather than extrapolated. */
+    len = pingEdgeSizeFor(1.0f, PING_EDGE_LENGTH_MIN_PX,
+                          PING_EDGE_LENGTH_MAX_PX);
+    UT_ASSERT_MSG(len == PING_EDGE_LENGTH_MAX_PX, "near bar = %f", (double)len);
+    len = pingEdgeSizeFor(0.0f, PING_EDGE_LENGTH_MIN_PX,
+                          PING_EDGE_LENGTH_MAX_PX);
+    UT_ASSERT_MSG(len == PING_EDGE_LENGTH_MIN_PX, "far bar = %f", (double)len);
+    len = pingEdgeSizeFor(0.5f, PING_EDGE_LENGTH_MIN_PX,
+                          PING_EDGE_LENGTH_MAX_PX);
+    UT_ASSERT(len > PING_EDGE_LENGTH_MIN_PX && len < PING_EDGE_LENGTH_MAX_PX);
+    UT_ASSERT(pingEdgeSizeFor(-3.0f, 10.0f, 50.0f) == 10.0f);
+    UT_ASSERT(pingEdgeSizeFor(9.0f, 10.0f, 50.0f) == 50.0f);
+
+    /* The icon never drops below what a glyph needs to still be a glyph. */
+    UT_ASSERT(PING_EDGE_ICON_MIN_PX >= 12.0f);
+    UT_ASSERT(pingEdgeSizeFor(0.0f, PING_EDGE_ICON_MIN_PX,
+                              PING_EDGE_ICON_MAX_PX) >= 12.0f);
+
+    /* A far ping really is smaller than a near one, both parts of it. */
+    UT_ASSERT(pingEdgeSizeFor(farF, PING_EDGE_LENGTH_MIN_PX,
+                              PING_EDGE_LENGTH_MAX_PX) <
+              pingEdgeSizeFor(nearF, PING_EDGE_LENGTH_MIN_PX,
+                              PING_EDGE_LENGTH_MAX_PX));
+    UT_ASSERT(pingEdgeSizeFor(farF, PING_EDGE_ICON_MIN_PX,
+                              PING_EDGE_ICON_MAX_PX) <
+              pingEdgeSizeFor(nearF, PING_EDGE_ICON_MIN_PX,
+                              PING_EDGE_ICON_MAX_PX));
+    return 0;
+}
+
+/* Where the icon and the sender's name sit around an edge bar, on each of the
+ * four borders and in a corner. The name is the thing a player reads off the
+ * indicator, so what matters is that it is always on the inside of the
+ * rectangle and never hanging off it. */
+int run_ping_edge_name_anchor(void) {
+    PingEdgeMarker  m;
+    PingEdgeNameBox box;
+    const float     thick  = 10.0f;
+    const float     iconPx = 24.0f;
+    const float     gap    = 3.0f;
+    const float     textW  = 60.0f;
+    const float     textH  = 14.0f;
+    float ix, iy;
+
+    /* The icon steps in off its border and stays on the bar's centre line. */
+    UT_ASSERT(pe_marker(PE_TX - 5000.0f, PE_TY, &m));
+    pingEdgeIconCentre(&m, thick, iconPx, gap, &ix, &iy);
+    UT_ASSERT_MSG(ix > PE_RX && ix < PE_RX + PE_RW, "icon x = %f", (double)ix);
+    UT_ASSERT_MSG(fabsf(ix - (PE_RX + thick * 0.5f + iconPx * 0.5f + gap)) <
+                  0.01f, "icon x = %f", (double)ix);
+    UT_ASSERT_MSG(fabsf(iy - m.cy) < 0.01f, "icon y = %f", (double)iy);
+
+    /* Left border: the name runs to the right of the icon, into the view, on
+     * the icon's own centre line. */
+    UT_ASSERT(pingEdgeNameAnchor(PING_EDGE_LEFT, ix, iy, iconPx, gap,
+                                 textW, textH,
+                                 PE_RX, PE_RY, PE_RW, PE_RH, &box));
+    UT_ASSERT(!box.clamped);
+    UT_ASSERT_MSG(fabsf(box.x - (ix + iconPx * 0.5f + gap)) < 0.01f,
+                  "name x = %f", (double)box.x);
+    UT_ASSERT_MSG(fabsf((box.y + textH * 0.5f) - iy) < 0.01f,
+                  "name y = %f", (double)box.y);
+
+    /* Right border: the mirror image — the name is to the LEFT of the icon,
+     * which is what keeps it inside the rectangle. */
+    UT_ASSERT(pe_marker(PE_TX + 5000.0f, PE_TY, &m));
+    pingEdgeIconCentre(&m, thick, iconPx, gap, &ix, &iy);
+    UT_ASSERT(pingEdgeNameAnchor(PING_EDGE_RIGHT, ix, iy, iconPx, gap,
+                                 textW, textH,
+                                 PE_RX, PE_RY, PE_RW, PE_RH, &box));
+    UT_ASSERT(!box.clamped);
+    UT_ASSERT_MSG(fabsf((box.x + textW) - (ix - iconPx * 0.5f - gap)) < 0.01f,
+                  "name x = %f", (double)box.x);
+    UT_ASSERT(box.x >= PE_RX && box.x + textW <= PE_RX + PE_RW);
+
+    /* Top border: under the icon and centred on it. */
+    UT_ASSERT(pe_marker(PE_TX, PE_TY - 5000.0f, &m));
+    pingEdgeIconCentre(&m, thick, iconPx, gap, &ix, &iy);
+    UT_ASSERT_MSG(fabsf(iy - (PE_RY + thick * 0.5f + iconPx * 0.5f + gap)) <
+                  0.01f, "icon y = %f", (double)iy);
+    UT_ASSERT(pingEdgeNameAnchor(PING_EDGE_TOP, ix, iy, iconPx, gap,
+                                 textW, textH,
+                                 PE_RX, PE_RY, PE_RW, PE_RH, &box));
+    UT_ASSERT(!box.clamped);
+    UT_ASSERT_MSG(fabsf((box.x + textW * 0.5f) - ix) < 0.01f,
+                  "name x = %f", (double)box.x);
+    UT_ASSERT_MSG(box.y > iy, "name should be under the icon: %f",
+                  (double)box.y);
+
+    /* Bottom border: above the icon, so it never runs off the bottom. */
+    UT_ASSERT(pe_marker(PE_TX, PE_TY + 5000.0f, &m));
+    pingEdgeIconCentre(&m, thick, iconPx, gap, &ix, &iy);
+    UT_ASSERT(pingEdgeNameAnchor(PING_EDGE_BOTTOM, ix, iy, iconPx, gap,
+                                 textW, textH,
+                                 PE_RX, PE_RY, PE_RW, PE_RH, &box));
+    UT_ASSERT(!box.clamped);
+    UT_ASSERT_MSG((box.y + textH) < iy, "name should be above the icon: %f",
+                  (double)box.y);
+    UT_ASSERT(box.y >= PE_RY && box.y + textH <= PE_RY + PE_RH);
+
+    /* A corner. The bar is already slid flush into it, so a name centred on
+     * the icon would hang past the end of the rectangle; it is clamped back
+     * in, and says so. */
+    UT_ASSERT(pe_marker(PE_TX - 5000.0f, PE_TY - 5000.0f, &m));
+    pingEdgeIconCentre(&m, thick, iconPx, gap, &ix, &iy);
+    UT_ASSERT(pingEdgeNameAnchor(m.side, ix, iy, iconPx, gap, textW, textH,
+                                 PE_RX, PE_RY, PE_RW, PE_RH, &box));
+    UT_ASSERT(box.x >= PE_RX - 0.01f);
+    UT_ASSERT(box.y >= PE_RY - 0.01f);
+    UT_ASSERT(box.x + textW <= PE_RX + PE_RW + 0.01f);
+    UT_ASSERT(box.y + textH <= PE_RY + PE_RH + 0.01f);
+
+    /* Every corner, on both borders that can serve it, with a name long
+     * enough to be awkward: always wholly inside. */
+    {
+        const float longW = 180.0f;
+        float cornerX[4] = { PE_TX - 5000.0f, PE_TX + 5000.0f,
+                             PE_TX - 5000.0f, PE_TX + 5000.0f };
+        float cornerY[4] = { PE_TY - 5000.0f, PE_TY - 5000.0f,
+                             PE_TY + 5000.0f, PE_TY + 5000.0f };
+        int c;
+        for (c = 0; c < 4; c++) {
+            UT_ASSERT(pe_marker(cornerX[c], cornerY[c], &m));
+            pingEdgeIconCentre(&m, thick, iconPx, gap, &ix, &iy);
+            UT_ASSERT(pingEdgeNameAnchor(m.side, ix, iy, iconPx, gap,
+                                         longW, textH,
+                                         PE_RX, PE_RY, PE_RW, PE_RH, &box));
+            UT_ASSERT_MSG(box.x >= PE_RX - 0.01f &&
+                          box.x + longW <= PE_RX + PE_RW + 0.01f,
+                          "corner %d name x %f..%f outside the rectangle",
+                          c, (double)box.x, (double)(box.x + longW));
+            UT_ASSERT_MSG(box.y >= PE_RY - 0.01f &&
+                          box.y + textH <= PE_RY + PE_RH + 0.01f,
+                          "corner %d name y %f..%f outside the rectangle",
+                          c, (double)box.y, (double)(box.y + textH));
+        }
+    }
+
+    /* A name wider than the whole rectangle is pinned to the left edge, so at
+     * least its start can be read, and reported as clamped. */
+    UT_ASSERT(pingEdgeNameAnchor(PING_EDGE_TOP, PE_TX, PE_RY + 20.0f, iconPx,
+                                 gap, PE_RW + 100.0f, textH,
+                                 PE_RX, PE_RY, PE_RW, PE_RH, &box));
+    UT_ASSERT(box.clamped);
+    UT_ASSERT_MSG(box.x == PE_RX, "name x = %f", (double)box.x);
+
+    /* No rectangle and no output: nothing to place against. */
+    UT_ASSERT(!pingEdgeNameAnchor(PING_EDGE_TOP, PE_TX, PE_TY, iconPx, gap,
+                                  textW, textH, PE_RX, PE_RY, 0.0f, PE_RH,
+                                  &box));
+    UT_ASSERT(!pingEdgeNameAnchor(PING_EDGE_TOP, PE_TX, PE_TY, iconPx, gap,
+                                  textW, textH, PE_RX, PE_RY, PE_RW, PE_RH,
+                                  NULL));
     return 0;
 }
 

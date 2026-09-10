@@ -162,8 +162,9 @@ static void lv_pingAdd(BYTE sender, BYTE kind, uint16_t wx, uint16_t wy) {
 /* Read out one live ping. `index` walks 0..LV_MAX_PINGS-1 from the oldest
  * slot, so drawing in order puts the newest on top; a slot that is empty,
  * expired or (after a rewind) still in the future returns false and the
- * caller moves on. ageMs is measured on the playback clock. */
-bool lv_screenGetPing(int index, BYTE *kind, uint16_t *worldX,
+ * caller moves on. ageMs is measured on the playback clock. `sender` is the
+ * slot that sent it, which is how the drawer names the marker. */
+bool lv_screenGetPing(int index, BYTE *sender, BYTE *kind, uint16_t *worldX,
                       uint16_t *worldY, uint32_t *ageMs) {
   const lvPing *p;
   uint32_t at;
@@ -173,6 +174,7 @@ bool lv_screenGetPing(int index, BYTE *kind, uint16_t *worldX,
   at = p->timeMs - 1;
   if (g_lv->timeRunning < at) return FALSE;
   if (g_lv->timeRunning - at >= (uint32_t)PING_DISPLAY_MS) return FALSE;
+  if (sender) *sender = p->sender;
   if (kind)   *kind   = p->kind;
   if (worldX) *worldX = p->worldX;
   if (worldY) *worldY = p->worldY;
@@ -182,100 +184,18 @@ bool lv_screenGetPing(int index, BYTE *kind, uint16_t *worldX,
 
 int lv_screenGetPingCapacity(void) { return LV_MAX_PINGS; }
 
-/* --- Inferred tank-inventory helpers (legacy logs only) -------------
- * Logs prior to the snapshot-tank-stats version don't carry per-tank
- * shells/mines/armour/trees. We approximate them by walking the event
- * stream:
- *   - log_PlayerJoined / log_PlayerRejoin / first log_PlayerLocation
- *     after death  -> spawn defaults from gameType
- *   - log_KillPlayer / log_PlayerDied / log_PlayerLeaving / Quit -> 0
- *   - log_SoundShoot at (mx,my)        -> tank at tile: shells--
- *   - log_SoundMineLay at (mx,my)      -> tank at tile: mines--
- *   - log_SoundHitTank at (mx,my)      -> tank at tile: armour -= DAMAGE
- *   - log_SoundMineExplode at (mx,my)  -> tank at tile: armour -= MINE_DAMAGE
- *   - log_BaseSetStock                 -> tank on base: receives delta
- *
- * Sound events lack player IDs, so adjacent tanks may steal each
- * other's deltas. Drift accumulates over the game; new logs will
- * carry authoritative values in snapshots and override these. */
-
-static void inv_setSpawn(BYTE slot) {
+/* Store a slot's tank stocks. The recording is the only source: the four
+ * values arrive either on the end of a snapshot's player block or in a
+ * log_TankSetStock record. All zeros is what a slot gets when the recording
+ * carries neither — a file written before the stocks were recorded, or a slot
+ * not in use — and the status panel then draws empty bars rather than a
+ * guessed number. */
+static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   if (slot >= MAX_TANKS) return;
-  /* Mirrors gameTypeGetItems() in src/bolo/gametype.c. The
-   * gameTournament shell amount depends on the runtime ratio of
-   * neutral bases to total bases at spawn time — use TANK_FULL_SHELLS
-   * as the upper bound rather than try to reproduce that calculation
-   * over a different base ownership tracker. */
-  g_lv->tankInv[slot].armour = TANK_FULL_ARMOUR;
-  switch (g_lv->gt) {
-    case gameOpen:
-      g_lv->tankInv[slot].shells = TANK_FULL_SHELLS;
-      g_lv->tankInv[slot].mines  = TANK_FULL_MINES;
-      g_lv->tankInv[slot].trees  = TANK_FULL_TREES;
-      break;
-    case gameTournament:
-      g_lv->tankInv[slot].shells = TANK_FULL_SHELLS;
-      g_lv->tankInv[slot].mines  = 0;
-      g_lv->tankInv[slot].trees  = 0;
-      break;
-    case gameStrictTournament:
-    default:
-      g_lv->tankInv[slot].shells = 0;
-      g_lv->tankInv[slot].mines  = 0;
-      g_lv->tankInv[slot].trees  = 0;
-      break;
-  }
-}
-
-static void inv_zero(BYTE slot) {
-  if (slot >= MAX_TANKS) return;
-  g_lv->tankInv[slot].armour = 0;
-  g_lv->tankInv[slot].shells = 0;
-  g_lv->tankInv[slot].mines  = 0;
-  g_lv->tankInv[slot].trees  = 0;
-}
-
-/* Subtract `amount` from `*field`, clamped at 0. */
-static void inv_subClamp(BYTE *field, BYTE amount) {
-  if (*field <= amount) *field = 0;
-  else *field = (BYTE)(*field - amount);
-}
-
-/* Add `amount` to `*field`, clamped at `cap`. */
-static void inv_addClamp(BYTE *field, BYTE amount, BYTE cap) {
-  unsigned int sum = (unsigned int)(*field) + amount;
-  if (sum > cap) sum = cap;
-  *field = (BYTE)sum;
-}
-
-/* Find the first in-use tank whose mapX/mapY matches (mx,my). Returns
- * 0xFF if none. Tanks can't normally share a tile (collision), so the
- * first match is the only match in practice. */
-static BYTE inv_findTankAtTile(BYTE mx, BYTE my) {
-  BYTE i;
-  for (i = 0; i < MAX_TANKS; i++) {
-    if (!lv_playersIsInUse(i)) continue;
-    if (!g_lv->gameViewHud[i].alive) continue;
-    BYTE tmx, tmy, tpx, tpy, tframe;
-    bool tOnBoat;
-    lv_playersGetTankDetails(i, &tmx, &tmy, &tpx, &tpy, &tframe, &tOnBoat);
-    if (tmx == mx && tmy == my) return i;
-  }
-  return 0xFF;
-}
-
-/* Find the in-use tank whose LGM is at (mx,my). Used for events that
- * fire at the LGM's tile (mine lay, farm, build) rather than the
- * tank's. Returns 0xFF if no LGM matches. */
-static BYTE inv_findTankByLgmAtTile(BYTE mx, BYTE my) {
-  BYTE i;
-  for (i = 0; i < MAX_TANKS; i++) {
-    if (!lv_playersIsInUse(i)) continue;
-    BYTE lmx, lmy, lpx, lpy, lframe;
-    lv_playersGetLgmDetails(i, &lmx, &lmy, &lpx, &lpy, &lframe);
-    if (lmx == mx && lmy == my) return i;
-  }
-  return 0xFF;
+  g_lv->tankInv[slot].shells = shells;
+  g_lv->tankInv[slot].mines  = mines;
+  g_lv->tankInv[slot].armour = armour;
+  g_lv->tankInv[slot].trees  = trees;
 }
 
 // Some prototypes to cleanup and document
@@ -773,7 +693,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = true;
         g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
-        inv_setSpawn(opt1);
       }
       break;
     case log_PlayerQuit:
@@ -787,7 +706,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = false;
-        inv_zero(opt1);
         if (g_lv->gameView && opt1 == g_lv->cameraSlot) {
           /* Advance camera to next in-use slot. Mirrors Tab cycle in
            * logviewer.c:651-660. The `next != opt1` guard skips the
@@ -905,31 +823,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
          opt3 = manDyingNear;
       }
       lv_soundDist(opt3, opt1, opt2);
-
-      /* Inferred-inventory side effects. opt1=mx, opt2=my of the
-       * sound source. log_SoundShoot fires at the shooter's tile
-       * (tank or pill — pills don't share tiles with tanks so the
-       * lookup safely returns nobody). log_SoundHitTank fires at the
-       * victim's tile. log_SoundMineLay fires at the LGM's tile (the
-       * server emits manLayingMineNear in lgm.c, not the tank's
-       * position) — find the owning tank via the LGM tracker.
-       * log_SoundMineExplode fires at the mine tile; if a tank is on
-       * it, that tank took the damage. log_SoundFarm/Build aren't
-       * wired (would inflow trees, but trees ride home with the LGM
-       * before crediting the tank — too noisy to model here). */
-      if (code == log_SoundShoot) {
-        BYTE slot = inv_findTankAtTile(opt1, opt2);
-        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].shells, 1);
-      } else if (code == log_SoundMineLay) {
-        BYTE slot = inv_findTankByLgmAtTile(opt1, opt2);
-        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].mines, 1);
-      } else if (code == log_SoundHitTank) {
-        BYTE slot = inv_findTankAtTile(opt1, opt2);
-        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].armour, DAMAGE);
-      } else if (code == log_SoundMineExplode) {
-        BYTE slot = inv_findTankAtTile(opt1, opt2);
-        if (slot != 0xFF) inv_subClamp(&g_lv->tankInv[slot].armour, MINE_DAMAGE);
-      }
       break;
     case log_PlayerLocation:
       logReadBytes(&opt1, 1);
@@ -944,9 +837,16 @@ void lv_screenProcessLog(unsigned short numEvents) {
         if (opt1 < MAX_TANKS && !g_lv->gameViewHud[opt1].alive) {
           g_lv->gameViewHud[opt1].alive = true;
           g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
-          inv_setSpawn(opt1);
         }
       }
+      break;
+    case log_TankSetStock:
+      logReadBytes(&opt1, 1);  /* player */
+      logReadBytes(&opt2, 1);  /* shells */
+      logReadBytes(&opt3, 1);  /* mines */
+      logReadBytes(&opt4, 1);  /* armour */
+      logReadBytes(&opt5, 1);  /* trees */
+      lv_screenSetTankStock(opt1, opt2, opt3, opt4, opt5);
       break;
     case log_Shell:
       logReadBytes(&opt1, 1);
@@ -1016,43 +916,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt3, 1);
       logReadBytes(&opt4, 1);
       lv_basesSetStock(&g_lv->bs, opt1, opt2, opt3, opt4);
-      /* Refill inference: when a base's shells/mines/armour drops and a
-       * tank is standing on the base tile, credit the delta to that
-       * tank. Stock increases (server-side production) are ignored.
-       * Suppressed on the first event per base so the initial value
-       * isn't credited to whoever happens to be there. opt1 is the
-       * 0-based base index in the log (server emits it post-decrement
-       * — see basesSetBase / basesUpdateStock in src/bolo/bases.c).
-       * lv_basesGetBase wants the 1-based number, hence opt1+1. */
-      if (opt1 < MAX_BASES) {
-        BYTE bsIdx = opt1;
-        if (g_lv->prevBaseStockValid[bsIdx]) {
-          base bi;
-          lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(opt1 + 1));
-          BYTE slot = inv_findTankAtTile(bi.x, bi.y);
-          if (slot != 0xFF) {
-            if (opt2 < g_lv->prevBaseShells[bsIdx]) {
-              inv_addClamp(&g_lv->tankInv[slot].shells,
-                           (BYTE)(g_lv->prevBaseShells[bsIdx] - opt2),
-                           TANK_FULL_SHELLS);
-            }
-            if (opt3 < g_lv->prevBaseMines[bsIdx]) {
-              inv_addClamp(&g_lv->tankInv[slot].mines,
-                           (BYTE)(g_lv->prevBaseMines[bsIdx] - opt3),
-                           TANK_FULL_MINES);
-            }
-            if (opt4 < g_lv->prevBaseArmour[bsIdx]) {
-              inv_addClamp(&g_lv->tankInv[slot].armour,
-                           (BYTE)(g_lv->prevBaseArmour[bsIdx] - opt4),
-                           TANK_FULL_ARMOUR);
-            }
-          }
-        }
-        g_lv->prevBaseShells[bsIdx] = opt2;
-        g_lv->prevBaseMines[bsIdx]  = opt3;
-        g_lv->prevBaseArmour[bsIdx] = opt4;
-        g_lv->prevBaseStockValid[bsIdx] = true;
-      }
+      /* opt1 is the 0-based base index in the log (the server emits it
+       * post-decrement — see basesSetBase / basesUpdateStock in
+       * src/bolo/bases.c). */
       break;
     case log_PillSetOwner:
       logReadBytes(&opt1, 1);
@@ -1099,7 +965,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = false;
         g_lv->gameViewHud[opt1].deathTimeMs = g_lv->timeRunning;
-        inv_zero(opt1);
       }
       break;
     case log_PlayerRejoin:
@@ -1113,7 +978,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = true;
         g_lv->gameViewHud[opt1].respawnTimeMs = g_lv->timeRunning;
-        inv_setSpawn(opt1);
       }
       break;
     case log_PlayerLeaving:
@@ -1126,7 +990,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = false;
-        inv_zero(opt1);
         if (g_lv->gameView && opt1 == g_lv->cameraSlot) {
           /* Advance camera to next in-use slot. Mirrors Tab cycle in
            * logviewer.c:651-660. The `next != opt1` guard skips the
@@ -1154,7 +1017,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = false;
         g_lv->gameViewHud[opt1].deathTimeMs = g_lv->timeRunning;
-        inv_zero(opt1);
       }
       break;
     case log_SaveMap:
@@ -1658,6 +1520,7 @@ bool lv_processSnapshot() {
       lv_playersLeaveGame(count, FALSE);
       // Process the dummy data
       len = logReadBytes(data, 2);
+      lv_screenSetTankStock(count, 0, 0, 0, 0);
 
     } else if (dataLen > sizeof(data)) {
       returnValue = FALSE;
@@ -1714,11 +1577,21 @@ bool lv_processSnapshot() {
                * The flags will be re-set by any subsequent log_PlayerJoined
                * event for this slot. */
               lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
+              /* Tank stocks: shells, mines, armour, trees, on the end of the
+                 block after the alliance list. A block that ends with the
+                 alliances was written before the recorder carried them, so the
+                 slot reads as no stocks rather than a guessed value. */
+              pos = (BYTE)(pos + numAllies);
+              if ((unsigned int)(pos + 4) <= dataLen) {
+                lv_screenSetTankStock(count, data[pos], data[pos+1],
+                                      data[pos+2], data[pos+3]);
+              } else {
+                lv_screenSetTankStock(count, 0, 0, 0, 0);
+              }
               /* mx != 0 means the tank is on the map (alive) — the same sentinel
                  the forward log_PlayerLocation path uses. Mark the slot alive so
                  a mid-game seed clears the death-static overlay for living tanks;
-                 a dead/off-map tank (mx == 0) stays not-alive. inv_setSpawn for
-                 the slot is handled by the in-use sweep after this loop. */
+                 a dead/off-map tank (mx == 0) stays not-alive. */
               if (mx != 0) {
                 g_lv->gameViewHud[count].alive = true;
                 g_lv->gameViewHud[count].respawnTimeMs = g_lv->timeRunning;
@@ -1738,20 +1611,6 @@ bool lv_processSnapshot() {
     }
     count++;
   }
-
-  /* Legacy snapshots don't carry tank inventory or per-base prev-stock
-   * tracking. Best effort: assume any in-use tank in the snapshot is
-   * at spawn defaults and invalidate the base-stock cache so the next
-   * log_BaseSetStock re-anchors without crediting a bogus delta. New
-   * log format will replace this with authoritative snapshot data. */
-  for (BYTE slot = 0; slot < MAX_TANKS; slot++) {
-    if (lv_playersIsInUse(slot)) {
-      inv_setSpawn(slot);
-    } else {
-      inv_zero(slot);
-    }
-  }
-  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   return returnValue;
 }
@@ -1827,6 +1686,7 @@ static int walkSkipEventBody(BYTE code) {
       { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
       return 4;
     case log_PlayerLocation:
+    case log_TankSetStock:
       { BYTE b[5]; if (logReadBytes(b, 5) != 5) return -1; }
       return 5;
     case log_Ping:
@@ -2475,7 +2335,6 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
   memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
-  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   returnValue = lv_blocksCreate(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
@@ -2622,7 +2481,6 @@ static bool lv_logLoadCommon(void) {
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
   memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
-  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   if (returnValue == TRUE) {
     len = logReadBytes((BYTE *)id, LENGTH_ID);
@@ -2864,10 +2722,6 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   memset(lv->deaths, 0, sizeof(lv->deaths));
   memset(lv->gameViewHud, 0, sizeof(lv->gameViewHud));
   memset(lv->tankInv, 0, sizeof(lv->tankInv));
-  memset(lv->prevBaseShells, 0, sizeof(lv->prevBaseShells));
-  memset(lv->prevBaseMines, 0, sizeof(lv->prevBaseMines));
-  memset(lv->prevBaseArmour, 0, sizeof(lv->prevBaseArmour));
-  memset(lv->prevBaseStockValid, 0, sizeof(lv->prevBaseStockValid));
 
   lv_screenSetState(lv);
   return lv;
