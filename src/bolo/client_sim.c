@@ -2158,6 +2158,14 @@ void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
   slot->worldX = worldX;
   slot->worldY = worldY;
   slot->recvMs = nowMs;
+  /* The sender's name, taken now — see ClientPing. The players object is
+     gone between games, and a ping cannot arrive then; the guard is for the
+     order teardown happens in, not for a case that has a name to find. */
+  slot->senderName[0] = '\0';
+  if (clientSimGetGameSim(cs)->plyrs != NULL) {
+    playersGetPlayerName(&clientSimGetGameSim(cs)->plyrs, sender,
+                         slot->senderName, sizeof(slot->senderName), FALSE);
+  }
   cs->pingWriteIdx = (cs->pingWriteIdx + 1) % MAX_CLIENT_PINGS;
 }
 

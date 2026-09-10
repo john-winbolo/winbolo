@@ -709,6 +709,8 @@ static const UnitTestEntry s_tests[] = {
     { "ping_pie_slices",                         run_ping_pie_slices                         },
     { "ping_edge_sides",                         run_ping_edge_sides                         },
     { "ping_edge_corner",                        run_ping_edge_corner                        },
+    { "ping_edge_size_from_distance",            run_ping_edge_size_from_distance            },
+    { "ping_edge_name_anchor",                   run_ping_edge_name_anchor                   },
     { "ping_rect_inset",                         run_ping_rect_inset                         },
     { "ping_event_wire",                         run_ping_event_wire                         },
     { "ping_dispatch_accepts_and_builds_event",  run_ping_dispatch_accepts_and_builds_event  },

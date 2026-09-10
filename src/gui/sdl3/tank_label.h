@@ -94,6 +94,44 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
                    float x, float y, float scale);
 
 /*********************************************************
+ *NAME:          tankLabelDrawNameCentred
+ *PURPOSE:
+ *  The name on its own, in the label's look — same face,
+ *  same colour, same black shadow a glyph pixel down and
+ *  right — centred on an x rather than started at one, and
+ *  fadeable. What a smart-ping marker puts under its icon,
+ *  so a name over the map is one thing wherever it comes
+ *  from.
+ *
+ *  No flag, no brain icon, no voice glyph: those say
+ *  something about a tank that is on the picture, and the
+ *  thing labelled here is a spot on the ground.
+ *
+ *  The cache is keyed on the player slot exactly as
+ *  tankLabelDraw's is, so a caller wanting both must keep a
+ *  cache for each — one holding "Name@GB" and the other
+ *  "Name" for the same slot would rebuild the texture on
+ *  every frame.
+ *ARGUMENTS:
+ *  c         - the caller's own cache (see above)
+ *  r         - renderer to build on and draw with
+ *  font      - TTF face for the name (the newswire's)
+ *  name      - the player's name, drawn as given
+ *  playerNum - slot the name belongs to
+ *  cx        - centre of the text in render coordinates
+ *  y         - top of the text in render coordinates
+ *  scale     - multiplier on the rendered glyph size; 1
+ *              draws the face at the size it was opened
+ *  alpha     - 0..1 fade, applied to the name and its shadow
+ *RETURNS:
+ *  true if the name was drawn; false when there is nothing
+ *  to draw (no font, empty name, bad slot, alpha 0).
+ *********************************************************/
+bool tankLabelDrawNameCentred(TankLabelCache *c, SDL_Renderer *r,
+                              TTF_Font *font, const char *name, BYTE playerNum,
+                              float cx, float y, float scale, float alpha);
+
+/*********************************************************
  *NAME:          tankLabelCacheFlush
  *PURPOSE:
  *  Destroys every texture in the cache and forgets the

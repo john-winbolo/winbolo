@@ -1608,6 +1608,8 @@ int run_ping_binding_format(void);
 int run_ping_pie_slices(void);
 int run_ping_edge_sides(void);
 int run_ping_edge_corner(void);
+int run_ping_edge_size_from_distance(void);
+int run_ping_edge_name_anchor(void);
 int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
 
