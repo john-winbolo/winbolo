@@ -57,6 +57,7 @@
 #include "input_packet.h"
 #include "bot_manager.h"
 #include "bot_worker_pool.h"
+#include "brain_list.h"    /* brainListLoadModesForPath — the mode/level keys */
 #include "brain_worldsim.h"
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
@@ -594,35 +595,83 @@ bool botInitArgAppendToken(char *arg, size_t argSz, const char *token) {
 }
 
 /* Stage BRAIN_INIT_ARG for the brain create that follows, with this
- * slot's lobby difficulty appended as one "difficulty=<word>" token.
+ * slot's lobby mode and difficulty appended as the two tokens
+ * "mode=<modekey>;difficulty=<levelkey>".
+ *
+ * The keys are the brain's OWN, read from its modes.txt manifest
+ * (brain_list.h) for the brain this bot is about to load — a brain with no
+ * manifest gets the synthesized default mode, so the token pair reads
+ * "mode=default;difficulty=hard" exactly as it did before manifests
+ * existed. The slot's stored bytes are indices into that list and are
+ * clamped against it here, so a stale index (the host switched the bot to
+ * a brain with fewer modes) falls back to the default rather than naming a
+ * mode the brain never declared.
  *
  * Whatever the caller already staged (a CLI -bot-init "[preset=keel;...]"
- * suffix) is kept and the token is added after it, so a bench keeps its
- * overrides and still gets told the difficulty. If the existing arg is so
- * long that the token would not fit, the token is DROPPED whole and logged
- * — never truncated, because "difficulty=ha" would parse as garbage.
+ * suffix) is kept and the tokens are added after it, so a bench keeps its
+ * overrides and still gets told the mode and difficulty. If the existing
+ * arg is so long that a token would not fit, that token is DROPPED whole
+ * and logged — never truncated, because "difficulty=ha" would parse as
+ * garbage. The two are appended independently (mode first), so a very long
+ * arg loses the difficulty token and keeps the mode one.
  *
- * Called from both brain-create paths (add and reload), so a bot picks the
- * difficulty up at the round start after the host changed it in the lobby
- * (botManagerOnGameStart reloads every brain). */
-static void botManagerStageInitArg(struct ServerSim *sim, BYTE playerNum) {
-    char arg[BRAIN_INIT_ARG_MAX];
-    char token[32];
-    const char *staged = luaBrainsPeekNextInitArg();
-    uint8_t difficulty = BOT_DIFFICULTY_HARD;
-
-    if (sim != NULL && playerNum < MAX_TANKS) {
-        difficulty = sim->botConfigs[playerNum].difficulty;
+ * Declared in internal/bot_manager.h, which is where the argument contract
+ * lives; the unit test drives it directly. */
+void botInitArgAppendModeTokens(char *arg, size_t argSz,
+                                const BrainModes *modes,
+                                uint8_t modeIdx, uint8_t levelIdx,
+                                int playerNumForLog) {
+    char token[64];
+    if (arg == NULL || argSz == 0 || modes == NULL || modes->modeCount <= 0) {
+        return;
     }
-    SDL_strlcpy(arg, (staged != NULL) ? staged : "", sizeof(arg));
+    if (modeIdx >= (uint8_t)modes->modeCount) modeIdx = 0;
+    const BrainMode *mode = &modes->modes[modeIdx];
+    if (mode->levelCount <= 0) return;
+    if (levelIdx >= (uint8_t)mode->levelCount) {
+        levelIdx = (uint8_t)mode->defaultLevel;
+    }
+
+    SDL_snprintf(token, sizeof(token), "mode=%s", mode->key);
+    if (!botInitArgAppendToken(arg, argSz, token)) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                "botManager: bot %d init arg '%s' has no room for '%s'; "
+                "mode token dropped",
+                playerNumForLog, arg, token);
+    }
     SDL_snprintf(token, sizeof(token), "difficulty=%s",
-                 botDifficultyName(difficulty));
-    if (!botInitArgAppendToken(arg, sizeof(arg), token)) {
+                 mode->levels[levelIdx].key);
+    if (!botInitArgAppendToken(arg, argSz, token)) {
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                 "botManager: bot %d init arg '%s' has no room for '%s'; "
                 "difficulty token dropped",
-                (int)playerNum, arg, token);
+                playerNumForLog, arg, token);
     }
+}
+
+/* Stage BRAIN_INIT_ARG for the brain create that follows: whatever the
+ * caller already staged, plus this slot's mode and difficulty as the token
+ * pair above, read against the manifest of the brain at `brainPath`.
+ *
+ * Called from both brain-create paths (add and reload), so a bot picks the
+ * mode and difficulty up at the round start after the host changed them in
+ * the lobby (botManagerOnGameStart reloads every brain). */
+static void botManagerStageInitArg(struct ServerSim *sim, BYTE playerNum,
+                                   const char *brainPath) {
+    char arg[BRAIN_INIT_ARG_MAX];
+    const char *staged = luaBrainsPeekNextInitArg();
+    uint8_t modeIdx  = 0;
+    uint8_t levelIdx = BOT_DIFFICULTY_HARD;
+    BrainModes modes;
+
+    if (sim != NULL && playerNum < MAX_TANKS) {
+        modeIdx  = sim->botConfigs[playerNum].mode;
+        levelIdx = sim->botConfigs[playerNum].difficulty;
+    }
+    brainListLoadModesForPath(brainPath, &modes);
+    SDL_strlcpy(arg, (staged != NULL) ? staged : "", sizeof(arg));
+    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, modeIdx, levelIdx,
+                               (int)playerNum);
     luaBrainsSetNextInitArg(arg);
     /* One stderr line per brain creation naming the arg the brain is about
      * to read. A brain's own print() goes nowhere in a headless game, so
@@ -689,10 +738,11 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     /* Hand the fresh brain the game clock so its own tick counter continues
      * the session instead of restarting at 0 (see BRAIN_START_ENGINE_TICK). */
     luaBrainsSetNextStartEngineTick((unsigned int)serverSimGetTick(sim));
-    /* Re-stage the difficulty token. A reload creates a brand-new Lua state,
-     * which reads BRAIN_INIT_ARG at load, so the round-start reload is where
-     * a difficulty the host set in the lobby actually reaches the brain. */
-    botManagerStageInitArg(sim, bot->playerNum);
+    /* Re-stage the mode / difficulty tokens. A reload creates a brand-new
+     * Lua state, which reads BRAIN_INIT_ARG at load, so the round-start
+     * reload is where a mode or difficulty the host set in the lobby
+     * actually reaches the brain. */
+    botManagerStageInitArg(sim, bot->playerNum, brainPath);
 
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, bot->ai,
@@ -860,9 +910,9 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * mid-game (a Survival wave spawn) seeds its brain tick counter from
      * it rather than restarting at 0 (see BRAIN_START_ENGINE_TICK). */
     luaBrainsSetNextStartEngineTick((unsigned int)serverSimGetTick(sim));
-    /* Append this slot's lobby difficulty to whatever init arg the caller
-     * staged (a CLI -bot-init [..] suffix, or nothing at all). */
-    botManagerStageInitArg(sim, playerNum);
+    /* Append this slot's lobby mode and difficulty to whatever init arg
+     * the caller staged (a CLI -bot-init [..] suffix, or nothing at all). */
+    botManagerStageInitArg(sim, playerNum, brainPath);
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, ai, sim->botMgr.defaultDebugMode,
                                 playerNum)) {

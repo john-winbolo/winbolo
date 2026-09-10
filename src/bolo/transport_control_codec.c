@@ -629,10 +629,12 @@ static EncodeResult encodeLobbyTeamMeta(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* PACKET_LOBBY_BOT_CONFIG_CHG wire format (ported verbatim from
- * branch's transportUdpServerBroadcastLobbyBotConfigChg):
- *   [header 8] [slot 1] [difficulty 1] [personality 1] [nameLen 1]
- *   [name nameLen] */
+/* PACKET_LOBBY_BOT_CONFIG_CHG wire format:
+ *   [header 8] [slot 1] [difficulty 1] [personality 1] [mode 1]
+ *   [nameLen 1] [name nameLen]
+ * mode was appended after personality (rather than beside difficulty,
+ * which it selects the meaning of) so the three older fields kept their
+ * offsets; nameLen stays the last fixed byte with the name after it. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyBotConfigBody(const ControlEvent *evt,
@@ -643,12 +645,13 @@ static EncodeResult encodeLobbyBotConfigBody(const ControlEvent *evt,
     if (evt->u.lobbyBotConfig.slot >= MAX_TANKS) return ENCODE_SKIP;
     size_t nameLen = strnlen(evt->u.lobbyBotConfig.name,
                              PACKET_MAX_PLAYER_NAME - 1);
-    const size_t needed = 4 + nameLen;
+    const size_t needed = 5 + nameLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.lobbyBotConfig.slot;
     buf[pos++] = evt->u.lobbyBotConfig.difficulty;
     buf[pos++] = evt->u.lobbyBotConfig.personality;
+    buf[pos++] = evt->u.lobbyBotConfig.mode;
     buf[pos++] = (uint8_t)nameLen;
     if (nameLen > 0) {
         memcpy(buf + pos, evt->u.lobbyBotConfig.name, nameLen);
@@ -2099,21 +2102,23 @@ static bool decodeLobbyTeamMetaBody(const uint8_t *buf, size_t len,
 static bool decodeLobbyBotConfigBody(const uint8_t *buf, size_t len,
                                      ControlEvent *outEvt) {
     /* Layout matches encodeLobbyBotConfigBody. */
-    if (len < 4) return false;
+    if (len < 5) return false;
     uint8_t slot    = buf[0];
     uint8_t diff    = buf[1];
     uint8_t pers    = buf[2];
-    uint8_t nameLen = buf[3];
+    uint8_t mode    = buf[3];
+    uint8_t nameLen = buf[4];
     if (slot >= MAX_TANKS) return false;
     if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
-    if (len < (size_t)(4 + nameLen)) return false;
+    if (len < (size_t)(5 + nameLen)) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_BOT_CONFIG;
     outEvt->u.lobbyBotConfig.slot        = slot;
     outEvt->u.lobbyBotConfig.difficulty  = diff;
     outEvt->u.lobbyBotConfig.personality = pers;
+    outEvt->u.lobbyBotConfig.mode        = mode;
     if (nameLen > 0) {
-        memcpy(outEvt->u.lobbyBotConfig.name, buf + 4, nameLen);
+        memcpy(outEvt->u.lobbyBotConfig.name, buf + 5, nameLen);
     }
     outEvt->u.lobbyBotConfig.name[nameLen] = '\0';
     return true;

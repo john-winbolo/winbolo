@@ -142,22 +142,29 @@ typedef struct {
   char    name[LOBBY_TEAM_NAME_LEN];
 } TeamMetadata;
 
-/* Bot difficulty, as carried on the wire (CTRL_/PACKET_LOBBY_BOT_CONFIG)
- * and shown in the lobby. The values are frozen: 1 was labelled "normal"
- * before it was labelled "Medium". botDifficultyName (bot_manager.h) turns
- * one of these into the "difficulty=<word>" token handed to the brain. */
+/* Bot difficulty in the DEFAULT mode, as it has always been carried on the
+ * wire (CTRL_/PACKET_LOBBY_BOT_CONFIG) and shown in the lobby. The values
+ * are frozen: 1 was labelled "normal" before it was labelled "Medium".
+ * botDifficultyName (bot_manager.h) turns one of these into a word.
+ *
+ * Since modes arrived the byte is really an INDEX into the selected mode's
+ * level list (brain_list.h). The default mode's levels are easy / medium /
+ * hard in that order, so these three constants still name the right slots
+ * and every pre-mode caller keeps working unchanged. */
 #define BOT_DIFFICULTY_EASY    0
 #define BOT_DIFFICULTY_MEDIUM  1
 #define BOT_DIFFICULTY_HARD    2
 #define BOT_DIFFICULTY_MAX     2
 
-/* Per-bot config — extends bot identity with difficulty + personality
- * the Layout A AiConfig sub-panel writes. difficulty reaches the brain as
- * a BRAIN_INIT_ARG token at bot-brain creation (bot_manager.c); the brain
- * stores it and behaves the same at every setting for now. personality is
- * still unconsumed. Indexed by slot (matches bot's playerNum). */
+/* Per-bot config — extends bot identity with mode + difficulty +
+ * personality the Layout A AiConfig sub-panel writes. mode and difficulty
+ * reach the brain as BRAIN_INIT_ARG tokens at bot-brain creation
+ * (bot_manager.c); the brain stores them and behaves the same at every
+ * setting for now. personality is still unconsumed. Indexed by slot
+ * (matches bot's playerNum). */
 typedef struct {
-  uint8_t difficulty;   /* BOT_DIFFICULTY_* — 0=easy, 1=medium, 2=hard */
+  uint8_t mode;         /* index into the brain's mode list; 0 = default */
+  uint8_t difficulty;   /* index into that mode's level list (0=easy...) */
   uint8_t personality;  /* 0=normal, 1=aggressive, 2=defensive, 3=sniper */
 } LobbyBotConfig;
 
@@ -1628,29 +1635,36 @@ GameSim *serverSimGetGameSim(ServerSim *sim);
 void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
                                        uint8_t brainIdx);
 
-/* Apply a bot-config change atomically — write difficulty / personality
- * to the slot, optionally rename the bot (when validatedName is
+/* Apply a bot-config change atomically — write mode / difficulty /
+ * personality to the slot, optionally rename the bot (when validatedName is
  * non-NULL and non-empty), publish CTRL_LOBBY_BOT_CONFIG +
  * CTRL_LOBBY_SLOT, and clear humans' ready state. Callers (UDP
  * PACKET_LOBBY_BOT_CONFIG handler, SP-host clientSimNetSendLobbyBotConfig)
  * must validate the name beforehand — see lobbyBotNameAcceptable.
  * Pass NULL or an empty string to leave the name unchanged.
  *
+ * mode indexes the brain's mode list and difficulty indexes THAT mode's
+ * level list (brain_list.h); mode 0 with 0/1/2 is the pre-manifest
+ * easy/medium/hard.
+ *
  * Safe to call on a slot with no bot in it yet, and the SP-host and the
- * dedicated server both do: the difficulty has to be in the slot's config
+ * dedicated server both do: both bytes have to be in the slot's config
  * BEFORE the bot's brain is created, because that is where bot_manager
- * reads it to build the brain's "difficulty=" init token. */
+ * reads them to build the brain's "mode=" / "difficulty=" init tokens. */
 void        serverSimSetBotConfig(ServerSim *sim, BYTE slot,
-                                  uint8_t difficulty, uint8_t personality,
+                                  uint8_t mode, uint8_t difficulty,
+                                  uint8_t personality,
                                   const char *validatedName);
 
-/* Difficulty <-> word. "easy" / "medium" / "hard" is what the brain is
- * handed in its BRAIN_INIT_ARG, what -difficulty accepts on the dedicated
- * server's command line, and what the "Chosen Difficulty" preference
- * stores. botDifficultyName never returns NULL: an out-of-range value
- * reads as "hard". botDifficultyFromName is case-insensitive, takes
- * "normal" as an alias for "medium" (its former label), and returns false
- * without touching *out on anything else. Implemented in bot_manager.c. */
+/* Default-mode difficulty <-> word. "easy" / "medium" / "hard" is what
+ * -difficulty accepts on the dedicated server's command line and what the
+ * "Chosen Difficulty" preference stores for the default mode. (What the
+ * brain is handed is the level KEY from the brain's own modes.txt, which
+ * for the default mode is these same three words.) botDifficultyName never
+ * returns NULL: an out-of-range value reads as "hard". botDifficultyFromName
+ * is case-insensitive, takes "normal" as an alias for "medium" (its former
+ * label), and returns false without touching *out on anything else.
+ * Implemented in bot_manager.c. */
 const char *botDifficultyName(uint8_t difficulty);
 bool        botDifficultyFromName(const char *name, uint8_t *out);
 

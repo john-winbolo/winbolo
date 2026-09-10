@@ -52,6 +52,7 @@
 #include "transport_udp.h"
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
+#include "brain_list.h"  /* BrainModes, brainListLoadModesForPath — -mode */
 #include "bot_worker_pool.h"
 #include "lobby_bot_pools.h"
 #include "brain_record.h"
@@ -677,10 +678,14 @@ void printArgs() {
   fprintf(stderr, "                first of Brains/GoalHunter_1.7/init.lua,\n");
   fprintf(stderr, "                brains/GoalHunter_1.7/init.lua,\n");
   fprintf(stderr, "                data/Brains/GoalHunter_1.7/init.lua that exists)\n");
-  fprintf(stderr, "-difficulty <easy|medium|hard> - Difficulty for the -bots bots\n");
-  fprintf(stderr, "                (default hard). Handed to the brain as a\n");
-  fprintf(stderr, "                'difficulty=<word>' BRAIN_INIT_ARG token; every\n");
-  fprintf(stderr, "                setting plays the same way for now.\n");
+  fprintf(stderr, "-mode <key> - Mode for the -bots bots, one of the mode keys in the\n");
+  fprintf(stderr, "                brain's modes.txt (default 'default'). Handed to the\n");
+  fprintf(stderr, "                brain as a 'mode=<key>' BRAIN_INIT_ARG token.\n");
+  fprintf(stderr, "-difficulty <key> - Difficulty for the -bots bots: a level key from the\n");
+  fprintf(stderr, "                selected mode, or easy|medium|hard (default: the mode's\n");
+  fprintf(stderr, "                own default, which is hard). Handed to the brain as a\n");
+  fprintf(stderr, "                'difficulty=<key>' BRAIN_INIT_ARG token; every setting\n");
+  fprintf(stderr, "                plays the same way for now.\n");
   fprintf(stderr, "-bot-init <spec> - Per-bot brain paths by player id: 'range=path[arg],...'\n");
   fprintf(stderr, "                where range is 'a-b' or 'n' and the optional [arg] becomes\n");
   fprintf(stderr, "                that bot's BRAIN_INIT_ARG Lua global. Ids not listed use\n");
@@ -2386,22 +2391,56 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Warning: -teams overrides -allybots\n");
         allyTeam = 0;
       }
-      /* -difficulty easy|medium|hard: the difficulty every -bots bot is
-       * created with. Defaults to hard, which is what the shipping brain
-       * plays like and what a lobby bot left on Hard gets. The value lands
-       * in the slot's LobbyBotConfig before the brain is created, so the
-       * brain sees it as a "difficulty=<word>" BRAIN_INIT_ARG token. */
-      uint8_t botDifficulty = BOT_DIFFICULTY_HARD;
+      /* -mode / -difficulty: the mode and difficulty every -bots bot is
+       * created with, as INDICES into the brain's own modes.txt manifest.
+       * Both land in the slot's LobbyBotConfig before the brain is created,
+       * so the brain sees them as "mode=<key>;difficulty=<key>"
+       * BRAIN_INIT_ARG tokens. A brain with no manifest gets the
+       * synthesized default mode with easy/medium/hard, so leaving both
+       * flags off is the pre-manifest "hard" exactly as before. */
+      BrainModes botModes;
+      brainListLoadModesForPath(brainPath, &botModes);
+      uint8_t botMode = 0;
+      if (argExist(argc, argv, "mode") == TRUE) {
+        int mArg = findArg(argc, argv, "mode");
+        if (mArg != ARG_NOT_FOUND && argv[mArg][0] != '-') {
+          int found = brainModesFindMode(&botModes, (const char *)argv[mArg]);
+          if (found < 0) {
+            fprintf(stderr, "Warning: -mode '%s' is not a mode this brain declares; using '%s'\n",
+                    (const char *)argv[mArg], botModes.modes[0].key);
+          } else {
+            botMode = (uint8_t)found;
+          }
+        } else {
+          fprintf(stderr, "Warning: -mode given with no value; using '%s'\n",
+                  botModes.modes[0].key);
+        }
+      }
+      /* The mode's own default level — "hard" for the default mode, which
+       * is what a lobby bot left alone gets. */
+      uint8_t botDifficulty = (uint8_t)botModes.modes[botMode].defaultLevel;
       if (argExist(argc, argv, "difficulty") == TRUE) {
         int dArg = findArg(argc, argv, "difficulty");
         if (dArg != ARG_NOT_FOUND && argv[dArg][0] != '-') {
-          if (!botDifficultyFromName((const char *)argv[dArg], &botDifficulty)) {
-            fprintf(stderr, "Warning: -difficulty '%s' is not easy/medium/hard; using hard\n",
-                    (const char *)argv[dArg]);
-            botDifficulty = BOT_DIFFICULTY_HARD;
+          /* A level key of the selected mode first; then the frozen
+           * easy/medium/hard words, so an old command line keeps working
+           * against a mode that happens to name its levels differently. */
+          int lvl = brainModeFindLevel(&botModes.modes[botMode],
+                                       (const char *)argv[dArg]);
+          uint8_t legacy = 0;
+          if (lvl >= 0) {
+            botDifficulty = (uint8_t)lvl;
+          } else if (botDifficultyFromName((const char *)argv[dArg], &legacy) &&
+                     legacy < (uint8_t)botModes.modes[botMode].levelCount) {
+            botDifficulty = legacy;
+          } else {
+            fprintf(stderr, "Warning: -difficulty '%s' is not a level of mode '%s'; using '%s'\n",
+                    (const char *)argv[dArg], botModes.modes[botMode].key,
+                    botModes.modes[botMode].levels[botDifficulty].key);
           }
         } else {
-          fprintf(stderr, "Warning: -difficulty given with no value; using hard\n");
+          fprintf(stderr, "Warning: -difficulty given with no value; using '%s'\n",
+                  botModes.modes[botMode].levels[botDifficulty].key);
         }
       }
       /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
@@ -2467,10 +2506,10 @@ int main(int argc, char **argv) {
           fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
                   botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
         }
-        /* Difficulty has to be in the slot's config BEFORE the brain is
-         * created: botManagerAddBot reads it from there to build the
-         * difficulty= token it appends to the staged arg above. */
-        serverSimSetBotConfig(serverSim, (BYTE)i, botDifficulty,
+        /* Mode and difficulty have to be in the slot's config BEFORE the
+         * brain is created: botManagerAddBot reads them from there to build
+         * the mode= / difficulty= tokens it appends to the staged arg. */
+        serverSimSetBotConfig(serverSim, (BYTE)i, botMode, botDifficulty,
                               0 /* personality: normal */, NULL);
         if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);

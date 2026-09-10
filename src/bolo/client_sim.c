@@ -2495,6 +2495,10 @@ const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId) {
   return cs->lobbyTeamName[teamId];
 }
 
+uint8_t clientSimGetLobbyBotMode(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0;
+  return cs->lobbyBotMode[slot];
+}
 uint8_t clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot) {
   if (slot >= 16) return 0;
   return cs->lobbyBotDifficulty[slot];

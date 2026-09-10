@@ -1634,19 +1634,35 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                 }
 
-                /* A bot's two extra name tags: which bot it is and how hard
-                 * it plays. Both come from lobby state the server already
+                /* A bot's extra name tags: which bot it is, which mode it
+                 * is in when that is not the default one, and how hard it
+                 * plays. All of it comes from lobby state the server already
                  * syncs to every client (the brain catalogue + index, and
-                 * LobbyBotConfig.difficulty), so joiners see the same pair
-                 * the host does. Computed before the name is truncated
-                 * because the truncation has to reserve room for them. */
+                 * LobbyBotConfig's mode + difficulty indices, resolved
+                 * against the brain's own modes.txt), so joiners see the
+                 * same run of tags the host does. Computed before the name
+                 * is truncated because the truncation has to reserve room
+                 * for them. */
                 char botBrainTag[BRAIN_LIST_NAME_LEN] = "";
+                const char *botModeTag = "";
                 const char *botDiffTag = "";
-                uint8_t botDiff = BOT_DIFFICULTY_HARD;
+                int botLevel = BOT_DIFFICULTY_HARD;
                 if (isBot) {
                     lobbyBotBrainBaseName(cs, i, botBrainTag, sizeof(botBrainTag));
-                    botDiff = clientSimGetLobbyBotDifficulty(cs, (BYTE)(i));
-                    botDiffTag = langGetText(lobbyBotDifficultyLabelId(botDiff));
+                    const BrainModes *bm = lobbyBotModesFor(cs, i);
+                    int botMode = 0;
+                    lobbyBotModeAndLevel(cs, i, &botMode, &botLevel);
+                    if (bm == NULL || lobbyBotModeUsesLangLevels(bm, botMode)) {
+                        botDiffTag =
+                            langGetText(lobbyBotDifficultyLabelId((uint8_t)botLevel));
+                    } else {
+                        botDiffTag = bm->modes[botMode].levels[botLevel].label;
+                    }
+                    if (bm != NULL && !lobbyBotModeIsDefault(bm, botMode)) {
+                        /* Name the mode too, so a row in the survival
+                         * scenario says so on the row itself. */
+                        botModeTag = bm->modes[botMode].label;
+                    }
                 }
 
                 /* ── Column 2: name + inline tags ────────────────── */
@@ -1663,15 +1679,17 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                      & PLAYER_FLAG_ADMIN)));
                     float nameAvail  = ImGui::GetContentRegionAvail().x;
                     float tagReserve = rowHasTag ? kNameTagW : 0.0f;
-                    /* A bot row carries three tags, not one: BOT, the bot's
-                     * name ("GoalHunter") and its difficulty. Reserve what
-                     * they actually measure so the name gives up the room
+                    /* A bot row carries three tags, not one — four in a
+                     * non-default mode: BOT, the bot's name ("GoalHunter"),
+                     * the mode and its difficulty. Reserve what they
+                     * actually measure so the name gives up the room
                      * instead of the tags spilling into the start dropdown.
                      * Same recipe drawNameTag uses below: 70% font, 6px pad
                      * each side, 6px gap before each pill. */
                     if (showNameTags && isBot) {
-                        const char *extra[2] = { botBrainTag, botDiffTag };
-                        for (int t = 0; t < 2; t++) {
+                        const char *extra[3] = { botBrainTag, botModeTag,
+                                                 botDiffTag };
+                        for (int t = 0; t < 3; t++) {
                             if (!extra[t] || !extra[t][0]) continue;
                             tagReserve += ImGui::CalcTextSize(extra[t]).x * 0.70f
                                         + 12.0f * s + 6.0f * s;
@@ -1766,17 +1784,31 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                         lobbyBotBrainTagColors(cs, i, &nBg, &nFg, &nBd);
                         drawNameTag(botBrainTag, nBg, nFg, nBd);
                     }
+                    if (botModeTag[0]) {
+                        /* The mode, when it is not the default one. Wears
+                         * the difficulty tag's colour scheme (so the run
+                         * still reads as one group) in its amber set, which
+                         * no level tag beside it can be using: an amber
+                         * level tag only happens at index 1, and the mode
+                         * tag sits before it, not next to it. */
+                        drawNameTag(botModeTag,
+                                    g_theme->diffMediumTagBg,
+                                    g_theme->diffMediumTagText,
+                                    g_theme->diffMediumTagBorder);
+                    }
                     if (botDiffTag[0]) {
                         /* Green / amber / red by level, the same reading the
-                         * Easy./Medium./Hard. tagline token gives. */
+                         * Easy./Medium./Hard. tagline token gives. A mode
+                         * with more than three levels runs off the end of
+                         * the scale and paints the rest red. */
                         ImU32 dBg = g_theme->diffHardTagBg;
                         ImU32 dFg = g_theme->diffHardTagText;
                         ImU32 dBd = g_theme->diffHardTagBorder;
-                        if (botDiff == BOT_DIFFICULTY_EASY) {
+                        if (botLevel == BOT_DIFFICULTY_EASY) {
                             dBg = g_theme->diffEasyTagBg;
                             dFg = g_theme->diffEasyTagText;
                             dBd = g_theme->diffEasyTagBorder;
-                        } else if (botDiff == BOT_DIFFICULTY_MEDIUM) {
+                        } else if (botLevel == BOT_DIFFICULTY_MEDIUM) {
                             dBg = g_theme->diffMediumTagBg;
                             dFg = g_theme->diffMediumTagText;
                             dBd = g_theme->diffMediumTagBorder;
@@ -2584,34 +2616,79 @@ static void renderBotAiConfig(ClientSim *cs,
         lastGroupRightX = ImGui::GetItemRectMax().x;
     }
 
-    /* ── Difficulty group ─────────────────────────────────────────
-     * Easy / Medium / Hard, sitting where Bot Code used to be the
-     * interesting control. Wire values stay 0/1/2 (Medium is the old
-     * "normal"), and the chosen difficulty's description is printed under
-     * the dropdown so the player can read what they are picking without
-     * hunting for a tooltip. Every setting plays the same way for now;
-     * only the wording and the token handed to the brain differ. */
+    /* ── Mode and Difficulty groups ─────────────────────────────────────────
+     * The brain says which modes it has and which difficulty levels each
+     * of those modes offers (brains/<brain>/modes.txt, read locally on
+     * every client — see lobbyBotModesFor). The lobby only picks indices:
+     * Mode indexes the brain's mode list, Difficulty indexes the SELECTED
+     * mode's level list, so switching mode re-fills the level dropdown.
+     * For the default mode that list is Easy / Medium / Hard and the
+     * indices are the same 0/1/2 the wire has always carried.
+     *
+     * Every mode and every level plays the same way for now; only the
+     * wording and the tokens handed to the brain differ. */
+    const BrainModes *modes = lobbyBotModesFor(cs, slot);
+    int curMode = 0, curLevel = 0;
+    lobbyBotModeAndLevel(cs, slot, &curMode, &curLevel);
+    const BrainMode *modeSel = (modes != NULL) ? &modes->modes[curMode] : NULL;
+    const uint8_t curPers = clientSimGetLobbyBotPersonality(cs, (BYTE)(slot));
+
+    if (modes != NULL) {
+        float mdX = lastGroupRightX + 24.0f * s;
+        ImGui::SetCursorScreenPos(ImVec2(mdX, formAnchor.y));
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_MODE));
+        const char *modeItems[BRAIN_MODES_MAX];
+        for (int m = 0; m < modes->modeCount; m++) {
+            modeItems[m] = modes->modes[m].label;
+        }
+        int mode = curMode;
+        ImGui::SetNextItemWidth(160.0f * s);
+        if (ImGui::Combo("##botmode", &mode, modeItems, modes->modeCount) &&
+            mode >= 0 && mode < modes->modeCount) {
+            /* A mode change carries the new mode's own default level: the
+             * old index means something different (or nothing) in the new
+             * mode's list, so keeping it would show a level the player
+             * never picked. */
+            const BrainMode *nm = &modes->modes[mode];
+            uint8_t lvl = (uint8_t)nm->defaultLevel;
+            lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)mode, lvl, curPers,
+                               clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
+            gameFrontSetChosenBotModeAndLevel(nm->key, nm->levels[lvl].key);
+        }
+        ImGui::EndGroup();
+        lastGroupRightX = ImGui::GetItemRectMax().x;
+    }
+
     float diffGroupBottomY = 0.0f;
-    {
+    if (modeSel != NULL) {
         float dfX = lastGroupRightX + 24.0f * s;
         ImGui::SetCursorScreenPos(ImVec2(dfX, formAnchor.y));
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
-        const char *diffItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_EASY),
-                                    langGetText(STR_DLGLOBBY_BOTCFG_MEDIUM),
-                                    langGetText(STR_DLGLOBBY_BOTCFG_HARD) };
-        int diff = clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot));
-        if (diff < 0 || diff > BOT_DIFFICULTY_MAX) diff = BOT_DIFFICULTY_HARD;
+        /* The default mode's easy / medium / hard keep their translated
+         * names; any other mode's levels are data and show their own label,
+         * because there are no lang strings for something a brain invented. */
+        const bool langLevels = lobbyBotModeUsesLangLevels(modes, curMode);
+        const char *levelItems[BRAIN_LEVELS_MAX];
+        for (int l = 0; l < modeSel->levelCount; l++) {
+            levelItems[l] = langLevels
+                ? langGetText(lobbyBotDifficultyLabelId((uint8_t)l))
+                : modeSel->levels[l].label;
+        }
+        int diff = curLevel;
         ImGui::SetNextItemWidth(110.0f * s);
-        if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
-            lobbySendBotConfig(cs, (uint8_t)slot,
-                (uint8_t)diff, clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
+        if (ImGui::Combo("##diff", &diff, levelItems, modeSel->levelCount) &&
+            diff >= 0 && diff < modeSel->levelCount) {
+            lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+                (uint8_t)diff, curPers,
                 clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
             /* An explicit pick here is the player's standing preference —
              * persist it so it becomes the default on every future launch
              * (gospel; overrides the single-player skill guess). This is the
              * role the Bot Code dropdown used to play. */
-            gameFrontSetChosenBotDifficulty((uint8_t)diff);
+            gameFrontSetChosenBotModeAndLevel(modeSel->key,
+                                              modeSel->levels[diff].key);
         }
         /* Description of the CURRENT difficulty. Wrapped to whatever is
          * left between this group and the Done button on the form's right
@@ -2624,7 +2701,14 @@ static void renderBotAiConfig(ClientSim *cs,
         if (descWrapW > 300.0f * s) descWrapW = 300.0f * s;
         if (descWrapW < 140.0f * s) descWrapW = 140.0f * s;
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + descWrapW);
-        ImGui::TextDisabled("%s", langGetText(lobbyBotDifficultyDescId((uint8_t)diff)));
+        if (langLevels) {
+            ImGui::TextDisabled("%s",
+                langGetText(lobbyBotDifficultyDescId((uint8_t)diff)));
+        } else {
+            /* No blurb exists for a manifest-defined level, so its label is
+             * the honest thing to show. */
+            ImGui::TextDisabled("%s", modeSel->levels[diff].label);
+        }
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
         diffGroupBottomY = ImGui::GetItemRectMax().y;
@@ -2637,15 +2721,15 @@ static void renderBotAiConfig(ClientSim *cs,
         int pool = (teamId > 0 && teamId < 16) ? clientSimGetLobbyTeamPool(cs, (BYTE)(teamId)) : 0;
         char pickBuf[32];
         lobbyBotPoolPick(pool, usedNames, usedCount, pickBuf, sizeof(pickBuf));
-        lobbySendBotConfig(cs, (uint8_t)slot,
-            clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), pickBuf);
+        lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+            (uint8_t)curLevel, curPers, pickBuf);
         if (slot < MAX_TANKS) lobbyCommandBotNameOverridden()[slot] = false;
     }
     if (nameChanged) {
         /* Manual edit — pin the name so a later pool change doesn't
          * overwrite it. */
-        lobbySendBotConfig(cs, (uint8_t)slot,
-            clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), nameBuf);
+        lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+            (uint8_t)curLevel, curPers, nameBuf);
         if (slot < MAX_TANKS) lobbyCommandBotNameOverridden()[slot] = true;
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
@@ -2678,8 +2762,8 @@ static void renderBotAiConfig(ClientSim *cs,
         if (pers < 0 || pers > 3) pers = 0;
         ImGui::SetNextItemWidth(110.0f * s);
         if (ImGui::Combo("##pers", &pers, persItems, 4)) {
-            lobbySendBotConfig(cs, (uint8_t)slot,
-                clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), (uint8_t)pers,
+            lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+                (uint8_t)curLevel, (uint8_t)pers,
                 clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
         }
     }

@@ -126,12 +126,14 @@ const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) 
 }
 
 void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
-                            uint8_t difficulty, uint8_t personality,
+                            uint8_t mode, uint8_t difficulty,
+                            uint8_t personality,
                             const char *validatedName) {
     if (!sim || slot >= MAX_TANKS) return;
     {
         LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
         if (bc) {
+            bc->mode        = mode;
             bc->difficulty  = difficulty;
             bc->personality = personality;
         }

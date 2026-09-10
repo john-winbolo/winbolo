@@ -49,6 +49,7 @@
 #include "../../common/wb_log.h"
 #include "../../common/prefs.h"
 #include "bolo_rand.h"
+#include "brain_list.h"   /* BrainModes, brainListLoadModesForPath — bot modes */
 #include "client_frontend_connect.h"
 #include "client_sim.h"
 #include "control_event.h"
@@ -1885,8 +1886,9 @@ bool gameFrontSetDlgState(openingStates newState) {
                  * on its very first load. */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
                 if (botBrain[0] == '\0') botBrain = spBrainPath;
-                serverSimSetBotConfig(spServerSim, slot,
-                                      gameFrontSpBotDifficulty(),
+                uint8_t spMode = gameFrontSpBotMode(botBrain);
+                serverSimSetBotConfig(spServerSim, slot, spMode,
+                                      gameFrontSpBotLevel(botBrain, spMode),
                                       0 /* personality: normal */, NULL);
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy, spGameType, hiddenMines);
                 /* serverSimCreateBot loads the brain from the path but leaves
@@ -2728,7 +2730,74 @@ void gameFrontSetOnboardingComplete(void) {
  * Stored as the word, not the number, so the prefs file stays readable and a
  * future difficulty doesn't have to reuse an index. */
 void gameFrontSetChosenBotDifficulty(uint8_t difficulty) {
-  prefsSetString("BOT", "Chosen Difficulty", botDifficultyName(difficulty));
+  gameFrontSetChosenBotModeAndLevel("default", botDifficultyName(difficulty));
+}
+
+/* The mode + level KEYS the player last picked in the lobby gear popup.
+ * Both are the brain's own manifest keys (brains/<brain>/modes.txt), so
+ * "Chosen Difficulty" keeps holding easy/medium/hard for the default mode
+ * — the same words it held before modes existed, which is what makes the
+ * old preference migrate by simply still being read. */
+void gameFrontSetChosenBotModeAndLevel(const char *modeKey,
+                                       const char *levelKey) {
+  prefsSetString("BOT", "Chosen Mode", (modeKey && modeKey[0]) ? modeKey : "default");
+  if (levelKey && levelKey[0]) {
+    prefsSetString("BOT", "Chosen Difficulty", levelKey);
+  }
+}
+
+bool gameFrontGetChosenBotModeKey(char *out, size_t outSz) {
+  char buff[BRAIN_MODE_KEY_LEN];
+  if (!out || outSz == 0) return false;
+  out[0] = '\0';
+  prefsGetString("BOT", "Chosen Mode", "", buff, (int)sizeof(buff));
+  if (buff[0] == '\0') return false;
+  SDL_strlcpy(out, buff, outSz);
+  return true;
+}
+
+bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz) {
+  char buff[BRAIN_MODE_KEY_LEN];
+  if (!out || outSz == 0) return false;
+  out[0] = '\0';
+  prefsGetString("BOT", "Chosen Difficulty", "", buff, (int)sizeof(buff));
+  if (buff[0] == '\0') return false;
+  SDL_strlcpy(out, buff, outSz);
+  return true;
+}
+
+/* Which of a brain's modes a single-player bot is created in: the player's
+ * chosen mode when the brain still declares it, else mode 0 (the default
+ * mode every ordinary game uses). */
+uint8_t gameFrontSpBotMode(const char *brainPath) {
+  char key[BRAIN_MODE_KEY_LEN];
+  BrainModes modes;
+  if (!gameFrontGetChosenBotModeKey(key, sizeof(key))) return 0;
+  brainListLoadModesForPath(brainPath, &modes);
+  int idx = brainModesFindMode(&modes, key);
+  return (idx > 0) ? (uint8_t)idx : 0;
+}
+
+/* The difficulty index that goes with gameFrontSpBotMode: the player's
+ * chosen level key inside that mode, else the mode's own default level.
+ * For mode 0 of a manifest-less brain this is exactly the old
+ * gameFrontSpBotDifficulty answer. */
+uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
+  char key[BRAIN_MODE_KEY_LEN];
+  BrainModes modes;
+  brainListLoadModesForPath(brainPath, &modes);
+  if (mode >= (uint8_t)modes.modeCount) mode = 0;
+  const BrainMode *m = &modes.modes[mode];
+  if (mode == 0) {
+    /* Default mode keeps the skill guess, which is the whole point of it. */
+    uint8_t d = gameFrontSpBotDifficulty();
+    return (d < (uint8_t)m->levelCount) ? d : (uint8_t)m->defaultLevel;
+  }
+  if (gameFrontGetChosenBotLevelKey(key, sizeof(key))) {
+    int lvl = brainModeFindLevel(m, key);
+    if (lvl >= 0) return (uint8_t)lvl;
+  }
+  return (uint8_t)m->defaultLevel;
 }
 
 /* Per-bot-name tag colour, kept under "BOT" / "Tag Color <name>" as
@@ -2765,6 +2834,11 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
   char buff[32];
   if (!out) return false;
+  /* Only the DEFAULT mode's level keys are easy/medium/hard, so a player
+   * whose last pick was in another mode has no default-mode preference to
+   * honour here — the skill guess takes over instead. */
+  prefsGetString("BOT", "Chosen Mode", "default", buff, (int)sizeof(buff));
+  if (buff[0] != '\0' && SDL_strcasecmp(buff, "default") != 0) return false;
   prefsGetString("BOT", "Chosen Difficulty", "", buff, (int)sizeof(buff));
   if (buff[0] != '\0' && botDifficultyFromName(buff, out)) return true;
   /* Migration from the pre-difficulty pref, which named a brain directory:

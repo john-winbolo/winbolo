@@ -1363,6 +1363,10 @@ static const LangEntry langTable[] = {
     {2158, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they avoid chasing the same target, though it plays cautiously and steers clear of big risks. Its steady, easy-to-read behaviour makes it a gentler challenge. Best for newer players, or anyone who wants a more relaxed game."},
     {2159, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they can strike a target together. It will join a group attack and press an advantage, but it picks its fights, keeps itself fuelled, and gives ground when the odds turn against it. Best for players who know the game and want a real opponent rather than a relentless one."},
     {2160, "This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent."},
+
+    /* Bot AiConfig: the Mode dropdown's label. The mode names themselves
+       come from the brain's own modes.txt, so they are data, not strings. */
+    {2161, "Mode"},
     /* Balance from WBN */
     {1345, "Balance from WBN"},
     {1346, "Balance teams from WBN"},

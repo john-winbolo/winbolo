@@ -978,6 +978,11 @@ uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamStartSide(const ClientSim *cs, BYTE teamId);
 const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
+/* Which of the brain's declared modes this bot runs in — an index into
+ * brainListLoadModes(<the slot's brain>)'s list, 0 being the default mode
+ * every ordinary game uses. clientSimGetLobbyBotDifficulty is then an index
+ * into THAT mode's level list. */
+uint8_t     clientSimGetLobbyBotMode(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
 /* Returns the catalogue index of the brain assigned to a lobby bot slot.

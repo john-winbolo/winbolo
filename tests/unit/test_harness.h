@@ -336,6 +336,16 @@ int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
+
+/* A brain's mode manifest (test_brain_modes.c): brains/<brain>/modes.txt,
+ * the API by which a brain tells the lobby which modes it has and which
+ * difficulty levels each of them offers. Happy path, the synthesized
+ * fallback when there is no manifest, malformed lines being skipped rather
+ * than fatal, and the two fixed-size caps. */
+int run_brain_modes_manifest_parses(void);
+int run_brain_modes_missing_falls_back(void);
+int run_brain_modes_malformed_lines_skipped(void);
+int run_brain_modes_counts_clamped(void);
 int run_bolo_rand_golden_sequence(void);
 
 /* Pathfinder diagonal corner-cut rule (test_pf_corner_cut.c): the nav
@@ -1610,6 +1620,7 @@ int run_lang_name_table(void);
  * nobody asked for. Plus the difficulty <-> word round trip the CLI's
  * -difficulty flag and the "Chosen Difficulty" preference share. */
 int run_bot_init_arg_difficulty_token(void);
+int run_bot_init_arg_mode_tokens(void);
 int run_bot_difficulty_names(void);
 
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
