@@ -119,7 +119,19 @@ typedef enum {
   lobbyCountdown,
   lobbyGameStart,
   lobbyPlayerJoin,
-  lobbyPlayerLeave
+  lobbyPlayerLeave,
+  /* Smart-ping sounds: one per PING_KIND_*, plus the default every kind
+   * without a file of its own plays. Which of the two a received ping ends up
+   * playing is pingSoundResolve's decision (src/gui/ping_sounds.h); nothing
+   * else may make it. These are client-side like the lobby sounds above and
+   * never travel as an EVENT_SOUND soundId. */
+  pingDefault,
+  pingStandard,
+  pingCaution,
+  pingAssist,
+  pingAttack,
+  pingOnMyWay,
+  pingBotCommand
 } sndEffects;
 
 #endif

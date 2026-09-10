@@ -101,10 +101,17 @@ static void pmStrokeRect(SDL_Renderer *renderer, float x0, float y0,
 static void pmDrawName(SDL_Renderer *renderer, const PingMarkerLabel *label,
                        float cx, float cy, float tileH, float alpha) {
     float scale;
+    char  shown[PING_NAME_DISPLAY_MAX];
     if (label == NULL || label->cache == NULL || label->font == NULL) return;
     if (label->name == NULL || label->name[0] == '\0') return;
     scale = (label->scale > 0.0f) ? label->scale : 1.0f;
-    tankLabelDrawNameCentred(label->cache, renderer, label->font, label->name,
+    /* Shortened to PING_NAME_MAX_CHARS with a real U+2026: these faces are the
+     * Sarasa TTFs and every one of them carries that glyph. The cache below is
+     * keyed on the slot and rebuilds when the string changes, so it has to be
+     * handed the shortened form every frame, not the full one. */
+    pingDisplayName(label->name, PING_NAME_ELLIPSIS, shown, sizeof(shown));
+    if (shown[0] == '\0') return;
+    tankLabelDrawNameCentred(label->cache, renderer, label->font, shown,
                              (BYTE)label->slot, cx,
                              cy + tileH * (0.5f + PING_MARKER_NAME_GAP),
                              scale, alpha);

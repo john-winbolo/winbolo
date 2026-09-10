@@ -4443,6 +4443,8 @@ set(_unit_test_names
     ping_edge_corner
     ping_rect_inset
     ping_event_wire
+    ping_sound_fallback
+    ping_name_truncate
     ping_dispatch_accepts_and_builds_event
     ping_dispatch_rejects_lobby
     ping_dispatch_rejects_empty_slot_and_out_of_range
