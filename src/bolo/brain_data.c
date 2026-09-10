@@ -195,6 +195,7 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->hidden = utilIsTankInTrees(&gs->mp, &gs->pb, &gs->bs, value->tankx, value->tanky);
 
   tankGetStats(&MY_TANK(csPtr), &(value->shells), &(value->mines), &(value->armour), &(value->trees));
+  value->destroyed = tankIsDestroyed(&MY_TANK(csPtr)) ? TRUE : FALSE;
 
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */
@@ -545,7 +546,7 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
    * will pick it up and put it in the InputPacket as-is.  The server
    * sim decrements to 0-based before passing to lgmAddRequest. */
   if (value->build->action != 0) {
-    if (tankGetArmour(&MY_TANK(csPtr)) > TANK_FULL_ARMOUR) {
+    if (tankIsDestroyed(&MY_TANK(csPtr))) {
       /* Tank is dead, cancel build */
       value->build->action = 0;
     }

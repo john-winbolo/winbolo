@@ -228,7 +228,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
 void lgmAddRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action) {
   bool isServer = sim->isServer;
 
-  if ((*lgman)->isDead == TRUE && tankGetArmour(tnk) <= TANK_FULL_ARMOUR) {
+  if ((*lgman)->isDead == TRUE && !tankIsDestroyed(tnk)) {
 	/* LGM is parachuting in and tank is alive */
     sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_MAN_DEAD, NULL);
   } else if ((*lgman)->action != LGM_IDLE) {
@@ -821,7 +821,7 @@ void lgmReturn(GameSim *sim, lgm *lgman, tank *tnk) {
   conv >>= TANK_SHIFT_MAPSIZE;
   bmy = (BYTE) conv;
   
-  if (tankGetArmour(tnk) > TANK_FULL_ARMOUR || newmx == 0 || newmy == 0) {
+  if (tankIsDestroyed(tnk) || newmx == 0 || newmy == 0) {
     speed = 0;
     return;
   } else if ((bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) || onBoat == TRUE) {

@@ -388,6 +388,60 @@ bool tankIsMoving(tank *value);
 BYTE tankGetArmour(tank *value);
 
 /*********************************************************
+*NAME:          tankIsDestroyed
+*PURPOSE:
+*  Returns whether the tank has been destroyed.
+*
+*  Ask this rather than comparing armour against
+*  TANK_FULL_ARMOUR: a live tank can sit at zero armour,
+*  so the armour value alone cannot tell the two apart.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+bool tankIsDestroyed(tank *value);
+
+/*********************************************************
+*NAME:          tankSetDestroyed
+*PURPOSE:
+*  Sets or clears the tank's destroyed state.
+*
+*ARGUMENTS:
+*  value     - Pointer to the tank structure
+*  destroyed - TRUE if the tank has been destroyed
+*********************************************************/
+void tankSetDestroyed(tank *value, bool destroyed);
+
+/*********************************************************
+*NAME:          tankGetArmourForWire
+*PURPOSE:
+*  Returns the armour byte a snapshot carries for this tank.
+*
+*  TankSnapshot sends armour as a plain U8 with nowhere to
+*  put a flag, so a destroyed tank goes out as
+*  TANK_FULL_ARMOUR + 1. This and tankSetArmourFromWire are
+*  the only two places that know that encoding.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+BYTE tankGetArmourForWire(tank *value);
+
+/*********************************************************
+*NAME:          tankSetArmourFromWire
+*PURPOSE:
+*  Applies a snapshot's armour byte to this tank, turning
+*  the destroyed sentinel back into the explicit state so
+*  everything above the codec asks tankIsDestroyed instead
+*  of comparing an armour value.
+*
+*ARGUMENTS:
+*  value      - Pointer to the tank structure
+*  wireArmour - The armour byte the snapshot carried
+*********************************************************/
+void tankSetArmourFromWire(tank *value, BYTE wireArmour);
+
+/*********************************************************
 *NAME:          tankGetScreenMX
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/11/98

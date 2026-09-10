@@ -5119,7 +5119,7 @@ static void appRender(BrainTestApp *app) {
                 t->speed     = (SPEEDTYPE)((float)ts->speed / 256.0f);
                 t->onBoat    = (ts->tankStatus & 0x0F) ? TRUE : FALSE;
                 t->deathWait = ts->deathWait;
-                t->armour    = ts->armour;
+                tankSetArmourFromWire(&t, ts->armour);
                 t->shells    = ts->shells;
                 t->mines     = ts->mines;
                 t->trees     = ts->trees;

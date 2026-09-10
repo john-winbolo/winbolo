@@ -782,7 +782,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 posHistoryRecord(&sim->posHistory[count],
                                  (*sim->sim.tanks[count]).x,
                                  (*sim->sim.tanks[count]).y,
-                                 (*sim->sim.tanks[count]).armour <= TANK_FULL_ARMOUR);
+                                 !tankIsDestroyed(&sim->sim.tanks[count]));
             }
         }
 
@@ -816,7 +816,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 if (!sim->playerConnected[count] || sim->sim.tanks[count] == NULL) {
                     continue;
                 }
-                if (tankGetArmour(&sim->sim.tanks[count]) > TANK_FULL_ARMOUR) {
+                if (tankIsDestroyed(&sim->sim.tanks[count])) {
                     continue;
                 }
                 tankGetWorld(&sim->sim.tanks[count], &twx, &twy);
