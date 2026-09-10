@@ -398,18 +398,23 @@ end
 -- Callers MUST `return` immediately after calling this: clear_attack_goal
 -- mutates state.goal in place (kind="none", every other field wiped), so the
 -- caller's cached `goal` local is no longer an attack_pill goal.
-local function suicider_kill_handoff(goal, state, world, info, now, site)
+-- reason: why we skip the kill swerve and go straight to capture -- either a
+-- pill_suicider (default) or, under BLITZ_SWERVE_ONLY_WHEN_HIT, an undamaged
+-- committed 3+ blitzer (reason="blitz_hold"): same "commit onto the corpse, no
+-- dodge" behaviour, its dodge returns only once it is hit.
+local function suicider_kill_handoff(goal, state, world, info, now, site, reason)
+  reason = reason or "pill_suicider"
   local pid = goal.target_id
   local gmx, gmy = goal.mx, goal.my
   mark_kill_pickup(state, pid, gmx, gmy, now)
-  clear_attack_goal(state, "pill dead, suicider: straight to capture")
+  clear_attack_goal(state, "pill dead, " .. reason .. ": straight to capture")
   local took = handoff_to_capture_pill(state, world, info, pid, now)
   if took then
     print(string.format(TAG ..
-      " ATTACK: pill dead, suicider: straight to capture (site=%s) — taking capture_pill on it", site))
+      " ATTACK: pill dead, %s: straight to capture (site=%s) — taking capture_pill on it", reason, site))
   else
     print(string.format(TAG ..
-      " ATTACK: pill dead, suicider: straight to capture (site=%s) — releasing to capture_pill", site))
+      " ATTACK: pill dead, %s: straight to capture (site=%s) — releasing to capture_pill", reason, site))
   end
 end
 
@@ -3697,11 +3702,15 @@ end
 -- on, >= MIN blitzers are on this pill, we are still UNDAMAGED (armour has not
 -- dropped below the value we committed with -- ANY hit ends the hold), and we
 -- are not a pill_suicider (that path is strictly stronger and is checked first
--- at every gated site).  The party count is cached on the goal and lazily
--- refreshed every 50 ticks -- cheap, and only while committed + mode on.
+-- at every gated site).  The party count is recomputed ONCE PER TICK (cached
+-- across the several calls within a tick) -- cheap (one <=15-slot ally scan),
+-- and only while committed + mode on. A 50-tick cache was too stale: a blitzer
+-- that committed early would miss a late joiner and still see party<MIN when the
+-- pill dies (e.g. bot2 committed t=20, bot1 t=475, pill died t=479 -> bot2's
+-- 470-tick recount saw only 2 and peeled). Per-tick keeps every member current.
 local function blitz_commit_hold(goal, state, info, now)
   if not (C.BLITZ_SWERVE_ONLY_WHEN_HIT and goal._blitz_committed) then return false end
-  if (now - (goal._blitz_party_tick or 0)) >= 50 then
+  if goal._blitz_party_tick ~= now then
     goal._blitz_party      = blitz_party_count(state, now, info.player_number or -1, goal.target_id)
     goal._blitz_party_tick = now
   end
@@ -6026,6 +6035,13 @@ function M.update_attack_substate(goal, state, world, info)
         suicider_kill_handoff(goal, state, world, info, now, "charge")
         return
       end
+      -- Blitz-only-when-hit: an undamaged committed 3+ blitzer likewise does NOT
+      -- peel on the kill -- it commits onto the corpse and captures. The dodge
+      -- returns only once it is actually hit (blitz_commit_hold goes false).
+      if blitz_commit_hold(goal, state, info, now) then
+        suicider_kill_handoff(goal, state, world, info, now, "charge", "blitz_hold")
+        return
+      end
       enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
       print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
@@ -6673,6 +6689,12 @@ function M.update_attack_substate(goal, state, world, info)
         suicider_kill_handoff(goal, state, world, info, now, "shoot_pill_ppt")
         return
       end
+      -- Blitz-only-when-hit: undamaged committed 3+ blitzer commits onto the
+      -- corpse instead of peeling; the dodge returns once hit.
+      if _commit_hold then
+        suicider_kill_handoff(goal, state, world, info, now, "shoot_pill_ppt", "blitz_hold")
+        return
+      end
       should_swerve = true
       pill_dead     = true
     elseif goal._kill_attempt and on_target_in_flight >= pill_hp and not _commit_hold then
@@ -6725,6 +6747,12 @@ function M.update_attack_substate(goal, state, world, info)
       -- body we just made, then bail out (clear_attack_goal wiped `goal`).
       if state.is_pill_suicider then
         suicider_kill_handoff(goal, state, world, info, now, "engage")
+        return
+      end
+      -- Blitz-only-when-hit: undamaged committed 3+ blitzer commits onto the
+      -- corpse instead of peeling; the dodge returns once hit.
+      if blitz_commit_hold(goal, state, info, now) then
+        suicider_kill_handoff(goal, state, world, info, now, "engage", "blitz_hold")
         return
       end
       enter_swerve(goal, world, state, info, pmx, pmy, "kill")
