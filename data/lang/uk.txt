@@ -2029,3 +2029,95 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Поставити обидві команди 
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Команди на {string1}. Натисніть, щоб повернутися до власних стартів.
 
 STR_SOUND_LOAD_FAILED=Помилка завантаження звукових ефектів
+
+STR_DLGLOBBY_AWAITING_MAP=Очікування сервера...
+STR_DLGSETTINGS_HOSTING_VOICE=Голосовий чат
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Увімкнено
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Вимкнено
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Близькість
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Вимкнено відкидає голос замість того, щоб передавати його будь-кому. Близькість поки не реалізована і працює так само, як Увімкнено.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Голос
+STR_DLGSETTINGS_VOICE_LOOPBACK=Перевірити мікрофон
+STR_DLGSETTINGS_VOICE_MICGAIN=Підсилення мікрофона
+STR_DLGSETTINGS_VOICE_LEVEL=Рівень входу
+STR_DLGSETTINGS_VOICE_ENABLE=Увімкнути голос
+STR_DLGSETTINGS_VOICE_MODE=Режим
+STR_DLGSETTINGS_VOICE_MODE_OFF=Вимкнено
+STR_DLGSETTINGS_VOICE_MODE_PTT=Натиснути і говорити
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Відкритий мікрофон
+STR_DLGSETTINGS_VOICE_PTTKEY=Клавіша для розмови
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Передає
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Не передає
+STR_DLGSETTINGS_VOICE_VOLUME=Гучність голосу
+STR_DLGSETTINGS_VOICE_TANKICONS=Показувати значки мікрофона над танками
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Придушення луни
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Запис...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Відтворення...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Недоступно в цій системі
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Обробляється системою
+STR_DLGSETTINGS_VOICE_MICDEVICE=Мікрофон
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Пристрій відтворення
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Системний за замовчуванням
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Цей сервер вимкнув голосовий чат
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Натиснути і говорити
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Заглушити мікрофон
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Говорить — натисніть, щоб заглушити
+STR_PLAYER_TIP_VOICE_IDLE=Є мікрофон — натисніть, щоб заглушити
+STR_PLAYER_TIP_VOICE_SELFMUTED=Мікрофон вимкнено — натисніть, щоб заглушити
+STR_PLAYER_TIP_VOICE_NOMIC=Немає мікрофона — натисніть, щоб заглушити
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Заглушено вами — натисніть, щоб увімкнути звук
+STR_PLAYER_TIP_VOICE_SELF=Ваш мікрофон — натисніть, щоб заглушити
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=У вас немає мікрофона
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Ваш мікрофон вимкнено — натисніть, щоб увімкнути звук
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=Наскільки голосно тут чути цього гравця
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Ваш мікрофон і налаштування голосу
+STR_DLGLOBBY_VOICE_OFF=Голос вимкнено
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Хтось користується голосовим чатом. Ваш вимкнено — увімкніть його значком шестірні поруч із вашим ім'ям.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Заглушено вами і говорить — натисніть, щоб увімкнути звук
+STR_DLGSETTINGS_MASTER_VOLUME=Загальна гучність
+STR_DLGSETTINGS_EFFECTS_VOLUME=Гучність ефектів
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Панель гравців
+
+# Розумний пінг (кругове меню)
+MESSAGE_PING_STANDARD={player}: Пінг!
+MESSAGE_PING_CAUTION={player}: Увага!
+MESSAGE_PING_ASSIST={player}: Допоможіть!
+MESSAGE_PING_ATTACK={player}: Атака!
+MESSAGE_PING_ON_MY_WAY={player}: Вже йду!
+MESSAGE_PING_BOT_COMMAND={player}: Команда боту
+STR_PING_STANDARD=Пінг
+STR_PING_CAUTION=Увага
+STR_PING_ASSIST=Допоможіть
+STR_PING_ATTACK=Атака
+STR_PING_ON_MY_WAY=Вже йду
+STR_PING_BOT_COMMAND=Команда боту
+STR_DLGKEYSETUP_PING=Розумний пінг
+STR_DLGKEYSETUP_PING_ALT=Розумний пінг — альтернативні клавіші
+STR_DLGKEYSETUP_PRESSACHORD=Натисніть клавішу або кнопку миші
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Ліва кнопка миші
+STR_PING_MOUSE_MIDDLE=Середня кнопка миші
+STR_PING_MOUSE_RIGHT=Права кнопка миші
+STR_PING_MOUSE_X1=Миша 4
+STR_PING_MOUSE_X2=Миша 5
+STR_DLGKEYSETUP_PING_ALT2=Розумний пінг — альтернативні клавіші 2

@@ -893,6 +893,18 @@ void clientSimNetSendViewCycle(ClientSim *cs, uint8_t kind, uint8_t direction,
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendPing(ClientSim *cs, uint8_t kind,
+                          uint16_t worldX, uint16_t worldY) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  if (kind >= PING_KIND_COUNT) return;
+  ClientCommand cmd = { .type = CMD_PING };
+  cmd.u.ping.kind   = kind;
+  cmd.u.ping.worldX = worldX;
+  cmd.u.ping.worldY = worldY;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 /* === Voice === */
 
 void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen,

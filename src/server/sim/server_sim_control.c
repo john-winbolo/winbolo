@@ -39,6 +39,25 @@
 #include "../../common/mp_diag_log.h"
 #include "../../common/wb_log.h"   /* WB_LOG_INFO — the newswire-mute flip trace */
 
+/* A ping is a team signal. The sender always sees its own (its client draws
+ * nothing until the server echoes it back, so this is the only copy it gets);
+ * everyone on the sender's lobby team, and anyone allied with the sender,
+ * sees it too. Team 0 means "unassigned" rather than "team zero", so a
+ * teamless sender pings for itself alone. */
+bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
+    const LobbyPlayer *sLp;
+    const LobbyPlayer *rLp;
+    if (sim == NULL) return false;
+    if (recipient >= MAX_TANKS || sender >= MAX_TANKS) return false;
+    if (recipient == sender) return true;
+    if (playersIsAllie(&sim->sim.plyrs, recipient, sender)) return true;
+    sLp = serverSimGetLobbyPlayer(sim, sender);
+    rLp = serverSimGetLobbyPlayer(sim, recipient);
+    if (sLp == NULL || rLp == NULL) return false;
+    if (sLp->teamNumber == 0) return false;
+    return sLp->teamNumber == rLp->teamNumber;
+}
+
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
@@ -88,6 +107,36 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
         sim->events[sim->eventCount] = *event;
         sim->eventCount++;
     }
+}
+
+void serverSimFlushPendingPings(ServerSim *sim) {
+    int i;
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->hasPendingPing[i]) continue;
+        /* A full frame buffer is a wait, not a loss. serverSimAddEvent drops
+         * silently once the buffer is full, and this event must not be one of
+         * the drops: EVENT_PING is reliable, and its sender has already been
+         * answered CMD_OK, so a dropped one is a marker the player watched
+         * themselves place that nobody — including them — ever sees. Leave the
+         * pending flag set and let a later tick, with room again, buffer it.
+         * Late by a frame or two beats gone. */
+        if (sim->eventCount >= MAX_SNAPSHOT_EVENTS) break;
+        sim->hasPendingPing[i] = false;
+        /* Buffer the ping into the freshly-cleared per-frame event buffer so
+         * both the per-client snapshot build and the UDP event drain (both run
+         * after the tick) see it. The dispatch arm records but never buffers,
+         * so this is the one and only add for this ping. */
+        serverSimAddEvent(sim, &sim->pendingPing[i]);
+    }
+}
+
+void serverSimResetPingState(ServerSim *sim) {
+    if (sim == NULL) return;
+    memset(sim->hasPendingPing, 0, sizeof(sim->hasPendingPing));
+    memset(sim->pingLastTick, 0, sizeof(sim->pingLastTick));
+    memset(sim->pingBurstTicks, 0, sizeof(sim->pingBurstTicks));
+    memset(sim->pingBurstIdx, 0, sizeof(sim->pingBurstIdx));
 }
 
 void serverSimClearBalanceProposal(ServerSim *sim) {

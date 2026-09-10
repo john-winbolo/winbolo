@@ -18,12 +18,15 @@
 *********************************************************/
 
 #include <math.h>
+#include <string.h>
 #include <SDL3/SDL.h>
 #include "input_gamepad.h"
 #include "input_joystick.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../steam/steam_input_actions.h"
 #include "../../common/wb_log.h"
+#include "ping_overlay.h"   /* pingOverlayIsMenuOpen — the pad pie owns the pad */
+#include "input_packet.h"    /* PING_KIND_* / PING_KIND_COUNT */
 
 /* Axis normalisation: int16 range to -1..1 */
 #define AXIS_NORM (1.0f / 32767.0f)
@@ -56,6 +59,10 @@ static bool s_buildCursorToggleEdge = false;
 static bool s_viewPlayersEdge   = false;
 static bool s_buildCancelEdge   = false;
 static bool s_tankViewEdge      = false;
+/* The direct ping whose button just went down (a PING_KIND_*), or -1. One
+   slot: a pad cannot press two of them in a frame in any way worth
+   answering, and the newest press is the one the player meant. */
+static int  s_pingDirectEdgeKind = -1;
 static bool s_activeDisconnectedEdge = false;
 
 /* Per-trigger last-axis state for edge synthesis when a trigger is
@@ -119,6 +126,7 @@ static bool s_path_a_last_build_cursor_toggle = false;
 static bool s_path_a_last_view_players   = false;
 static bool s_path_a_last_build_cancel   = false;
 static bool s_path_a_last_tank_view      = false;
+static bool s_path_a_last_ping_direct[PING_KIND_COUNT];
 
 static void reset_path_a_edges(void) {
   s_path_a_last_pause           = false;
@@ -131,6 +139,7 @@ static void reset_path_a_edges(void) {
   s_path_a_last_view_players   = false;
   s_path_a_last_build_cancel   = false;
   s_path_a_last_tank_view      = false;
+  memset(s_path_a_last_ping_direct, 0, sizeof(s_path_a_last_ping_direct));
 }
 
 static bool path_a_active(void) {
@@ -168,6 +177,13 @@ static const char *kActionNames[GP_ACT_COUNT] = {
   "build_cancel",
   "lock_heading",
   "tank_view",
+  "ping_menu",
+  "ping_standard",
+  "ping_caution",
+  "ping_assist",
+  "ping_attack",
+  "ping_on_my_way",
+  "ping_bot_command",
 };
 
 const char *inputGamepadActionName(GamepadAction a) {
@@ -223,7 +239,9 @@ void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
   out->b[GP_ACT_VIEW_PLAYERS].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_RIGHT };
   out->b[GP_ACT_BUILD_CANCEL].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
   out->b[GP_ACT_LOCK_HEADING].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
-  /* TANK_VIEW intentionally unbound by default. */
+  /* TANK_VIEW and every smart-ping action intentionally unbound by default:
+     the pad has no spare button left, and a ping the player did not ask for
+     goes to their whole team. */
 }
 
 static GamepadBinding *slotPtr(GamepadActionBindings *ab, GamepadSlot s) {
@@ -285,6 +303,18 @@ static bool actionIsHeld(GamepadAction a) {
    accumulator instead.  Held actions (fire, mine, gunsight inc/dec)
    are intentionally absent: their queries poll live state. */
 static void fireEdgeForAction(GamepadAction a) {
+  /* While the pie is open the pad belongs to it: the d-pad is picking a
+     sector, not cycling build types, and a ping the player is in the middle
+     of aiming must not also open the players panel on the way past. Held
+     actions (fire, mine) are unaffected — they poll live state. */
+  if (pingOverlayIsMenuOpen() &&
+      (a < GP_ACT_PING_MENU || a > GP_ACT_PING_BOT_COMMAND)) {
+    return;
+  }
+  if (a >= GP_ACT_PING_DIRECT_FIRST && a <= GP_ACT_PING_BOT_COMMAND) {
+    s_pingDirectEdgeKind = (int)a - (int)GP_ACT_PING_DIRECT_FIRST;
+    return;
+  }
   switch (a) {
     case GP_ACT_BUILD_PREV:          s_buildSelectChange     = -1; break;
     case GP_ACT_BUILD_NEXT:          s_buildSelectChange     = +1; break;
@@ -353,6 +383,7 @@ void inputGamepadInit(void) {
   s_viewPlayersEdge   = false;
   s_buildCancelEdge   = false;
   s_tankViewEdge      = false;
+  s_pingDirectEdgeKind = -1;
   s_activeDisconnectedEdge = false;
   s_triggerWasPressed[0] = false;
   s_triggerWasPressed[1] = false;
@@ -517,6 +548,9 @@ bool inputGamepadActivityDetected(void) {
       SI_ACTION_BUILD_PREV, SI_ACTION_BUILD_NEXT, SI_ACTION_BUILD_CURSOR_TOGGLE,
       SI_ACTION_QUICK_CHAT, SI_ACTION_PAUSE, SI_ACTION_VIEW_PLAYERS,
       SI_ACTION_BUILD_CANCEL, SI_ACTION_LOCK_HEADING, SI_ACTION_TANK_VIEW,
+      SI_ACTION_PING_MENU, SI_ACTION_PING_STANDARD, SI_ACTION_PING_CAUTION,
+      SI_ACTION_PING_ASSIST, SI_ACTION_PING_ATTACK, SI_ACTION_PING_ON_MY_WAY,
+      SI_ACTION_PING_BOT_COMMAND,
     };
     for (size_t i = 0; i < sizeof(kDigital) / sizeof(kDigital[0]); i++) {
       if (steam_input_is_action_pressed(kDigital[i])) return true;
@@ -729,6 +763,12 @@ bool inputGamepadGetScrollDirection(float *dx, float *dy) {
   if (dx) *dx = 0.0f;
   if (dy) *dy = 0.0f;
 
+  /* The right stick is how the pad picks a sector of the ping pie, so while
+     the pie is open it is not also scrolling the map out from under the
+     square the ping is already aimed at. Same call the mouse wheel's two
+     gates make for the same reason. */
+  if (pingOverlayIsMenuOpen()) return false;
+
   float x, y;
   if (path_a_active()) {
     x = 0.0f;
@@ -895,6 +935,87 @@ bool inputGamepadIsViewPlayersEdge(void) {
   bool v = s_viewPlayersEdge;
   s_viewPlayersEdge = false;
   return v;
+}
+
+/* --- Smart ping --- */
+
+bool inputGamepadIsPingMenuHeld(void) {
+  if (path_a_active()) {
+    return steam_input_is_action_pressed(SI_ACTION_PING_MENU);
+  }
+  if (!s_activeGamepad) return false;
+  return actionIsHeld(GP_ACT_PING_MENU);
+}
+
+bool inputGamepadConsumePingDirect(int *outKind) {
+  if (path_a_active()) {
+    /* Steam Input is polled, so the edge is synthesised here the way every
+       other Path A edge above is. The lowest-numbered kind pressed this frame
+       wins; the rest keep their held state and fire on their own frame if the
+       player is still on them. */
+    static const char *const kDirect[PING_KIND_COUNT] = {
+      SI_ACTION_PING_STANDARD, SI_ACTION_PING_CAUTION, SI_ACTION_PING_ASSIST,
+      SI_ACTION_PING_ATTACK, SI_ACTION_PING_ON_MY_WAY,
+      SI_ACTION_PING_BOT_COMMAND,
+    };
+    int  found = -1;
+    int  i;
+    for (i = 0; i < PING_KIND_COUNT; i++) {
+      bool now  = steam_input_is_action_pressed(kDirect[i]);
+      bool edge = now && !s_path_a_last_ping_direct[i];
+      s_path_a_last_ping_direct[i] = now;
+      if (edge && found < 0) found = i;
+    }
+    if (found < 0) return false;
+    if (outKind) *outKind = found;
+    return true;
+  }
+
+  if (s_pingDirectEdgeKind < 0) return false;
+  if (outKind) *outKind = s_pingDirectEdgeKind;
+  s_pingDirectEdgeKind = -1;
+  return true;
+}
+
+bool inputGamepadGetPingAim(float *outX, float *outY) {
+  float x = 0.0f, y = 0.0f, dist;
+
+  if (outX) *outX = 0.0f;
+  if (outY) *outY = 0.0f;
+
+  /* The right stick first — the same stick that scrolls the map, which is
+     held back while the pie is open (inputGamepadGetScrollDirection). */
+  if (path_a_active()) {
+    steam_input_get_analog_action(SI_ANALOG_MAP_SCROLL, &x, &y);
+  } else if (s_activeGamepad) {
+    x = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHTX) * AXIS_NORM;
+    y = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHTY) * AXIS_NORM;
+  }
+  dist = sqrtf(x * x + y * y);
+  if (dist >= SCROLL_DEADZONE) {
+    if (outX) *outX = x / dist;
+    if (outY) *outY = y / dist;
+    return true;
+  }
+
+  /* Then the d-pad, for a pad whose right stick the player would rather keep
+     for the map. Path A has no d-pad of its own to read — Steam maps it to
+     whatever actions the player bound — so this is the native path only. */
+  if (s_activeGamepad) {
+    x = 0.0f;
+    y = 0.0f;
+    if (SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT))  x -= 1.0f;
+    if (SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) x += 1.0f;
+    if (SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_DPAD_UP))    y -= 1.0f;
+    if (SDL_GetGamepadButton(s_activeGamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN))  y += 1.0f;
+    dist = sqrtf(x * x + y * y);
+    if (dist > 0.0f) {
+      if (outX) *outX = x / dist;
+      if (outY) *outY = y / dist;
+      return true;
+    }
+  }
+  return false;
 }
 
 bool inputGamepadConsumeActiveDisconnect(void) {

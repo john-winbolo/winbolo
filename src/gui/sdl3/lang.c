@@ -2051,12 +2051,42 @@ static const LangEntry langTable[] = {
     {2095, "Your microphone and voice settings"},
     {2096, "Voice is turned off"},
 
+    /* Lobby chat — said once when somebody else is heard and voice is off here */
+    {2153, "Someone is using voice chat. Yours is off — turn it on with the cog beside your name."},
+
     /* Players panel — a player muted here who is talking anyway */
     {2097, "Muted by you, and talking — click to unmute"},
 
     /* Sound settings — the three volumes, of which "Voice volume" is 2042 */
     {2100, "Master volume"},
     {2101, "Effects volume"},
+
+    /* Smart ping: newswire lines, slice names, and the key-setup chord
+       vocabulary. */
+    {2129, "{player}: Ping!"},
+    {2130, "{player}: Caution!"},
+    {2131, "{player}: Assist me!"},
+    {2132, "{player}: Attack!"},
+    {2133, "{player}: On my way!"},
+    {2134, "{player}: Bot command"},
+    {2135, "Ping"},
+    {2136, "Caution"},
+    {2137, "Assist Me"},
+    {2138, "Attack"},
+    {2139, "On My Way"},
+    {2140, "Bot Command"},
+    {2141, "Smart Ping"},
+    {2142, "Smart Ping Alternate Keys"},
+    {2143, "Press a key or mouse button"},
+    {2144, "Ctrl"},
+    {2145, "Alt"},
+    {2146, "Shift"},
+    {2147, "Left Mouse"},
+    {2148, "Middle Mouse"},
+    {2149, "Right Mouse"},
+    {2150, "Mouse 4"},
+    {2151, "Mouse 5"},
+    {2152, "Smart Ping Alternate Keys 2"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -374,14 +374,26 @@ bool clientSimCreate(ClientSim *cs) {
 }
 
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
+    BYTE prevPlayerNum = cs->myPlayerNum;
+
     cs->myPlayerNum = playerNum;
     cs->sim.viewPlayer = playerNum;
-    if (playerNum != 0) {
-        cs->sim.tanks[playerNum] = cs->sim.tanks[0];
-        cs->sim.tanks[0] = NULL;
-        cs->sim.lgmen[playerNum] = cs->sim.lgmen[0];
-        cs->sim.lgmen[0] = NULL;
+    /* The client owns exactly one tank and one lgm — its own — and both sit
+     * at the slot index, so changing slot has to carry them across. Take the
+     * source from the slot they are actually in rather than from 0: only the
+     * first assignment finds them at 0, where clientSimCreate pre-allocated
+     * them. A second assignment (a mid-lobby PACKET_LOBBY_MAP_CHANGE sends
+     * the joiner through JOIN_REQUEST -> JOIN_ACCEPT again, and the server
+     * may hand back a different slot) then copied the already-NULL slot 0
+     * over the live pointers and dropped the only reference to both. */
+    if (playerNum != prevPlayerNum) {
+        cs->sim.tanks[playerNum] = cs->sim.tanks[prevPlayerNum];
+        cs->sim.tanks[prevPlayerNum] = NULL;
+        cs->sim.lgmen[playerNum] = cs->sim.lgmen[prevPlayerNum];
+        cs->sim.lgmen[prevPlayerNum] = NULL;
         lgmSetPlayerNum(&cs->sim.lgmen[playerNum], playerNum);
+    }
+    if (playerNum != 0) {
         cs->sim.baseTimer[playerNum] = BASE_TICKS_BETWEEN_REFUEL;
     }
 }
@@ -394,16 +406,12 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
         MY_TANK(cs) = NULL;
     }
     tankCreate(&cs->sim, &MY_TANK(cs));
-    /* LGM lifecycle must mirror the tank's. setupSelf runs on
-     * first-time slot assignment (clientSimCreate pre-allocated
-     * lgmen[0]; clientSimSetPlayerNum then moved it to
-     * lgmen[playerNum]) and on re-assignment — a mid-lobby
-     * PACKET_LOBBY_MAP_CHANGE round-trips the joiner through
-     * JOIN_REQUEST → JOIN_ACCEPT a second time, and that second
-     * setPlayerNum nulls lgmen[playerNum] because lgmen[0] is
-     * already NULL from the first move. Recreate here so MY_LGM is
-     * always valid by the time the first per-frame lgmGetStatus
-     * runs after game start. */
+    /* LGM lifecycle must mirror the tank's. setupSelf runs on first-time
+     * slot assignment and again on re-assignment, and both times the slot
+     * holds the objects clientSimSetPlayerNum carried over. Destroy before
+     * recreating so the re-assignment path frees the pair it was handed
+     * instead of leaking it, and so MY_LGM is valid by the time the first
+     * per-frame lgmGetStatus runs after game start. */
     if (MY_LGM(cs) != NULL) {
         lgmDestroy(&MY_LGM(cs));
         MY_LGM(cs) = NULL;
@@ -473,6 +481,12 @@ static void clientSimDestroyContents(ClientSim *cs) {
   cs->sim.swp = NULL;
   screenBrainMapDestroy(cs);
   tkExplosionDestroy(&cs->sim.tankExplosions);
+  /* clientSimCreate allocates the mine field and only clientSimResetWorld
+   * ever paired it with a destroy, so every ClientSim that reached teardown
+   * left it behind. Dispose() does not clear the pointer, so null it here as
+   * the other teardowns do. */
+  minesDestroy(&cs->sim.mns);
+  cs->sim.mns = NULL;
   minesExpDestroy(&cs->sim.minesExplosions);
   treeGrowDestroy(&cs->sim);
   pillsDestroy(&cs->sim.pb);
@@ -2089,6 +2103,46 @@ const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
   return cs->brainEvents;
 }
 
+void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
+                      uint16_t worldX, uint16_t worldY, uint32_t nowMs) {
+  ClientPing *slot;
+  if (cs == NULL) {
+    return;
+  }
+  /* The write cursor wraps, so a burst overwrites the oldest entries rather
+     than being dropped at the door — a player who has just been pinged six
+     times wants the six newest. */
+  slot = &cs->pings[cs->pingWriteIdx];
+  slot->sender = sender;
+  slot->kind   = kind;
+  slot->worldX = worldX;
+  slot->worldY = worldY;
+  slot->recvMs = nowMs;
+  cs->pingWriteIdx = (cs->pingWriteIdx + 1) % MAX_CLIENT_PINGS;
+}
+
+int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
+                      ClientPing *out, int maxOut) {
+  int i;
+  int count = 0;
+  if (cs == NULL || out == NULL || maxOut <= 0) {
+    return 0;
+  }
+  /* Walk from the oldest slot forward so the copy comes out in arrival
+     order: the newest ping draws last and therefore on top. */
+  for (i = 0; i < MAX_CLIENT_PINGS && count < maxOut; i++) {
+    const ClientPing *p = &cs->pings[(cs->pingWriteIdx + i) % MAX_CLIENT_PINGS];
+    if (p->recvMs == 0) {
+      continue;   /* never written */
+    }
+    if (nowMs < p->recvMs || nowMs - p->recvMs >= (uint32_t)PING_DISPLAY_MS) {
+      continue;   /* expired, or a clock that went backwards */
+    }
+    out[count++] = *p;
+  }
+  return count;
+}
+
 const OverviewMap *clientSimGetOverviewMap(const ClientSim *cs) {
   if (cs == NULL) {
     return NULL;
@@ -3095,6 +3149,12 @@ struct OverviewSnapshot {
    * them. Rebuilt on every fill; nothing is filtered here. */
   OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
   int               itemLabelCount;
+
+  /* The smart pings still on their clock, oldest first, taken with the rest
+   * of the frame's reads so the render half never touches the ping ring the
+   * network thread writes. */
+  ClientPing        pings[MAX_CLIENT_PINGS];
+  int               pingCount;
 };
 
 /* Whether an entity standing on (mapX, mapY) may be drawn: only a square the
@@ -3217,8 +3277,15 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->pillViewX     = 0;
   s->pillViewY     = 0;
   s->itemLabelCount = 0;
+  s->pingCount     = 0;
   s->haveMap       = (cs != NULL);
   if (cs == NULL) return;
+
+  /* The pings, on the clock the drawer ages them against. Sampled here rather
+   * than in the render so the ring — written from the network thread — is
+   * only ever read under the same lock the rest of this fill runs under. */
+  s->pingCount = clientSimGetPings(cs, (uint32_t)SDL_GetTicks(), s->pings,
+                                   MAX_CLIENT_PINGS);
 
   /* Generation 0 only exists between a round reset and the seed that follows
    * it, so a match on 0 can be a snapshot filled in that same window a round
@@ -3363,6 +3430,14 @@ void overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
 
 int overviewSnapshotItemLabelCount(const OverviewSnapshot *s) {
   return s ? s->itemLabelCount : 0;
+}
+
+const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s) {
+  return s ? &s->pings[0] : NULL;
+}
+
+int overviewSnapshotPingCount(const OverviewSnapshot *s) {
+  return s ? s->pingCount : 0;
 }
 
 const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s) {

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Smart ping: Caution. A warning triangle with the exclamation cut out of
+     it by fill-rule="evenodd", so the glyph reads at map-square size without
+     a stroke that would blur. The gap between the bar and the dot is about
+     2 of the 24 units wide, enough to survive at the ~32px the world
+     marker draws at on a 1x zoom; any tighter and the two merge into one
+     stroke there. Authored solid black and used as an alpha mask
+     — see standard.svg for why the fill colour here does not matter. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path fill-rule="evenodd" d="M12 1.5 L23.2 21.8 L0.8 21.8 Z M10.7 6.8 L13.3 6.8 L12.8 14.2 L11.2 14.2 Z M12 16.2 A1.55 1.55 0 1 1 12 19.3 A1.55 1.55 0 1 1 12 16.2 Z"/>
+</svg>

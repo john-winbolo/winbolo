@@ -306,6 +306,15 @@ void clientSimNetSendViewState(ClientSim *cs, uint8_t kind, uint8_t target);
 void clientSimNetSendViewCycle(ClientSim *cs, uint8_t kind, uint8_t direction,
                                uint8_t from);
 
+/* Ask the server to place a smart ping at (worldX, worldY) in WORLD units
+ * (256 per map tile) for the sender's team. kind is a PING_KIND_*
+ * (input_packet.h). The server re-checks state, range and the per-player rate
+ * limit, so a ping the sender is not entitled to costs nothing but the
+ * packet. Sends nothing without a transport, from a spectator, or for a kind
+ * this build does not know. */
+void clientSimNetSendPing(ClientSim *cs, uint8_t kind,
+                          uint16_t worldX, uint16_t worldY);
+
 /* === Last completed round's replay log === */
 
 /* State of the round-log transfer. A joined client cannot record a round

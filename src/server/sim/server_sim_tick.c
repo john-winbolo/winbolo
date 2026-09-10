@@ -1072,6 +1072,13 @@ void serverSimTick(ServerSim *sim) {
     if (sim->state == serverStateRunning) {
         sim->eventCount = 0;
         sim->mapEventCount = 0;
+        /* Buffer pings accepted during this frame's packet receive: the
+         * command-dispatch path runs before this clear, so it records the ping
+         * rather than buffering it (anything buffered there would be wiped
+         * before the post-tick UDP event drain sends it). Done here, right
+         * after the clear, so both the snapshot build and the drain see it —
+         * once. */
+        serverSimFlushPendingPings(sim);
         simRunHalfStep(sim);
         simRunHalfStep(sim);
         /* Both half-steps have finished filling mapEvents and no transport has

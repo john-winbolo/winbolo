@@ -993,6 +993,34 @@ static bool commandDecodeViewCycle(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_PING — PACKET_MAP_PING
+ * Wire: [header 8] [kind 1] [worldX 2] [worldY 2] — fixed length. The
+ * position is in WORLD units (256 per map tile) so the marker lands where
+ * the cursor was rather than on a tile centre. */
+static bool commandEncodePing(const ClientCommand *cmd,
+                              uint8_t *buf, size_t bufCap,
+                              size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 5;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_MAP_PING, 0);
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.ping.kind;
+    packU16(buf + CMD_PACKET_BODY_OFFSET + 1, cmd->u.ping.worldX);
+    packU16(buf + CMD_PACKET_BODY_OFFSET + 3, cmd->u.ping.worldY);
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodePing(const uint8_t *buf, size_t len,
+                              ClientCommand *cmd) {
+    /* Fixed-length body: anything shorter or longer is not this command. */
+    if (len != CMD_PACKET_BODY_OFFSET + 5) return false;
+    cmd->type = CMD_PING;
+    cmd->u.ping.kind   = buf[CMD_PACKET_BODY_OFFSET];
+    cmd->u.ping.worldX = unpackU16(buf + CMD_PACKET_BODY_OFFSET + 1);
+    cmd->u.ping.worldY = unpackU16(buf + CMD_PACKET_BODY_OFFSET + 3);
+    return true;
+}
+
 /* ================================================================
  * Public API — switch dispatch keyed off cmd->type for encode and
  * buf[2] (packet type) for decode. Mirrors transport_control_codec.c
@@ -1040,6 +1068,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_VOICE_STATE:           ok = commandEncodeVoiceState(cmd, buf, bufCap, outLen); break;
         case CMD_VIEW_STATE:            ok = commandEncodeViewState(cmd, buf, bufCap, outLen); break;
         case CMD_VIEW_CYCLE:            ok = commandEncodeViewCycle(cmd, buf, bufCap, outLen); break;
+        case CMD_PING:                  ok = commandEncodePing(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
         default:                        return false;
     }
@@ -1090,6 +1119,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_VOICE_STATE:           return commandDecodeVoiceState(buf, len, cmd);
         case PACKET_VIEW_STATE:            return commandDecodeViewState(buf, len, cmd);
         case PACKET_VIEW_CYCLE:            return commandDecodeViewCycle(buf, len, cmd);
+        case PACKET_MAP_PING:              return commandDecodePing(buf, len, cmd);
         default:                           return false;
     }
 }

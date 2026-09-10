@@ -2027,3 +2027,95 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Colocar as duas equipes em {string1}\n{player} 
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Equipes em {string1}. Clique para voltar aos inícios personalizados.
 
 STR_SOUND_LOAD_FAILED=Erro ao carregar efeitos sonoros
+
+STR_DLGLOBBY_AWAITING_MAP=Aguardando o servidor...
+STR_DLGSETTINGS_HOSTING_VOICE=Chat de voz
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Ativado
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Desativado
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximidade
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Desativado descarta a voz em vez de transmiti-la a alguém. Proximidade ainda não está implementada e se comporta como Ativado.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Voz
+STR_DLGSETTINGS_VOICE_LOOPBACK=Testar microfone
+STR_DLGSETTINGS_VOICE_MICGAIN=Ganho do microfone
+STR_DLGSETTINGS_VOICE_LEVEL=Nível de entrada
+STR_DLGSETTINGS_VOICE_ENABLE=Ativar voz
+STR_DLGSETTINGS_VOICE_MODE=Modo
+STR_DLGSETTINGS_VOICE_MODE_OFF=Desativado
+STR_DLGSETTINGS_VOICE_MODE_PTT=Pressione para falar
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Microfone aberto
+STR_DLGSETTINGS_VOICE_PTTKEY=Tecla para falar
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Transmitindo
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Não transmitindo
+STR_DLGSETTINGS_VOICE_VOLUME=Volume de voz
+STR_DLGSETTINGS_VOICE_TANKICONS=Mostrar ícones de microfone sobre os tanques
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Cancelamento de eco
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Gravando...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Reproduzindo...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Indisponível neste sistema
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Gerenciado pelo sistema
+STR_DLGSETTINGS_VOICE_MICDEVICE=Microfone
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Dispositivo de reprodução
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Padrão do sistema
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Este servidor está com o chat de voz desativado
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Pressione para falar
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Silenciar microfone
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Falando — clique para silenciar
+STR_PLAYER_TIP_VOICE_IDLE=Tem microfone — clique para silenciar
+STR_PLAYER_TIP_VOICE_SELFMUTED=Microfone desligado — clique para silenciar
+STR_PLAYER_TIP_VOICE_NOMIC=Sem microfone — clique para silenciar
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Silenciado por você — clique para reativar
+STR_PLAYER_TIP_VOICE_SELF=Seu microfone — clique para silenciar
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=Você não tem microfone
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Seu microfone está desligado — clique para reativar
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=O volume em que você ouve este jogador aqui
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Seu microfone e as configurações de voz
+STR_DLGLOBBY_VOICE_OFF=A voz está desativada
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Alguém está usando o chat de voz. A sua está desativada — ative-a na engrenagem ao lado do seu nome.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Silenciado por você, e falando — clique para reativar
+STR_DLGSETTINGS_MASTER_VOLUME=Volume principal
+STR_DLGSETTINGS_EFFECTS_VOLUME=Volume de efeitos
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Painel de jogadores
+
+# Ping inteligente (menu circular)
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Cuidado!
+MESSAGE_PING_ASSIST={player}: Me ajude!
+MESSAGE_PING_ATTACK={player}: Ataquem!
+MESSAGE_PING_ON_MY_WAY={player}: Estou a caminho!
+MESSAGE_PING_BOT_COMMAND={player}: Ordem para o bot
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Cuidado
+STR_PING_ASSIST=Me ajude
+STR_PING_ATTACK=Atacar
+STR_PING_ON_MY_WAY=Estou a caminho
+STR_PING_BOT_COMMAND=Ordem para o bot
+STR_DLGKEYSETUP_PING=Ping inteligente
+STR_DLGKEYSETUP_PING_ALT=Ping inteligente: teclas alternativas
+STR_DLGKEYSETUP_PRESSACHORD=Pressione uma tecla ou botão do mouse
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Botão esquerdo
+STR_PING_MOUSE_MIDDLE=Botão do meio
+STR_PING_MOUSE_RIGHT=Botão direito
+STR_PING_MOUSE_X1=Mouse 4
+STR_PING_MOUSE_X2=Mouse 5
+STR_DLGKEYSETUP_PING_ALT2=Ping inteligente: teclas alternativas 2

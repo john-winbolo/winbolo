@@ -63,6 +63,9 @@
 #include "skin_source.h"
 #include "sdl_bmp.h"
 #include "glyphs.h"
+#include "ping_overlay.h"
+#include "ping_marker.h"    /* pingMarkerDraw — the on-map ping pass */
+#include "../ping_kinds.h"  /* pingDisplayAlpha */
 #include "global.h"
 #include "client_sim.h"
 #include "client_command.h" /* VIEW_KIND_* — which item view the label names */
@@ -1142,6 +1145,113 @@ static bool windowToGameCoords(float winX, float winY, float *gameX, float *game
   return true;
 }
 
+/* The inverse of windowToGameCoords: game logical coordinates back out to
+   window pixels, for overlays that are drawn by ImGui (which works in window
+   pixels) but positioned from game state. No bounds test — an overlay marker
+   for something off the side of the view has to know how far off it is, so a
+   point outside the game area still maps. */
+bool sdl3DrawGameToWindowCoords(float gameX, float gameY,
+                                float *winX, float *winY) {
+  if (!gRenderer || !winX || !winY) return false;
+
+  if (gGameRenderTarget != NULL && gGameDestRect.w > 0 && gGameDestRect.h > 0) {
+    *winX = gGameDestRect.x + gameX * gGameScale;
+    *winY = gGameDestRect.y + gameY * gGameScale;
+    return true;
+  }
+
+  {
+    SDL_FRect logRect;
+    int logW = 0, logH = 0;
+    SDL_RendererLogicalPresentation logMode;
+    if (!SDL_GetRenderLogicalPresentationRect(gRenderer, &logRect)) {
+      *winX = gameX;
+      *winY = gameY;
+      return true;
+    }
+    SDL_GetRenderLogicalPresentation(gRenderer, &logW, &logH, &logMode);
+    if (logW <= 0 || logH <= 0) {
+      *winX = gameX;
+      *winY = gameY;
+      return true;
+    }
+    {
+      float scale = logRect.w / (float)logW;
+      *winX = logRect.x + gameX * scale;
+      *winY = logRect.y + gameY * scale;
+    }
+    return true;
+  }
+}
+
+/* Game logical coordinates to the renderer's own coordinates — the space
+   ImGui draws in, and the one SDL_ConvertEventToRenderCoordinates puts an
+   event into. Two cases, decided by the render target and not by whether a
+   logical presentation is set, because Android desktop mode has both:
+
+     The game went to the offscreen render target (desktop, wasm, Android
+     desktop mode). It is blitted to gGameDestRect, and that rect was laid out
+     from SDL_GetCurrentRenderOutputSize, which is the logical size whenever a
+     logical presentation is set — so the rect is already in render
+     coordinates and the blit arithmetic is the whole answer.
+
+     No render target (Deck, mobile tablet). The layout is drawn straight into
+     the renderer at gZoomFactor, and the tablet viewport is laid out against
+     the logical size too, so game coordinates already ARE render coordinates.
+     SDL scales the logical surface to the window afterwards; that is what
+     makes window pixels a different space, and why the window-pixel
+     conversion above is the wrong one here. */
+bool sdl3DrawGameToRenderCoords(float gameX, float gameY,
+                                float *renderX, float *renderY) {
+  if (!gRenderer || !renderX || !renderY) return false;
+  if (gGameRenderTarget != NULL && gGameDestRect.w > 0 && gGameDestRect.h > 0) {
+    *renderX = gGameDestRect.x + gameX * gGameScale;
+    *renderY = gGameDestRect.y + gameY * gGameScale;
+    return true;
+  }
+  *renderX = gameX;
+  *renderY = gameY;
+  return true;
+}
+
+/* The 15x15 main view rectangle in game logical coordinates, plus the pixel
+   size of one map square there. Desktop puts the view at the classic
+   MAIN_OFFSET_* inside the chrome; tablet mode drops the chrome and centres
+   the view in the window, so the two modes disagree on both the origin and
+   the zoom and every caller would otherwise have to know which is running.
+   False when there is no view to speak of (no renderer, zero zoom). */
+bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
+                                 float *outW, float *outH,
+                                 float *outTileW, float *outTileH) {
+  float x, y, tw, th;
+  if (!gRenderer) return false;
+  if (uiModeIsTablet()) {
+    if (gTabletVpZoom <= 0) return false;
+    x  = (float)gTabletVpX;
+    y  = (float)gTabletVpY;
+    tw = (float)(gTabletVpZoom * TILE_SIZE_X);
+    th = (float)(gTabletVpZoom * TILE_SIZE_Y);
+  } else {
+    if (gZoomFactor <= 0) return false;
+    x  = (float)(gZoomFactor * MAIN_OFFSET_X);
+    y  = (float)(gZoomFactor * MAIN_OFFSET_Y);
+    tw = (float)(gZoomFactor * TILE_SIZE_X);
+    th = (float)(gZoomFactor * TILE_SIZE_Y);
+  }
+  if (outX) *outX = x;
+  if (outY) *outY = y;
+  if (outW) *outW = tw * (float)MAIN_SCREEN_SIZE_X;
+  if (outH) *outH = th * (float)MAIN_SCREEN_SIZE_Y;
+  if (outTileW) *outTileW = tw;
+  if (outTileH) *outTileH = th;
+  return true;
+}
+
+/* The smart-ping pie is not offered events here. It gets them at the top of
+   sdl3ImguiProcessEvents, ahead of ImGui itself, because the map overview's
+   pan item would otherwise take the chord press first and the capture-flag
+   block would then drop the event before it ever reached this function. An
+   event the pie takes never gets this far. */
 void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {
@@ -1488,6 +1598,22 @@ bool sdl3DrawSetup(int zoomFactor) {
   gZoomFactor = zoomFactor;
   sdl3DrawStatusSetZoom(gZoomFactor);
 
+#ifdef __APPLE__
+  /* Keep the native menu bar on screen in full screen. SDL's default for this
+     hint is "auto", which shows the menu bar only when the user took the window
+     full screen themselves (green button / ctrl-cmd-F) and hides it whenever the
+     app asked for it via SDL_SetWindowFullscreen -- which is exactly what
+     windowFullScreenChoose does. The hide is [NSMenu setMenuBarVisible:NO], a
+     hard removal rather than an auto-hide, so there is no pointer-to-the-top
+     gesture that brings it back and macOS is left with no menus at all: the
+     in-window ImGui bar is never drawn here (see the __APPLE__ guard around
+     renderMenuBar) because the native NSMenu is meant to be doing that job.
+     Costs no game area either way -- AppKit keeps the full screen window below
+     the menu bar strip whether or not the bar is drawn in it, so this only fills
+     a band that was otherwise left blank. */
+  SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "1");
+#endif
+
 #ifdef __EMSCRIPTEN__
   /* Pre-size the canvas so SDL3's external_size probe sees the right
      dimensions (it temporarily sets the canvas to 1x1 and checks CSS).
@@ -1659,6 +1785,10 @@ bool sdl3DrawSetup(int zoomFactor) {
      No-op (returns NULL) when Steam Input isn't active. */
   glyphsInit(gRenderer);
 
+  /* Smart-ping icons — rasterised from data/ui/ping/ onto this renderer, so
+     they are rebuilt whenever the renderer is. */
+  pingOverlayInit(gRenderer);
+
   /* Load custom crosshair (17×17 PNG, center pixel (8,8) = aim point). */
   gCrosshairTex = sdl3DrawCreateCrosshairTexture(gRenderer);
 
@@ -1751,6 +1881,7 @@ void sdl3DrawCleanup(void) {
 
   /* Glyph cache textures must be destroyed before the renderer. */
   glyphsShutdown();
+  pingOverlayShutdown();
 
   if (gManStatusTex)     { SDL_DestroyTexture(gManStatusTex);     gManStatusTex     = NULL; }
   if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }
@@ -2825,6 +2956,35 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale,
                            (float)gZoomFactor };
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
+
+      /* Smart pings, on the ground: after the terrain and before every
+         sprite pass, so the tanks, shells and builders a ping points at stay
+         on top of it. Each marker names the map square the ping landed in,
+         placed with the same offset/edge arithmetic the sprites use. The pie
+         menu and the off-screen edge bars are ImGui overlays instead
+         (ping_overlay.cpp): those belong above everything. */
+      {
+        ClientPing pings[MAX_CLIENT_PINGS];
+        Uint32 nowMs = (Uint32)SDL_GetTicks();
+        int nPings = clientSimGetPings(cs, nowMs, pings, MAX_CLIENT_PINGS);
+        int pi;
+        for (pi = 0; pi < nPings; pi++) {
+          float alpha = pingDisplayAlpha((int)(nowMs - pings[pi].recvMs));
+          float cx, cy;
+          if (alpha <= 0.0f) continue;
+          cx = (float)originX
+             + ((float)(pings[pi].worldX >> 8) + 0.5f
+                - (float)(clientSimGetXOffset(cs) + 1)) * (float)tileW
+             - (float)edgeX;
+          cy = (float)originY
+             + ((float)(pings[pi].worldY >> 8) + 0.5f
+                - (float)(clientSimGetYOffset(cs) + 1)) * (float)tileH
+             - (float)edgeY;
+          pingMarkerDraw(gRenderer, pings[pi].kind, cx, cy,
+                         (float)tileW, (float)tileH,
+                         nowMs - pings[pi].recvMs, alpha);
+        }
+      }
 
       /* The pill and base numbers, from the 17x17 screen buffer: a square
          showing a pill or base tile asks the sim which one it is. The

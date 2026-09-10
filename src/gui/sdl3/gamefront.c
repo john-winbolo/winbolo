@@ -2728,6 +2728,13 @@ static bool gameFrontStartServerSim(ServerSim *sim,
   return true;
 }
 
+/* A config cleared with memset, an advertisement from a server built before
+ * the voice field existed, and a [HOSTING] Voice value that cannot be parsed
+ * all have to mean voice on, and each of them arrives as a zero. Stated here
+ * because the memset that leans on it is in the function below. Reordering
+ * ServerVoiceMode would turn all three into off with no line changing. */
+BOLO_STATIC_ASSERT(serverVoiceOn == 0, server_voice_default_is_on);
+
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
 
@@ -3175,6 +3182,30 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
      saves its preferences does not apply the defaults a second time. */
   prefsSetString("KEYS", "Voice Defaults Applied", "Yes");
 
+  /* Smart ping — three menu chord slots and one per ping kind for the direct
+     pings. Stored as the same packed int the rest of the section uses, so an
+     older build reading a newer file just sees a number it does not recognise
+     in a key it does not know. A file written by the four-slot build still
+     loads: "Ping 4" is simply never read. */
+  {
+    static const int pingDefaults[PING_BIND_SLOTS] = {
+      DEFAULT_PING1, DEFAULT_PING2, DEFAULT_PING3
+    };
+    int pi;
+    for (pi = 0; pi < PING_BIND_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping %d", pi + 1);
+      intToStr(pingDefaults[pi], def, sizeof(def));
+      prefsGetString("KEYS", name, def, buff, FILENAME_MAX);
+      keys->kiPing[pi] = atoi(buff);
+    }
+    for (pi = 0; pi < PING_BIND_DIRECT_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping Direct %d", pi + 1);
+      prefsGetString("KEYS", name, "0", buff, FILENAME_MAX);
+      keys->kiPingDirect[pi] = atoi(buff);
+    }
+  }
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
   prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);
   {
@@ -3575,7 +3606,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 #if defined(WINBOLO_VOICE)
   /* Voice.  Applied straight onto the running voice module, which is already
      up by the time this runs — winbolo.c brings it up before gameFrontStart. */
-  prefsGetString("VOICE", "Enabled", "Yes", buff, FILENAME_MAX);
+  /* Off unless the prefs file says otherwise, so a fresh install joins
+     without opening a microphone.  A player who has already chosen has
+     Enabled written in their file and keeps whatever they chose. */
+  prefsGetString("VOICE", "Enabled", "No", buff, FILENAME_MAX);
   windowSetVoiceEnabled(YESNO_TO_TRUEFALSE(buff[0]));
   prefsGetString("VOICE", "Mode", VOICE_MODE_NAME_PTT, buff, FILENAME_MAX);
   if (strcmp(buff, VOICE_MODE_NAME_OFF) == 0) {
@@ -3757,6 +3791,23 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Mute microphone — 0 is unbound, and round-trips as such. */
   intToStr(keys->kiMuteMic, buff, sizeof(buff));
   prefsSetString("KEYS", "Mute Mic", buff);
+
+  /* Smart ping — the menu chords, then the per-kind direct ones. */
+  {
+    int pi;
+    for (pi = 0; pi < PING_BIND_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping %d", pi + 1);
+      intToStr(keys->kiPing[pi], buff, sizeof(buff));
+      prefsSetString("KEYS", name, buff);
+    }
+    for (pi = 0; pi < PING_BIND_DIRECT_SLOTS; pi++) {
+      char name[32];
+      snprintf(name, sizeof(name), "Ping Direct %d", pi + 1);
+      intToStr(keys->kiPingDirect[pi], buff, sizeof(buff));
+      prefsSetString("KEYS", name, buff);
+    }
+  }
 
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);

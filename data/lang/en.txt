@@ -1675,6 +1675,9 @@ STR_PLAYER_TIP_VOICE_VOLUME=How loud this player is played here
 STR_DLGLOBBY_TOOLTIP_VOICE=Your microphone and voice settings
 STR_DLGLOBBY_VOICE_OFF=Voice is turned off
 
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Someone is using voice chat. Yours is off — turn it on with the cog beside your name.
+
 # Players panel — a player muted here who is talking anyway
 STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Muted by you, and talking — click to unmute
 STR_DLGSETTINGS_MASTER_VOLUME=Master volume
@@ -2090,4 +2093,28 @@ STR_MENU_PLAYERS_PANEL=Players Panel
 
 # Sound setup: message box when no sound effect at all could be loaded
 STR_SOUND_LOAD_FAILED=Error loading sound effects
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Caution!
+MESSAGE_PING_ASSIST={player}: Assist me!
+MESSAGE_PING_ATTACK={player}: Attack!
+MESSAGE_PING_ON_MY_WAY={player}: On my way!
+MESSAGE_PING_BOT_COMMAND={player}: Bot command
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Caution
+STR_PING_ASSIST=Assist Me
+STR_PING_ATTACK=Attack
+STR_PING_ON_MY_WAY=On My Way
+STR_PING_BOT_COMMAND=Bot Command
+STR_DLGKEYSETUP_PING=Smart Ping
+STR_DLGKEYSETUP_PING_ALT=Smart Ping Alternate Keys
+STR_DLGKEYSETUP_PRESSACHORD=Press a key or mouse button
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Left Mouse
+STR_PING_MOUSE_MIDDLE=Middle Mouse
+STR_PING_MOUSE_RIGHT=Right Mouse
+STR_PING_MOUSE_X1=Mouse 4
+STR_PING_MOUSE_X2=Mouse 5
+STR_DLGKEYSETUP_PING_ALT2=Smart Ping Alternate Keys 2
 

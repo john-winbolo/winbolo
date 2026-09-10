@@ -109,7 +109,7 @@ int run_voice_segment_roundtrip(void) {
 int run_voice_segment_rejects_malformed(void) {
     uint8_t payload[VOICE_SEG_MAX_OPUS + 1];
     uint8_t seg[CHANNEL_VOICE_SEG];
-    uint8_t tooSmall[VOICE_SEG_DOWN_HEADER];  /* not "small": MSVC rpcndr.h typedefs that */
+    uint8_t tooSmall[VOICE_SEG_DOWN_HEADER];
     const uint8_t *opus;
     uint8_t fromPlayer, seq, flags;
     int opusLen;
