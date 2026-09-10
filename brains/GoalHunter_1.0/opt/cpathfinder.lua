@@ -345,6 +345,16 @@ function M.dijkstra_cost_at(slate, x, y, boat)
   return cpf_dijkstra_cost_at(slate, x, y, boat or 0)
 end
 
+-- Next step off a Dijkstra slate by kind (the tank-rooted KIND_NORMAL flood):
+-- a parent-pointer walk from (dx,dy) back toward (sx,sy). Returns nx, ny or
+-- nil when the slate has not reached (dx,dy) yet. steering.lua's rescue_lgm
+-- path reads the next step straight off the slate through this instead of
+-- re-running A* every tick; the wrapper was missing here (present in 1.5+),
+-- so that path crashed with "attempt to call field 'dijkstra_next_step'".
+function M.dijkstra_next_step(kind, sx, sy, dx, dy, obstacles, penalty)
+  return cpf_dijkstra_next_step(kind, sx, sy, dx, dy, obstacles, penalty)
+end
+
 --- Smart lookup: searches all slates of matching kind in started_tick
 --- descending order, returns first finite cost. Newer (running) slates
 --- win over older completed ones; partial-result fallback to older
