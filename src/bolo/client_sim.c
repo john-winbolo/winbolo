@@ -465,6 +465,12 @@ static void clientSimDestroyContents(ClientSim *cs) {
   cs->sim.swp = NULL;
   screenBrainMapDestroy(cs);
   tkExplosionDestroy(&cs->sim.tankExplosions);
+  /* clientSimCreate allocates the mine field and only clientSimResetWorld
+   * ever paired it with a destroy, so every ClientSim that reached teardown
+   * left it behind. Dispose() does not clear the pointer, so null it here as
+   * the other teardowns do. */
+  minesDestroy(&cs->sim.mns);
+  cs->sim.mns = NULL;
   minesExpDestroy(&cs->sim.minesExplosions);
   treeGrowDestroy(&cs->sim);
   pillsDestroy(&cs->sim.pb);
