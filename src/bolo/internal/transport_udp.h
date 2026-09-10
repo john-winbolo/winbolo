@@ -854,6 +854,12 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
 bool transportUdpServerChannelTestSend(int slot, uint8_t ch,
                                        const uint8_t *msg, uint16_t len);
 bool transportUdpServerTestPendingRemove(int slot);
+/* Read a slot's liveness clock — the transport tick at which the server last
+ * received anything from that client, which transportUdpServerCheckTimeouts
+ * measures the disconnect against. A test watches it across a known-quiet
+ * window to tell which inbound packets refresh it. 0 for an out-of-range or
+ * unconnected slot, so a dropped slot is distinguishable from a stale one. */
+uint32_t transportUdpServerTestLastReceivedTick(int slot);
 /* Read a slot's server-side join-download-complete flag. The client reports
  * CONNECTED once it has the full map, but the server only flips this once the
  * download's bytes are acked back on CHANNEL_BULK — a round-trip later. A test

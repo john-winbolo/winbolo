@@ -162,6 +162,12 @@ typedef struct {
 
     /* Ping */
     uint32_t lastPingSentTick;
+    /* Suppress the periodic ping below. Written only by the WB_NOPING read at
+     * ctx create, which is compiled in solely where WB_ENABLE_NETIMPAIR is on
+     * (the unit-test target's own build of this file), so it stays false for
+     * the life of every shipping connection. Lets a test hold a connected
+     * client whose only outbound traffic is what the test itself sends. */
+    bool suppressPing;
     uint32_t pingClientTime;  /* Monotonic counter used as ping timestamp */
     uint16_t pingMs;          /* Min-over-window RTT — feeds shell projection
                                * and the InputPacket lag-comp fallback. */
@@ -3534,7 +3540,8 @@ static bool udpClientTick(void *ctx) {
     /* Periodic ping — bypasses delay so RTT measurement is accurate
      * (measures real network RTT, not simulated RTT) */
     if (c->joinState == UDP_CLIENT_CONNECTED) {
-        if (c->localTick - c->lastPingSentTick >= PING_INTERVAL_TICKS) {
+        if (!c->suppressPing &&
+            c->localTick - c->lastPingSentTick >= PING_INTERVAL_TICKS) {
             uint8_t pbuf[PACKET_HEADER_SIZE + 8];
             packHeader(pbuf, PACKET_PING, c->outSequence++);
             packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
@@ -3948,6 +3955,18 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                       (unsigned)impairCfg.jitterMs,
                       (unsigned)impairCfg.lossPercent,
                       (unsigned)impairCfg.burstLossLen);
+        }
+    }
+    /* Optional ping suppression from WB_NOPING (any non-empty value). Read
+     * once here, beside WB_NETIMPAIR and under the same compile-time
+     * condition, so a test can hold a connection whose only outbound traffic
+     * is what it sends itself — a ping every PING_INTERVAL_TICKS would
+     * otherwise keep the server's liveness clock fresh on its own. */
+    {
+        const char *noPing = getenv("WB_NOPING");
+        if (noPing != NULL && noPing[0] != '\0') {
+            c->suppressPing = true;
+            mpDiagLog("[cli] periodic ping suppressed (WB_NOPING)");
         }
     }
 #endif

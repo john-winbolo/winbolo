@@ -78,6 +78,12 @@ bool transportUdpServerTestPendingRemove(int slot) {
     return udpServer.pendingSimRemove[slot];
 }
 
+uint32_t transportUdpServerTestLastReceivedTick(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    if (!udpServer.clients[slot].connected) return 0;
+    return udpServer.clients[slot].lastReceivedTick;
+}
+
 const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
                                                   uint8_t *outKind) {
     SpectatorConn *sp;
