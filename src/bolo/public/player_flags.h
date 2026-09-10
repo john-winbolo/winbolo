@@ -37,9 +37,22 @@ typedef enum {
                                             * never sourced from a connected
                                             * human. Never honour from a
                                             * client packet. */
-/* bits 6-7 reserved */
+#define PLAYER_FLAG_HAS_MIC      0x40  /* client-set; voice enabled and a
+                                        * working input device */
+#define PLAYER_FLAG_VOICE_MUTED  0x80  /* client-set; has a mic but is not
+                                        * transmitting */
 
 #define PLAYER_CLIENT_HINT_MASK \
     (PLAYER_FLAG_SUPPORTER | PLAYER_FLAG_STEAM_BUILD)
+
+/* The two mic bits. Masked out of a snapshot for recipients who could not
+ * hear that player's voice, so visibility follows audibility.
+ *
+ * These take the last two free bits of the uint8_t clientFlags carries. A
+ * third voice flag would mean widening clientFlags on the wire (the tank
+ * snapshot and the lobby slot) and in playersGetClientFlags /
+ * playersSetClientFlags — pack any further mic state into the existing two
+ * rather than adding one. */
+#define PLAYER_VOICE_FLAG_MASK (PLAYER_FLAG_HAS_MIC | PLAYER_FLAG_VOICE_MUTED)
 
 #endif /* PLAYER_FLAGS_H */

@@ -231,10 +231,22 @@ static bool pred_map_complete(LoopbackHarness *h, void *u) {
            clientSimGetServerMapData(h->cs, &len) != NULL && len > 0;
 }
 
-static bool pred_map_data_gone(LoopbackHarness *h, void *u) {
+/* Latches once the map change has both discarded the installed map and
+ * finished re-downloading it. u points at the invalidate count sampled
+ * before the change.
+ *
+ * Replaces a predicate that waited to observe clientSimGetServerMapData
+ * returning NULL. That state is a transient roughly one pump wide, and
+ * loopbackHarnessPumpUntil samples only between pumps, so the window
+ * routinely closed inside a single pump and the test failed having missed
+ * it — ~24-36% of runs on macOS, where the pump-to-pump progression is not
+ * repeatable. The counter cannot be stepped over, and the completion check
+ * keeps the assertion terminal rather than transient. */
+static bool pred_map_reloaded(LoopbackHarness *h, void *u) {
     int len = 0;
-    (void)u;
-    return clientSimGetServerMapData(h->cs, &len) == NULL;
+    uint32_t before = *(const uint32_t *)u;
+    return clientSimGetMapInvalidateCount(h->cs) > before &&
+           clientSimGetServerMapData(h->cs, &len) != NULL && len > 0;
 }
 
 static int legLobbyMapDelivered(void) {
@@ -269,6 +281,7 @@ static int legLobbyMapDelivered(void) {
 static int legLobbyMapChange(void) {
     LoopbackHarness h;
     int len = 0;
+    uint32_t invalidatesBefore;
     const BYTE *map;
 
     UT_ASSERT_MSG(loopbackHarnessStartSpectatorLobby(&h, "SpecChg", /*seed*/ 22u),
@@ -284,15 +297,19 @@ static int legLobbyMapChange(void) {
     /* Host changes the map: the transport re-sends the spectator accept and
      * re-arms its lobby-map download (resetting the bulk channel via
      * CTRL_CHANNEL_RESET), so the viewer abandons the old map and re-downloads. */
+    invalidatesBefore = clientSimGetMapInvalidateCount(h.cs);
     threadsWaitForMutex();
     transportUdpServerOnLobbyMapChange(h.sim);
     threadsReleaseMutex();
 
-    /* The re-accept drops the install (the bytes go unavailable) until the new
-     * map lands — proof the change actually triggered a fresh download — then it
-     * re-completes. */
-    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, MAP_MAX, pred_map_data_gone, NULL) > 0,
-                  "map change never invalidated the spectator's installed lobby map");
+    /* The re-accept drops the install — proof the change actually triggered a
+     * fresh download rather than leaving the old map in place — and the new
+     * map then lands. Both halves are checked at once against the pre-change
+     * invalidate count, so neither depends on catching the gap between them. */
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, MAP_MAX, pred_map_reloaded,
+                                           &invalidatesBefore) > 0,
+                  "map change never invalidated and re-downloaded the "
+                  "spectator's installed lobby map");
     UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, MAP_MAX, pred_map_complete, NULL) > 0,
                   "spectator never re-completed its lobby map after a map change");
     map = clientSimGetServerMapData(h.cs, &len);

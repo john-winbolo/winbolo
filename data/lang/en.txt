@@ -469,6 +469,10 @@ STR_STARTPICK_SLOT_FALLBACK=(slot)
 STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nNot on your team's side
 STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nOff-side for {string1}
 
+# Held start you may join (LOBBY_SHARED_STARTS): non-host / host.
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nClick to start here too
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nClick to start here too; drag to move; right-click to assign to someone else
+
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=AI player
 STR_PLATFORM_WINDOWS=Windows
@@ -1540,6 +1544,10 @@ STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} starts for {number2} players 
 STR_DLGLOBBY_TOOLTIP_START_SEA=Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player.
 
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Set the two teams to {string1}\n{player} starts {string2}, {other} starts {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Teams set to {string1}. Click to go back to custom starts.
+
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller
 STR_GP_REBIND_PROMPT=Press a button or pull a trigger...
@@ -1610,9 +1618,67 @@ STR_DLGSETTINGS_HOSTING_ENABLELOG=Enable Logging
 STR_DLGSETTINGS_HOSTING_LOGDIR=Log Directory
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Send Replays to Players
 STR_DLGSETTINGS_HOSTING_APPLYNOTE=Applies to the next hosted / New Internet game.
+STR_DLGSETTINGS_HOSTING_VOICE=Voice Chat
+STR_DLGSETTINGS_HOSTING_VOICE_ON=On
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Off
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximity
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Off drops voice instead of carrying it to anyone. Proximity is not implemented yet and behaves the same as On.
 
 # Log viewer Options menu
 STR_LV_HIDE_LOBBY=Hide Lobby
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Voice
+STR_DLGSETTINGS_VOICE_LOOPBACK=Test microphone
+STR_DLGSETTINGS_VOICE_MICGAIN=Mic gain
+STR_DLGSETTINGS_VOICE_LEVEL=Input level
+STR_DLGSETTINGS_VOICE_ENABLE=Enable voice
+STR_DLGSETTINGS_VOICE_MODE=Mode
+STR_DLGSETTINGS_VOICE_MODE_OFF=Off
+STR_DLGSETTINGS_VOICE_MODE_PTT=Push to talk
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Open mic
+STR_DLGSETTINGS_VOICE_PTTKEY=Push-to-talk key
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Transmitting
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Not transmitting
+STR_DLGSETTINGS_VOICE_VOLUME=Voice volume
+STR_DLGSETTINGS_VOICE_TANKICONS=Show microphone icons over tanks
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Echo cancellation
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Recording...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Playing back...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Unavailable on this system
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Handled by the system
+STR_DLGSETTINGS_VOICE_MICDEVICE=Microphone
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Playback device
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=System default
+STR_DLGSETTINGS_VOICE_SERVER_OFF=This server has voice turned off
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Push to talk
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Mute microphone
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Talking — click to mute
+STR_PLAYER_TIP_VOICE_IDLE=Has a microphone — click to mute
+STR_PLAYER_TIP_VOICE_SELFMUTED=Their microphone is off — click to mute
+STR_PLAYER_TIP_VOICE_NOMIC=No microphone — click to mute
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Muted by you — click to unmute
+STR_PLAYER_TIP_VOICE_SELF=Your microphone — click to mute
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=You have no microphone
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Your microphone is off — click to unmute
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=How loud this player is played here
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Your microphone and voice settings
+STR_DLGLOBBY_VOICE_OFF=Voice is turned off
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Muted by you, and talking — click to unmute
+STR_DLGSETTINGS_MASTER_VOLUME=Master volume
+STR_DLGSETTINGS_EFFECTS_VOLUME=Effects volume
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
@@ -2018,6 +2084,9 @@ STR_WEB_JOIN_GAME_FULL=This game is full.
 STR_WEB_JOIN_CODE_UNREACHABLE=Could not reach the server to get a join code.
 STR_WEB_CONNECT_FAILED=Could not connect to the server.
 STR_WEB_JOIN_NO_RESPONSE=Could not join the game (the server did not respond, or your invite link has already been used or expired).
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Players Panel
 
 # Sound setup: message box when no sound effect at all could be loaded
 STR_SOUND_LOAD_FAILED=Error loading sound effects

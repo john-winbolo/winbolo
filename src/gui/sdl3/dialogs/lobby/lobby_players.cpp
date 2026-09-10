@@ -58,6 +58,10 @@ extern "C" {
 #include "../../flags.h"         /* flagsGetTexture / FLAG_HEIGHT */
 #include "../../map_preview_popup.h"  /* mapPreviewPopupFocusMapSquare */
 #include "../../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning */
+#if defined(WINBOLO_VOICE)
+#include "../../../voice.h"   /* voiceGetTalkingMap — lobby mic icons;
+                               * the own-row voice sub-row's state */
+#endif
 }
 
 /* Player-list state: bot-row expansion, the tab-cycle's forced selection
@@ -65,6 +69,10 @@ extern "C" {
 typedef struct LobbyPlayersState {
     /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
     int expandedBotSlot = -1;
+
+    /* Whether the local player's voice sub-row is open. A bool rather than a
+     * slot index like the bots': there is only ever one own row. */
+    bool voiceRowExpanded = false;
 
     /* Tab the trigger/shoulder tab-cycle wants selected next frame in the
      * tabbed lobby layout, or -1 for "no forced selection". Set from the
@@ -99,6 +107,9 @@ void lobbyPlayersReset(void) {
 /* Forward decl — defined below the team renderer. */
 static void renderBotAiConfig(ClientSim *cs,
                               int slot, int teamId, float s);
+#if defined(WINBOLO_VOICE)
+static void renderOwnVoiceConfig(ClientSim *cs, float s);
+#endif
 
 /* ── Layout A — team-grouped player list ──────────────────────────
  * Renders players grouped under team headers with color tints from
@@ -1211,7 +1222,30 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
          * divider dragged left does, and scaled by s throughout so it lands
          * the same at any DPI. */
         const float kColTankW    = 60.0f * s;
+#if defined(WINBOLO_VOICE)
+        /* The microphone cell follows the badge run, so the icons column
+         * carries one more LOBBY_WBN_ICON_SIZE icon plus the spacing before
+         * it, and the local player's row carries the voice gear after that,
+         * with a spacing of its own. That raises needIconsCol, so the column
+         * sheds at a slightly wider window than it does without voice — the
+         * wider run needs the room, and the whole column still goes at once.
+         * The gear draws on one row, but every team's table takes the width:
+         * the team panels are stacked, so a column one width in your team
+         * and another in the rest would not line up.
+         *
+         * Sized for the form that will draw, which is known here: the
+         * SmallButton in controller mode, the font-sized icon otherwise. */
+        const float kColGearW    = uiShouldUseControllerMode()
+                                 ? ImGui::CalcTextSize(">").x
+                                   + ImGui::GetStyle().FramePadding.x * 2.0f
+                                 : ImGui::GetFontSize();
+        const float kColIconsW   = 96.0f * s + (float)LOBBY_WBN_ICON_SIZE * s
+                                 + ImGui::GetStyle().ItemSpacing.x
+                                 + kColGearW
+                                 + ImGui::GetStyle().ItemSpacing.x;
+#else
         const float kColIconsW   = 96.0f * s;
+#endif
         const float kColPingW    = 50.0f * s;
         const float kColReadyW   = 80.0f * s;
         const float kColXW       = 44.0f * s;
@@ -1238,6 +1272,11 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         const bool showPingCol   = contentW >= needPingCol;
         const bool showStartCol  = contentW >= needStartCol;
         const bool showIconsCol  = contentW >= needIconsCol;
+#if defined(WINBOLO_VOICE)
+        /* Who is producing voice right now, read once for the whole list
+         * rather than per row. */
+        const PlayerBitMap talkingMap = voiceGetTalkingMap();
+#endif
         /* Disabled is the master hide flag — the column takes no width and
          * ImGui skips every widget submitted into it, so the remaining
          * columns get the room back. The row blocks below still guard their
@@ -1505,6 +1544,76 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                          pflags,
                                          clientSimGetLobbySlot(cs, (BYTE)(i))->clientType,
                                          "", false);
+#if defined(WINBOLO_VOICE)
+                        /* Voice state and the mute toggle. Lobby voice
+                         * is all-talk, so this shows for every player. The
+                         * slot's own flags, not pflags: the WBN masking
+                         * above has nothing to say about the microphone.
+                         * The true is what marks this as the lobby: it is
+                         * the one place a player with no microphone is
+                         * drawn, since picking who to play with is when
+                         * knowing they cannot talk matters. */
+                        renderPlayerMicCell(cs, i,
+                                            clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags,
+                                            talkingMap, isSelf,
+                                            (float)LOBBY_WBN_ICON_SIZE, true);
+                        /* Gear beside your own microphone, expanding the
+                         * voice sub-row below. Your row only: nobody else's
+                         * microphone is yours to change. Controller mode
+                         * renders the visible ">"/"v" toggle (the SmallButton
+                         * path below) instead of the invisible icon button,
+                         * so it's reachable by gamepad nav and shows a focus
+                         * ring — A expands the sub-row, whose widgets are
+                         * then navigable like any other dialog control. */
+                        if (isSelf) {
+                            ImGui::SameLine();
+                            if (lobbyIcons()->settings && !uiShouldUseControllerMode()) {
+                                float iconSize = ImGui::GetFontSize();
+                                cyAbs(iconSize);
+                                /* settings.svg renders 5px above / 2px below
+                                 * with pure geometric centering — the gear
+                                 * sits slightly low in the row. Nudge up
+                                 * ~12% of font size (about 1.5px) so it
+                                 * matches the optical center used by the
+                                 * text and tank widgets. */
+                                ImGui::SetCursorPosY(ImGui::GetCursorPosY()
+                                                     - ImGui::GetFontSize() * 0.12f);
+                                ImVec2 iconStart = ImGui::GetCursorScreenPos();
+                                bool clicked = ImGui::InvisibleButton(
+                                    "##voicecfg", ImVec2(iconSize, iconSize));
+                                /* Grey so the gear reads as a secondary
+                                 * action, full white on hover so it lights
+                                 * up under the mouse — the same tint the
+                                 * bot gear uses. */
+                                ImU32 gearTint = ImGui::IsItemHovered()
+                                    ? IM_COL32_WHITE
+                                    : IM_COL32(180, 180, 180, 200);
+                                ImGui::GetWindowDrawList()->AddImage(
+                                    (ImTextureID)lobbyIcons()->settings,
+                                    iconStart,
+                                    ImVec2(iconStart.x + iconSize, iconStart.y + iconSize),
+                                    ImVec2(0, 0), ImVec2(1, 1), gearTint);
+                                if (clicked) {
+                                    s_players.voiceRowExpanded = !s_players.voiceRowExpanded;
+                                }
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("%s",
+                                        langGetText(STR_DLGLOBBY_TOOLTIP_VOICE));
+                                }
+                            } else {
+                                cyAbs(ImGui::GetFrameHeight());
+                                if (ImGui::SmallButton(s_players.voiceRowExpanded
+                                                       ? "v##voicecfg"
+                                                       : ">##voicecfg")) {
+                                    s_players.voiceRowExpanded = !s_players.voiceRowExpanded;
+                                }
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("%s",
+                                        langGetText(STR_DLGLOBBY_TOOLTIP_VOICE));
+                                }
+                            }
+                        }
+#endif
                     }
                 }
 
@@ -1826,21 +1935,39 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                     if (lobbyStartOffSideMasked(mask, teamSide, closedMask)) kGroup = 2;
                                     else if (hasSide && startSideIsCentre(mask))          kGroup = 1;
                                     if (kGroup != group) continue;
-                                    /* Connected holder of start k, if any. */
-                                    int holder = lobbyStartHolderSlot(cs, k);
-                                    bool occupiedByOther = (holder >= 0 && holder != i);
-                                    /* Non-host self-claim: only free starts + own. */
-                                    if (!effectiveHost && occupiedByOther) continue;
+                                    /* Connected holders of start k, if any,
+                                     * and their names — everyone but this
+                                     * row, since "(Name)" says who else is
+                                     * already there. */
+                                    int holders[MAX_TANKS];
+                                    int nHold = lobbyStartHolders(cs, k, holders, MAX_TANKS);
+                                    const char *others[MAX_TANKS];
+                                    int nOthers = 0;
+                                    for (int h = 0; h < nHold; h++) {
+                                        if (holders[h] == i) continue;
+                                        others[nOthers++] =
+                                            clientSimGetLobbySlot(cs, (BYTE)holders[h])->playerName;
+                                    }
+                                    bool occupiedByOther = (nOthers > 0);
+                                    /* Non-host self-claim: only free starts
+                                     * + own, unless starts can be shared —
+                                     * then joining someone is an ordinary
+                                     * pick and the server allows it. */
+                                    if (!effectiveHost && occupiedByOther &&
+                                        !lobbySharedStartsEnabled()) continue;
                                     if (group == 2 && !offSideSep) {
                                         ImGui::Separator();
                                         offSideSep = true;
                                     }
-                                    char entry[96];
+                                    char entry[160];
                                     if (occupiedByOther) {
+                                        char who[96];
+                                        lobbyStartHolderNameLabel(others, nOthers,
+                                                                  who, sizeof(who));
                                         SDL_snprintf(entry, sizeof(entry),
                                                      "#%u \xC2\xB7 %s (%s)", (unsigned)k,
                                                      langGetText(lobbyMapPreview()->startCompassId[k]),
-                                                     clientSimGetLobbySlot(cs, (BYTE)holder)->playerName);
+                                                     who);
                                     } else {
                                         SDL_snprintf(entry, sizeof(entry),
                                                      "#%u \xC2\xB7 %s", (unsigned)k,
@@ -2042,6 +2169,19 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     ImGui::TableSetColumnIndex(0);
                     renderBotAiConfig(cs, i, teamId, s);
                 }
+#if defined(WINBOLO_VOICE)
+                /* Voice sub-row when your own gear is expanded. Built the
+                 * same way as the AiConfig one above: its own table row with
+                 * content in column 0 only, which the NoClip table lets
+                 * spread across the row, and the parent row's stripe so it
+                 * reads as a continuation of your row. */
+                if (isSelf && s_players.voiceRowExpanded) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, rowStripe);
+                    ImGui::TableSetColumnIndex(0);
+                    renderOwnVoiceConfig(cs, s);
+                }
+#endif
             }
             ImGui::EndTable();
         }
@@ -2471,3 +2611,93 @@ static void renderBotAiConfig(ClientSim *cs,
     ImGui::Spacing();
     ImGui::SetWindowFontScale(aicfgOldScale);
 }
+
+#if defined(WINBOLO_VOICE)
+/* ── Layout A — own voice sub-row ─────────────────────────────────
+ * Inline panel under the local player's row: whether this client has
+ * a microphone, the mute toggle, the input level with whether it is
+ * being sent, and which key push to talk is on. Reads and writes the
+ * same voice state the settings dialog does — nothing here picks a
+ * device or a mode. */
+static void renderOwnVoiceConfig(ClientSim *cs, float s) {
+    const ClientLobbySlot *mySlot =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    /* The microphone comes from the slot's published flags, the same
+     * place the mic cell beside this row reads it from, so the row and
+     * the sub-row cannot disagree about whether there is one. */
+    const bool hasMic = mySlot &&
+                        (mySlot->clientFlags & PLAYER_FLAG_HAS_MIC) != 0;
+
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
+
+    /* Read the master switch once: the line below and the
+       BeginDisabled / EndDisabled around the rest have to be told the
+       same answer. The rest still draws, greyed, rather than being
+       left out — what the microphone is doing is worth seeing even
+       when nothing is being sent. */
+    const bool voiceOn = voiceIsEnabled();
+    /* The server dropping voice reads the same way here as the master switch
+       being off: the rest is greyed rather than left out, so the row keeps its
+       shape and the reason is stated instead of being left to guess at. The
+       switch is named first when both apply — it is the one the player can
+       do something about. */
+    const bool serverOff = voiceServerHasVoiceOff();
+    if (!voiceOn) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_VOICE_OFF));
+        ImGui::BeginDisabled();
+    } else if (serverOff) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
+        ImGui::BeginDisabled();
+    } else if (!hasMic) {
+        ImGui::TextDisabled("%s", langGetText(STR_PLAYER_TIP_VOICE_SELF_NOMIC));
+    }
+
+    /* Local, and independent of the mute key: the binding may be unset,
+       and this is the way to mute without one. */
+    bool muted = voiceIsSelfMuted();
+    if (ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_MUTEMIC), &muted)) {
+        voiceSetSelfMuted(muted);
+    }
+
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
+    ImGui::SameLine();
+    ImGui::ProgressBar(voiceGetInputMeter(), ImVec2(200.0f * s, 0.0f));
+    ImGui::SameLine();
+    /* Spelt out both ways rather than a colour that only means something
+       to players who can tell the two greens apart. */
+    if (voiceIsTransmitting()) {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
+                           langGetText(STR_DLGSETTINGS_VOICE_TRANSMITTING));
+    } else {
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING));
+    }
+
+    /* The mode is named, not picked — it is set in the settings dialog,
+       and this row is state and a mute. */
+    const VoiceMode mode = voiceGetMode();
+    langid modeStr = STR_DLGSETTINGS_VOICE_MODE_OFF;
+    if (mode == VOICE_MODE_PTT)       modeStr = STR_DLGSETTINGS_VOICE_MODE_PTT;
+    else if (mode == VOICE_MODE_OPEN) modeStr = STR_DLGSETTINGS_VOICE_MODE_OPEN;
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MODE));
+    ImGui::SameLine();
+    ImGui::TextUnformatted(langGetText(modeStr));
+
+    /* The binding itself is set in Key Setup; showing it here is so the
+       player can see which key push to talk is on without leaving. */
+    if (mode == VOICE_MODE_PTT) {
+        keyItems pttKeys;
+        windowGetKeys(&pttKeys);
+        const char *pttName =
+            SDL_GetScancodeName((SDL_Scancode)pttKeys.kiPushToTalk);
+        if (!pttName || pttName[0] == '\0') {
+            pttName = langGetText(STR_DLGKEYSETUP_NONE_VAL);
+        }
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(pttName);
+    }
+
+    if (!voiceOn || serverOff) ImGui::EndDisabled();
+}
+#endif

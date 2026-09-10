@@ -57,6 +57,10 @@ extern "C" {
 #include "imgui_lobby.h"
 #include "imgui_keyboard.h"
 #include "imgui_messagebox.h"
+#if defined(WINBOLO_VOICE)
+#include "../../voice.h"
+#include "../input.h"  /* inputPushToTalkPoll — the lobby reads the key itself */
+#endif
 
 }
 
@@ -1061,11 +1065,19 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
                         imguiPopNearestSampling();
                         ImVec2 miniMin = ImGui::GetItemRectMin();
-                        bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
+                        /* The two-team compass sits over the image, so it
+                         * gets the mouse first; when it has it, the start
+                         * claim/drag layer and the zoom popup stay out. */
+                        bool compassHot = lobbyPreviewCompassHot(cs, effHostMap,
+                                                miniMin, innerSize, gapPx, s);
+                        bool miniConsumed = compassHot ||
+                                            lobbyPreviewInteract(cs, (int)myPlayerNum,
                                                 effHostMap, miniMin, innerSize,
                                                 bx0, by0, bx1, by1);
                         lobbyDrawPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                                      bx0, by0, bx1, by1);
+                        /* Painted last so the rose sits over any start label in its corner. */
+                        lobbyDrawPreviewCompass(cs, effHostMap, miniMin, innerSize, gapPx, s);
                         /* Controller-reachable entry to the start picker: a
                          * focusable activation over the preview that opens the
                          * popup (which in controller mode shows the start list).
@@ -1914,11 +1926,19 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
                 imguiPopNearestSampling();
                 ImVec2 miniMin = ImGui::GetItemRectMin();
-                bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
+                /* The two-team compass sits over the image, so it gets the
+                 * mouse first; when it has it, the start claim/drag layer
+                 * and the zoom popup stay out. */
+                bool compassHot = lobbyPreviewCompassHot(cs, effHostMap,
+                                        miniMin, innerSize, gapPx, s);
+                bool miniConsumed = compassHot ||
+                                    lobbyPreviewInteract(cs, (int)myPlayerNum,
                                         effHostMap, miniMin, innerSize,
                                         bx0, by0, bx1, by1);
                 lobbyDrawPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                              bx0, by0, bx1, by1);
+                /* Painted last so the rose sits over any start label in its corner. */
+                lobbyDrawPreviewCompass(cs, effHostMap, miniMin, innerSize, gapPx, s);
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
                 /* A click that didn't land on a start opens the zoomed popup
@@ -2306,6 +2326,41 @@ static float lobbyComputeUiScale(SDL_Window *window) {
     return s;
 }
 
+#if defined(WINBOLO_VOICE)
+/*********************************************************
+*NAME:          imguiLobbyPushToTalkPoll
+*PURPOSE:
+*  Reads the push-to-talk key for the lobby, once per turn
+*  of whichever loop is running it.  Nothing else reads keys
+*  here: the frontend tick step returns as soon as it sees
+*  the lobby, so the in-game poll stops. Without this the
+*  key never reaches the voice runtime in the lobby, and a
+*  key still down as the game ended stays down for the whole
+*  of it.
+*
+*  Reading input here means the window has keyboard focus
+*  and nothing is taking typed characters. The lobby has a
+*  chat box, and the letter push to talk sits on must not go
+*  on the air while the player is typing it. WantTextInput
+*  is the answer the last ImGui frame settled on — the
+*  blocking loop polls this before its ImGui::NewFrame — and
+*  a frame either way does not matter for a key held down.
+*
+*  An unbound key is scancode 0, which inputPushToTalkPoll
+*  never reports as held.
+*********************************************************/
+extern "C" void imguiLobbyPushToTalkPoll(void) {
+    SDL_Window *window = sdl3DrawGetWindow();
+    keyItems lobbyKeys;
+    windowGetKeys(&lobbyKeys);
+    const bool reading =
+        window != NULL &&
+        (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0 &&
+        !ImGui::GetIO().WantTextInput;
+    inputPushToTalkPoll(&lobbyKeys, reading);
+}
+#endif
+
 /* Blocking desktop modal: owns a private ImGui context + SDL backends and
  * runs its own event/draw loop, calling imguiLobbyRenderFrame() to build
  * each frame. Returns 1 if the game started, 0 if the player left. */
@@ -2483,6 +2538,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (hasTransport) {
             clientSimNetTick(cs);
         }
+#if defined(WINBOLO_VOICE)
+        /* Ahead of the tick below, so it sends what the key is doing this
+         * turn of the loop rather than the last one's answer. */
+        imguiLobbyPushToTalkPoll();
+        /* This dialog owns the event loop while it is up, so the voice pump
+         * the in-game loop runs each frame has to run here too - otherwise
+         * lobby voice neither plays nor sends, and the mic-state command
+         * does not reach the server until the game starts. */
+        voiceTick(cs);
+#endif
 
 #if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
         /* Write out a clip export whose save picker has been answered. Here

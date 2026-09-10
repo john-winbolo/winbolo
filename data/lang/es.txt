@@ -949,6 +949,8 @@ STR_STARTPICK_TIP_FREE_HOST=Inicio #{number}\nHaz clic para elegir; clic derecho
 STR_STARTPICK_TIP_FREE=Inicio #{number}\nHaz clic para elegir este inicio
 STR_STARTPICK_TIP_HELD_HOST=Inicio #{number} - {player}\nArrastra para mover; clic derecho para asignar a otro jugador
 STR_STARTPICK_TIP_HELD=Inicio #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Inicio #{number} - {player}\nHaz clic para empezar aquí también
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Inicio #{number} - {player}\nHaz clic para empezar aquí también; arrastra para mover; clic derecho para asignar a otro jugador
 STR_STARTPICK_YOU=tú
 STR_STARTPICK_SWAP_WITH=Intercambiar este inicio con:
 STR_STARTPICK_ASSIGN_TO=Asignar inicio a:
@@ -2022,5 +2024,9 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(fuera de zona)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} inicios para {number2} jugadores — {number3} empezarán en el mar.\nCambiar de lado reasigna el inicio de cada jugador.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Todos los inicios que este equipo puede usar están ocupados, así que este jugador\nempezará en el mar junto al inicio de un compañero de equipo.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Fuera de zona: este inicio no está en {string1}, el lado del equipo.\nEl anfitrión lo eligió para este jugador.
+
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Poner los dos equipos en {string1}\n{player} empieza {string2}, {other} empieza {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Equipos en {string1}. Haz clic para volver a los inicios personalizados.
 
 STR_SOUND_LOAD_FAILED=Error al cargar los efectos de sonido

@@ -32,6 +32,7 @@
 #include "platform_net.h"  /* struct in_addr */
 #include "wire_limits.h"   /* PACKET_MAX_CHAT_MESSAGE */
 #include "view_policy.h"   /* ViewPolicy — INFO_PACKET.view_policies helpers */
+#include "server_voice_mode.h"  /* ServerVoiceMode — INFO_PACKET.flags voice bits */
 #include "playername_validate.h"  /* playerNameValidate / playerNameCompare */
 
 #define MAX_UDPPACKET_SIZE 1024
@@ -162,6 +163,34 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
 #define INFO_FLAG_RANDOM_MAP        0x08u
 #define INFO_FLAG_ALLOW_SPECTATORS  0x10u
 #define INFO_FLAG_IN_LOBBY          0x20u
+
+/* The server's voice mode rides the top two bits of the same byte, which
+ * were the only two left. serverVoiceOn is 0, so a server built before
+ * this encoding existed sends both bits clear and reads back as on —
+ * which is what those servers do. The two bits can hold a fourth value
+ * the enum does not use; it reads as on for the same reason. */
+#define INFO_FLAG_VOICE_MASK        0xC0u
+#define INFO_FLAG_VOICE_SHIFT       6
+
+/* Pack a voice mode into the bits to OR into INFO_PACKET.flags. Only
+ * bits 6-7 are returned, so an out-of-range mode cannot reach the other
+ * INFO_FLAG_* bits sharing the byte. */
+static inline BYTE infoPacketPackVoiceMode(ServerVoiceMode mode) {
+  return (BYTE)(((unsigned)mode << INFO_FLAG_VOICE_SHIFT) & INFO_FLAG_VOICE_MASK);
+}
+
+/* Read the voice mode back out of a received flags byte. The reserved
+ * fourth value reports serverVoiceOn rather than a mode that does not
+ * exist, so an encoding this build does not recognise reads as the mode
+ * every server ran before the field existed. */
+static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
+  unsigned mode = ((unsigned)flags & INFO_FLAG_VOICE_MASK) >> INFO_FLAG_VOICE_SHIFT;
+  switch (mode) {
+    case (unsigned)serverVoiceOff:       return serverVoiceOff;
+    case (unsigned)serverVoiceProximity: return serverVoiceProximity;
+    default:                             return serverVoiceOn;
+  }
+}
 
 /* Packet types */
 /* Info Packet */
@@ -606,7 +635,6 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               address-spoofed READY could
                                               otherwise reset a healthy
                                               client's stream). */
-
 #define PACKET_VIEW_STATE              214  /* client → server
                                               { kind 1, target 1 } — the view
                                               the sender's client is in: 0=tank,
@@ -631,7 +659,26 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               live state and answers with
                                               CTRL_VIEW_TARGET. */
 
-#define PACKET_NEWSWIRE_MUTE           216  /* server → all
+#define PACKET_PLAYER_MUTE             216  /* client → server
+                                              { targetPlayer 1, muted 1 }
+                                              per-recipient mute: the
+                                              server stops forwarding
+                                              that player's voice and
+                                              chat to the sender. Not
+                                              echoed to anyone else. */
+
+#define PACKET_VOICE_STATE             217  /* client → server
+                                              { hasMic 1, selfMuted 1 }
+                                              the sender's own mic status,
+                                              sent when it changes. Lands
+                                              in the sender's clientFlags
+                                              and rides the snapshot and
+                                              lobby slot from there. */
+
+/* 218 is reserved for PACKET_MAP_PING, which arrives with the map-ping
+ * work on its own branch. Leave it unused here. */
+
+#define PACKET_NEWSWIRE_MUTE           219  /* server → all
                                               { muted 1 } — 1 while the
                                               scripted scenario wants the
                                               engine-generated newswire

@@ -46,15 +46,16 @@
 #include <stdint.h>
 
 /* Fixed channel identities and the channel count. Channels 0-2 carry
- * discrete messages; channel 3 carries a byte stream; channel 4 carries
- * best-effort (fire-and-forget) messages. */
+ * discrete messages; channel 3 carries a byte stream; channels 4 and 5
+ * carry best-effort (fire-and-forget) messages. */
 enum {
     CHANNEL_GAME        = 0,
     CHANNEL_MAP         = 1,
     CHANNEL_CONTROL     = 2,
     CHANNEL_BULK        = 3,
     CHANNEL_GAME_EFFECT = 4,
-    CHANNEL_COUNT       = 5
+    CHANNEL_VOICE       = 5,
+    CHANNEL_COUNT       = 6
 };
 
 /* Per-channel window depth and segment size. Each channel sizes its rings
@@ -88,6 +89,13 @@ enum {
                                         * sized to one tick's burst + margin,
                                         * not retransmit depth                */
 #define CHANNEL_GAME_EFFECT_SEG    16  /* one GameEvent, like CHANNEL_GAME    */
+#define CHANNEL_VOICE_WINDOW    8   /* best-effort 20 ms voice frames; the
+                                     * server multiplexes up to 4 forwarded
+                                     * talkers into one recipient ring, so
+                                     * this is ~2 ticks of headroom          */
+#define CHANNEL_VOICE_SEG     128   /* [fromPlayer][seq][flags] + one Opus
+                                     * frame; 24 kbps constrained VBR over
+                                     * 20 ms stays well under this           */
 
 /* Largest segSize over all channels, so a caller can size one scratch
  * receive buffer that fits a segment from any channel. */
@@ -126,6 +134,14 @@ typedef struct {
     bool     *recvPresent; /* [window]                                  */
     uint16_t *recvLen;     /* [window]                                  */
     uint8_t  *recvData;    /* [window * segSize], row stride = segSize  */
+
+    /* Best-effort resync state (unused by the reliable channels). A segment
+     * too far from the delivery cursor to be followed on its own is recorded
+     * here instead of acted on; a later one agreeing with it re-bases the
+     * cursor onto where the traffic actually is. Cleared by any accepted
+     * segment, so the two have to be consecutive. */
+    uint32_t refusedSeq;   /* the last refused sequence number           */
+    bool     refusedValid; /* refusedSeq holds a candidate               */
 
     /* Fast-retransmit (NAK) state. */
     uint32_t recvHighestSeq; /* exclusive upper bound on the highest seq
@@ -173,6 +189,12 @@ typedef struct ChannelMux {
     bool     gameEffectRecvPresent[CHANNEL_GAME_EFFECT_WINDOW];
     uint16_t gameEffectRecvLen[CHANNEL_GAME_EFFECT_WINDOW];
     uint8_t  gameEffectRecvData[CHANNEL_GAME_EFFECT_WINDOW][CHANNEL_GAME_EFFECT_SEG];
+
+    uint16_t voiceSendLen[CHANNEL_VOICE_WINDOW];
+    uint8_t  voiceSendData[CHANNEL_VOICE_WINDOW][CHANNEL_VOICE_SEG];
+    bool     voiceRecvPresent[CHANNEL_VOICE_WINDOW];
+    uint16_t voiceRecvLen[CHANNEL_VOICE_WINDOW];
+    uint8_t  voiceRecvData[CHANNEL_VOICE_WINDOW][CHANNEL_VOICE_SEG];
 
     /* Stream channel (CHANNEL_BULK) pending-byte ring. */
     uint8_t  streamBuf[CHANNEL_STREAM_BUF];

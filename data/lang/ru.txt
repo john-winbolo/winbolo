@@ -1484,6 +1484,8 @@ STR_STARTPICK_TIP_FREE_HOST=Старт #{number}\nНажмите, чтобы в�
 STR_STARTPICK_TIP_FREE=Старт #{number}\nНажмите, чтобы выбрать этот старт
 STR_STARTPICK_TIP_HELD_HOST=Старт #{number} — {player}\nПеретащите, чтобы переместить; правой кнопкой — назначить другому игроку
 STR_STARTPICK_TIP_HELD=Старт #{number} — {player}
+STR_STARTPICK_TIP_HELD_JOIN=Старт #{number} — {player}\nНажмите, чтобы стартовать здесь же
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Старт #{number} — {player}\nНажмите, чтобы стартовать здесь же; перетащите, чтобы переместить; правой кнопкой — назначить другому игроку
 STR_STARTPICK_YOU=вы
 STR_STARTPICK_SWAP_WITH=Поменять этот старт с:
 STR_STARTPICK_ASSIGN_TO=Назначить старт игроку:
@@ -2019,5 +2021,9 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(вне стороны)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} стартов для {number2} игроков — {number3} из них начнёт в море.\nСмена стороны переназначает старт каждому игроку.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Все старты, доступные этой команде, заняты, поэтому этот игрок\nначнёт в море рядом со стартом товарища по команде.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Вне стороны: этот старт не относится к {string1}, стороне команды.\nХост выбрал его для этого игрока.
+
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Поставить обе команды на {string1}\n{player} начинает {string2}, {other} начинает {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Команды на {string1}. Нажмите, чтобы вернуться к своим точкам старта.
 
 STR_SOUND_LOAD_FAILED=Ошибка загрузки звуковых эффектов

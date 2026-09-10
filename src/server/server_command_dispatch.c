@@ -29,12 +29,14 @@
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
 #include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor; serverSimFindFreeSlot */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
+#include "lobby_shared_starts.h"      /* lobbySharedStartsEnabled — several players per start */
 #include "start_sides.h"              /* startSideEligible — the claim command's side check */
 #include "threads.h"
 #include "../common/wb_log.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
                                          transportUdpServerSetBotName,
-                                         transportUdpServerKickPlayer */
+                                         transportUdpServerKickPlayer,
+                                         transportUdpServerSetVoiceMute */
 #include "../winbolonet/winbolonet_server.h" /* winboloNetIsPlayerParticipant */
 #include "../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning */
 
@@ -107,7 +109,10 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_NOT_HOST;
         }
         /* A player picking for themselves may take only a start the side
-         * rules let their slot hold; the host may hand anyone any start. */
+         * rules let their slot hold; the host may hand anyone any start.
+         * Whether anyone already holds the start makes no difference to
+         * this test — with shared starts on, joining a held start is
+         * judged exactly like taking a free one. */
         if (!isHost && idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
             !lobbySlotMayHoldStart(sim, target, idx)) {
             return CMD_REJECT_INVALID;
@@ -121,9 +126,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             lobbyAutoUnreadyOnChange(sim);
             return CMD_OK;
         }
-        /* Connected slot currently holding idx (none when idx == 0xFF). */
+        /* Connected slot currently holding idx (none when idx == 0xFF).
+         * With shared starts on nobody is displaced, so the holder does
+         * not need looking up at all: the claim always just lands. */
         BYTE holder = 0xFF;
-        if (idx != 0xFF) {
+        if (idx != 0xFF && !lobbySharedStartsEnabled()) {
             for (BYTE k = 0; k < MAX_TANKS; k++) {
                 if (!serverSimIsPlayerConnected(sim, k)) continue;
                 const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, k);
@@ -131,7 +138,9 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         if (holder != 0xFF && holder != target) {
-            /* Non-host may not take a start someone else holds. */
+            /* One player per start (LOBBY_SHARED_STARTS off): a non-host
+             * may not take a start someone else holds, and a host putting
+             * anyone on one swaps the two. */
             if (!isHost) return CMD_REJECT_INVALID;
             const LobbyPlayer *tlp = serverSimGetLobbyPlayer(sim, target);
             BYTE oldTarget = tlp ? tlp->startIdx : 0xFF;
@@ -146,7 +155,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             serverSimPublishLobbySlot(sim, target);
             serverSimPublishLobbySlot(sim, holder);
         } else {
-            /* Free start, release, or already mine. */
+            /* Free start, release, already mine — or, with shared starts
+             * on, joining a start others hold: they keep it too. */
             serverSimSetLobbyStartIdx(sim, target, idx);
             serverSimPublishLobbySlot(sim, target);
         }
@@ -320,6 +330,48 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         memcpy(evt.u.ratingPosted.key, p->key, sizeof(evt.u.ratingPosted.key));
         evt.u.ratingPosted.key[sizeof(evt.u.ratingPosted.key) - 1] = '\0';
         serverSimPublishControl(sim, &evt);
+        return CMD_OK;
+    }
+    case CMD_PLAYER_MUTE: {
+        const CmdPlayerMute *p = &cmd->u.playerMute;
+        if (p->targetPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Muting yourself is meaningless — you never receive your own
+         * voice or chat. */
+        if ((int)p->targetPlayer == senderSlot) return CMD_REJECT_INVALID;
+        transportUdpServerSetVoiceMute((BYTE)senderSlot, p->targetPlayer,
+                                       p->muted != 0);
+        /* No control event: the mute is private to the muting client.
+         * Broadcasting it would tell the muted player they were muted. */
+        return CMD_OK;
+    }
+    case CMD_VOICE_STATE: {
+        const CmdVoiceState *p = &cmd->u.voiceState;
+        GameSim *gs = serverSimGetGameSim(sim);
+        uint8_t oldFlags = playersGetClientFlags(&gs->plyrs, (BYTE)senderSlot);
+        uint8_t flags = oldFlags;
+        flags &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
+        if (p->hasMic) {
+            flags |= PLAYER_FLAG_HAS_MIC;
+            /* Muted only means anything with a mic. Never setting the two
+             * together leaves the receiving end a clean three states — no
+             * mic, muted, live — rather than four with a nonsense one. */
+            if (p->selfMuted) flags |= PLAYER_FLAG_VOICE_MUTED;
+        }
+        /* A client packs many commands into one PACKET_COMMAND_TICK, and
+         * a re-send of the state the slot already holds is not a change.
+         * Publishing it anyway would fan one reliable lobby-slot control
+         * event per command to every client. */
+        if (flags == oldFlags) return CMD_OK;
+        playersSetClientFlags(&gs->plyrs, (BYTE)senderSlot, flags);
+        /* During a running game the snapshot carries clientFlags every
+         * tick, so the new bits reach every client on their own. The lobby
+         * slot only goes out when it is published, so a change made while
+         * clients are looking at the lobby has to publish it here. Same
+         * gate as the lobby-slot heartbeat in server_lifecycle.c. */
+        if (serverSimGetState(sim) == serverStateLobby ||
+            serverSimGetState(sim) == serverStateCountdown) {
+            serverSimPublishLobbySlot(sim, (BYTE)senderSlot);
+        }
         return CMD_OK;
     }
     case CMD_VIEW_STATE: {

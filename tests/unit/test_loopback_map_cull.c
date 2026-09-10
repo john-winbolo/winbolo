@@ -65,7 +65,7 @@
 #define CULL_SEED 0xC011EDu
 
 /* How far off B's tank the hidden square has to be, in map squares. Well past
- * the 27-square half-width of a viewport rect, and further than a tank covers
+ * the 19-square half-width of a viewport rect, and further than a tank covers
  * in the time this case runs. */
 #define CULL_FAR_MIN 60
 

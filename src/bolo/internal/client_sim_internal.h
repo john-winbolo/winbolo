@@ -313,6 +313,12 @@ struct ClientSim {
                                          * set TRUE by CTRL_LOBBY_SYNC_COMPLETE.
                                          * Lobby event sounds play only when set,
                                          * so the roster replay burst is silent. */
+    /* Who the server says is producing voice right now, one bit per slot
+     * (CTRL_VOICE_TALKING). Lobby and countdown only — the server stops
+     * sending it once a round starts, and sends one empty set on the way
+     * out, so this is 0 in a running game. Raw: the local mute list is not
+     * folded in here. */
+    PlayerBitMap     voiceTalkingMap;
     bool             newswireMuted;     /* Mirror of the server's newswire mute
                                          * (CTRL_NEWSWIRE_MUTE). While set,
                                          * csCallbackMessageAdd drops every
@@ -350,6 +356,12 @@ struct ClientSim {
                                      * to their allies; raw mirror of the
                                      * lobby-settings event, false until the
                                      * first one lands */
+    ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
+                                       * its clients send it; raw mirror of
+                                       * the lobby-settings event. Zero is
+                                       * serverVoiceOn, so a client that has
+                                       * not been told yet behaves as it did
+                                       * before the server carried the mode */
     /* The client's own copy of the proximity clocks a viewPolicyDecay
      * category runs on, for the local player as the viewer. The server keeps
      * the same clocks and they are what decides which rects it sends; these
@@ -610,6 +622,10 @@ struct ClientSim {
     /* Steam achievement: per-game death/loss counters (zeroed by memset in clientSimCreate) */
     uint16_t myDeathsThisGame;
     uint16_t myLgmLossesThisGame;
+
+    /* Live per-slot scoreboard, counted from the reliable game-event
+     * stream for every slot (not just ours). Zeroed at CTRL_GAME_PHASE_RUNNING. */
+    ClientPlayerStats liveStats[MAX_TANKS];
 
     /* Steam achievement: player count tracking (ACH_PLAYERS_6/8/16) */
     uint8_t  maxPlayersSeenThisGame;

@@ -39,7 +39,9 @@
 #include "imgui.h"
 #include "lobby_internal.h"
 #include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot / Classify, compass helpers, side rules, off-side tooltip */
+#include "../../wb_theme.h"  /* g_theme->teamColors — the compass rose's per-team colours */
 #include "start_sides.h"  /* startSideMaskFor — side mask behind the compass label */
+#include "lobby_side_axis.h"  /* LOBBY_SIDE_AXIS_* and the compass axis rules */
 extern "C" {
 #include "client_sim.h"  /* ClientSim + lobby getters; ClientLobbySlot */
 #include "client_net.h"  /* clientSimGetConnectState, clientSimNetSendLobbyClaimStart */
@@ -49,6 +51,18 @@ extern "C" {
 }
 
 static LobbyMapPreviewState s_mapPreview = {};
+
+/* Lobby slot being dragged across the inline preview, or -1. File scope
+ * rather than a local static inside lobbyPreviewInteract because the
+ * compass drawn over the same image has to keep its hands off the mouse
+ * while a drag is in flight. */
+static int s_miniDragHolder = -1;
+
+/* Set with s_miniDragHolder when the host pressed on a start held by
+ * someone else (shared starts only): the press may still turn into a drag
+ * of that holder, but a release without movement joins the start instead
+ * of moving anybody. */
+static bool s_miniDragJoin = false;
 
 /* Core reads the stashed map bytes; players reads those and the per-start
  * caches behind the start column and the ownership overlay. */
@@ -186,8 +200,7 @@ int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
     int myTeam = lobbySlotTeam(cs, myPlayerNum);
     uint32_t sig = 2166136261u;
     for (int i = 1; i <= n; i++) {
-        uint8_t o = (uint8_t)lobbyStartClassify(cs, lobbyStartHolderSlot(cs, i),
-                                                myPlayerNum);
+        uint8_t o = (uint8_t)lobbyStartClassifyShared(cs, i, myPlayerNum);
         if (lobbyStartOffSide(cs, myTeam, lobbyStartSideMask(i))) {
             o |= MINIMAP_OWNER_OFFSIDE;
         }
@@ -222,6 +235,197 @@ static int lobbyPreviewStartAtScreen(ImVec2 imgMin, float previewSize,
     return best;
 }
 
+/* A team's colour as the player panel's header strip picks it: the theme
+ * colour the team chose once the team is in use, otherwise the palette
+ * entry its number cycles onto. */
+static ImU32 lobbyCompassTeamColor(ClientSim *cs, int teamId) {
+    uint8_t colorIdx = clientSimGetLobbyTeamColor(cs, (BYTE)teamId);
+    if (clientSimGetLobbyTeamInUse(cs, (BYTE)teamId) && colorIdx < 8) {
+        return g_theme->teamColors[colorIdx];
+    }
+    return g_theme->teamColors[(teamId - 1) & 7];
+}
+
+/* "N/S" or "E/W" from the localized compass letters — the axis name the
+ * two compass tooltips lead with. */
+static void lobbyCompassAxisLabel(int axis, char *buf, size_t bufLen) {
+    BYTE sa = START_SIDE_ANY, sb = START_SIDE_ANY;
+    char a[16], b[16];
+    lobbySideAxisSides(axis, &sa, &sb);
+    SDL_strlcpy(a, langGetText(lobbySideCompassId(sa)), sizeof(a));
+    SDL_strlcpy(b, langGetText(lobbySideCompassId(sb)), sizeof(b));
+    SDL_snprintf(buf, bufLen, "%s/%s", a, b);
+}
+
+/* The two-team compass rose, drawn in the bottom-left corner of the map
+ * preview image: N/E/S/W around a centre mark, an axis at a time.
+ *
+ * It is a shortcut for the pair of "Start:" combos in the player panel's
+ * team headers, so it follows them exactly: host only (the combos are not
+ * drawn for anyone else, so neither is this), and only when the map has
+ * starts. On top of that it needs a pair to act on, so it appears only
+ * when exactly two teams have members — the same "connected slots, bots
+ * included" count the panel puts in its team headers.
+ *
+ * Hovering either letter of an axis lights both: N and S together, E and
+ * W together. On an axis the teams are not already on, the tooltip offers
+ * to put them there and names which team takes which side, and a click
+ * sends both sides — the lower team id takes the first side of the axis
+ * (north, or east). When the two teams' sides already form that axis it
+ * is drawn permanently lit in the two teams' colours, and the tooltip and
+ * click instead put both teams back to Any.
+ *
+ * Returns true when the rose is under the cursor, so the caller skips the
+ * start claim/drag layer and the zoom popup for that click. */
+/* Everything the rose needs before it can draw or answer the mouse: the
+ * two teams, the centre and radius, the four letter anchors and, from the
+ * cursor, which axis (if any) is under it. Shared by the hit test that runs
+ * BEFORE the start claim/drag layer (so the rose keeps mouse priority) and
+ * the draw that runs AFTER the start overlay (so the letters paint on top
+ * of any start label pushed into this corner). */
+struct LobbyCompassGeom {
+    int    teamA, teamB;
+    ImVec2 c;
+    float  r;
+    ImVec2 gp[4];      /* letter anchors, N E S W */
+    int    setAxis;    /* axis the two teams are on now, or NONE */
+    int    hovAxis;    /* axis under the cursor, or NONE */
+    bool   overRose;   /* cursor within the rose's reach at all */
+};
+static const BYTE kCompassSides[4] = { START_SIDE_N, START_SIDE_E,
+                                       START_SIDE_S, START_SIDE_W };
+
+static bool lobbyCompassGeom(ClientSim *cs, bool effHostMap, ImVec2 imgMin,
+                             float innerSize, float gapPx, float s,
+                             LobbyCompassGeom *g) {
+    /* Same gates as the "Start:" combo, plus the pair the rose acts on. */
+    if (!effHostMap) return false;
+    if (s_mapPreview.startCount == 0) return false;
+    if (s_miniDragHolder >= 0) return false;   /* a drag owns the mouse */
+    if (!lobbyTwoTeamPair(cs, &g->teamA, &g->teamB)) return false;
+
+    /* Corner rose, sized off the preview but held between a legible
+     * minimum and a modest maximum so it stays a badge rather than an
+     * overlay. Give up entirely on a preview too small to hold one. */
+    float r = innerSize * 0.13f;
+    if (r < 20.0f * s) r = 20.0f * s;
+    if (r > 40.0f * s) r = 40.0f * s;
+    if (r * 2.0f > innerSize * 0.45f) return false;
+    /* Top-left corner of the WHOLE preview box -- the deep-blue inset
+     * (gapPx wide on every side) included, not just the map image -- as
+     * tight as the glyph letters allow. */
+    const float pad = 2.0f * s;
+    g->r = r;
+    g->c = ImVec2(imgMin.x - gapPx + pad + r, imgMin.y - gapPx + pad + r);
+
+    /* Letter positions, in the N, E, S, W order of the side values. */
+    const float gr = r * 0.66f;
+    g->gp[0] = ImVec2(g->c.x,      g->c.y - gr);
+    g->gp[1] = ImVec2(g->c.x + gr, g->c.y);
+    g->gp[2] = ImVec2(g->c.x,      g->c.y + gr);
+    g->gp[3] = ImVec2(g->c.x - gr, g->c.y);
+
+    g->setAxis  = lobbyTeamPairAxis(cs, g->teamA, g->teamB);
+    g->hovAxis  = LOBBY_SIDE_AXIS_NONE;
+    g->overRose = false;
+    if (ImGui::IsWindowHovered()) {
+        ImVec2 mp = ImGui::GetMousePos();
+        float dx = mp.x - g->c.x, dy = mp.y - g->c.y;
+        float reach = r + 3.0f * s;
+        g->overRose = (dx * dx + dy * dy) <= reach * reach;
+        float hit = r * 0.42f;
+        if (hit < 9.0f * s) hit = 9.0f * s;
+        for (int i = 0; i < 4; i++) {
+            if (mp.x >= g->gp[i].x - hit && mp.x <= g->gp[i].x + hit &&
+                mp.y >= g->gp[i].y - hit && mp.y <= g->gp[i].y + hit) {
+                g->hovAxis  = lobbySideAxisOfSide(kCompassSides[i]);
+                g->overRose = true;
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+bool lobbyPreviewCompassHot(ClientSim *cs, bool effHostMap,
+                            ImVec2 imgMin, float innerSize, float gapPx, float s) {
+    LobbyCompassGeom g;
+    if (!lobbyCompassGeom(cs, effHostMap, imgMin, innerSize, gapPx, s, &g)) return false;
+    return g.overRose;
+}
+
+bool lobbyDrawPreviewCompass(ClientSim *cs, bool effHostMap,
+                             ImVec2 imgMin, float innerSize, float gapPx, float s) {
+    LobbyCompassGeom g;
+    if (!lobbyCompassGeom(cs, effHostMap, imgMin, innerSize, gapPx, s, &g)) return false;
+
+    /* No backing disc: the letters carry their own shadow. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImFont *font   = ImGui::GetFont();
+    float fsz      = ImGui::GetFontSize() * 0.85f;
+    dl->AddCircleFilled(g.c, (2.0f * s < 1.5f) ? 1.5f : 2.0f * s,
+                        IM_COL32(255, 255, 255, 190), 12);
+
+    for (int i = 0; i < 4; i++) {
+        int  axis = lobbySideAxisOfSide(kCompassSides[i]);
+        bool set  = (axis == g.setAxis);
+        bool hot  = (axis == g.hovAxis);
+        /* A set axis wears the colour of the team that holds that side;
+         * a hovered one is bright white; everything else is dimmed. */
+        ImU32 col = IM_COL32(255, 255, 255, hot ? 255 : 130);
+        if (set) {
+            int owner = (lobbyTeamSide(cs, g.teamA) == kCompassSides[i]) ? g.teamA : g.teamB;
+            col = lobbyCompassTeamColor(cs, owner);
+            if (!hot) {
+                col = (col & ~(0xFFu << IM_COL32_A_SHIFT))
+                    | (200u << IM_COL32_A_SHIFT);
+            }
+        }
+        dl->AddLine(g.c, g.gp[i], col, ((set || hot) ? 2.0f : 1.0f) * s);
+        char letter[16];
+        SDL_strlcpy(letter, langGetText(lobbySideCompassId(kCompassSides[i])),
+                    sizeof(letter));
+        ImVec2 ts = font->CalcTextSizeA(fsz, FLT_MAX, 0.0f, letter);
+        ImVec2 tp(g.gp[i].x - ts.x * 0.5f, g.gp[i].y - ts.y * 0.5f);
+        dl->AddText(font, fsz, ImVec2(tp.x + 1.0f, tp.y + 1.0f),
+                    IM_COL32(0, 0, 0, 205), letter);
+        dl->AddText(font, fsz, tp, col, letter);
+    }
+
+    if (g.hovAxis == LOBBY_SIDE_AXIS_NONE) return g.overRose;
+
+    /* Hover text: the axis, and -- when it is not the one already set --
+     * which team takes which side of it. */
+    MessageArgs args = {};
+    char axisLbl[24];
+    lobbyCompassAxisLabel(g.hovAxis, axisLbl, sizeof(axisLbl));
+    SDL_strlcpy(args.string1, axisLbl, sizeof(args.string1));
+    if (g.hovAxis == g.setAxis) {
+        ImGui::SetTooltip("%s",
+            langGetTextFmt(STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR, &args));
+    } else {
+        BYTE sa = START_SIDE_ANY, sb = START_SIDE_ANY;
+        lobbySideAxisSides(g.hovAxis, &sa, &sb);
+        lobbyTeamLabel(cs, g.teamA, args.playerName, sizeof(args.playerName));
+        lobbyTeamLabel(cs, g.teamB, args.otherName, sizeof(args.otherName));
+        SDL_strlcpy(args.string2, langGetText(lobbySideNameId(sa)),
+                    sizeof(args.string2));
+        SDL_strlcpy(args.string3, langGetText(lobbySideNameId(sb)),
+                    sizeof(args.string3));
+        ImGui::SetTooltip("%s",
+            langGetTextFmt(STR_DLGLOBBY_TOOLTIP_COMPASS_SET, &args));
+    }
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        BYTE sa = START_SIDE_ANY, sb = START_SIDE_ANY;
+        if (lobbySideAxisClick(g.hovAxis, g.setAxis, &sa, &sb)) {
+            lobbySendTeamSide(cs, (uint8_t)g.teamA, sa);
+            lobbySendTeamSide(cs, (uint8_t)g.teamB, sb);
+        }
+    }
+    return true;
+}
+
 /* Draw reserved-start ownership markers over the inline map preview Image.
  * Maps each cached start map-square into the displayed (cropped) image rect,
  * colours it by who claimed it (self/ally/enemy/unclaimed), and labels
@@ -241,20 +445,25 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
      * spectator has none, so nothing is off-side for it. */
     const int myTeam = spectator ? 0 : lobbySlotTeam(cs, myPlayerNum);
 
-    /* Pass 1: holder slot + a compact name list for disambiguation. */
-    const char *holderNames[MAX_STARTS + 1] = {0};
-    int holderOf[MAX_STARTS + 1];
-    int nameListIdx[MAX_STARTS + 1];
+    /* Pass 1: every start's holders, plus one flat name list for the
+     * prefix disambiguation — the prefixes are computed against all the
+     * holder names on the map, not just the ones sharing a start, so a
+     * given player's initial reads the same wherever it appears. A start
+     * several players share lists them all (nameIdx holds their entries in
+     * the flat list, in slot order). */
+    const char *holderNames[MAX_TANKS] = {0};
+    int nameIdx[MAX_STARTS + 1][MAX_TANKS];
+    int nNames[MAX_STARTS + 1];
     int nHolders = 0;
     for (int i = 1; i <= (int)s_mapPreview.startCount; i++) {
-        holderOf[i]    = lobbyStartHolderSlot(cs, i);
-        nameListIdx[i] = -1;
-        if (holderOf[i] >= 0) {
-            const char *nm = clientSimGetLobbySlot(cs, (BYTE)holderOf[i])->playerName;
-            if (nm && nm[0]) {
-                nameListIdx[i] = nHolders;
-                holderNames[nHolders++] = nm;
-            }
+        int holders[MAX_TANKS];
+        int n = lobbyStartHolders(cs, i, holders, MAX_TANKS);
+        nNames[i] = 0;
+        for (int h = 0; h < n && nHolders < MAX_TANKS; h++) {
+            const char *nm = clientSimGetLobbySlot(cs, (BYTE)holders[h])->playerName;
+            if (!nm || !nm[0]) continue;
+            nameIdx[i][nNames[i]++] = nHolders;
+            holderNames[nHolders++] = nm;
         }
     }
 
@@ -271,15 +480,14 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
             fy < imgMin.y || fy > imgMin.y + previewSize) continue;
 
         /* Label: "#<n>" alone, or "#<n> <initials>" when claimed (the
-         * disambiguating prefix to the right of the number). */
-        char buf[40];
-        if (nameListIdx[i] >= 0) {
-            int plen = lobbyStartUniquePrefixLen(holderNames, nHolders, nameListIdx[i]);
-            char pfx[24];
-            if (plen > (int)sizeof(pfx) - 1) plen = (int)sizeof(pfx) - 1;
-            memcpy(pfx, holderNames[nameListIdx[i]], (size_t)plen);
-            pfx[plen] = '\0';
-            SDL_snprintf(buf, sizeof(buf), "#%d %s", i, pfx);
+         * disambiguating prefixes to the right of the number). Several
+         * holders are joined with a comma — "#3 C, M". */
+        char buf[96];
+        if (nNames[i] > 0) {
+            char who[64];
+            lobbyStartHolderPrefixLabel(holderNames, nHolders,
+                                        nameIdx[i], nNames[i], who, sizeof(who));
+            SDL_snprintf(buf, sizeof(buf), "#%d %s", i, who);
         } else {
             SDL_snprintf(buf, sizeof(buf), "#%d", i);
         }
@@ -317,9 +525,9 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
          * drops to half alpha, matching its dimmed dot in the texture. */
         ImU32 txtCol = IM_COL32(255, 255, 255, 255);
         ImU32 shadow = IM_COL32(0, 0, 0, 205);
-        if (nameListIdx[i] >= 0) {
-            LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i],
-                                                   spectator ? -1 : myPlayerNum);
+        if (nNames[i] > 0) {
+            LobbyStartOwner o = lobbyStartClassifyShared(cs, i,
+                                                         spectator ? -1 : myPlayerNum);
             if (o == LSO_ENEMY) txtCol = IM_COL32(235, 90, 90, 255);
             else                txtCol = IM_COL32(80, 255, 170, 255);
         }
@@ -353,8 +561,10 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
 /* Interaction layer for the inline map preview. Called right after the map
  * Image, which stays the last item (so the caller's mapPreviewPopupOnClick
  * still works). No invisible button — that grabbed nav focus and drew a
- * light-blue focus outline. Clicking a FREE start moves you there; pressing a
- * movable claimed start and dragging reassigns its player (a manual drag).
+ * light-blue focus outline. Clicking a free start moves you there, and — with
+ * shared starts on — so does clicking one others already hold, which joins
+ * them rather than pushing anyone off; pressing a start you hold, or (host)
+ * one somebody else holds, and dragging reassigns that player (a manual drag).
  * A start that the placed player's team side rejects — the dragged player
  * during a drag, the viewer otherwise — takes neither a click nor a drop
  * from a player who is not the host — the server would refuse the claim —
@@ -364,7 +574,6 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
 bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                                  ImVec2 imgMin, float innerSize,
                                  int bx0, int by0, int bx1, int by1) {
-    static int s_miniDragHolder = -1;   /* lobby slot being dragged, or -1 */
     bool consumed = false;
     /* A spectator owns no slot: it can neither claim a free start nor drag a
      * claimed one. Bail before any click is interpreted as an action. */
@@ -392,13 +601,22 @@ bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
         consumed = true;
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             s_miniDragHolder = -1;
+            s_miniDragJoin   = false;
             return consumed;
         }
-        ImGui::SetMouseCursor(dropBlocked ? ImGuiMouseCursor_Arrow
-                                          : ImGuiMouseCursor_ResizeAll);
+        /* A press that may still be a join (host on a start somebody else
+         * holds) shows nothing of the drag until the cursor actually
+         * travels, so a plain click reads as a click and not as a grab. */
+        ImVec2 ddNow = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+        bool dragging = !s_miniDragJoin ||
+                        (ddNow.x * ddNow.x + ddNow.y * ddNow.y >= 16.0f);
+        if (dragging) {
+            ImGui::SetMouseCursor(dropBlocked ? ImGuiMouseCursor_Arrow
+                                              : ImGuiMouseCursor_ResizeAll);
+        }
         if (offSide) offSideTooltip();
         const ClientLobbySlot *ds = clientSimGetLobbySlot(cs, (BYTE)s_miniDragHolder);
-        if (ds && ds->playerName[0]) {
+        if (dragging && ds && ds->playerName[0]) {
             ImVec2 ts = ImGui::CalcTextSize(ds->playerName);
             ImVec2 p(mp.x + 12.0f, mp.y - ts.y * 0.5f);
             dl->AddRectFilled(ImVec2(p.x - 3, p.y - 1),
@@ -407,32 +625,64 @@ bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
             dl->AddText(p, IM_COL32(255, 255, 255, 255), ds->playerName);
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-            if (st >= 1 && !dropBlocked)
-                clientSimNetSendLobbyClaimStart(cs, (BYTE)s_miniDragHolder, (BYTE)st);
+            /* The host's press on a start somebody else holds is a join
+             * until it turns into a real drag: under 4 px of travel the
+             * release puts the viewer on the start instead of moving the
+             * holder off it. A drop onto a held start just joins it too —
+             * the server no longer swaps anyone out. */
+            ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+            bool moved = (dd.x * dd.x + dd.y * dd.y >= 16.0f);
+            if (st >= 1 && !dropBlocked) {
+                BYTE who = (s_miniDragJoin && !moved && myPlayerNum >= 0)
+                               ? (BYTE)myPlayerNum : (BYTE)s_miniDragHolder;
+                clientSimNetSendLobbyClaimStart(cs, who, (BYTE)st);
+            }
             s_miniDragHolder = -1;
+            s_miniDragJoin   = false;
         }
         return consumed;
     }
 
     if (!hov) return consumed;
-    int holder = (st >= 1) ? lobbyStartHolderSlot(cs, st) : -1;
+    /* Every connected slot on the start under the cursor: the first of them
+     * is who the host drags, and whether the viewer is among them decides
+     * between "drag me" and "join them". */
+    int holders[MAX_TANKS];
+    int nHold  = (st >= 1) ? lobbyStartHolders(cs, st, holders, MAX_TANKS) : 0;
+    int holder = (nHold > 0) ? holders[0] : -1;
+    bool iHold = false;
+    for (int h = 0; h < nHold; h++) {
+        if (holders[h] == myPlayerNum) iHold = true;
+    }
     /* Nothing to do on an off-side start unless you are the host or already
      * hold it — your own claim can still be dragged away. */
-    bool blocked = dropBlocked && holder != myPlayerNum;
+    bool blocked = dropBlocked && !iHold;
     ImGui::SetMouseCursor(blocked ? ImGuiMouseCursor_Arrow : ImGuiMouseCursor_Hand);
     if (offSide) offSideTooltip();
     /* On press: a free start under the cursor → claim it for yourself; a
-     * movable claimed start → begin a manual drag-to-move. Both consume the
-     * click so the zoom popup doesn't open, as does a press on a start you
-     * cannot take, so that it does nothing at all. */
+     * start you hold → begin a manual drag-to-move. With shared starts on,
+     * a start somebody else holds is one you may join: a non-host joins on
+     * the press, and for the host the press begins a potential drag of the
+     * first holder that a release without movement turns into a join.
+     * Every one of those consumes the click so the zoom popup doesn't open,
+     * as does a press on a start you cannot take, so that it does nothing
+     * at all. */
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         if (blocked) {
             consumed = true;
         } else if (st >= 1 && holder < 0 && myPlayerNum >= 0) {
             clientSimNetSendLobbyClaimStart(cs, (BYTE)myPlayerNum, (BYTE)st);
             consumed = true;
-        } else if (holder >= 0 && (effHostMap || holder == myPlayerNum)) {
+        } else if (iHold) {
+            s_miniDragHolder = myPlayerNum;
+            s_miniDragJoin   = false;
+            consumed = true;
+        } else if (holder >= 0 && effHostMap) {
             s_miniDragHolder = holder;
+            s_miniDragJoin   = lobbySharedStartsEnabled();
+            consumed = true;
+        } else if (holder >= 0 && lobbySharedStartsEnabled() && myPlayerNum >= 0) {
+            clientSimNetSendLobbyClaimStart(cs, (BYTE)myPlayerNum, (BYTE)st);
             consumed = true;
         }
     }

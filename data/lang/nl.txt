@@ -1486,6 +1486,8 @@ STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlik om te kiezen; rechtsklikken om
 STR_STARTPICK_TIP_FREE=Start #{number}\nKlik om deze startpositie te kiezen
 STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nSlepen om te verplaatsen; rechtsklikken om aan iemand anders toe te wijzen
 STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nKlik om hier ook te starten
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nKlik om hier ook te starten; slepen om te verplaatsen; rechtsklikken om aan iemand anders toe te wijzen
 STR_STARTPICK_YOU=jij
 STR_STARTPICK_SWAP_WITH=Ruil deze start met:
 STR_STARTPICK_ASSIGN_TO=Start toewijzen aan:
@@ -2021,5 +2023,9 @@ STR_DLGLOBBY_START_OFFSIDE_SUFFIX=(buitenspel)
 STR_DLGLOBBY_TOOLTIP_TEAM_SIDE={string1}: {number} startposities voor {number2} spelers — {number3} beginnen op zee.\nEen kant wijzigen wijst elke speler opnieuw een start toe.
 STR_DLGLOBBY_TOOLTIP_START_SEA=Alle starts die dit team kan gebruiken zijn bezet, dus deze speler\nbegint op zee naast de start van een teamgenoot.
 STR_DLGLOBBY_TOOLTIP_START_OFFSIDE=Buitenspel: deze start ligt niet aan {string1}, de kant van het team.\nDe host koos die voor deze speler.
+
+# Map-preview compass: the two-team N/S or E/W shortcut hover text
+STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Zet beide teams op {string1}\n{player} start {string2}, {other} start {string3}
+STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Teams op {string1} gezet. Klik om terug te gaan naar eigen startpunten.
 
 STR_SOUND_LOAD_FAILED=Fout bij het laden van geluidseffecten

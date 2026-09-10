@@ -248,6 +248,15 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
     csPtr->pendingBuildY = 0;
   }
 }
+
+/* Bounds-checked live-scoreboard row. Slot bytes arrive off the wire and
+ * an owner field can legitimately hold NEUTRAL, so nothing indexes
+ * liveStats without passing through here. */
+static ClientPlayerStats *liveStatsSlot(ClientSim *csPtr, BYTE slot) {
+  if (slot >= MAX_TANKS) return NULL;
+  return &csPtr->liveStats[slot];
+}
+
 /*********************************************************
 *NAME:          clientSimApplyGameEvents
 *PURPOSE:
@@ -316,11 +325,15 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         }
         break;
       case EVENT_SOUND:
-        /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
-         * Sounds are server-authoritative (isPredicting suppresses prediction-side
-         * sounds). Bubbles and tank-sink are gated to the local player only:
-         * they're tied to the player's own boat/drown event and would otherwise
-         * play whenever any remote tank within distance went into water. */
+        /* data: [soundId, tier, direction, sourcePlayer] — play the variant the
+         * tier names. The server measured the sound against this recipient's
+         * tank and dropped anything out of earshot, so there is no distance
+         * work left here. Sounds are server-authoritative (isPredicting
+         * suppresses prediction-side sounds). Bubbles and tank-sink are
+         * restricted to the local player: they're tied to the player's own
+         * boat/drown event and would otherwise play whenever any remote tank
+         * within distance went into water. The server drops those too; keeping
+         * the check here also covers a replay. */
         if (isHuman) {
           sndEffects sid = (sndEffects)events[i].data[0];
           bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
@@ -330,13 +343,13 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         }
         break;
       case EVENT_SOUND_SHOOT:
-        /* data: [soundId, mx, my, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
+        /* data: [soundId, tier, direction, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
         if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
           clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
         }
         break;
       case EVENT_SOUND_TANK_HIT:
-        /* data: [soundId, mx, my, hitPlayer] */
+        /* data: [soundId, tier, direction, hitPlayer] */
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
             frontEndPlaySound(csPtr, hitTankSelf);
@@ -367,6 +380,11 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
       }
       case EVENT_BASE_CAPTURED:
         /* data: [newOwner, previousOwner] */
+        /* Live scoreboard: counted for every slot. */
+        {
+          ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
+          if (ownerRow != NULL) ownerRow->baseCaptures++;
+        }
         if (isHuman) {
           basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
                                      events[i].data[0], events[i].data[1]);
@@ -395,6 +413,11 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         break;
       case EVENT_PILL_CAPTURED:
         /* data: [newOwner, previousOwner] */
+        /* Live scoreboard: counted for every slot. */
+        {
+          ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
+          if (ownerRow != NULL) ownerRow->pillCaptures++;
+        }
         if (isHuman) {
           BYTE newOwner = events[i].data[0];
           BYTE prevOwner = events[i].data[1];
@@ -525,6 +548,16 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         break;
       case EVENT_LGM_LOST:
         /* data: [victim, killer] — builder killed, broadcast newswire */
+        /* Live scoreboard: counted for every slot. Killing your own LGM
+         * credits no lgmKills, matching the Steam branch below. */
+        {
+          ClientPlayerStats *victimRow = liveStatsSlot(csPtr, events[i].data[0]);
+          if (victimRow != NULL) victimRow->lgmDeaths++;
+          if (events[i].data[1] != events[i].data[0]) {
+            ClientPlayerStats *killerRow = liveStatsSlot(csPtr, events[i].data[1]);
+            if (killerRow != NULL) killerRow->lgmKills++;
+          }
+        }
         if (isHuman) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
@@ -570,6 +603,16 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         break;
       case EVENT_TANK_KILLED:
         /* data: [killer, killed, deathCause, carriedPills] */
+        /* Live scoreboard: counted for every slot. A self-kill is a death
+         * with no kill credited, matching the server's PlayerRoundStats. */
+        {
+          ClientPlayerStats *killedRow = liveStatsSlot(csPtr, events[i].data[1]);
+          if (killedRow != NULL) killedRow->deaths++;
+          if (events[i].data[0] != events[i].data[1]) {
+            ClientPlayerStats *killerRow = liveStatsSlot(csPtr, events[i].data[0]);
+            if (killerRow != NULL) killerRow->kills++;
+          }
+        }
         if (events[i].data[0] == playerNum && events[i].data[0] != events[i].data[1]) {
           tankAddKill(&csPtr->sim, &MY_TANK(csPtr));
           /* Steam stat: human only — bots run this same path. */
@@ -714,7 +757,11 @@ void clientApplySnapshot(ClientSim *csPtr,
        * must NOT go in this mask for that reason. */
       const uint8_t snapshotMask = PLAYER_FLAG_WBN_VERIFIED
                                  | PLAYER_FLAG_WBN_STEAM_LINKED
-                                 | PLAYER_FLAG_SUPPORTER;
+                                 | PLAYER_FLAG_SUPPORTER
+                                 /* Mic status: server-broadcast per-player
+                                  * state, and only for the players whose
+                                  * voice reaches us. */
+                                 | PLAYER_VOICE_FLAG_MASK;
       uint8_t cur = playersGetClientFlags(&csPtr->sim.plyrs, pn);
       uint8_t next = (uint8_t)((cur & ~snapshotMask) | (tanks[i].clientFlags & snapshotMask));
       playersSetClientFlags(&csPtr->sim.plyrs, pn, next);

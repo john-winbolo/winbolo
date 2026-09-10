@@ -32,9 +32,28 @@
 #include "server_sim_internal.h"
 #include "../../common/wb_log.h"   /* WB_LOG_DEBUG — the one-shot clientFlags trace */
 
-/* Viewport culling — margin in map squares beyond the visible 15×15 screen */
+/* Viewport culling — margin in map squares beyond the visible 15×15 screen.
+ * Every rect reaches SNAPSHOT_SCREEN_SIZE / 2 + SNAPSHOT_VIEWPORT_MARGIN
+ * squares from its centre, so the margin below puts the half-extent at 19 and
+ * each rect covers 39x39 squares.
+ *
+ * 19 is the overview's tank reveal block plus room for travel. The reveal block
+ * is OVERVIEW_TANK_HALF, which is 14 (overview_types.h): a client cannot draw
+ * ground it was never sent, so the cull can never be tighter than what the
+ * overview reveals. The main screen's own edge only reaches 13 squares from the
+ * tank under full autoscroll lead, so it is the reveal that sets the floor, not
+ * the screen.
+ *
+ * The five squares on top cover travel and interpolation slack. A tank's top
+ * speed is 3.125 map squares a second (MAP_SPEED_TROAD is 16 world units a
+ * move, at 50 moves a second, with 256 units to a square), so a 400 ms round
+ * trip is 1.25 squares — a tank driving at an edge was sent the ground ahead of
+ * it well before it gets there.
+ *
+ * 14 + 5 = 19, written as a margin on the screen half because that is the shape
+ * the rect builder wants: 19 - 7 = 12. */
 #define SNAPSHOT_SCREEN_SIZE 15
-#define SNAPSHOT_VIEWPORT_MARGIN 20
+#define SNAPSHOT_VIEWPORT_MARGIN 12
 
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
     int i;
@@ -45,6 +64,129 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
         }
     }
     return false;
+}
+
+/* Written once here and exported through server_sim_internal.h so both sound
+ * delivery paths measure the same way.
+ *
+ * The tier follows the general near/far rule the client applies today: near
+ * inside the SDIST_SOFT square on both axes, far outside it. The bearing is
+ * map-absolute, with map Y increasing southward, and is a pure axis when one
+ * component is more than twice the other, a diagonal otherwise.
+ *
+ * The listener square comes from wx >> 8, which every other server-side cull
+ * uses. That sits half a square from the client's own tankGetScreenMX, so a
+ * boundary case can land one square either side of what the client would work
+ * out for itself. */
+bool soundTierAndDirection(int listenerMX, int listenerMY, int mx, int my,
+                           uint8_t *tier, uint8_t *dir) {
+    int dx = mx - listenerMX;
+    int dy = my - listenerMY;
+    int ax = (dx < 0) ? -dx : dx;
+    int ay = (dy < 0) ? -dy : dy;
+
+    *tier = (ax <= SDIST_SOFT && ay <= SDIST_SOFT) ? SOUND_TIER_NEAR
+                                                   : SOUND_TIER_FAR;
+
+    if (dx == 0 && dy == 0) {
+        *dir = SOUND_DIR_CENTRE;
+    } else if (ay > 2 * ax) {
+        *dir = (dy < 0) ? SOUND_DIR_N : SOUND_DIR_S;
+    } else if (ax > 2 * ay) {
+        *dir = (dx > 0) ? SOUND_DIR_E : SOUND_DIR_W;
+    } else if (dx > 0) {
+        *dir = (dy < 0) ? SOUND_DIR_NE : SOUND_DIR_SE;
+    } else {
+        *dir = (dy < 0) ? SOUND_DIR_NW : SOUND_DIR_SW;
+    }
+
+    return ax < SDIST_NONE && ay < SDIST_NONE;
+}
+
+bool soundEventIsSound(uint8_t type) {
+    return type == EVENT_SOUND || type == EVENT_SOUND_TANK_HIT ||
+           type == EVENT_SOUND_SHOOT;
+}
+
+void soundPickInit(SoundPick *pick) {
+    int s;
+    for (s = 0; s < SOUND_PICK_TYPES; s++) {
+        pick->has[s] = false;
+        pick->dist[s] = 0;
+    }
+}
+
+void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
+                    int listenerMX, int listenerMY, bool keepSquare) {
+    uint8_t soundId = ev->data[0];
+    int mx = ev->data[1];
+    int my = ev->data[2];
+    uint8_t tier = SOUND_TIER_NEAR;
+    uint8_t dir = SOUND_DIR_CENTRE;
+    bool inRange;
+    int ax, ay, dist;
+
+    if (!soundEventIsSound(ev->type) || soundId >= SOUND_PICK_TYPES) return;
+
+    /* Own shot: the client plays shootSelf from its prediction. */
+    if (ev->type == EVENT_SOUND_SHOOT && ev->data[3] == recipient) return;
+
+    /* Bubbles and a tank going under are each tied to one player's own boat
+     * or drowning, so they only go to that player. */
+    if (ev->type == EVENT_SOUND &&
+        (soundId == bubbles || soundId == tankSinkNear ||
+         soundId == tankSinkFar) &&
+        ev->data[3] != recipient) {
+        return;
+    }
+
+    /* Worked out for every sound, including the tank hit below that skips
+     * the range cull, so the winner always has a tier and a bearing. */
+    inRange = soundTierAndDirection(listenerMX, listenerMY, mx, my,
+                                    &tier, &dir);
+
+    /* A tank hit reaches the player hit at any range: they play hitTankSelf
+     * at full volume. Everything else stops at SDIST_NONE. */
+    if (!inRange &&
+        !(ev->type == EVENT_SOUND_TANK_HIT && ev->data[3] == recipient)) {
+        return;
+    }
+
+    /* Neither bubbles nor manLayingMineNear has a far variant, so a far one
+     * is silence at a recipient that plays tiers. Dropped ahead of the dedup
+     * so it cannot take the slot a nearer one wants. A recipient that keeps
+     * the square reads the sound as a position, not a variant, and gets it. */
+    if (!keepSquare && tier == SOUND_TIER_FAR && ev->type == EVENT_SOUND &&
+        (soundId == bubbles || soundId == manLayingMineNear)) {
+        return;
+    }
+
+    /* Closest instance of each sound id wins, measured on the real squares. */
+    ax = (mx > listenerMX) ? (mx - listenerMX) : (listenerMX - mx);
+    ay = (my > listenerMY) ? (my - listenerMY) : (listenerMY - my);
+    dist = ax + ay;
+    if (pick->has[soundId] && dist >= pick->dist[soundId]) return;
+
+    /* Shaped into the pick's own copy: the sim's event array is shared by
+     * every recipient in the tick, so rewriting it in place would hand the
+     * next client a bearing measured against this one's tank. */
+    pick->ev[soundId] = *ev;
+    if (!keepSquare) {
+        pick->ev[soundId].data[1] = tier;
+        pick->ev[soundId].data[2] = dir;
+    }
+    pick->dist[soundId] = dist;
+    pick->has[soundId] = true;
+}
+
+void serverSimSetSoundSquares(ServerSim *sim, BYTE playerNum, bool keep) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    sim->soundSquares[playerNum] = keep;
+}
+
+bool serverSimRecipientKeepsSoundSquares(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    return serverSimIsBot(sim, playerNum) || sim->soundSquares[playerNum];
 }
 
 static int serverSimGetShells(ServerSim *sim, ShellSnapshot *out, int maxOut,
@@ -1094,7 +1236,28 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->firstLeft = tankGetFirstLeft(&sim->sim.tanks[i]);
         ts->firstRight = tankGetFirstRight(&sim->sim.tanks[i]);
         ts->pingMs = sim->playerPing[i];
-        ts->clientFlags = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+        {
+            uint8_t cf = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+            /* The mic bits are shown only to the players this one's voice
+             * could reach: everyone outside a running game (all-talk), the
+             * live alliance inside one. Same scope rule serverPumpVoice
+             * carries the frames themselves by, so a mic status can never
+             * appear for someone you cannot hear. Safe because a snapshot
+             * is built per recipient — never cache or share the result.
+             * Every other bit stays recipient-agnostic. */
+            if (i != clientIdx &&
+                serverSimGetState(sim) == serverStateRunning &&
+                !playersIsAllie(&sim->sim.plyrs, (BYTE)i, clientIdx)) {
+                cf &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
+            }
+            ts->clientFlags = cf;
+        }
+        { static bool _snaplg[16] = {0};
+          if (!_snaplg[i] && ts->clientFlags != 0) {
+            _snaplg[i] = 1;
+            WB_LOG_DEBUG(WB_LOG_CAT_SERVER, "[WBN SNAP] player %d clientFlags=0x%02x", i, ts->clientFlags);
+          }
+        }
 
         /* Resources: only send to the owning player */
         if (i == clientIdx) {
@@ -1221,53 +1384,23 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             clientMY = (BYTE)(cwy >> 8);
         }
 
-        /* First pass: collect best (closest) sound event per sound type.
-         * Track by soundId index — sndEffects has ~24 values. */
-        #define MAX_SOUND_TYPES 32
-        int bestSoundIdx[MAX_SOUND_TYPES];   /* index into sim->events */
-        int bestSoundDist[MAX_SOUND_TYPES];  /* manhattan distance to client */
+        /* A human recipient is sent a tier and a bearing in place of each
+         * sound's map square. A recipient that reads the square keeps it — a
+         * bot's observation builder turns it into a relative position vector,
+         * and so does the gym agent's — and so does the recording path, which
+         * has no client to withhold anything from. Which sounds reach the
+         * recipient at all is decided inside soundPickOffer, shared with the
+         * UDP drain. */
+        bool keepSquare = noCull ||
+                          serverSimRecipientKeepsSoundSquares(sim, clientIdx);
+        SoundPick pick;
         int s;
-        for (s = 0; s < MAX_SOUND_TYPES; s++) {
-            bestSoundIdx[s] = -1;
-            bestSoundDist[s] = 255;
-        }
+        soundPickInit(&pick);
 
-        for (i = 0; i < sim->eventCount; i++) {
-            uint8_t evType = sim->events[i].type;
-            if (evType == EVENT_SOUND || evType == EVENT_SOUND_TANK_HIT || evType == EVENT_SOUND_SHOOT) {
-                uint8_t soundId = sim->events[i].data[0];
-                uint8_t mx = sim->events[i].data[1];
-                uint8_t my = sim->events[i].data[2];
-
-                if (!hasClientPos) continue;
-
-                /* Skip own shoot sound — client plays shootSelf via prediction */
-                if (evType == EVENT_SOUND_SHOOT && sim->events[i].data[3] == clientIdx) {
-                    continue;
-                }
-
-                /* Bubbles only go to the player losing ammo in water */
-                if (evType == EVENT_SOUND && soundId == bubbles && sim->events[i].data[3] != clientIdx) {
-                    continue;
-                }
-
-                /* Calculate manhattan distance to client */
-                int dx = (clientMX > mx) ? (clientMX - mx) : (mx - clientMX);
-                int dy = (clientMY > my) ? (clientMY - my) : (my - clientMY);
-
-                /* Always send tank hits to the hit player (plays hitTankSelf at full volume) */
-                if (evType == EVENT_SOUND_TANK_HIT && sim->events[i].data[3] == clientIdx) {
-                    /* Skip distance cull */
-                } else if (dx >= SDIST_NONE || dy >= SDIST_NONE) {
-                    continue;
-                }
-
-                /* Keep closest instance of each sound type */
-                int dist = dx + dy;
-                if (soundId < MAX_SOUND_TYPES && dist < bestSoundDist[soundId]) {
-                    bestSoundIdx[soundId] = i;
-                    bestSoundDist[soundId] = dist;
-                }
+        if (hasClientPos) {
+            for (i = 0; i < sim->eventCount; i++) {
+                soundPickOffer(&pick, &sim->events[i], clientIdx,
+                               clientMX, clientMY, keepSquare);
             }
         }
 
@@ -1278,7 +1411,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         }
         for (i = 0; i < sim->eventCount && outCount < maxEvents; i++) {
             uint8_t evType = sim->events[i].type;
-            if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+            if (!soundEventIsSound(evType)) {
                 /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
                  * LGM mines go only to the placer and their allies */
                 if (evType == EVENT_MINE_VISIBLE) {
@@ -1321,12 +1454,11 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 eventsOut[outCount++] = sim->events[i];
             }
         }
-        for (s = 0; s < MAX_SOUND_TYPES && outCount < maxEvents; s++) {
-            if (bestSoundIdx[s] >= 0) {
-                eventsOut[outCount++] = sim->events[bestSoundIdx[s]];
+        for (s = 0; s < SOUND_PICK_TYPES && outCount < maxEvents; s++) {
+            if (pick.has[s]) {
+                eventsOut[outCount++] = pick.ev[s];
             }
         }
-        #undef MAX_SOUND_TYPES
 
         /* The arrival base-stock push is no longer emitted here: it writes
          * per-client sim state (lastClosestBase) that the first caller each

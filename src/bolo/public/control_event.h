@@ -35,6 +35,7 @@
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
+#include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -137,6 +138,23 @@ typedef enum {
      * answer to an earlier press can be told apart from the answer to the
      * current one. */
     CTRL_VIEW_TARGET,
+    /* CTRL_STATS_SEED — the server's running per-slot round stats, unicast
+     * to one joiner inside its sync replay while a round is running. The
+     * client counts its live scoreboard from the game-event stream, so it
+     * knows only what happened since it joined; this seeds that accumulator
+     * from the server's own PlayerRoundStats so a mid-round joiner sees the
+     * real numbers. Carries the same RoundPlayerSummary rows CTRL_ROUND_STATS
+     * ships, without the awards, highlights and log key. */
+    CTRL_STATS_SEED,
+    /* CTRL_VOICE_TALKING — who is producing voice right now, as one
+     * bitmap over the player slots. Broadcast in the lobby and the
+     * countdown only, where voice is all-talk and the set says nothing a
+     * listener could not already hear. Deliberately not sent in a running
+     * game: voice there is alliance-only, and broadcasting the set would
+     * tell a player that an enemy is speaking. The client intersects it
+     * with its own mute list — a muted player sends nothing that reaches
+     * you, so this is the only way to show that they are talking. */
+    CTRL_VOICE_TALKING,
     /* CTRL_NEWSWIRE_MUTE — server-owned "stop showing event newswire
      * lines" switch, broadcast to every client and replayed to a late
      * joiner. While it is set, clients drop the ENGINE-GENERATED
@@ -274,6 +292,10 @@ typedef struct ControlEvent {
             bool     lobbyClassicMode;  /* server is running classic mode */
             bool     lobbyAlliesInTrees; /* server sends allies standing in
                                           * trees to their allies */
+            ServerVoiceMode voiceMode;  /* what the server does with the voice
+                                         * its clients send it. serverVoiceOff
+                                         * means a client here has nowhere to
+                                         * send voice, so it captures none. */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -476,6 +498,21 @@ typedef struct ControlEvent {
             BYTE found;      /* 0 when there was nothing to watch */
             BYTE fromEcho;   /* the request's `from`, copied back */
         } viewTarget;
+        /* CTRL_STATS_SEED — the in-progress round's scoreboard rows, one per
+         * connected slot. Same row type as RoundStatsSummary.players, so the
+         * seed and the end-of-round recap cannot disagree on what a column
+         * means. dmgDealt and builds ride along in the row and the client
+         * drops them: no client-side event keeps them current. */
+        struct {
+            uint8_t            playerCount;             /* present slots, <= MAX_TANKS */
+            RoundPlayerSummary players[MAX_TANKS];
+        } statsSeed;
+
+        /* CTRL_VOICE_TALKING — bit N set means slot N is producing voice
+         * right now. */
+        struct {
+            PlayerBitMap talking;
+        } voiceTalking;
 
         /* CTRL_NEWSWIRE_MUTE — 1 = engine newswire suppressed, 0 = normal.
          * One byte on the wire; the server only publishes it on a change. */

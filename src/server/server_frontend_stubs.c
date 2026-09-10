@@ -189,7 +189,8 @@ void messageInboxClear(MessageState *ms) {
    and brainDataExtractInfo live in brain_data.c (both linked into
    WinBoloDS). */
 void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) { (void)ms; (void)msgType; (void)top; (void)bottom; }
-void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }
+void clientSoundDist(GameSim *sim, sndEffects value, BYTE tier, BYTE dir) { (void)sim; (void)value; (void)tier; (void)dir; }
+void clientSoundDistLocal(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }
 
 /* Stubs for client-only subsystems that client_sim.c references */
 void *dialogAllianceCreate(void) { return NULL; }
