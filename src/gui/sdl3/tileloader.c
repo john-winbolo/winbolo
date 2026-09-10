@@ -1345,6 +1345,172 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
                                    (int)gfxGetTileDetail());
 }
 
+/* ------------------------------------------------------------------ */
+/* The padded copy of the moving sprites                              */
+/* ------------------------------------------------------------------ */
+
+/* Which sheet slots the tank, shell and LGM drawers can ask for, and so
+ * which ones get a gutter.  Named by prefix rather than listed one by one so
+ * a new facing or explosion frame joins without a second edit — but tightly
+ * enough that the interface's own tank art stays out: tank_icon is drawn by
+ * the interface at whole pixels and tank_transparent by nothing at all. */
+bool tileLoaderIsSpriteSlot(const char *name) {
+    if (name == NULL) return false;
+    if (SDL_strncmp(name, "shell_", 6) == 0) return true;
+    if (SDL_strncmp(name, "lgm_", 4) == 0) return true;
+    if (SDL_strncmp(name, "explosion", 9) == 0) return true;
+    if (SDL_strncmp(name, "tank_self_", 10) == 0 ||
+        SDL_strncmp(name, "tank_selfboat_", 14) == 0 ||
+        SDL_strncmp(name, "tank_good_", 10) == 0 ||
+        SDL_strncmp(name, "tank_goodboat_", 14) == 0 ||
+        SDL_strncmp(name, "tank_evil_", 10) == 0 ||
+        SDL_strncmp(name, "tank_evilboat_", 14) == 0) {
+        return true;
+    }
+    return false;
+}
+
+/* Fill the ring around a slot from the slot's own edge, so a sampler
+ * reaching past the rect finds the sprite again rather than its neighbour.
+ * The corners take the corner texel, which is what a kernel straddling a
+ * corner needs. */
+static void padSlotEdges(SDL_Surface *s, const SDL_Rect *slot) {
+    unsigned char *px = (unsigned char *)s->pixels;
+    int pitch = s->pitch;
+    int g = SPRITE_ATLAS_GUTTER;
+
+    for (int y = slot->y - g; y < slot->y + slot->h + g; y++) {
+        if (y < 0 || y >= s->h) continue;
+        int ey = y < slot->y ? slot->y
+                             : (y >= slot->y + slot->h ? slot->y + slot->h - 1 : y);
+        for (int x = slot->x - g; x < slot->x + slot->w + g; x++) {
+            if (x < 0 || x >= s->w) continue;
+            if (x >= slot->x && x < slot->x + slot->w &&
+                y >= slot->y && y < slot->y + slot->h) {
+                continue;
+            }
+            int ex = x < slot->x ? slot->x
+                                 : (x >= slot->x + slot->w ? slot->x + slot->w - 1 : x);
+            SDL_memcpy(px + (size_t)y * (size_t)pitch + (size_t)x * 4,
+                       px + (size_t)ey * (size_t)pitch + (size_t)ex * 4, 4);
+        }
+    }
+}
+
+/* The order spriteAtlasFind searches in: srcY, then srcX. */
+static int SDLCALL compareSlots(const void *a, const void *b) {
+    const SpriteAtlasSlot *l = (const SpriteAtlasSlot *)a;
+    const SpriteAtlasSlot *r = (const SpriteAtlasSlot *)b;
+    if (l->srcY != r->srcY) return l->srcY < r->srcY ? -1 : 1;
+    if (l->srcX != r->srcX) return l->srcX < r->srcX ? -1 : 1;
+    return 0;
+}
+
+SpriteAtlas *tileLoaderBuildSpriteAtlas(SDL_Surface *sheet, int scale) {
+    if (sheet == NULL) return NULL;
+    if (sheet->format != SDL_PIXELFORMAT_RGBA32) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "tileLoaderBuildSpriteAtlas: the sheet is not RGBA32");
+        return NULL;
+    }
+    if (scale < 1) scale = 1;
+
+    int count = 0;
+    for (int i = 0; gTileMap[i].name != NULL; i++) {
+        if (tileLoaderIsSpriteSlot(gTileMap[i].name)) count++;
+    }
+    if (count == 0) return NULL;
+
+    SpriteAtlas *a = (SpriteAtlas *)SDL_calloc(1, sizeof(*a));
+    if (a == NULL) return NULL;
+    a->slots = (SpriteAtlasSlot *)SDL_calloc((size_t)count, sizeof(*a->slots));
+    if (a->slots == NULL) {
+        SDL_free(a);
+        return NULL;
+    }
+    a->count = count;
+    a->scale = scale;
+
+    /* One cell per sprite, every cell the size of the largest.  The shells
+       and the LGM are smaller and sit in the corner of theirs, which wastes
+       a few hundred texels and keeps the placement to one multiply. */
+    int cell = TILE_SIZE_X * scale + 2 * SPRITE_ATLAS_GUTTER;
+    int cols = 16;
+    int rows = (count + cols - 1) / cols;
+
+    a->surface = SDL_CreateSurface(cols * cell, rows * cell,
+                                   SDL_PIXELFORMAT_RGBA32);
+    if (a->surface == NULL) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "tileLoaderBuildSpriteAtlas: SDL_CreateSurface(%dx%d) failed: %s",
+                     cols * cell, rows * cell, SDL_GetError());
+        SDL_free(a->slots);
+        SDL_free(a);
+        return NULL;
+    }
+    SDL_memset(a->surface->pixels, 0,
+               (size_t)(a->surface->pitch * a->surface->h));
+
+    /* A straight copy, not a composite: the two are the same format and each
+       slot has to arrive with the source's own alpha, transparent texels and
+       the colour tileLoaderBleedEdges left under them included.  Put back
+       whatever the caller had, since the sheet is theirs. */
+    SDL_BlendMode sheetBlend = SDL_BLENDMODE_BLEND;
+    SDL_GetSurfaceBlendMode(sheet, &sheetBlend);
+    SDL_SetSurfaceBlendMode(sheet, SDL_BLENDMODE_NONE);
+
+    int n = 0;
+    for (int i = 0; gTileMap[i].name != NULL; i++) {
+        const TileMapEntry *e = &gTileMap[i];
+        if (!tileLoaderIsSpriteSlot(e->name)) continue;
+
+        if (e->width > TILE_SIZE_X || e->height > TILE_SIZE_Y) {
+            WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                        "tileLoaderBuildSpriteAtlas: %s is %dx%d, larger than a "
+                        "tile; it keeps drawing from the sheet",
+                        e->name, e->width, e->height);
+            a->count--;
+            continue;
+        }
+
+        SpriteAtlasSlot *sl = &a->slots[n];
+        sl->srcX = e->sheetX;
+        sl->srcY = e->sheetY;
+        sl->w    = e->width;
+        sl->h    = e->height;
+        sl->x    = (n % cols) * cell + SPRITE_ATLAS_GUTTER;
+        sl->y    = (n / cols) * cell + SPRITE_ATLAS_GUTTER;
+
+        SDL_Rect src = { e->sheetX * scale, e->sheetY * scale,
+                         e->width * scale, e->height * scale };
+        SDL_Rect dst = { sl->x, sl->y, src.w, src.h };
+        SDL_BlitSurface(sheet, &src, a->surface, &dst);
+        padSlotEdges(a->surface, &dst);
+        n++;
+    }
+
+    SDL_SetSurfaceBlendMode(sheet, sheetBlend);
+    SDL_qsort(a->slots, (size_t)a->count, sizeof(*a->slots), compareSlots);
+
+    WB_LOG_INFO(WB_LOG_CAT_ASSET,
+                "tileLoaderBuildSpriteAtlas: scale=%d, atlas=%dx%d, %d sprites",
+                scale, a->surface->w, a->surface->h, a->count);
+    return a;
+}
+
+void tileLoaderSpriteAtlasDropSurface(SpriteAtlas *a) {
+    if (a == NULL || a->surface == NULL) return;
+    SDL_DestroySurface(a->surface);
+    a->surface = NULL;
+}
+
+void tileLoaderFreeSpriteAtlas(SpriteAtlas *a) {
+    if (a == NULL) return;
+    tileLoaderSpriteAtlasDropSurface(a);
+    SDL_free(a->slots);
+    SDL_free(a);
+}
+
 void tileLoaderCleanup(void) {
     /* Drop the density scan.  The serial key already keeps a later skin from
      * hitting it, so this is housekeeping rather than correctness.

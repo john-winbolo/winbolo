@@ -1736,6 +1736,13 @@ int run_sheet_bleed_edges(void);
 int run_sheet_no_key_under_alpha(void);
 int run_bmp_sheet_no_key_under_alpha(void);
 
+/* The ring of texels around a sprite slot, on the padded atlas the tank,
+ * shell and LGM drawers sample and on the packed sheet it is copied out
+ * of (test_sprite_atlas.c). */
+int run_sprite_atlas_isolated(void);
+int run_sprite_atlas_lookup(void);
+int run_sprite_atlas_packed_sheet_unsafe(void);
+
 /* Which <name>_N.wav members a source holds, and the compaction that
    keeps a decoded pool contiguous (test_sound_variants.c). */
 int run_sound_variant_pool_names(void);

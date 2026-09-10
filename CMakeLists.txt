@@ -3593,6 +3593,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The colour left under the built sheet's transparency, and the bleed
     # that takes it out. Runs on the real data/svg art beside the binary.
     tests/unit/test_sheet_bleed.c
+    # The texel ring around a sprite slot: clean on the padded atlas the
+    # sprite drawers sample, and what the packed sheet has there instead.
+    tests/unit/test_sprite_atlas.c
     src/gui/sdl3/sdl_bmp.c
     # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
     # and the compaction that leaves the members which decoded contiguous.
@@ -4519,6 +4522,9 @@ set(_unit_test_names
     sheet_bleed_edges
     sheet_no_key_under_alpha
     bmp_sheet_no_key_under_alpha
+    sprite_atlas_isolated
+    sprite_atlas_lookup
+    sprite_atlas_packed_sheet_unsafe
     sound_variant_pool_names
     sound_variant_load_compaction
     pascal_string_lengths
