@@ -750,6 +750,8 @@ static const UnitTestEntry s_tests[] = {
     { "ping_edge_name_anchor",                   run_ping_edge_name_anchor                   },
     { "ping_rect_inset",                         run_ping_rect_inset                         },
     { "ping_event_wire",                         run_ping_event_wire                         },
+    { "ping_sound_fallback",                     run_ping_sound_fallback                     },
+    { "ping_name_truncate",                      run_ping_name_truncate                      },
     { "ping_dispatch_accepts_and_builds_event",  run_ping_dispatch_accepts_and_builds_event  },
     { "ping_dispatch_rejects_lobby",             run_ping_dispatch_rejects_lobby             },
     { "ping_dispatch_rejects_empty_slot_and_out_of_range",

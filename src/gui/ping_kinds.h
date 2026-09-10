@@ -32,6 +32,9 @@
 #ifndef WINBOLO_PING_KINDS_H
 #define WINBOLO_PING_KINDS_H
 
+#include <stddef.h>         /* size_t */
+#include <string.h>         /* memcpy, strlen */
+
 #include "input_packet.h"   /* PING_KIND_*, PING_KIND_COUNT */
 #include "lang.h"           /* MESSAGE_PING_* / STR_PING_* — the per-kind text */
 
@@ -122,6 +125,113 @@ static inline langid pingKindNameId(unsigned char kind) {
     case PING_KIND_BOT_COMMAND: return STR_PING_BOT_COMMAND;
     default:                    return STR_PING_STANDARD;
     }
+}
+
+/* How much of the sender's name a ping marker shows. Counts CHARACTERS, not
+ * bytes: six Cyrillic letters are twelve bytes and are still six characters,
+ * and a name is never cut inside a UTF-8 sequence. A name at or under this is
+ * drawn as it is.
+ *
+ * The marker is a hint on the map, not a scoreboard — a long name under it
+ * covers the ground the ping is pointing at, and the edge bars are laid along
+ * a border where a long name runs into the next one. The message line in the
+ * newswire keeps the whole name, so nothing is lost. */
+#define PING_NAME_MAX_CHARS 6
+
+/* What a shortened name ends in. U+2026 HORIZONTAL ELLIPSIS, spelled out in
+ * UTF-8 so this header needs no wide literals.
+ *
+ * The ASCII form is for a renderer whose font has no U+2026 to draw: the
+ * marker names use the Sarasa faces, which carry it, but the edge bars are
+ * drawn with the ImGui atlas, and that is built over Latin, Cyrillic, Greek
+ * and Vietnamese only (imguiBoloGlyphRanges in src/gui/imgui_fonts.h) — a
+ * U+2026 there would come out as a missing-glyph box. */
+#define PING_NAME_ELLIPSIS       "\xE2\x80\xA6"
+#define PING_NAME_ELLIPSIS_ASCII "..."
+
+/* A buffer this big always holds a shortened name whole: every character kept
+ * at UTF-8's maximum four bytes, the longer of the two ellipses, and the
+ * terminator. */
+#define PING_NAME_DISPLAY_MAX (PING_NAME_MAX_CHARS * 4 + 3 + 1)
+
+/*********************************************************
+*NAME:          pingDisplayName
+*PURPOSE:
+*  The name a ping marker draws: `name` unchanged when it is
+*  PING_NAME_MAX_CHARS characters or fewer, and otherwise its
+*  first PING_NAME_MAX_CHARS characters followed by the
+*  ellipsis. The one copy of that rule — the world marker,
+*  the overview, the replay viewer and the off-screen edge
+*  bars all shorten a name through here, so they cannot
+*  disagree about where it stops.
+*
+*  Characters are UTF-8 code points, counted by their lead
+*  bytes, so the cut always lands on a character boundary.
+*  Nothing is written past `outSize`; a buffer too small for
+*  the whole result loses whole characters off the end rather
+*  than half of one.
+*
+*ARGUMENTS:
+*  name     - the sender's name, or NULL for none
+*  ellipsis - what a shortened name ends in, or NULL for
+*             PING_NAME_ELLIPSIS
+*  out      - buffer to write into, PING_NAME_DISPLAY_MAX to
+*             be sure of the whole result
+*  outSize  - size of that buffer in bytes
+*
+*RETURNS:
+*  out, holding the name to draw, or "" when there is no
+*  buffer to write into
+*********************************************************/
+static inline const char *pingDisplayName(const char *name,
+                                          const char *ellipsis,
+                                          char *out, size_t outSize) {
+    size_t bytes = 0;   /* the whole name, in bytes */
+    size_t chars = 0;   /* the whole name, in characters */
+    size_t cut = 0;     /* byte the character past the cap starts at */
+    size_t keep;
+    size_t tailLen;
+    const char *tail;
+
+    if (out == NULL || outSize == 0) return "";
+    out[0] = '\0';
+    if (name == NULL) return out;
+
+    /* A byte that is not a continuation byte (10xxxxxx) starts a character. */
+    while (name[bytes] != '\0') {
+        if (((unsigned char)name[bytes] & 0xC0) != 0x80) {
+            if (chars == PING_NAME_MAX_CHARS) cut = bytes;
+            chars++;
+        }
+        bytes++;
+    }
+
+    if (chars <= PING_NAME_MAX_CHARS) {
+        keep = bytes;
+        tail = "";
+    } else {
+        keep = cut;
+        tail = (ellipsis != NULL) ? ellipsis : PING_NAME_ELLIPSIS;
+    }
+    tailLen = strlen(tail);
+
+    /* Whatever the caller's buffer is, the result fits in it. The ellipsis
+     * goes first if even it will not fit, then whole characters come off the
+     * end until the rest does. */
+    if (tailLen + 1 > outSize) {
+        tail = "";
+        tailLen = 0;
+    }
+    while (keep + tailLen + 1 > outSize) {
+        do {
+            keep--;
+        } while (keep > 0 && ((unsigned char)name[keep] & 0xC0) == 0x80);
+    }
+
+    memcpy(out, name, keep);
+    memcpy(out + keep, tail, tailLen);
+    out[keep + tailLen] = '\0';
+    return out;
 }
 
 /* 0..1 opacity for a ping `ageMs` old: solid until the fade window, then a

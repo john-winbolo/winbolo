@@ -925,7 +925,14 @@ void pingOverlayDraw(struct ClientSim *cs) {
                Unlike the bar it does not shrink with the distance: a name too
                small to read says nothing at all. */
             {
-                const char *who = pings[i].senderName;
+                /* Shortened the same way the marker's name is, ending in the
+                   same "…": this draw list uses the ImGui atlas, which
+                   imguiBoloGlyphRanges builds with U+2026 in it for exactly
+                   this label. */
+                char        shown[PING_NAME_DISPLAY_MAX];
+                const char *who = pingDisplayName(pings[i].senderName,
+                                                  PING_NAME_ELLIPSIS,
+                                                  shown, sizeof(shown));
                 if (who[0] != '\0') {
                     ImVec2          sz = ImGui::CalcTextSize(who);
                     PingEdgeNameBox box;

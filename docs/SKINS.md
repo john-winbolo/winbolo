@@ -160,6 +160,11 @@ pool for that sound, so the game's own file is not mixed in with yours, and a
 file that will not decode is skipped while the rest of the pool still plays.
 See [Sound names](#sound-names).
 
+The six smart-ping sounds are the one exception to a sound needing a file: a
+ping kind with no file of its own plays `ping_default.wav`, so a skin can
+replace all six with one file or just one of them. See
+[Ping sounds](#ping-sounds).
+
 ## Sprite names and sizes
 
 There are **307** sprites. All are **16 × 16** except the 33 listed here:
@@ -352,10 +357,29 @@ shot_building_far.wav      shot_building_near.wav     shot_tree_far.wav
 shot_tree_near.wav         tank_sinking_far.wav       tank_sinking_near.wav
 lobby_chat.wav             lobby_countdown.wav        lobby_game_start.wav
 lobby_player_join.wav      lobby_player_leave.wav     lobby_ready.wav
-lobby_unready.wav
+lobby_unready.wav          ping_default.wav           ping_standard.wav
+ping_caution.wav           ping_assist.wav            ping_attack.wav
+ping_onmyway.wav           ping_botcommand.wav
 ```
 
 `near` and `far` are the same event heard close by or at a distance.
+
+### Ping sounds
+
+A received smart ping plays the sound for its own kind — `ping_attack.wav` for
+an Attack ping — and `ping_default.wav` when there is no file for that kind, in
+your skin or in the game. The game itself ships only `ping_default.wav` and
+`ping_caution.wav`, so out of the box four of the six kinds play the default
+one.
+
+That makes both of the obvious skins easy. Replace `ping_default.wav` alone and
+every kind without its own file plays yours. Ship `ping_attack.wav` alone and
+only the Attack ping changes, with the rest still on the game's default. Each
+of the seven takes `_0` through `_9` variants like any other sound.
+
+A file that will not decode, or an empty one, counts as no file: that kind falls
+back rather than pinging silently. The log line below says how many kinds ended
+up on the default.
 
 ### Variants
 
@@ -509,14 +533,16 @@ built-in counts and the skin counts always add up to 307. Reading it:
 Sounds get a line of their own:
 
 ```
-soundSetup: 31 effects, 12 from skin=user:mytheme, 7 with variants (max 4), 2 members unreadable, 1 fell back to the built-in
+soundSetup: 34 effects, 12 from skin=user:mytheme, 7 with variants (max 4), 2 members unreadable, 1 fell back to the built-in, 4 ping kinds on the default sound
 ```
 
 Reading it:
 
-- **`31 effects`** — sounds with at least one file that plays. There are 31 in
-  all, so a smaller number means some sound has nothing to play at all, and a
-  warning line just above names the file.
+- **`34 effects`** — sounds with at least one file that plays. There are 38 in
+  all, but six of those are the per-kind ping sounds, which are allowed to be
+  missing (see [Ping sounds](#ping-sounds)); short of that, a smaller number
+  means some sound has nothing to play at all, and a warning line just above
+  names the file.
 - **`12 from skin=`** — sounds whose pool came from your skin rather than from
   the game's own set. **`skin=none`** means no skin is loaded: either you have
   not picked one, or yours was not found or failed to open.
@@ -528,6 +554,12 @@ Reading it:
   `farming_tree_near_5.wav` was never picked up.
 - **`1 fell back to the built-in`** — sounds where your skin held files but none
   of them decoded, so the game's own sound is what plays.
+- **`4 ping kinds on the default sound`** — ping kinds with no file of their
+  own anywhere, which play `ping_default.wav`. A line just above names each
+  one. Five is what the game on its own gives you, since it ships
+  `ping_caution.wav` and nothing else per-kind; each sound your skin adds
+  takes one off that count. A kind your skin meant to cover but which is
+  still listed here has its file in the wrong place or under the wrong name.
 
 The last two count different things. One bad file among several moves
 `members unreadable` only, and the sound still works with one variant fewer. A
