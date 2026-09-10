@@ -258,6 +258,7 @@ set(GUI_SOURCES
     # the log viewer's replay draw. sdl3draw.c calls into both.
     ${SRC_ROOT}/gui/sdl3/ping_overlay.cpp
     ${SRC_ROOT}/gui/sdl3/ping_icons.c
+    ${SRC_ROOT}/gui/sdl3/ping_marker.c
     ${SRC_ROOT}/gui/sdl3/build_cursor.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/lang.c
