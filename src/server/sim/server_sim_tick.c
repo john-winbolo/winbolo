@@ -184,46 +184,6 @@ uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
     return (uint8_t)ticks;
 }
 
-/* True if a harvested build order still suits its frozen target tile.
- *
- * A harvested one-shot build was commanded on a tick that got stall-
- * substituted, then carried forward with its target frozen from when the
- * player clicked. By the time it replays the world may have moved on — that
- * tile's terrain can no longer suit the order. Re-check it against the
- * current map so a stale replay cannot dispatch a bogus request and nag the
- * player with an assistant message they never provoked (the reported
- * symptom: "there is no tree to farm there" while they have wall selected).
- * `action0` is the 0-based LGM_*_REQUEST enum. These are the same terrain
- * conditions lgmCheckNewRequest (lgm.c) tests — keep the two in step; a
- * still-valid replay dispatches the correct request, only a now-invalid one
- * is dropped. */
-static bool serverSimHarvestBuildStillValid(GameSim *gs, BYTE action0,
-                                            BYTE x, BYTE y) {
-    BYTE pos = mapGetPos(&gs->mp, x, y);
-    bool isPill, isBase;
-    if (pos == MINE_FOREST) {
-        pos = FOREST;
-    }
-    isPill = pillsExistPos(&gs->pb, x, y);
-    isBase = basesExistPos(&gs->bs, x, y);
-    switch (action0) {
-    case LGM_TREE_REQUEST:
-        return pos == FOREST && !isBase && !isPill;
-    case LGM_ROAD_REQUEST:
-        return !(pos == BOAT || pos == DEEP_SEA || pos == BUILDING ||
-                 pos == HALFBUILDING || pos == ROAD || isPill || isBase);
-    case LGM_BUILDING_REQUEST:
-        return !(pos == BOAT || pos == DEEP_SEA || pos == BUILDING ||
-                 isPill || isBase);
-    case LGM_PILL_REQUEST:
-        return !(pos == BOAT || pos == DEEP_SEA || pos == BUILDING ||
-                 pos == HALFBUILDING || pos == RIVER || isBase);
-    default:  /* LGM_MINE_REQUEST */
-        return !(pos == DEEP_SEA || pos == RIVER || pos == BUILDING ||
-                 pos == BOAT || pos == HALFBUILDING || isPill || isBase);
-    }
-}
-
 /* Apply a single input to player `count`'s tank: gap-fill for any ticks
  * lost to packet loss, per-input parity selection (keys vs game arm),
  * lag compensation, fire/mine/build, and the lastProcessedInput advance.
@@ -330,16 +290,19 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
             }
             if (sim->pendingHarvestBuildAction[count] != 0 &&
                 applied.buildAction == 0) {
-                /* Only replay the harvested build if its frozen target is
-                 * still valid for that order against the current map; a stale
-                 * replay onto changed terrain would dispatch a bogus request
-                 * and nag the player. Either way the pending slot is consumed
-                 * exactly once. */
-                if (serverSimHarvestBuildStillValid(
-                        &sim->sim,
-                        (BYTE)(sim->pendingHarvestBuildAction[count] - 1),
+                /* Only replay the harvested build if its frozen target
+                 * would still be accepted against the current map — the same
+                 * question lgmAddRequest asks, put to lgmCheckNewRequest
+                 * without acting or messaging. A stale replay onto changed
+                 * terrain would dispatch a bogus request and nag the player
+                 * about an order they did not just issue. Either way the
+                 * pending slot is consumed exactly once. */
+                if (lgmRequestIsValid(
+                        &sim->sim, &sim->sim.lgmen[count],
+                        &sim->sim.tanks[count],
                         sim->pendingHarvestBuildX[count],
-                        sim->pendingHarvestBuildY[count])) {
+                        sim->pendingHarvestBuildY[count],
+                        (BYTE)(sim->pendingHarvestBuildAction[count] - 1))) {
                     applied.buildAction = sim->pendingHarvestBuildAction[count];
                     applied.buildX      = sim->pendingHarvestBuildX[count];
                     applied.buildY      = sim->pendingHarvestBuildY[count];

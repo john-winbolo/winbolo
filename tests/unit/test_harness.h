@@ -1258,6 +1258,12 @@ int run_catchup_ignores_redundant_duplicates(void);
 int run_build_harvest_stale(void);
 int run_build_harvest_valid(void);
 
+/* Build-request validity (test_lgm_request_valid.c): lgmCheckNewRequest's
+ * verdicts over terrain and tank stores, and lgmRequestIsValid asking for one
+ * without dispatching, spending or messaging the player. */
+int run_lgm_request_valid(void);
+int run_lgm_request_quiet(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */

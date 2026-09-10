@@ -3381,6 +3381,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_overlay.c
     tests/unit/test_input_catchup.c
     tests/unit/test_build_harvest_stale.c
+    tests/unit/test_lgm_request_valid.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_screen_bullets_build.c
@@ -4276,6 +4277,8 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     build_harvest_stale
     build_harvest_valid
+    lgm_request_valid
+    lgm_request_quiet
     jitter_buffer_grow
     shell_projection
     screen_bullets_build
