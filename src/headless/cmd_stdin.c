@@ -39,6 +39,7 @@ static const char *kOpNames[CMD_OP__COUNT] = {
   "reapply_alliances",
   "shutdown",
   "exit",
+  "ping",
 };
 
 const char *cmdOpName(CmdOp op) {
@@ -159,6 +160,7 @@ static void parseOneLine(const char *origLine, int lineNumber, CmdLine *out) {
   bool haveSlot = false, haveTeam = false, haveReady = false;
   bool haveFrom = false, haveTo = false, haveName = false;
   bool haveDest = false, haveBody = false;
+  bool haveKind = false, haveMx = false, haveMy = false;
 
   const char *p = skipWs(buf);
   if (*p != '{') fatalParseError(lineNumber, origLine, "expected '{'");
@@ -258,6 +260,27 @@ static void parseOneLine(const char *origLine, int lineNumber, CmdLine *out) {
         fatalParseError(lineNumber, origLine, "malformed body string");
       }
       haveBody = true;
+    } else if (strcmp(key, "kind") == 0) {
+      uint64_t v;
+      if (!parseUint(&p, &v) || v > 255) {
+        fatalParseError(lineNumber, origLine, "kind must be 0..255");
+      }
+      out->kind = (BYTE)v;
+      haveKind = true;
+    } else if (strcmp(key, "mx") == 0) {
+      uint64_t v;
+      if (!parseUint(&p, &v) || v > 255) {
+        fatalParseError(lineNumber, origLine, "mx must be 0..255");
+      }
+      out->mx = (BYTE)v;
+      haveMx = true;
+    } else if (strcmp(key, "my") == 0) {
+      uint64_t v;
+      if (!parseUint(&p, &v) || v > 255) {
+        fatalParseError(lineNumber, origLine, "my must be 0..255");
+      }
+      out->my = (BYTE)v;
+      haveMy = true;
     } else {
       char msg[96];
       snprintf(msg, sizeof(msg), "unknown key '%s'", key);
@@ -311,6 +334,11 @@ static void parseOneLine(const char *origLine, int lineNumber, CmdLine *out) {
     case CMD_OP_CHAT:
       if (!haveDest || !haveBody) {
         fatalParseError(lineNumber, origLine, "chat needs dest + body");
+      }
+      break;
+    case CMD_OP_PING:
+      if (!haveKind || !haveMx || !haveMy) {
+        fatalParseError(lineNumber, origLine, "ping needs kind + mx + my");
       }
       break;
     default:

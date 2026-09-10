@@ -804,6 +804,13 @@ static bool cmdDispatchServer(const CmdLine *cmd) {
     case CMD_OP_CHAT:
       clientSimNetSendChat(humanSim, cmd->dest, cmd->body);
       return true;
+    case CMD_OP_PING:
+      /* A smart ping on the centre of map square (mx, my); the server
+         relays it to this client's team as EVENT_PING. */
+      clientSimNetSendPing(humanSim, cmd->kind,
+                           (uint16_t)(cmd->mx * 256 + 128),
+                           (uint16_t)(cmd->my * 256 + 128));
+      return true;
     case CMD_OP_START_GAME:
     case CMD_OP_REAPPLY_ALLIANCES:
     case CMD_OP_SHUTDOWN:
@@ -1150,6 +1157,16 @@ static void logStateVerbose(int tickNum) {
           fprintf(f, "{\"type\":\"base_lost\"}");
           first = 0;
         }
+        break;
+      case EVENT_PING:
+        /* A teammate's smart ping: who sent it, which kind, and the map
+           square it names (WORLD units are 256 per square). */
+        if (!first) fprintf(f, ",");
+        fprintf(f, "{\"type\":\"ping\",\"from\":%d,\"kind\":%d,\"mx\":%d,\"my\":%d}",
+                (int)e->data[0], (int)e->data[1],
+                (int)((e->data[2] << 8) | e->data[3]) >> 8,
+                (int)((e->data[4] << 8) | e->data[5]) >> 8);
+        first = 0;
         break;
       default:
         break;

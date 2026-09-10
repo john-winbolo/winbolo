@@ -56,6 +56,7 @@ typedef enum {
   CMD_OP_REAPPLY_ALLIANCES,
   CMD_OP_SHUTDOWN,
   CMD_OP_EXIT,
+  CMD_OP_PING,   /* smart ping: kind + map square (server mode only) */
   CMD_OP__COUNT
 } CmdOp;
 
@@ -70,6 +71,8 @@ typedef struct CmdLine {
   BYTE     dest;                              /* chat — 0xFF broadcast, else slot */
   char     name[PACKET_MAX_PLAYER_NAME];      /* name_change */
   char     body[PACKET_MAX_CHAT_MESSAGE + 1]; /* chat */
+  BYTE     kind;                              /* ping: PING_KIND_* */
+  BYTE     mx, my;                            /* ping: map square */
   int      lineNumber;                        /* 1-based, for error messages */
 } CmdLine;
 
