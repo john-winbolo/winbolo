@@ -764,12 +764,6 @@ const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
 int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
                       ClientPing *out, int maxOut);
 
-/* Record a ping this client should draw. Called by the EVENT_PING arm of the
- * snapshot ingest; a local echo has no separate path, because the server
- * sends the sender its own ping back like everyone else's. */
-void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
-                      uint16_t worldX, uint16_t worldY, uint32_t nowMs);
-
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained
  * every display tick. NULL when cs is NULL. */
