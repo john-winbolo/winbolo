@@ -1312,6 +1312,64 @@ bool basesCantDrive(GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy) {
   return returnValue;
 }
 /*********************************************************
+*NAME:          basesArmourVisibleToPlayer
+*PURPOSE:
+*  Returns whether a base's true armour may be sent to a
+*  player rather than the BASE_FULL_ARMOUR stand-in. See the
+*  header for the three cases.
+*
+*ARGUMENTS:
+*  sim     - Pointer to the game sim
+*  baseIdx - Index of the base being considered
+*  player  - Player the send is destined for
+*********************************************************/
+bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
+  bases *value = &sim->bs;
+  BYTE owner;
+  int baseX, baseY, gapX, gapY;
+  WORLD tankX, tankY;
+
+  if (baseIdx >= (*value)->numBases) {
+    return FALSE;
+  }
+
+  /* Neutral, own and allied bases are never masked. */
+  owner = (*value)->item[baseIdx].owner;
+  if (owner == NEUTRAL || owner == player ||
+      playersIsAllie(&sim->plyrs, owner, player) == TRUE) {
+    return TRUE;
+  }
+
+  /* A dead enemy base reports its real armour so the capturable flip shows. */
+  if ((*value)->item[baseIdx].armour <= MIN_ARMOUR_CAPTURE) {
+    return TRUE;
+  }
+
+  /* Otherwise only while the player's tank is close enough that their client
+     has to predict this square's solidity. A player with no living tank has
+     nothing to predict with. */
+  if (player >= MAX_TANKS || sim->tanks[player] == NULL) {
+    return FALSE;
+  }
+  if (sim->tanks[player]->armour > TANK_FULL_ARMOUR) {
+    return FALSE;
+  }
+  tankGetWorld(&sim->tanks[player], &tankX, &tankY);
+
+  baseX = ((int)(*value)->item[baseIdx].x << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE;
+  baseY = ((int)(*value)->item[baseIdx].y << M_W_SHIFT_SIZE) + MAP_SQUARE_MIDDLE;
+  gapX = abs((int)tankX - baseX);
+  gapY = abs((int)tankY - baseY);
+  /* Bound both axes before squaring so the multiply cannot overflow on a
+     full-size map; never rejects a base that is genuinely in range. */
+  if (gapX >= BASE_PREDICT_REVEAL_RANGE || gapY >= BASE_PREDICT_REVEAL_RANGE) {
+    return FALSE;
+  }
+  return (gapX * gapX + gapY * gapY) <
+         (BASE_PREDICT_REVEAL_RANGE * BASE_PREDICT_REVEAL_RANGE);
+}
+
+/*********************************************************
 *NAME:          basesGetBaseOwner
 *AUTHOR:        John Morrison
 *CREATION DATE: 16/2/99
@@ -1436,6 +1494,42 @@ void basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
   }
 }
 
+
+/*********************************************************
+*NAME:          basesValidate
+*PURPOSE:
+*  Clamps every base field a map can supply to the range the
+*  rest of the codebase assumes. basesSetBase applies these on
+*  the file-load path; the compressed path memcpys the structs
+*  wholesale and reaches none of them, so a downloaded map can
+*  seat values no legitimate map holds. Idempotent, and pure
+*  clamping: no logging or side effects, so it is safe to call
+*  on a half-built map.
+*
+*ARGUMENTS:
+*  value - Pointer to the bases structure
+*********************************************************/
+void basesValidate(bases *value) {
+  BYTE count;
+
+  if (value == NULL || *value == NULL) {
+    return;
+  }
+  if ((*value)->numBases > MAX_BASES) {
+    (*value)->numBases = MAX_BASES;
+  }
+  for (count = 0; count < (*value)->numBases; count++) {
+    base *item = &((*value)->item[count]);
+    /* x and y are BYTE against a 256x256 map, so every value is in
+     * range by type and needs no clamp. */
+    if (item->owner > (MAX_TANKS - 1) && item->owner != NEUTRAL) {
+      item->owner = NEUTRAL;
+    }
+    if (item->armour > BASE_FULL_ARMOUR) item->armour = BASE_FULL_ARMOUR;
+    if (item->shells > BASE_FULL_SHELLS) item->shells = BASE_FULL_SHELLS;
+    if (item->mines  > BASE_FULL_MINES)  item->mines  = BASE_FULL_MINES;
+  }
+}
 
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_BASES);

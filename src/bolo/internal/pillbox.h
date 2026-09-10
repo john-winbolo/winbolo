@@ -934,5 +934,8 @@ bool pillsMoveView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible,
 BYTE pillsGetNumberOwnedByPlayer(pillboxes *value, BYTE playerNum);
 
 void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen);
+/* Clamps every pillbox field a map can supply. See basesValidate. */
+void pillsValidate(pillboxes *value);
+
 
 #endif /* PILLBOX_H */

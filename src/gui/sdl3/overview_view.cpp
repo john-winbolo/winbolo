@@ -999,6 +999,14 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.zoomFactor = 1;
     ctx.sheetScale = ss;
     ctx.scale      = zoomScale;
+    /* The full screen map draws from the host's sheet and has no padded copy
+       of its own, so its sprites still sample the packed layout. Its camera
+       is continuous, which is the condition the leak needs, so this is the
+       next one to hand an atlas — it wants the builder plumbed through
+       overviewViewRenderOffscreen and through the copy sdl3imgui.cpp builds
+       for the pop-out. */
+    ctx.spritesTex = NULL;
+    ctx.sprites    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
 

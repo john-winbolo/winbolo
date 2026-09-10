@@ -24,6 +24,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "sprite_atlas.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -147,6 +149,52 @@ bool tileLoaderIsSheetKeyColor(Uint8 r, Uint8 g, Uint8 b);
  *   which is the same guard reduceSheetSprite uses.
  *********************************************************/
 void tileLoaderBleedEdges(SDL_Surface *rgba, const SDL_Rect *clip);
+
+/*********************************************************
+ * NAME:          tileLoaderIsSpriteSlot
+ * PURPOSE:
+ *   True for the gTileMap names the tank, shell and LGM
+ *   drawers can ask for, which is what the sprite atlas
+ *   holds.  Terrain, the status icons and the interface's
+ *   own tank art are not among them.
+ *********************************************************/
+bool tileLoaderIsSpriteSlot(const char *name);
+
+/*********************************************************
+ * NAME:          tileLoaderBuildSpriteAtlas
+ * PURPOSE:
+ *   Copies every sprite slot off a built sheet into a
+ *   second surface, each with a texel of its own edge
+ *   repeated around it, and returns the index from sheet
+ *   address to atlas rect.  `scale` is the multiple the
+ *   sheet was built at; the index keys on 1x coordinates
+ *   either way, as tiles.h gives them.
+ *
+ *   What it buys is in sprite_atlas.h: the sheet packs its
+ *   slots edge to edge, and a filtered sampler reads past
+ *   the source rect it is given.
+ *
+ *   Returns NULL on failure.  Caller owns the result and
+ *   frees it with tileLoaderFreeSpriteAtlas.
+ *********************************************************/
+SpriteAtlas *tileLoaderBuildSpriteAtlas(SDL_Surface *sheet, int scale);
+
+/*********************************************************
+ * NAME:          tileLoaderSpriteAtlasDropSurface
+ * PURPOSE:
+ *   Releases the atlas surface once it has been handed to
+ *   a texture, leaving the index — which is all a draw
+ *   path needs — behind.  Idempotent.
+ *********************************************************/
+void tileLoaderSpriteAtlasDropSurface(SpriteAtlas *a);
+
+/*********************************************************
+ * NAME:          tileLoaderFreeSpriteAtlas
+ * PURPOSE:
+ *   Frees an atlas and whatever surface it still holds.
+ *   NULL is a no-op.
+ *********************************************************/
+void tileLoaderFreeSpriteAtlas(SpriteAtlas *a);
 
 /*********************************************************
  * NAME:          tileLoaderScanDensity

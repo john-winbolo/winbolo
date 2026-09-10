@@ -33,6 +33,7 @@
 #include "screenlgm.h"
 #include "server_sim.h"
 #include "sprite_positions.h"
+#include "sprite_atlas.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,6 +48,13 @@ typedef struct {
                                   sprite drawers. A positional initialiser
                                   has to give it too: left at 0 it puts
                                   every sprite on the origin. */
+    /* The padded copy of the moving sprites, and the index into it. Both
+       NULL draws every sprite from tilesTex, which is what a caller that
+       never built one gets and what the drawers did before there was one.
+       Fill them in and the tank, shell and LGM draws move across; the
+       terrain does not. sprite_atlas.h says why they are worth carrying. */
+    SDL_Texture       *spritesTex;
+    const SpriteAtlas *sprites;
 } MapViewCtx;
 
 /* Source rect for a cell of the tile atlas, inset by a whisker on every
@@ -70,6 +78,27 @@ static inline SDL_FRect mapViewAtlasSrc(int x, int y, int w, int h, int ss) {
     r.w = (float)(w * ss) - 2.0f * MAPVIEW_ATLAS_INSET;
     r.h = (float)(h * ss) - 2.0f * MAPVIEW_ATLAS_INSET;
     return r;
+}
+
+/* Where a sprite is drawn from: the padded atlas when the context carries
+ * one and it holds this sprite, the sheet otherwise. (x, y, w, h) are the
+ * 1x sheet coordinates the drawers switch to, as tiles.h gives them.
+ *
+ * No inset on the atlas rect. The inset above is for a NEAREST sample that
+ * rounds outward at a fractional scale, and on the atlas that rounding
+ * lands in the gutter, which is a copy of the texel it was reaching for. A
+ * filtered sample finds the same copy, which is the whole point of the
+ * gutter — while shifting the rect by a twentieth of a texel is what puts
+ * the sample inside the blend band in the first place. */
+static inline SDL_Texture *mapViewSpriteSrc(const MapViewCtx *ctx,
+                                            int x, int y, int w, int h,
+                                            SDL_FRect *out) {
+    if (ctx->spritesTex != NULL &&
+        spriteAtlasFind(ctx->sprites, x, y, w, h, out)) {
+        return ctx->spritesTex;
+    }
+    *out = mapViewAtlasSrc(x, y, w, h, ctx->sheetScale);
+    return ctx->tilesTex;
 }
 
 /* Draw pre-built tile buffer. hiddenView marks the squares the player cannot

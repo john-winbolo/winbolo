@@ -731,6 +731,10 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   ctx.zoomFactor = zf;
   ctx.sheetScale = lv_drawGetSheetScale();
   ctx.scale      = (float)zf;
+  /* The log viewer builds no padded copy: it replays at a whole-number zoom
+     with no sub-pixel motion, so the sampler has nothing to blend. */
+  ctx.spritesTex = NULL;
+  ctx.sprites    = NULL;
 
   /* Set clip rect so the map render stays within the main view (no
    * spillover into the surrounding chrome from the 1-tile mapView

@@ -140,9 +140,10 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                         (int)mx, (int)my, (int)px, (int)py, (int)wx, (int)wy,
                         (int)frame, &sx, &sy);
 
-    SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, srcW, srcH, ctx->sheetScale);
+    SDL_FRect srcR;
+    SDL_Texture *tex = mapViewSpriteSrc(ctx, srcX, srcY, srcW, srcH, &srcR);
     SDL_FRect dstR = { sx, sy, (float)srcW * ctx->scale, (float)srcH * ctx->scale };
-    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    SDL_RenderTexture(ctx->renderer, tex, &srcR, &dstR);
   }
 }
 
@@ -286,8 +287,9 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
 #endif
 
     {
-      SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, TILE_SIZE_X, TILE_SIZE_Y,
-                                       ctx->sheetScale);
+      SDL_FRect srcR;
+      SDL_Texture *tex = mapViewSpriteSrc(ctx, srcX, srcY,
+                                          TILE_SIZE_X, TILE_SIZE_Y, &srcR);
       SDL_FRect dstR = { sx, sy, tileW, tileH };
 #if WB_SKIN_DRAWTIME_ROTATION
       if (rotated) {
@@ -296,14 +298,14 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
            turn stated finely — and clockwise is the direction SDL reads its
            degrees in.  NULL centre turns about the middle of dstR, which is
            the point the build's rotation works about as well. */
-        SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
+        SDL_RenderTextureRotated(ctx->renderer, tex, &srcR, &dstR,
                                  (double)angle * 360.0 / 256.0, NULL,
                                  SDL_FLIP_NONE);
       } else {
-        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+        SDL_RenderTexture(ctx->renderer, tex, &srcR, &dstR);
       }
 #else
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      SDL_RenderTexture(ctx->renderer, tex, &srcR, &dstR);
 #endif
     }
   }
@@ -346,10 +348,10 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                       (int)frame, &sx, &sy);
 
     {
-      SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, srcW, srcH,
-                                       ctx->sheetScale);
+      SDL_FRect srcR;
+      SDL_Texture *tex = mapViewSpriteSrc(ctx, srcX, srcY, srcW, srcH, &srcR);
       SDL_FRect dstR = { sx, sy, (float)srcW * ctx->scale, (float)srcH * ctx->scale };
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      SDL_RenderTexture(ctx->renderer, tex, &srcR, &dstR);
     }
   }
 }
@@ -680,9 +682,11 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
       default: continue;
     }
 
-    SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, tileSize, tileSize, ss);
+    SDL_FRect srcR;
+    SDL_Texture *tankTex = mapViewSpriteSrc(ctx, srcX, srcY,
+                                            tileSize, tileSize, &srcR);
     SDL_FRect dstR = { dx, dy, (float)scaledTile, (float)scaledTile };
-    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+    SDL_RenderTexture(ctx->renderer, tankTex, &srcR, &dstR);
   }
 
   /* Draw shells via serverSim snapshot */
@@ -744,9 +748,10 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
         /* Cull off-screen */
         if (sx + srcW * zf >= originX && sx <= originX + viewW &&
             sy + srcH * zf >= originY && sy <= originY + viewH) {
-          SDL_FRect sSrc = mapViewAtlasSrc(srcX, srcY, srcW, srcH, ss);
+          SDL_FRect sSrc;
+          SDL_Texture *sTex = mapViewSpriteSrc(ctx, srcX, srcY, srcW, srcH, &sSrc);
           SDL_FRect sDst = { sx, sy, (float)(srcW * zf), (float)(srcH * zf) };
-          SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &sSrc, &sDst);
+          SDL_RenderTexture(ctx->renderer, sTex, &sSrc, &sDst);
         }
       }
     }
@@ -784,9 +789,11 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
 
       if (ex + scaledTile >= originX && ex <= originX + viewW &&
           ey + scaledTile >= originY && ey <= originY + viewH) {
-        SDL_FRect eSrc = mapViewAtlasSrc(srcX, srcY, tileSize, tileSize, ss);
+        SDL_FRect eSrc;
+        SDL_Texture *eTex = mapViewSpriteSrc(ctx, srcX, srcY,
+                                             tileSize, tileSize, &eSrc);
         SDL_FRect eDst = { ex, ey, (float)scaledTile, (float)scaledTile };
-        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &eSrc, &eDst);
+        SDL_RenderTexture(ctx->renderer, eTex, &eSrc, &eDst);
       }
     }
   }
@@ -832,9 +839,10 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
 
     if (lx + srcW * zf >= originX && lx <= originX + viewW &&
         ly + srcH * zf >= originY && ly <= originY + viewH) {
-      SDL_FRect lSrc = mapViewAtlasSrc(srcX, srcY, srcW, srcH, ss);
+      SDL_FRect lSrc;
+      SDL_Texture *lTex = mapViewSpriteSrc(ctx, srcX, srcY, srcW, srcH, &lSrc);
       SDL_FRect lDst = { lx, ly, (float)(srcW * zf), (float)(srcH * zf) };
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &lSrc, &lDst);
+      SDL_RenderTexture(ctx->renderer, lTex, &lSrc, &lDst);
     }
   }
 
@@ -858,10 +866,11 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
           ty + scaledTile >= originY && ty <= originY + viewH) {
         /* Fireball is TANK_EXPLOSION_FRAME (8) which in the real game maps
          * through SHELL_EXPLOSION1 (=8) to the EXPLOSION1 sprite (small spark). */
-        SDL_FRect tSrc = mapViewAtlasSrc(EXPLOSION1_X, EXPLOSION1_Y,
-                                         tileSize, tileSize, ss);
+        SDL_FRect tSrc;
+        SDL_Texture *tTex = mapViewSpriteSrc(ctx, EXPLOSION1_X, EXPLOSION1_Y,
+                                             tileSize, tileSize, &tSrc);
         SDL_FRect tDst = { tx, ty, (float)scaledTile, (float)scaledTile };
-        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &tSrc, &tDst);
+        SDL_RenderTexture(ctx->renderer, tTex, &tSrc, &tDst);
       }
     }
   }

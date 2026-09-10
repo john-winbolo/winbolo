@@ -913,7 +913,18 @@ int run_voice_talking_clears_on_leave(void);
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
+int run_base_armour_reveal_in_range(void);
 int run_two_clients_full_sync_independent(void);
+
+/* Base-death prediction (test_base_death_prediction.c): the collision path
+ * resolves a base our own predicted shell is about to kill against the tick
+ * being replayed, so a reconciliation replay spanning the hit sees a wall
+ * before it and open ground after. */
+int run_base_death_prediction_replay_tick(void);
+/* Authoritative armour settles the stamp by the server's processed input
+ * tick: kept while still ahead and one hit from dead, dropped once disproved,
+ * and a landing that was waiting on an earlier hit's armour is armed. */
+int run_base_death_prediction_authority(void);
 
 /* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
  * inAnyViewport cover the recipient's tank screen and each owned/allied
@@ -1608,6 +1619,15 @@ int run_client_type_name_round_trips(void);
 int run_client_slot_reassign_carries_tank_and_lgm(void);
 int run_client_slot_reassign_same_slot_is_stable(void);
 int run_client_slot_reassign_back_to_zero(void);
+
+/* Downloaded-map clamps (test_map_load_validate.c): mapLoadCompressedMap
+ * memcpys the wire bases/pillboxes/starts wholesale, so none of the per-field
+ * clamps the file-load setters apply have run. Asserts a hostile blob cannot
+ * leave an out-of-range owner, base stock, pill armour or speed, or start dir
+ * in live game state. */
+int run_map_load_clamps_base_fields(void);
+int run_map_load_clamps_pill_fields(void);
+int run_map_load_clamps_start_dir(void);
 int run_players_oob_index_safe(void);
 int run_control_oob_player_dropped(void);
 
@@ -1731,6 +1751,13 @@ int run_skin_density_scan(void);
 int run_sheet_bleed_edges(void);
 int run_sheet_no_key_under_alpha(void);
 int run_bmp_sheet_no_key_under_alpha(void);
+
+/* The ring of texels around a sprite slot, on the padded atlas the tank,
+ * shell and LGM drawers sample and on the packed sheet it is copied out
+ * of (test_sprite_atlas.c). */
+int run_sprite_atlas_isolated(void);
+int run_sprite_atlas_lookup(void);
+int run_sprite_atlas_packed_sheet_unsafe(void);
 
 /* Which <name>_N.wav members a source holds, and the compaction that
    keeps a decoded pool contiguous (test_sound_variants.c). */

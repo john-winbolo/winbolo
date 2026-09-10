@@ -112,6 +112,43 @@ static const TankBoundingBox tank_bbox_boat[16] = {
 #endif /* BOLO_LEGACY_SQUARE_COLLISION */
 
 /*********************************************************
+ * tankBasePredictedDrivable - Whether the client has already
+ * worked out that the base on this square is dead, ahead of
+ * the server telling it so.
+ *
+ * The client is masked out of a live enemy base's armour, so
+ * without this the square stays solid until the death event
+ * lands a round trip later while the server has already
+ * driven the tank through — the client snaps forward each
+ * snapshot and replays itself back into the wall. Once the
+ * client's own predicted shell is due to drop the base to
+ * MIN_ARMOUR_CAPTURE, both ends derive "drivable" from the
+ * same rule at the same tick and there is nothing to correct.
+ *
+ * Compares against replayTick rather than the latest tick so
+ * a reconciliation replay spanning the death still treats the
+ * ticks before it as blocked. Always FALSE on the server and
+ * outside prediction, where every field involved is 0.
+ *********************************************************/
+static bool tankBasePredictedDrivable(GameSim *sim, BYTE mx, BYTE my) {
+  BYTE num, idx;
+
+  if (sim->replayTick == 0) {
+    return FALSE;
+  }
+  /* basesGetBaseNum answers 1-based, with BASE_NOT_FOUND for no base here. */
+  num = basesGetBaseNum(&sim->bs, mx, my);
+  if (num == BASE_NOT_FOUND || num == 0 || (BYTE)(num - 1) >= MAX_BASES) {
+    return FALSE;
+  }
+  idx = (BYTE)(num - 1);
+  if (sim->basePredictedDeadTick[idx] == 0) {
+    return FALSE;
+  }
+  return sim->replayTick >= sim->basePredictedDeadTick[idx];
+}
+
+/*********************************************************
  * tankBuildingCollision - Check if a WORLD coordinate
  * collides with a solid object (building, pillbox, base).
  * Sets bumptype flags for the type of collision.
@@ -139,7 +176,8 @@ static bool tankBuildingCollision(GameSim *sim, tank *value, WORLD x, WORLD y,
   }
 
   if (basesExistPos(bs, mx, my) == TRUE) {
-    if (basesCantDrive(sim, mx, my, gameSimGetTankPlayer(sim, value)) == TRUE) {
+    if (basesCantDrive(sim, mx, my, gameSimGetTankPlayer(sim, value)) == TRUE &&
+        tankBasePredictedDrivable(sim, mx, my) == FALSE) {
       *bumptype |= BumpInfo_SolidWall;
       return TRUE;
     }
