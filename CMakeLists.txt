@@ -4621,6 +4621,54 @@ if(WB_FUZZ)
                      ${WB_FUZZ_CORPUS_DIR}/map_load ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.map_load PROPERTIES TIMEOUT 120)
 
+    # The same loader, past the LZW gate. fuzz_map_load cannot reach a
+    # successful load — a mutated compressed stream almost never decodes to
+    # exactly 65536 bytes — so this one compresses fuzzer-chosen terrain with
+    # the writer's own lzwencoding and hands the result to the real
+    # mapLoadCompressedMap. Every input therefore loads, which is what
+    # exercises the field clamps and the terrain the file format cannot
+    # express.
+    add_executable(fuzz_map_fields
+        tests/fuzz/fuzz_map_fields.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_map_fields unittests)
+    target_include_directories(fuzz_map_fields PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_map_fields PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_map_fields PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_map_fields PRIVATE -fcommon)
+    target_link_options(fuzz_map_fields PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_map_fields "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.map_fields
+             COMMAND $<TARGET_FILE:fuzz_map_fields> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/map_fields ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.map_fields PROPERTIES TIMEOUT 120)
+
     # Tier 1 — the channel-mux frame parser (channelRecvFrame), the single
     # bounds-checked decode site the reliability rework collapsed every reliable
     # queue / carrier / chunker onto. bolo_static only, like the wire codecs.
