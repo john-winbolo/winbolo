@@ -3846,6 +3846,45 @@ local function blitz_contested_check(goal, state, world, info, now)
                             party = party, n = n }
 end
 
+-- ── "Blitz only when hit" (BLITZ_SWERVE_ONLY_WHEN_HIT) ────────────────────
+-- Count the tanks COMMITTED to blitzing THIS pill right now: self + every active
+-- ally broadcasting attack_pill on the same target that is past negotiation and
+-- not dead.  Mirrors squad.blitz_members' field access + dead test
+-- (squad.lua:137-146) but WITHOUT the role/commander filter -- a blitz on one
+-- pill can draw tanks from more than one squad, and every body on it counts.
+local function blitz_party_count(state, now, self_pn, target_id)
+  local n = 1                                   -- self
+  if not target_id then return n end
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn then
+      local h = slot.info
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if not is_dead and h.goal == "attack_pill"
+         and tonumber(h.target or "") == target_id and h.sqst ~= "nego" then
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+-- True when a committed blitzer should HOLD its proactive swerves: the mode is
+-- on, >= MIN blitzers are on this pill, we are still UNDAMAGED (armour has not
+-- dropped below the value we committed with -- ANY hit ends the hold), and we
+-- are not a pill_suicider (that path is strictly stronger and is checked first
+-- at every gated site).  The party count is cached on the goal and lazily
+-- refreshed every 50 ticks -- cheap, and only while committed + mode on.
+local function blitz_commit_hold(goal, state, info, now)
+  if not (C.BLITZ_SWERVE_ONLY_WHEN_HIT and goal._blitz_committed) then return false end
+  if (now - (goal._blitz_party_tick or 0)) >= 50 then
+    goal._blitz_party      = blitz_party_count(state, now, info.player_number or -1, goal.target_id)
+    goal._blitz_party_tick = now
+  end
+  return (goal._blitz_party or 0) >= (C.BLITZ_ONLY_WHEN_HIT_MIN or 3)
+     and (info.armour or 0) >= (goal._blitz_start_armour or 0)
+     and not state.is_pill_suicider
+end
+
 -- Effective loiter-wait cap. Starts at ANGER_WAIT_MAX and shrinks (divisors
 -- stack) when sitting out the pill's anger cooldown is cheap or pointless:
 --   * pill one hit from death — a single shot kills it even fully angry, so the
@@ -5030,6 +5069,8 @@ function M.update_attack_substate(goal, state, world, info)
         local _prev = goal.substate
         goal._blitz_committed    = true
         goal._blitz_start_armour = info.armour or 0
+        goal._blitz_party        = blitz_party_count(state, now, info.player_number or -1, goal.target_id)
+        goal._blitz_party_tick   = now
         goal._is_ppt             = false        -- charge FAST like the soldiers, not PPT creep
         goal._charge_braking     = nil
         goal.substate            = "charge"
@@ -5341,6 +5382,8 @@ function M.update_attack_substate(goal, state, world, info)
       end
       goal._blitz_committed    = true
       goal._blitz_start_armour = info.armour or 0  -- baseline for damage-gated swerve
+      goal._blitz_party        = blitz_party_count(state, now, info.player_number or -1, goal.target_id)
+      goal._blitz_party_tick   = now
       if goal._blitz_shielded and goal._shield_scan then
         goal.substate = "aim"
         goal.aim_tick = now
@@ -6657,10 +6700,16 @@ function M.update_attack_substate(goal, state, world, info)
                            and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
       local _kill_locked = goal._kill_attempt and (goal._on_target_in_flight or 0) >= (pill.health or 0)
       local _hits_swerve = (goal._charge_hits_total or 0) >= (C.ATTACK_CURVE_AFTER_HITS or 3)
+      -- "Blitz only when hit": an UNDAMAGED committed blitzer in a 3+ party holds
+      -- its PROACTIVE kill-locked swerve -- falls through to the substate handler
+      -- below, exactly like the suicider skip. The hits-taken swerve is NOT held
+      -- (once _commit_hold is true we are undamaged, so _hits_swerve is 0 anyway),
+      -- and neither is the pill-DEAD swerve above.
+      local _commit_hold = blitz_commit_hold(goal, state, info, now)
       -- Kill-lock bypasses the soak: once the lethal shot is in flight the pill is
       -- as good as dead, so swerve even on a calm low-HP pill we'd otherwise soak.
       -- tank_finish still suppresses the purely-defensive (hits-taken) swerve.
-      if _kill_locked or (_hits_swerve and not _tank_finish) then
+      if (_kill_locked and not _commit_hold) or (_hits_swerve and not _tank_finish) then
         if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_ENTER t=%d site=charge_defensive tid=%s goal=(%d,%d) hits_total=%s kill_locked=%s armour=%d pill_hp=%s", now, tostring(goal.target_id), pmx, pmy, tostring(goal._charge_hits_total), tostring(_kill_locked), info.armour or -1, tostring(pill and pill.health))) end
         enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
         return
@@ -7304,6 +7353,10 @@ function M.update_attack_substate(goal, state, world, info)
 
     local should_swerve = false
     local pill_dead     = false
+    -- "Blitz only when hit": hold the proactive (kill-locked) swerve while an
+    -- undamaged committed blitzer in a 3+ party. The pill-dead and hits-taken
+    -- exits are not gated (see below). Falls through to the substate handler.
+    local _commit_hold = blitz_commit_hold(goal, state, info, now)
     local on_target_in_flight = goal._on_target_in_flight or 0
     -- Tank-the-finish: honor the ONE-TIME soak decision committed at
     -- build_walls/charge (lazily committed here if this take skipped those).
@@ -7324,7 +7377,7 @@ function M.update_attack_substate(goal, state, world, info)
       end
       should_swerve = true
       pill_dead     = true
-    elseif goal._kill_attempt and on_target_in_flight >= pill_hp then
+    elseif goal._kill_attempt and on_target_in_flight >= pill_hp and not _commit_hold then
       -- Last sure shot fired: the in-flight shells whose simulated path actually
       -- reaches the pill already cover its remaining HP, so the kill is locked —
       -- curve away NOW instead of standing another tick under return fire. Stays
@@ -7415,14 +7468,27 @@ function M.update_attack_substate(goal, state, world, info)
       local _tank_finish = _soak_ok and pill and (pill.health or 0) > 0
                            and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                            and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
+      -- "Blitz only when hit": an UNDAMAGED committed blitzer in a 3+ party holds
+      -- its proactive swerves. Folded into _kill_locked (kills that disjunct in
+      -- BOTH should_swerve and the crosshairs_off branch) and added to the
+      -- crosshairs_off condition below so the ANGER disjunct routes to post_engage
+      -- (same as a suicider) rather than dodging. Hits-taken and pill-dead are not
+      -- gated; while _commit_hold holds we are undamaged, so _engage_hits is 0.
+      local _commit_hold = blitz_commit_hold(goal, state, info, now)
       -- Last sure shot fired (in-flight on-target shells already cover the pill's
       -- remaining HP) → kill is locked, dodge now. Only on a kill attempt, and
       -- not while soaking the last HP of a calm pill.
       local _kill_locked = goal._kill_attempt
                            and (goal._on_target_in_flight or 0) >= pill_hp
                            and pill_hp > 0 and not _tank_finish
+      -- "Blitz only when hit": an undamaged committed blitzer in a 3+ party holds
+      -- its PROACTIVE (crosshairs-ON) dodge -- keep firing instead of peeling off.
+      -- The crosshairs-OFF threat case below RE-AIMS rather than retreating; the
+      -- dodge resumes once hit (_commit_hold releases on the armour drop). NOTE
+      -- _kill_locked stays ungated so the crosshairs-off branch can still see the
+      -- threat and re-aim on it.
       local should_swerve = (goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS or _kill_locked)
-                            and not _tank_finish
+                            and not _tank_finish and not _commit_hold
       -- Pill-suicider: hits taken and a locked kill are NOT reasons to peel off
       -- — it stands in the fire and keeps shooting until the pill dies (the
       -- pill_hp<=0 branch above then hands straight to capture_pill with no
@@ -7450,6 +7516,12 @@ function M.update_attack_substate(goal, state, world, info)
         -- on crosshairs_off — route that to post_engage, never to a swerve.)
         if (pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked)
            and not state.is_pill_suicider then
+          if _commit_hold then
+            -- Held blitzer keeps its sight on the pill; the dodge resumes once hit (_commit_hold false).
+            goal.substate = "aim"
+            goal.aim_tick = now
+            if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_SKIP t=%d site=engage_dodge reason=blitz_commit_hold party=%s -> re-aim anger=%.2f kill_locked=%s", now, tostring(goal._blitz_party), pill_anger, tostring(_kill_locked))) end
+          else
           -- Pill angry, OR the kill is already locked (last sure shot fired) —
           -- swerve to dodge (defensive, so a diverging shell re-engages). The
           -- kill-locked case dodges regardless of anger instead of falling to
@@ -7467,6 +7539,7 @@ function M.update_attack_substate(goal, state, world, info)
           enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
+          end
         else
           if BRAIN_DEBUG_MODE and state.is_pill_suicider and (pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked) then
             print2(string.format(
