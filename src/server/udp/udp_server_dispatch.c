@@ -117,18 +117,8 @@
 static void handlePing(ServerSim *sim, uint8_t *buf, int len,
                        struct sockaddr_in *fromAddr) {
     serverHandlePing(buf, len, fromAddr);
-    /* PACKET_PING is the client's steady ~1 Hz keepalive: it is the
-     * ONLY traffic a client sends while idle in the lobby. Refresh the
-     * client's liveness clock here, or a client that is quietly waiting
-     * in the lobby (long survival setup, say) gets timed out and
-     * dropped even though it is pinging us every second. The spectator
-     * path below already did this; the connected-client path did not. */
+    /* Spectators aren't in clients[]; refresh their liveness too. */
     {
-        int cIdx = serverFindClient(fromAddr);
-        if (cIdx >= 0) {
-            udpServer.clients[cIdx].lastReceivedTick = udpServer.tickCount;
-        }
-        /* Spectators aren't in clients[]; refresh their liveness too. */
         int sIdx = serverFindSpectator(fromAddr);
         if (sIdx >= 0) {
             udpServer.spectators[sIdx].lastReceivedTick = udpServer.tickCount;
@@ -210,15 +200,11 @@ static void handleCommandTick(ServerSim *sim, uint8_t *buf, int len,
         return;
     }
     UdpServerClient *client = &udpServer.clients[clientIdx];
-    /* A command packet from a connected client is proof of life:
-     * refresh the timeout clock, exactly as every other client
-     * packet path does (and as the spectator branch above does).
-     * Without this, a client whose only inbound traffic is
-     * COMMAND_TICK -- which is all it sends while sitting in the
-     * lobby (ready / team-set / chat / ping) -- goes stale after
-     * CLIENT_TIMEOUT_TICKS and the timeout sweep disconnects it
-     * mid-lobby or the instant the game starts, even though it is
-     * actively talking to us. */
+    /* A command datagram is traffic like an input or a ping, so refresh the
+     * liveness clock here — before the length check, so a packet that fails to
+     * parse still counts as the client being alive. Without it a client whose
+     * only traffic is commands ages toward the timeout while it is talking to
+     * us. Same placement as the spectator branch above. */
     client->lastReceivedTick = udpServer.tickCount;
     if (len < PACKET_HEADER_SIZE + 1) return;
     uint8_t count = buf[PACKET_HEADER_SIZE];

@@ -42,11 +42,32 @@ extern "C" {
 /* PING_DISPLAY_MS / PING_FADE_MS come in with input_packet.h: the client's
  * ping ring expires on them too, so they are not a drawing-only choice.
  *
- * The off-screen edge marker: a bar this thick and this long, laid along the
- * border of the game view where the line from the viewer's tank to the ping
- * leaves it. */
+ * The off-screen edge marker: a bar this thick, laid along the border of the
+ * game view where the line from the viewer's tank to the ping leaves it. */
 #define PING_EDGE_THICKNESS_PX 10.0f
-#define PING_EDGE_LENGTH_PX    40.0f
+
+/* How long that bar is, and how big the icon on it, both from how far away
+ * the ping is: near is a big marker, far is a small one, so the size alone
+ * says roughly how much of the map is between the player and it.
+ *
+ * The two distances are in map squares from the viewer's tank. Eight is about
+ * half the classic 15x15 view — a ping that has only just gone off the edge —
+ * and 64 is a quarter of the map away, past which there is nothing left to
+ * tell apart. Between them pingEdgeSizeFactor (ping_edge.h) ramps the size,
+ * and the pixel sizes below are at the view's own scale, like every other
+ * number here.
+ *
+ * The icon's minimum is the floor the whole thing is designed around: below
+ * about 12 px the glyphs stop reading as anything and the marker is a
+ * coloured dash. The name under the bar does not shrink with it. */
+#define PING_EDGE_NEAR_TILES      8.0f   /* map squares: at or under, biggest */
+#define PING_EDGE_FAR_TILES      64.0f   /* map squares: at or over, smallest */
+#define PING_EDGE_LENGTH_MIN_PX  14.0f   /* bar length at PING_EDGE_FAR_TILES */
+#define PING_EDGE_LENGTH_MAX_PX  52.0f   /* bar length at PING_EDGE_NEAR_TILES */
+#define PING_EDGE_ICON_MIN_PX    12.0f   /* icon at PING_EDGE_FAR_TILES */
+#define PING_EDGE_ICON_MAX_PX    30.0f   /* icon at PING_EDGE_NEAR_TILES */
+/* Air between the bar and the icon, and between the icon and the name. */
+#define PING_EDGE_GAP_PX          3.0f
 
 typedef struct {
     unsigned char r, g, b;   /* the kind's colour, opaque */

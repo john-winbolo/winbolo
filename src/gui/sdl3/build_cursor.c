@@ -135,8 +135,8 @@ void buildCursorToggle(struct ClientSim *cs) {
   if (!s_positioned) {
     /* Very first activation: seed to the gunsight tile (or the tank tile if
        the gunsight isn't valid) so it starts somewhere visible.
-       clientSimGetGunsightTile only writes valid coords when armour <=
-       TANK_FULL_ARMOUR; if our tank is dead the locals stay at zero. */
+       clientSimGetGunsightTile only writes valid coords for a tank that has
+       not been destroyed; if our tank is dead the locals stay at zero. */
     BYTE gx = 0, gy = 0;
     clientSimGetGunsightTile(cs, &gx, &gy);
     if (gx == 0 && gy == 0) {

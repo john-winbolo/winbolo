@@ -1829,7 +1829,7 @@ bool playersCalcTankCollision(GameSim *sim, BYTE playerNum, WORLD xValue, WORLD 
   *pushY = 0;
 
   for (count = 0; count < MAX_TANKS; count++) {
-    if (count != playerNum && sim->tanks[count] != NULL && tankGetArmour(&sim->tanks[count]) <= TANK_FULL_ARMOUR) {
+    if (count != playerNum && sim->tanks[count] != NULL && !tankIsDestroyed(&sim->tanks[count])) {
       tankGetWorld(&sim->tanks[count], &mx, &my);
 
       float dx = (float)((int)xValue - (int)mx);
@@ -2419,6 +2419,15 @@ bool playersPrepareLogSnapshotForPlayer(GameSim *sim, players *value, BYTE playe
     utilCtoPString((*value)->item[playerNum].location, (char *)(buff+*len));
     *len += *(buff+*len) + 1;
     *len += allianceMakeLogAlliance(&((*value)->item[playerNum].allie), buff+*len);
+    /* Tank stocks on the end of the block: shells, mines, armour, trees. Only
+     * a slot in use gets them — a slot that is not stays the 2-byte stub. The
+     * block is length-delimited, so a reader that runs out of block after the
+     * alliance list is reading a recording written before these were here. */
+    buff[*len] = tankGetShells(tnk);
+    buff[*len + 1] = tankGetMines(tnk);
+    buff[*len + 2] = tankGetArmour(tnk);
+    buff[*len + 3] = tankGetTrees(tnk);
+    *len += 4;
   }
   return returnValue;
 }

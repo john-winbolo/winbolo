@@ -562,3 +562,63 @@ int run_map_compress_incompressible(void) {
     startsDestroy(&ss);
     return 0;
 }
+
+/* mapLoadCompressedMap dereferences both levels of all four world handles: the
+ * parameters are pointers to pointer typedefs, and the compressed-data setters
+ * and the (*value)->mapItem reads go straight in. A caller still holding a
+ * handle that a teardown has nulled has to get a refusal back, not a fault
+ * inside the loader.
+ *
+ * A control load brackets the refusals. The first proves the fixture decodes,
+ * so a FALSE below is the null check talking and not a broken map; the last
+ * proves the refused calls left the valid handles as they were. */
+int run_map_compress_rejects_null_handles(void) {
+    static BYTE emap[6000] = E_MAP;
+    map mp;
+    pillboxes pb;
+    bases bs;
+    starts ss;
+    map nullMp = NULL;
+    pillboxes nullPb = NULL;
+    bases nullBs = NULL;
+    starts nullSs = NULL;
+
+    mapCreate(&mp);
+    pillsCreate(&pb);
+    basesCreate(&bs);
+    startsCreate(&ss);
+
+    UT_ASSERT_MSG(mapLoadCompressedMap(&mp, &pb, &bs, &ss, emap, EMAP_LEN),
+                  "control: four valid handles failed to decode the embedded "
+                  "Everard map");
+
+    /* Outer level: the parameter itself is NULL. */
+    UT_ASSERT_MSG(!mapLoadCompressedMap(NULL, &pb, &bs, &ss, emap, EMAP_LEN),
+                  "map: a NULL parameter (outer level) was accepted");
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, NULL, &bs, &ss, emap, EMAP_LEN),
+                  "pillboxes: a NULL parameter (outer level) was accepted");
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, NULL, &ss, emap, EMAP_LEN),
+                  "bases: a NULL parameter (outer level) was accepted");
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, &bs, NULL, emap, EMAP_LEN),
+                  "starts: a NULL parameter (outer level) was accepted");
+
+    /* Inner level: the parameter points at a handle that is itself NULL. */
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&nullMp, &pb, &bs, &ss, emap, EMAP_LEN),
+                  "map: a NULL handle (inner level) was accepted");
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &nullPb, &bs, &ss, emap, EMAP_LEN),
+                  "pillboxes: a NULL handle (inner level) was accepted");
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, &nullBs, &ss, emap, EMAP_LEN),
+                  "bases: a NULL handle (inner level) was accepted");
+    UT_ASSERT_MSG(!mapLoadCompressedMap(&mp, &pb, &bs, &nullSs, emap, EMAP_LEN),
+                  "starts: a NULL handle (inner level) was accepted");
+
+    UT_ASSERT_MSG(mapLoadCompressedMap(&mp, &pb, &bs, &ss, emap, EMAP_LEN),
+                  "the refused calls disturbed the valid handles: the control "
+                  "load no longer succeeds");
+
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+    return 0;
+}

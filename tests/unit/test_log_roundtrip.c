@@ -34,6 +34,8 @@
 #include "input_packet.h"   /* PING_KIND_* — log_Ping's kind byte */
 #include "log.h"
 #include "server_sim.h"
+#include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
+#include "tank.h"           /* tankSetShells / tankSetMines / ... */
 #include "unzip.h"
 #include "test_harness.h"
 
@@ -96,6 +98,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_GameVoteEnd:      return 2;
         case log_GameSettings:     return -1;  /* 0 + pstr */
         case log_Ping:             return 6;   /* sender, kind, x (BE u16), y (BE u16) */
+        case log_TankSetStock:     return 5;   /* player, shells, mines, armour, trees */
         default:                   return -2;  /* unknown */
     }
 }
@@ -130,6 +133,8 @@ typedef struct {
     int mapRunCount;       /* number of runs read, NOT counting the terminator */
     int playerStubCount;   /* number of 2-byte (not-in-use) player blocks */
     int playerFullCount;   /* number of >2-byte player blocks */
+    int slot0BlockLen;     /* payload length of slot 0's block */
+    uint8_t slot0Block[256]; /* slot 0's block payload, for a field-by-field walk */
 } snapshotShape;
 
 /* Decode the snapshot at *pos, advancing *pos past it. Fills *shape with
@@ -168,6 +173,11 @@ static bool decodeSnapshot(const uint8_t *buf, size_t len, size_t *pos,
         if ((n = readByte(buf, len, p)) < 0) return false;
         if (n == 2) shape->playerStubCount++;
         else        shape->playerFullCount++;
+        if (i == 0) {
+            if (p + 1 + (size_t)n > len) return false;
+            shape->slot0BlockLen = n;
+            memcpy(shape->slot0Block, buf + p + 1, (size_t)n);
+        }
         p += 1 + (size_t)n;
     }
     *pos = p;
@@ -774,5 +784,155 @@ int run_log_roundtrip_lobby_mode_drops_world_events(void) {
     UT_ASSERT(got[4] == log_LobbyExit);
     UT_ASSERT(got[5] == log_BaseSetOwner);
     UT_ASSERT(got[6] == log_Shell);
+    return 0;
+}
+
+/* A snapshot's player block ends with the tank's four stock values — shells,
+ * mines, armour, trees, in that order — for a slot in use, and a slot that is
+ * not in use stays the 2-byte stub. Walks the block field by field (the field
+ * order the reader consumes) rather than trusting a fixed offset, so a change
+ * to the name / location / alliance sections still lands on the stocks.
+ *
+ * The four values are set to distinct numbers first: they are all 40 at spawn,
+ * so a writer that swapped two of them would round-trip by luck otherwise. */
+int run_log_roundtrip_snapshot_tank_stocks(void) {
+    char fname[64];
+    const uint8_t wantShells = 7;
+    const uint8_t wantMines  = 11;
+    const uint8_t wantArmour = 23;
+    const uint8_t wantTrees  = 5;
+
+    mkTempPath(fname, sizeof(fname), "tankstocks");
+    remove(fname);
+
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL && gs->tanks[0] != NULL, "no slot-0 tank");
+    tankSetShells(&gs->tanks[0], wantShells);
+    tankSetMines(&gs->tanks[0], wantMines);
+    tankSetArmour(&gs->tanks[0], wantArmour);
+    tankSetTrees(&gs->tanks[0], wantTrees);
+
+    /* logStart writes the opening snapshot, which is the one decoded below.
+     * Lobby mode would make that an empty world with 16 stubs, and it is
+     * process state an earlier test may have left on, so say which one. */
+    logCreate();
+    logSetLobbyMode(FALSE);
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE), "logStart failed");
+    logWriteTick();
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+
+    size_t pos = blockStart;
+    int code = readByte(buf, blen, pos);
+    pos++;
+    UT_ASSERT_MSG(code == LOG_EVENT_SNAPSHOT,
+                  "expected initial snapshot marker, got %d", code);
+
+    snapshotShape shape;
+    UT_ASSERT_MSG(decodeSnapshot(buf, blen, &pos, &shape),
+                  "decodeSnapshot failed");
+    free(buf);
+    remove(fname);
+
+    /* One player joined, so one full block and fifteen not-in-use stubs. */
+    UT_ASSERT_MSG(shape.playerFullCount == 1,
+                  "full player blocks = %d (want 1)", shape.playerFullCount);
+    UT_ASSERT_MSG(shape.playerStubCount == MAX_TANKS - 1,
+                  "player stubs = %d (want %d)",
+                  shape.playerStubCount, MAX_TANKS - 1);
+
+    /* Walk slot 0: 2 header bytes, 9 fixed fields, name, location, alliances,
+     * then the stocks. */
+    const uint8_t *b = shape.slot0Block;
+    int blockLen = shape.slot0BlockLen;
+    UT_ASSERT_MSG(b[0] == 0, "block player number = %d (want 0)", b[0]);
+    UT_ASSERT_MSG(b[1] != 0, "slot 0 not marked in use");
+    int p = 11;                       /* past the 2 header bytes + 9 fixed */
+    UT_ASSERT_MSG(p < blockLen, "block ends before the name");
+    p += 1 + b[p];                    /* name */
+    UT_ASSERT_MSG(p < blockLen, "block ends before the location");
+    p += 1 + b[p];                    /* location */
+    UT_ASSERT_MSG(p < blockLen, "block ends before the alliances");
+    p += 1 + b[p];                    /* alliance count + entries */
+
+    UT_ASSERT_MSG(p + 4 == blockLen,
+                  "%d stock bytes on the end of the block (want 4)",
+                  blockLen - p);
+    UT_ASSERT_MSG(b[p]     == wantShells, "shells = %d (want %d)", b[p], wantShells);
+    UT_ASSERT_MSG(b[p + 1] == wantMines,  "mines = %d (want %d)", b[p+1], wantMines);
+    UT_ASSERT_MSG(b[p + 2] == wantArmour, "armour = %d (want %d)", b[p+2], wantArmour);
+    UT_ASSERT_MSG(b[p + 3] == wantTrees,  "trees = %d (want %d)", b[p+3], wantTrees);
+    return 0;
+}
+
+/* log_TankSetStock carries the player and the four values, and only goes out
+ * when one of them changed since the last record for that tank: the per-tick
+ * pass offers one for every connected tank, so without that rule every tank
+ * would write five bytes every tick. */
+int run_log_roundtrip_tank_stock_record(void) {
+    char fname[64];
+    mkTempPath(fname, sizeof(fname), "stockrecord");
+    remove(fname);
+
+    /* log_TankSetStock is a world event, so lobby mode would drop it — it is
+     * process state an earlier test may have left on, so say which one. */
+    logSetLobbyMode(FALSE);
+    ServerSim *sim = startTestLog(fname);
+    UT_ASSERT_MSG(sim != NULL, "startTestLog failed");
+
+    /* Distinct values so a mis-ordered payload cannot match by luck. */
+    logAddEvent(log_TankSetStock, 3, 12, 5, 34, 7, NULL);  /* first: written */
+    logAddEvent(log_TankSetStock, 3, 12, 5, 34, 7, NULL);  /* same: dropped */
+    logAddEvent(log_TankSetStock, 3, 12, 5, 34, 6, NULL);  /* trees moved: written */
+    logAddEvent(log_TankSetStock, 4, 12, 5, 34, 6, NULL);  /* other tank: written */
+    logWriteTick();
+
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+
+    uint8_t got[8];
+    int     nGot  = 0;
+    int     nSnap = 0;
+    eventPayloadCapture stock;
+    stock.code = log_TankSetStock;
+    stock.len  = -1;
+    int rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, &stock);
+    free(buf);
+    remove(fname);
+
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(nGot == 3, "expected 3 events (one dropped), got %d", nGot);
+    UT_ASSERT(got[0] == log_TankSetStock);
+    UT_ASSERT(got[1] == log_TankSetStock);
+    UT_ASSERT(got[2] == log_TankSetStock);
+    UT_ASSERT_MSG(stock.len == 5, "payload len = %d (want 5)", stock.len);
+    UT_ASSERT_MSG(stock.bytes[0] == 3,  "player = %d", stock.bytes[0]);
+    UT_ASSERT_MSG(stock.bytes[1] == 12, "shells = %d", stock.bytes[1]);
+    UT_ASSERT_MSG(stock.bytes[2] == 5,  "mines = %d", stock.bytes[2]);
+    UT_ASSERT_MSG(stock.bytes[3] == 34, "armour = %d", stock.bytes[3]);
+    UT_ASSERT_MSG(stock.bytes[4] == 7,  "trees = %d", stock.bytes[4]);
     return 0;
 }

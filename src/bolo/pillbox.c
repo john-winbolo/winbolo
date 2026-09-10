@@ -354,7 +354,6 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
   WORLD tankY;
   WORLD diffX;     /* X and Y differences in distances */
   WORLD diffY;
-  BYTE tankArmour; /* Armour of the tank */
   TURNTYPE dir;    /* Direction Pillbox should fire */
   BYTE count;      /* Looping variable */
   BYTE t;          /* Tank looping variable */
@@ -407,9 +406,8 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         if (playersIsAllie(plyrs, (*value)->item[count].owner, t) == TRUE || (*value)->item[count].owner == t) continue;
 
         tankGetWorld(&tanks[t], &tankX, &tankY);
-        tankArmour = tankGetArmour(&tanks[t]);
         /* Skip dead tanks */
-        if (tankArmour > TANK_FULL_ARMOUR) continue;
+        if (tankIsDestroyed(&tanks[t])) continue;
 
         if (tankX > x) {
           diffX = tankX - x;
@@ -1612,6 +1610,45 @@ BYTE pillsGetNumNeutral(pillboxes *value) {
   }
 
   return returnValue;
+}
+
+/*********************************************************
+*NAME:          pillsValidate
+*PURPOSE:
+*  Clamps every pillbox field a map can supply to the range the
+*  rest of the codebase assumes. pillsSetPill applies these on
+*  the file-load path; the compressed path memcpys the structs
+*  wholesale and reaches none of them. Pure clamping — the
+*  coolDown that pillsSetPill sets alongside speed is gameplay
+*  state, not a safety property, so it is left alone.
+*
+*ARGUMENTS:
+*  value - Pointer to the pillboxes structure
+*********************************************************/
+void pillsValidate(pillboxes *value) {
+  BYTE count;
+
+  if (value == NULL || *value == NULL) {
+    return;
+  }
+  if ((*value)->numPills > MAX_PILLS) {
+    (*value)->numPills = MAX_PILLS;
+  }
+  for (count = 0; count < (*value)->numPills; count++) {
+    pillbox *item = &((*value)->item[count]);
+    /* x and y are BYTE against a 256x256 map: in range by type. */
+    if (item->owner > (MAX_TANKS - 1) && item->owner != NEUTRAL) {
+      item->owner = NEUTRAL;
+    }
+    if (item->armour > PILLS_MAX_ARMOUR) {
+      item->armour = PILLS_MAX_ARMOUR;
+    }
+    if (item->speed < PILLBOX_MAX_FIRERATE) {
+      item->speed = PILLBOX_MAX_FIRERATE;
+    } else if (item->speed > PILLBOX_ATTACK_NORMAL) {
+      item->speed = PILLBOX_ATTACK_NORMAL;
+    }
+  }
 }
 
 void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen) {

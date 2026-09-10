@@ -3420,6 +3420,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_base_death_prediction.c
+    tests/unit/test_tank_death_state.c
+    tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
@@ -3443,6 +3446,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
     tests/unit/test_input_catchup.c
+    tests/unit/test_build_harvest_stale.c
+    tests/unit/test_lgm_request_valid.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_screen_bullets_build.c
@@ -3454,6 +3459,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
+    # Record-and-decode replay fixture and the case that uses it. The
+    # fixture is two translation units because the sim headers and the
+    # log-viewer headers cannot share one: replay_harness.c records a round
+    # and diffs two captures, replay_harness_decode.c reads the .wbv back
+    # through the production viewer. replay_harness.h carries the seam.
+    tests/unit/replay_harness.c
+    tests/unit/replay_harness_decode.c
+    tests/unit/test_replay_roundtrip.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -3461,6 +3474,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
+    tests/unit/test_loopback_command_liveness.c
     tests/unit/test_loopback_channel.c
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
@@ -3627,6 +3641,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # game vs log-viewer copies of screenCalcRiver never disagreeing.
     tests/unit/test_screencalc_river.c
     tests/unit/test_client_type.c
+    # A downloaded map's bases/pillboxes/starts are memcpy'd from the wire, so
+    # the file-load setters' per-field clamps never run on that path.
+    tests/unit/test_map_load_validate.c
     # The client's tank and lgm live at its slot index; a second JOIN_ACCEPT
     # with a different slot has to carry them across rather than read slot 0.
     tests/unit/test_client_slot_reassign.c
@@ -3654,6 +3671,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The colour left under the built sheet's transparency, and the bleed
     # that takes it out. Runs on the real data/svg art beside the binary.
     tests/unit/test_sheet_bleed.c
+    # The texel ring around a sprite slot: clean on the padded atlas the
+    # sprite drawers sample, and what the packed sheet has there instead.
+    tests/unit/test_sprite_atlas.c
     src/gui/sdl3/sdl_bmp.c
     # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
     # and the compaction that leaves the members which decoded contiguous.
@@ -3743,6 +3763,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_spectator_seed_capture.c
     # Blocks-level append-fed stream source: drives blocks.c's no-zip path.
     tests/unit/test_blocks_stream.c
+    # Viewer-side decode of per-tank stocks: hand-built snapshot player blocks
+    # (with and without the stock bytes) and a log_TankSetStock record, through
+    # lv_specSeedLoad / lv_specRecordPump.
+    tests/unit/test_lv_tank_stocks.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4213,6 +4237,13 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_ping
+    log_roundtrip_snapshot_tank_stocks
+    log_roundtrip_tank_stock_record
+    replay_roundtrip_world
+    replay_roundtrip_base_migrate
+    lv_tank_stocks_from_snapshot
+    lv_tank_stocks_snapshot_without_tail
+    lv_tank_stocks_from_record
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
@@ -4246,6 +4277,8 @@ set(_unit_test_names
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event
     alliance_reset_apply_rebuilds_alliances
+    alliance_reset_bots_synced_after_inplace_start
+    alliance_reset_bots_synced_after_countdown_start
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour
@@ -4294,6 +4327,15 @@ set(_unit_test_names
     bases_closest_for_player
     base_stock_visibility
     base_armour_fog_of_war
+    base_armour_reveal_in_range
+    base_death_prediction_replay_tick
+    base_death_prediction_authority
+    tank_damage_exact_armour_survives
+    tank_damage_overkill_destroys
+    tank_damage_partial_survives
+    tank_destroyed_snapshot_round_trip
+    tank_status_wire_bits
+    tank_status_wire_start_find_round_trip
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
@@ -4384,6 +4426,11 @@ set(_unit_test_names
     stall_long_dry_advances
     input_catchup
     catchup_ignores_redundant_duplicates
+    build_harvest_stale
+    build_harvest_valid
+    build_harvest_busy_queues
+    lgm_request_valid
+    lgm_request_quiet
     jitter_buffer_grow
     shell_projection
     screen_bullets_build
@@ -4402,6 +4449,7 @@ set(_unit_test_names
     loopback_join_loss
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
+    loopback_command_liveness
     loopback_channel
     player_mute_mask_roundtrip
     lock_channel
@@ -4430,6 +4478,7 @@ set(_unit_test_names
     map_compress_capacity_refuses
     map_compress_incompressible
     map_compress_roundtrip_mutated
+    map_compress_rejects_null_handles
     map_checksum_ignores_mines
     map_resync_base_crater_converges
     map_shadow_tracks_real
@@ -4521,6 +4570,9 @@ set(_unit_test_names
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
+    map_load_clamps_base_fields
+    map_load_clamps_pill_fields
+    map_load_clamps_start_dir
     client_slot_reassign_carries_tank_and_lgm
     client_slot_reassign_same_slot_is_stable
     client_slot_reassign_back_to_zero
@@ -4629,6 +4681,9 @@ set(_unit_test_names
     sheet_bleed_edges
     sheet_no_key_under_alpha
     bmp_sheet_no_key_under_alpha
+    sprite_atlas_isolated
+    sprite_atlas_lookup
+    sprite_atlas_packed_sheet_unsafe
     sound_variant_pool_names
     sound_variant_load_compaction
     pascal_string_lengths
@@ -4693,6 +4748,102 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_wire_codec> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/wire_codec ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.wire_codec PROPERTIES TIMEOUT 120)
+
+    # The compressed-map loader. Every map that arrives over the network lands
+    # in mapLoadCompressedMap: three fixed-size struct memcpys for the bases,
+    # pillboxes and starts, then an LZW decode of the terrain. The struct
+    # region is copied wholesale, so the file-load setters' per-field clamps
+    # never run on this route and basesValidate/pillsValidate/startsValidate
+    # stand in for them. Links like join_accept: bolo_static alone leaves the
+    # front-end, lang and lzw symbols the map path reaches undefined.
+    add_executable(fuzz_map_load
+        tests/fuzz/fuzz_map_load.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_map_load unittests)
+    target_include_directories(fuzz_map_load PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_map_load PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_map_load PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_map_load PRIVATE -fcommon)
+    target_link_options(fuzz_map_load PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_map_load "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.map_load
+             COMMAND $<TARGET_FILE:fuzz_map_load> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/map_load ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.map_load PROPERTIES TIMEOUT 120)
+
+    # The same loader, past the LZW gate. fuzz_map_load cannot reach a
+    # successful load — a mutated compressed stream almost never decodes to
+    # exactly 65536 bytes — so this one compresses fuzzer-chosen terrain with
+    # the writer's own lzwencoding and hands the result to the real
+    # mapLoadCompressedMap. Every input therefore loads, which is what
+    # exercises the field clamps and the terrain the file format cannot
+    # express.
+    add_executable(fuzz_map_fields
+        tests/fuzz/fuzz_map_fields.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_map_fields unittests)
+    target_include_directories(fuzz_map_fields PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_map_fields PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_map_fields PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_map_fields PRIVATE -fcommon)
+    target_link_options(fuzz_map_fields PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_map_fields "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.map_fields
+             COMMAND $<TARGET_FILE:fuzz_map_fields> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/map_fields ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.map_fields PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the channel-mux frame parser (channelRecvFrame), the single
     # bounds-checked decode site the reliability rework collapsed every reliable

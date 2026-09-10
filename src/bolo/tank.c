@@ -112,6 +112,43 @@ static const TankBoundingBox tank_bbox_boat[16] = {
 #endif /* BOLO_LEGACY_SQUARE_COLLISION */
 
 /*********************************************************
+ * tankBasePredictedDrivable - Whether the client has already
+ * worked out that the base on this square is dead, ahead of
+ * the server telling it so.
+ *
+ * The client is masked out of a live enemy base's armour, so
+ * without this the square stays solid until the death event
+ * lands a round trip later while the server has already
+ * driven the tank through — the client snaps forward each
+ * snapshot and replays itself back into the wall. Once the
+ * client's own predicted shell is due to drop the base to
+ * MIN_ARMOUR_CAPTURE, both ends derive "drivable" from the
+ * same rule at the same tick and there is nothing to correct.
+ *
+ * Compares against replayTick rather than the latest tick so
+ * a reconciliation replay spanning the death still treats the
+ * ticks before it as blocked. Always FALSE on the server and
+ * outside prediction, where every field involved is 0.
+ *********************************************************/
+static bool tankBasePredictedDrivable(GameSim *sim, BYTE mx, BYTE my) {
+  BYTE num, idx;
+
+  if (sim->replayTick == 0) {
+    return FALSE;
+  }
+  /* basesGetBaseNum answers 1-based, with BASE_NOT_FOUND for no base here. */
+  num = basesGetBaseNum(&sim->bs, mx, my);
+  if (num == BASE_NOT_FOUND || num == 0 || (BYTE)(num - 1) >= MAX_BASES) {
+    return FALSE;
+  }
+  idx = (BYTE)(num - 1);
+  if (sim->basePredictedDeadTick[idx] == 0) {
+    return FALSE;
+  }
+  return sim->replayTick >= sim->basePredictedDeadTick[idx];
+}
+
+/*********************************************************
  * tankBuildingCollision - Check if a WORLD coordinate
  * collides with a solid object (building, pillbox, base).
  * Sets bumptype flags for the type of collision.
@@ -139,7 +176,8 @@ static bool tankBuildingCollision(GameSim *sim, tank *value, WORLD x, WORLD y,
   }
 
   if (basesExistPos(bs, mx, my) == TRUE) {
-    if (basesCantDrive(sim, mx, my, gameSimGetTankPlayer(sim, value)) == TRUE) {
+    if (basesCantDrive(sim, mx, my, gameSimGetTankPlayer(sim, value)) == TRUE &&
+        tankBasePredictedDrivable(sim, mx, my) == FALSE) {
       *bumptype |= BumpInfo_SolidWall;
       return TRUE;
     }
@@ -167,7 +205,7 @@ static void tankNudgeOtherTanks(GameSim *sim, tank *value) {
   for (t = 0; t < MAX_TANKS; t++) {
     if (t == myPlayer || sim->tanks[t] == NULL) continue;
     tank other = sim->tanks[t];
-    if (other->armour > TANK_FULL_ARMOUR) continue;
+    if (other->destroyed) continue;
 
     int j;
     for (j = 0; j < TANK_MAX_NUDGE_ITERATIONS; j++) {
@@ -389,6 +427,7 @@ void tankCreate(GameSim *sim, tank *value) {
     gameTypeGetItems(sim, &loadoutType, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
   }
   (*value)->armour = armourAmount;
+  (*value)->destroyed = FALSE;
   (*value)->shells = shellsAmount;
   (*value)->mines = minesAmount;
   (*value)->trees = treesAmount;
@@ -536,7 +575,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
 
 
   /* Shoot if required */
-  if (tankShoot == TRUE && (*value)->reload == 0 && (*value)->shells > 0 && (*value)->armour <= TANK_FULL_ARMOUR)  {
+  if (tankShoot == TRUE && (*value)->reload == 0 && (*value)->shells > 0 && !(*value)->destroyed)  {
     TURNTYPE a;
     TURNTYPE b = 2;
     TURNTYPE c;
@@ -563,12 +602,12 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
       /* Server: respawn immediately so position updates in the same tick
        * deathWait hits zero — avoids a one-tick flash at the old death
        * position before the spawn location is applied. */
-      if (isServer && (*value)->armour > TANK_FULL_ARMOUR
+      if (isServer && (*value)->destroyed
           && sim->inStartFind == FALSE) {
         tankDeath(sim, value);
       }
     }
-  } else if ((*value)->armour > TANK_FULL_ARMOUR) {
+  } else if ((*value)->destroyed) {
 	/* Tank just took enough damage to die */
     if (sim->inStartFind == FALSE) {
 	  tankDeath(sim, value);
@@ -593,7 +632,8 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
       }
       sim->callbacks.tankKill(sim->callbacks.ctx, drownedPlayer, drownedPlayer, LAST_DEATH_BY_DEEPSEA, tankGetNumCarriedPills(value));
       tankDropPills(sim, value);
-      (*value)->armour = TANK_FULL_ARMOUR+1;
+      (*value)->armour = 0;
+      (*value)->destroyed = TRUE;
       (*value)->deathWait = TANK_DEATH_WAIT;
   } else {
     /* Tank Movement (unified boat/land) */
@@ -728,6 +768,61 @@ BYTE tankGetArmour(tank *value) {
   return ((*value)->armour);
 }
 
+/*********************************************************
+*NAME:          tankIsDestroyed
+*PURPOSE:
+*  Returns whether the tank has been destroyed.
+*
+*  Ask this rather than comparing armour against
+*  TANK_FULL_ARMOUR: a live tank can sit at zero armour,
+*  so the armour value alone cannot tell the two apart.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+bool tankIsDestroyed(tank *value) {
+  return ((*value)->destroyed);
+}
+
+/*********************************************************
+*NAME:          tankSetDestroyed
+*PURPOSE:
+*  Sets or clears the tank's destroyed state.
+*
+*ARGUMENTS:
+*  value     - Pointer to the tank structure
+*  destroyed - TRUE if the tank has been destroyed
+*********************************************************/
+void tankSetDestroyed(tank *value, bool destroyed) {
+  (*value)->destroyed = destroyed;
+}
+
+/*********************************************************
+*NAME:          tankApplyDamage
+*PURPOSE:
+*  Takes damage off a tank's armour and reports whether it
+*  destroyed the tank.
+*
+*  Armour is a plain 0..TANK_FULL_ARMOUR value that clamps
+*  at zero instead of wrapping, so the tank is destroyed
+*  only when the damage is strictly greater than the armour
+*  remaining. A hit that exactly empties the armour leaves
+*  the tank alive at zero; the next hit destroys it.
+*
+*ARGUMENTS:
+*  value  - Pointer to the tank structure
+*  damage - Amount of damage to apply
+*********************************************************/
+static bool tankApplyDamage(tank *value, BYTE damage) {
+  if (damage > (*value)->armour) {
+    (*value)->armour = 0;
+    (*value)->destroyed = TRUE;
+    return TRUE;
+  }
+  (*value)->armour -= damage;
+  return FALSE;
+}
+
 
 /*********************************************************
 *NAME:          tankGetScreenMX
@@ -831,7 +926,7 @@ BYTE tankGetMX(tank *value) {
   BYTE returnValue; /* Value to return */
 
   returnValue = 0;
-  if ((*value)->armour <= TANK_FULL_ARMOUR) {
+  if (!(*value)->destroyed) {
     conv = (*value)->x;
     conv >>= TANK_SHIFT_MAPSIZE;
     returnValue = (BYTE) conv;
@@ -877,7 +972,7 @@ BYTE tankGetMY(tank *value) {
   BYTE returnValue; /* Value to return */
 
   returnValue = 0;
-  if ((*value)->armour <= TANK_FULL_ARMOUR) {
+  if (!(*value)->destroyed) {
     conv = (*value)->y;
     conv >>= TANK_SHIFT_MAPSIZE;
     returnValue = (BYTE) conv;
@@ -1015,7 +1110,7 @@ void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
   WORLD y;
   WORLD conv;
 
-  if ((*value)->armour <= TANK_FULL_ARMOUR) {
+  if (!(*value)->destroyed) {
     /* Use the same HP fixed-point accumulator as shellsUpdate so the crosshair
      * lands on the exact WORLD position the real shell reaches.
      * Total ticks = SHELL_LIFE * (sightLen/2) covers the SHELL_START_ADD
@@ -1254,10 +1349,10 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 	bool inHitZone = (abs(hitDX) < TANK_HIT_RADIUS && abs(hitDY) < TANK_HIT_RADIUS &&
 	                  (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED);
 #endif
-	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
+	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
-		BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
-		(*value)->armour -= DAMAGE;
+		BYTE armourBefore = (*value)->armour;
+		bool wasDestroyed = tankApplyDamage(value, DAMAGE);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
@@ -1280,12 +1375,7 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			}
 		}
 
-		/*
-		* Tank was at zero armor before it was hit with a shell.  When we decrement the armor counter, it
-		* "wraps" around and becomes larger than what a tank is supposed to have.  This signals that the
-		* tank should die.
-		*/
-		if ((*value)->armour > TANK_FULL_ARMOUR) {
+		if (wasDestroyed) {
 			if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
 				returnValue = TH_KILL_BIG;
 			} else {
@@ -1300,22 +1390,16 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 
 			/*      netSendNow = TRUE; */
 			tankDropPills(sim, value);
-		} else { /* if ((*value)->armour <= TANK_FULL_ARMOUR)  */
+		} else {
 			/* Tank was hit and survived — set bump for gradual knockback */
 			utilCalcDistance(&newX, &newY, angle, TANK_SLIDE);
 			(*value)->bumpX = newX * 512;
 			(*value)->bumpY = newY * 512;
 		}
-		if ((*value)->armour <= TANK_FULL_ARMOUR) {
-			if (!isServer) {
-				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
-			}
-		} else {
-			if (!isServer) {
-				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
-			}
+		if (!isServer) {
+			frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
 		}
-	} else if (inHitZone && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (inHitZone && (*value)->destroyed) {
 		/* Do crazy shit here */
 	}
 	return returnValue;
@@ -1400,7 +1484,7 @@ BYTE tankGetFrame(tank *value) {
 BYTE tankGetFrameAt(tank *value, TURNTYPE angle) {
   BYTE returnValue; /* Value to return */
 
-  if ((*value)->armour > TANK_FULL_ARMOUR) {
+  if ((*value)->destroyed) {
     returnValue = TANK_TRANSPARENT;
   } else {
     returnValue = utilGetDir(angle);
@@ -1473,6 +1557,7 @@ void tankDeath(GameSim *sim, tank *value) {
       gameTypeGetItems(sim, &loadoutType, &shellAmount, &minesAmount, &armourAmount, &treesAmount);
     }
     (*value)->armour = armourAmount;
+    (*value)->destroyed = FALSE;
     (*value)->tankHitCount = 0;
     (*value)->shells = shellAmount;
     (*value)->mines = minesAmount;
@@ -1562,7 +1647,10 @@ void tankGetKillsDeaths(tank *value, int *kills, int *deaths) {
 *********************************************************/
 void tankAddArmour(GameSim *sim, tank *value, BYTE amount) {
   bool isServer = sim->isServer;
-  if ((*value)->armour + amount <= TANK_FULL_ARMOUR) {
+  /* A destroyed tank takes no armour. Its armour reads as a real 0 rather than
+   * a wrapped value, so the capacity test below no longer rejects it on its
+   * own and the destroyed state has to be asked about directly. */
+  if (!(*value)->destroyed && (*value)->armour + amount <= TANK_FULL_ARMOUR) {
     (*value)->armour += amount;
     if (!isServer) {
       frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
@@ -1672,7 +1760,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   /* Step 3 — Apply bump effect (shell knockback with decay) */
   (*value)->x += (*value)->bumpX >> 9;
   (*value)->y += (*value)->bumpY >> 9;
-  if ((*value)->armour <= TANK_FULL_ARMOUR) {
+  if (!(*value)->destroyed) {
     (*value)->bumpX -= ((*value)->bumpX >> TANK_BUMP_DECAY_SHIFT) + ((*value)->bumpX > 0 ? 1 : 0);
     (*value)->bumpY -= ((*value)->bumpY >> TANK_BUMP_DECAY_SHIFT) + ((*value)->bumpY > 0 ? 1 : 0);
   }
@@ -2124,7 +2212,7 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 	int p;
 
 	/* Tank is alive and we are either in a server context or a non-network game */
-	if ((*value)->armour <= TANK_FULL_ARMOUR && (isServer)) {
+	if (!(*value)->destroyed && (isServer)) {
 		/* Pickup tests a small box around the tank centre (TANK_PILL_PICKUP_INSET
 		 * each way): the centre, four edge midpoints and four corners. Much
 		 * smaller than the tank's collision footprint so a pill isn't grabbed
@@ -2378,7 +2466,7 @@ bool tankGetLgmTrees(GameSim *sim, tank *value, BYTE amount, bool perform) {
     returnValue = TRUE;
     if (perform == TRUE) {
       (*value)->trees -= amount;
-      if ((*value)->armour <= TANK_FULL_ARMOUR) {
+      if (!(*value)->destroyed) {
         if (!isServer) {
           frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
         }
@@ -2411,7 +2499,7 @@ void tankGiveTrees(GameSim *sim, tank *value, BYTE amount) {
   if ((*value)->trees > TANK_FULL_TREES) {
     (*value)->trees = TANK_FULL_TREES;
   }
-  if ((*value)->armour <= TANK_FULL_ARMOUR) {
+  if (!(*value)->destroyed) {
     if (!isServer) {
       frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
@@ -2447,7 +2535,7 @@ bool tankGetLgmMines(GameSim *sim, tank *value, BYTE amount, bool perform) {
     returnValue = TRUE;
     if (perform == TRUE) {
       (*value)->mines -= amount;
-      if ((*value)->armour <= TANK_FULL_ARMOUR) {
+      if (!(*value)->destroyed) {
         if (!isServer) {
           frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
         }
@@ -2480,7 +2568,7 @@ void tankGiveMines(GameSim *sim, tank *value, BYTE amount) {
   if ((*value)->mines > TANK_FULL_MINES) {
     (*value)->mines = TANK_FULL_MINES;
   }
-  if ((*value)->armour <= TANK_FULL_ARMOUR) {
+  if (!(*value)->destroyed) {
     if (!isServer) {
       frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
@@ -2645,7 +2733,7 @@ void tankLayMine(GameSim *sim, tank *value) {
   if (mapIsMine(mp, bmx, bmy) == FALSE) {
     terrain = mapGetPos(mp, bmx, bmy);
 
-    if (terrain != BUILDING && terrain != HALFBUILDING && terrain != BOAT && terrain != RIVER && terrain < MINE_START && (*value)->mines > 0 && (*value)->onBoat == FALSE && pillsExistPos(pb, bmx, bmy) == FALSE && basesExistPos(bs, bmx, bmy) == FALSE && (*value)->armour <= TANK_FULL_ARMOUR) {
+    if (terrain != BUILDING && terrain != HALFBUILDING && terrain != BOAT && terrain != RIVER && terrain < MINE_START && (*value)->mines > 0 && (*value)->onBoat == FALSE && pillsExistPos(pb, bmx, bmy) == FALSE && basesExistPos(bs, bmx, bmy) == FALSE && !(*value)->destroyed) {
       (*value)->mines--;
       mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
       /* Record the layer so a later detonation credits its owner (mirrors the
@@ -2660,7 +2748,7 @@ void tankLayMine(GameSim *sim, tank *value) {
         sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
       }
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
-      if ((*value)->armour <= TANK_FULL_ARMOUR) {
+      if (!(*value)->destroyed) {
         if (!isServer) {
           frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
         }
@@ -2714,9 +2802,9 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
   }
 
 
-  if (diffX < 384 && diffY < 384 && (*value)->armour <= TANK_FULL_ARMOUR) {
-    BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
-    (*value)->armour -= MINE_DAMAGE;
+  if (diffX < 384 && diffY < 384 && !(*value)->destroyed) {
+    BYTE armourBefore = (*value)->armour;
+    bool wasDestroyed = tankApplyDamage(value, MINE_DAMAGE);
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
       uint16_t eff = (armourBefore >= MINE_DAMAGE) ? MINE_DAMAGE : armourBefore;
       sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
@@ -2724,7 +2812,7 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
                                   (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
                                   (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
     }
-    if ((*value)->armour > TANK_FULL_ARMOUR) {
+    if (wasDestroyed) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
       (*value)->pendingDeathCause = DEATH_CAUSE_MINE;
       if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
@@ -2740,14 +2828,8 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
       (*value)->boatState = BoatState_NotOnBoat;
       (*value)->speed = 0;
     }
-    if ((*value)->armour <= TANK_FULL_ARMOUR) {
-      if (!isServer) {
-        frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
-      }
-    } else {
-      if (!isServer) {
-        frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
-      }
+    if (!isServer) {
+      frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
 
     if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
@@ -3547,10 +3629,10 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 	bool inHitZone = (abs(hitDX) < TANK_HIT_RADIUS && abs(hitDY) < TANK_HIT_RADIUS &&
 	                  (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED);
 #endif
-	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
+	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
-		BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
-		(*value)->armour -= DAMAGE;
+		BYTE armourBefore = (*value)->armour;
+		bool wasDestroyed = tankApplyDamage(value, DAMAGE);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
@@ -3573,7 +3655,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 			}
 		}
 
-		if ((*value)->armour > TANK_FULL_ARMOUR) {
+		if (wasDestroyed) {
 			if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
 				returnValue = TH_KILL_BIG;
 			} else {
@@ -3593,16 +3675,10 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 			(*value)->bumpX = newX * 512;
 			(*value)->bumpY = newY * 512;
 		}
-		if ((*value)->armour <= TANK_FULL_ARMOUR) {
-			if (!isServer) {
-				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
-			}
-		} else {
-			if (!isServer) {
-				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
-			}
+		if (!isServer) {
+			frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
 		}
-	} else if (inHitZone && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (inHitZone && (*value)->destroyed) {
 		/* Do crazy shit here */
 	}
 	return returnValue;
@@ -3616,6 +3692,7 @@ void tankSyncResources(tank dst, tank src) {
     }
 
     dst->armour = src->armour;
+    dst->destroyed = src->destroyed;
     dst->shells = src->shells;
     dst->mines = src->mines;
     dst->trees = src->trees;

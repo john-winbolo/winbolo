@@ -594,7 +594,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
     tank *tk = &MY_TANK(cs);
     if (tankGetReloadTime(tk) <= 1 &&
         tankGetShells(tk) > 0 &&
-        tankGetArmour(tk) <= TANK_FULL_ARMOUR) {
+        !tankIsDestroyed(tk)) {
       tankGetWorld(tk, &preX, &preY);
       preAngle = tankGetAngle(tk);
       canFire = true;
@@ -602,6 +602,11 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
   }
 
   clientStateRecordInput(&cs->clientState, pkt);
+  /* The tick being simulated, for base-death prediction: the movement below
+   * resolves a predicted-dead base against it, and the shell advance stamps
+   * it onto any base its hit is about to kill. Cleared once the tick is done
+   * so nothing outside prediction sees a stale value. */
+  cs->sim.replayTick = pkt->tick;
   clientStatePredictTick(cs, &cs->clientState, pkt, &MY_TANK(cs), &cs->sim, FALSE, isBrain);
 
   /* Create predicted shell using pre-movement position to match server */
@@ -617,6 +622,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
 
   /* Advance existing predicted shells */
   clientSimAdvancePredictedShells(cs);
+  cs->sim.replayTick = 0;
 
   /* Advance render-only projected shells (other players', human clients).
    * Empty for bots, so this is a no-op there. */
@@ -1162,17 +1168,36 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
  *  onBoat governs water passability (predicted shells carry
  *  the launching tank's flag; projected snapshot shells, which
  *  don't carry it, pass false).
+ *
+ *  hitBaseIdx, when non-NULL, reports the zero-based index of
+ *  the base a hostile-base hit landed on, and BASE_NOT_FOUND
+ *  otherwise, so the caller can carry the damage into
+ *  base-death prediction. (basesGetBaseNum itself answers
+ *  1-based; the conversion happens here so callers index the
+ *  base arrays directly.) Callers with nothing to predict
+ *  pass NULL.
  *********************************************************/
 static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
-                                     uint8_t owner, bool onBoat) {
+                                     uint8_t owner, bool onBoat,
+                                     BYTE *hitBaseIdx) {
   BYTE mapX = (BYTE)(newX >> TANK_SHIFT_MAPSIZE);
   BYTE mapY = (BYTE)(newY >> TANK_SHIFT_MAPSIZE);
   BYTE p;
+  bool onHostileBase = basesExistPos(&cs->sim.bs, mapX, mapY) &&
+                       basesCanHit(&cs->sim, mapX, mapY, owner);
+  if (hitBaseIdx != NULL) {
+    *hitBaseIdx = BASE_NOT_FOUND;
+  }
   if (pillsIsPillHit(&cs->sim.pb, mapX, mapY) ||
       (!mapIsPassable(&cs->sim.mp, mapX, mapY, onBoat) &&
        !basesExistPos(&cs->sim.bs, mapX, mapY)) ||
-      (basesExistPos(&cs->sim.bs, mapX, mapY) &&
-       (onBoat || basesCanHit(&cs->sim, mapX, mapY, owner)))) {
+      (basesExistPos(&cs->sim.bs, mapX, mapY) && (onBoat || onHostileBase))) {
+    if (onHostileBase && hitBaseIdx != NULL) {
+      BYTE num = basesGetBaseNum(&cs->sim.bs, mapX, mapY);
+      if (num != BASE_NOT_FOUND && num != 0) {
+        *hitBaseIdx = (BYTE)(num - 1);
+      }
+    }
     return true;
   }
   /* Overlap with other players' tanks (interpolated positions) */
@@ -1208,12 +1233,29 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
  *PURPOSE:
  *  Moves each predicted shell forward by one tick and
  *  removes any that have expired.
+ *
+ *  A shell that lands on an enemy base also arms base-death
+ *  prediction when the hit would drop it to MIN_ARMOUR_CAPTURE:
+ *  see tankBasePredictedDrivable. This is what stops a tank
+ *  driving into a base it is killing from fighting its own
+ *  prediction for a round trip.
+ *
+ *  Only the shell in flight is counted, not a second one
+ *  behind it — the client's base armour is a mirror of what
+ *  the server sent and is deliberately not decremented here,
+ *  so two of our shells in flight at once predict off the same
+ *  starting armour. That under-predicts (the square stays
+ *  blocked until the server says otherwise, the behaviour we
+ *  had all along) rather than predicting a death that isn't
+ *  coming. Out of BASE_PREDICT_REVEAL_RANGE the armour reads
+ *  BASE_FULL_ARMOUR, which fails the same safe way.
  *********************************************************/
 void clientSimAdvancePredictedShells(ClientSim *cs) {
   int i;
   for (i = 0; i < cs->predictedShellCount; ) {
     PredictedShell *ps = &cs->predictedShells[i];
     WORLD newX, newY;
+    BYTE hitBaseIdx;
     if (ps->length <= SHELL_DEATH) {
       /* Shell expired — remove by swapping with last */
       cs->predictedShells[i] = cs->predictedShells[cs->predictedShellCount - 1];
@@ -1226,7 +1268,20 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
     newX = (WORLD)(int)ps->fx;
     newY = (WORLD)(int)ps->fy;
 
-    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, ps->onBoat)) {
+    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, ps->onBoat,
+                                 &hitBaseIdx)) {
+      if (hitBaseIdx < MAX_BASES && cs->sim.replayTick != 0) {
+        int armour = (int)(*cs->sim.bs).item[hitBaseIdx].armour;
+        /* Remember the landing whatever the armour read: if the mirror was
+         * behind by an earlier hit still in flight from the server,
+         * clientBaseArmourArrived arms the stamp from this tick once that
+         * hit's armour lands. */
+        cs->sim.basePredictedHitTick[hitBaseIdx] = cs->sim.replayTick;
+        if (armour > MIN_ARMOUR_CAPTURE &&
+            armour - DAMAGE <= MIN_ARMOUR_CAPTURE) {
+          cs->sim.basePredictedDeadTick[hitBaseIdx] = cs->sim.replayTick;
+        }
+      }
       cs->predictedShells[i] = cs->predictedShells[cs->predictedShellCount - 1];
       cs->predictedShellCount--;
       continue;
@@ -1391,7 +1446,8 @@ void clientSimAdvanceProjectedShells(ClientSim *cs) {
     newX = (WORLD)(int)ps->fx;
     newY = (WORLD)(int)ps->fy;
 
-    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, false)) {
+    /* Other players' shells — NULL: nothing of ours to predict off them. */
+    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, false, NULL)) {
       cs->projectedShells[i] = cs->projectedShells[cs->projectedShellCount - 1];
       cs->projectedShellCount--;
       continue;
@@ -2122,6 +2178,14 @@ void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
   slot->worldX = worldX;
   slot->worldY = worldY;
   slot->recvMs = nowMs;
+  /* The sender's name, taken now — see ClientPing. The players object is
+     gone between games, and a ping cannot arrive then; the guard is for the
+     order teardown happens in, not for a case that has a name to find. */
+  slot->senderName[0] = '\0';
+  if (clientSimGetGameSim(cs)->plyrs != NULL) {
+    playersGetPlayerName(&clientSimGetGameSim(cs)->plyrs, sender,
+                         slot->senderName, sizeof(slot->senderName), FALSE);
+  }
   cs->pingWriteIdx = (cs->pingWriteIdx + 1) % MAX_CLIENT_PINGS;
 }
 
@@ -2325,6 +2389,11 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->predictedShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  /* Base-death prediction is stamped in input ticks, which restart with the
+   * round; a stamp carried over would compare against the wrong clock. */
+  memset(gs->basePredictedDeadTick, 0, sizeof(gs->basePredictedDeadTick));
+  memset(gs->basePredictedHitTick, 0, sizeof(gs->basePredictedHitTick));
+  gs->replayTick = 0;
   /* Rows render "---" until the first snapshot of the new round lands,
    * rather than a smoothed value carried over from the last one. */
   memset(cs->displayPing, 0, sizeof(cs->displayPing));
@@ -2948,9 +3017,9 @@ bool clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY) {
 
 bool clientSimIsMyTankAlive(const ClientSim *cs) {
   if (!cs || MY_TANK((ClientSim *)cs) == NULL) return false;
-  /* Over full armour is how a dead tank waiting on deathWait reads, the same
-   * test viewportCenterOnTank makes before it re-centres the main view. */
-  return tankGetArmour(&MY_TANK((ClientSim *)cs)) <= TANK_FULL_ARMOUR;
+  /* The destroyed state the tank carries, the same test viewportCenterOnTank
+   * makes before it re-centres the main view. */
+  return !tankIsDestroyed(&MY_TANK((ClientSim *)cs));
 }
 
 void clientSimBuildShellList(ClientSim *cs, screenBullets *sb,
@@ -3640,15 +3709,7 @@ void clientSimPanY(ClientSim *cs, int dyTiles) {
 }
 
 bool clientSimTankIsDead(ClientSim *cs) {
-  bool returnValue;
-  BYTE high, low, health, dummy;
-
-  returnValue = FALSE;
-  tankGetStats(&MY_TANK(cs), &high, &low, &health, &dummy);
-  if (health > TANK_FULL_ARMOUR) {
-    returnValue = TRUE;
-  }
-  return returnValue;
+  return tankIsDestroyed(&MY_TANK(cs));
 }
 
 bool clientSimTankScroll(ClientSim *cs) {
@@ -3676,7 +3737,7 @@ bool clientSimTankScroll(ClientSim *cs) {
 }
 
 void clientSimManMove(ClientSim *cs, buildSelect buildS) {
-  if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
+  if (!tankIsDestroyed(&MY_TANK(cs)) && clientSimGetNetStatus(cs) != netFailed) {
     /* Route build request through InputPacket so the server sim
      * processes it authoritatively (matches brain build path). */
     clientSimSetPendingBuild(cs,
@@ -3687,7 +3748,7 @@ void clientSimManMove(ClientSim *cs, buildSelect buildS) {
 }
 
 void clientSimManMoveToMap(ClientSim *cs, BYTE mapX, BYTE mapY, buildSelect buildS) {
-  if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
+  if (!tankIsDestroyed(&MY_TANK(cs)) && clientSimGetNetStatus(cs) != netFailed) {
     clientSimSetPendingBuild(cs, (BYTE) buildS + 1, mapX, mapY);
   }
 }
@@ -3728,9 +3789,6 @@ BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {
 /* Local tank stat accessors. */
 void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
   tankGetStats(&MY_TANK(cs), shellsAmount, minesAmount, armourAmount, treesAmount);
-  if (*armourAmount > TANK_FULL_ARMOUR) {
-    *armourAmount = 0;
-  }
 }
 
 void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {

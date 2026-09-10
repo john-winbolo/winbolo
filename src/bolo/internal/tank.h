@@ -409,6 +409,31 @@ bool tankIsMoving(tank *value);
 BYTE tankGetArmour(tank *value);
 
 /*********************************************************
+*NAME:          tankIsDestroyed
+*PURPOSE:
+*  Returns whether the tank has been destroyed.
+*
+*  Ask this rather than comparing armour against
+*  TANK_FULL_ARMOUR: a live tank can sit at zero armour,
+*  so the armour value alone cannot tell the two apart.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+bool tankIsDestroyed(tank *value);
+
+/*********************************************************
+*NAME:          tankSetDestroyed
+*PURPOSE:
+*  Sets or clears the tank's destroyed state.
+*
+*ARGUMENTS:
+*  value     - Pointer to the tank structure
+*  destroyed - TRUE if the tank has been destroyed
+*********************************************************/
+void tankSetDestroyed(tank *value, bool destroyed);
+
+/*********************************************************
 *NAME:          tankGetScreenMX
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/11/98

@@ -272,6 +272,7 @@ static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
     bi->inboat = tankIsOnBoat(&sim->tanks[0]);
     bi->hidden = utilIsTankInTrees(&sim->mp, &sim->pb, &sim->bs, bi->tankx, bi->tanky);
     tankGetStats(&sim->tanks[0], &bi->shells, &bi->mines, &bi->armour, &bi->trees);
+    bi->destroyed = tankIsDestroyed(&sim->tanks[0]) ? TRUE : FALSE;
     bi->gunrange = tankGetGunsightLength(&sim->tanks[0]);
     bi->reload = tankGetReloadTime(&sim->tanks[0]);
 
@@ -329,7 +330,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     BYTE selfPlayer = (BYTE)bi.player_number;
     PlayerBitMap alliesBits = bi.allies ? *(bi.allies) : 0;
-    bool dead = bi.armour > TANK_FULL_ARMOUR;
+    bool dead = bi.destroyed != 0;
     int tank_tx = bi.tankx >> 8;
     int tank_ty = bi.tanky >> 8;
     float self_wx = (float)bi.tankx;
@@ -559,7 +560,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         WORLD tx_w, ty_w;
         tankGetWorld(tk, &tx_w, &ty_w);
         BYTE armour = tankGetArmour(tk);
-        bool tankDead = armour > TANK_FULL_ARMOUR;
+        bool tankDead = tankIsDestroyed(tk);
 
         if (worldInAnyRect(tx_w, ty_w, viewRects, numViewRects) && ne < WBGYM_MAX_ENTITIES) {
             tankSeen[p] = true;
@@ -755,7 +756,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             } else if (ms == LGM_BRAIN_DEAD) {
                 /* Check if actually parachuting (isDead but tank alive = parachuting) */
                 lgm *lg = &gs->lgmen[selfPlayer];
-                if ((*lg)->isDead && tankGetArmour(&gs->tanks[selfPlayer]) <= TANK_FULL_ARMOUR) {
+                if ((*lg)->isDead && !tankIsDestroyed(&gs->tanks[selfPlayer])) {
                     obs->scalar[23] = 0.66f; /* parachuting */
                 } else {
                     obs->scalar[23] = 1.0f; /* actually dead */

@@ -1852,6 +1852,36 @@ BYTE startsConvertDir(BYTE dir) {
   return returnValue;
 }
 
+/*********************************************************
+*NAME:          startsValidate
+*PURPOSE:
+*  Clamps every start field a map can supply to the range the
+*  rest of the codebase assumes. startsSetStart applies the dir
+*  clamp on the file-load path; the compressed path memcpys the
+*  structs wholesale and never reaches it, so it calls this
+*  instead.
+*
+*ARGUMENTS:
+*  value - Pointer to the starts structure
+*********************************************************/
+void startsValidate(starts *value) {
+  BYTE count;
+
+  if (value == NULL || *value == NULL) {
+    return;
+  }
+  if ((*value)->numStarts > MAX_STARTS) {
+    (*value)->numStarts = MAX_STARTS;
+  }
+  for (count = 0; count < (*value)->numStarts; count++) {
+    /* x and y are BYTE against a 256x256 map: in range by type.
+     * dir indexes the direction tables, so it must be 0-15. */
+    if ((*value)->item[count].dir > 15) {
+      (*value)->item[count].dir = 0;
+    }
+  }
+}
+
 void startsSetStartCompressData(starts *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_STARTS);
   /* Clamp the wire-supplied count so a hostile map cannot drive out-of-bounds

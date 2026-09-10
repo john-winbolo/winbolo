@@ -110,7 +110,7 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
     (*value).pos[0].playerNum = clientSimGetMyPlayerNum(cs);
     /* Get the tanks names */
     (*value).pos[0].playerName[0] = '\0';
-    if (tankGetArmour(tnk) <= TANK_FULL_ARMOUR) {
+    if (!tankIsDestroyed(tnk)) {
       GameSim *gs = clientSimGetGameSim(cs);
       BYTE selfPN = clientSimGetMyPlayerNum(cs);
       playersGetPlayerName(&gs->plyrs, selfPN, playerName, sizeof(playerName),

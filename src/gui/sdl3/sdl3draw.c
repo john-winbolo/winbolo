@@ -143,6 +143,15 @@ void sdl3DrawSetCursorFaint(bool faint) {
   gCursorFaint = faint;
 }
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
+/* The moving sprites again, each with a texel of its own edge repeated
+   around it, and the index from a sheet address into it. Built beside
+   gTilesTex and dropped with it; the tank, shell and LGM draws sample this
+   instead so a filtered sampler reaching past a sprite's edge finds the
+   sprite rather than whatever the sheet packs next door. sprite_atlas.h has
+   the reasoning. NULL is a working state: the drawers fall back to the
+   sheet, which is what they did before. */
+static SDL_Texture  *gSpritesTex   = NULL;
+static SpriteAtlas  *gSpriteAtlas  = NULL;
 /* Bumped by sdl3DrawReloadTiles, the skin / tile-detail reload, so a caller
    holding its own atlas (bg_game, the lobby map preview) can tell that copy
    is stale. Not bumped by the zoom rebuild: that changes only this
@@ -637,6 +646,26 @@ static bool sdl3LoadTiles(void) {
           atlasZoom, sheet->w, sheet->h);
 
   gTilesTex = SDL_CreateTextureFromSurface(gRenderer, sheet);
+
+  /* The padded copy, off the same sheet and before it goes. A failure here
+     is not fatal: the drawers keep reading the sheet, which is the artefact
+     back rather than a blank screen. */
+  gSpriteAtlas = tileLoaderBuildSpriteAtlas(sheet, gSheetScale);
+  if (gSpriteAtlas != NULL) {
+    gSpritesTex = SDL_CreateTextureFromSurface(gRenderer, gSpriteAtlas->surface);
+    tileLoaderSpriteAtlasDropSurface(gSpriteAtlas);
+    if (gSpritesTex != NULL) {
+      SDL_SetTextureBlendMode(gSpritesTex, SDL_BLENDMODE_BLEND);
+      SDL_SetTextureScaleMode(gSpritesTex, gTilesScaleMode);
+    } else {
+      WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                  "sdl3LoadTiles: the sprite atlas would not become a texture "
+                  "(%s); sprites keep drawing from the sheet", SDL_GetError());
+      tileLoaderFreeSpriteAtlas(gSpriteAtlas);
+      gSpriteAtlas = NULL;
+    }
+  }
+
   SDL_DestroySurface(sheet);
   if (gTilesTex == NULL) {
     WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3LoadTiles: SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
@@ -647,6 +676,15 @@ static bool sdl3LoadTiles(void) {
   SDL_SetTextureScaleMode(gTilesTex, gTilesScaleMode);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
   return TRUE;
+}
+
+/* Drops the sprite atlas and its texture. Every place that destroys
+   gTilesTex calls this: the atlas is a copy of that sheet, so it is exactly
+   as stale as the sheet is. */
+static void sdl3DropSpriteAtlas(void) {
+  if (gSpritesTex) { SDL_DestroyTexture(gSpritesTex); gSpritesTex = NULL; }
+  tileLoaderFreeSpriteAtlas(gSpriteAtlas);
+  gSpriteAtlas = NULL;
 }
 
 unsigned int sdl3DrawGetTilesGeneration(void) {
@@ -667,6 +705,9 @@ void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode) {
   if (gTilesTex != NULL) {
     SDL_SetTextureScaleMode(gTilesTex, mode);
   }
+  if (gSpritesTex != NULL) {
+    SDL_SetTextureScaleMode(gSpritesTex, mode);
+  }
 }
 
 /* Put the player's Texture Filter back on the sheet at the top of a frame.
@@ -686,9 +727,11 @@ void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode) {
  * the setting rather than from gTilesScaleMode so the player's choice stays
  * the single answer to what the filter is. */
 static void sdl3DrawAssertTilesSampler(void) {
-  if (gTilesTex == NULL) return;
-  SDL_SetTextureScaleMode(gTilesTex,
-                          sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+  SDL_ScaleMode mode = sdl3DrawScaleModeForFilter(gfxGetTextureFilter());
+  if (gTilesTex   != NULL) SDL_SetTextureScaleMode(gTilesTex, mode);
+  /* The sprite atlas is bound by the same draws and clobbered by the same
+     ImGui pass, so it needs the same answer. */
+  if (gSpritesTex != NULL) SDL_SetTextureScaleMode(gSpritesTex, mode);
 }
 
 /* Rebuilds only the tile atlas in place (for a skin change) by re-reading
@@ -698,6 +741,7 @@ static void sdl3DrawAssertTilesSampler(void) {
  * the same failure this path did. */
 void sdl3DrawReloadTiles(void) {
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
+  sdl3DropSpriteAtlas();
   sdl3DrawStatusSetAtlas(NULL, 1);
   gTilesGeneration++;
   sdl3LoadTiles();
@@ -1901,6 +1945,7 @@ void sdl3DrawCleanup(void) {
     gTilesTex = NULL;
     gSheetScale = 1;
   }
+  sdl3DropSpriteAtlas();
   if (gBackgroundTex) {
     SDL_DestroyTexture(gBackgroundTex);
     gBackgroundTex = NULL;
@@ -1972,6 +2017,7 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
 
   /* Destroy old resources that are zoom-dependent */
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
+  sdl3DropSpriteAtlas();
   sdl3DrawStatusSetAtlas(NULL, 1);
   tileLoaderCleanup();
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
@@ -2954,7 +3000,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     } else {
       /* Draw map tiles via mapview */
       MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale,
-                           (float)gZoomFactor };
+                           (float)gZoomFactor, gSpritesTex, gSpriteAtlas };
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
 
       /* Smart pings, on the ground: after the terrain and before every
@@ -2980,9 +3026,18 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
              + ((float)(pings[pi].worldY >> 8) + 0.5f
                 - (float)(clientSimGetYOffset(cs) + 1)) * (float)tileH
              - (float)edgeY;
+          /* The sender's name under the square, in the tank labels' own
+             face and look. The face is opened at 13 px times this window's
+             zoom, so it needs no scaling of its own. */
+          PingMarkerLabel label;
+          label.cache = sdl3DrawGetPingNameCache();
+          label.font  = sdl3DrawGetMessageFont();
+          label.name  = pings[pi].senderName;
+          label.slot  = pings[pi].sender;
+          label.scale = 1.0f;
           pingMarkerDraw(gRenderer, pings[pi].kind, cx, cy,
                          (float)tileW, (float)tileH,
-                         nowMs - pings[pi].recvMs, alpha);
+                         nowMs - pings[pi].recvMs, alpha, &label);
         }
       }
 

@@ -1224,9 +1224,15 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->angle = (uint16_t)(tankGetAngle(&sim->sim.tanks[i]) * 256.0f);
         ts->speed = (uint16_t)(tankGetActualSpeed(&sim->sim.tanks[i]) * 256.0f);
         {
-            BYTE onBoat = tankIsOnBoat(&sim->sim.tanks[i]) ? 1 : 0;
-            BYTE isDead = (tankGetDeathWait(&sim->sim.tanks[i]) > 0) ? 1 : 0;
-            ts->tankStatus = utilPutNibble(isDead, onBoat);
+            /* Both death signals go to every recipient: the wait, which the
+             * interpolation reads, and the destroyed state, which is the only
+             * way a non-owner learns a tank is destroyed once its wait has
+             * run out but no start has been found. */
+            uint8_t status = 0;
+            if (tankIsOnBoat(&sim->sim.tanks[i])) status |= TANK_STATUS_ON_BOAT;
+            if (tankGetDeathWait(&sim->sim.tanks[i]) > 0) status |= TANK_STATUS_DEAD;
+            if (tankIsDestroyed(&sim->sim.tanks[i])) status |= TANK_STATUS_DESTROYED;
+            ts->tankStatus = status;
         }
         ts->lgmFrame = lgmIsOut(&sim->sim.lgmen[i]) ? (lgmGetFrame(&sim->sim.lgmen[i]) + 1) : 0;
         ts->lgmMX = lgmGetMX(&sim->sim.lgmen[i]);
@@ -1313,7 +1319,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             /* Per-recipient base visibility (owner is always real):
              *  - armour is public base condition: real for neutral/own/allied bases;
              *    an enemy base reports BASE_FULL_ARMOUR while alive (exact value hidden)
-             *    but its true armour once dead/capturable, so the capturable flip shows.
+             *    but its true armour once dead/capturable, so the capturable flip shows,
+             *    and once the recipient's tank is inside BASE_PREDICT_REVEAL_RANGE so
+             *    their client can predict the square becoming drivable rather than
+             *    learn it a round trip late. basesArmourVisibleToPlayer holds all
+             *    three cases and is shared with the event cull in
+             *    transport_udp_server.c so the two cannot drift.
              *    Mirrors the brain fog-of-war in basesGetBrainBaseInRect.
              *  - shells/mines are the private ammo reserve: real for every
              *    neutral/allied base, zeroed for enemy bases. Always sending a
@@ -1323,7 +1334,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 BYTE owner = basesOut[i].owner;
                 bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
                                 playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
-                if (!friendly && basesOut[i].armour > MIN_ARMOUR_CAPTURE) {
+                if (!basesArmourVisibleToPlayer(&sim->sim, (BYTE)i, clientIdx)) {
                     basesOut[i].armour = BASE_FULL_ARMOUR;
                 }
                 if (!friendly) {

@@ -648,10 +648,7 @@ bool viewportGetCursor(const ViewPort *vp, BYTE *posX, BYTE *posY) {
 }
 
 void viewportCenterOnTank(ViewPort *vp, ScrollState *scroll, tank myTank) {
-  BYTE high, low, health, dummy;
-
-  tankGetStats(&myTank, &high, &low, &health, &dummy);
-  if (health <= TANK_FULL_ARMOUR) {
+  if (!tankIsDestroyed(&myTank)) {
     /* Tank isn't dead */
     scrollCenterObject(scroll, &vp->xOffset, &vp->yOffset,
                        tankGetMX(&myTank), tankGetMY(&myTank));

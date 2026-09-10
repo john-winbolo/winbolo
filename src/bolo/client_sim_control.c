@@ -833,10 +833,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->pendingBuildAction = 0;
         cs->pendingBuildX = 0;
         cs->pendingBuildY = 0;
-        /* Reseed the death-detection armour to "alive" (<= TANK_FULL_ARMOUR)
-         * so the new game's first snapshot doesn't register a spurious
-         * death or respawn edge against the previous game's last value. */
-        cs->lastServerArmour = 0;
+        /* Reseed the death-detection edge to "alive" so the new game's first
+         * snapshot doesn't register a spurious death or respawn edge against
+         * the previous game's last value. */
+        cs->lastServerDestroyed = FALSE;
         frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_GAME_OVER:

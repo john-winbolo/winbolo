@@ -760,12 +760,16 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                                        serverSimGetEvents(sim)[i].data[0],
                                        serverSimGetEvents(sim)[i].data[1])) continue;
                 }
-                /* Base stock is culled to neutral/allied bases. Exception: a
-                 * dead enemy base (armour <= MIN_ARMOUR_CAPTURE) is delivered to
-                 * non-friendly recipients too — armour only, with shells/mines
-                 * zeroed so its reserve stays hidden — on the reliable channel,
-                 * so the shooter unblocks the now-drivable tile promptly and the
-                 * one-shot transition can't be dropped. */
+                /* Base stock is culled to neutral/allied bases. An enemy base
+                 * whose armour this recipient may see — dead, or close enough
+                 * that their client has to predict the square's solidity — is
+                 * delivered too, armour only, with shells/mines zeroed so its
+                 * reserve stays hidden. basesArmourVisibleToPlayer is the same
+                 * predicate the snapshot cull uses. The capturable transition
+                 * additionally rides the reliable channel: it is one-shot, so a
+                 * drop would leave the tile blocked on the client until the next
+                 * full sync. In-range updates to a base still alive are routine
+                 * and take the default channel. */
                 if (evType == EVENT_BASE_STOCK) {
                     BYTE bIdx = serverSimGetEvents(sim)[i].data[0];
                     GameSim *gs = serverSimGetGameSim(sim);
@@ -773,12 +777,13 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                     bool bFriendly = (bOwner == NEUTRAL) || (bOwner == (BYTE)c) ||
                                      playersIsAllie(&gs->plyrs, bOwner, (BYTE)c);
                     if (!bFriendly) {
-                        if (serverSimGetEvents(sim)[i].data[1] <= MIN_ARMOUR_CAPTURE) {
-                            evToSend.data[2] = 0;
-                            evToSend.data[3] = 0;
-                            forceReliable = true;
-                        } else {
+                        if (!basesArmourVisibleToPlayer(gs, bIdx, (BYTE)c)) {
                             continue;
+                        }
+                        evToSend.data[2] = 0;
+                        evToSend.data[3] = 0;
+                        if (serverSimGetEvents(sim)[i].data[1] <= MIN_ARMOUR_CAPTURE) {
+                            forceReliable = true;
                         }
                     }
                 }
