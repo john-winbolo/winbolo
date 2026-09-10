@@ -15,13 +15,19 @@
  *   4. Client apply rebuilds the alliance state from the matrix —
  *      pre-existing alliances are cleared, then re-accepted per the
  *      bitmap (mirrors the server's reapply).
+ *   5/6. After a game start on either start path, every in-process
+ *      bot's ClientSim alliance matrix matches the server's, so a
+ *      bot's view never paints its own team as enemies.
  */
 
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+#include <SDL3/SDL.h>
+
 #include "global.h"
+#include "bot_manager.h"             /* botManagerOnGameStart, BotContext */
 #include "client_sim.h"
 #include "client_sim_internal.h"
 #include "client_sim_control.h"
@@ -320,5 +326,220 @@ int run_alliance_reset_apply_rebuilds_alliances(void) {
                   "after reset: 1+2 (cross-group) must NOT be allied");
 
     clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * 5. In-place start: each bot's ClientSim alliance matrix ends up
+ *    identical to the server's.
+ *
+ * serverSimStartGameInPlace re-arms the bots first
+ * (botManagerOnGameStart reloads each bot's map and recreates its
+ * tank) and only then calls serverSimReapplyTeamAlliances, whose
+ * botManagerSyncClientAlliances copies the server matrix into every
+ * in-process bot ClientSim. The renderer colours tanks from the
+ * followed bot's CLIENT players object, so a bot left without those
+ * bits draws its own teammates as enemies.
+ *
+ * Slot 0 is a human on team 1 with bots 1 and 2, so a human/bot pair
+ * and a bot/bot pair are both covered; bots 3 and 4 are team 2.
+ *
+ * The bot ClientSims are patched straight into botMgr.bots[] rather
+ * than going through botManagerAddBot, which would spin a real Lua VM
+ * and need a brain script on disk.
+ * ================================================================ */
+int run_alliance_reset_bots_synced_after_inplace_start(void) {
+    ClientSim *botCs[MAX_TANKS];
+    ServerSim *sim;
+    GameSim   *srvGs;
+    BYTE b, i;
+
+    memset(botCs, 0, sizeof(botCs));
+    sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "Human", false);
+    serverSimAddPlayer(sim, 1, "Bot1", false);
+    serverSimAddPlayer(sim, 2, "Bot2", false);
+    serverSimAddPlayer(sim, 3, "Bot3", false);
+    serverSimAddPlayer(sim, 4, "Bot4", false);
+    serverSimSetTeamBatch(sim, 0, 1);
+    serverSimSetTeamBatch(sim, 1, 1);
+    serverSimSetTeamBatch(sim, 2, 1);
+    serverSimSetTeamBatch(sim, 3, 2);
+    serverSimSetTeamBatch(sim, 4, 2);
+
+    srvGs = serverSimGetGameSim(sim);
+    for (b = 1; b <= 4; b++) {
+        srvGs->plyrs->item[b].clientFlags |= PLAYER_FLAG_BOT;
+    }
+
+    /* One real ClientSim per bot slot, wired into botMgr.bots[] the way
+     * botManagerAddBot leaves them: .active set and .cs pointing at the
+     * bot's own sim. The roster slots are marked inUse by hand — over
+     * the wire that comes from CTRL_PLAYER_JOIN, which these unhooked
+     * ClientSims never receive, and playersIsAllie needs it. */
+    for (b = 1; b <= 4; b++) {
+        GameSim *botGs;
+        botCs[b] = clientSimAlloc();
+        UT_ASSERT(botCs[b] != NULL);
+        clientSimCreate(botCs[b]);
+        clientSimSetPlayerNum(botCs[b], b);
+        botGs = clientSimGetGameSim(botCs[b]);
+        for (i = 0; i < 5; i++) {
+            botGs->plyrs->item[i].inUse = TRUE;
+        }
+        sim->botMgr.bots[b].active = true;
+        sim->botMgr.bots[b].cs     = botCs[b];
+    }
+
+    /* The in-place path calls botManagerOnGameStart itself. */
+    serverSimStartGameInPlace(sim);
+
+    srvGs = serverSimGetGameSim(sim);
+    for (b = 1; b <= 4; b++) {
+        players *botPlrs = &clientSimGetGameSim(botCs[b])->plyrs;
+        for (i = 0; i < MAX_TANKS; i++) {
+            UT_ASSERT_MSG((*botPlrs)->item[i].allie
+                              == srvGs->plyrs->item[i].allie,
+                          "in-place start: bot %u disagrees with the server "
+                          "on slot %u (bot 0x%04X, server 0x%04X)",
+                          (unsigned)b, (unsigned)i,
+                          (unsigned)(*botPlrs)->item[i].allie,
+                          (unsigned)srvGs->plyrs->item[i].allie);
+        }
+
+        /* The rendering question, asked directly: does this bot see its
+         * own team as allies and the other team as enemies? */
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 0, 1),
+                      "in-place start: bot %u must see 0+1 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 0, 2),
+                      "in-place start: bot %u must see 0+2 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 1, 2),
+                      "in-place start: bot %u must see 1+2 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 3, 4),
+                      "in-place start: bot %u must see 3+4 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(!playersIsAllie(botPlrs, 1, 3),
+                      "in-place start: bot %u must NOT see 1+3 allied "
+                      "(team 1 vs team 2)", (unsigned)b);
+        UT_ASSERT_MSG(!playersIsAllie(botPlrs, 0, 4),
+                      "in-place start: bot %u must NOT see 0+4 allied "
+                      "(team 1 vs team 2)", (unsigned)b);
+    }
+
+    /* Detach before teardown so botManagerDestroy (from serverSimDestroy)
+     * never tears down a brain that was never created. */
+    for (b = 1; b <= 4; b++) {
+        sim->botMgr.bots[b].active = false;
+        sim->botMgr.bots[b].cs     = NULL;
+    }
+    for (b = 1; b <= 4; b++) {
+        if (botCs[b] != NULL) clientSimDestroy(botCs[b]);
+    }
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 6. Countdown start: same bitmap agreement over the other order.
+ *
+ * serverSimStartGame runs serverSimReapplyTeamAlliances (and with it
+ * botManagerSyncClientAlliances) inside itself; production re-arms the
+ * bots afterwards, from the countdown->running transition in
+ * server_lifecycle.c. So the sync lands first here and the map reload
+ * plus tank recreate follow it — the reverse of the in-place path.
+ * Same seating and the same assertions, so a difference between the
+ * two cases is a difference in call order and nothing else.
+ * ================================================================ */
+int run_alliance_reset_bots_synced_after_countdown_start(void) {
+    ClientSim *botCs[MAX_TANKS];
+    ServerSim *sim;
+    GameSim   *srvGs;
+    BYTE b, i;
+
+    memset(botCs, 0, sizeof(botCs));
+    sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "Human", false);
+    serverSimAddPlayer(sim, 1, "Bot1", false);
+    serverSimAddPlayer(sim, 2, "Bot2", false);
+    serverSimAddPlayer(sim, 3, "Bot3", false);
+    serverSimAddPlayer(sim, 4, "Bot4", false);
+    serverSimSetTeamBatch(sim, 0, 1);
+    serverSimSetTeamBatch(sim, 1, 1);
+    serverSimSetTeamBatch(sim, 2, 1);
+    serverSimSetTeamBatch(sim, 3, 2);
+    serverSimSetTeamBatch(sim, 4, 2);
+
+    srvGs = serverSimGetGameSim(sim);
+    for (b = 1; b <= 4; b++) {
+        srvGs->plyrs->item[b].clientFlags |= PLAYER_FLAG_BOT;
+    }
+
+    for (b = 1; b <= 4; b++) {
+        GameSim *botGs;
+        botCs[b] = clientSimAlloc();
+        UT_ASSERT(botCs[b] != NULL);
+        clientSimCreate(botCs[b]);
+        clientSimSetPlayerNum(botCs[b], b);
+        botGs = clientSimGetGameSim(botCs[b]);
+        for (i = 0; i < 5; i++) {
+            botGs->plyrs->item[i].inUse = TRUE;
+        }
+        sim->botMgr.bots[b].active = true;
+        sim->botMgr.bots[b].cs     = botCs[b];
+    }
+
+    /* Production's countdown->running order (server_lifecycle.c): the
+     * full-reset start first, the bot re-arm second. */
+    serverSimStartGame(sim);
+    botManagerOnGameStart(sim);
+
+    srvGs = serverSimGetGameSim(sim);
+    for (b = 1; b <= 4; b++) {
+        players *botPlrs = &clientSimGetGameSim(botCs[b])->plyrs;
+        for (i = 0; i < MAX_TANKS; i++) {
+            UT_ASSERT_MSG((*botPlrs)->item[i].allie
+                              == srvGs->plyrs->item[i].allie,
+                          "countdown start: bot %u disagrees with the server "
+                          "on slot %u (bot 0x%04X, server 0x%04X)",
+                          (unsigned)b, (unsigned)i,
+                          (unsigned)(*botPlrs)->item[i].allie,
+                          (unsigned)srvGs->plyrs->item[i].allie);
+        }
+
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 0, 1),
+                      "countdown start: bot %u must see 0+1 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 0, 2),
+                      "countdown start: bot %u must see 0+2 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 1, 2),
+                      "countdown start: bot %u must see 1+2 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(playersIsAllie(botPlrs, 3, 4),
+                      "countdown start: bot %u must see 3+4 allied",
+                      (unsigned)b);
+        UT_ASSERT_MSG(!playersIsAllie(botPlrs, 1, 3),
+                      "countdown start: bot %u must NOT see 1+3 allied "
+                      "(team 1 vs team 2)", (unsigned)b);
+        UT_ASSERT_MSG(!playersIsAllie(botPlrs, 0, 4),
+                      "countdown start: bot %u must NOT see 0+4 allied "
+                      "(team 1 vs team 2)", (unsigned)b);
+    }
+
+    for (b = 1; b <= 4; b++) {
+        sim->botMgr.bots[b].active = false;
+        sim->botMgr.bots[b].cs     = NULL;
+    }
+    for (b = 1; b <= 4; b++) {
+        if (botCs[b] != NULL) clientSimDestroy(botCs[b]);
+    }
+    serverSimDestroy(sim);
     return 0;
 }

@@ -745,6 +745,10 @@ int run_alliance_reset_codec_roundtrip(void);
 int run_alliance_reset_decoder_rejects_short(void);
 int run_alliance_reset_reapply_publishes_one_event(void);
 int run_alliance_reset_apply_rebuilds_alliances(void);
+/* Bot ClientSim alliance matrices agree with the server's after a game
+ * start, on both start paths (bot re-arm before vs after the reapply). */
+int run_alliance_reset_bots_synced_after_inplace_start(void);
+int run_alliance_reset_bots_synced_after_countdown_start(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
