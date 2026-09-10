@@ -2027,3 +2027,69 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=두 팀을 {string1}(으)로 설정\n{player}�
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=팀이 {string1}(으)로 설정되었습니다. 클릭하면 사용자 지정 시작 지점으로 돌아갑니다.
 
 STR_SOUND_LOAD_FAILED=음향 효과를 불러오는 데 실패했습니다
+
+STR_DLGLOBBY_AWAITING_MAP=서버 대기 중...
+STR_DLGSETTINGS_HOSTING_VOICE=음성 채팅
+STR_DLGSETTINGS_HOSTING_VOICE_ON=켜기
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=끄기
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=근접
+STR_DLGSETTINGS_HOSTING_VOICE_TIP="끄기"를 선택하면 음성이 아무에게도 전달되지 않고 폐기돼요. "근접"은 아직 구현되지 않아 "켜기"와 동일하게 동작해요.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=음성
+STR_DLGSETTINGS_VOICE_LOOPBACK=마이크 테스트
+STR_DLGSETTINGS_VOICE_MICGAIN=마이크 게인
+STR_DLGSETTINGS_VOICE_LEVEL=입력 레벨
+STR_DLGSETTINGS_VOICE_ENABLE=음성 활성화
+STR_DLGSETTINGS_VOICE_MODE=모드
+STR_DLGSETTINGS_VOICE_MODE_OFF=끄기
+STR_DLGSETTINGS_VOICE_MODE_PTT=눌러서 말하기
+STR_DLGSETTINGS_VOICE_MODE_OPEN=항상 켜기
+STR_DLGSETTINGS_VOICE_PTTKEY=눌러서 말하기 키
+STR_DLGSETTINGS_VOICE_TRANSMITTING=송신 중
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=송신 안 함
+STR_DLGSETTINGS_VOICE_VOLUME=음성 볼륨
+STR_DLGSETTINGS_VOICE_TANKICONS=탱크 위에 마이크 아이콘 표시
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=에코 제거
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=녹음 중...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=재생 중...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=이 시스템에서는 사용할 수 없어요
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=시스템에서 처리해요
+STR_DLGSETTINGS_VOICE_MICDEVICE=마이크
+STR_DLGSETTINGS_VOICE_OUTDEVICE=재생 장치
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=시스템 기본값
+STR_DLGSETTINGS_VOICE_SERVER_OFF=이 서버는 음성 채팅을 껐어요
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=눌러서 말하기
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=마이크 음소거
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=말하는 중, 클릭하면 음소거돼요
+STR_PLAYER_TIP_VOICE_IDLE=마이크 있음, 클릭하면 음소거돼요
+STR_PLAYER_TIP_VOICE_SELFMUTED=마이크 꺼짐, 클릭하면 음소거돼요
+STR_PLAYER_TIP_VOICE_NOMIC=마이크 없음, 클릭하면 음소거돼요
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=내가 음소거함, 클릭하면 해제돼요
+STR_PLAYER_TIP_VOICE_SELF=내 마이크, 클릭하면 음소거돼요
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=마이크가 없어요
+STR_PLAYER_TIP_VOICE_SELF_MUTED=내 마이크 음소거됨, 클릭하면 해제돼요
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=이 플레이어의 재생 음량
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=마이크 및 음성 설정
+STR_DLGLOBBY_VOICE_OFF=음성이 꺼져 있어요
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=누군가 음성 채팅을 사용하고 있어요. 내 음성은 꺼져 있어요. 이름 옆 톱니바퀴 아이콘으로 켤 수 있어요.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=내가 음소거함 (말하는 중), 클릭하면 해제돼요
+STR_DLGSETTINGS_MASTER_VOLUME=마스터 볼륨
+STR_DLGSETTINGS_EFFECTS_VOLUME=효과음 볼륨
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=플레이어 패널
