@@ -57,15 +57,10 @@ typedef struct {
   uint32_t respawnTimeMs;
 } GameViewPlayerHud;
 
-/* Per-tank inventory inferred from the event stream for legacy logs that
- * do not carry tank shells/mines/armour/trees. Reset at spawn/respawn
- * from gameTypeGetItems; mutated on log_SoundShoot/MineLay/HitTank/
- * MineExplode by tile correlation with the shooter/victim's last
- * log_PlayerLocation; refilled on log_BaseSetStock deltas when a
- * friendly tank is standing on the base tile. Approximate — sound
- * events lack player IDs, so adjacent tanks may steal each other's
- * deltas. New (post-snapshot-tank-stats) logs should override these
- * from authoritative snapshots. */
+/* Per-tank shells/mines/armour/trees as the recording states them: from the
+ * four bytes on the end of each snapshot's player block, and from the
+ * log_TankSetStock records that carry every change in between. A recording
+ * written before those existed carries neither, and the slot stays at zero. */
 typedef struct {
   BYTE shells;
   BYTE mines;
@@ -149,12 +144,12 @@ typedef struct LogViewerState {
   uint16_t     kills[MAX_TANKS];     /* per-player kill tally */
   uint16_t     deaths[MAX_TANKS];    /* per-player death tally */
   GameViewPlayerHud gameViewHud[MAX_TANKS];
-  TankInventory tankInv[MAX_TANKS];  /* inferred per-tank inventory (legacy logs) */
-  /* Per-base previous-stock snapshot for log_BaseSetStock delta
-   * computation. prevBaseStockValid is set FALSE until the first
-   * log_BaseSetStock for a base, so the initial value isn't credited
-   * to whichever tank happens to be standing on that tile. Indexed by
-   * base number minus 1 (1..MAX_BASES → 0..MAX_BASES-1). */
+  TankInventory tankInv[MAX_TANKS];  /* per-tank stocks, as the recording states them */
+  /* The stock values the last log_BaseSetStock carried for each base, so a
+   * later event can be read as a delta against them. prevBaseStockValid says
+   * whether a base has had one yet; a snapshot clears it, since the snapshot
+   * re-anchors the world. Indexed by base number minus 1
+   * (1..MAX_BASES → 0..MAX_BASES-1). */
   BYTE         prevBaseShells[MAX_BASES];
   BYTE         prevBaseMines[MAX_BASES];
   BYTE         prevBaseArmour[MAX_BASES];

@@ -828,11 +828,12 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     sdl3DrawStatusTank(i, ta);
   }
 
-  /* Step 11 — tank stat bars. Legacy logs don't carry tank inventory,
-   * so the values are inferred by walking the event stream (see
-   * inv_setSpawn / inv_findTankAtTile in screen.c). Approximate but
-   * tracks roughly correctly between snapshot anchors. Base bars stay
-   * empty — the camera tank's view doesn't spectate a specific base. */
+  /* Step 11 — tank stat bars. The values come from the recording: each
+   * snapshot's player block carries the camera tank's stocks and a
+   * log_TankSetStock record carries each change between snapshots. A
+   * recording written before either was recorded reads as zero and the bars
+   * draw empty. Base bars stay empty — the camera tank's view doesn't
+   * spectate a specific base. */
   {
     BYTE shells = 0, mines = 0, armour = 0, trees = 0;
     if (lv_gameViewIsHudAlive(camera)) {
