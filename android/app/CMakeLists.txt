@@ -249,6 +249,11 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/input_joystick.c
     ${PROJ_ROOT}/src/gui/sdl3/input_gamepad.c
     ${PROJ_ROOT}/src/gui/sdl3/glyphs.c
+    # Smart-ping pie menu and markers, and the icon loader they share with
+    # the log viewer's replay draw. sdl3draw.c calls into both.
+    ${PROJ_ROOT}/src/gui/sdl3/ping_overlay.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/ping_icons.c
+    ${PROJ_ROOT}/src/gui/sdl3/ping_marker.c
     ${PROJ_ROOT}/src/gui/sdl3/build_cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c

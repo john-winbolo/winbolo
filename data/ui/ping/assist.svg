@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Smart ping: Assist Me. A thick cross — the help mark — rather than a
+     raised hand: a hand has fingers, and fingers are the first thing to
+     disappear when the icon is drawn at the size of a map square. One filled
+     shape, no strokes. Authored solid black and used as an alpha mask; see
+     standard.svg. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path d="M9.4 1.5 L14.6 1.5 L14.6 9.4 L22.5 9.4 L22.5 14.6 L14.6 14.6 L14.6 22.5 L9.4 22.5 L9.4 14.6 L1.5 14.6 L1.5 9.4 L9.4 9.4 Z"/>
+</svg>

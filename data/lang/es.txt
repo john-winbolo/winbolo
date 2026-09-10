@@ -949,6 +949,8 @@ STR_STARTPICK_TIP_FREE_HOST=Inicio #{number}\nHaz clic para elegir; clic derecho
 STR_STARTPICK_TIP_FREE=Inicio #{number}\nHaz clic para elegir este inicio
 STR_STARTPICK_TIP_HELD_HOST=Inicio #{number} - {player}\nArrastra para mover; clic derecho para asignar a otro jugador
 STR_STARTPICK_TIP_HELD=Inicio #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Inicio #{number} - {player}\nHaz clic para empezar aquí también
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Inicio #{number} - {player}\nHaz clic para empezar aquí también; arrastra para mover; clic derecho para asignar a otro jugador
 STR_STARTPICK_YOU=tú
 STR_STARTPICK_SWAP_WITH=Intercambiar este inicio con:
 STR_STARTPICK_ASSIGN_TO=Asignar inicio a:
@@ -2028,3 +2030,95 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Poner los dos equipos en {string1}\n{player} em
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Equipos en {string1}. Haz clic para volver a los inicios personalizados.
 
 STR_SOUND_LOAD_FAILED=Error al cargar los efectos de sonido
+
+STR_DLGLOBBY_AWAITING_MAP=Esperando al servidor...
+STR_DLGSETTINGS_HOSTING_VOICE=Chat de voz
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Activado
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Desactivado
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximidad
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Desactivado descarta la voz en lugar de transmitirla a alguien. Proximidad todavía no está implementada y se comporta igual que Activado.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Voz
+STR_DLGSETTINGS_VOICE_LOOPBACK=Probar micro
+STR_DLGSETTINGS_VOICE_MICGAIN=Ganancia del micro
+STR_DLGSETTINGS_VOICE_LEVEL=Nivel de entrada
+STR_DLGSETTINGS_VOICE_ENABLE=Activar voz
+STR_DLGSETTINGS_VOICE_MODE=Modo
+STR_DLGSETTINGS_VOICE_MODE_OFF=Desactivado
+STR_DLGSETTINGS_VOICE_MODE_PTT=Pulsar para hablar
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Micro abierto
+STR_DLGSETTINGS_VOICE_PTTKEY=Tecla para hablar
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Transmitiendo
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Sin transmitir
+STR_DLGSETTINGS_VOICE_VOLUME=Volumen de voz
+STR_DLGSETTINGS_VOICE_TANKICONS=Mostrar iconos de micro sobre los tanques
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Cancelación de eco
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Grabando...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Reproduciendo...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=No disponible en este sistema
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Gestionado por el sistema
+STR_DLGSETTINGS_VOICE_MICDEVICE=Micrófono
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Dispositivo de reproducción
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Predeterminado del sistema
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Este servidor tiene la voz desactivada
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Pulsar para hablar
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Silenciar micrófono
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Hablando — clic para silenciar
+STR_PLAYER_TIP_VOICE_IDLE=Tiene micrófono — clic para silenciar
+STR_PLAYER_TIP_VOICE_SELFMUTED=Su micrófono está apagado — clic para silenciar
+STR_PLAYER_TIP_VOICE_NOMIC=Sin micrófono — clic para silenciar
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Silenciado por ti — clic para reactivar
+STR_PLAYER_TIP_VOICE_SELF=Tu micrófono — clic para silenciar
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=No tienes micrófono
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Tu micrófono está apagado — clic para reactivar
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=El volumen al que se escucha a este jugador aquí
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Tu micrófono y ajustes de voz
+STR_DLGLOBBY_VOICE_OFF=La voz está desactivada
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Alguien está usando el chat de voz. La tuya está desactivada — actívala con el engranaje junto a tu nombre.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Silenciado por ti, y hablando — clic para reactivar
+STR_DLGSETTINGS_MASTER_VOLUME=Volumen general
+STR_DLGSETTINGS_EFFECTS_VOLUME=Volumen de efectos
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Panel de jugadores
+
+# Ping inteligente (menú circular)
+MESSAGE_PING_STANDARD={player}: ¡Ping!
+MESSAGE_PING_CAUTION={player}: ¡Cuidado!
+MESSAGE_PING_ASSIST={player}: ¡Ayúdame!
+MESSAGE_PING_ATTACK={player}: ¡Ataca!
+MESSAGE_PING_ON_MY_WAY={player}: ¡Voy en camino!
+MESSAGE_PING_BOT_COMMAND={player}: Orden para el bot
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Cuidado
+STR_PING_ASSIST=Ayúdame
+STR_PING_ATTACK=Atacar
+STR_PING_ON_MY_WAY=Voy en camino
+STR_PING_BOT_COMMAND=Orden para el bot
+STR_DLGKEYSETUP_PING=Ping inteligente
+STR_DLGKEYSETUP_PING_ALT=Ping inteligente: teclas alternativas
+STR_DLGKEYSETUP_PRESSACHORD=Pulsa una tecla o un botón del ratón
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Mayús
+STR_PING_MOUSE_LEFT=Botón izquierdo
+STR_PING_MOUSE_MIDDLE=Botón central
+STR_PING_MOUSE_RIGHT=Botón derecho
+STR_PING_MOUSE_X1=Ratón 4
+STR_PING_MOUSE_X2=Ratón 5
+STR_DLGKEYSETUP_PING_ALT2=Ping inteligente: teclas alternativas 2

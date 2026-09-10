@@ -63,6 +63,9 @@ extern "C" {
 #include "sprite_positions.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
+#include "../ping_kinds.h"   /* pingDisplayAlpha */
+#include "ping_marker.h"     /* pingMarkerDraw — the on-map ping pass */
+#include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
 }
 #include "sdl3draw_status.h" /* sdl3DrawGetMessageFont, sdl3DrawGetLabelFont,
                                 sdl3DrawGetTinyFont — the main window's faces */
@@ -1259,6 +1262,33 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             overviewViewDrawFog(v, r, &v->cam, w, h, om);
         }
 
+        /* Smart pings on the ground, on the same terms the classic view draws
+         * them: after the terrain and the fog, before every sprite, so the
+         * tanks and men a ping points at stay on top of it. One map square at
+         * the current zoom, on the centre of the square the ping landed in.
+         * A ping is a teammate telling the player where to look, so it is not
+         * held to the live-square filter the sprites are: the point of it is
+         * often ground nobody can see. */
+        {
+            const ClientPing *pl   = overviewSnapshotPings(snap);
+            int               np   = overviewSnapshotPingCount(snap);
+            Uint32            nowMs = (Uint32)SDL_GetTicks();
+            float tilePx =
+                (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(&v->cam);
+            for (int i = 0; i < np; i++) {
+                Uint32 ageMs = nowMs - pl[i].recvMs;
+                float  alpha = pingDisplayAlpha((int)ageMs);
+                float  sx = 0.0f, sy = 0.0f;
+                if (nowMs < pl[i].recvMs || alpha <= 0.0f) continue;
+                overviewCameraWorldToScreen(&v->cam, w, h,
+                                            (float)(pl[i].worldX >> 8) + 0.5f,
+                                            (float)(pl[i].worldY >> 8) + 0.5f,
+                                            &sx, &sy);
+                pingMarkerDraw(r, pl[i].kind, sx, sy, tilePx, tilePx,
+                               ageMs, alpha);
+            }
+        }
+
         /* Sprites on top of the fog: a tank only stands on a live square, and
          * the build cursor and the gunsight are the player's own marks, so
          * neither wants dimming. */
@@ -1468,8 +1498,13 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * sdl3imgui.cpp, which neither host's wheel reaches: the in-window mode
      * sits under an ImGui window that captures the mouse, and the pop-out's
      * events are consumed as that window's own. Same running-game test the
-     * handler there makes. */
-    if (hovered && io.MouseWheel != 0.0f) {
+     * handler there makes.
+     *
+     * Not while the smart-ping pie is open, for the reason the gunsight bump
+     * in sdl3imgui.cpp is not either: the wheel is under the same hand that is
+     * holding the menu, and a nudge while choosing a ping should not re-zoom
+     * the map out from under the square the ping is already aimed at. */
+    if (hovered && io.MouseWheel != 0.0f && !pingOverlayIsMenuOpen()) {
         int steps = (io.MouseWheel > 0.0f) ? 1 : -1;
         if (overviewWheelZooms(keys)) {
             ImVec2 rectMin = ImGui::GetItemRectMin();

@@ -56,6 +56,7 @@ extern "C" {
 #include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_keyboard.h"
+#include "imgui_keysetup.h"  /* the Key Setup popup, drawn and fed from this loop */
 #include "imgui_messagebox.h"
 #if defined(WINBOLO_VOICE)
 #include "../../voice.h"
@@ -260,6 +261,41 @@ extern "C" void imguiLobbyFrameReset(void) {
     s_lf.active = false;
 }
 
+#if defined(WINBOLO_VOICE)
+/* Voice starts off, so a player who has never turned it on has no reason to
+ * know it is there. Said once, in the lobby chat, the first time somebody
+ * else is heard, and it names the cog beside your own row as the way in.
+ *
+ * The talking set is read off the ClientSim, not the voice module: with voice
+ * off this client is sent no voice frames at all, so the module's own map is
+ * always empty. The server publishes this one whether or not this client is
+ * listening, and it is the set each row's mic cell already reads.
+ *
+ * It is non-empty in the lobby and the countdown only — in a running game
+ * voice follows the alliance and the server publishes an empty set on
+ * purpose — so this cannot fire mid-game, which is the window the line wants.
+ *
+ * A file-static rather than a prefs key: a player who still has voice off on
+ * the next run is worth telling once more. */
+static bool s_voiceHintShown = false;
+
+static void lobbyVoiceHintPoll(ClientSim *cs) {
+    if (s_voiceHintShown || cs == NULL) return;
+    if (voiceIsEnabled()) return;
+    /* Nothing here to turn on where the server carries no voice. */
+    if (voiceServerHasVoiceOff()) return;
+    PlayerBitMap talking = clientSimGetVoiceTalkingMap(cs);
+    /* With voice off you cannot be the one talking, but clear your own bit
+       rather than leaving that to be worked out. A spectator holds no slot,
+       so it has no bit of its own to clear. */
+    BYTE me = clientSimGetMyPlayerNum(cs);
+    if (me < MAX_TANKS) talking &= ~((PlayerBitMap)1u << me);
+    if (talking == 0) return;
+    clientSimAppendLobbyChat(cs, "***", langGetText(STR_DLGLOBBY_VOICE_HINT));
+    s_voiceHintShown = true;
+}
+#endif
+
 /* Build the lobby UI into the currently-active ImGui frame. See
  * imgui_lobby.h for the host contract. Returns LOBBY_FRAME_LEFT once the
  * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
@@ -270,6 +306,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     /* Before anything draws, so a round that has ended takes its rating and
      * comments with it whether or not the recap is the view on screen. */
     lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);
+#endif
+
+#if defined(WINBOLO_VOICE)
+    /* Here rather than in either host's loop: both of them come through this
+       function, so one call covers the blocking lobby and the in-game seam. */
+    lobbyVoiceHintPoll(cs);
 #endif
 
     SDL_Window   *window   = sdl3DrawGetWindow();
@@ -2346,6 +2388,11 @@ static float lobbyComputeUiScale(SDL_Window *window) {
 *  blocking loop polls this before its ImGui::NewFrame — and
 *  a frame either way does not matter for a key held down.
 *
+*  A Key Setup row waiting for a key is the same case: the
+*  keystroke is being aimed at a binding, not at the
+*  microphone, and the key still bound to push to talk may
+*  well be the one held down while it is rebound.
+*
 *  An unbound key is scancode 0, which inputPushToTalkPoll
 *  never reports as held.
 *********************************************************/
@@ -2356,7 +2403,8 @@ extern "C" void imguiLobbyPushToTalkPoll(void) {
     const bool reading =
         window != NULL &&
         (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0 &&
-        !ImGui::GetIO().WantTextInput;
+        !ImGui::GetIO().WantTextInput &&
+        !imguiKeySetupIsCapturingInGameKey();
     inputPushToTalkPoll(&lobbyKeys, reading);
 }
 #endif
@@ -2512,6 +2560,38 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 continue;
             }
 #endif
+            /* Key Setup is open and a row is waiting for a key: the
+               keystroke belongs to the binding, so it goes straight to the
+               dialog and no further. Ahead of the ImGui feed because the
+               lobby holds a chat input, and a key being bound must not be
+               typed into it. */
+            if (imguiKeySetupIsCapturingInGameKey() &&
+                ev.type == SDL_EVENT_KEY_DOWN &&
+                ev.key.windowID == SDL_GetWindowID(window)) {
+                imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
+                continue;
+            }
+            /* Same for a controller row: a button or a trigger past half
+               travel binds it, Escape drops the capture. Stick movement is
+               ignored, so the row stays armed until one of those arrives. */
+            if (imguiKeySetupIsCapturingInGamePad()) {
+                if (ev.type == SDL_EVENT_KEY_DOWN &&
+                    ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                    imguiKeySetupCancelInGamePad();
+                    continue;
+                }
+                if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                    imguiKeySetupHandleInGamePadButton((int)ev.gbutton.button);
+                    continue;
+                }
+                if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+                    (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                     ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+                    ev.gaxis.value > 16384 /* ~0.5 of 32767 */) {
+                    imguiKeySetupHandleInGamePadTrigger((int)ev.gaxis.axis);
+                    continue;
+                }
+            }
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
@@ -2619,6 +2699,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 break;
         }
 
+        /* This dialog owns the frame while it is up, so the Key Setup popup
+           the in-game frame draws has to be drawn here too — the same reason
+           voiceTick runs from this loop. NULL rather than cs: the popup seeds
+           its two checkboxes from a live tank when it is given one, and a
+           lobby has no tank, only an idle slot. */
+        imguiKeySetupRenderInGamePopup(NULL);
+
         dialogDrawNavOutline();
         keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
@@ -2632,6 +2719,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
     /* Release per-frame state (texture, popup buffers, transient flags). */
     imguiLobbyFrameReset();
+
+    /* The usual way out of here is the game starting, which breaks the loop
+     * before another frame is drawn, and the running game's event pump reads
+     * the same Key Setup capture state this loop was feeding. Drop it here, so
+     * a dialog left open does not reappear over the game and an armed row does
+     * not swallow the game's first keystroke. */
+    imguiKeySetupCancelInGame();
 
     /* The lobby closing is the last chance to write a move / resize / split
      * drag that landed inside the debounce window — there is no further

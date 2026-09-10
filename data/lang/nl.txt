@@ -1486,6 +1486,8 @@ STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlik om te kiezen; rechtsklikken om
 STR_STARTPICK_TIP_FREE=Start #{number}\nKlik om deze startpositie te kiezen
 STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nSlepen om te verplaatsen; rechtsklikken om aan iemand anders toe te wijzen
 STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nKlik om hier ook te starten
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nKlik om hier ook te starten; slepen om te verplaatsen; rechtsklikken om aan iemand anders toe te wijzen
 STR_STARTPICK_YOU=jij
 STR_STARTPICK_SWAP_WITH=Ruil deze start met:
 STR_STARTPICK_ASSIGN_TO=Start toewijzen aan:
@@ -2027,3 +2029,95 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Zet beide teams op {string1}\n{player} start {s
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Teams op {string1} gezet. Klik om terug te gaan naar eigen startpunten.
 
 STR_SOUND_LOAD_FAILED=Fout bij het laden van geluidseffecten
+
+STR_DLGLOBBY_AWAITING_MAP=Wachten op server...
+STR_DLGSETTINGS_HOSTING_VOICE=Voicechat
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Aan
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Uit
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Nabijheid
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Uit negeert spraak in plaats van deze naar iedereen door te sturen. Nabijheid is nog niet geïmplementeerd en gedraagt zich hetzelfde als Aan.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Voicechat
+STR_DLGSETTINGS_VOICE_LOOPBACK=Microfoon testen
+STR_DLGSETTINGS_VOICE_MICGAIN=Microfoonversterking
+STR_DLGSETTINGS_VOICE_LEVEL=Invoerniveau
+STR_DLGSETTINGS_VOICE_ENABLE=Voicechat inschakelen
+STR_DLGSETTINGS_VOICE_MODE=Modus
+STR_DLGSETTINGS_VOICE_MODE_OFF=Uit
+STR_DLGSETTINGS_VOICE_MODE_PTT=Push-to-talk
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Spraakactivering
+STR_DLGSETTINGS_VOICE_PTTKEY=Push-to-talk-toets
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Zendt
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Zendt niet
+STR_DLGSETTINGS_VOICE_VOLUME=Spraakvolume
+STR_DLGSETTINGS_VOICE_TANKICONS=Microfoonpictogrammen boven tanks tonen
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Echo-onderdrukking
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Bezig met opnemen...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Bezig met afspelen...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Niet beschikbaar op dit systeem
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Wordt door het systeem afgehandeld
+STR_DLGSETTINGS_VOICE_MICDEVICE=Microfoon
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Afspeelapparaat
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Systeemstandaard
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Deze server heeft voicechat uitgeschakeld
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Push-to-talk
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Microfoon dempen
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Spreekt — klik om te dempen
+STR_PLAYER_TIP_VOICE_IDLE=Heeft een microfoon — klik om te dempen
+STR_PLAYER_TIP_VOICE_SELFMUTED=Microfoon staat uit — klik om te dempen
+STR_PLAYER_TIP_VOICE_NOMIC=Geen microfoon — klik om te dempen
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Door jou gedempt — klik om het dempen op te heffen
+STR_PLAYER_TIP_VOICE_SELF=Jouw microfoon — klik om te dempen
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=Je hebt geen microfoon
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Jouw microfoon staat uit — klik om het dempen op te heffen
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=Hoe luid deze speler hier wordt afgespeeld
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Jouw microfoon- en voicechatinstellingen
+STR_DLGLOBBY_VOICE_OFF=Voicechat staat uit
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Iemand gebruikt voicechat. Die van jou staat uit — zet hem aan met het tandwiel naast je naam.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Door jou gedempt, en spreekt toch — klik om het dempen op te heffen
+STR_DLGSETTINGS_MASTER_VOLUME=Hoofdvolume
+STR_DLGSETTINGS_EFFECTS_VOLUME=Effectenvolume
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Spelerslijst
+
+# Slimme ping (cirkelmenu)
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Pas op!
+MESSAGE_PING_ASSIST={player}: Help me!
+MESSAGE_PING_ATTACK={player}: Aanvallen!
+MESSAGE_PING_ON_MY_WAY={player}: Ik kom eraan!
+MESSAGE_PING_BOT_COMMAND={player}: Botopdracht
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Pas op
+STR_PING_ASSIST=Help me
+STR_PING_ATTACK=Aanvallen
+STR_PING_ON_MY_WAY=Ik kom eraan
+STR_PING_BOT_COMMAND=Botopdracht
+STR_DLGKEYSETUP_PING=Slimme ping
+STR_DLGKEYSETUP_PING_ALT=Slimme ping – alternatieve toetsen
+STR_DLGKEYSETUP_PRESSACHORD=Druk op een toets of muisknop
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Linkermuisknop
+STR_PING_MOUSE_MIDDLE=Middelste muisknop
+STR_PING_MOUSE_RIGHT=Rechtermuisknop
+STR_PING_MOUSE_X1=Muis 4
+STR_PING_MOUSE_X2=Muis 5
+STR_DLGKEYSETUP_PING_ALT2=Slimme ping – alternatieve toetsen 2

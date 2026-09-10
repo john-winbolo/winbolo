@@ -1486,6 +1486,8 @@ STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlicka för att välja; högerklick
 STR_STARTPICK_TIP_FREE=Start #{number}\nKlicka för att välja den här startplatsen
 STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nDra för att flytta; högerklicka för att tilldela till någon annan
 STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nKlicka för att starta här också
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nKlicka för att starta här också; dra för att flytta; högerklicka för att tilldela till någon annan
 STR_STARTPICK_YOU=du
 STR_STARTPICK_SWAP_WITH=Byt den här startplatsen med:
 STR_STARTPICK_ASSIGN_TO=Tilldela startplats till:
@@ -2027,3 +2029,95 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Sätt båda lagen till {string1}\n{player} star
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Lagen satta till {string1}. Klicka för att gå tillbaka till egna startpunkter.
 
 STR_SOUND_LOAD_FAILED=Fel vid inläsning av ljudeffekter
+
+STR_DLGLOBBY_AWAITING_MAP=Väntar på server...
+STR_DLGSETTINGS_HOSTING_VOICE=Röstchatt
+STR_DLGSETTINGS_HOSTING_VOICE_ON=På
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Av
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Närhet
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Av kastar bort rösten i stället för att skicka den till någon. Närhet är inte implementerad än och beter sig som På.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Röstchatt
+STR_DLGSETTINGS_VOICE_LOOPBACK=Testa mikrofon
+STR_DLGSETTINGS_VOICE_MICGAIN=Mikrofonförstärkning
+STR_DLGSETTINGS_VOICE_LEVEL=Ingångsnivå
+STR_DLGSETTINGS_VOICE_ENABLE=Aktivera röstchatt
+STR_DLGSETTINGS_VOICE_MODE=Läge
+STR_DLGSETTINGS_VOICE_MODE_OFF=Av
+STR_DLGSETTINGS_VOICE_MODE_PTT=Push-to-talk
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Röstaktivering
+STR_DLGSETTINGS_VOICE_PTTKEY=Push-to-talk-tangent
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Sänder
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Sänder inte
+STR_DLGSETTINGS_VOICE_VOLUME=Röstvolym
+STR_DLGSETTINGS_VOICE_TANKICONS=Visa mikrofonikoner över tanks
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Ekoeliminering
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Spelar in...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Spelar upp...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Inte tillgänglig på det här systemet
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Hanteras av systemet
+STR_DLGSETTINGS_VOICE_MICDEVICE=Mikrofon
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Uppspelningsenhet
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Systemstandard
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Den här servern har stängt av röstchatt
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Push-to-talk
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Tysta mikrofon
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Pratar — klicka för att tysta
+STR_PLAYER_TIP_VOICE_IDLE=Har en mikrofon — klicka för att tysta
+STR_PLAYER_TIP_VOICE_SELFMUTED=Deras mikrofon är avstängd — klicka för att tysta
+STR_PLAYER_TIP_VOICE_NOMIC=Ingen mikrofon — klicka för att tysta
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Tystad av dig — klicka för att häva tystningen
+STR_PLAYER_TIP_VOICE_SELF=Din mikrofon — klicka för att tysta
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=Du har ingen mikrofon
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Din mikrofon är avstängd — klicka för att häva tystningen
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=Hur högt den här spelaren spelas upp här
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Dina mikrofon- och röstinställningar
+STR_DLGLOBBY_VOICE_OFF=Röstchatt är avstängd
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Någon använder röstchatt. Din är avstängd — slå på den med kugghjulet bredvid ditt namn.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Tystad av dig, och pratar ändå — klicka för att häva tystningen
+STR_DLGSETTINGS_MASTER_VOLUME=Huvudvolym
+STR_DLGSETTINGS_EFFECTS_VOLUME=Effektvolym
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Spelarlista
+
+# Smart ping (cirkelmeny)
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Se upp!
+MESSAGE_PING_ASSIST={player}: Hjälp mig!
+MESSAGE_PING_ATTACK={player}: Anfall!
+MESSAGE_PING_ON_MY_WAY={player}: Jag är på väg!
+MESSAGE_PING_BOT_COMMAND={player}: Botorder
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Se upp
+STR_PING_ASSIST=Hjälp mig
+STR_PING_ATTACK=Anfall
+STR_PING_ON_MY_WAY=På väg
+STR_PING_BOT_COMMAND=Botorder
+STR_DLGKEYSETUP_PING=Smart ping
+STR_DLGKEYSETUP_PING_ALT=Smart ping – alternativa tangenter
+STR_DLGKEYSETUP_PRESSACHORD=Tryck på en tangent eller musknapp
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Skift
+STR_PING_MOUSE_LEFT=Vänster musknapp
+STR_PING_MOUSE_MIDDLE=Mittenknapp
+STR_PING_MOUSE_RIGHT=Höger musknapp
+STR_PING_MOUSE_X1=Mus 4
+STR_PING_MOUSE_X2=Mus 5
+STR_DLGKEYSETUP_PING_ALT2=Smart ping – alternativa tangenter 2

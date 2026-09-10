@@ -72,8 +72,25 @@ typedef enum {
   GP_ACT_BUILD_CANCEL,    /* exit build cursor mode without building */
   GP_ACT_LOCK_HEADING,    /* toggle: freeze tank facing, stick only drives */
   GP_ACT_TANK_VIEW,       /* recentre on / return to tank view */
+  /* Smart ping. The menu one is held — the pie opens under it and the right
+     stick or the d-pad picks a sector — and the six below it send one kind
+     outright with no menu. All unbound by default.
+     The six MUST stay contiguous and in PING_KIND_* order: the direct
+     dispatch turns a kind into an action with
+     GP_ACT_PING_DIRECT_FIRST + kind. */
+  GP_ACT_PING_MENU,
+  GP_ACT_PING_STANDARD,
+  GP_ACT_PING_CAUTION,
+  GP_ACT_PING_ASSIST,
+  GP_ACT_PING_ATTACK,
+  GP_ACT_PING_ON_MY_WAY,
+  GP_ACT_PING_BOT_COMMAND,
   GP_ACT_COUNT
 } GamepadAction;
+
+/* The action the direct ping for PING_KIND_STANDARD sits on; add the kind to
+   reach the rest. */
+#define GP_ACT_PING_DIRECT_FIRST GP_ACT_PING_STANDARD
 
 typedef enum {
   GP_BIND_NONE    = 0,
@@ -130,6 +147,20 @@ bool inputGamepadIsBuildCancelEdge(void);       /* Cancel-build press, consumed 
 bool inputGamepadIsLockHeadingHeld(void);       /* Lock-direction held (live state) */
 bool inputGamepadIsTankViewEdge(void);          /* Tank-view press, consumed on read */
 bool inputGamepadIsViewPlayersEdge(void);      /* D-pad Right press, consumed on read */
+
+/* --- Smart ping --- */
+/* Is the pie-menu binding held? The pie opens while it is and sends what the
+   aim below is pointing at when it goes. */
+bool inputGamepadIsPingMenuHeld(void);
+/* A direct-ping binding just went down: writes its PING_KIND_* to *outKind
+   and returns true, consuming the edge. Only one per call — a pad cannot
+   press two in the same frame in any way worth answering. */
+bool inputGamepadConsumePingDirect(int *outKind);
+/* Which way the pad is pointing for an open pie: the right stick past its
+   deadzone, or the d-pad if the stick is idle. Writes a unit-ish vector with
+   +y down, the way the pie's own geometry measures. False when the pad is
+   pointing nowhere, which is the standard ping. */
+bool inputGamepadGetPingAim(float *outX, float *outY);
 bool inputGamepadConsumeActiveDisconnect(void);  /* Active controller disconnect, consumed on read */
 
 /* Right-stick scroll sensitivity multiplier (clamped 0.25..4.0 by UI). */

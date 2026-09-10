@@ -53,6 +53,7 @@
 #include "logviewer.h"
 #include "lv_messages.h"
 #include "../gui/lang.h"
+#include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
 
 /* File-scope pointer to the central LogViewerState */
 static LogViewerState *g_lv = NULL;
@@ -116,6 +117,70 @@ BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
 BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
 bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
 uint32_t lv_screenGetTimeRunning(void) { return g_lv->timeRunning; }
+
+/* --- Smart pings ----------------------------------------------------
+ * Every log_Ping the playback has walked past that is still inside its
+ * PING_DISPLAY_MS. Aged on g_lv->timeRunning, the playback clock, so a ping
+ * lasts the same five seconds of game time however fast the round is being
+ * played back — and a rewind, which winds that clock backwards, leaves every
+ * stored ping in the future and so drops them all with no explicit reset.
+ *
+ * The viewer shows every team's pings: a replay is watched from outside, so
+ * there is no team to filter to. */
+#define LV_MAX_PINGS 16
+
+typedef struct {
+  BYTE     sender;
+  BYTE     kind;
+  uint16_t worldX;
+  uint16_t worldY;
+  uint32_t timeMs;   /* playback clock at the ping, +1 so 0 means "empty" */
+} lvPing;
+
+static lvPing s_pings[LV_MAX_PINGS];
+static int    s_pingWrite = 0;
+
+/* Drop every stored ping. A new log restarts the playback clock at zero, so
+   the previous log's pings all read as "in the future" and are hidden — until
+   playback runs past the time they were stored at, when they would come back
+   over a replay they were never part of. Called from lv_screenSetup, which
+   every load path runs through. */
+static void lv_pingReset(void) {
+  memset(s_pings, 0, sizeof(s_pings));
+  s_pingWrite = 0;
+}
+
+static void lv_pingAdd(BYTE sender, BYTE kind, uint16_t wx, uint16_t wy) {
+  s_pings[s_pingWrite].sender = sender;
+  s_pings[s_pingWrite].kind   = kind;
+  s_pings[s_pingWrite].worldX = wx;
+  s_pings[s_pingWrite].worldY = wy;
+  s_pings[s_pingWrite].timeMs = g_lv->timeRunning + 1;
+  s_pingWrite = (s_pingWrite + 1) % LV_MAX_PINGS;
+}
+
+/* Read out one live ping. `index` walks 0..LV_MAX_PINGS-1 from the oldest
+ * slot, so drawing in order puts the newest on top; a slot that is empty,
+ * expired or (after a rewind) still in the future returns false and the
+ * caller moves on. ageMs is measured on the playback clock. */
+bool lv_screenGetPing(int index, BYTE *kind, uint16_t *worldX,
+                      uint16_t *worldY, uint32_t *ageMs) {
+  const lvPing *p;
+  uint32_t at;
+  if (index < 0 || index >= LV_MAX_PINGS) return FALSE;
+  p = &s_pings[(s_pingWrite + index) % LV_MAX_PINGS];
+  if (p->timeMs == 0) return FALSE;
+  at = p->timeMs - 1;
+  if (g_lv->timeRunning < at) return FALSE;
+  if (g_lv->timeRunning - at >= (uint32_t)PING_DISPLAY_MS) return FALSE;
+  if (kind)   *kind   = p->kind;
+  if (worldX) *worldX = p->worldX;
+  if (worldY) *worldY = p->worldY;
+  if (ageMs)  *ageMs  = g_lv->timeRunning - at;
+  return TRUE;
+}
+
+int lv_screenGetPingCapacity(void) { return LV_MAX_PINGS; }
 
 /* --- Inferred tank-inventory helpers (legacy logs only) -------------
  * Logs prior to the snapshot-tank-stats version don't carry per-tank
@@ -471,6 +536,7 @@ void lv_screenSetup() {
      settings before the new one's walk can collect its own. */
   lv_screenStoreGameSettings(NULL, 0);
   s_gameSettingsWalked = FALSE;
+  lv_pingReset();
   g_lv->gmeStartDelay = 0;
   g_lv->gmeLength = UNLIMITED_GAME_TIME;
   g_lv->isPlaying = FALSE;
@@ -1202,6 +1268,30 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER,
                     opt2 ? STR_LV_VOTE_PASSED : STR_LV_VOTE_FAILED, NULL);
       break;
+    case log_Ping:
+      /* sender + kind + worldX (BE u16) + worldY (BE u16). */
+      logReadBytes(&opt1, 1);  /* sender */
+      logReadBytes(&opt2, 1);  /* kind */
+      logReadBytes(&opt3, 1);  /* worldX high */
+      logReadBytes(&opt4, 1);  /* worldX low */
+      logReadBytes(&opt5, 1);  /* worldY high */
+      {
+        BYTE yLo = 0;
+        uint16_t wx, wy;
+        logReadBytes(&yLo, 1);
+        wx = (uint16_t)((opt3 << 8) | opt4);
+        wy = (uint16_t)((opt5 << 8) | yLo);
+        lv_pingAdd(opt1, opt2, wx, wy);
+        lv_playersGetPlayerName(opt1, str, sizeof(str));
+        {
+          MessageArgs args = {0};
+          snprintf(args.playerName, sizeof(args.playerName), "%.*s",
+                   (int)sizeof(args.playerName) - 1, str);
+          lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
+                        pingKindMessageId(opt2), &args);
+        }
+      }
+      break;
     case log_SpectatorJoined:
       logReadBytes(&opt1, 1);  /* spectator slot */
       logReadBytes(&opt2, 1);  /* country[0] */
@@ -1739,6 +1829,12 @@ static int walkSkipEventBody(BYTE code) {
     case log_PlayerLocation:
       { BYTE b[5]; if (logReadBytes(b, 5) != 5) return -1; }
       return 5;
+    case log_Ping:
+      /* sender + kind + two big-endian u16 coordinates. Only v2 logs can
+         carry one, but the v1 walker keeps a full table so a future
+         re-encoder cannot silently desynchronise the cursor. */
+      { BYTE b[6]; if (logReadBytes(b, 6) != 6) return -1; }
+      return 6;
     case log_SaveMap:
     case log_LobbyEnter:
     case log_LobbyExit:

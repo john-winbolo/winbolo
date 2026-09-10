@@ -17,8 +17,9 @@
  * Purpose:       Focusable list of map start slots — the
  *                non-spatial start picker. Each start is a
  *                Selectable row coloured by ownership;
- *                activating a free row claims that start for
- *                the local player via the same
+ *                activating a free row — or, with shared
+ *                starts on, one somebody else holds — claims
+ *                that start for the local player via the same
  *                clientSimNetSendLobbyClaimStart path the
  *                map-marker picker uses.
  *********************************************************/
@@ -51,24 +52,34 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
 
     int focused = 0;
     for (int i = 1; i <= startCount; i++) {
-        int  holder  = lobbyStartHolderSlot(cs, i);
-        bool free    = (holder < 0);
+        int  holders[MAX_TANKS];
+        int  nHold   = lobbyStartHolders(cs, i, holders, MAX_TANKS);
+        bool free    = (nHold == 0);
+        bool iHold   = false;
+        for (int h = 0; h < nHold; h++) {
+            if (holders[h] == myPlayerNum) iHold = true;
+        }
         bool offSide = sideMasks != NULL &&
                        lobbyStartOffSideMasked(sideMasks[i], mySide, closedMask);
 
-        /* Occupant: the holder's name when claimed, "(open)" when free.
-         * Names are runtime data, drawn directly. The leading "#N" is the
-         * start number (runtime), not a fixed caption — no English to
-         * localise here. An off-side start carries the same suffix the
-         * player list's dropdown puts on one. */
+        /* Occupant: every holder's name when claimed, comma-joined, and
+         * "(open)" when free. Names are runtime data, drawn directly. The
+         * leading "#N" is the start number (runtime), not a fixed caption —
+         * no English to localise here. An off-side start carries the same
+         * suffix the player list's dropdown puts on one. */
         const char *who;
+        char whoBuf[96];
         if (free) {
             who = langGetText(STR_DLGLOBBY_START_OPEN);
         } else {
-            const ClientLobbySlot *slot = clientSimGetLobbySlot(cs, (BYTE)holder);
-            who = slot ? slot->playerName : langGetText(STR_DLGLOBBY_START_OPEN);
+            const char *names[MAX_TANKS];
+            for (int h = 0; h < nHold; h++) {
+                names[h] = clientSimGetLobbySlot(cs, (BYTE)holders[h])->playerName;
+            }
+            lobbyStartHolderNameLabel(names, nHold, whoBuf, sizeof(whoBuf));
+            who = whoBuf[0] ? whoBuf : langGetText(STR_DLGLOBBY_START_OPEN);
         }
-        char label[128];
+        char label[160];
         if (offSide) {
             SDL_snprintf(label, sizeof(label), "#%d  %s %s##start%d", i, who,
                          langGetText(STR_DLGLOBBY_START_OFFSIDE_SUFFIX), i);
@@ -76,20 +87,24 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount,
             SDL_snprintf(label, sizeof(label), "#%d  %s##start%d", i, who, i);
         }
 
-        /* Colour the row by ownership relative to the local player; an
-         * off-side row at half alpha, the way both map previews dim one. */
-        LobbyStartOwner o = lobbyStartClassify(cs, holder, myPlayerNum);
+        /* Colour the row by ownership relative to the local player — enemy
+         * when any holder is one, self when the viewer is among them, ally
+         * otherwise; an off-side row at half alpha, the way both map
+         * previews dim one. */
+        LobbyStartOwner o = lobbyStartClassifyShared(cs, i, myPlayerNum);
         ImU32 rowColor = lobbyStartOwnerColor(o);
         if (offSide) rowColor = lobbyStartDimColor(rowColor);
         ImGui::PushStyleColor(ImGuiCol_Text, rowColor);
         /* Every row stays a plain focusable Selectable so the pad can
          * D-pad through (and the map highlight the focused slot) regardless
-         * of occupancy. Only a free start the local player can take has an
-         * effect on activate — self-claim / self-move only; activating an
-         * occupied or off-side row does nothing, mirroring the mouse marker
-         * picker. */
+         * of occupancy. Activating a free on-side row takes it; with shared
+         * starts on, so does activating a row others hold — that joins them,
+         * the same as clicking one on the map. A row the viewer already
+         * holds, and an off-side row, do nothing, mirroring the mouse
+         * marker picker. */
         bool activated  = ImGui::Selectable(label);
-        bool actionable = free && myPlayerNum >= 0 && !offSide;
+        bool actionable = (free || (lobbySharedStartsEnabled() && !iHold)) &&
+                          myPlayerNum >= 0 && !offSide;
         ImGui::PopStyleColor();
 
         if (ImGui::IsItemFocused()) focused = i;

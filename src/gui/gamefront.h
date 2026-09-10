@@ -74,6 +74,18 @@
 #define DEFAULT_QUICKPILLBOX 33   /* SDL_SCANCODE_4 */
 #define DEFAULT_QUICKMINE    34   /* SDL_SCANCODE_5 */
 
+/* Smart ping — the pie menu opens on a chord, so these are packed
+   pingBinding ints (src/gui/sdl3/ping_binding.h) rather than bare scancodes.
+   Ctrl and Alt with the right mouse button both open it out of the box,
+   because the right button is otherwise unused in the game view and the two
+   modifiers cover both muscle memories. The third slot starts unbound, and so
+   does every direct-ping slot: a chord that fires a ping with no menu at all
+   is a thing the player asks for, not something to hand them.
+   0x0200 + 3 is the right mouse button; 0x10000 / 0x20000 are Ctrl / Alt. */
+#define DEFAULT_PING1  (0x00010000 | (512 + 3))  /* Ctrl + Right Mouse */
+#define DEFAULT_PING2  (0x00020000 | (512 + 3))  /* Alt + Right Mouse  */
+#define DEFAULT_PING3  0
+
 /* Gunsight range — KP+ / Enter */
 #define DEFAULT_SCROLL_GUNINCREASE  87   /* SDL_SCANCODE_KP_PLUS */
 #define DEFAULT_SCROLL_GUNDECREASE  40   /* SDL_SCANCODE_RETURN */

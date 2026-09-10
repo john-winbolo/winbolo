@@ -149,6 +149,23 @@ typedef void (*ControlObserverCb)(void *ctx, const struct ControlEvent *evt);
  * cachedEvents). */
 #define MAX_BRAIN_EVENTS 512
 
+/* Received smart pings this client is still drawing. Small: a ping lives
+ * PING_DISPLAY_MS and the server rate-limits each sender, so a full team
+ * cannot keep more than a handful alive at once. Oldest is overwritten when
+ * it fills — a flood should push the stale ones off, not drop the new ones. */
+#define MAX_CLIENT_PINGS 16
+
+/* One received ping, in the shape the renderer wants: who sent it, which
+ * kind, where in WORLD units, and the SDL_GetTicks() millisecond it landed
+ * so the drawer can age it without knowing anything about sim ticks. */
+typedef struct {
+    uint8_t  sender;
+    uint8_t  kind;      /* PING_KIND_* */
+    uint16_t worldX;
+    uint16_t worldY;
+    uint32_t recvMs;
+} ClientPing;
+
 /* A client-side predicted shell, created instantly on fire input
  * and removed once the server has processed the fire tick. */
 typedef struct {
@@ -738,6 +755,15 @@ const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs);
 const ProjectedShell *clientSimGetProjectedShells(const ClientSim *cs);
 const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
 
+/* Copy out the smart pings this client is still showing, newest last, and
+ * drop the ones older than PING_DISPLAY_MS on the way. nowMs is the caller's
+ * SDL_GetTicks() reading — the ping ring is written from the network thread
+ * and read from the render thread, so the clock comes from the caller rather
+ * than being sampled twice. Returns how many entries were written into `out`
+ * (never more than maxOut, never more than MAX_CLIENT_PINGS). */
+int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
+                      ClientPing *out, int maxOut);
+
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained
  * every display tick. NULL when cs is NULL. */
@@ -1279,6 +1305,13 @@ bool    overviewSnapshotFogViewCentre(const OverviewSnapshot *s, float *mapX,
    on it: the first the sim lists at that square, counted from 0. */
 int                      overviewSnapshotItemLabelCount(const OverviewSnapshot *s);
 const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
+
+/* The smart pings the overview draws on the ground, oldest first — the same
+   list clientSimGetPings hands the classic view, taken at fill time so the
+   render half never reads the ring the network thread writes. Always a valid
+   pointer for a non-NULL snapshot; the count is what matters. */
+const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s);
+int               overviewSnapshotPingCount(const OverviewSnapshot *s);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);

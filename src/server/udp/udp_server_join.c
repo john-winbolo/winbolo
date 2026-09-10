@@ -26,17 +26,6 @@
 #include <stdlib.h>  /* getenv, strtoll */
 #include <string.h>  /* memcpy, memset, strncpy, strcmp, strlen */
 
-/* OS cryptographic RNG, used to seed the address-proof cookie secret. */
-#if defined(_WIN32)
-#  include <bcrypt.h>
-#elif defined(__linux__)
-#  include <sys/random.h>  /* getrandom */
-#  include <fcntl.h>       /* open, O_RDONLY (/dev/urandom fallback) */
-#  include <unistd.h>      /* read, close */
-#else
-#  include <stdlib.h>      /* arc4random_buf (macOS/BSD) */
-#endif
-
 #include "transport_udp_internal.h"        /* packHeader, packU32, unpackU32,
                                             * PACKET_HEADER_SIZE, SDL_GetTicks */
 #include "transport_udp_server_internal.h" /* udpServer, srvSendTo, JoinRateEntry,
@@ -73,6 +62,20 @@
 #include "../../winbolonet/winbolonet_server.h" /* winboloNetVerifyClientKey,
                                                  * winboloNetVerifySpectatorKey,
                                                  * winboloNetClientLeaveGame */
+
+/* OS cryptographic RNG, used to seed the address-proof cookie secret. Kept
+ * below the headers above: bcrypt.h uses the Windows base types without
+ * including them itself, so it has to follow the WinSock2.h/windows.h that
+ * platform_net.h pulls in through transport_udp_internal.h. */
+#if defined(_WIN32)
+#  include <bcrypt.h>
+#elif defined(__linux__)
+#  include <sys/random.h>  /* getrandom */
+#  include <fcntl.h>       /* open, O_RDONLY (/dev/urandom fallback) */
+#  include <unistd.h>      /* read, close */
+#else
+#  include <stdlib.h>      /* arc4random_buf (macOS/BSD) */
+#endif
 
 /* ── Deferred WBN PLAYER_JOIN pure core (declared in transport_udp.h) ─
  * Value-only sequencing so the join/reauth/grace/disconnect logic is

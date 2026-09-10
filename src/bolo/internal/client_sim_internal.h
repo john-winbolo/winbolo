@@ -236,6 +236,13 @@ struct ClientSim {
     uint8_t    lastServerArmour;    /* Previous server snapshot armour for death detection */
     uint8_t    brainLastAssistMsg;  /* ASSIST_MSG_* or 0 */
 
+    /* Smart pings this client has been sent and is still drawing. Written by
+     * the EVENT_PING arm in client_snapshot.c, read by the GUI overlay
+     * through clientSimGetPings. A plain array with a write cursor: entries
+     * are expired by age at read time, so nothing has to tick it. */
+    ClientPing  pings[MAX_CLIENT_PINGS];
+    int         pingWriteIdx;
+
     /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
     BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 
@@ -898,5 +905,15 @@ void clientSimSpectatorFeedClear(ClientSim *cs);
  * read (clientSimGetPlayerPing / clientSimGetPlayerPingBand in client_sim.h),
  * so the reset has no business on the public API. */
 void clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum);
+
+/* Record a ping this client should draw. T2: the EVENT_PING arm of the
+ * snapshot ingest is the only caller, and it must stay that way — a ping is
+ * something the server decided this client may see, so a frontend that could
+ * call this could paint a marker nobody sent. A local echo needs no separate
+ * path either, because the server sends the sender its own ping back like
+ * everyone else's. Frontends only read the ring, through clientSimGetPings
+ * (client_sim.h). */
+void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
+                      uint16_t worldX, uint16_t worldY, uint32_t nowMs);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

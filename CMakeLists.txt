@@ -774,6 +774,9 @@ file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
+# The smart-ping glyphs sit in their own folder, so the flat data/ui glob
+# above does not reach them.
+file(GLOB IOS_DATA_UI_PING "${CMAKE_SOURCE_DIR}/data/ui/ping/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
 # About-box markdown docs that live at the repo root but ship in data/
 set(IOS_ABOUT_DOCS
@@ -828,6 +831,9 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
     src/gui/sdl3/minimap_render.c
+    src/gui/sdl3/ping_overlay.cpp
+    src/gui/sdl3/ping_icons.c
+    src/gui/sdl3/ping_marker.c
     src/gui/sdl3/flags.c
     src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/input.c
@@ -923,6 +929,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_SOUNDS}
     ${IOS_DATA_SVG}
     ${IOS_DATA_UI}
+    ${IOS_DATA_UI_PING}
     ${IOS_LANG_FILES}
     ${IOS_ABOUT_DOCS}
     ${IOS_ASSET_CATALOG}
@@ -955,6 +962,9 @@ set_source_files_properties(${IOS_DATA_SVG} PROPERTIES
 set_source_files_properties(${IOS_DATA_UI} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/ui"
 )
+set_source_files_properties(${IOS_DATA_UI_PING} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/ui/ping"
+)
 set_source_files_properties(${IOS_LANG_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/lang"
 )
@@ -972,7 +982,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 )
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES})
@@ -1468,6 +1478,10 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    # Smart-ping pie menu and the markers for pings that have arrived.
+    src/gui/sdl3/ping_overlay.cpp
+    src/gui/sdl3/ping_icons.c
+    src/gui/sdl3/ping_marker.c
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
@@ -2263,6 +2277,10 @@ add_executable(LogViewer
     src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
+    # The replay draws the same smart-ping glyphs the game does, out of the
+    # same loose files.
+    src/gui/sdl3/ping_icons.c
+    src/gui/sdl3/ping_marker.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
@@ -3330,6 +3348,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_open_ideal.c
     tests/unit/test_start_sides.c
     tests/unit/test_lobby_side_axis.c
+    tests/unit/test_lobby_start_shared.c
     tests/unit/test_starts_scatter_separation.c
     tests/unit/test_starts_team_side.c
     tests/unit/test_lobby_team_side_dispatch.c
@@ -3520,6 +3539,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
+    # Smart-ping pure headers — the chord packing and its exact-modifier
+    # match rule, the pie's slice selection (dead zone and the wrap at the
+    # top), and the off-screen edge marker on all four borders and at a
+    # corner. No SDL window, no game.
+    tests/unit/test_ping.c
+    # The CMD_PING arm in server_command_dispatch.c: its state and range
+    # gates, the per-player rate limit, the GameEvent it builds, and the
+    # team-only delivery predicate both snapshot filters share.
+    tests/unit/test_ping_dispatch.c
+    # Smart ping over the wire: the full client -> server -> client path on the
+    # real loopback UDP transport, driven through serverInstanceTick so the
+    # per-frame event-buffer clear that drops a networked ping is exercised.
+    tests/unit/test_ping_network.c
     # Generated lang-name table: K_LANG_NAME_TABLE_SIZE vs the real array
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
@@ -3529,6 +3561,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # game vs log-viewer copies of screenCalcRiver never disagreeing.
     tests/unit/test_screencalc_river.c
     tests/unit/test_client_type.c
+    # The client's tank and lgm live at its slot index; a second JOIN_ACCEPT
+    # with a different slot has to carry them across rather than read slot 0.
+    tests/unit/test_client_slot_reassign.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
     # Mid-sim-frame player removal vs the arrays simRunHalfStep snapshots for
@@ -3841,7 +3876,9 @@ set(_unit_test_names
     command_codec_rating_posted
     command_codec_view_state
     command_codec_view_cycle
+    command_codec_ping
     lobby_claim_start_host_swaps_occupied
+    lobby_claim_start_host_assign_onto_own
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected
     lobby_claim_start_non_host_other_slot_rejected
@@ -4065,6 +4102,7 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    log_roundtrip_ping
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
@@ -4121,6 +4159,10 @@ set(_unit_test_names
     lobby_side_axis_two_team_pair
     lobby_side_axis_pair_classification
     lobby_side_axis_click_targets
+    lobby_start_shared_prefix_len
+    lobby_start_shared_prefix_label
+    lobby_start_shared_name_label
+    lobby_start_shared_owner_fold
     starts_scatter_avoids_existing_tanks
     starts_scatter_falls_back_when_crowded
     starts_side_team_stays_on_its_side
@@ -4345,6 +4387,24 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    ping_binding_encode_decode
+    ping_binding_match
+    ping_binding_direct
+    ping_binding_format
+    ping_pie_slices
+    ping_edge_sides
+    ping_edge_corner
+    ping_rect_inset
+    ping_event_wire
+    ping_dispatch_accepts_and_builds_event
+    ping_dispatch_rejects_lobby
+    ping_dispatch_rejects_empty_slot_and_out_of_range
+    ping_dispatch_map_range_bound
+    ping_dispatch_rejects_bad_kind
+    ping_dispatch_rate_limit
+    ping_dispatch_new_round_clears_rate_limit
+    ping_reaches_team_only
+    ping_network
     lang_name_table
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
@@ -4352,6 +4412,9 @@ set(_unit_test_names
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
+    client_slot_reassign_carries_tank_and_lgm
+    client_slot_reassign_same_slot_is_stable
+    client_slot_reassign_back_to_zero
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy

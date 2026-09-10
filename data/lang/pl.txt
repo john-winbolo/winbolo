@@ -1482,6 +1482,8 @@ STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKliknij, aby wybrać; prawy przycis
 STR_STARTPICK_TIP_FREE=Start #{number}\nKliknij, aby wybrać ten start
 STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nPrzeciągnij, aby przenieść; prawy przycisk, aby przypisać komuś innemu
 STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nKliknij, aby też tu wystartować
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nKliknij, aby też tu wystartować; przeciągnij, aby przenieść; prawy przycisk, aby przypisać komuś innemu
 STR_STARTPICK_YOU=ty
 STR_STARTPICK_SWAP_WITH=Zamień ten start z:
 STR_STARTPICK_ASSIGN_TO=Przypisz start do:
@@ -2021,3 +2023,95 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Ustaw obie drużyny na {string1}\n{player} star
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Drużyny ustawione na {string1}. Kliknij, aby wrócić do własnych startów.
 
 STR_SOUND_LOAD_FAILED=Błąd ładowania efektów dźwiękowych
+
+STR_DLGLOBBY_AWAITING_MAP=Oczekiwanie na serwer...
+STR_DLGSETTINGS_HOSTING_VOICE=Czat głosowy
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Włączone
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Wyłączone
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Bliskość
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Wyłączone odrzuca głos, zamiast przesyłać go komukolwiek. Bliskość nie jest jeszcze zaimplementowana i działa tak samo jak Włączone.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Głos
+STR_DLGSETTINGS_VOICE_LOOPBACK=Testuj mikrofon
+STR_DLGSETTINGS_VOICE_MICGAIN=Wzmocnienie mikrofonu
+STR_DLGSETTINGS_VOICE_LEVEL=Poziom wejścia
+STR_DLGSETTINGS_VOICE_ENABLE=Włącz głos
+STR_DLGSETTINGS_VOICE_MODE=Tryb
+STR_DLGSETTINGS_VOICE_MODE_OFF=Wyłączone
+STR_DLGSETTINGS_VOICE_MODE_PTT=Naciśnij i mów
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Otwarty mikrofon
+STR_DLGSETTINGS_VOICE_PTTKEY=Klawisz do mówienia
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Nadaje
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Nie nadaje
+STR_DLGSETTINGS_VOICE_VOLUME=Głośność głosu
+STR_DLGSETTINGS_VOICE_TANKICONS=Pokazuj ikony mikrofonu nad czołgami
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Usuwanie echa
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Nagrywanie...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Odtwarzanie...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Niedostępne w tym systemie
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Obsługiwane przez system
+STR_DLGSETTINGS_VOICE_MICDEVICE=Mikrofon
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Urządzenie odtwarzające
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Domyślne systemowe
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Ten serwer ma wyłączony czat głosowy
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Naciśnij i mów
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Wycisz mikrofon
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Mówi — kliknij, aby wyciszyć
+STR_PLAYER_TIP_VOICE_IDLE=Ma mikrofon — kliknij, aby wyciszyć
+STR_PLAYER_TIP_VOICE_SELFMUTED=Ma wyłączony mikrofon — kliknij, aby wyciszyć
+STR_PLAYER_TIP_VOICE_NOMIC=Brak mikrofonu — kliknij, aby wyciszyć
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Wyciszony przez ciebie — kliknij, aby wyłączyć wyciszenie
+STR_PLAYER_TIP_VOICE_SELF=Twój mikrofon — kliknij, aby wyciszyć
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=Nie masz mikrofonu
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Twój mikrofon jest wyłączony — kliknij, aby wyłączyć wyciszenie
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=Jak głośno słyszysz tego gracza
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Twój mikrofon i ustawienia głosu
+STR_DLGLOBBY_VOICE_OFF=Głos jest wyłączony
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Ktoś korzysta z czatu głosowego. Twój jest wyłączony — włącz go ikoną koła zębatego obok swojego imienia.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Wyciszony przez ciebie i mówi — kliknij, aby wyłączyć wyciszenie
+STR_DLGSETTINGS_MASTER_VOLUME=Głośność główna
+STR_DLGSETTINGS_EFFECTS_VOLUME=Głośność efektów
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Panel graczy
+
+# Inteligentny ping (menu kołowe)
+MESSAGE_PING_STANDARD={player}: Ping!
+MESSAGE_PING_CAUTION={player}: Uwaga!
+MESSAGE_PING_ASSIST={player}: Pomóż mi!
+MESSAGE_PING_ATTACK={player}: Atakuj!
+MESSAGE_PING_ON_MY_WAY={player}: Już idę!
+MESSAGE_PING_BOT_COMMAND={player}: Rozkaz dla bota
+STR_PING_STANDARD=Ping
+STR_PING_CAUTION=Uwaga
+STR_PING_ASSIST=Pomóż mi
+STR_PING_ATTACK=Atakuj
+STR_PING_ON_MY_WAY=Już idę
+STR_PING_BOT_COMMAND=Rozkaz dla bota
+STR_DLGKEYSETUP_PING=Inteligentny ping
+STR_DLGKEYSETUP_PING_ALT=Inteligentny ping – klawisze alternatywne
+STR_DLGKEYSETUP_PRESSACHORD=Naciśnij klawisz lub przycisk myszy
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Lewy przycisk myszy
+STR_PING_MOUSE_MIDDLE=Środkowy przycisk myszy
+STR_PING_MOUSE_RIGHT=Prawy przycisk myszy
+STR_PING_MOUSE_X1=Mysz 4
+STR_PING_MOUSE_X2=Mysz 5
+STR_DLGKEYSETUP_PING_ALT2=Inteligentny ping – klawisze alternatywne 2

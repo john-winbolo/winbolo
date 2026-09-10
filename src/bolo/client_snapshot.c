@@ -84,6 +84,36 @@
 #include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
+/* The newswire line a received ping posts ("{player}: Attack!"), per
+ * PING_KIND_*. The sim knows lang ids — every message it raises is one — but
+ * it must not reach into src/gui for a drawing table, so the ids live here and
+ * the pie menu's copy (pingKindMessageId, src/gui/ping_kinds.h) stays with the
+ * colours and icons it belongs to.
+ *
+ * Designated indices with no declared size: the array is exactly as long as
+ * the highest kind listed, so a kind added to input_packet.h and forgotten
+ * here leaves it short and the check below fails the build. Nothing can drift
+ * silently in either direction. */
+static const langid kPingMessageIds[] = {
+    [PING_KIND_STANDARD]    = MESSAGE_PING_STANDARD,
+    [PING_KIND_CAUTION]     = MESSAGE_PING_CAUTION,
+    [PING_KIND_ASSIST]      = MESSAGE_PING_ASSIST,
+    [PING_KIND_ATTACK]      = MESSAGE_PING_ATTACK,
+    [PING_KIND_ON_MY_WAY]   = MESSAGE_PING_ON_MY_WAY,
+    [PING_KIND_BOT_COMMAND] = MESSAGE_PING_BOT_COMMAND
+};
+BOLO_STATIC_ASSERT(sizeof(kPingMessageIds) / sizeof(kPingMessageIds[0])
+                       == PING_KIND_COUNT,
+                   every_ping_kind_needs_a_newswire_line);
+
+/* A kind this build does not know falls back to the plain ping line, the same
+ * clamp pingKindMessageId makes — a ping from a newer build reaching an older
+ * one should still say something. */
+static langid clientPingMessageId(uint8_t kind) {
+  if (kind >= PING_KIND_COUNT) kind = PING_KIND_STANDARD;
+  return kPingMessageIds[kind];
+}
+
 /*********************************************************
 *NAME:          clientBuildInputPacket
 *PURPOSE:
@@ -294,6 +324,7 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
       case EVENT_BASE_UPDATE:
       case EVENT_BASE_STOCK:
       case EVENT_EXPLOSION:
+      case EVENT_PING:
         if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
           csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
         }
@@ -653,6 +684,29 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         minesAddItem(&csPtr->sim.mns, events[i].data[0], events[i].data[1]);
         clientSimRecalc(csPtr);
         break;
+      case EVENT_PING: {
+        /* data: [sender, kind, xHi, xLo, yHi, yLo] — a teammate's smart
+           ping. The server has already decided this client is entitled to
+           see it, including the sender's own copy, so there is nothing to
+           filter here. Held in a ring the GUI overlay draws from; bots get
+           it through the brain event buffer above and act on it themselves. */
+        uint8_t  kind = events[i].data[1];
+        uint16_t px = (uint16_t)((events[i].data[2] << 8) | events[i].data[3]);
+        uint16_t py = (uint16_t)((events[i].data[4] << 8) | events[i].data[5]);
+        clientSimAddPing(csPtr, events[i].data[0], kind, px, py, SDL_GetTicks());
+        if (isHuman) {
+          MessageArgs args;
+          memset(&args, 0, sizeof(args));
+          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
+                               args.playerName, sizeof(args.playerName), FALSE);
+          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
+          csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
+                                          newsWireMessage, MESSAGE_NEWSWIRE,
+                                          clientPingMessageId(kind), &args);
+        }
+        break;
+      }
       default:
         break;
       }
