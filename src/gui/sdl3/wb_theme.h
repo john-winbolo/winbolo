@@ -80,11 +80,8 @@ struct WbTheme {
     ImU32 botTagBg;
     ImU32 botTagBorder;
     ImU32 botTagText;
-    /* Bot NAME tag ("GoalHunter") — same bg family, its own border + text so
-     * it reads as a third member of the row-badge set, not a second BOT. */
-    ImU32 brainTagBg;
-    ImU32 brainTagBorder;
-    ImU32 brainTagText;
+    /* (The bot NAME tag's colour is the brain's own — see
+     * lobbyBotBrainTagColors — so it has no theme slot.) */
     /* Bot DIFFICULTY tag — one colour per level, matching the Easy./Medium./
      * Hard. tagline tokens (green / amber / red) so the two readings agree. */
     ImU32 diffEasyTagBg;

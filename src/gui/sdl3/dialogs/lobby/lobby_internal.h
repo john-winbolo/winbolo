@@ -120,6 +120,7 @@ struct LobbyBrainMeta {
     char name[BRAIN_LIST_NAME_LEN];
     char tagline[BRAIN_LIST_TAG_LEN];
     char desc[BRAIN_LIST_DESC_LEN];
+    uint32_t color;        /* 0xRRGGBB the bot's name tag is painted with */
 };
 
 /* Bounding box of interesting (non-sea) terrain in the map preview */
@@ -365,6 +366,13 @@ typedef struct LobbyReelState {
 void lobbyCommandReset(void);
 void lobbySendReadyToggle(ClientSim *cs, bool ready);
 const LobbyBrainMeta *lobbyBrainMetaFor(const char *name);
+
+/* The three colours (bg / text / border) a bot's NAME tag is drawn with on
+ * the player list, from the brain's own colour: the one its about.txt
+ * declares, else the one remembered in the prefs for that name, else one
+ * derived from the name and remembered from then on. */
+void lobbyBotBrainTagColors(ClientSim *cs, int slot,
+                            ImU32 *bg, ImU32 *fg, ImU32 *border);
 void lobbyDrawTagline(const char *tag, float wrapPosX);
 void lobbyGearTooltip(ClientSim *cs, int slot, float s);
 /* Per-difficulty wording (lang ids) and the bot's brain name without its

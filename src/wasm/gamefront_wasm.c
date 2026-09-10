@@ -902,6 +902,10 @@ void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
  * skill-guess callers fall back to their own default. */
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) { (void)out; return false; }
 void gameFrontSetChosenBotDifficulty(uint8_t difficulty) { (void)difficulty; }
+/* No prefs in the browser: a bot's tag colour is never remembered, so the
+ * lobby re-derives it from the name each session (same result every time). */
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb) { (void)botName; (void)rgb; return false; }
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) { (void)botName; (void)rgb; }
 /* No WinBolo.net stats plumbing here either, so the skill guess has nothing
  * to go on: the browser build gets the same Hard every difficulty currently
  * plays like. */

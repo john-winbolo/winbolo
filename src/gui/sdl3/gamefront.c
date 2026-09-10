@@ -2731,6 +2731,37 @@ void gameFrontSetChosenBotDifficulty(uint8_t difficulty) {
   prefsSetString("BOT", "Chosen Difficulty", botDifficultyName(difficulty));
 }
 
+/* Per-bot-name tag colour, kept under "BOT" / "Tag Color <name>" as
+ * "#RRGGBB". Written once when the lobby first derives a colour for a bot
+ * that declares none in its about.txt, read every time after, so the same
+ * bot wears the same colour on every launch. */
+static void gameFrontBotTagColorKey(const char *botName, char *key, size_t keySz) {
+  SDL_snprintf(key, keySz, "Tag Color %s", botName ? botName : "");
+}
+
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb) {
+  char key[96], buff[16];
+  if (!botName || !botName[0] || !rgb) return false;
+  gameFrontBotTagColorKey(botName, key, sizeof(key));
+  prefsGetString("BOT", key, "", buff, (int)sizeof(buff));
+  const char *v = buff;
+  if (*v == '#') v++;
+  if (strlen(v) != 6) return false;
+  char *end = NULL;
+  unsigned long val = strtoul(v, &end, 16);
+  if (!end || *end != '\0') return false;
+  *rgb = (uint32_t)val & 0xFFFFFFu;
+  return true;
+}
+
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
+  char key[96], val[16];
+  if (!botName || !botName[0]) return;
+  gameFrontBotTagColorKey(botName, key, sizeof(key));
+  SDL_snprintf(val, sizeof(val), "#%06X", (unsigned)(rgb & 0xFFFFFFu));
+  prefsSetString("BOT", key, val);
+}
+
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
   char buff[32];
   if (!out) return false;
