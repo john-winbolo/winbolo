@@ -853,5 +853,10 @@ BYTE basesGetNumberOwnedByPlayer(bases *value, BYTE playerNum);
 int basesHalfTickCalulator(int typeSelector);
 
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen);
+/* Clamps every base field a map can supply to the range the rest of the
+ * codebase assumes. The compressed load path memcpys structs wholesale and
+ * reaches none of basesSetBase's clamps, so it must call this afterwards. */
+void basesValidate(bases *value);
+
 
 #endif /* BASES_H */

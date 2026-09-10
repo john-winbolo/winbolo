@@ -3560,6 +3560,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # game vs log-viewer copies of screenCalcRiver never disagreeing.
     tests/unit/test_screencalc_river.c
     tests/unit/test_client_type.c
+    # A downloaded map's bases/pillboxes/starts are memcpy'd from the wire, so
+    # the file-load setters' per-field clamps never run on that path.
+    tests/unit/test_map_load_validate.c
     # The client's tank and lgm live at its slot index; a second JOIN_ACCEPT
     # with a different slot has to carry them across rather than read slot 0.
     tests/unit/test_client_slot_reassign.c
@@ -4410,6 +4413,9 @@ set(_unit_test_names
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
+    map_load_clamps_base_fields
+    map_load_clamps_pill_fields
+    map_load_clamps_start_dir
     client_slot_reassign_carries_tank_and_lgm
     client_slot_reassign_same_slot_is_stable
     client_slot_reassign_back_to_zero

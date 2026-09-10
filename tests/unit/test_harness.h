@@ -1576,6 +1576,15 @@ int run_client_type_name_round_trips(void);
 int run_client_slot_reassign_carries_tank_and_lgm(void);
 int run_client_slot_reassign_same_slot_is_stable(void);
 int run_client_slot_reassign_back_to_zero(void);
+
+/* Downloaded-map clamps (test_map_load_validate.c): mapLoadCompressedMap
+ * memcpys the wire bases/pillboxes/starts wholesale, so none of the per-field
+ * clamps the file-load setters apply have run. Asserts a hostile blob cannot
+ * leave an out-of-range owner, base stock, pill armour or speed, or start dir
+ * in live game state. */
+int run_map_load_clamps_base_fields(void);
+int run_map_load_clamps_pill_fields(void);
+int run_map_load_clamps_start_dir(void);
 int run_players_oob_index_safe(void);
 int run_control_oob_player_dropped(void);
 
