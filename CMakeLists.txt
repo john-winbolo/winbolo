@@ -3357,6 +3357,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_base_death_prediction.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
@@ -4188,6 +4189,9 @@ set(_unit_test_names
     bases_closest_for_player
     base_stock_visibility
     base_armour_fog_of_war
+    base_armour_reveal_in_range
+    base_death_prediction_replay_tick
+    base_death_prediction_authority
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec

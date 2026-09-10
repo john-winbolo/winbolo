@@ -913,7 +913,18 @@ int run_voice_talking_clears_on_leave(void);
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
+int run_base_armour_reveal_in_range(void);
 int run_two_clients_full_sync_independent(void);
+
+/* Base-death prediction (test_base_death_prediction.c): the collision path
+ * resolves a base our own predicted shell is about to kill against the tick
+ * being replayed, so a reconciliation replay spanning the hit sees a wall
+ * before it and open ground after. */
+int run_base_death_prediction_replay_tick(void);
+/* Authoritative armour settles the stamp by the server's processed input
+ * tick: kept while still ahead and one hit from dead, dropped once disproved,
+ * and a landing that was waiting on an earlier hit's armour is armed. */
+int run_base_death_prediction_authority(void);
 
 /* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
  * inAnyViewport cover the recipient's tank screen and each owned/allied

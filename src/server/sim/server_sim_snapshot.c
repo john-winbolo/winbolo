@@ -1313,7 +1313,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             /* Per-recipient base visibility (owner is always real):
              *  - armour is public base condition: real for neutral/own/allied bases;
              *    an enemy base reports BASE_FULL_ARMOUR while alive (exact value hidden)
-             *    but its true armour once dead/capturable, so the capturable flip shows.
+             *    but its true armour once dead/capturable, so the capturable flip shows,
+             *    and once the recipient's tank is inside BASE_PREDICT_REVEAL_RANGE so
+             *    their client can predict the square becoming drivable rather than
+             *    learn it a round trip late. basesArmourVisibleToPlayer holds all
+             *    three cases and is shared with the event cull in
+             *    transport_udp_server.c so the two cannot drift.
              *    Mirrors the brain fog-of-war in basesGetBrainBaseInRect.
              *  - shells/mines are the private ammo reserve: real for every
              *    neutral/allied base, zeroed for enemy bases. Always sending a
@@ -1323,7 +1328,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 BYTE owner = basesOut[i].owner;
                 bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
                                 playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
-                if (!friendly && basesOut[i].armour > MIN_ARMOUR_CAPTURE) {
+                if (!basesArmourVisibleToPlayer(&sim->sim, (BYTE)i, clientIdx)) {
                     basesOut[i].armour = BASE_FULL_ARMOUR;
                 }
                 if (!friendly) {
