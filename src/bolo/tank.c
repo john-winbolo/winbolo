@@ -758,48 +758,6 @@ void tankSetDestroyed(tank *value, bool destroyed) {
 }
 
 /*********************************************************
-*NAME:          tankGetArmourForWire
-*PURPOSE:
-*  Returns the armour byte a snapshot carries for this tank.
-*
-*  TankSnapshot sends armour as a plain U8 with nowhere to
-*  put a flag, so a destroyed tank goes out as
-*  TANK_FULL_ARMOUR + 1. This and tankSetArmourFromWire are
-*  the only two places that know that encoding.
-*
-*ARGUMENTS:
-*  value - Pointer to the tank structure
-*********************************************************/
-BYTE tankGetArmourForWire(tank *value) {
-  if ((*value)->destroyed) {
-    return (BYTE)(TANK_FULL_ARMOUR + 1);
-  }
-  return ((*value)->armour);
-}
-
-/*********************************************************
-*NAME:          tankSetArmourFromWire
-*PURPOSE:
-*  Applies a snapshot's armour byte to this tank, turning
-*  the destroyed sentinel back into the explicit state so
-*  everything above the codec asks tankIsDestroyed instead
-*  of comparing an armour value.
-*
-*ARGUMENTS:
-*  value      - Pointer to the tank structure
-*  wireArmour - The armour byte the snapshot carried
-*********************************************************/
-void tankSetArmourFromWire(tank *value, BYTE wireArmour) {
-  if (wireArmour > TANK_FULL_ARMOUR) {
-    (*value)->destroyed = TRUE;
-    (*value)->armour = 0;
-  } else {
-    (*value)->destroyed = FALSE;
-    (*value)->armour = wireArmour;
-  }
-}
-
-/*********************************************************
 *NAME:          tankApplyDamage
 *PURPOSE:
 *  Takes damage off a tank's armour and reports whether it

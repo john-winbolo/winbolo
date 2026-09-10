@@ -1466,7 +1466,7 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int i = 0; i < pf_->tankCount; i++) {
             const TankSnapshot *ts = &pf_->tanks[i];
             if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) continue; /* stub */
-            if (ts->tankStatus & 0xF0) continue;                    /* dead */
+            if (ts->tankStatus & (TANK_STATUS_DEAD | TANK_STATUS_DESTROYED)) continue;
             int pn = ts->playerNum & TANK_SNAPSHOT_PLAYER_MASK;
             float tx = ts->worldX / 256.0f;
             float ty = ts->worldY / 256.0f - 0.5f;
@@ -5117,9 +5117,10 @@ static void appRender(BrainTestApp *app) {
                  * janky during scrubbing). */
                 t->angle     = (TURNTYPE)((float)ts->angle  / 256.0f);
                 t->speed     = (SPEEDTYPE)((float)ts->speed / 256.0f);
-                t->onBoat    = (ts->tankStatus & 0x0F) ? TRUE : FALSE;
+                t->onBoat    = (ts->tankStatus & TANK_STATUS_ON_BOAT) ? TRUE : FALSE;
+                t->destroyed = (ts->tankStatus & TANK_STATUS_DESTROYED) ? TRUE : FALSE;
                 t->deathWait = ts->deathWait;
-                tankSetArmourFromWire(&t, ts->armour);
+                t->armour    = ts->armour;
                 t->shells    = ts->shells;
                 t->mines     = ts->mines;
                 t->trees     = ts->trees;
