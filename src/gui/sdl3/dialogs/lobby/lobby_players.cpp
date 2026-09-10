@@ -2510,7 +2510,8 @@ static void renderBotAiConfig(ClientSim *cs,
      * 50px row indent so the form spans the full team width.) */
     ImGui::PushID(slot);
 
-    /* Two side-by-side groups: Name on the left, Bot Code on the right.
+    /* Side-by-side groups (Name, Bot Code, Mode, Difficulty), wrapping
+     * onto further rows when the team panel is too narrow for them.
      * BeginGroup + SameLine works inside the outer table cell (which is
      * NoClip-enabled), unlike a nested BeginTable which gets clipped to
      * the parent's narrow column width and squashes the controls. */
@@ -2530,7 +2531,7 @@ static void renderBotAiConfig(ClientSim *cs,
      * the FrameBorderSize when ItemAdd commits it. An explicit
      * anchor sidesteps that entirely. */
     ImVec2 formAnchor = ImGui::GetCursorScreenPos();
-    /* Nudge all three sub-groups 2px down (purely cosmetic — the
+    /* Nudge the whole form 2px down (purely cosmetic — the
      * AiConfig content felt visually crowded against the bot row
      * above). The end-of-function SetCursorScreenPos subtracts the
      * same nudge so the parent container's total height is
@@ -2538,11 +2539,70 @@ static void renderBotAiConfig(ClientSim *cs,
     const float kFormNudgeY = 2.0f;
     formAnchor.y += kFormNudgeY;
 
+    /* ── Flow layout ──────────────────────────────────────────────────
+     * The groups (Name, Bot Code, Mode, Difficulty) run left to right
+     * along a row while they fit, and wrap onto a further row when they
+     * do not. Each one is measured BEFORE it is placed, so a group that
+     * has no room starts a new row instead of being drawn under the Done
+     * button or off the right of the team panel.
+     *
+     * The right edge is worked out once and used by every row: the panel's
+     * right edge, less the room the Done button keeps for itself and the
+     * window's own padding. The button only sits on the top row, but a row
+     * that stopped short of it and one that ran past it would not line up,
+     * and the reserve is small enough not to cost a row anything. */
+    const ImGuiStyle &fst = ImGui::GetStyle();
+    const float kGroupGapX   =  24.0f * s;  /* between groups on a row */
+    const float kRowGapY     =   8.0f * s;  /* between wrapped rows */
+    const float kDoneReserve = 100.0f * s;  /* room kept for Done */
+    const float winRightX =
+        ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
+    const float flowRightX = winRightX - kDoneReserve - fst.WindowPadding.x;
+
+    float flowX       = formAnchor.x;  /* where the next group starts */
+    float flowY       = formAnchor.y;
+    float rowBottomY  = formAnchor.y;  /* lowest point on the current row */
+    float formBottomY = formAnchor.y;  /* lowest point over every row */
+    bool  rowHasGroup = false;
+
+    /* Where a group of this width goes: beside the previous one, or at the
+     * start of a new row when it would cross the right edge. The first
+     * group on a row is placed however wide it is — there is nowhere
+     * narrower to send it, and wrapping it would leave an empty row. */
+    auto flowPlace = [&](float groupW) -> ImVec2 {
+        if (rowHasGroup && flowX + groupW > flowRightX) {
+            flowY = rowBottomY + kRowGapY;
+            flowX = formAnchor.x;
+            rowBottomY = flowY;
+            rowHasGroup = false;
+        }
+        return ImVec2(flowX, flowY);
+    };
+    /* Called straight after the group's EndGroup, while it is still the
+     * current item, so the cursor moves on by what the group really
+     * measured — the width handed to flowPlace is only a forecast, and the
+     * difficulty group's wrapped description makes it wider than its
+     * combo. Also feeds the row's and the form's bottom. */
+    auto flowPlaced = [&]() {
+        const ImVec2 rmax = ImGui::GetItemRectMax();
+        if (rmax.y > rowBottomY)  rowBottomY  = rmax.y;
+        if (rmax.y > formBottomY) formBottomY = rmax.y;
+        flowX = rmax.x + kGroupGapX;
+        rowHasGroup = true;
+    };
+
     /* Name group. */
-    ImGui::SetCursorScreenPos(formAnchor);
+    const float kNameInputW = 180.0f * s;
+    const float diceBtnW =
+        ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_REROLL)).x
+        + fst.FramePadding.x * 2.0f;
+    const float nameGroupW = ImMax(
+        ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_NAME)).x,
+        kNameInputW + fst.ItemSpacing.x + diceBtnW);
+    ImGui::SetCursorScreenPos(flowPlace(nameGroupW));
     ImGui::BeginGroup();
     ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_NAME));
-    ImGui::SetNextItemWidth(180.0f * s);
+    ImGui::SetNextItemWidth(kNameInputW);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     nameChanged = ImGui::InputText("##botname", nameBuf, sizeof(nameBuf),
                                    ImGuiInputTextFlags_EnterReturnsTrue);
@@ -2553,23 +2613,20 @@ static void renderBotAiConfig(ClientSim *cs,
         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_BOTCFG_REROLL_TIP));
     }
     ImGui::EndGroup();
-    float nameGroupRightX = ImGui::GetItemRectMax().x;
-    float nameGroupBottomY = ImGui::GetItemRectMax().y;
+    flowPlaced();
 
-    /* Bot Code group, right of the Name group at the same anchor Y.
+    /* Bot Code group, next in the flow after the Name group.
      * Hidden when the catalogue holds a single brain: there is nothing to
      * choose, and a one-entry dropdown just invites the question "what else
      * is there?". A dev tree that has frozen a second brain alongside the
      * shipping one still gets the combo. */
     bool  botCodeShown  = (bl->count > 1);
-    /* Right edge / bottom of the last group placed on the form's top row,
-     * so the next group can sit beside it and the form can size to the
-     * tallest. Starts at the Name group. */
-    float lastGroupRightX  = nameGroupRightX;
     const float comboW  = 240.0f * s;
     if (botCodeShown) {
-        float bcX = nameGroupRightX + 24.0f * s;
-        ImGui::SetCursorScreenPos(ImVec2(bcX, formAnchor.y));
+        const float bcGroupW = ImMax(
+            ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_CODE)).x,
+            comboW);
+        ImGui::SetCursorScreenPos(flowPlace(bcGroupW));
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_CODE));
         uint8_t curIdx = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
@@ -2613,7 +2670,7 @@ static void renderBotAiConfig(ClientSim *cs,
             ImGui::EndCombo();
         }
         ImGui::EndGroup();
-        lastGroupRightX = ImGui::GetItemRectMax().x;
+        flowPlaced();
     }
 
     /* ── Mode and Difficulty groups ─────────────────────────────────────────
@@ -2633,9 +2690,12 @@ static void renderBotAiConfig(ClientSim *cs,
     const BrainMode *modeSel = (modes != NULL) ? &modes->modes[curMode] : NULL;
     const uint8_t curPers = clientSimGetLobbyBotPersonality(cs, (BYTE)(slot));
 
+    const float kModeComboW = 160.0f * s;
     if (modes != NULL) {
-        float mdX = lastGroupRightX + 24.0f * s;
-        ImGui::SetCursorScreenPos(ImVec2(mdX, formAnchor.y));
+        const float mdGroupW = ImMax(
+            ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_MODE)).x,
+            kModeComboW);
+        ImGui::SetCursorScreenPos(flowPlace(mdGroupW));
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_MODE));
         const char *modeItems[BRAIN_MODES_MAX];
@@ -2643,7 +2703,7 @@ static void renderBotAiConfig(ClientSim *cs,
             modeItems[m] = modes->modes[m].label;
         }
         int mode = curMode;
-        ImGui::SetNextItemWidth(160.0f * s);
+        ImGui::SetNextItemWidth(kModeComboW);
         if (ImGui::Combo("##botmode", &mode, modeItems, modes->modeCount) &&
             mode >= 0 && mode < modes->modeCount) {
             /* A mode change carries the new mode's own default level: the
@@ -2657,13 +2717,18 @@ static void renderBotAiConfig(ClientSim *cs,
             gameFrontSetChosenBotModeAndLevel(nm->key, nm->levels[lvl].key);
         }
         ImGui::EndGroup();
-        lastGroupRightX = ImGui::GetItemRectMax().x;
+        flowPlaced();
     }
 
-    float diffGroupBottomY = 0.0f;
+    const float kDiffComboW = 110.0f * s;
     if (modeSel != NULL) {
-        float dfX = lastGroupRightX + 24.0f * s;
-        ImGui::SetCursorScreenPos(ImVec2(dfX, formAnchor.y));
+        /* The description below the combo wraps to this group's own width,
+         * so the combo alone decides where the group goes. */
+        const float dfGroupW = ImMax(
+            ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY)).x,
+            kDiffComboW);
+        const ImVec2 dfPos = flowPlace(dfGroupW);
+        ImGui::SetCursorScreenPos(dfPos);
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
         /* The default mode's easy / medium / hard keep their translated
@@ -2677,7 +2742,7 @@ static void renderBotAiConfig(ClientSim *cs,
                 : modeSel->levels[l].label;
         }
         int diff = curLevel;
-        ImGui::SetNextItemWidth(110.0f * s);
+        ImGui::SetNextItemWidth(kDiffComboW);
         if (ImGui::Combo("##diff", &diff, levelItems, modeSel->levelCount) &&
             diff >= 0 && diff < modeSel->levelCount) {
             lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
@@ -2691,13 +2756,13 @@ static void renderBotAiConfig(ClientSim *cs,
                                               modeSel->levels[diff].key);
         }
         /* Description of the CURRENT difficulty. Wrapped to whatever is
-         * left between this group and the Done button on the form's right
-         * edge, capped so it doesn't turn into one very long line on a wide
-         * window and floored so a narrow one still gets a readable column
-         * (the text goes taller instead, which the row height follows). */
-        const float doneReserve = 100.0f * s;
-        float winRightX = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
-        float descWrapW = (winRightX - doneReserve) - dfX;
+         * left between this group and the right edge of the row it landed
+         * on — a group that wrapped onto a row of its own has the full
+         * width. Capped so it doesn't turn into one very long line on a
+         * wide window and floored so a narrow one still gets a readable
+         * column (the text goes taller instead, which the row height
+         * follows). */
+        float descWrapW = flowRightX - dfPos.x;
         if (descWrapW > 300.0f * s) descWrapW = 300.0f * s;
         if (descWrapW < 140.0f * s) descWrapW = 140.0f * s;
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + descWrapW);
@@ -2711,7 +2776,7 @@ static void renderBotAiConfig(ClientSim *cs,
         }
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
-        diffGroupBottomY = ImGui::GetItemRectMax().y;
+        flowPlaced();
     }
 
     if (diceClicked) {
@@ -2749,37 +2814,44 @@ static void renderBotAiConfig(ClientSim *cs,
      * its own group above. */
     const bool kShowAiOptions = false;
 
-    /* ── Personality dropdown ─────────────────────────────────── */
+    /* ── Personality dropdown ─────────────────────────────────────
+     * Joins the same flow as the other groups if it is ever turned on,
+     * so it wraps with them rather than shoving them off the row. */
     if (kShowAiOptions) {
-        ImGui::SameLine(0.0f, 16.0f * s);
+        const float kPersComboW = 110.0f * s;
+        const float persGroupW = ImMax(
+            ImGui::CalcTextSize(
+                langGetText(STR_DLGLOBBY_BOTCFG_PERSONALITY)).x,
+            kPersComboW);
+        ImGui::SetCursorScreenPos(flowPlace(persGroupW));
+        ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_PERSONALITY));
-        ImGui::SameLine();
         const char *persItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_NORMAL),
                                     langGetText(STR_DLGLOBBY_BOTCFG_AGGRESSIVE),
                                     langGetText(STR_DLGLOBBY_BOTCFG_DEFENSIVE),
                                     langGetText(STR_DLGLOBBY_BOTCFG_SNIPER) };
         int pers = clientSimGetLobbyBotPersonality(cs, (BYTE)(slot));
         if (pers < 0 || pers > 3) pers = 0;
-        ImGui::SetNextItemWidth(110.0f * s);
+        ImGui::SetNextItemWidth(kPersComboW);
         if (ImGui::Combo("##pers", &pers, persItems, 4)) {
             lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
                 (uint8_t)curLevel, (uint8_t)pers,
                 clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
         }
+        ImGui::EndGroup();
+        flowPlaced();
     }
 
-    /* ── Done group — anchored to formAnchor.y so all three sub-
-     * groups (Name / Bot Code / Done) sit on the same top Y. The
-     * "Hello" spacer above the button is a temporary debug label;
+    /* ── Done group — anchored to formAnchor.y so it sits on the same
+     * top Y as the form's first row, wherever the groups below it wrap
+     * to. The "Hello" spacer above the button is a temporary debug label;
      * change back to a blank string once alignment is confirmed. */
     {
         const char *doneLbl = langGetText(STR_DLGLOBBY_BOTCFG_DONE);
         float doneW = ImGui::CalcTextSize(doneLbl).x
-                    + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImVec2 winPos  = ImGui::GetWindowPos();
-        float winRight = winPos.x + ImGui::GetWindowSize().x;
+                    + fst.FramePadding.x * 2.0f;
         float padR     = 20.0f * s;
-        float targetScreenX = winRight - doneW - padR;
+        float targetScreenX = winRightX - doneW - padR;
         ImGui::SetCursorScreenPos(ImVec2(targetScreenX, formAnchor.y));
         ImGui::BeginGroup();
         /* Invisible spacer that advances the cursor exactly the
@@ -2796,20 +2868,17 @@ static void renderBotAiConfig(ClientSim *cs,
         ImGui::EndGroup();
     }
 
-    /* Restore the cursor below all three groups so any subsequent
-     * widgets in the AiConfig sub-row land underneath. Subtract
-     * kFormNudgeY from the final Y so the 2px we shifted the
-     * contents down doesn't grow the parent container. */
-    float bottomY = nameGroupBottomY;
-    float curBotBottom = ImGui::GetItemRectMax().y;
-    if (curBotBottom > bottomY) bottomY = curBotBottom;
-    /* The difficulty group carries the wrapped description, so it is
-     * usually the tallest of the three — the form has to reserve its
-     * height or the description bleeds into the row below. */
-    if (diffGroupBottomY > bottomY) bottomY = diffGroupBottomY;
+    /* Restore the cursor below every row the flow produced so any
+     * subsequent widgets in the AiConfig sub-row land underneath, and the
+     * table row grows to hold two or three rows exactly as it already grew
+     * for the wrapped difficulty description. Subtract kFormNudgeY from
+     * the final Y so the 2px we shifted the contents down doesn't grow the
+     * parent container. */
+    float bottomY = formBottomY;
+    float doneBottomY = ImGui::GetItemRectMax().y;  /* the Done group */
+    if (doneBottomY > bottomY) bottomY = doneBottomY;
     ImGui::SetCursorScreenPos(
-        ImVec2(formAnchor.x,
-               bottomY - kFormNudgeY + ImGui::GetStyle().ItemSpacing.y));
+        ImVec2(formAnchor.x, bottomY - kFormNudgeY + fst.ItemSpacing.y));
 
     ImGui::PopID();
     ImGui::Spacing();
