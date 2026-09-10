@@ -172,3 +172,50 @@ int run_replay_roundtrip_world(void) {
     replayHarnessStop(&h);
     return 0;
 }
+
+/* A base that changes hands because its owner left the game goes through
+ * basesMigrate, which writes log_BaseSetOwner for each base it moves. The
+ * record has to name the base and the new owner in that order; a record
+ * that names the owner where the base index goes puts the change on the
+ * wrong base, and the replay shows a base the sim never touched changing
+ * hands while the one that moved stays put. */
+int run_replay_roundtrip_base_migrate(void) {
+    ReplayHarness h;
+    GameSim *gs;
+    base firstBase;
+    BYTE oldOwner;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "migrate", "Tester"),
+                  "could not start recording");
+    gs = serverSimGetGameSim(h.sim);
+    UT_ASSERT_MSG(gs != NULL, "no GameSim");
+
+    replayHarnessTick(&h, 4);
+
+    UT_ASSERT_MSG(basesGetNumBases(&gs->bs) >= 1, "fixture map has no bases");
+    memset(&firstBase, 0, sizeof(firstBase));
+    basesGetBase(&gs->bs, &firstBase, 1);
+    oldOwner = firstBase.owner;
+    UT_ASSERT_MSG(oldOwner != 0,
+                  "base 1 already belongs to player 0, so migrating it "
+                  "would change nothing");
+
+    basesMigrate(gs, oldOwner, 0);
+
+    memset(&firstBase, 0, sizeof(firstBase));
+    basesGetBase(&gs->bs, &firstBase, 1);
+    UT_ASSERT_MSG(firstBase.owner == 0, "base 1 owner is %d, expected 0",
+                  firstBase.owner);
+
+    replayHarnessTick(&h, 6);
+
+    UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+    UT_ASSERT_MSG(replayHarnessDecode(&h),
+                  "replay did not decode to end-of-log");
+    UT_ASSERT_MSG(replayHarnessCompare(&h), "replayed world differs: %s",
+                  replayHarnessDiff(&h));
+
+    replayHarnessStop(&h);
+    return 0;
+}

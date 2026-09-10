@@ -774,6 +774,9 @@ int run_log_roundtrip_tank_stock_record(void);
  * round is far shorter than the interval between snapshots, so only the
  * per-change events can carry them. */
 int run_replay_roundtrip_world(void);
+/* Same fixture: a base moved by basesMigrate (its owner left the game) is on
+ * the same base, with the same new owner, after replay. */
+int run_replay_roundtrip_base_migrate(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
