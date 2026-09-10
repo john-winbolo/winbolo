@@ -1529,14 +1529,16 @@ int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
 
 /* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's
- * running-game / has-a-tank / known-kind gates, the per-player rate limit,
- * the GameEvent an accepted ping turns into, and the team-only delivery
- * predicate both copies of the snapshot filter call. */
+ * running-game / occupied-slot / known-kind gates, the per-player rate limit
+ * and its reset at a round change, the GameEvent an accepted ping turns into
+ * (including the retry when the frame's event buffer is full), and the
+ * team-only delivery predicate both copies of the snapshot filter call. */
 int run_ping_dispatch_accepts_and_builds_event(void);
 int run_ping_dispatch_rejects_lobby(void);
-int run_ping_dispatch_rejects_tankless_and_spectator(void);
+int run_ping_dispatch_rejects_empty_slot_and_out_of_range(void);
 int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
+int run_ping_dispatch_new_round_clears_rate_limit(void);
 int run_ping_reaches_team_only(void);
 
 /* Smart ping across the wire (test_ping_network.c): the full client -> server

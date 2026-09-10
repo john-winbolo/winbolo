@@ -862,10 +862,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
     }
     case CMD_PING: {
         /* A ping is a game-time signal drawn on the map, so it needs a
-         * running game and a sender that holds a player slot in it: a lobby
-         * sender has no map to point at, and an empty slot is somebody who
-         * has left. Being dead is fine — a player waiting to respawn has as
-         * much to say about the map as anyone. */
+         * running game and a sender that still occupies a player slot in it:
+         * a lobby sender has no map to point at, and an empty slot is
+         * somebody who has left. The test is occupancy, not a live tank —
+         * being dead is fine, because a player waiting to respawn has as much
+         * to say about the map as anyone. */
         const CmdPing *p = &cmd->u.ping;
         BYTE slot = (BYTE)senderSlot;
         uint32_t now = sim->tick;

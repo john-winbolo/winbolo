@@ -4380,6 +4380,7 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    ping_dispatch_new_round_clears_rate_limit
     lang_name_table
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross

@@ -742,8 +742,22 @@ bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender);
  * CMD_PING arm runs during packet receive, before that clear, so it records the
  * ping instead of buffering it and this is the single point at which an
  * EVENT_PING enters sim->events. A ping therefore survives to the UDP event
- * drain that runs after the tick, and is delivered exactly once. */
+ * drain that runs after the tick, and is delivered exactly once.
+ *
+ * A ping the frame's event buffer has no room for keeps its pending flag and
+ * is buffered by a later tick instead of being dropped: EVENT_PING is a
+ * reliable event and its sender was already told CMD_OK. */
 void serverSimFlushPendingPings(ServerSim *sim);
+
+/* Return every slot's smart-ping state to what a fresh sim has: the pings
+ * accepted but not yet buffered, and the rate limiter that governs them.
+ * Called wherever a round starts, because sim->tick restarts at 0 there. A
+ * stamp left over from the last round is a tick number on a clock that has
+ * since been rewound, so the new round's clock walks back through it: the
+ * arm measures "now + 1 - stamp" against a ping sent minutes ago in another
+ * round and refuses one the player is entitled to. One call, so the pending
+ * record and the limiter that produced it can never be cleared apart. */
+void serverSimResetPingState(ServerSim *sim);
 
 /* serverSimGetCompressedMap over one slot's copy of the terrain and its record
  * of the pill squares, with the live bases and starts. The blob a client

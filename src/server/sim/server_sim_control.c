@@ -113,6 +113,14 @@ void serverSimFlushPendingPings(ServerSim *sim) {
     if (sim == NULL) return;
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->hasPendingPing[i]) continue;
+        /* A full frame buffer is a wait, not a loss. serverSimAddEvent drops
+         * silently once the buffer is full, and this event must not be one of
+         * the drops: EVENT_PING is reliable, and its sender has already been
+         * answered CMD_OK, so a dropped one is a marker the player watched
+         * themselves place that nobody — including them — ever sees. Leave the
+         * pending flag set and let a later tick, with room again, buffer it.
+         * Late by a frame or two beats gone. */
+        if (sim->eventCount >= MAX_SNAPSHOT_EVENTS) break;
         sim->hasPendingPing[i] = false;
         /* Buffer the ping into the freshly-cleared per-frame event buffer so
          * both the per-client snapshot build and the UDP event drain (both run
@@ -120,6 +128,14 @@ void serverSimFlushPendingPings(ServerSim *sim) {
          * so this is the one and only add for this ping. */
         serverSimAddEvent(sim, &sim->pendingPing[i]);
     }
+}
+
+void serverSimResetPingState(ServerSim *sim) {
+    if (sim == NULL) return;
+    memset(sim->hasPendingPing, 0, sizeof(sim->hasPendingPing));
+    memset(sim->pingLastTick, 0, sizeof(sim->pingLastTick));
+    memset(sim->pingBurstTicks, 0, sizeof(sim->pingBurstTicks));
+    memset(sim->pingBurstIdx, 0, sizeof(sim->pingBurstIdx));
 }
 
 void serverSimClearBalanceProposal(ServerSim *sim) {

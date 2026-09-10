@@ -6,7 +6,7 @@
  * server_command_dispatch.c has more gates than most:
  *
  *   - a running game (a lobby has no map to point at),
- *   - a sender that actually holds a tank,
+ *   - a sender that still occupies a player slot (dead is fine; empty is not),
  *   - a kind this build knows,
  *   - a position on the map,
  *   - and a rate limit, so a held key cannot machine-gun the team's view.
@@ -104,7 +104,7 @@ int run_ping_dispatch_accepts_and_builds_event(void) {
     pd_clear_events(sim);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_ATTACK, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_OK,
-                  "a running game with a live tank must accept a ping");
+                  "a running game with an occupied slot must accept a ping");
 
     /* The arm records, it does not buffer: the event must still be absent from
      * sim->events, and waiting in the pending slot. Buffering at dispatch time
@@ -146,6 +146,84 @@ int run_ping_dispatch_accepts_and_builds_event(void) {
                   "a second flush re-buffered the ping (count now %d)",
                   (int)serverSimGetEventCount(sim));
 
+    /* A frame with no room left in the event buffer must postpone the ping,
+     * not eat it: the sender has already been answered CMD_OK, and EVENT_PING
+     * is reliable, so a dropped one is a marker the player watched themselves
+     * place that nobody ever sees. Filling the buffer is a single assignment —
+     * what it holds doesn't matter, only that serverSimAddEvent would refuse. */
+    pd_clear_events(sim);
+    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    UT_ASSERT(pd_send(sim, 0, PING_KIND_ATTACK, PD_WORLD_X, PD_WORLD_Y)
+                  == CMD_OK);
+    sim->eventCount = MAX_SNAPSHOT_EVENTS;
+    serverSimFlushPendingPings(sim);
+    UT_ASSERT_MSG(pd_has_pending(sim, 0),
+                  "a flush with no buffer room dropped the ping instead of "
+                  "leaving it pending for the next tick");
+    UT_ASSERT_MSG(serverSimGetEventCount(sim) == MAX_SNAPSHOT_EVENTS,
+                  "the full buffer grew past its cap");
+
+    /* Next tick, with room again, it goes out. */
+    sim->eventCount = 0;
+    serverSimFlushPendingPings(sim);
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "the retried ping is still pending");
+    UT_ASSERT_MSG(serverSimGetEventCount(sim) == 1,
+                  "the retried ping buffered %d events, expected 1",
+                  (int)serverSimGetEventCount(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_ping_dispatch_new_round_clears_rate_limit(void) {
+    ServerSim *sim = ut_make_running_sim("Pinger");
+    int i;
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    pd_clear_events(sim);
+
+    /* Spend the whole burst allowance in the round that is ending, so the
+     * ring is full and its oldest entry is the round's first tick. That is
+     * the state that goes wrong: the rate limiter stamps sim->tick, and the
+     * next round rewinds sim->tick to 0, so a stamp left behind sits in the
+     * new round's future — the arm then measures the new round's first ping
+     * against a ping sent in the last one and calls it a cooldown. */
+    for (i = 0; i < PING_RATE_BURST; i++) {
+        UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD,
+                              PD_WORLD_X, PD_WORLD_Y) == CMD_OK,
+                      "ping %d of the previous round's burst was refused", i);
+        pd_advance(sim, PING_RATE_MIN_GAP_TICKS);
+        pd_clear_events(sim);
+    }
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
+                      == CMD_REJECT_COOLDOWN,
+                  "the previous round's allowance should now be spent");
+
+    /* A new round, the same way the harness started the first one. */
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->tick == 0, "a new round did not rewind the clock");
+    UT_ASSERT_MSG(playersIsInUse(&sim->sim.plyrs, 0),
+                  "the player did not survive the round change");
+    pd_clear_events(sim);
+
+    /* First ping of the new round, at its first ticks, must land. */
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
+                      == CMD_OK,
+                  "the new round's first ping was refused as a cooldown for a "
+                  "ping sent in the previous round");
+    UT_ASSERT_MSG(pd_has_pending(sim, 0),
+                  "the accepted ping left no pending record");
+
+    /* And the fresh allowance is a whole burst, not the remains of one. */
+    pd_clear_events(sim);
+    for (i = 1; i < PING_RATE_BURST; i++) {
+        pd_advance(sim, PING_RATE_MIN_GAP_TICKS);
+        UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD,
+                              PD_WORLD_X, PD_WORLD_Y) == CMD_OK,
+                      "ping %d of the new round's burst was refused", i + 1);
+        pd_clear_events(sim);
+    }
+
     serverSimDestroy(sim);
     return 0;
 }
@@ -170,7 +248,7 @@ int run_ping_dispatch_rejects_lobby(void) {
     return 0;
 }
 
-int run_ping_dispatch_rejects_tankless_and_spectator(void) {
+int run_ping_dispatch_rejects_empty_slot_and_out_of_range(void) {
     ServerSim *sim = ut_make_running_sim("Pinger");
     UT_ASSERT(sim != NULL);
     pd_clear_events(sim);
