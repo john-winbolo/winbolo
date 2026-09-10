@@ -1659,7 +1659,7 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 twx = pf_->tanks[i].worldX;
                 twy = pf_->tanks[i].worldY;
-                in_boat  = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat  = (pf_->tanks[i].tankStatus & TANK_STATUS_ON_BOAT) ? 1 : 0;
                 res_shells = pf_->tanks[i].shells;
                 res_trees  = pf_->tanks[i].trees;
                 res_mines  = pf_->tanks[i].mines;
@@ -2669,7 +2669,7 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 smx = pf_->tanks[i].worldX >> 8;
                 smy = pf_->tanks[i].worldY >> 8;
-                in_boat    = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat    = (pf_->tanks[i].tankStatus & TANK_STATUS_ON_BOAT) ? 1 : 0;
                 res_shells = pf_->tanks[i].shells;
                 res_trees  = pf_->tanks[i].trees;
                 res_mines  = pf_->tanks[i].mines;
