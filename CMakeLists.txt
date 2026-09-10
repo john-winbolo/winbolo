@@ -3560,6 +3560,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # game vs log-viewer copies of screenCalcRiver never disagreeing.
     tests/unit/test_screencalc_river.c
     tests/unit/test_client_type.c
+    # The client's tank and lgm live at its slot index; a second JOIN_ACCEPT
+    # with a different slot has to carry them across rather than read slot 0.
+    tests/unit/test_client_slot_reassign.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
     # Mid-sim-frame player removal vs the arrays simRunHalfStep snapshots for
@@ -4407,6 +4410,9 @@ set(_unit_test_names
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
+    client_slot_reassign_carries_tank_and_lgm
+    client_slot_reassign_same_slot_is_stable
+    client_slot_reassign_back_to_zero
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
