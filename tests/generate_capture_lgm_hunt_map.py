@@ -133,7 +133,9 @@ SPARES = [(108, 118), (108, 122), (108, 126), (108, 130), (108, 134),
           (112, 118), (112, 134), (140, 118), (140, 134)]
 
 # ── Brain constants this arena is designed against (constants.lua) ───────
-HUNT_RADIUS = 2                   # CAPTURE_LGM_HUNT_RADIUS (Chebyshev)
+HUNT_RADIUS = 7                   # CAPTURE_LGM_HUNT_RADIUS: a EUCLIDEAN circle of
+                                  # tile-centre deltas since 2026-09-10
+                                  # (CAPTURE_LGM_HUNT_CIRCLE); was a Chebyshev 2 box
 HUNT_NEAR_TILES = 4               # CAPTURE_LGM_HUNT_NEAR_TILES
 HUNT_TOL_BRADS = 26               # CAPTURE_LGM_HUNT_TOL_BRADS
 HUNT_TOL_NEAR_BRADS = 45          # CAPTURE_LGM_HUNT_TOL_NEAR_BRADS

@@ -12,7 +12,8 @@ There are two answers to that in the brain and they are INDEPENDENT knobs:
 
   CAPTURE_LGM_HUNT      the SWEEP.  The goal never changes; while it is
                         capture_pill the turret is blended onto a man within
-                        CAPTURE_LGM_HUNT_RADIUS (2) tiles of the target pill.
+                        CAPTURE_LGM_HUNT_RADIUS (7, Euclidean) of the target
+                        pill.
                         Tested by tests/capture_lgm_hunt_test.py.
 
   CAPTURE_LGM_PRIORITY  THIS ONE.  Steering is untouched; instead the man's
@@ -70,8 +71,10 @@ errand tiles, so the man is INSIDE the priority box and OUTSIDE the sweep box)
 WHY P0 PINS ONLY THE ONE KNOB.  BotInitSlot.arg is 127 bytes
 (luabrainshandler.h), and "both masters off" plus the three arena pins is 152.
 It does not need both: the sweep is INERT in this arena by construction -- its
-LGM trigger needs a man within 2 tiles of the corpse and the errand tiles are
-6, and its armour trigger needs the corpse's armour to go UP, which the
+LGM trigger needs a man within 7 tiles (Euclidean) of the corpse and the man
+never comes closer than 7.8 on his walk (the corpse sits at (122,131), the
+errands at (128,126)/(128,125), and his park at (128,121)), and its armour
+trigger needs the corpse's armour to go UP, which the
 scripted enemy never does (he paves a road and chops a tree; he never repairs
 the pill).  Every variant asserts ZERO CAPTURE_LGM_HUNT lines, which is the
 proof rather than the assumption, so P1 vs P0 differ in exactly one live
@@ -132,7 +135,7 @@ TOKENS = {
     # Sweep pinned off explicitly even though it is inert here, so P1 cannot
     # be blamed on it.
     # The sweep stays at its default here: the arena's man never comes inside
-    # its 2-tile box and never repairs the pill, and the test asserts zero
+    # its 7-tile circle and never repairs the pill, and the test asserts zero
     # CAPTURE_LGM_HUNT lines to prove it (a second cfg= would push the token
     # past the 127-byte BRAIN_INIT_ARG limit).
     "P1": "cfg=CAPTURE_LGM_PRIORITY=true;" + COMMON,
@@ -333,9 +336,10 @@ def check_sweep_silent(text):
     n = len(HUNT_ANY_RE.findall(text))
     if n:
         return [f"{n} CAPTURE_LGM_HUNT line(s) appeared. The arena is built so "
-                f"the sweep cannot trigger (errand tiles are Chebyshev 6 from "
-                f"the corpse, radius 2; the enemy never repairs the pill), so "
-                f"P1 vs P0 would no longer isolate CAPTURE_LGM_PRIORITY."]
+                f"the sweep cannot trigger (the man's walk stays 7.8+ tiles "
+                f"Euclidean from the corpse, radius 7; the enemy never repairs "
+                f"the pill), so P1 vs P0 would no longer isolate "
+                f"CAPTURE_LGM_PRIORITY."]
     return []
 
 

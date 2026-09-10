@@ -97,8 +97,13 @@ from generate_capture_lgm_hunt_map import (          # noqa: E402
 
 VARIANTS = ("P1", "P0", "PK")
 
-# THE ONE NUMBER THIS ARENA CHANGES.  Three tiles west of the errand tiles.
-CORPSE = (122, 126)   # cheb 6 from the errands: the CAP wins here, the old x0.333 did not
+# THE ONE NUMBER THIS ARENA CHANGES.  Six tiles west of the errand tiles and
+# five south of them: Chebyshev 6 from both errands (inside the priority box
+# with its two tiles of margin), yet EUCLIDEAN 7.8+ from every tile the man
+# walks (x=128, y=121..126), which keeps him outside the sweep's circle now
+# that CAPTURE_LGM_HUNT_RADIUS is 7 (2026-09-10; it was a Chebyshev 2 box, and
+# the corpse sat at (122,126)).  The CAP wins here, the old x0.333 did not.
+CORPSE = (122, 131)
 
 # ── Brain constants this arena is designed against (constants.lua) ───────
 PRIO_RADIUS = 8                   # CAPTURE_LGM_PRIORITY_RADIUS (Chebyshev)
@@ -152,12 +157,20 @@ def main():
             f"be at most CAPTURE_LGM_PRIORITY_RADIUS ({PRIO_RADIUS}) minus two "
             "tiles of margin, or the man drifting mid-walk leaves the box")
         # (the old multiplier-edge assert lived here; a CAP has no such edge)
-        assert d > HUNT_RADIUS, (
-            f"{what} {tile} is Chebyshev {d} from the corpse {CORPSE}, INSIDE "
-            f"CAPTURE_LGM_HUNT_RADIUS ({HUNT_RADIUS}) -- the sweep would fire "
-            "too and the arena could no longer attribute anything to the "
-            "priority option alone")
         assert tile != CORPSE, "an errand tile cannot be the corpse tile"
+    # The sweep's region is a EUCLIDEAN circle of tile-centre deltas around
+    # the target pill (CAPTURE_LGM_HUNT_CIRCLE), and it fires the moment a
+    # hostile man is inside it on ANY tick -- so not just the errand tiles but
+    # every tile of his walk from the park down to them has to stay outside.
+    walk = [(ROAD_TILE[0], y) for y in range(min(P1_PARK[1], ROAD_TILE[1]),
+                                              max(P1_PARK[1], ROAD_TILE[1]) + 1)]
+    for tile in [ROAD_TILE, FARM_TILE, P1_PARK] + walk:
+        e = ((tile[0] - CORPSE[0]) ** 2 + (tile[1] - CORPSE[1]) ** 2) ** 0.5
+        assert e > HUNT_RADIUS, (
+            f"{tile} is {e:.2f} tiles (Euclidean) from the corpse {CORPSE}, "
+            f"INSIDE CAPTURE_LGM_HUNT_RADIUS ({HUNT_RADIUS}) -- the sweep would "
+            "fire too and the arena could no longer attribute anything to the "
+            "priority option alone")
     assert terrain[ROAD_TILE[1]][ROAD_TILE[0]] is GRASS, (
         "ROAD_TILE must be GRASS: the C-side LGM scan hides a tree-covered man "
         "more than 3 tiles out, and this arena needs him visible")

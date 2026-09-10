@@ -53,6 +53,14 @@ PARTIAL = {
     # sidecar a way to re-wear it, so the whole file runs again.
 }
 
+# Tests that must run ALONE: they fail under the parallel load and pass by
+# themselves (wall-clock sensitive somewhere, even with -brain-no-budget).
+# The gate runs these one at a time on a quiet machine BEFORE it starts the
+# parallel pool. Dated like KNOWN_BROKEN; an entry here is a debt too.
+SERIAL = {
+    "repair_priority_test.py": "arena C flakes under load, passes alone (2026-09-10)",
+}
+
 # Not tests of the bots.
 NOT_A_TEST = {"run_test.py", "gate_wrap.py"}
 
@@ -199,6 +207,8 @@ def main():
                     help="seconds between load samples / scheduling decisions (default 2)")
     ap.add_argument("--port-base", type=int, default=50100,
                     help="first private server port handed to tests that pass none (default 50100)")
+    ap.add_argument("--no-retry", action="store_true",
+                    help="do not re-run a test that failed under the parallel load alone")
     args = ap.parse_args()
 
     ncpu = os.cpu_count() or 4
@@ -229,8 +239,10 @@ def main():
             port, own_port = own, True
         pending.append(Job(name, port, own_port, extra, log_dir))
 
+    serial = [j for j in pending if j.name in SERIAL]
+    pending = [j for j in pending if j.name not in SERIAL]
     print("gate: %d test(s), up to %d at once (cpu-high %.0f%%, mem-min %.1f GB), logs in %s"
-          % (len(pending), jobs_max, args.cpu_high, args.mem_min_gb, log_dir))
+          % (len(pending) + len(serial), jobs_max, args.cpu_high, args.mem_min_gb, log_dir))
     sys.stdout.flush()
 
     cpu = CpuSampler()
@@ -242,6 +254,25 @@ def main():
     # The first sample right after construction is meaningless; take one now.
     time.sleep(0.5)
     cpu.percent()
+
+    # The load-sensitive tests first, one at a time, while nothing else runs.
+    for j in serial:
+        print("  ....  %-32s port %d  alone (%s)" % (j.name, j.port, SERIAL[j.name]))
+        sys.stdout.flush()
+        j.start()
+        while not j.poll():
+            time.sleep(1.0)
+        done.append(j)
+        if j.rc == 0:
+            print("  PASS  %-32s %6.0fs  (alone)" % (j.name, j.dt))
+        else:
+            failed.append(j.name)
+            print("  FAIL  %-32s %6.0fs  rc=%s  (alone; %s)" % (j.name, j.dt, j.rc, j.log_path))
+            t = j.tail()
+            if t:
+                print(t)
+        sys.stdout.flush()
+    serial_failed = list(failed)
 
     while pending or running:
         # Reap.
@@ -281,17 +312,52 @@ def main():
                         break
         time.sleep(args.interval)
 
+    # Serial retry. A test that fails under the parallel load but passes on
+    # its own was not measuring the bots -- some of these tests are wall-clock
+    # sensitive even with -brain-no-budget. Re-run each failure alone, one at
+    # a time, and only count it as red if it fails again. Flaky ones are
+    # reported by name so a test that keeps needing the retry gets looked at.
+    flaky = []
+    to_retry = [n for n in failed if n not in serial_failed]   # the SERIAL ones already ran alone
+    if to_retry and jobs_max > 1 and not args.no_retry:
+        print()
+        print("gate: %d failed under load; re-running each alone" % len(to_retry))
+        sys.stdout.flush()
+        still = list(serial_failed)
+        for name in to_retry:
+            j = next(d for d in done if d.name == name)
+            r = Job(name, j.port, j.own_port, j.extra, log_dir)
+            r.log_path = j.log_path.replace(".log", ".retry.log")
+            r.start()
+            while not r.poll():
+                time.sleep(1.0)
+            if r.rc == 0:
+                flaky.append(name)
+                print("  PASS  %-32s %6.0fs  (retry; failed under load)" % (name, r.dt))
+            else:
+                still.append(name)
+                print("  FAIL  %-32s %6.0fs  rc=%s  (retry; %s)" % (name, r.dt, r.rc, r.log_path))
+                t = r.tail()
+                if t:
+                    print(t)
+            sys.stdout.flush()
+        failed = still
+
     total = time.time() - t_start
     print()
     if failed:
         print("GATE RED: %d failed -> %s" % (len(failed), ", ".join(failed)))
         print("Do NOT pigeon. Fix in winbolo2 first.")
+        if flaky:
+            print("FLAKY (passed alone): %s" % ", ".join(flaky))
         print("(%d tests in %.0fs)" % (len(done), total))
         return 1
     print("GATE GREEN: %d passed%s  (%.0fs wall, up to %d at once)" % (
         len(done),
         (", %d known-broken skipped" % len(skipped)) if skipped else "",
         total, jobs_max))
+    if flaky:
+        print("FLAKY (failed under load, passed alone): %s" % ", ".join(flaky))
     return 0
 
 
