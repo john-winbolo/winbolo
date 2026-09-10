@@ -51,6 +51,12 @@
  *      (the server drops its send tail and the client lifts its receive
  *      baseline via CTRL_CHANNEL_RESET), while a fresh post-flip game event
  *      still applies.
+ *
+ *   9. Map channel pacing.  A terrain burst larger than CHANNEL_MAP's send
+ *      window is staged in one tick; the server must hold what will not fit
+ *      and resume on later snapshots as acks free the window, never flagging
+ *      the slot for removal.  Every square lands, the hold buffer empties, and
+ *      no resync is involved — the changes arrive over the channel.
  */
 
 #include <stdint.h>
@@ -79,6 +85,10 @@
 #define RUNNING_MAX     2000   /* countdown (250) + RUNNING delivery under loss */
 #define FLIP_SETTLE      150   /* flush any game-start transition events post-flip */
 #define STRAGGLER_STAB   400   /* idle window the stale event must not break */
+#define PACE_BURST       300   /* terrain changes staged in one tick; the map
+                                * channel's window is CHANNEL_MAP_WINDOW (128),
+                                * so the burst cannot fit in one drain */
+#define PACE_DELIVER_MAX 2000  /* bounded convergence for the whole burst */
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
@@ -846,6 +856,155 @@ static int run_straggler_gate(void) {
     return 0;
 }
 
+/* Case 9: a terrain burst larger than the map channel's send window is paced,
+ * not fatal. PACE_BURST changes are staged for one slot in a single tick, so
+ * the first snapshot drain fills CHANNEL_MAP's window and is refused partway
+ * through. The server must leave the remainder in the hold buffer and resume
+ * on later snapshots as acks free the window — never mark the slot for
+ * removal. Every square must land on the client, the hold buffer must empty,
+ * and no map resync may be involved: the changes have to arrive over the
+ * channel, not be papered over by a fresh copy of the map. */
+static bool collect_changeable_cells(ClientSim *cs, uint8_t target,
+                                     uint8_t *xs, uint8_t *ys, int want) {
+    int x, y, n = 0;
+    for (y = 96; y < 160 && n < want; y++) {
+        for (x = 96; x < 160 && n < want; x++) {
+            uint8_t t = clientSimGetMapTerrain(cs, (uint8_t)x, (uint8_t)y);
+            if (t == DEEP_SEA || t == RIVER || t == target) continue;
+            /* Leave squares carrying a pill or a base alone — those objects
+             * own their tile and the sim may write it back. */
+            if (clientSimPillExistsAt(cs, (uint8_t)x, (uint8_t)y)) continue;
+            if (clientSimBaseExistsAt(cs, (uint8_t)x, (uint8_t)y)) continue;
+            xs[n] = (uint8_t)x;
+            ys[n] = (uint8_t)y;
+            n++;
+        }
+    }
+    return n == want;
+}
+
+static int run_map_channel_pacing(void) {
+    LoopbackHarness h;
+    int connectedAt;
+    uint32_t inputTick = 1;
+    Transport *ct;
+    int slot;
+    static uint8_t xs[PACE_BURST];
+    static uint8_t ys[PACE_BURST];
+    static bool landed[PACE_BURST];
+    int staged = 0;
+    int delivered = 0;
+    uint32_t resync0 = 0, resync1 = 0;
+    int i, k;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "ChanPace", /*lobbyMode*/ false,
+                                       /*impairSpec*/ "loss=5,burst=2",
+                                       /*seed*/ 0x9ACE1u),
+                  "harness start (map channel pacing) failed");
+
+    connectedAt = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
+    if (connectedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    /* The drain is held off until the join download is acked through, so wait
+     * for the server's own view of it before staging anything. */
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX,
+                                 pred_server_download_complete, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("server never completed the join download within %d pumps",
+                CONNECT_MAX);
+    }
+
+    ct   = &h.cs->transport;
+    slot = (int)clientSimGetMyPlayerNum(h.cs);
+    transportUdpClientTestMapState(ct, NULL, &resync0);
+
+    if (!collect_changeable_cells(h.cs, CRATER, xs, ys, PACE_BURST)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("could not find %d changeable land squares in the scanned span",
+                PACE_BURST);
+    }
+    memset(landed, 0, sizeof(landed));
+
+    if (transportUdpServerTestPendingRemove(slot)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("slot %d already flagged for removal before the burst", slot);
+    }
+
+    /* Stage the whole burst between ticks, so the next snapshot meets more
+     * changes than one window can carry. */
+    for (k = 0; k < PACE_BURST; k++) {
+        if (!transportUdpServerTestAddMapEvent(h.sim, slot, xs[k], ys[k],
+                                               CRATER)) {
+            break;
+        }
+        staged++;
+    }
+    if (staged != PACE_BURST) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("hold buffer accepted only %d of %d changes — the burst never "
+                "exceeded the send window, so nothing was paced",
+                staged, PACE_BURST);
+    }
+
+    /* Carry it. The slot must never be flagged for removal at any point. */
+    for (i = 1; i <= PACE_DELIVER_MAX && delivered < PACE_BURST; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+        if (transportUdpServerTestPendingRemove(slot)) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("slot %d flagged for removal on a full map channel after "
+                    "%d pump(s) — the burst was treated as fatal instead of "
+                    "being held", slot, i);
+        }
+        for (k = 0; k < PACE_BURST; k++) {
+            if (landed[k]) continue;
+            if (clientSimGetMapTerrain(h.cs, xs[k], ys[k]) == CRATER) {
+                landed[k] = true;
+                delivered++;
+            }
+        }
+    }
+
+    fprintf(stderr, "  map channel pacing: %d/%d squares after %d pump(s) "
+                    "(cap %d), held=%u\n",
+            delivered, PACE_BURST, i, PACE_DELIVER_MAX,
+            (unsigned)transportUdpServerTestMapQueueOutstanding(slot));
+
+    if (delivered != PACE_BURST) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("only %d of %d staged changes reached the client within %d "
+                "pumps", delivered, PACE_BURST, PACE_DELIVER_MAX);
+    }
+
+    /* The hold buffer must have been handed over in full, not merely
+     * partially drained with the rest abandoned. */
+    if (transportUdpServerTestMapQueueOutstanding(slot) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("hold buffer still owes %u event(s) after the burst landed",
+                (unsigned)transportUdpServerTestMapQueueOutstanding(slot));
+    }
+
+    /* It has to have arrived over the channel. A resync would have installed a
+     * fresh copy of the map carrying every change, passing the checks above
+     * without the pacing path doing any of the work. */
+    transportUdpClientTestMapState(ct, NULL, &resync1);
+    if (resync1 != resync0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the burst forced a map resync (count %u -> %u) instead of "
+                "being paced over the channel",
+                (unsigned)resync0, (unsigned)resync1);
+    }
+    if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client dropped while the burst was being paced");
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 int run_loopback_channel(void) {
     int rc = run_empty_flow();
     if (rc != 0) return rc;
@@ -861,5 +1020,7 @@ int run_loopback_channel(void) {
     if (rc != 0) return rc;
     rc = run_map_event_generation_gate();
     if (rc != 0) return rc;
-    return run_straggler_gate();
+    rc = run_straggler_gate();
+    if (rc != 0) return rc;
+    return run_map_channel_pacing();
 }

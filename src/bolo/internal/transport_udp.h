@@ -880,6 +880,10 @@ bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
  * it still answers for events already sent and acked. */
 uint32_t transportUdpServerTestMapQueueCount(int slot);
 bool transportUdpServerTestMapQueueHasSquare(int slot, uint8_t x, uint8_t y);
+/* How much of that queue the snapshot drain still owes the map channel. The
+ * count above is cumulative (everything the slot was ever given); this is the
+ * live depth, which a full send window holds above zero until acks free it. */
+uint32_t transportUdpServerTestMapQueueOutstanding(int slot);
 /* Queue one whole game event on a slot's reliable game channel (CHANNEL_GAME),
  * as the real producer does — lets a test stage a distinguishable ch0 event
  * (e.g. one left unacked across game start). False on a bad slot/event or a

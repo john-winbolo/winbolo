@@ -242,6 +242,13 @@ typedef struct UdpServerState {
      * it — this counter says how often that recovery is being leaned on. */
     uint32_t mapEventQueueDrops[MAX_TANKS];
 
+    /* Set while a slot's map-channel send window is full and the snapshot
+     * drain is holding the remainder of its queue. Keeps that condition to one
+     * log line per stall: it is cleared only once the queue has drained
+     * completely, so a window that frees a slot at a time does not log on
+     * every snapshot it spends catching up. */
+    bool mapChannelStalled[MAX_TANKS];
+
     /* Per-client map generation, tagged onto every map-change event sent on
      * CHANNEL_MAP. Persistent across resyncs (distinct from the transient
      * mapDownload[].resyncGen, which resets to 0 once a resync completes):

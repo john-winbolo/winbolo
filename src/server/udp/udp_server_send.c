@@ -59,7 +59,7 @@
 #include "channel_mux.h"     /* channelRecvFrame, channelSend, channelTick,
                               * channelBuildFrame, CHANNEL_MAP */
 #include "bulk_transfer.h"   /* bulkSenderPump */
-#include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_ERROR, WB_LOG_CAT_NET */
+#include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_WARN, WB_LOG_CAT_NET */
 
 /* Handle input packet from a connected client */
 void serverHandleInput(const uint8_t *buf, int len,
@@ -298,8 +298,9 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * the cut, and changes during the transfer sit undrained, so hold them
      * (gate on downloadComplete && !resyncInProgress) and flush once both gates
      * clear. Each successful channelSend advances ackedSeq to free the slot.
-     * A full window defers the disconnect off this path, mirroring the
-     * game-channel overflow. The snapshot no longer carries a map tail. */
+     * A full window is backpressure, not a failure: the drain stops where it
+     * is, leaves the remainder held, and the next snapshot resumes at the same
+     * seq once acks free space. The snapshot no longer carries a map tail. */
     if (udpServer.mapDownload[clientIdx].downloadComplete &&
         !udpServer.mapDownload[clientIdx].resyncInProgress) {
         uint32_t seq;
@@ -312,15 +313,26 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
             evLen = packGameEvent(mapMsg + 4, &mapQ->buffer[idx].event);
             if (!channelSend(&udpServer.channelMux[clientIdx], CHANNEL_MAP,
                              mapMsg, (uint16_t)(4 + evLen))) {
-                if (!udpServer.pendingSimRemove[clientIdx]) {
-                    WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                 "map channel overflow for slot %d, deferring disconnect",
-                                 clientIdx);
-                    udpServer.pendingSimRemove[clientIdx] = true;
+                /* Window full. Leave this event and everything behind it in
+                 * the hold buffer: ackedSeq is not advanced, so the next
+                 * snapshot picks up at exactly this seq. One line per stall —
+                 * the flag clears only once the queue has drained, so a window
+                 * that frees a slot at a time stays quiet while it catches
+                 * up. */
+                if (!udpServer.mapChannelStalled[clientIdx]) {
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                                "map channel window full for slot %d, holding "
+                                "%u event(s) until acks free it",
+                                clientIdx, (unsigned)(mapQ->nextSeq - seq));
+                    udpServer.mapChannelStalled[clientIdx] = true;
                 }
                 break;
             }
             mapQ->ackedSeq = seq + 1; /* Sent reliably — free the hold slot. */
+        }
+        /* Caught up — the next window-full is a new stall and logs again. */
+        if (mapQ->ackedSeq == mapQ->nextSeq) {
+            udpServer.mapChannelStalled[clientIdx] = false;
         }
     }
 

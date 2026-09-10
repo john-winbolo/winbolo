@@ -175,6 +175,15 @@ uint32_t transportUdpServerTestMapQueueCount(int slot) {
     return udpServer.mapEventQueues[slot].nextSeq - 1u;
 }
 
+uint32_t transportUdpServerTestMapQueueOutstanding(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    /* What the snapshot drain still owes the channel: the cumulative ack only
+     * advances on a successful channelSend, so this is what a full window is
+     * holding back. Zero means the queue has been handed over in full. */
+    return udpServer.mapEventQueues[slot].nextSeq -
+           udpServer.mapEventQueues[slot].ackedSeq;
+}
+
 bool transportUdpServerTestMapQueueHasSquare(int slot, uint8_t x, uint8_t y) {
     const ClientEventQueue *mq;
     uint32_t i;
