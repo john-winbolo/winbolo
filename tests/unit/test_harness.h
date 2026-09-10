@@ -959,6 +959,16 @@ int run_base_death_prediction_replay_tick(void);
  * and a landing that was waiting on an earlier hit's armour is armed. */
 int run_base_death_prediction_authority(void);
 
+/* Tank destroyed state (test_tank_death_state.c): armour is a plain
+ * 0..TANK_FULL_ARMOUR value that clamps at zero and the destroyed state is
+ * stored on the tank, so a hit greater than the armour remaining destroys it
+ * while a hit that exactly empties the armour leaves it alive at zero. The
+ * wire's sentinel is put on by the encoder and taken off by the decode. */
+int run_tank_damage_exact_armour_survives(void);
+int run_tank_damage_overkill_destroys(void);
+int run_tank_damage_partial_survives(void);
+int run_tank_destroyed_snapshot_round_trip(void);
+
 /* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
  * inAnyViewport cover the recipient's tank screen and each owned/allied
  * pillbox screen, so an fx near an owned pillbox but off the tank screen is

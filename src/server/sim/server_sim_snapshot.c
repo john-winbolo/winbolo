@@ -1261,7 +1261,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
 
         /* Resources: only send to the owning player */
         if (i == clientIdx) {
-            ts->armour = tankGetArmour(&sim->sim.tanks[i]);
+            ts->armour = tankGetArmourForWire(&sim->sim.tanks[i]);
             ts->shells = tankGetShells(&sim->sim.tanks[i]);
             ts->mines = tankGetMines(&sim->sim.tanks[i]);
             ts->trees = tankGetTrees(&sim->sim.tanks[i]);

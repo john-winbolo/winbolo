@@ -83,7 +83,7 @@ static bool obsAddObjectAsEntity(const ObjectInfo *o, float self_wx, float self_
         if (cs != NULL && o->idnum < MAX_TANKS) {
             GameSim *gs = clientSimGetGameSim(cs);
             BYTE armour = tankGetArmour(&gs->tanks[o->idnum]);
-            bool tankDead = armour > TANK_FULL_ARMOUR;
+            bool tankDead = tankIsDestroyed(&gs->tanks[o->idnum]);
             ent->strength = tankDead ? 0.0f : (float)armour / 40.0f;
             if (tankIsOnBoat(&gs->tanks[o->idnum])) ent->flags |= WBGYM_FLAG_IN_BOAT;
             if (tankDead) ent->flags |= WBGYM_FLAG_DEAD;
@@ -343,7 +343,7 @@ static void obsBuildTerrain(const BrainInfo *bi, WinBoloObs *obs) {
 
 /* Build scalars from BrainInfo */
 static void obsBuildScalars(const BrainInfo *bi, WinBoloObs *obs) {
-    bool dead = bi->armour > TANK_FULL_ARMOUR;
+    bool dead = bi->destroyed != 0;
     int tank_tx = bi->tankx >> 8;
     int tank_ty = bi->tanky >> 8;
 
@@ -431,7 +431,7 @@ static void obsBuildScalars(const BrainInfo *bi, WinBoloObs *obs) {
 
 /* Build scalars with ClientSim data for accurate pill/base fracs, LGM, death_wait */
 static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs *obs) {
-    bool dead = bi->armour > TANK_FULL_ARMOUR;
+    bool dead = bi->destroyed != 0;
     int tank_tx = bi->tankx >> 8;
     int tank_ty = bi->tanky >> 8;
     GameSim *gs = clientSimGetGameSim(cs);
@@ -506,7 +506,7 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
             obs->scalar[23] = 0.0f;
         } else if (ms == LGM_BRAIN_DEAD) {
             lgm *lg = &gs->lgmen[selfPlayer];
-            if ((*lg)->isDead && tankGetArmour(&gs->tanks[selfPlayer]) <= TANK_FULL_ARMOUR) {
+            if ((*lg)->isDead && !tankIsDestroyed(&gs->tanks[selfPlayer])) {
                 obs->scalar[23] = 0.66f; /* parachuting */
             } else {
                 obs->scalar[23] = 1.0f; /* actually dead */
@@ -526,7 +526,7 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
 static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs *obs) {
     float self_wx = (float)bi->tankx;
     float self_wy = (float)bi->tanky;
-    bool dead = bi->armour > TANK_FULL_ARMOUR;
+    bool dead = bi->destroyed != 0;
     GameSim *gs = clientSimGetGameSim(cs);
     BYTE selfPlayer = clientSimGetMyPlayerNum(cs);
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
@@ -591,7 +591,7 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
 static void obsBuildMeta(const BrainInfo *bi, WinBoloObs *obs) {
     float self_wx = (float)bi->tankx;
     float self_wy = (float)bi->tanky;
-    bool dead = bi->armour > TANK_FULL_ARMOUR;
+    bool dead = bi->destroyed != 0;
 
     /* LGM state */
     obs->man_rx = ((float)bi->man_x - self_wx) / 256.0f;

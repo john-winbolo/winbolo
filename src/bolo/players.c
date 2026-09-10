@@ -1826,7 +1826,7 @@ bool playersCalcTankCollision(GameSim *sim, BYTE playerNum, WORLD xValue, WORLD 
   *pushY = 0;
 
   for (count = 0; count < MAX_TANKS; count++) {
-    if (count != playerNum && sim->tanks[count] != NULL && tankGetArmour(&sim->tanks[count]) <= TANK_FULL_ARMOUR) {
+    if (count != playerNum && sim->tanks[count] != NULL && !tankIsDestroyed(&sim->tanks[count])) {
       tankGetWorld(&sim->tanks[count], &mx, &my);
 
       float dx = (float)((int)xValue - (int)mx);

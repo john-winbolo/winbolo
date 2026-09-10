@@ -3358,6 +3358,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_base_death_prediction.c
+    tests/unit/test_tank_death_state.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
@@ -4217,6 +4218,10 @@ set(_unit_test_names
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
     base_death_prediction_authority
+    tank_damage_exact_armour_survives
+    tank_damage_overkill_destroys
+    tank_damage_partial_survives
+    tank_destroyed_snapshot_round_trip
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec

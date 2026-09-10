@@ -987,7 +987,7 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetSpeed(&MY_TANK(csPtr), decodedSpeed);
         tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
         tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
-        tankSetArmour(&MY_TANK(csPtr), tanks[i].armour);
+        tankSetArmourFromWire(&MY_TANK(csPtr), tanks[i].armour);
         csPtr->lastServerArmour = tanks[i].armour;
         tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
         tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
@@ -1117,7 +1117,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                   if ((histPkt->actions & INPUT_ACTION_FIRE) &&
                       tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                       tankGetShells(&MY_TANK(csPtr)) > 0 &&
-                      tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR) {
+                      !tankIsDestroyed(&MY_TANK(csPtr))) {
                     tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
                     tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
@@ -1157,7 +1157,9 @@ void clientApplySnapshot(ClientSim *csPtr,
         /* Detect death/respawn transitions using server armour values
          * (not predicted state, which may already reflect the death) */
         {
-          tankSetArmour(&MY_TANK(csPtr), tanks[i].armour);
+          /* The transitions below still compare the raw server values, which
+           * is what this codec end is for. */
+          tankSetArmourFromWire(&MY_TANK(csPtr), tanks[i].armour);
           if (csPtr->lastServerArmour <= TANK_FULL_ARMOUR && tanks[i].armour > TANK_FULL_ARMOUR) {
             /* alive→dead: set death type for static screen rendering */
             tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
@@ -1224,7 +1226,7 @@ void clientApplySnapshot(ClientSim *csPtr,
             if ((histPkt->actions & INPUT_ACTION_FIRE) &&
                 tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                 tankGetShells(&MY_TANK(csPtr)) > 0 &&
-                tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR) {
+                !tankIsDestroyed(&MY_TANK(csPtr))) {
               tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
               tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
