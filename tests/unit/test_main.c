@@ -627,6 +627,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_join_loss",                      run_loopback_join_loss                      },
     { "loopback_lobby_running_loss",             run_loopback_lobby_running_loss             },
     { "loopback_quiet_lobby_control_loss",       run_loopback_quiet_lobby_control_loss       },
+    { "loopback_command_liveness",               run_loopback_command_liveness               },
     { "loopback_channel",                        run_loopback_channel                        },
     { "lock_channel",                            run_lock_channel                            },
     { "loopback_map_preview",                    run_loopback_map_preview                    },

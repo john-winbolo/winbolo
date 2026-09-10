@@ -1337,6 +1337,9 @@ int run_loopback_lobby_running_loss(void);
 /* Quiet-lobby reliable control delivery under loss with no input flowing:
  * proves control acks ride the standalone PACKET_CHANNEL trailer. */
 int run_loopback_quiet_lobby_control_loss(void);
+/* A command packet refreshes the sending client's server-side liveness clock:
+ * watched directly across a window in which nothing else is refreshing it. */
+int run_loopback_command_liveness(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);

@@ -3401,6 +3401,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
+    tests/unit/test_loopback_command_liveness.c
     tests/unit/test_loopback_channel.c
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
@@ -4310,6 +4311,7 @@ set(_unit_test_names
     loopback_join_loss
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
+    loopback_command_liveness
     loopback_channel
     player_mute_mask_roundtrip
     lock_channel

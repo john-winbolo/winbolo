@@ -162,6 +162,12 @@ typedef struct {
 
     /* Ping */
     uint32_t lastPingSentTick;
+    /* Suppress the periodic ping below. Written only by the WB_NOPING read at
+     * ctx create, which is compiled in solely where WB_ENABLE_NETIMPAIR is on
+     * (the unit-test target's own build of this file), so it stays false for
+     * the life of every shipping connection. Lets a test hold a connected
+     * client whose only outbound traffic is what the test itself sends. */
+    bool suppressPing;
     uint32_t pingClientTime;  /* Monotonic counter used as ping timestamp */
     uint16_t pingMs;          /* Min-over-window RTT — feeds shell projection
                                * and the InputPacket lag-comp fallback. */
@@ -3534,7 +3540,8 @@ static bool udpClientTick(void *ctx) {
     /* Periodic ping — bypasses delay so RTT measurement is accurate
      * (measures real network RTT, not simulated RTT) */
     if (c->joinState == UDP_CLIENT_CONNECTED) {
-        if (c->localTick - c->lastPingSentTick >= PING_INTERVAL_TICKS) {
+        if (!c->suppressPing &&
+            c->localTick - c->lastPingSentTick >= PING_INTERVAL_TICKS) {
             uint8_t pbuf[PACKET_HEADER_SIZE + 8];
             packHeader(pbuf, PACKET_PING, c->outSequence++);
             packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
@@ -3950,6 +3957,18 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                       (unsigned)impairCfg.burstLossLen);
         }
     }
+    /* Optional ping suppression from WB_NOPING (any non-empty value). Read
+     * once here, beside WB_NETIMPAIR and under the same compile-time
+     * condition, so a test can hold a connection whose only outbound traffic
+     * is what it sends itself — a ping every PING_INTERVAL_TICKS would
+     * otherwise keep the server's liveness clock fresh on its own. */
+    {
+        const char *noPing = getenv("WB_NOPING");
+        if (noPing != NULL && noPing[0] != '\0') {
+            c->suppressPing = true;
+            mpDiagLog("[cli] periodic ping suppressed (WB_NOPING)");
+        }
+    }
 #endif
 
     t.recordInput = udpClientRecordInput;
@@ -4164,6 +4183,18 @@ bool transportUdpClientTestBeginResync(Transport *t) {
     c->resyncAttempts++;
     udpClientSendMapResyncRequest(c, c->activeResyncGen);
     return true;
+}
+
+/* Test-only: overwrite the map-event ack stamped into every InputPacket from
+ * here on. Nothing in the client advances it past its initial 1, so this is
+ * the only way a value the server has never handed to the map channel can
+ * reach the wire — which is exactly what the test needs the server to
+ * ignore. */
+void transportUdpClientTestSetMapEventAck(Transport *t, uint32_t ack) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    c->mapEventAck = ack;
 }
 
 /* Test-only: run the map-resync finalize on a caller-supplied blob, as if a
