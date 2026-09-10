@@ -109,7 +109,7 @@ int run_voice_segment_roundtrip(void) {
 int run_voice_segment_rejects_malformed(void) {
     uint8_t payload[VOICE_SEG_MAX_OPUS + 1];
     uint8_t seg[CHANNEL_VOICE_SEG];
-    uint8_t small[VOICE_SEG_DOWN_HEADER];
+    uint8_t tooSmall[VOICE_SEG_DOWN_HEADER];  /* not "small": MSVC rpcndr.h typedefs that */
     const uint8_t *opus;
     uint8_t fromPlayer, seq, flags;
     int opusLen;
@@ -191,9 +191,9 @@ int run_voice_segment_rejects_malformed(void) {
                                  VOICE_SEG_MAX_OPUS + 1) == 0);
     UT_ASSERT(voiceSegmentPackDown(seg, (int)sizeof(seg), 0, 0, 0, payload,
                                    VOICE_SEG_MAX_OPUS + 1) == 0);
-    UT_ASSERT(voiceSegmentPackUp(small, (int)sizeof(small), 0, 0, payload,
+    UT_ASSERT(voiceSegmentPackUp(tooSmall, (int)sizeof(tooSmall), 0, 0, payload,
                                  40) == 0);
-    UT_ASSERT(voiceSegmentPackDown(small, (int)sizeof(small), 0, 0, 0, payload,
+    UT_ASSERT(voiceSegmentPackDown(tooSmall, (int)sizeof(tooSmall), 0, 0, 0, payload,
                                    40) == 0);
     /* An empty frame carries nothing to play. */
     UT_ASSERT(voiceSegmentPackUp(seg, (int)sizeof(seg), 0, 0, payload, 0) == 0);
