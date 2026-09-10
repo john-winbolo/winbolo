@@ -4185,6 +4185,18 @@ bool transportUdpClientTestBeginResync(Transport *t) {
     return true;
 }
 
+/* Test-only: overwrite the map-event ack stamped into every InputPacket from
+ * here on. Nothing in the client advances it past its initial 1, so this is
+ * the only way a value the server has never handed to the map channel can
+ * reach the wire — which is exactly what the test needs the server to
+ * ignore. */
+void transportUdpClientTestSetMapEventAck(Transport *t, uint32_t ack) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    c->mapEventAck = ack;
+}
+
 /* Test-only: run the map-resync finalize on a caller-supplied blob, as if a
  * resync of a fresh generation had just reassembled `buf`. Arms the resync
  * precondition (resyncActive, a fresh activeResyncGen, buf copied into the

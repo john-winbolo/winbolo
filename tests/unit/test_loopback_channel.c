@@ -57,6 +57,12 @@
  *      and resume on later snapshots as acks free the window, never flagging
  *      the slot for removal.  Every square lands, the hold buffer empties, and
  *      no resync is involved — the changes arrive over the channel.
+ *
+ *  10. Map ack from the wire.  An InputPacket still carries a map-event ack
+ *      field from the snapshot-tail era; the server's hold-buffer cursor is
+ *      owned by its own drain now, so a client claiming an ack past the
+ *      queue head must not move it.  Otherwise the space check wraps, every
+ *      later change for that slot is dropped, and the stall flag sticks.
  */
 
 #include <stdint.h>
@@ -1005,6 +1011,117 @@ static int run_map_channel_pacing(void) {
     return 0;
 }
 
+/* Case 10: the map-event ack an InputPacket carries cannot move the server's
+ * hold-buffer cursor. The field is left over from when map events rode the
+ * snapshot tail; they ride CHANNEL_MAP now, with the channel's own acks, and
+ * the cursor means "handed to the channel", which only the drain knows. A
+ * real client sends 1 for the life of the connection, so the seam below is
+ * the only way any other value reaches the wire. The claim is placed far past
+ * the queue head: a server that honours it puts the cursor beyond the head,
+ * the space check's subtraction wraps, and the buffer refuses every change
+ * from then on — so the assertion is simply that one change staged after the
+ * claim is accepted, and lands. */
+#define WIRE_ACK_SETTLE       20   /* pumps for the claiming input to be consumed */
+#define WIRE_ACK_DELIVER_MAX 500   /* bounded delivery of the change that follows */
+
+static int run_map_ack_from_wire_ignored(void) {
+    LoopbackHarness h;
+    uint32_t inputTick = 1;
+    Transport *ct;
+    int slot;
+    uint8_t x = 0, y = 0;
+    uint32_t resync0 = 0, resync1 = 0;
+    int i;
+    bool landed = false;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "WireAck", /*lobbyMode*/ false,
+                                       /*impairSpec*/ NULL, /*seed*/ 0x0ACC1u),
+                  "harness start (map ack from wire) failed");
+
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX,
+                                 pred_server_download_complete, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("server never completed the join download within %d pumps",
+                CONNECT_MAX);
+    }
+
+    ct   = &h.cs->transport;
+    slot = (int)clientSimGetMyPlayerNum(h.cs);
+    transportUdpClientTestMapState(ct, NULL, &resync0);
+
+    if (!collect_changeable_cells(h.cs, CRATER, &x, &y, 1)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("could not find a changeable land square in the scanned span");
+    }
+
+    /* Put the claim on the wire on real inputs, and let the server consume
+     * them. */
+    transportUdpClientTestSetMapEventAck(ct, 0xFFFFFFF0u);
+    for (i = 0; i < WIRE_ACK_SETTLE; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+    }
+
+    /* Nothing has been staged, so nothing is owed. A cursor pushed past the
+     * head reads as an enormous outstanding count once the subtraction
+     * wraps. */
+    if (transportUdpServerTestMapQueueOutstanding(slot) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the wire ack moved slot %d's hold-buffer cursor: %u event(s) "
+                "outstanding on a queue nothing was staged on",
+                slot, (unsigned)transportUdpServerTestMapQueueOutstanding(slot));
+    }
+
+    /* One change after the claim. The buffer must take it. */
+    if (!transportUdpServerTestAddMapEvent(h.sim, slot, x, y, CRATER)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("hold buffer refused a single change for slot %d after the "
+                "wire ack — the space check wrapped, so every later change "
+                "for this slot would be dropped", slot);
+    }
+
+    /* And it must land over the channel, with the inputs still carrying the
+     * claim the whole way. */
+    for (i = 1; i <= WIRE_ACK_DELIVER_MAX && !landed; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+        if (clientSimGetMapTerrain(h.cs, x, y) == CRATER) landed = true;
+    }
+
+    fprintf(stderr, "  map ack from wire: change landed=%d after %d pump(s) "
+                    "(cap %d), held=%u\n",
+            landed ? 1 : 0, i, WIRE_ACK_DELIVER_MAX,
+            (unsigned)transportUdpServerTestMapQueueOutstanding(slot));
+
+    if (!landed) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the change staged after the wire ack never reached the "
+                "client within %d pumps", WIRE_ACK_DELIVER_MAX);
+    }
+    if (transportUdpServerTestMapQueueOutstanding(slot) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("hold buffer still owes %u event(s) after the change landed",
+                (unsigned)transportUdpServerTestMapQueueOutstanding(slot));
+    }
+    transportUdpClientTestMapState(ct, NULL, &resync1);
+    if (resync1 != resync0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the change arrived by a map resync (count %u -> %u), not "
+                "over the channel", (unsigned)resync0, (unsigned)resync1);
+    }
+    if (transportUdpServerTestPendingRemove(slot)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("slot %d was flagged for removal", slot);
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 int run_loopback_channel(void) {
     int rc = run_empty_flow();
     if (rc != 0) return rc;
@@ -1022,5 +1139,7 @@ int run_loopback_channel(void) {
     if (rc != 0) return rc;
     rc = run_straggler_gate();
     if (rc != 0) return rc;
-    return run_map_channel_pacing();
+    rc = run_map_channel_pacing();
+    if (rc != 0) return rc;
+    return run_map_ack_from_wire_ignored();
 }

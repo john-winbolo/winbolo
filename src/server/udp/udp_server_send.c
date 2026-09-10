@@ -121,14 +121,16 @@ void serverHandleInput(const uint8_t *buf, int len,
         /* Override playerNum to prevent spoofing */
         pkt.playerNum = (uint8_t)clientIdx;
 
-        /* Advance the reliable map-event ACK from this client.  Game events
-         * ride CHANNEL_GAME with their own acks; the InputPacket carries no
-         * game-event ack. */
-        if (pkt.mapEventAck > udpServer.mapEventQueues[clientIdx].ackedSeq) {
-            udpServer.mapEventQueues[clientIdx].ackedSeq = pkt.mapEventAck;
-        }
-        /* Control events ride CHANNEL_CONTROL; their acks arrive on the
-         * channel frame trailer (ingested below), not in the input packet. */
+        /* pkt.mapEventAck is not read. It dates from when map events rode
+         * the snapshot tail and this was their ack; they ride CHANNEL_MAP now
+         * with the channel's own acks, and the hold buffer's ackedSeq means
+         * "handed to the channel", which only the snapshot drain knows. A
+         * client cannot know that, and honouring its claim let a value past
+         * nextSeq wrap the space check so every later change for the slot
+         * was dropped. The field stays on the wire (clients send 1) so the
+         * InputPacket layout is unchanged. Game events ride CHANNEL_GAME and
+         * control events CHANNEL_CONTROL, both acked on the channel frame
+         * trailer ingested below. */
 
         /* Only apply if this is a newer input than what we last processed */
         if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {

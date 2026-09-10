@@ -911,6 +911,13 @@ void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
  * installedMapGen as the harness pumps. Returns false if one is already
  * outstanding. */
 bool transportUdpClientTestBeginResync(Transport *t);
+/* Overwrite the map-event ack the client stamps into every InputPacket. A
+ * real client leaves it at its initial 1 for the life of the connection —
+ * map events ride CHANNEL_MAP with their own acks — so the only way to put
+ * any other value on the wire is this seam. A test uses it to prove the
+ * server's hold-buffer cursor is owned by its own drain and not by whatever
+ * a client claims. */
+void transportUdpClientTestSetMapEventAck(Transport *t, uint32_t ack);
 /* Read installedMapGen (the generation gate floor) and mapResyncCount
  * (cumulative successful installs). */
 void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
