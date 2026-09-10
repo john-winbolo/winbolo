@@ -44,6 +44,7 @@
 #include "sounddist.h"
 #include "floodfill.h"
 #include "log.h"
+#include "../common/wb_log.h"
 #include "screenbrainmap.h"
 #include "bolo_map_validate.h"
 
@@ -1540,6 +1541,19 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
   BYTE *ptr2;
 
   returnValue = TRUE;
+
+  /* Each of the four world structures arrives as a pointer to its handle, so
+   * either level can be NULL when the game is torn down under a caller that is
+   * still holding it. Nothing below checks: the three compress setters and the
+   * (*value)->mapItem reads all dereference straight away. Refuse instead, so
+   * the caller gets its FALSE rather than a crash inside the loader. */
+  if (value == NULL || *value == NULL ||
+      pb == NULL || *pb == NULL ||
+      bs == NULL || *bs == NULL ||
+      ss == NULL || *ss == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_MAP, "mapLoadCompressedMap: null world handle");
+    return FALSE;
+  }
 
   /* Reject input too short to hold the fixed header before any struct read:
    * basesSetBaseCompressData/pillsSetPillCompressData/startsSetStartCompressData
