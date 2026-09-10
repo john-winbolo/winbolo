@@ -632,20 +632,47 @@ void botInitArgAppendModeTokens(char *arg, size_t argSz,
         levelIdx = (uint8_t)mode->defaultLevel;
     }
 
-    SDL_snprintf(token, sizeof(token), "mode=%s", mode->key);
-    if (!botInitArgAppendToken(arg, argSz, token)) {
-        WB_LOG_WARN(WB_LOG_CAT_SIM,
-                "botManager: bot %d init arg '%s' has no room for '%s'; "
-                "mode token dropped",
-                playerNumForLog, arg, token);
+    /* An explicit token already in the staged arg wins over the lobby
+     * config: a -bot-init "[difficulty=medium]" from ab_bench, or a
+     * scenario's spawn_bot init string, names the level ON PURPOSE, and the
+     * brain applies tokens in order with the last write winning — so
+     * appending the lobby's "difficulty=hard" after it would silently turn
+     * every benched bot into a Hard one. Each key is skipped independently. */
+    if (!botInitArgHasKey(arg, "mode=")) {
+        SDL_snprintf(token, sizeof(token), "mode=%s", mode->key);
+        if (!botInitArgAppendToken(arg, argSz, token)) {
+            WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "botManager: bot %d init arg '%s' has no room for '%s'; "
+                    "mode token dropped",
+                    playerNumForLog, arg, token);
+        }
     }
-    SDL_snprintf(token, sizeof(token), "difficulty=%s",
-                 mode->levels[levelIdx].key);
-    if (!botInitArgAppendToken(arg, argSz, token)) {
-        WB_LOG_WARN(WB_LOG_CAT_SIM,
-                "botManager: bot %d init arg '%s' has no room for '%s'; "
-                "difficulty token dropped",
-                playerNumForLog, arg, token);
+    if (!botInitArgHasKey(arg, "difficulty=")) {
+        SDL_snprintf(token, sizeof(token), "difficulty=%s",
+                     mode->levels[levelIdx].key);
+        if (!botInitArgAppendToken(arg, argSz, token)) {
+            WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "botManager: bot %d init arg '%s' has no room for '%s'; "
+                    "difficulty token dropped",
+                    playerNumForLog, arg, token);
+        }
+    }
+}
+
+/* Does the ';'/','-separated init arg already carry a token starting with
+ * `key` (e.g. "difficulty=")? Matches at the start of a token only, so
+ * "cfg=DIFFICULTY=easy" does not count as a difficulty= token. */
+bool botInitArgHasKey(const char *arg, const char *key) {
+    size_t klen;
+    const char *p;
+    if (arg == NULL || key == NULL || key[0] == '\0') return false;
+    klen = strlen(key);
+    p = arg;
+    for (;;) {
+        while (*p == ';' || *p == ',' || *p == ' ') p++;
+        if (*p == '\0') return false;
+        if (SDL_strncasecmp(p, key, klen) == 0) return true;
+        while (*p != '\0' && *p != ';' && *p != ',') p++;
     }
 }
 

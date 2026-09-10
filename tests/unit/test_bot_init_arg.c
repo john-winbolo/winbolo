@@ -113,6 +113,33 @@ int run_bot_init_arg_mode_tokens(void) {
     UT_ASSERT_MSG(strcmp(arg, "preset=keel;mode=default;difficulty=easy") == 0,
                   "append onto a staged arg produced '%s'", arg);
 
+    /* An explicit token already staged WINS over the lobby config: the brain
+     * applies tokens in order, last write wins, so appending the lobby's
+     * "difficulty=hard" after a bench's "difficulty=medium" would silently
+     * make every benched bot Hard. Each key is skipped on its own. */
+    SDL_strlcpy(arg, "difficulty=medium", sizeof(arg));
+    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
+                               BOT_DIFFICULTY_HARD, 0);
+    UT_ASSERT_MSG(strcmp(arg, "difficulty=medium;mode=default") == 0,
+                  "explicit difficulty was not kept: '%s'", arg);
+    SDL_strlcpy(arg, "preset=keel;mode=survival;difficulty=easy", sizeof(arg));
+    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
+                               BOT_DIFFICULTY_HARD, 0);
+    UT_ASSERT_MSG(strcmp(arg, "preset=keel;mode=survival;difficulty=easy") == 0,
+                  "explicit mode+difficulty were not kept: '%s'", arg);
+    /* A cfg= write of the constant is NOT a difficulty token: the lobby's
+     * token is still appended (and, applied first, is then overridden by
+     * the later cfg= exactly as any cfg= override is). */
+    SDL_strlcpy(arg, "cfg=DIFFICULTY=easy", sizeof(arg));
+    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
+                               BOT_DIFFICULTY_HARD, 0);
+    UT_ASSERT_MSG(strcmp(arg, "cfg=DIFFICULTY=easy;mode=default;difficulty=hard") == 0,
+                  "cfg= was mistaken for a token: '%s'", arg);
+    UT_ASSERT(botInitArgHasKey("a=1;difficulty=x", "difficulty="));
+    UT_ASSERT(!botInitArgHasKey("cfg=DIFFICULTY=x", "difficulty="));
+    UT_ASSERT(!botInitArgHasKey("", "difficulty="));
+    UT_ASSERT(!botInitArgHasKey(NULL, "difficulty="));
+
     /* An index past the end of the list never names something the brain
      * did not declare: the mode falls back to 0, the level to that mode's
      * own default (hard here). */

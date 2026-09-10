@@ -403,6 +403,13 @@ bool botInitArgAppendToken(char *arg, size_t argSz, const char *token);
  *  levelIdx         - LobbyBotConfig.difficulty for this slot
  *  playerNumForLog  - slot number, used only in the drop warning
  *********************************************************/
+/* True when the ';'/','-separated init arg already carries a token that
+ * starts with `key` ("mode=", "difficulty="). Matched at token starts only,
+ * so a "cfg=DIFFICULTY=..." write is not mistaken for a difficulty token.
+ * botInitArgAppendModeTokens uses it to let an explicit token win over the
+ * lobby config. */
+bool botInitArgHasKey(const char *arg, const char *key);
+
 void botInitArgAppendModeTokens(char *arg, size_t argSz,
                                 const BrainModes *modes,
                                 uint8_t modeIdx, uint8_t levelIdx,
