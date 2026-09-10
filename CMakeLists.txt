@@ -3394,6 +3394,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
+    # Record-and-decode replay fixture and the case that uses it. The
+    # fixture is two translation units because the sim headers and the
+    # log-viewer headers cannot share one: replay_harness.c records a round
+    # and diffs two captures, replay_harness_decode.c reads the .wbv back
+    # through the production viewer. replay_harness.h carries the seam.
+    tests/unit/replay_harness.c
+    tests/unit/replay_harness_decode.c
+    tests/unit/test_replay_roundtrip.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -3686,6 +3694,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_spectator_seed_capture.c
     # Blocks-level append-fed stream source: drives blocks.c's no-zip path.
     tests/unit/test_blocks_stream.c
+    # Viewer-side decode of per-tank stocks: hand-built snapshot player blocks
+    # (with and without the stock bytes) and a log_TankSetStock record, through
+    # lv_specSeedLoad / lv_specRecordPump.
+    tests/unit/test_lv_tank_stocks.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4112,6 +4124,13 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_ping
+    log_roundtrip_snapshot_tank_stocks
+    log_roundtrip_tank_stock_record
+    replay_roundtrip_world
+    replay_roundtrip_base_migrate
+    lv_tank_stocks_from_snapshot
+    lv_tank_stocks_snapshot_without_tail
+    lv_tank_stocks_from_record
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip

@@ -91,6 +91,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 32–33 | `log_LostMan`, `log_KillPlayer` | man lost / player killed |
 | 53 | `log_GameSettings` | Pascal-form blob of every lobby setting (below) |
 | 54 | `log_Ping` | Smart ping: sender, kind, world x/y (below) |
+| 55 | `log_TankSetStock` | Tank stocks: player, shells, mines, armour, trees (below) |
 
 ### `log_GameSettings` payload
 
@@ -138,6 +139,25 @@ the recording is not filtered that way, because a replay is watched from
 outside and has no team to be on. The viewer draws every ping in the file, in
 the kind's colour, for `PING_DISPLAY_MS` of playback time.
 
+### `log_TankSetStock` payload
+
+One tank's four stock values. Five bytes, no Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Player | Player slot |
+| 1 | Shells | |
+| 2 | Mines | |
+| 3 | Armour | |
+| 4 | Trees | |
+
+Written by the same per-tick pass that writes `log_PlayerLocation`
+(`serverSimLogTick`), and only when at least one of the four differs from the
+last record written for that tank — so a tank whose stocks are unchanged costs
+nothing, and there is at most one record per tank per tick. A recording written
+before this event existed carries none; the reader then has only what the
+snapshot player blocks give it.
+
 ## Snapshot body
 
 A `LOG_EVENT_SNAPSHOT` captures the full world state, used both for the
@@ -166,8 +186,34 @@ terminator: [4][255][255][255]
 half-open column range, and `data` holds packed terrain — one tile per nibble,
 two tiles per byte. Decoded in `src/logviewer/bolo_map.c` (`lv_mapReadRuns`).
 
-A player block whose `dataLen` is 2 is a "slot not in use" stub; otherwise it
-carries that tank's full snapshot.
+### Player block
+
+Each block is `[dataLen:u8][payload:dataLen bytes]`. A block whose `dataLen` is
+2 is a "slot not in use" stub — player number and a zero in-use byte, nothing
+else. A slot in use carries:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Player | Player slot |
+| 1 | In use | 1 |
+| 2–3 | Tank map x, y | |
+| 4 | Tank pixel x/y | One per nibble |
+| 5 | Tank frame | |
+| 6 | On boat | |
+| 7–8 | Man map x, y | (0,0) means the man is aboard |
+| 9 | Man pixel x/y | One per nibble |
+| 10 | Man frame | |
+| 11… | Player name | Pascal form |
+| … | Location | Pascal form |
+| … | Alliances | `[count][count player slots]` |
+| … | Tank stocks | Four bytes: shells, mines, armour, trees |
+
+The four stock bytes are optional: `dataLen` delimits the block, so a reader
+that runs out of block at the end of the alliance list is reading a recording
+written before the stocks were carried and has no stock values for that tank —
+which is what every recording made before this looks like. A reader must treat
+their absence as "not present" rather than as a malformed block, and a slot with
+no stocks reads as zero rather than as a guess.
 
 ## Versions
 

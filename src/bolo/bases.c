@@ -1704,7 +1704,7 @@ void basesMigrate(GameSim *sim, BYTE oldOwner, BYTE newOwner) {
   while (count < ((*value)->numBases)) {
     if (((*value)->item[count].owner) == oldOwner) {
       (*value)->item[count].owner = newOwner;
-      logAddEvent(log_BaseSetOwner, newOwner, NEUTRAL, FALSE, 0, 0, NULL);
+      logAddEvent(log_BaseSetOwner, count, newOwner, TRUE, 0, 0, NULL);
     }
     count++;
   }

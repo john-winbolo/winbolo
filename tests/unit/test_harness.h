@@ -758,6 +758,35 @@ int run_log_roundtrip_lobby_mode_drops_world_events(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);
+/* A snapshot's player block ends with the tank's shells, mines, armour and
+ * trees for a slot in use, and a slot that is not in use stays the 2-byte
+ * stub. */
+int run_log_roundtrip_snapshot_tank_stocks(void);
+/* log_TankSetStock carries the player and the four values, and is written only
+ * when one of them changed since the last record for that tank. */
+int run_log_roundtrip_tank_stock_record(void);
+
+/* Record-and-decode round trip (test_replay_roundtrip.c, on the
+ * replay_harness fixture): records a round in which a terrain cell, a base's
+ * owner and stock, a pillbox's owner and a tank's stocks all change, replays
+ * the .wbv through the production viewer and requires the replayed world to
+ * be the recorded one. Every change lands after the opening snapshot and the
+ * round is far shorter than the interval between snapshots, so only the
+ * per-change events can carry them. */
+int run_replay_roundtrip_world(void);
+/* Same fixture: a base moved by basesMigrate (its owner left the game) is on
+ * the same base, with the same new owner, after replay. */
+int run_replay_roundtrip_base_migrate(void);
+
+/* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
+ * snapshot bodies and forward records through lv_specSeedLoad /
+ * lv_specRecordPump. Covers the four bytes on the end of a player block, a
+ * block written before they existed (no stocks, and the fields in front of them
+ * still decode), a not-in-use slot, the log_TankSetStock record, and an unknown
+ * record type skipped by its framed length. */
+int run_lv_tank_stocks_from_snapshot(void);
+int run_lv_tank_stocks_snapshot_without_tail(void);
+int run_lv_tank_stocks_from_record(void);
 
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
