@@ -38,8 +38,9 @@ local C       = require("constants")
 --                          as a number if it looks like one, as a boolean for
 --                          "true"/"false", and as a plain string otherwise.
 --
--- Presets are applied FIRST and every cfg= afterwards, so an explicit cfg=
--- always wins no matter where in the token list it sits.
+-- The per-(mode,difficulty) LEVEL bundle (C.MODE_LEVELS) is applied FIRST,
+-- then presets, then every cfg=, so precedence is level < preset < cfg and
+-- an explicit cfg= always wins no matter where in the token list it sits.
 --
 -- WHY IT IS UP HERE AND NOT IN THE TICK-1 TOKEN BLOCK (search BRAIN_INIT_ARG,
 -- ~line 1250) where every other token is parsed: several modules CAPTURE a
@@ -123,12 +124,13 @@ do
         -- to this arg by bot_manager.c at brain-create time. The key comes
         -- from this brain's own modes.txt, so the vocabulary is whatever
         -- that file lists ("default", "survival", ...) and this side only
-        -- checks the shape. Rides in as an ordinary cfg write of C.MODE,
-        -- so it is type-checked and logged like every other override, and a
-        -- bench can equally say cfg=MODE=survival.
+        -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
+        -- cfgs) so the level bundle below can read the chosen mode; it is
+        -- type-checked and logged like every other override. Precedence:
+        -- level < preset < cfg (a later cfg=MODE= would still win).
         mname = mname:lower()
         if mname:match("^[a-z0-9_]+$") then
-          cfgs[#cfgs + 1] = { "MODE", mname }
+          _cfg_set("MODE", mname, "mode")
         else
           _cfg_warn_add("[mode] BAD TOKEN '%s' -- want mode=<key> of [a-z0-9_]; IGNORED.", tok)
         end
@@ -137,14 +139,14 @@ do
         -- inside that mode, likewise appended by bot_manager.c. modes.txt
         -- defines which keys a mode has, so any [a-z0-9_] key is accepted
         -- here rather than the three the default mode happens to use.
-        -- Rides in as an ordinary cfg write of C.DIFFICULTY. Queued with
-        -- the cfgs (not applied here) so it lands AFTER any preset=, same
-        -- as a cfg= would. "normal" is the old name for medium; the C side
-        -- never sends it, but a hand-written arg might.
+        -- Written into C.DIFFICULTY RIGHT HERE (not queued) so the level
+        -- bundle below reads it; MODE_LEVELS[C.MODE][C.DIFFICULTY] then
+        -- applies BEFORE any preset=. "normal" is the old name for medium;
+        -- the C side never sends it, but a hand-written arg might.
         dname = dname:lower()
         if dname == "normal" then dname = "medium" end
         if dname:match("^[a-z0-9_]+$") then
-          cfgs[#cfgs + 1] = { "DIFFICULTY", dname }
+          _cfg_set("DIFFICULTY", dname, "difficulty")
         else
           _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want difficulty=<key> of [a-z0-9_]; IGNORED.", tok)
         end
@@ -152,6 +154,37 @@ do
         _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
       end
       -- Everything else is one of the tick-1 tokens; not our business.
+    end
+    -- LEVEL BUNDLE (lowest precedence, applied BEFORE presets): the per-(mode,
+    -- difficulty) scalar overrides from C.MODE_LEVELS, pushed through the same
+    -- _cfg_set path so its type/table refusals and logging apply with no new
+    -- validation. MODE and DIFFICULTY were resolved inline above. A missing
+    -- mode/difficulty key (or hard = {}) simply applies nothing.
+    --
+    -- The level is selected by the difficulty= (and mode=) TOKEN only. A later
+    -- cfg=DIFFICULTY= changes the label C.DIFFICULTY but does NOT apply a
+    -- different bundle -- the bundle was already chosen when this block ran.
+    -- That is intended: cfg= is a single-knob override, not a level selector,
+    -- so bench a level with difficulty=<level>, not cfg=DIFFICULTY=<level>.
+    -- Every bundle value is FIRST-PASS, to be benched preset=keel vs
+    -- difficulty=<level> per the approve-values rule; hard = {} is empty by
+    -- design so a default game is bit-for-bit today's brain.
+    do
+      local mode, diff = C.MODE, C.DIFFICULTY
+      local mtbl = C.MODE_LEVELS and C.MODE_LEVELS[mode]
+      local ltbl = mtbl and mtbl[diff]
+      if type(ltbl) == "table" then
+        -- Sorted so the log reads the same on every run (see the preset loop).
+        local keys = {}
+        for k in pairs(ltbl) do keys[#keys + 1] = k end
+        table.sort(keys)
+        local n = 0
+        for _, k in ipairs(keys) do
+          if _cfg_set(k, ltbl[k], "level " .. tostring(mode) .. "/" .. tostring(diff)) then n = n + 1 end
+        end
+        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+          string.format("[level] %s/%s applied (%d values)", tostring(mode), tostring(diff), n)
+      end
     end
     -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
     for _, pname in ipairs(presets) do

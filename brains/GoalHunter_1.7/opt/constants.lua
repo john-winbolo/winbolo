@@ -4323,4 +4323,98 @@ M.PRESETS = {
   },
 }
 
+-- ── PER-(MODE, DIFFICULTY) LEVEL BUNDLES ──────────────────────────────────
+-- Beside M.PRESETS, and applied the same way (init.lua, right after
+-- require("constants"), through the shared _cfg_set): a flat CONST -> scalar
+-- map per (mode, difficulty). `difficulty=` is parsed today but nothing read
+-- it (every bot played Hard); this wires it to per-level knob bundles.
+--
+-- Precedence is level < preset < cfg: MODE_LEVELS[mode][difficulty] applies
+-- FIRST, then any preset=, then any cfg=. So `preset=keel` still reproduces
+-- keel at any difficulty and a cfg= token still overrides one knob.
+--
+-- hard = {} is EMPTY by definition: default/Hard is today's constants,
+-- bit-for-bit. Every value below is a plain scalar the same _cfg_set writes
+-- and type-checks (unknown names, tables and type changes are refused). The
+-- NEW handicap knobs (BLITZ_ENABLED, AIM_ERROR_BRADS, FIRE_HOLD_TICKS,
+-- REACTION_DELAY_TICKS, AHEAD_*, BEHIND_ATTACK_MULT, AHEAD_BLITZ_ONLY,
+-- OUTNUMBERED_*) are DEFERRED to a later pass and are NOT listed here yet.
+--
+-- Every value below is FIRST-PASS -- to be benched preset=keel vs
+-- difficulty=<level> per the approve-values rule; expect them to move.
+-- Two values are deliberate (Andrew's) calls worth naming:
+--   * DEFEND_ALARM_BASE_COST at Easy makes Easy defend its pills MORE SLOWLY
+--     (a steal window for new players) -- detection range (DEFEND_ALARM_ENEMY_TILES)
+--     is left at 11 so it still notices and turns up ("defends its own").
+--   * ATTACK_PILL_RISKY_ARMOUR = 40 at Easy == TANK_FULL_ARMOUR, so Easy pays
+--     the risky-take penalty on essentially EVERY pill take -- intended.
+M.MODE_LEVELS = {
+  default = {
+    hard = {},                    -- empty = today's constants (no-op)
+    medium = {
+      SQUAD_MAX_SIZE = 1,
+      HARD_TAKE_MIN_HP = 13, BLITZ_SWERVE_ONLY_WHEN_HIT = false, SQUAD_HELP_RANGE = 18,
+      -- skill (mild)
+      TANK_COMBAT_STEADY_TICKS = 5, TANK_COMBAT_STEADY_MIN_SPEED = 6,
+      TANK_COMBAT_JINK_PERIOD = 15, TANK_COMBAT_JINK_ANGLE = 24, GHOST_TANK_TTL_TICKS = 60,
+      -- gives ground
+      TANK_COMBAT_FLEE_ARMOUR = 12, TANK_COMBAT_FLEE_SHELLS = 4,
+      ARMOUR_CRITICAL = 8, ENGAGE_MAX_INCOMING_TICKS = 40,
+      -- picks its fights
+      ATTACK_PILL_RISKY_ARMOUR = 34, ATTACK_PILL_RISKY_PENALTY = 150, TANK_COMBAT_BASE_COST = 40,
+      GOAL_CROSSFIRE_PENALTY = 150,
+      -- placement (moderate forward)
+      STRATEGIC_PLACE_FRONT_WEIGHT = 2.0, STRATEGIC_PLACE_BASE_WEIGHT = 3.0,
+      STRATEGIC_PLACE_THREAT_WEIGHT = 2.0, STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 150,
+      STRATEGIC_PLACE_SPIKE_BONUS = 40,
+      -- defend / carry (a step down from Hard)
+      DEFEND_ALARM_BASE_COST = 140,
+      STRATEGIC_PLACE_CARRY_DISCOUNT_PER_TICK = 0.35, STRATEGIC_PLACE_CARRY_DISCOUNT_MAX = 200,
+      SEEK_TREES_CARRY_DISCOUNT = 4,
+      -- no rebuild under fire (softer than Easy)
+      REPAIR_UNDER_FIRE_MULT = 8.0, REPAIR_QUIET_TICKS = 150, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.10,
+      -- fuelled
+      ARMOUR_LOW = 18, SHELLS_LOW = 22, ARMOUR_COMBAT = 33, SHELLS_COMBAT = 33,
+    },
+    easy = {
+      -- Blitz: solo, never gangs up
+      SQUAD_MAX_SIZE = 1, HARD_TAKE_MIN_HP = 15,
+      BLITZ_SWERVE_ONLY_WHEN_HIT = false,
+      -- Skill: bad at moving targets; pills/bases stay accurate
+      CAPTURE_LGM_HUNT = false,                 -- drives straight; won't snipe a builder off a corpse
+      TANK_COMBAT_STEADY_TICKS = 10, TANK_COMBAT_STEADY_MIN_SPEED = 10,
+      TANK_COMBAT_JINK_PERIOD = 30, TANK_COMBAT_JINK_ANGLE = 12,
+      TANK_COMBAT_OPPORTUNISTIC_RANGE = 0, GHOST_TANK_TTL_TICKS = 25,
+      -- Aggression / refuse takes
+      ATTACK_PILL_RISKY_ARMOUR = 40, ATTACK_PILL_RISKY_PENALTY = 250,
+      ATTACK_PILL_UNSAFE_HP_THRESHOLD = 9, ATTACK_PILL_UNSAFE_ARMOUR_FLOOR = 28,
+      ATTACK_RUSH_MIN_ARMOUR = 41,              -- >full armour -> never point-blank rushes
+      GOAL_CROSSFIRE_PENALTY = 250, TANK_COMBAT_BASE_COST = 60,
+      -- Caution: peels off, gives ground
+      ATTACK_CURVE_AFTER_HITS = 1, SWERVE_SKIP_ARMOUR_PER_HP = 40,  -- NB 40 not 0
+      TANK_COMBAT_FLEE_ARMOUR = 18, TANK_COMBAT_FLEE_SHELLS = 6,    -- keep < SHELLS_LOW
+      ENGAGE_MAX_INCOMING_TICKS = 25, ARMOUR_CRITICAL = 12,        -- keep <= ARMOUR_LOW
+      -- Steady / predictable (goal hysteresis)
+      GOAL_SWITCH_PENALTY = 60, GOAL_SWITCH_RATIO = 0.5, GOAL_COMMITMENT_CAP = 150,
+      GOAL_MIN_COMMIT_TICKS = 75, REFUEL_LOCK_IN = true, ATTACK_PILL_COMMITMENT_BONUS = 120,
+      -- Placement: back / defensive
+      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0, STRATEGIC_PLACE_BASE_WEIGHT = 4.0,
+      STRATEGIC_PLACE_THREAT_WEIGHT = 3.0, STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 250,
+      STRATEGIC_PLACE_SPIKE_BONUS = 0, STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
+      -- Defend slow / loaded ambush target
+      DEFEND_ALARM_BASE_COST = 220,             -- ENEMY_TILES unchanged at 11 ("defends its own")
+      KILL_ME_ENABLED = false,
+      STRATEGIC_PLACE_CARRY_DISCOUNT_PER_TICK = 0.2, STRATEGIC_PLACE_CARRY_DISCOUNT_MAX = 120,
+      SEEK_TREES_CARRY_DISCOUNT = 2, ATTACK_NO_BUILDER_MULT = 20,   -- a RESTRAINT, raise it
+      -- No rebuild under fire
+      REPAIR_UNDER_FIRE_MULT = 20.0, REPAIR_QUIET_TICKS = 300, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.0,
+      -- Route caution (multiplicative on coverage -- safe vs absolute thresholds)
+      CROSSFIRE_MULTIPLIER_ENABLED = true,
+      -- Refuel: predictable, fuelled
+      ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
+    },
+  },
+  survival = { hard = {}, medium = {}, easy = {} },  -- placeholders (see modes.txt)
+}
+
 return M
