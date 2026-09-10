@@ -358,14 +358,26 @@ bool clientSimCreate(ClientSim *cs) {
 }
 
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
+    BYTE prevPlayerNum = cs->myPlayerNum;
+
     cs->myPlayerNum = playerNum;
     cs->sim.viewPlayer = playerNum;
-    if (playerNum != 0) {
-        cs->sim.tanks[playerNum] = cs->sim.tanks[0];
-        cs->sim.tanks[0] = NULL;
-        cs->sim.lgmen[playerNum] = cs->sim.lgmen[0];
-        cs->sim.lgmen[0] = NULL;
+    /* The client owns exactly one tank and one lgm — its own — and both sit
+     * at the slot index, so changing slot has to carry them across. Take the
+     * source from the slot they are actually in rather than from 0: only the
+     * first assignment finds them at 0, where clientSimCreate pre-allocated
+     * them. A second assignment (a mid-lobby PACKET_LOBBY_MAP_CHANGE sends
+     * the joiner through JOIN_REQUEST -> JOIN_ACCEPT again, and the server
+     * may hand back a different slot) then copied the already-NULL slot 0
+     * over the live pointers and dropped the only reference to both. */
+    if (playerNum != prevPlayerNum) {
+        cs->sim.tanks[playerNum] = cs->sim.tanks[prevPlayerNum];
+        cs->sim.tanks[prevPlayerNum] = NULL;
+        cs->sim.lgmen[playerNum] = cs->sim.lgmen[prevPlayerNum];
+        cs->sim.lgmen[prevPlayerNum] = NULL;
         lgmSetPlayerNum(&cs->sim.lgmen[playerNum], playerNum);
+    }
+    if (playerNum != 0) {
         cs->sim.baseTimer[playerNum] = BASE_TICKS_BETWEEN_REFUEL;
     }
 }
@@ -378,16 +390,12 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
         MY_TANK(cs) = NULL;
     }
     tankCreate(&cs->sim, &MY_TANK(cs));
-    /* LGM lifecycle must mirror the tank's. setupSelf runs on
-     * first-time slot assignment (clientSimCreate pre-allocated
-     * lgmen[0]; clientSimSetPlayerNum then moved it to
-     * lgmen[playerNum]) and on re-assignment — a mid-lobby
-     * PACKET_LOBBY_MAP_CHANGE round-trips the joiner through
-     * JOIN_REQUEST → JOIN_ACCEPT a second time, and that second
-     * setPlayerNum nulls lgmen[playerNum] because lgmen[0] is
-     * already NULL from the first move. Recreate here so MY_LGM is
-     * always valid by the time the first per-frame lgmGetStatus
-     * runs after game start. */
+    /* LGM lifecycle must mirror the tank's. setupSelf runs on first-time
+     * slot assignment and again on re-assignment, and both times the slot
+     * holds the objects clientSimSetPlayerNum carried over. Destroy before
+     * recreating so the re-assignment path frees the pair it was handed
+     * instead of leaking it, and so MY_LGM is valid by the time the first
+     * per-frame lgmGetStatus runs after game start. */
     if (MY_LGM(cs) != NULL) {
         lgmDestroy(&MY_LGM(cs));
         MY_LGM(cs) = NULL;

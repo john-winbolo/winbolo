@@ -1513,6 +1513,16 @@ int run_mdns_discovery(void);
  * and bolo_client_type_name() maps every enumerator to its exact name. */
 int run_client_type_matches_platform(void);
 int run_client_type_name_round_trips(void);
+
+/* Client slot bookkeeping (test_client_slot_reassign.c): the client's single
+ * tank and lgm live at its slot index, and clientSimSetPlayerNum has to carry
+ * them across when a second JOIN_ACCEPT assigns a different slot. The move
+ * used to read slot 0 unconditionally, which is only where they sit on the
+ * first assignment — later ones wrote NULL over the live pointers and orphaned
+ * both objects. Asserts one live tank and one live lgm, at the current slot. */
+int run_client_slot_reassign_carries_tank_and_lgm(void);
+int run_client_slot_reassign_same_slot_is_stable(void);
+int run_client_slot_reassign_back_to_zero(void);
 int run_players_oob_index_safe(void);
 int run_control_oob_player_dropped(void);
 
