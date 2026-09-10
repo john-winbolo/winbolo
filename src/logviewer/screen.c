@@ -917,13 +917,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       /* opt1 is the 0-based base index in the log (the server emits it
        * post-decrement — see basesSetBase / basesUpdateStock in
        * src/bolo/bases.c). */
-      if (opt1 < MAX_BASES) {
-        BYTE bsIdx = opt1;
-        g_lv->prevBaseShells[bsIdx] = opt2;
-        g_lv->prevBaseMines[bsIdx]  = opt3;
-        g_lv->prevBaseArmour[bsIdx] = opt4;
-        g_lv->prevBaseStockValid[bsIdx] = true;
-      }
       break;
     case log_PillSetOwner:
       logReadBytes(&opt1, 1);
@@ -1616,10 +1609,6 @@ bool lv_processSnapshot() {
     }
     count++;
   }
-
-  /* A snapshot re-anchors the world, so drop the per-base stock cache with it
-   * and let the next log_BaseSetStock write it fresh. */
-  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   return returnValue;
 }
@@ -2344,7 +2333,6 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
   memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
-  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   returnValue = lv_blocksCreate(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
@@ -2491,7 +2479,6 @@ static bool lv_logLoadCommon(void) {
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
   memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
-  memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
   if (returnValue == TRUE) {
     len = logReadBytes((BYTE *)id, LENGTH_ID);
@@ -2733,10 +2720,6 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   memset(lv->deaths, 0, sizeof(lv->deaths));
   memset(lv->gameViewHud, 0, sizeof(lv->gameViewHud));
   memset(lv->tankInv, 0, sizeof(lv->tankInv));
-  memset(lv->prevBaseShells, 0, sizeof(lv->prevBaseShells));
-  memset(lv->prevBaseMines, 0, sizeof(lv->prevBaseMines));
-  memset(lv->prevBaseArmour, 0, sizeof(lv->prevBaseArmour));
-  memset(lv->prevBaseStockValid, 0, sizeof(lv->prevBaseStockValid));
 
   lv_screenSetState(lv);
   return lv;

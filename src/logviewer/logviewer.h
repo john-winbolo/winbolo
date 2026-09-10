@@ -145,15 +145,6 @@ typedef struct LogViewerState {
   uint16_t     deaths[MAX_TANKS];    /* per-player death tally */
   GameViewPlayerHud gameViewHud[MAX_TANKS];
   TankInventory tankInv[MAX_TANKS];  /* per-tank stocks, as the recording states them */
-  /* The stock values the last log_BaseSetStock carried for each base, so a
-   * later event can be read as a delta against them. prevBaseStockValid says
-   * whether a base has had one yet; a snapshot clears it, since the snapshot
-   * re-anchors the world. Indexed by base number minus 1
-   * (1..MAX_BASES → 0..MAX_BASES-1). */
-  BYTE         prevBaseShells[MAX_BASES];
-  BYTE         prevBaseMines[MAX_BASES];
-  BYTE         prevBaseArmour[MAX_BASES];
-  bool         prevBaseStockValid[MAX_BASES];
 
   /* --- Embedded reel (post-game recap) state --- */
   /* Colour tanks by their alliance to the local player -- green allies, red
