@@ -925,7 +925,7 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
     /* SCROLL_MECH_ENHANCED — John's current sub-tile / threat-aware path. */
     if (manual == TRUE) {
       returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
-    } else if (ss->autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR) {
+    } else if (ss->autoScroll == TRUE && isTank == TRUE && tankIsDead == FALSE) {
       returnValue = scrollAutoScroll(ss, sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle, ownRenderX, ownRenderY);
     } else {
       returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);

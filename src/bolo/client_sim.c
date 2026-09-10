@@ -577,7 +577,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
     tank *tk = &MY_TANK(cs);
     if (tankGetReloadTime(tk) <= 1 &&
         tankGetShells(tk) > 0 &&
-        tankGetArmour(tk) <= TANK_FULL_ARMOUR) {
+        !tankIsDestroyed(tk)) {
       tankGetWorld(tk, &preX, &preY);
       preAngle = tankGetAngle(tk);
       canFire = true;
@@ -3110,9 +3110,9 @@ bool clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY) {
 
 bool clientSimIsMyTankAlive(const ClientSim *cs) {
   if (!cs || MY_TANK((ClientSim *)cs) == NULL) return false;
-  /* Over full armour is how a dead tank waiting on deathWait reads, the same
-   * test viewportCenterOnTank makes before it re-centres the main view. */
-  return tankGetArmour(&MY_TANK((ClientSim *)cs)) <= TANK_FULL_ARMOUR;
+  /* The destroyed state the tank carries, the same test viewportCenterOnTank
+   * makes before it re-centres the main view. */
+  return !tankIsDestroyed(&MY_TANK((ClientSim *)cs));
 }
 
 void clientSimBuildShellList(ClientSim *cs, screenBullets *sb,
@@ -3825,15 +3825,7 @@ void clientSimPanY(ClientSim *cs, int dyTiles) {
 }
 
 bool clientSimTankIsDead(ClientSim *cs) {
-  bool returnValue;
-  BYTE high, low, health, dummy;
-
-  returnValue = FALSE;
-  tankGetStats(&MY_TANK(cs), &high, &low, &health, &dummy);
-  if (health > TANK_FULL_ARMOUR) {
-    returnValue = TRUE;
-  }
-  return returnValue;
+  return tankIsDestroyed(&MY_TANK(cs));
 }
 
 bool clientSimTankScroll(ClientSim *cs) {
@@ -3861,7 +3853,7 @@ bool clientSimTankScroll(ClientSim *cs) {
 }
 
 void clientSimManMove(ClientSim *cs, buildSelect buildS) {
-  if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
+  if (!tankIsDestroyed(&MY_TANK(cs)) && clientSimGetNetStatus(cs) != netFailed) {
     /* Route build request through InputPacket so the server sim
      * processes it authoritatively (matches brain build path). */
     clientSimSetPendingBuild(cs,
@@ -3872,7 +3864,7 @@ void clientSimManMove(ClientSim *cs, buildSelect buildS) {
 }
 
 void clientSimManMoveToMap(ClientSim *cs, BYTE mapX, BYTE mapY, buildSelect buildS) {
-  if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
+  if (!tankIsDestroyed(&MY_TANK(cs)) && clientSimGetNetStatus(cs) != netFailed) {
     clientSimSetPendingBuild(cs, (BYTE) buildS + 1, mapX, mapY);
   }
 }
@@ -3913,9 +3905,6 @@ BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {
 /* Local tank stat accessors. */
 void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
   tankGetStats(&MY_TANK(cs), shellsAmount, minesAmount, armourAmount, treesAmount);
-  if (*armourAmount > TANK_FULL_ARMOUR) {
-    *armourAmount = 0;
-  }
 }
 
 void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {

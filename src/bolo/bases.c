@@ -331,7 +331,6 @@ void basesUpdate(GameSim *sim, tank *tnk) {
   BYTE tx;                 /* Tank Map X and Y Co-ordinates */
   BYTE ty;
   BYTE baseNum;            /* The base number if the tank is on a base */
-  BYTE tankArmour;         /* Amount of health the tank has */
   BYTE count;              /* Looping Variable */
   int secondCounter;       /* another looping variable */
 
@@ -395,9 +394,8 @@ void basesUpdate(GameSim *sim, tank *tnk) {
     tx = (BYTE) twx;
     twy >>= TANK_SHIFT_MAPSIZE;
     ty = (BYTE) twy;
-    tankArmour = tankGetArmour(tnk);
     baseNum = basesGetBaseNum(value,tx,ty);
-    if (baseNum != BASE_NOT_FOUND && tankArmour <= TANK_FULL_ARMOUR) {
+    if (baseNum != BASE_NOT_FOUND && !tankIsDestroyed(tnk)) {
       /* On base */
       if ((*value)->item[baseNum-1].justStopped == FALSE) {
         basesRefueling(sim, tnk, baseNum);
@@ -1045,7 +1043,10 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
   if ((*value)->item[baseNum].refuelTime == 0) {
     tankGetStats(tnk, &shellsAmount, &mines, &armour, &trees);
     if (playersIsAllie(&sim->plyrs, (*value)->item[baseNum].owner, gameSimGetTankPlayer(sim, tnk))) {
-      if (armour < TANK_FULL_ARMOUR && ((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
+      /* A destroyed tank draws nothing from the base. Its armour reads as a
+       * real 0 rather than a wrapped value, so the capacity test below no
+       * longer rejects it on its own. */
+      if (!tankIsDestroyed(tnk) && armour < TANK_FULL_ARMOUR && ((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
         (*value)->item[baseNum].armour -= BASE_ARMOUR_GIVE;
         tankAddArmour(sim, tnk, BASE_ARMOUR_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
@@ -1351,7 +1352,7 @@ bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
   if (player >= MAX_TANKS || sim->tanks[player] == NULL) {
     return FALSE;
   }
-  if (sim->tanks[player]->armour > TANK_FULL_ARMOUR) {
+  if (tankIsDestroyed(&sim->tanks[player])) {
     return FALSE;
   }
   tankGetWorld(&sim->tanks[player], &tankX, &tankY);
@@ -1704,7 +1705,7 @@ void basesMigrate(GameSim *sim, BYTE oldOwner, BYTE newOwner) {
   while (count < ((*value)->numBases)) {
     if (((*value)->item[count].owner) == oldOwner) {
       (*value)->item[count].owner = newOwner;
-      logAddEvent(log_BaseSetOwner, newOwner, NEUTRAL, FALSE, 0, 0, NULL);
+      logAddEvent(log_BaseSetOwner, count, newOwner, TRUE, 0, 0, NULL);
     }
     count++;
   }

@@ -233,7 +233,7 @@ struct ClientSim {
     GameEvent  brainEvents[MAX_BRAIN_EVENTS];
     int        brainEventCount;
     uint32_t   lastServerTick;
-    uint8_t    lastServerArmour;    /* Previous server snapshot armour for death detection */
+    bool       lastServerDestroyed; /* Previous snapshot's destroyed bit, for death/respawn edges */
     uint8_t    brainLastAssistMsg;  /* ASSIST_MSG_* or 0 */
 
     /* Smart pings this client has been sent and is still drawing. Written by

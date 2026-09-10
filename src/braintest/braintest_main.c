@@ -1466,7 +1466,7 @@ static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
         for (int i = 0; i < pf_->tankCount; i++) {
             const TankSnapshot *ts = &pf_->tanks[i];
             if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) continue; /* stub */
-            if (ts->tankStatus & 0xF0) continue;                    /* dead */
+            if (ts->tankStatus & (TANK_STATUS_DEAD | TANK_STATUS_DESTROYED)) continue;
             int pn = ts->playerNum & TANK_SNAPSHOT_PLAYER_MASK;
             float tx = ts->worldX / 256.0f;
             float ty = ts->worldY / 256.0f - 0.5f;
@@ -1659,7 +1659,7 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 twx = pf_->tanks[i].worldX;
                 twy = pf_->tanks[i].worldY;
-                in_boat  = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat  = (pf_->tanks[i].tankStatus & TANK_STATUS_ON_BOAT) ? 1 : 0;
                 res_shells = pf_->tanks[i].shells;
                 res_trees  = pf_->tanks[i].trees;
                 res_mines  = pf_->tanks[i].mines;
@@ -2669,7 +2669,7 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
             if (pf_->tanks[i].playerNum == app->followBot) {
                 smx = pf_->tanks[i].worldX >> 8;
                 smy = pf_->tanks[i].worldY >> 8;
-                in_boat    = (pf_->tanks[i].tankStatus & 0x0F) ? 1 : 0;
+                in_boat    = (pf_->tanks[i].tankStatus & TANK_STATUS_ON_BOAT) ? 1 : 0;
                 res_shells = pf_->tanks[i].shells;
                 res_trees  = pf_->tanks[i].trees;
                 res_mines  = pf_->tanks[i].mines;
@@ -5117,7 +5117,8 @@ static void appRender(BrainTestApp *app) {
                  * janky during scrubbing). */
                 t->angle     = (TURNTYPE)((float)ts->angle  / 256.0f);
                 t->speed     = (SPEEDTYPE)((float)ts->speed / 256.0f);
-                t->onBoat    = (ts->tankStatus & 0x0F) ? TRUE : FALSE;
+                t->onBoat    = (ts->tankStatus & TANK_STATUS_ON_BOAT) ? TRUE : FALSE;
+                t->destroyed = (ts->tankStatus & TANK_STATUS_DESTROYED) ? TRUE : FALSE;
                 t->deathWait = ts->deathWait;
                 t->armour    = ts->armour;
                 t->shells    = ts->shells;

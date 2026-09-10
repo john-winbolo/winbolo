@@ -757,9 +757,6 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
     (void)cs;
-    if (armour > TANK_FULL_ARMOUR) {
-        armour = 0;
-    }
     sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
 }
 

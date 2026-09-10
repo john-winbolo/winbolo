@@ -56,6 +56,7 @@ static bool bd_stays_on_base(GameSim *gs, BYTE baseIdx) {
     BYTE by = (*gs->bs).item[baseIdx].y;
     tankSetDeathWait(&gs->tanks[0], 0);
     tankSetArmour(&gs->tanks[0], TANK_FULL_ARMOUR);
+    tankSetDestroyed(&gs->tanks[0], FALSE);
     tankSetOnBoat(&gs->tanks[0], FALSE);
     tankSetSpeed(&gs->tanks[0], 0);
     gs->inStartFind = FALSE;

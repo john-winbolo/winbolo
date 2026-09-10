@@ -7,7 +7,8 @@
  *
  * The matrix proves the full reliability burden: clean delivery, loss,
  * reorder, duplication, burst loss, a multi-seed soak, window / flow
- * control, overflow, per-channel independence, the stream flavor, frame
+ * control, overflow, hold-and-resume of a burst larger than one window,
+ * per-channel independence, the stream flavor, frame
  * coalescing under a tight budget, a worst-case control event fitting one
  * datagram, malformed-input rejection, the named
  * live-play regressions (lobby-ack resend, seq-space across game start,
@@ -444,6 +445,102 @@ done:
     free(b);
     if (rc) {
         UT_FAIL("window / flow-control contract violated");
+    }
+    return 0;
+}
+
+/* A producer that holds its unsent remainder rather than treating a full
+ * window as fatal gets everything across, in order and exactly once, as acks
+ * free the window. This is the contract the server's map-event drain leans on:
+ * it stops at the first refused send, leaves the rest in its hold buffer with
+ * the cumulative ack un-advanced, and resumes at the same message on a later
+ * snapshot. The burst deliberately exceeds one window, so the hold path is the
+ * only way every message can arrive. */
+static int t_hold_and_resume(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    const uint32_t total = 300;   /* > CHANNEL_MAP_WINDOW */
+    uint32_t window;
+    uint32_t queued = 0;          /* next index the producer still owes */
+    uint32_t received = 0;        /* next index the consumer expects */
+    int refused = 0;
+    int tick;
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    window = a->ch[CHANNEL_MAP].window;
+    if (total <= window) {
+        goto done; /* the burst must outgrow the window to test anything */
+    }
+
+    /* First pass with no acks yet: exactly one window fits and the next send
+     * is refused, leaving the remainder owed. */
+    while (queued < total) {
+        uint8_t msg[CHANNEL_MAX_SEG];
+        memset(msg, 0, sizeof(msg));
+        putIdx(msg, queued);
+        if (!channelSend(a, CHANNEL_MAP, msg,
+                         msgLenFor(queued, CHANNEL_MAP_SEG))) {
+            refused = 1;
+            break;
+        }
+        queued++;
+    }
+    if (!refused || queued != window) {
+        goto done; /* the window did not bound the burst as expected */
+    }
+
+    /* Carry the exchange. Each tick re-offers the remainder, stopping at the
+     * first refusal exactly as the drain does, then moves one frame each way
+     * and takes delivery in order. */
+    for (tick = 0; tick < 2000 && received < total; tick++) {
+        int la, lb;
+        uint16_t olen;
+        channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+        channelTick(b, (uint32_t)tick, LINK_RTT_MS);
+        while (queued < total) {
+            uint8_t msg[CHANNEL_MAX_SEG];
+            memset(msg, 0, sizeof(msg));
+            putIdx(msg, queued);
+            if (!channelSend(a, CHANNEL_MAP, msg,
+                             msgLenFor(queued, CHANNEL_MAP_SEG))) {
+                break; /* still full — hold the rest for a later tick */
+            }
+            queued++;
+        }
+        if (checkSendInvariants(a, window)) {
+            goto done;
+        }
+        la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+        while (channelReceive(b, CHANNEL_MAP, out, &olen)) {
+            if (getIdx(out) != received) {
+                goto done; /* out of order, a gap, or a duplicate delivered */
+            }
+            if (olen != msgLenFor(received, CHANNEL_MAP_SEG)) {
+                goto done; /* payload boundary lost */
+            }
+            received++;
+        }
+        lb = channelBuildFrame(b, frame, FRAME_BUDGET);
+        channelRecvFrame(a, frame, lb);
+    }
+    if (queued != total || received != total) {
+        goto done; /* the held remainder never resumed */
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("held remainder did not resume in order after the window freed "
+                "(sent %u, received %u of %u)",
+                (unsigned)queued, (unsigned)received, (unsigned)total);
     }
     return 0;
 }
@@ -2425,6 +2522,9 @@ int run_channel_mux(void) {
         return 1;
     }
     if (t_overflow()) {
+        return 1;
+    }
+    if (t_hold_and_resume()) {
         return 1;
     }
     if (t_flavor_usage()) {

@@ -1717,12 +1717,12 @@ int run_overview_dead_tank(void) {
     }
 
     /* Dead but still in its slot, which is what the server leaves behind for
-     * the whole of deathWait: over full armour, the way a drowning writes it,
-     * with a full wait left to run and a shell as the cause. The move to the
+     * the whole of deathWait: destroyed, with a full wait left to run and a
+     * shell as the cause. The move to the
      * corner stands in for the map origin a dead tank's position reads as, so
      * what the corner arm below asserts does not rest on how that position
      * goes bad. */
-    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    tankSetDestroyed(&f.gs->tanks[f.me], TRUE);
     tankSetLastTankDeath(&f.gs->tanks[f.me], LAST_DEATH_BY_SHELL);
     tankSetDeathWait(&f.gs->tanks[f.me], TANK_DEATH_WAIT);
     tankSetWorld(f.gs, &f.gs->tanks[f.me],
@@ -1829,6 +1829,7 @@ int run_overview_dead_tank(void) {
                  (WORLD)(respawnMX << TANK_SHIFT_MAPSIZE),
                  (WORLD)((int)f.tankMY << TANK_SHIFT_MAPSIZE), 0, false);
     tankSetArmour(&f.gs->tanks[f.me], (BYTE)TANK_FULL_ARMOUR);
+    tankSetDestroyed(&f.gs->tanks[f.me], FALSE);
     tankSetDeathWait(&f.gs->tanks[f.me], 0);
     clientSimDisplayTick(f.cs, false);
     ASSERT_RECT_LIVE(om, respawnRect, TRUE, "a respawned tank's block");
@@ -1862,7 +1863,7 @@ int run_tank_pos_dead(void) {
     /* Dead but still in its slot, which is where the server leaves it for the
      * whole of deathWait. The position underneath reads as the map origin, so
      * the accessor has nothing true to report. */
-    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    tankSetDestroyed(&f.gs->tanks[f.me], TRUE);
     gotX = TANK_POS_SENTINEL;
     gotY = TANK_POS_SENTINEL;
     UT_ASSERT_MSG(clientSimGetMyTankMapPos(f.cs, &gotX, &gotY) != TRUE,
@@ -1875,6 +1876,7 @@ int run_tank_pos_dead(void) {
 
     /* Respawned: the accessor answers again, with the square it had. */
     tankSetArmour(&f.gs->tanks[f.me], (BYTE)TANK_FULL_ARMOUR);
+    tankSetDestroyed(&f.gs->tanks[f.me], FALSE);
     gotX = TANK_POS_SENTINEL;
     gotY = TANK_POS_SENTINEL;
     UT_ASSERT_MSG(clientSimGetMyTankMapPos(f.cs, &gotX, &gotY) == TRUE,
@@ -2113,7 +2115,7 @@ int run_overview_gunsight(void) {
     /* Dead but still in its slot, which is what the server leaves behind for
      * the whole of deathWait. The sight is still shown, so dying is the only
      * thing the accessor can be answering to. */
-    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    tankSetDestroyed(&f.gs->tanks[f.me], TRUE);
     mx = my = px = py = GUNSIGHT_SENTINEL;
     UT_ASSERT_MSG(clientSimGetGunsightPos(f.cs, &mx, &my, &px, &py) != TRUE,
                   "a dead tank reported a gunsight position");
@@ -2142,6 +2144,7 @@ int run_overview_gunsight(void) {
     /* Respawned: the accessor answers again, so discounting a dead tank is not
      * a one-way door. */
     tankSetArmour(&f.gs->tanks[f.me], (BYTE)TANK_FULL_ARMOUR);
+    tankSetDestroyed(&f.gs->tanks[f.me], FALSE);
     UT_ASSERT_MSG(clientSimGetGunsightPos(f.cs, &mx, &my, &px, &py) == TRUE,
                   "a respawned tank reported no gunsight position");
 

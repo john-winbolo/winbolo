@@ -88,7 +88,7 @@ void clientStatePredictTick(ClientSim *csim, ClientState *cs, const InputPacket 
      * authoritatively and syncs the result to the client. Running
      * tankUpdate during death would trigger tankDeath on the client
      * side, picking a different start position than the server. */
-    if (tankGetArmour(predictedTank) > TANK_FULL_ARMOUR || tankGetDeathWait(predictedTank) > 0) {
+    if (tankIsDestroyed(predictedTank) || tankGetDeathWait(predictedTank) > 0) {
         return;
     }
 

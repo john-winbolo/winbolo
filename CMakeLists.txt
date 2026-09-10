@@ -3358,6 +3358,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_base_death_prediction.c
+    tests/unit/test_tank_death_state.c
+    tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
@@ -3395,6 +3397,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
+    # Record-and-decode replay fixture and the case that uses it. The
+    # fixture is two translation units because the sim headers and the
+    # log-viewer headers cannot share one: replay_harness.c records a round
+    # and diffs two captures, replay_harness_decode.c reads the .wbv back
+    # through the production viewer. replay_harness.h carries the seam.
+    tests/unit/replay_harness.c
+    tests/unit/replay_harness_decode.c
+    tests/unit/test_replay_roundtrip.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -3402,6 +3412,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
+    tests/unit/test_loopback_command_liveness.c
     tests/unit/test_loopback_channel.c
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
@@ -3686,6 +3697,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_spectator_seed_capture.c
     # Blocks-level append-fed stream source: drives blocks.c's no-zip path.
     tests/unit/test_blocks_stream.c
+    # Viewer-side decode of per-tank stocks: hand-built snapshot player blocks
+    # (with and without the stock bytes) and a log_TankSetStock record, through
+    # lv_specSeedLoad / lv_specRecordPump.
+    tests/unit/test_lv_tank_stocks.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4112,6 +4127,13 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_ping
+    log_roundtrip_snapshot_tank_stocks
+    log_roundtrip_tank_stock_record
+    replay_roundtrip_world
+    replay_roundtrip_base_migrate
+    lv_tank_stocks_from_snapshot
+    lv_tank_stocks_snapshot_without_tail
+    lv_tank_stocks_from_record
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
@@ -4145,6 +4167,8 @@ set(_unit_test_names
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event
     alliance_reset_apply_rebuilds_alliances
+    alliance_reset_bots_synced_after_inplace_start
+    alliance_reset_bots_synced_after_countdown_start
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour
@@ -4196,6 +4220,12 @@ set(_unit_test_names
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
     base_death_prediction_authority
+    tank_damage_exact_armour_survives
+    tank_damage_overkill_destroys
+    tank_damage_partial_survives
+    tank_destroyed_snapshot_round_trip
+    tank_status_wire_bits
+    tank_status_wire_start_find_round_trip
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
@@ -4310,6 +4340,7 @@ set(_unit_test_names
     loopback_join_loss
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
+    loopback_command_liveness
     loopback_channel
     player_mute_mask_roundtrip
     lock_channel
@@ -4338,6 +4369,7 @@ set(_unit_test_names
     map_compress_capacity_refuses
     map_compress_incompressible
     map_compress_roundtrip_mutated
+    map_compress_rejects_null_handles
     map_checksum_ignores_mines
     map_resync_base_crater_converges
     map_shadow_tracks_real

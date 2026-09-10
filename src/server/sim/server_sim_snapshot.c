@@ -1224,9 +1224,15 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->angle = (uint16_t)(tankGetAngle(&sim->sim.tanks[i]) * 256.0f);
         ts->speed = (uint16_t)(tankGetActualSpeed(&sim->sim.tanks[i]) * 256.0f);
         {
-            BYTE onBoat = tankIsOnBoat(&sim->sim.tanks[i]) ? 1 : 0;
-            BYTE isDead = (tankGetDeathWait(&sim->sim.tanks[i]) > 0) ? 1 : 0;
-            ts->tankStatus = utilPutNibble(isDead, onBoat);
+            /* Both death signals go to every recipient: the wait, which the
+             * interpolation reads, and the destroyed state, which is the only
+             * way a non-owner learns a tank is destroyed once its wait has
+             * run out but no start has been found. */
+            uint8_t status = 0;
+            if (tankIsOnBoat(&sim->sim.tanks[i])) status |= TANK_STATUS_ON_BOAT;
+            if (tankGetDeathWait(&sim->sim.tanks[i]) > 0) status |= TANK_STATUS_DEAD;
+            if (tankIsDestroyed(&sim->sim.tanks[i])) status |= TANK_STATUS_DESTROYED;
+            ts->tankStatus = status;
         }
         ts->lgmFrame = lgmIsOut(&sim->sim.lgmen[i]) ? (lgmGetFrame(&sim->sim.lgmen[i]) + 1) : 0;
         ts->lgmMX = lgmGetMX(&sim->sim.lgmen[i]);

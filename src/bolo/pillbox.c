@@ -354,7 +354,6 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
   WORLD tankY;
   WORLD diffX;     /* X and Y differences in distances */
   WORLD diffY;
-  BYTE tankArmour; /* Armour of the tank */
   TURNTYPE dir;    /* Direction Pillbox should fire */
   BYTE count;      /* Looping variable */
   BYTE t;          /* Tank looping variable */
@@ -407,9 +406,8 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         if (playersIsAllie(plyrs, (*value)->item[count].owner, t) == TRUE || (*value)->item[count].owner == t) continue;
 
         tankGetWorld(&tanks[t], &tankX, &tankY);
-        tankArmour = tankGetArmour(&tanks[t]);
         /* Skip dead tanks */
-        if (tankArmour > TANK_FULL_ARMOUR) continue;
+        if (tankIsDestroyed(&tanks[t])) continue;
 
         if (tankX > x) {
           diffX = tankX - x;

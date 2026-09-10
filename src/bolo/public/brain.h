@@ -310,6 +310,13 @@ typedef struct
 	// can't act) and it should early-return without acting on world data.
 	BYTE dead;
 
+	// TRUE once the tank has been destroyed, which is not the same question as
+	// "dead" above: "dead" is set for the whole respawn wait, while "destroyed"
+	// tracks the tank's own state and clears when it respawns. Ask this rather
+	// than comparing "armour" against TANK_FULL_ARMOUR — a live tank can sit at
+	// zero armour, so the armour value alone cannot tell the two apart.
+	BYTE destroyed;
+
 	} BrainInfo;
 
 #pragma pack(pop)

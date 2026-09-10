@@ -125,6 +125,16 @@ static void serverSimLogTick(ServerSim *sim) {
                                           lgmGetPY(&sim->sim.lgmen[count])),
                             0, NULL);
             }
+
+            /* Tank stocks, so a shot fired or a refill shows at the tick it
+               happens rather than at the next snapshot. logAddEvent drops the
+               record when none of the four changed since the last one written
+               for this tank, so a still tank costs nothing. */
+            logAddEvent(log_TankSetStock, count,
+                        tankGetShells(&sim->sim.tanks[count]),
+                        tankGetMines(&sim->sim.tanks[count]),
+                        tankGetArmour(&sim->sim.tanks[count]),
+                        tankGetTrees(&sim->sim.tanks[count]), NULL);
         }
     }
 
@@ -782,7 +792,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 posHistoryRecord(&sim->posHistory[count],
                                  (*sim->sim.tanks[count]).x,
                                  (*sim->sim.tanks[count]).y,
-                                 (*sim->sim.tanks[count]).armour <= TANK_FULL_ARMOUR);
+                                 !tankIsDestroyed(&sim->sim.tanks[count]));
             }
         }
 
@@ -816,7 +826,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 if (!sim->playerConnected[count] || sim->sim.tanks[count] == NULL) {
                     continue;
                 }
-                if (tankGetArmour(&sim->sim.tanks[count]) > TANK_FULL_ARMOUR) {
+                if (tankIsDestroyed(&sim->sim.tanks[count])) {
                     continue;
                 }
                 tankGetWorld(&sim->sim.tanks[count], &twx, &twy);

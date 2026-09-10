@@ -117,6 +117,21 @@ typedef struct {
 #define TANK_PRESENT_FLAGS     0x40  /* clientFlags (1B) */
 #define TANK_PRESENT_HIDDEN    0x80  /* hiddenFlags (1B) */
 
+/* TankSnapshot.tankStatus bits. The low nibble carries the boat, the high
+ * nibble the two death signals, which are not the same question:
+ *   TANK_STATUS_DEAD       deathWait > 0 — the tank is in its respawn wait.
+ *   TANK_STATUS_DESTROYED  the tank has been destroyed and not yet respawned.
+ * The wait ends on its own; the respawn does not happen until a start position
+ * is found, so a tank can be DESTROYED with DEAD clear. DESTROYED is what
+ * tankIsDestroyed() answers on the other end; DEAD is what the interpolation
+ * and the brain's "dead" read. Both bits go to every recipient, unlike armour,
+ * which only the owning player sees — so this byte, not armour, is how a
+ * client learns that any tank is destroyed. armour itself is a plain
+ * 0..TANK_FULL_ARMOUR value and never carries a death sentinel. */
+#define TANK_STATUS_ON_BOAT    0x01
+#define TANK_STATUS_DEAD       0x10
+#define TANK_STATUS_DESTROYED  0x20
+
 /* TankSnapshot.hiddenFlags bits.  An entry whose tank is withheld but whose LGM
  * must still be drawn is not a stub — it is a full entry with the tank's own
  * fields zeroed and this flag set, so the LGM group can ride along.  The tank's
@@ -134,13 +149,13 @@ typedef struct {
     uint16_t worldY;
     uint16_t angle;        /* TURNTYPE scaled: actual_angle * 256 */
     uint16_t speed;        /* SPEEDTYPE scaled: actual_speed * 256 */
-    uint8_t  tankStatus;   /* Low nibble: onBoat (0/1), high nibble: isDead (0/1) */
+    uint8_t  tankStatus;   /* TANK_STATUS_* bits: onBoat, dead (in respawn wait), destroyed */
     uint8_t  lgmFrame;
     uint8_t  lgmMX;
     uint8_t  lgmMY;
     uint8_t  lgmPX;
     uint8_t  lgmPY;
-    uint8_t  armour;
+    uint8_t  armour;       /* 0..TANK_FULL_ARMOUR, owning player only; death is in tankStatus */
     uint8_t  shells;       /* Only meaningful for the owning player */
     uint8_t  mines;        /* Only meaningful for the owning player */
     uint8_t  trees;        /* Only meaningful for the owning player */
