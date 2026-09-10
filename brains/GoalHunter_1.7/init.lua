@@ -6153,6 +6153,31 @@ function Brain.think(info)
     local replan_floor_ok =
       (now - (state._last_full_replan_tick or -1e9)) >= (C.REPLAN_MIN_INTERVAL or 5)
     local urgent_replan = urgent_hard or (urgent_soft and replan_floor_ok)
+    -- DIFFICULTY REACTION_DELAY_TICKS: hold the URGENT GOAL RE-DECISION for N
+    -- ticks after its trigger fires, so an Easy/Medium bot reacts to new
+    -- threats/opportunities a beat late. This only gates urgent_replan (the goal
+    -- pool re-run); it does NOT touch force_replan / refuel_done (line ~6476) nor
+    -- the safety layers -- cliff guards, swerve arming, drain-disengage and
+    -- flee_to_base run every tick in steering / goal-invalidation, independent of
+    -- this flag. Byte-inert at 0 (guard skips the whole block, no state write).
+    -- A SECOND urgent trigger while a window is already pending is absorbed into
+    -- that same window (the replan runs once, at the original deadline) rather
+    -- than resetting the timer -- fine, and arguably the point: one delayed
+    -- reaction per burst of triggers, not an ever-postponed one.
+    if C.REACTION_DELAY_TICKS > 0 then
+      if urgent_replan and not state._rxn_pending then
+        -- First trigger: start the delay window and hold this tick's replan.
+        state._rxn_pending = now + C.REACTION_DELAY_TICKS
+        urgent_replan = false
+      elseif state._rxn_pending then
+        if now >= state._rxn_pending then
+          state._rxn_pending = nil   -- window elapsed: run the delayed replan now
+          urgent_replan = true
+        else
+          urgent_replan = false      -- still holding
+        end
+      end
+    end
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -7616,6 +7641,13 @@ function Brain.think(info)
         -- fields (shouldn't happen, but be defensive).
         local aim_wx = elm.predicted_wx or elm.wx
         local aim_wy = elm.predicted_wy or elm.wy
+        -- DIFFICULTY AIM_ERROR_BRADS: deflect the LGM aim POINT here, BEFORE the
+        -- LOS raycast and the impact-offset fire gate below both read aim_wx/
+        -- aim_wy (so the validated shell line is the deflected line). Keyed on
+        -- elm.idnum so the crosshair search (below) deflects by the SAME amount
+        -- for the primary LGM. No-op at 0 (moving-target miss on Easy/Medium).
+        aim_wx, aim_wy = U.aim_error_point(state, C.AIM_ERROR_BRADS,
+                                           info.tankx, info.tanky, aim_wx, aim_wy, elm.idnum)
         local target_sl = elm.target_sightLen
         local aim_dir = U.aim_at(info.tankx, info.tanky, aim_wx, aim_wy)
         local aim_corr = U.adiff(info.direction, aim_dir)
@@ -7789,6 +7821,11 @@ function Brain.think(info)
                 or (_primary_lgm.wx + (_primary_lgm.v_ema_x or 0))
     local lgm_wy = _primary_lgm.predicted_wy
                 or (_primary_lgm.wy + (_primary_lgm.v_ema_y or 0))
+    -- DIFFICULTY AIM_ERROR_BRADS: deflect the search target by the SAME offset
+    -- the fire gate above used (same idnum + tick-block seed), so the crosshair
+    -- drives to the deflected point and the gate fires on it. No-op at 0.
+    lgm_wx, lgm_wy = U.aim_error_point(state, C.AIM_ERROR_BRADS,
+                                       tank_wx, tank_wy, lgm_wx, lgm_wy, _primary_lgm.idnum)
     -- Build the turn/speed/gun descriptor tables ONCE (cached on state)
     -- rather than reallocating 9 records every tick the goal is kill_lgm.
     -- Built lazily here, not at module scope, because the KEY_* globals

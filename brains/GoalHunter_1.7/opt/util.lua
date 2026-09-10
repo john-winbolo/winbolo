@@ -451,4 +451,53 @@ function M.human_ally_count(info)
   return n
 end
 
+-- ── DIFFICULTY (Stage 3 Pass B) — deterministic aim/fire handicaps ─────────
+-- Both helpers are exact no-ops at their default (0) argument: they return
+-- BEFORE touching any float / hash / state, so Hard (all difficulty knobs 0)
+-- stays bit-for-bit identical to today's brain. The ONLY source of variation
+-- is the deterministic (tick-block + target + per-bot) hash below — never
+-- math.random (the determinism recipe forbids a fresh draw on a per-tick
+-- decision path).
+
+-- AIM_ERROR_BRADS: rotate an aim POINT (tx,ty) about the tank by a signed brad
+-- offset in [-err_brads, err_brads]. The offset is deterministic and changes
+-- only every AIM_ERROR_PERIOD ticks, so it reads as "this bot's aim is a bit
+-- off" rather than per-tick jitter. Seeded by (tick/period + target id +
+-- per-bot replan_offset) so different bots, different targets and different
+-- time-windows miss in different directions, all reproducibly. Callers apply
+-- this to the point BEFORE the shell-path check reads it, so the validated
+-- path is the deflected path (a deflected shell can never hit a friendly a
+-- clear-check thought clear).
+local AIM_ERROR_PERIOD = 40
+function M.aim_error_point(state, err_brads, tankx, tanky, tx, ty, tid)
+  if not err_brads or err_brads == 0 then return tx, ty end   -- no-op: nothing computed
+  local nid = (type(tid) == "number") and tid or 0
+  local blk = math.floor((state.tick or 0) / AIM_ERROR_PERIOD)
+  -- seed < ~3000 => seed*2654435761 < 2^43, exact in a double; low 16 bits mixed
+  local seed = blk + nid + (state.replan_offset or 0)
+  local h    = (seed * 2654435761) % 65536
+  local off  = (h % (2 * err_brads + 1)) - err_brads   -- integer in [-E, E]
+  if off == 0 then return tx, ty end
+  local ang = off * (math.pi * 2 / 256)
+  local s, c = math.sin(ang), math.cos(ang)
+  local dx, dy = tx - tankx, ty - tanky
+  return tankx + dx * c - dy * s, tanky + dx * s + dy * c
+end
+
+-- FIRE_HOLD_TICKS: brain-side reload gate. Returns true when a shot must be
+-- SUPPRESSED this tick (a recent shot is still inside the hold window); else
+-- stamps state._last_fire_tick and returns false so the caller fires. No-op
+-- (never suppresses, never stamps, never writes state) at hold_ticks <= 0.
+-- Suppressing KEY_SHOOT keeps shot_tracker's in-flight kill-lock accounting
+-- consistent: the tracker keys off the real info.shells decrement, so a shot
+-- we never fire is a shell that never leaves and is never counted.
+function M.fire_hold_block(state, hold_ticks)
+  if not hold_ticks or hold_ticks <= 0 then return false end   -- no-op
+  local now  = state.tick or 0
+  local last = state._last_fire_tick
+  if last and (now - last) < hold_ticks then return true end
+  state._last_fire_tick = now
+  return false
+end
+
 return M

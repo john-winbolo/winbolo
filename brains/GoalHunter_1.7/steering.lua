@@ -1259,7 +1259,8 @@ local function reposition_steer(state, world, info, goal)
   -- sim (blocks on walls/half-walls, any live pillbox, allied tanks, and
   -- bases of any owner) and excludes the target tile, so the trajectory
   -- reaching our pill counts as clear.
-  if math.abs(corr) <= 1 and (info.shells or 0) > 0 and los_clear then
+  if math.abs(corr) <= 1 and (info.shells or 0) > 0 and los_clear
+     and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
     keys = bit.bor(keys, KEY_SHOOT)
   end
   if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
@@ -1337,11 +1338,13 @@ local function defend_pill_steer(state, world, info, goal)
   keys = bit.bor(keys, h); taps = bit.bor(taps, t)
   if math.abs(corr) <= 1 then
     goal.substate = "heat_pill_shoot"
-    keys = bit.bor(keys, KEY_SHOOT)
-    -- Refresh while firing (and during shell flight): world.lua skips the
-    -- under_attack stamp within HEAT_SELF_STAMP_TICKS of this, so our own
-    -- heat shells don't read as an enemy siege to us or our allies.
-    pill._heat_shot_tick = now
+    if not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
+      keys = bit.bor(keys, KEY_SHOOT)
+      -- Refresh while firing (and during shell flight): world.lua skips the
+      -- under_attack stamp within HEAT_SELF_STAMP_TICKS of this, so our own
+      -- heat shells don't read as an enemy siege to us or our allies.
+      pill._heat_shot_tick = now
+    end
   else
     goal.substate = "heat_pill_aim"
   end
@@ -1654,7 +1657,8 @@ local function attack_pill_steer(state, world, info, goal)
       keys = bit.bor(keys, h); taps = bit.bor(taps, t)
     end
 
-    if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
+    if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE
+       and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
     end
 
@@ -1804,12 +1808,14 @@ local function attack_pill_steer(state, world, info, goal)
           if t.mx == goal.mx and t.my == goal.my then hits_pill = true; break end
         end
       end
-      if hits_pill then
+      if hits_pill and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
         keys = bit.bor(keys, KEY_SHOOT)
         -- Pre-fire predictive swerve: if this on-target shot would be
         -- the one that brings in-flight count up to remaining pill HP,
         -- enter swerve right now (same tick as the shot fires) instead
-        -- of waiting for next-tick tracker confirmation.
+        -- of waiting for next-tick tracker confirmation. Gated WITH the shot
+        -- so a fire-hold-suppressed tick arms no swerve for a shell that
+        -- never left (shot_tracker's kill-lock keys off info.shells).
         predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
         if BRAIN_DEBUG_MODE then
           charge_phase = charge_phase .. " FIRE"
@@ -2004,10 +2010,12 @@ local function attack_pill_steer(state, world, info, goal)
       keys = bit.bor(keys, h); taps = bit.bor(taps, t)
     end
 
-    if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
+    if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE
+       and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
       goal._engage_aimed = true
-      -- Pre-fire predictive swerve (same rationale as charge).
+      -- Pre-fire predictive swerve (same rationale as charge); gated WITH
+      -- the shot so a suppressed tick arms no swerve.
       predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
 
@@ -2443,9 +2451,11 @@ local function attack_pill_steer(state, world, info, goal)
     local _sp_pill = goal.target_id and world.pills and world.pills[goal.target_id] or nil
     local _sp_hp = _sp_pill and (_sp_pill.health or 0) or 0
     local _sp_in_air = goal._on_target_in_flight or 0
-    if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE and _sp_in_air < _sp_hp then
+    if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE and _sp_in_air < _sp_hp
+       and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
-      -- Pre-fire predictive swerve (same rationale as charge).
+      -- Pre-fire predictive swerve (same rationale as charge); gated WITH
+      -- the shot so a suppressed tick arms no swerve.
       predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
     if info.gunrange < C.GUNSIGHT_MAX then
@@ -3140,6 +3150,14 @@ local function tank_combat_steer(state, world, info, goal)
     end
   end
 
+  -- DIFFICULTY AIM_ERROR_BRADS: deflect the aim POINT here, BEFORE aim_dir,
+  -- the fire gate and shot_path_clear all read pred_wx/pred_wy — so the tank
+  -- turns to, fires at, and validates the SAME deflected point (a deflected
+  -- shell can't hit a friendly a clear-check thought clear). No-op at 0.
+  pred_wx, pred_wy = U.aim_error_point(state, C.AIM_ERROR_BRADS,
+                                       info.tankx, info.tanky, pred_wx, pred_wy,
+                                       target.id)
+
   -- Lead visualizer ("tank_combat_viz"): shows the shell-travel intercept the
   -- aim is built on, so the leading can be eyeballed frame-by-frame.
   --   red dot + arrow = target now + its smoothed velocity (x8 for visibility)
@@ -3273,7 +3291,7 @@ local function tank_combat_steer(state, world, info, goal)
                                    bit.rshift(math.floor(pred_wx), 8),
                                    bit.rshift(math.floor(pred_wy), 8),
                                    nil, nil, nil, nil, km_pn)
-    if _clear then
+    if _clear and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
       if BRAIN_DEBUG_MODE then print2(string.format("TANK_FIRE t=%d id=%s ghost=%s @(%d,%d) dist=%.1f aim_corr=%.0f", now, tostring(target.id), tostring(target.ghost or false), target.mx, target.my, dist_tiles, aim_corr)) end
       goal._engage_blocked_ticks = 0
@@ -5756,7 +5774,19 @@ local function steer_core(state, world, info, goal)
         firing = true
       end
       if firing then
-        keys = bit.bor(keys, KEY_SHOOT)
+        -- DIFFICULTY FIRE_HOLD_TICKS: pace base shelling too, but EXEMPT the
+        -- close-out (base a few shots from neutral) — holding there can stall a
+        -- capture two shells short. Guarded so Hard (0) is byte-inert.
+        local _hold = false
+        if C.FIRE_HOLD_TICKS > 0 then
+          local _be = world.base_at and world.base_at[goal.my * 256 + goal.mx]
+          local _cb = _be and _be.base
+          local _closeout = _cb and (_cb.health or 99) <= (C.ATTACK_BASE_CLOSEOUT_HEALTH or 3)
+          if not _closeout then _hold = U.fire_hold_block(state, C.FIRE_HOLD_TICKS) end
+        end
+        if not _hold then
+          keys = bit.bor(keys, KEY_SHOOT)
+        end
       end
       if BRAIN_DEBUG_MODE and not firing then print2(string.format("BASE_NOFIRE t=%d reason=heading_misses corr=%.1f wdist=%.0f (shell at current heading doesn't cross base tile)", state.tick or 0, corr, wdist_base)) end
 

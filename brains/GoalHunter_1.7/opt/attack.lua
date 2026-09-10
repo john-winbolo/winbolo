@@ -7708,7 +7708,7 @@ function M.heat_pill_fire(state, world, info, goal, pill, pid, hits, shots, now)
   -- Hold the trigger once `allow` shells are fired or still in the air, so the
   -- volley cannot overshoot while it waits for the hits to register.
   local shooting = (math.abs(corr) <= 1) and not goal._heat_hold
-  if shooting then
+  if shooting and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
     keys = bit.bor(keys, KEY_SHOOT)
     goal._heat_fire_tick = now
     -- Refresh while firing (and through the shell's flight) so world.lua

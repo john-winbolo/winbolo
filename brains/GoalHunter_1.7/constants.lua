@@ -2906,6 +2906,30 @@ M.OUTNUMBERED_DISENGAGE = false -- true => tank_combat breaks off (substate=dise
                                 -- when local enemies outnumber allies (see below).
                                 -- Keeps the opening-phase land-grab exemption.
 M.OUTNUMBERED_NET = 2      -- n_enemy - n_ally >= this triggers the disengage above.
+-- ── DIFFICULTY (Stage 3 Pass B) aim/fire/reaction handicaps ──────────────
+-- All default to the NO-OP value so Hard (MODE_LEVELS.default.hard = {}) stays
+-- bit-for-bit today's brain; Easy/Medium set them in MODE_LEVELS below. The
+-- three read sites early-out at the default so nothing (not even the hash /
+-- float rotation) is computed at 0. DETERMINISTIC: the only randomness is a
+-- (tick-block + target + per-bot) hash in util.aim_error_point -- NO math.random.
+M.AIM_ERROR_BRADS = 0      -- >0 => a deterministic per-bot/per-target aim-point
+                           -- offset (up to +/- this many brads, changing on a slow
+                           -- period) added to the aim POINT BEFORE the shell-path
+                           -- check, so moving-target shots (tank engage + kill_lgm)
+                           -- miss a little. 0 = no offset. Easy = 4, Medium = 1.
+M.FIRE_HOLD_TICKS = 0      -- >0 => brain-side reload gate: after a combat shot,
+                           -- suppress the next KEY_SHOOT for this many THINKS
+                           -- (state.tick is per-think). UNITS: a think = 1 frame
+                           -- = 2 engine ticks, and TANK_RELOAD_TIME is 13 engine
+                           -- ticks ~= 6.5 thinks, so a value <= ~7 has NO effect
+                           -- (the engine's own reload already dominates). Base
+                           -- close-out is exempt. 0 = no gate. Easy = 16
+                           -- (~0.3s between shots), Medium = 8 (just past reload).
+M.REACTION_DELAY_TICKS = 0 -- >0 => queue the URGENT goal re-decision this many
+                           -- ticks instead of running it the tick the trigger
+                           -- fires (bot reacts slower). Never delays safety
+                           -- (cliff/swerve/drain-disengage/flee). 0 = no delay.
+                           -- Easy = 20, Medium = 8.
 -- Outbound /info batching: several internal-channel messages are packed into the
 -- one BrainInfo.sendmessage buffer per tick (joined by comms.MSG_SEP), capped here
 -- so the packed string stays under PACKET_MAX_CHAT_MESSAGE (128; bot_manager.c
@@ -4357,10 +4381,11 @@ M.PRESETS = {
 -- hard = {} is EMPTY by definition: default/Hard is today's constants,
 -- bit-for-bit. Every value below is a plain scalar the same _cfg_set writes
 -- and type-checks (unknown names, tables and type changes are refused). The
--- Stage 3 Pass A control-flow handicap knobs (BLITZ_ENABLED, AHEAD_PILL_FRAC,
--- AHEAD_BASE_FRAC, BEHIND_ATTACK_MULT, AHEAD_BLITZ_ONLY, OUTNUMBERED_DISENGAGE)
--- are now LANDED below. The aim/fire/reaction trio (AIM_ERROR_BRADS,
--- FIRE_HOLD_TICKS, REACTION_DELAY_TICKS) is Pass B and is NOT listed here yet.
+-- All Stage 3 handicap knobs are now LANDED below: the control-flow set
+-- (BLITZ_ENABLED, AHEAD_PILL_FRAC, AHEAD_BASE_FRAC, BEHIND_ATTACK_MULT,
+-- AHEAD_BLITZ_ONLY, OUTNUMBERED_DISENGAGE) and the aim/fire/reaction trio
+-- (AIM_ERROR_BRADS, FIRE_HOLD_TICKS, REACTION_DELAY_TICKS). Each defaults to
+-- its no-op so Hard (empty bundle) is bit-for-bit today's brain.
 --
 -- Every value below is FIRST-PASS -- to be benched preset=keel vs
 -- difficulty=<level> per the approve-values rule; expect them to move.
@@ -4378,7 +4403,8 @@ M.MODE_LEVELS = {
       HARD_TAKE_MIN_HP = 13, BLITZ_SWERVE_ONLY_WHEN_HIT = false, SQUAD_HELP_RANGE = 18,
       -- press when ahead (Stage 3 Pass A)
       AHEAD_PILL_FRAC = 0.55, AHEAD_BASE_FRAC = 0.55, BEHIND_ATTACK_MULT = 1.3, AHEAD_BLITZ_ONLY = true,
-      -- skill (mild)
+      -- skill (mild) — Stage 3 Pass B aim/fire/reaction trio
+      AIM_ERROR_BRADS = 1, FIRE_HOLD_TICKS = 8, REACTION_DELAY_TICKS = 8,
       TANK_COMBAT_STEADY_TICKS = 5, TANK_COMBAT_STEADY_MIN_SPEED = 6,
       TANK_COMBAT_JINK_PERIOD = 15, TANK_COMBAT_JINK_ANGLE = 24, GHOST_TANK_TTL_TICKS = 60,
       -- gives ground
@@ -4407,6 +4433,8 @@ M.MODE_LEVELS = {
       SQUAD_MAX_SIZE = 1, HARD_TAKE_MIN_HP = 15,
       BLITZ_SWERVE_ONLY_WHEN_HIT = false,
       -- Skill: bad at moving targets; pills/bases stay accurate
+      -- Stage 3 Pass B aim/fire/reaction trio
+      AIM_ERROR_BRADS = 4, FIRE_HOLD_TICKS = 16, REACTION_DELAY_TICKS = 20,
       CAPTURE_LGM_HUNT = false,                 -- drives straight; won't snipe a builder off a corpse
       TANK_COMBAT_STEADY_TICKS = 10, TANK_COMBAT_STEADY_MIN_SPEED = 10,
       TANK_COMBAT_JINK_PERIOD = 30, TANK_COMBAT_JINK_ANGLE = 12,
