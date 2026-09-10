@@ -39,7 +39,7 @@ typedef struct {
   TURNTYPE angle;
   SPEEDTYPE speed;
   bool onBoat;
-  bool alive;       /* TRUE unless the snapshot's tankStatus marked it dead */
+  bool alive;       /* TRUE unless tankStatus carried DEAD or DESTROYED */
   bool tankHidden;  /* TRUE when the server withheld this tank's position and
                      * the entry arrived only to carry the LGM below — worldX,
                      * worldY, angle and speed hold nothing to draw. */

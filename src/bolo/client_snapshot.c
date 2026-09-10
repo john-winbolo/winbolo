@@ -979,16 +979,17 @@ void clientApplySnapshot(ClientSim *csPtr,
         SPEEDTYPE decodedSpeed = (SPEEDTYPE)tanks[i].speed / 256.0f;
         tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), tanks[i].worldX, tanks[i].worldY,
                      decodedAngle, FALSE);
-        {
-          BYTE isDead, onBoat;
-          utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
-          tankSetOnBoat(&MY_TANK(csPtr), onBoat);
-        }
+        tankSetOnBoat(&MY_TANK(csPtr),
+                      (tanks[i].tankStatus & TANK_STATUS_ON_BOAT) != 0);
         tankSetSpeed(&MY_TANK(csPtr), decodedSpeed);
         tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
         tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
-        tankSetArmourFromWire(&MY_TANK(csPtr), tanks[i].armour);
-        csPtr->lastServerArmour = tanks[i].armour;
+        {
+          bool destroyed = (tanks[i].tankStatus & TANK_STATUS_DESTROYED) != 0;
+          tankSetArmour(&MY_TANK(csPtr), tanks[i].armour);
+          tankSetDestroyed(&MY_TANK(csPtr), destroyed);
+          csPtr->lastServerDestroyed = destroyed;
+        }
         tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
         tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
         tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
@@ -1059,11 +1060,8 @@ void clientApplySnapshot(ClientSim *csPtr,
              * corrections that the old angle-restore band-aid hid, so the
              * honest replayed angle is kept. */
             tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), servX, servY, servAngle, FALSE);
-            {
-              BYTE isDead, onBoat;
-              utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
-              tankSetOnBoat(&MY_TANK(csPtr), onBoat);
-            }
+            tankSetOnBoat(&MY_TANK(csPtr),
+                          (tanks[i].tankStatus & TANK_STATUS_ON_BOAT) != 0);
             tankSetSpeed(&MY_TANK(csPtr), decodedSpeed);
             tankSetFirstLeft(&MY_TANK(csPtr), tanks[i].firstLeft);
             tankSetFirstRight(&MY_TANK(csPtr), tanks[i].firstRight);
@@ -1154,13 +1152,13 @@ void clientApplySnapshot(ClientSim *csPtr,
           }
         }
 
-        /* Detect death/respawn transitions using server armour values
+        /* Detect death/respawn transitions from the server's destroyed bit
          * (not predicted state, which may already reflect the death) */
         {
-          /* The transitions below still compare the raw server values, which
-           * is what this codec end is for. */
-          tankSetArmourFromWire(&MY_TANK(csPtr), tanks[i].armour);
-          if (csPtr->lastServerArmour <= TANK_FULL_ARMOUR && tanks[i].armour > TANK_FULL_ARMOUR) {
+          bool destroyed = (tanks[i].tankStatus & TANK_STATUS_DESTROYED) != 0;
+          tankSetArmour(&MY_TANK(csPtr), tanks[i].armour);
+          tankSetDestroyed(&MY_TANK(csPtr), destroyed);
+          if (!csPtr->lastServerDestroyed && destroyed) {
             /* alive→dead: set death type for static screen rendering */
             tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
             tankAddDeath(&csPtr->sim, &MY_TANK(csPtr));
@@ -1175,7 +1173,7 @@ void clientApplySnapshot(ClientSim *csPtr,
             csPtr->errY = 0.0f;
             csPtr->errAngle = 0.0f;
           }
-          if (csPtr->lastServerArmour > TANK_FULL_ARMOUR && tanks[i].armour <= TANK_FULL_ARMOUR) {
+          if (csPtr->lastServerDestroyed && !destroyed) {
             /* dead→alive: recenter view on respawn */
             csPtr->sim.inStartFind = FALSE;
             if (isHuman) {
@@ -1187,7 +1185,7 @@ void clientApplySnapshot(ClientSim *csPtr,
             csPtr->errY = 0.0f;
             csPtr->errAngle = 0.0f;
           }
-          csPtr->lastServerArmour = tanks[i].armour;
+          csPtr->lastServerDestroyed = destroyed;
         }
 
         /* Sync resources from server — but not reload/shells, which are
@@ -1203,11 +1201,8 @@ void clientApplySnapshot(ClientSim *csPtr,
          * machine (isPredicting guard in tankUpdate), so the client's
          * onBoat flag can go stale if no position mismatch triggers
          * reconciliation. Always apply the server's value. */
-        {
-          BYTE isDead, onBoat;
-          utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
-          tankSetOnBoat(&MY_TANK(csPtr), onBoat);
-        }
+        tankSetOnBoat(&MY_TANK(csPtr),
+                      (tanks[i].tankStatus & TANK_STATUS_ON_BOAT) != 0);
 
         /* Correct shells/reload for any unprocessed fire inputs.
          * The server snapshot reflects state before our fire was processed,
@@ -1249,12 +1244,12 @@ void clientApplySnapshot(ClientSim *csPtr,
       snap.worldY = tanks[i].worldY;
       snap.angle = (TURNTYPE)tanks[i].angle / 256.0f;
       snap.speed = (SPEEDTYPE)tanks[i].speed / 256.0f;
-      {
-        BYTE isDead, onBoat;
-        utilGetNibbles(tanks[i].tankStatus, &isDead, &onBoat);
-        snap.onBoat = onBoat;
-        snap.alive = (isDead == 0);
-      }
+      /* A tank in its respawn wait, or destroyed and still waiting for a
+       * start, has no position worth drawing. The destroyed bit is the only
+       * one of the two a non-owner can see once the wait has run out. */
+      snap.onBoat = (tanks[i].tankStatus & TANK_STATUS_ON_BOAT) != 0;
+      snap.alive = (tanks[i].tankStatus &
+                    (TANK_STATUS_DEAD | TANK_STATUS_DESTROYED)) == 0;
       /* Tree-hidden tank whose man is still on screen: the server zeroed the
        * tank fields, so keep them out of interpolation and let the LGM below
        * ride through on its own. */
