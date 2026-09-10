@@ -1251,6 +1251,13 @@ int run_stall_long_dry_advances(void);
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
 
+/* Stale build-order harvest (test_build_harvest_stale.c): a build commanded on
+ * a stall-substituted tick is stashed with its target tile frozen, so the
+ * replay must re-check that tile against the current map — a now-invalid one is
+ * dropped instead of nagging the player, a still-valid one still dispatches. */
+int run_build_harvest_stale(void);
+int run_build_harvest_valid(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */

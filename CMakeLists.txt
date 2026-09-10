@@ -3380,6 +3380,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
     tests/unit/test_input_catchup.c
+    tests/unit/test_build_harvest_stale.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_screen_bullets_build.c
@@ -4273,6 +4274,8 @@ set(_unit_test_names
     stall_long_dry_advances
     input_catchup
     catchup_ignores_redundant_duplicates
+    build_harvest_stale
+    build_harvest_valid
     jitter_buffer_grow
     shell_projection
     screen_bullets_build

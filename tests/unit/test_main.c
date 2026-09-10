@@ -602,6 +602,8 @@ static const UnitTestEntry s_tests[] = {
     { "stall_long_dry_advances",                 run_stall_long_dry_advances                 },
     { "input_catchup",                           run_input_catchup                           },
     { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
+    { "build_harvest_stale",                     run_build_harvest_stale                     },
+    { "build_harvest_valid",                     run_build_harvest_valid                     },
     { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "shell_projection",                        run_shell_projection                        },
     { "screen_bullets_build",                    run_screen_bullets_build                    },
