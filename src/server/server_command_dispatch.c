@@ -29,6 +29,7 @@
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
 #include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
+#include "lobby_shared_starts.h"      /* lobbySharedStartsEnabled — several players per start */
 #include "start_sides.h"              /* startSideEligible — the claim command's side check */
 #include "threads.h"
 #include "../common/wb_log.h"
@@ -108,7 +109,10 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_NOT_HOST;
         }
         /* A player picking for themselves may take only a start the side
-         * rules let their slot hold; the host may hand anyone any start. */
+         * rules let their slot hold; the host may hand anyone any start.
+         * Whether anyone already holds the start makes no difference to
+         * this test — with shared starts on, joining a held start is
+         * judged exactly like taking a free one. */
         if (!isHost && idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
             !lobbySlotMayHoldStart(sim, target, idx)) {
             return CMD_REJECT_INVALID;
@@ -122,9 +126,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             lobbyAutoUnreadyOnChange(sim);
             return CMD_OK;
         }
-        /* Connected slot currently holding idx (none when idx == 0xFF). */
+        /* Connected slot currently holding idx (none when idx == 0xFF).
+         * With shared starts on nobody is displaced, so the holder does
+         * not need looking up at all: the claim always just lands. */
         BYTE holder = 0xFF;
-        if (idx != 0xFF) {
+        if (idx != 0xFF && !lobbySharedStartsEnabled()) {
             for (BYTE k = 0; k < MAX_TANKS; k++) {
                 if (!serverSimIsPlayerConnected(sim, k)) continue;
                 const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, k);
@@ -132,7 +138,9 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         if (holder != 0xFF && holder != target) {
-            /* Non-host may not take a start someone else holds. */
+            /* One player per start (LOBBY_SHARED_STARTS off): a non-host
+             * may not take a start someone else holds, and a host putting
+             * anyone on one swaps the two. */
             if (!isHost) return CMD_REJECT_INVALID;
             const LobbyPlayer *tlp = serverSimGetLobbyPlayer(sim, target);
             BYTE oldTarget = tlp ? tlp->startIdx : 0xFF;
@@ -147,7 +155,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             serverSimPublishLobbySlot(sim, target);
             serverSimPublishLobbySlot(sim, holder);
         } else {
-            /* Free start, release, or already mine. */
+            /* Free start, release, already mine — or, with shared starts
+             * on, joining a start others hold: they keep it too. */
             serverSimSetLobbyStartIdx(sim, target, idx);
             serverSimPublishLobbySlot(sim, target);
         }

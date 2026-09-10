@@ -3,10 +3,12 @@
  *
  * The dispatcher gates a start claim behind a lobby-state precondition,
  * target range/connected + startIdx range validation, and an authority
- * split: a player may set only its own start (and only to a free one),
- * while a host may set any slot's start and swaps when the target start
- * is already held. None of that has end-to-end coverage today, so a
- * regression in the swap bookkeeping or the authority check would be
+ * split: a player may set only its own start, while a host may set any
+ * slot's start. What happens on a start somebody already holds depends on
+ * LOBBY_SHARED_STARTS: with it on the claim simply joins and every holder
+ * keeps the start, with it off a non-host is refused and a host swaps the
+ * two players. None of that has end-to-end coverage today, so a regression
+ * in the join rule, the swap bookkeeping or the authority check would be
  * silent.
  *
  * Tests build a fresh two-player lobby and drive serverSimApplyCommand
@@ -19,6 +21,7 @@
 #include "global.h"
 #include "client_command.h"        /* CMD_LOBBY_CLAIM_START, CmdResult */
 #include "everard_map.h"
+#include "lobby_shared_starts.h"   /* lobbySharedStartsEnabled */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* sim->sim.ss for startsGetNumStarts */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled,
@@ -60,9 +63,10 @@ static uint8_t start_of(ServerSim *sim, BYTE slot) {
     return lp ? lp->startIdx : 0u;
 }
 
-/* Host assigning an occupied start swaps the two slots: the assignee
- * takes the requested start and the displaced holder inherits the
- * assignee's old start. */
+/* Host assigning an occupied start. Sharing on: the assignee joins and the
+ * holder keeps it too. Sharing off: the two slots swap — the assignee takes
+ * the requested start and the displaced holder inherits the assignee's
+ * old one. */
 int run_lobby_claim_start_host_swaps_occupied(void) {
     ServerSim *sim = make_two_player_lobby();
     UT_ASSERT(sim != NULL);
@@ -72,23 +76,29 @@ int run_lobby_claim_start_host_swaps_occupied(void) {
     serverSimSetLobbyStartIdx(sim, 0, 1);
     serverSimSetLobbyStartIdx(sim, 1, 2);
 
-    /* Host (slot 0) takes Bob's start 2 — swap. */
+    /* Host (slot 0) takes Bob's start 2. */
     UT_ASSERT(apply_claim(sim, 0, 0, 2) == CMD_OK);
     UT_ASSERT_MSG(start_of(sim, 0) == 2,
                   "assignee takes requested start, got %u",
                   (unsigned)start_of(sim, 0));
-    UT_ASSERT_MSG(start_of(sim, 1) == 1,
-                  "displaced holder inherits assignee's old start, got %u",
-                  (unsigned)start_of(sim, 1));
+    if (lobbySharedStartsEnabled()) {
+        UT_ASSERT_MSG(start_of(sim, 1) == 2,
+                      "holder keeps the shared start, got %u",
+                      (unsigned)start_of(sim, 1));
+    } else {
+        UT_ASSERT_MSG(start_of(sim, 1) == 1,
+                      "displaced holder inherits assignee's old start, got %u",
+                      (unsigned)start_of(sim, 1));
+    }
 
     serverSimDestroy(sim);
     return 0;
 }
 
 /* A host assigning an occupied start to a slot whose own start is "none"
- * (0xFF) displaces the holder, which would otherwise inherit "none"; the
- * displaced holder is given a fresh free start instead of being left
- * without one. */
+ * (0xFF). Sharing off, that displaces the holder, which would otherwise
+ * inherit "none"; the displaced holder is given a fresh free start instead
+ * of being left without one. Sharing on, nobody is displaced at all. */
 int run_lobby_claim_start_host_swap_into_none(void) {
     ServerSim *sim = make_two_player_lobby();
     UT_ASSERT(sim != NULL);
@@ -100,6 +110,13 @@ int run_lobby_claim_start_host_swap_into_none(void) {
 
     UT_ASSERT(apply_claim(sim, 0, 0, 2) == CMD_OK);
     UT_ASSERT(start_of(sim, 0) == 2);
+    if (lobbySharedStartsEnabled()) {
+        UT_ASSERT_MSG(start_of(sim, 1) == 2,
+                      "holder keeps the shared start, got %u",
+                      (unsigned)start_of(sim, 1));
+        serverSimDestroy(sim);
+        return 0;
+    }
     UT_ASSERT_MSG(start_of(sim, 1) != 2,
                   "displaced holder still holds the assigned start 2");
     UT_ASSERT_MSG(start_of(sim, 1) != 0xFF,
@@ -112,8 +129,9 @@ int run_lobby_claim_start_host_swap_into_none(void) {
     return 0;
 }
 
-/* A non-host claiming a start another connected slot holds is refused
- * with INVALID and nothing moves. */
+/* A non-host claiming a start another connected slot holds. Sharing off it
+ * is refused with INVALID and nothing moves; sharing on it joins, and both
+ * slots end up on the start. */
 int run_lobby_claim_start_non_host_occupied_rejected(void) {
     ServerSim *sim = make_two_player_lobby();
     UT_ASSERT(sim != NULL);
@@ -122,10 +140,20 @@ int run_lobby_claim_start_non_host_occupied_rejected(void) {
     serverSimSetLobbyStartIdx(sim, 0, 1);
     serverSimSetLobbyStartIdx(sim, 1, 2);
 
-    /* Bob (slot 1) tries to take the host's start 1. */
-    UT_ASSERT(apply_claim(sim, 1, 1, 1) == CMD_REJECT_INVALID);
-    UT_ASSERT(start_of(sim, 0) == 1);
-    UT_ASSERT(start_of(sim, 1) == 2);
+    /* Bob (slot 1) takes the host's start 1. */
+    if (lobbySharedStartsEnabled()) {
+        UT_ASSERT(apply_claim(sim, 1, 1, 1) == CMD_OK);
+        UT_ASSERT_MSG(start_of(sim, 0) == 1,
+                      "the existing holder keeps start 1, got %u",
+                      (unsigned)start_of(sim, 0));
+        UT_ASSERT_MSG(start_of(sim, 1) == 1,
+                      "the joiner takes start 1 too, got %u",
+                      (unsigned)start_of(sim, 1));
+    } else {
+        UT_ASSERT(apply_claim(sim, 1, 1, 1) == CMD_REJECT_INVALID);
+        UT_ASSERT(start_of(sim, 0) == 1);
+        UT_ASSERT(start_of(sim, 1) == 2);
+    }
 
     serverSimDestroy(sim);
     return 0;
@@ -181,6 +209,37 @@ int run_lobby_claim_start_validation(void) {
     UT_ASSERT(apply_claim(sim, 0, 0, 0xFD) == CMD_REJECT_INVALID);
     /* Target slot 5 is not connected. */
     UT_ASSERT(apply_claim(sim, 0, 5, 1) == CMD_REJECT_INVALID);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A host putting another player onto the start the host itself holds.
+ * Sharing on, both end up on it and nobody is moved — the host keeps its
+ * own reservation, which the old swap rule would have handed away. Sharing
+ * off it is the ordinary swap. */
+int run_lobby_claim_start_host_assign_onto_own(void) {
+    ServerSim *sim = make_two_player_lobby();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(startsGetNumStarts(&sim->sim.ss) >= 2);
+
+    serverSimSetLobbyStartIdx(sim, 0, 1);
+    serverSimSetLobbyStartIdx(sim, 1, 2);
+
+    /* Host (slot 0) assigns Bob (slot 1) onto the host's own start 1. */
+    UT_ASSERT(apply_claim(sim, 0, 1, 1) == CMD_OK);
+    UT_ASSERT_MSG(start_of(sim, 1) == 1,
+                  "assignee takes the requested start, got %u",
+                  (unsigned)start_of(sim, 1));
+    if (lobbySharedStartsEnabled()) {
+        UT_ASSERT_MSG(start_of(sim, 0) == 1,
+                      "the host keeps its own start, got %u",
+                      (unsigned)start_of(sim, 0));
+    } else {
+        UT_ASSERT_MSG(start_of(sim, 0) == 2,
+                      "the displaced host inherits the assignee's start 2, got %u",
+                      (unsigned)start_of(sim, 0));
+    }
 
     serverSimDestroy(sim);
     return 0;

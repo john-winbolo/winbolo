@@ -469,6 +469,10 @@ STR_STARTPICK_SLOT_FALLBACK=(slot)
 STR_STARTPICK_TIP_OFFSIDE=Start #{number}\nNot on your team's side
 STR_STARTPICK_TIP_OFFSIDE_HOST=Start #{number}\nOff-side for {string1}
 
+# Held start you may join (LOBBY_SHARED_STARTS): non-host / host.
+STR_STARTPICK_TIP_HELD_JOIN=Start #{number} - {player}\nClick to start here too
+STR_STARTPICK_TIP_HELD_JOIN_HOST=Start #{number} - {player}\nClick to start here too; drag to move; right-click to assign to someone else
+
 # Player-row badge tooltips
 STR_PLAYER_TIP_AI=AI player
 STR_PLATFORM_WINDOWS=Windows
@@ -1636,7 +1640,6 @@ STR_DLGSETTINGS_VOICE_MODE_OPEN=Open mic
 STR_DLGSETTINGS_VOICE_PTTKEY=Push-to-talk key
 STR_DLGSETTINGS_VOICE_TRANSMITTING=Transmitting
 STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Not transmitting
-STR_DLGSETTINGS_VOICE_SERVER_OFF=This server has voice turned off
 STR_DLGSETTINGS_VOICE_VOLUME=Voice volume
 STR_DLGSETTINGS_VOICE_TANKICONS=Show microphone icons over tanks
 STR_DLGSETTINGS_VOICE_ECHOCANCEL=Echo cancellation
@@ -1647,6 +1650,7 @@ STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Handled by the system
 STR_DLGSETTINGS_VOICE_MICDEVICE=Microphone
 STR_DLGSETTINGS_VOICE_OUTDEVICE=Playback device
 STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=System default
+STR_DLGSETTINGS_VOICE_SERVER_OFF=This server has voice turned off
 
 # Key setup — push to talk binding
 STR_DLGKEYSETUP_PUSHTOTALK=Push to talk
