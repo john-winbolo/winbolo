@@ -290,9 +290,31 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
             }
             if (sim->pendingHarvestBuildAction[count] != 0 &&
                 applied.buildAction == 0) {
-                applied.buildAction = sim->pendingHarvestBuildAction[count];
-                applied.buildX      = sim->pendingHarvestBuildX[count];
-                applied.buildY      = sim->pendingHarvestBuildY[count];
+                /* Only replay the harvested build if its frozen target
+                 * would still be accepted against the current map — the same
+                 * question lgmAddRequest asks, put to lgmCheckNewRequest
+                 * without acting or messaging. A stale replay onto changed
+                 * terrain would dispatch a bogus request and nag the player
+                 * about an order they did not just issue. Either way the
+                 * pending slot is consumed exactly once.
+                 *
+                 * Ask only when the man is idle, because only then does
+                 * lgmAddRequest act on the order now. A busy man has it
+                 * queued as his next order and checked when he gets back in
+                 * the tank, with whatever the tank holds by then — testing
+                 * it now against a tank whose wood is out with the man would
+                 * throw away an order that was going to succeed. */
+                if (!lgmIsIdle(&sim->sim.lgmen[count]) ||
+                    lgmRequestIsValid(
+                        &sim->sim, &sim->sim.lgmen[count],
+                        &sim->sim.tanks[count],
+                        sim->pendingHarvestBuildX[count],
+                        sim->pendingHarvestBuildY[count],
+                        (BYTE)(sim->pendingHarvestBuildAction[count] - 1))) {
+                    applied.buildAction = sim->pendingHarvestBuildAction[count];
+                    applied.buildX      = sim->pendingHarvestBuildX[count];
+                    applied.buildY      = sim->pendingHarvestBuildY[count];
+                }
                 sim->pendingHarvestBuildAction[count] = 0;
                 sim->pendingHarvestBuildX[count] = 0;
                 sim->pendingHarvestBuildY[count] = 0;

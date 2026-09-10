@@ -231,6 +231,23 @@ void lgmTankDied(lgm *lgman);
 void lgmNewPrimaryRequest(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action);
 
 /*********************************************************
+*NAME:          lgmRequestIsValid
+*PURPOSE:
+*  Returns whether a build request would be accepted right
+*  now, without acting on it and without sending the player
+*  an assistant message. For re-testing an order that was
+*  commanded earlier against the current map.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm structure
+*  tnk    - Pointer to the tank structure
+*  mapX   - X Co-ordinate of the request
+*  mapY   - Y Co-ordinate of the request
+*  action - What the request is (LGM_*_REQUEST)
+*********************************************************/
+bool lgmRequestIsValid(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action);
+
+/*********************************************************
 *NAME:          lgmMoveAway
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99
@@ -483,6 +500,19 @@ BYTE lgmGetPY(lgm *lgman);
 BYTE lgmGetFrame(lgm *lgman);
 
 bool lgmIsOut(lgm *lgman);
+
+/*********************************************************
+*NAME:          lgmIsIdle
+*PURPOSE:
+*  Returns whether the man has no order in hand. This is
+*  the test lgmAddRequest makes: an idle man acts on a new
+*  order at once, a busy one has it queued as his next order
+*  and checked when he gets back in the tank.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm structure
+*********************************************************/
+bool lgmIsIdle(lgm *lgman);
 
 /*********************************************************
 *NAME:          lgmGetStatus
