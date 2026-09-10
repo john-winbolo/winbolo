@@ -98,6 +98,19 @@ from generate_capture_lgm_hunt_map import (          # noqa: E402
     CORPSE, ROAD_TILE, FARM_TILE, P1_PARK, SPAWN0, HUNT_RADIUS,
     HUNT_NEAR_TILES, HUNT_TOL_BRADS, HUNT_TOL_NEAR_BRADS, nbots, cheb)
 
+def _brain_const(name, default):
+    """Read a numeric M.<name> from the brain's constants.lua so the test tracks
+    the live knob instead of hardcoding it (e.g. CAPTURE_LGM_HUNT_RADIUS)."""
+    try:
+        txt = (REPO / "brains" / "GoalHunter_1.7" / "constants.lua").read_text()
+        m = re.search(r"M\." + re.escape(name) + r"\s*=\s*([0-9.]+)", txt)
+        return float(m.group(1)) if m else default
+    except Exception:
+        return default
+
+# The hunt region radius (Euclidean tiles), read live from the brain.
+HUNT_CIRCLE_R = _brain_const("CAPTURE_LGM_HUNT_RADIUS", 7)
+
 VARIANTS = ("H0", "H1", "H2")
 PORTS = {"H0": 50570, "H1": 50571, "H2": 50572}
 # ENGINE ticks.  The brain thinks once per frame and the sim advances two
@@ -298,10 +311,14 @@ def check_common(variant, rows, goals):
     if bad_pill:
         errs.append(f"the hunt named a pill other than the corpse {CORPSE} on "
                     f"ticks {bad_pill[:6]}")
+    # CAPTURE_LGM_HUNT_CIRCLE: the hunt region is a TRUE CIRCLE of radius
+    # CAPTURE_LGM_HUNT_RADIUS (read live from constants.lua via HUNT_CIRCLE_R,
+    # currently 7), so pd is a float Euclidean tile distance. A targeted man
+    # must be inside that circle.
     bad_pd = [(r["t"], r["pd"]) for r in rows
-              if r["src"] == "lgm" and int(r["pd"]) > HUNT_RADIUS]
+              if r["src"] == "lgm" and float(r["pd"]) > HUNT_CIRCLE_R + 1e-6]
     if bad_pd:
-        errs.append(f"a man outside CAPTURE_LGM_HUNT_RADIUS {HUNT_RADIUS} "
+        errs.append(f"a man outside CAPTURE_LGM_HUNT_RADIUS {HUNT_CIRCLE_R} "
                     f"triggered the hunt: {bad_pd[:6]}")
     # 3. THE TOLERANCE IS THE ONE THE KNOBS SAY, and the aim is only ever
     #    taken inside it.
@@ -363,32 +380,34 @@ def report_rows(rows, goals, eps):
 
 def check_H1(rows, goals, text, trace, eps):
     errs = check_common("H1", rows, goals)
-    turns = [r for r in rows if r["steer"] == "turn"]
+    # Engagement = the hunt drove the heading toward the man: the sweep-line
+    # NUDGE (new design, within SWEEP_FOCUS_RADIUS) or the tol-blend TURN (the
+    # fallback outside it). Either counts.
+    engaged = [r for r in rows if r["steer"] in ("nudge", "turn")]
     fires = [r for r in rows if r["verdict"] == "fire"]
     lgm_rows = [r for r in rows if r["src"] == "lgm"]
     if not lgm_rows:
         errs.append("the hunt never saw a hostile LGM at all. Either the "
                     "scripted enemy never sent its man (check "
                     f"[farm_beside] lines / man_status in print2_bot1.log) or "
-                    f"it stopped outside the {HUNT_RADIUS}-tile box around "
+                    f"it stopped outside the {HUNT_CIRCLE_R}-tile circle around "
                     f"{CORPSE}.")
-    if len(turns) < 5:
-        errs.append(f"the aim took the turn keys only {len(turns)} time(s); "
-                    "expected at least 5 engagements over the run.")
+    if len(engaged) < 5:
+        errs.append(f"the hunt drove the heading (nudge/turn) only "
+                    f"{len(engaged)} time(s); expected at least 5 engagements "
+                    "over the run.")
     if not fires:
         errs.append("the bot never fired at the builder from capture_pill "
-                    "(no verdict=fire / gate=shooting). The gate histogram "
-                    "above says why it stopped short: out_of_range = never got "
-                    "within KILL_LGM_SHOOT_RANGE; off_aim = the hull never "
-                    "came round far enough; gunrange_off = the crosshair never "
-                    "landed within 64 wu of the lead point; ready_busy = "
-                    "something else had already claimed KEY_SHOOT that tick "
-                    "(check the enemy tank is off the firing line).")
-    for r in fires:
-        if r["gate"] != "shooting":
-            errs.append(f"t={r['t']}: verdict=fire with gate={r['gate']} -- a "
-                        "fire verdict must come from the kill-LGM block's own "
-                        "'shooting' status.")
+                    "(no verdict=fire). The gate histogram above says why it "
+                    "stopped short: out_of_range = never got within "
+                    "KILL_LGM_SHOOT_RANGE; off_aim = the hull never came round "
+                    "far enough; gunrange_off = the shared kill-LGM 64-wu gate "
+                    "never opened (the capture shot's own 1-tile gate can still "
+                    "fire here, so this alone is not fatal).")
+    # NOTE: a capture-target shot fires on its OWN gate (impact within
+    # CAPTURE_LGM_HUNT_FIRE_WU / exact-tile on a solid square), NOT the shared
+    # kill-LGM evaluator's 64-wu 'shooting' status -- so verdict=fire legitimately
+    # pairs with gate=gunrange_off/off_aim here. We no longer require gate=shooting.
     caps = len(SPENT_RE.findall(trace))
     print(f"  captures (engine trace): {caps}")
     if caps < 3:
