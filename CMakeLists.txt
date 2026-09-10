@@ -3394,6 +3394,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
+    # Record-and-decode replay fixture and the case that uses it. The
+    # fixture is two translation units because the sim headers and the
+    # log-viewer headers cannot share one: replay_harness.c records a round
+    # and diffs two captures, replay_harness_decode.c reads the .wbv back
+    # through the production viewer. replay_harness.h carries the seam.
+    tests/unit/replay_harness.c
+    tests/unit/replay_harness_decode.c
+    tests/unit/test_replay_roundtrip.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -4117,6 +4125,7 @@ set(_unit_test_names
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
+    replay_roundtrip_world
     lv_tank_stocks_from_snapshot
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record

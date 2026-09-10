@@ -421,6 +421,7 @@ static const UnitTestEntry s_tests[] = {
     { "log_roundtrip_ping",                      run_log_roundtrip_ping                      },
     { "log_roundtrip_snapshot_tank_stocks",      run_log_roundtrip_snapshot_tank_stocks      },
     { "log_roundtrip_tank_stock_record",         run_log_roundtrip_tank_stock_record         },
+    { "replay_roundtrip_world",                  run_replay_roundtrip_world                  },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_tank_stocks_snapshot_without_tail",    run_lv_tank_stocks_snapshot_without_tail    },
     { "lv_tank_stocks_from_record",              run_lv_tank_stocks_from_record              },

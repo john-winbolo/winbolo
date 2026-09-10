@@ -766,6 +766,15 @@ int run_log_roundtrip_snapshot_tank_stocks(void);
  * when one of them changed since the last record for that tank. */
 int run_log_roundtrip_tank_stock_record(void);
 
+/* Record-and-decode round trip (test_replay_roundtrip.c, on the
+ * replay_harness fixture): records a round in which a terrain cell, a base's
+ * owner and stock, a pillbox's owner and a tank's stocks all change, replays
+ * the .wbv through the production viewer and requires the replayed world to
+ * be the recorded one. Every change lands after the opening snapshot and the
+ * round is far shorter than the interval between snapshots, so only the
+ * per-change events can carry them. */
+int run_replay_roundtrip_world(void);
+
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
  * lv_specRecordPump. Covers the four bytes on the end of a player block, a
