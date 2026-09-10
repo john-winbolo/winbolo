@@ -1186,30 +1186,32 @@ bool sdl3DrawGameToWindowCoords(float gameX, float gameY,
 
 /* Game logical coordinates to the renderer's own coordinates — the space
    ImGui draws in, and the one SDL_ConvertEventToRenderCoordinates puts an
-   event into. Two cases, and they are exclusive:
+   event into. Two cases, decided by the render target and not by whether a
+   logical presentation is set, because Android desktop mode has both:
 
-     A logical presentation is set (Deck, Android desktop mode, mobile
-     tablet). The whole layout is drawn straight into that logical surface at
-     gZoomFactor, and the tablet viewport is laid out against the logical size
-     too, so game coordinates already ARE render coordinates and there is
-     nothing to do. SDL scales the surface to the window afterwards; that is
-     what makes window pixels a different space.
+     The game went to the offscreen render target (desktop, wasm, Android
+     desktop mode). It is blitted to gGameDestRect, and that rect was laid out
+     from SDL_GetCurrentRenderOutputSize, which is the logical size whenever a
+     logical presentation is set — so the rect is already in render
+     coordinates and the blit arithmetic is the whole answer.
 
-     No logical presentation (desktop, wasm). The game went to a render target
-     that is blitted to gGameDestRect, render coordinates are the window's
-     pixels, and the window-pixel conversion is the right one. */
+     No render target (Deck, mobile tablet). The layout is drawn straight into
+     the renderer at gZoomFactor, and the tablet viewport is laid out against
+     the logical size too, so game coordinates already ARE render coordinates.
+     SDL scales the logical surface to the window afterwards; that is what
+     makes window pixels a different space, and why the window-pixel
+     conversion above is the wrong one here. */
 bool sdl3DrawGameToRenderCoords(float gameX, float gameY,
                                 float *renderX, float *renderY) {
-  int logW = 0, logH = 0;
-  SDL_RendererLogicalPresentation logMode = SDL_LOGICAL_PRESENTATION_DISABLED;
   if (!gRenderer || !renderX || !renderY) return false;
-  SDL_GetRenderLogicalPresentation(gRenderer, &logW, &logH, &logMode);
-  if (logMode != SDL_LOGICAL_PRESENTATION_DISABLED && logW > 0 && logH > 0) {
-    *renderX = gameX;
-    *renderY = gameY;
+  if (gGameRenderTarget != NULL && gGameDestRect.w > 0 && gGameDestRect.h > 0) {
+    *renderX = gGameDestRect.x + gameX * gGameScale;
+    *renderY = gGameDestRect.y + gameY * gGameScale;
     return true;
   }
-  return sdl3DrawGameToWindowCoords(gameX, gameY, renderX, renderY);
+  *renderX = gameX;
+  *renderY = gameY;
+  return true;
 }
 
 /* The 15x15 main view rectangle in game logical coordinates, plus the pixel
