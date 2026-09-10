@@ -44,6 +44,19 @@
 extern "C" {
 #endif
 
+/* How loud a ping plays, relative to the effects volume; 1.0 = as loud as
+ * every other effect. A third off, because a ping is a teammate asking for
+ * attention rather than something that happened in the world, and at the same
+ * strength as the shells and the explosions it talked over the fight.
+ *
+ * It multiplies the gain the player's master and effects settings make rather
+ * than replacing it: turning the effects down still turns the pings down, and
+ * a skin shipping its own louder ping_*.wav is a third quieter than it would
+ * otherwise be, the same as the ones that ship. It applies to the seven ping
+ * effects only — ping_default and the six kinds, the ones pingSoundKindOf
+ * names — and to no other effect. */
+#define PING_SOUND_GAIN 0.67f
+
 /* pingSoundKindOf's answer for an effect that is not a per-kind ping sound.
  * Past every kind, so a caller can test the answer with a plain
  * `< PING_KIND_COUNT` instead of comparing against this. */

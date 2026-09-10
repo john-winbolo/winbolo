@@ -149,6 +149,25 @@ static inline langid pingKindNameId(unsigned char kind) {
 #define PING_NAME_ELLIPSIS       "\xE2\x80\xA6"
 #define PING_NAME_ELLIPSIS_ASCII "..."
 
+/* How a ping's name is drawn against the tank labels it borrows its face and
+ * its black shadow from. Both renderers read these: the world marker, which
+ * draws the name through the tank label's own drawer, and the off-screen edge
+ * bars, which draw it with the ImGui atlas.
+ *
+ * PING_NAME_SCALE is a fraction of the tank label's text size, so it follows
+ * the font and the zoom like the label does. Smaller is the point: a name over
+ * the map should not be read as a tank's at a glance, and the marker names a
+ * spot on the ground rather than something driving around on it.
+ *
+ * PING_NAME_GREY is the 0-255 grey the text itself is drawn at: tank labels
+ * are 200-grey, ping names sit a little brighter than that but short of pure
+ * white so the two read as different things; the size difference
+ * (PING_NAME_SCALE) does most of the telling-apart. The shadow under it is the
+ * label's own — same offset, same black — because the terrain under a name
+ * runs from black sea to pale road either way. */
+#define PING_NAME_SCALE 0.8f
+#define PING_NAME_GREY  225
+
 /* A buffer this big always holds a shortened name whole: every character kept
  * at UTF-8's maximum four bytes, the longer of the two ellipses, and the
  * terminator. */

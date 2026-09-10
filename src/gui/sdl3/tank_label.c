@@ -27,6 +27,12 @@
 #include "player_flags.h"    /* PLAYER_FLAG_HAS_MIC, PLAYER_FLAG_VOICE_MUTED */
 #endif
 
+/* The grey a tank label's name is drawn at — bright enough to read over dark
+ * sea, short of white so it does not glare over sand. What a ping name is
+ * measured against: it is drawn through the same texture at a grey of its
+ * caller's choosing (tankLabelDrawNameCentred). */
+#define TANK_LABEL_NAME_GREY 200
+
 #if defined(WINBOLO_VOICE)
 /* Alpha the voice glyphs are drawn at. They are drawn over their own shadow,
  * like the name, so they are set at full strength rather than the flag's 170:
@@ -172,7 +178,13 @@ static void tankLabelRebuild(TankLabelCache *c, SDL_Renderer *r,
          * nameOnly as the full "name@loc" string so the label is unchanged. */
     }
 
-    SDL_Color fg = {200, 200, 200, 255};
+    /* Rendered white and tinted at draw time rather than rendered in its
+     * final grey: the two drawers want different greys off the same texture —
+     * a tank label is TANK_LABEL_NAME_GREY, a ping name a little brighter (see
+     * tankLabelDrawNameCentred) — and a colour mod can only take a texture
+     * down. White plus a mod of g gives exactly g, so the labels come out
+     * where they always did. */
+    SDL_Color fg = {255, 255, 255, 255};
     SDL_Surface *sFg = TTF_RenderText_Blended(font, nameOnly, 0, fg);
     if (sFg) {
         c->nameTex[playerNum] = SDL_CreateTextureFromSurface(r, sFg);
@@ -249,7 +261,8 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
     SDL_SetTextureColorMod(tex, 0, 0, 0);
     SDL_RenderTexture(r, tex, NULL, &sh);
     SDL_FRect d = { x, y, w, h };
-    SDL_SetTextureColorMod(tex, 255, 255, 255);
+    SDL_SetTextureColorMod(tex, TANK_LABEL_NAME_GREY, TANK_LABEL_NAME_GREY,
+                           TANK_LABEL_NAME_GREY);
     SDL_RenderTexture(r, tex, NULL, &d);
 
     /* Country flag (humans) or brain icon (bots) just after the name, at
@@ -307,7 +320,8 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
 
 bool tankLabelDrawNameCentred(TankLabelCache *c, SDL_Renderer *r,
                               TTF_Font *font, const char *name, BYTE playerNum,
-                              float cx, float y, float scale, float alpha) {
+                              float cx, float y, float scale, float alpha,
+                              Uint8 grey) {
     SDL_assert(sdl3DrawOnRenderThread());
     if (!r || !name || name[0] == '\0') return false;
     if (playerNum >= MAX_TANKS) return false;
@@ -334,7 +348,10 @@ bool tankLabelDrawNameCentred(TankLabelCache *c, SDL_Renderer *r,
     SDL_SetTextureColorMod(tex, 0, 0, 0);
     SDL_RenderTexture(r, tex, NULL, &sh);
     SDL_FRect d = { x, y, w, h };
-    SDL_SetTextureColorMod(tex, 255, 255, 255);
+    /* The caller's grey rather than the label's own: a ping name is drawn a
+     * little brighter than a tank label so the two are not read as the same
+     * thing. The shadow above is untouched by it — black is black. */
+    SDL_SetTextureColorMod(tex, grey, grey, grey);
     SDL_RenderTexture(r, tex, NULL, &d);
     /* Back to opaque: the texture is cached across frames, and the other
      * drawer does not set an alpha of its own. */
