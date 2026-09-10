@@ -236,6 +236,33 @@ function M.update(state, world, info)
   state.strength = friendly_ratio       -- 0.0 = losing, 1.0 = dominating
   state.base_strength = base_ratio
 
+  -- "Team ahead" lead gate (read by BEHIND_ATTACK_MULT in goals.lua and
+  -- AHEAD_BLITZ_ONLY in squad.lua). Raw signal: we're ahead if our pill lead
+  -- ratio OR our base lead ratio clears its fraction. With the AHEAD_*_FRAC
+  -- defaults of 0 the raw is always true (ratios are >= 0), so team_ahead is
+  -- always true and every downstream `not state.team_ahead` branch is dead ->
+  -- Hard is unchanged. A short hysteresis (reuse PHASE_HYSTERESIS_TICKS, ~100
+  -- ticks) keeps a bot sitting right at the fraction boundary from flipping the
+  -- attack multiplier / blitz gate on and off every tick.
+  local ahead_raw = (state.strength >= C.AHEAD_PILL_FRAC)
+                 or (state.base_strength >= C.AHEAD_BASE_FRAC)
+  if state.team_ahead == nil then
+    state.team_ahead = ahead_raw
+    state.team_ahead_pending = nil
+  elseif ahead_raw ~= state.team_ahead then
+    if not state.team_ahead_pending or state.team_ahead_pending.val ~= ahead_raw then
+      state.team_ahead_pending = { val = ahead_raw, count = 1 }
+    else
+      state.team_ahead_pending.count = state.team_ahead_pending.count + 1
+      if state.team_ahead_pending.count >= (C.PHASE_HYSTERESIS_TICKS or 100) then
+        state.team_ahead = ahead_raw
+        state.team_ahead_pending = nil
+      end
+    end
+  else
+    state.team_ahead_pending = nil
+  end
+
   -- Ammo deprivation: shells held below AMMO_DEPRIVED_SHELLS for
   -- AMMO_DEPRIVED_TICKS of normal (non-opening) play, with no recovery. We do
   -- NOT care WHY it can't refuel (no base / chose not to) — pure time-below-the-

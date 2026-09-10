@@ -2885,6 +2885,27 @@ M.BLITZ_SWERVE_ONLY_WHEN_HIT = true   -- default ON; KEEL false
 M.BLITZ_ONLY_WHEN_HIT_MIN    = 3      -- committed-blitzer threshold (self + allies on the same pill)
 M.BLITZ_ABORT_BUILD_ON_READY = true  -- if a soldier JOINS while the commander is mid build_walls (laying its guard pills/shield), abandon the remaining blocks and rally NOW (build_walls -> blitz_wait, unshielded charge route). The joiner's simultaneous overwhelm replaces the shield as protection ??? same routing as if the joiner had answered before the in-position decision. Off = finish the shield first, then rally (original behavior).
 M.BLITZ_MIN_READY_TO_CHARGE = 2  -- (used with BLITZ_ABORT_BUILD_ON_READY) DEFAULT ONLY, see SQUAD_BLITZ_GO_EARLY_READY: minimum READY blitzers ??? total tanks in position and aimed (rdy=1) ??? required before the commander abandons the build and charges. The commander itself always counts as 1 (it's at its standoff). 2 = commander + one ready soldier; a still-approaching 3rd is left to keep closing and joins the charge when it arrives. Default 2 = original abort-on-join behavior.
+-- ── DIFFICULTY (Stage 3 Pass A) control-flow knobs ───────────────────────
+-- All default to the NO-OP value so Hard (MODE_LEVELS.default.hard = {}) stays
+-- bit-for-bit today's brain; Easy/Medium set them in MODE_LEVELS below. Read on
+-- C. only (both C and state are already Brain.think upvalues). PURE control
+-- flow -- no math.random anywhere, fully deterministic.
+M.BLITZ_ENABLED   = true   -- false => this bot never OPENS or JOINS a blitz (solo
+                           -- takes only). Reuses the tested state.blitz_disabled
+                           -- "noblitz" path at every gate; the noblitz token still
+                           -- wins. Easy = false.
+M.AHEAD_PILL_FRAC = 0      -- team is "ahead" when state.strength (pill lead ratio)
+                           -- >= this. 0 => always ahead => no downstream change.
+M.AHEAD_BASE_FRAC = 0      -- ...OR state.base_strength (base lead ratio) >= this.
+M.BEHIND_ATTACK_MULT = 1.0 -- when NOT state.team_ahead, multiply attack_pill /
+                           -- attack_base / attack_tank cost by this at the pool
+                           -- choke point. 1.0 = no-op. Medium = 1.3.
+M.AHEAD_BLITZ_ONLY = false -- true => only OPEN a blitz call while team_ahead; still
+                           -- ANSWERS someone else's call (availability). Medium = true.
+M.OUTNUMBERED_DISENGAGE = false -- true => tank_combat breaks off (substate=disengage)
+                                -- when local enemies outnumber allies (see below).
+                                -- Keeps the opening-phase land-grab exemption.
+M.OUTNUMBERED_NET = 2      -- n_enemy - n_ally >= this triggers the disengage above.
 -- Outbound /info batching: several internal-channel messages are packed into the
 -- one BrainInfo.sendmessage buffer per tick (joined by comms.MSG_SEP), capped here
 -- so the packed string stays under PACKET_MAX_CHAT_MESSAGE (128; bot_manager.c
@@ -4336,9 +4357,10 @@ M.PRESETS = {
 -- hard = {} is EMPTY by definition: default/Hard is today's constants,
 -- bit-for-bit. Every value below is a plain scalar the same _cfg_set writes
 -- and type-checks (unknown names, tables and type changes are refused). The
--- NEW handicap knobs (BLITZ_ENABLED, AIM_ERROR_BRADS, FIRE_HOLD_TICKS,
--- REACTION_DELAY_TICKS, AHEAD_*, BEHIND_ATTACK_MULT, AHEAD_BLITZ_ONLY,
--- OUTNUMBERED_*) are DEFERRED to a later pass and are NOT listed here yet.
+-- Stage 3 Pass A control-flow handicap knobs (BLITZ_ENABLED, AHEAD_PILL_FRAC,
+-- AHEAD_BASE_FRAC, BEHIND_ATTACK_MULT, AHEAD_BLITZ_ONLY, OUTNUMBERED_DISENGAGE)
+-- are now LANDED below. The aim/fire/reaction trio (AIM_ERROR_BRADS,
+-- FIRE_HOLD_TICKS, REACTION_DELAY_TICKS) is Pass B and is NOT listed here yet.
 --
 -- Every value below is FIRST-PASS -- to be benched preset=keel vs
 -- difficulty=<level> per the approve-values rule; expect them to move.
@@ -4354,11 +4376,13 @@ M.MODE_LEVELS = {
     medium = {
       SQUAD_MAX_SIZE = 1,
       HARD_TAKE_MIN_HP = 13, BLITZ_SWERVE_ONLY_WHEN_HIT = false, SQUAD_HELP_RANGE = 18,
+      -- press when ahead (Stage 3 Pass A)
+      AHEAD_PILL_FRAC = 0.55, AHEAD_BASE_FRAC = 0.55, BEHIND_ATTACK_MULT = 1.3, AHEAD_BLITZ_ONLY = true,
       -- skill (mild)
       TANK_COMBAT_STEADY_TICKS = 5, TANK_COMBAT_STEADY_MIN_SPEED = 6,
       TANK_COMBAT_JINK_PERIOD = 15, TANK_COMBAT_JINK_ANGLE = 24, GHOST_TANK_TTL_TICKS = 60,
       -- gives ground
-      TANK_COMBAT_FLEE_ARMOUR = 12, TANK_COMBAT_FLEE_SHELLS = 4,
+      TANK_COMBAT_FLEE_ARMOUR = 12, TANK_COMBAT_FLEE_SHELLS = 4, OUTNUMBERED_DISENGAGE = true,
       ARMOUR_CRITICAL = 8, ENGAGE_MAX_INCOMING_TICKS = 40,
       -- picks its fights
       ATTACK_PILL_RISKY_ARMOUR = 34, ATTACK_PILL_RISKY_PENALTY = 150, TANK_COMBAT_BASE_COST = 40,
@@ -4377,7 +4401,9 @@ M.MODE_LEVELS = {
       ARMOUR_LOW = 18, SHELLS_LOW = 22, ARMOUR_COMBAT = 33, SHELLS_COMBAT = 33,
     },
     easy = {
-      -- Blitz: solo, never gangs up
+      -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
+      -- "solo" switch -- NOT SQUAD_MAX_SIZE=1, which never reaches quorum)
+      BLITZ_ENABLED = false,
       SQUAD_MAX_SIZE = 1, HARD_TAKE_MIN_HP = 15,
       BLITZ_SWERVE_ONLY_WHEN_HIT = false,
       -- Skill: bad at moving targets; pills/bases stay accurate
@@ -4393,6 +4419,7 @@ M.MODE_LEVELS = {
       -- Caution: peels off, gives ground
       ATTACK_CURVE_AFTER_HITS = 1, SWERVE_SKIP_ARMOUR_PER_HP = 40,  -- NB 40 not 0
       TANK_COMBAT_FLEE_ARMOUR = 18, TANK_COMBAT_FLEE_SHELLS = 6,    -- keep < SHELLS_LOW
+      OUTNUMBERED_DISENGAGE = true,                                -- gives ground when outnumbered
       ENGAGE_MAX_INCOMING_TICKS = 25, ARMOUR_CRITICAL = 12,        -- keep <= ARMOUR_LOW
       -- Steady / predictable (goal hysteresis)
       GOAL_SWITCH_PENALTY = 60, GOAL_SWITCH_RATIO = 0.5, GOAL_COMMITMENT_CAP = 150,

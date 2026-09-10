@@ -2700,6 +2700,22 @@ local function tank_combat_steer(state, world, info, goal)
     return keys, taps
   end
 
+  -- Outnumbered disengage (difficulty gate): break off when the LOCAL odds turn
+  -- against us -- more enemy tanks than allied within the imdanger ring, by at
+  -- least OUTNUMBERED_NET ("gives ground when the odds turn"). Same opening-phase
+  -- exemption as the armour/shells disengage above, so the level keeps its early
+  -- land grab. Default OUTNUMBERED_DISENGAGE=false -> no-op, Hard unchanged.
+  if C.OUTNUMBERED_DISENGAGE and state.phase ~= "opening" then
+    local it = state.imdanger_terms
+    if it and ((it.n_enemy or 0) - (it.n_ally or 0)) >= (C.OUTNUMBERED_NET or 2) then
+      goal.substate = "disengage"
+      log.reason("steer", { mode = "tank_combat_outnumbered",
+        n_enemy = it.n_enemy, n_ally = it.n_ally, net = C.OUTNUMBERED_NET })
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+      return keys, taps
+    end
+  end
+
   -- ── HEAT A FRIENDLY PILL (C.ATTACK_TANK_HEAT_PILL, default OFF in keel) ──
   -- Placed AFTER both disengage returns above on purpose: on any tick the
   -- existing code has decided we must break off (pillbox crossfire, or the
