@@ -51,6 +51,14 @@ int  imguiKeySetupShow(void);
 void imguiKeySetupOpenInGame(void);
 void imguiKeySetupRenderInGamePopup(struct ClientSim *cs);
 
+/* Drop a pending open and any armed capture row. A host that owns its
+ * own event loop calls this as it closes, so nothing carries into
+ * whatever context runs next — the lobby hands straight over to the
+ * running game, whose pump reads the same capture state. Bindings are
+ * written only when OK is pressed, so an abandoned row is a Cancel and
+ * loses nothing that was saved. */
+void imguiKeySetupCancelInGame(void);
+
 /* Event-pump hooks — called from sdl3ImguiProcessEvents so the
  * raw SDL_EVENT_KEY_DOWN scancode gets routed into the dialog's
  * key-capture state instead of the game's input layer. Mirror of

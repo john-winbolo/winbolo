@@ -2028,6 +2028,72 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Команды на {string1}. Нажмите
 
 STR_SOUND_LOAD_FAILED=Ошибка загрузки звуковых эффектов
 
+STR_DLGLOBBY_AWAITING_MAP=Ожидание сервера...
+STR_DLGSETTINGS_HOSTING_VOICE=Голосовой чат
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Включено
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Выключено
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Близость
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Выключено отбрасывает голос вместо того, чтобы передать его кому-либо. Близость пока не реализована и работает так же, как Включено.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Голос
+STR_DLGSETTINGS_VOICE_LOOPBACK=Проверить микрофон
+STR_DLGSETTINGS_VOICE_MICGAIN=Усиление микрофона
+STR_DLGSETTINGS_VOICE_LEVEL=Уровень входа
+STR_DLGSETTINGS_VOICE_ENABLE=Включить голос
+STR_DLGSETTINGS_VOICE_MODE=Режим
+STR_DLGSETTINGS_VOICE_MODE_OFF=Выключено
+STR_DLGSETTINGS_VOICE_MODE_PTT=Нажать и говорить
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Открытый микрофон
+STR_DLGSETTINGS_VOICE_PTTKEY=Клавиша для разговора
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Передаёт
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Не передаёт
+STR_DLGSETTINGS_VOICE_VOLUME=Громкость голоса
+STR_DLGSETTINGS_VOICE_TANKICONS=Показывать значки микрофона над танками
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Подавление эха
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Запись...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Воспроизведение...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Недоступно в этой системе
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Обрабатывается системой
+STR_DLGSETTINGS_VOICE_MICDEVICE=Микрофон
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Устройство воспроизведения
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Системное по умолчанию
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Этот сервер отключил голосовой чат
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Нажать и говорить
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Заглушить микрофон
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Говорит — нажмите, чтобы заглушить
+STR_PLAYER_TIP_VOICE_IDLE=Есть микрофон — нажмите, чтобы заглушить
+STR_PLAYER_TIP_VOICE_SELFMUTED=Микрофон выключен — нажмите, чтобы заглушить
+STR_PLAYER_TIP_VOICE_NOMIC=Нет микрофона — нажмите, чтобы заглушить
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Заглушено вами — нажмите, чтобы включить звук
+STR_PLAYER_TIP_VOICE_SELF=Ваш микрофон — нажмите, чтобы заглушить
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=У вас нет микрофона
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Ваш микрофон выключен — нажмите, чтобы включить звук
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=Насколько громко здесь слышен этот игрок
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Ваш микрофон и настройки голоса
+STR_DLGLOBBY_VOICE_OFF=Голос выключен
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Кто-то использует голосовой чат. Ваш выключен — включите его значком шестерёнки рядом с вашим именем.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Заглушено вами и говорит — нажмите, чтобы включить звук
+STR_DLGSETTINGS_MASTER_VOLUME=Общая громкость
+STR_DLGSETTINGS_EFFECTS_VOLUME=Громкость эффектов
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Панель игроков
+
 # Умный пинг (круговое меню)
 MESSAGE_PING_STANDARD={player}: Пинг!
 MESSAGE_PING_CAUTION={player}: Осторожно!

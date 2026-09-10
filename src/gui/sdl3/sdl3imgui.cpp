@@ -5992,6 +5992,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 windowLeaveGame();
 #endif
             }
+            /* The lobby's copy of the Key Setup popup. This host draws the
+               lobby inside the shared frame and returns below, before the
+               in-game popup draw further down, so a binding opened from the
+               lobby would otherwise have nothing drawing it. NULL rather than
+               cs: the popup seeds its checkboxes from a live tank when it is
+               given one, and a lobby has no tank. */
+            imguiKeySetupRenderInGamePopup(NULL);
             keyboardUpdate();
             dialogDrawNavOutline();
             ImGui::Render();
@@ -7164,7 +7171,8 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
  *
  * Never runs on the local player's own row from a decoded level: the talking
  * map carries no self bit, so the caller's talking branch is unreachable
- * there. */
+ * there. That row is filled all the same, from this client's own capture
+ * level, which is what the game view's indicator draws from too. */
 static void micDrawLevelFill(SDL_Texture *micTex, float level, ImVec4 tint) {
     if (level <= 0.0f) return;
     if (level > 1.0f) level = 1.0f;   /* over 1 would sample off the texture */
@@ -7239,6 +7247,7 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
     langid       micTip;
     bool         micLevelFill = false;
     bool         micPulseFill = false;
+    bool         micInputFill = false;
     if (mutedByMe) {
         /* Their voice never arrives, so the server's own set of who is
          * talking is the only thing that can say they are speaking. It is
@@ -7274,10 +7283,19 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
                          : STR_PLAYER_TIP_VOICE_SELFMUTED;
     } else {
+        /* On the own row the microphone is a meter rather than an idle icon:
+         * dim, with this client's capture level filled over it. Green while
+         * the frame is actually going out and white while the level is only
+         * being measured, so push-to-talk between presses reads as a live
+         * microphone that is not sending rather than as silence — the same
+         * two colours the game view's own indicator uses. A remote player
+         * idle here keeps the flat dim speaker; there is nothing to measure
+         * until they speak. */
         micTex  = isSelf ? s_iconMic[iconSlot] : s_iconSpeaker[iconSlot];
-        micTint = isSelf ? MIC_TINT_NORMAL : MIC_TINT_DIM;
+        micTint = MIC_TINT_DIM;
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
                          : STR_PLAYER_TIP_VOICE_IDLE;
+        micInputFill = isSelf;
     }
 
     /* A bot has no microphone and nothing to play back, so its cell is drawn
@@ -7302,6 +7320,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
                              MIC_TINT_TALKING);
         } else if (micPulseFill) {
             micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        } else if (micInputFill) {
+            micDrawLevelFill(micTex, voiceGetInputMeter(),
+                             voiceIsTransmitting() ? MIC_TINT_TALKING
+                                                   : MIC_TINT_NORMAL);
         }
         imguiHelpTooltip(langGetText(micTip));
     } else {
@@ -7326,6 +7348,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
                              MIC_TINT_TALKING);
         } else if (micPulseFill) {
             micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        } else if (micInputFill) {
+            micDrawLevelFill(micTex, voiceGetInputMeter(),
+                             voiceIsTransmitting() ? MIC_TINT_TALKING
+                                                   : MIC_TINT_NORMAL);
         }
         imguiHelpTooltip(langGetText(micTip));
         imguiHandOnHover();

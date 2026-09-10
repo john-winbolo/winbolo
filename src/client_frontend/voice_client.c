@@ -132,7 +132,9 @@
 static bool isInitialised = false;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
-static bool voiceEnabled = true;
+/* Off until the prefs say otherwise, and the same answer the prefs default
+   gives, so nothing captures before they are read. */
+static bool voiceEnabled = false;
 static VoiceMode voiceMode = VOICE_MODE_PTT;
 static bool pushToTalkHeld = false;
 static float micGain = 1.0f;
