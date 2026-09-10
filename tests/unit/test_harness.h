@@ -1254,9 +1254,12 @@ int run_catchup_ignores_redundant_duplicates(void);
 /* Stale build-order harvest (test_build_harvest_stale.c): a build commanded on
  * a stall-substituted tick is stashed with its target tile frozen, so the
  * replay must re-check that tile against the current map — a now-invalid one is
- * dropped instead of nagging the player, a still-valid one still dispatches. */
+ * dropped instead of nagging the player, a still-valid one still dispatches,
+ * and one that folds while the man is out is queued unchecked as his next
+ * order. */
 int run_build_harvest_stale(void);
 int run_build_harvest_valid(void);
+int run_build_harvest_busy_queues(void);
 
 /* Build-request validity (test_lgm_request_valid.c): lgmCheckNewRequest's
  * verdicts over terrain and tank stores, and lgmRequestIsValid asking for one

@@ -4277,6 +4277,7 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     build_harvest_stale
     build_harvest_valid
+    build_harvest_busy_queues
     lgm_request_valid
     lgm_request_quiet
     jitter_buffer_grow

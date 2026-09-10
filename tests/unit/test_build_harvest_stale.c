@@ -24,6 +24,13 @@
  *                                  buildable grass) must STILL dispatch the
  *                                  correct request. Passes pre- and post-fix so
  *                                  the fix can't be "just drop every harvest".
+ * run_build_harvest_busy_queues  — the other guard: a harvested order that
+ *                                  arrives while the man is out is queued as his
+ *                                  next order unchecked, the way a directly
+ *                                  issued one is. The tank has no wood while the
+ *                                  man is fetching it, so a re-check at replay
+ *                                  time would wrongly throw the wall away; the
+ *                                  check belongs to the moment he acts on it.
  *
  * Drives serverSimApplyInput + serverSimTick directly on ut_make_running_sim
  * (slot 0) and reads state off the ServerSim/GameSim structs (the unittests
@@ -45,7 +52,7 @@
 #include "pillbox.h"               /* pillsExistPos */
 #include "bases.h"                 /* basesExistPos */
 #include "mines.h"                 /* minesExistPos */
-#include "tank.h"                  /* tankGiveTrees, tankGetMX/MY */
+#include "tank.h"                  /* tankGiveTrees, tankSetTrees, tankGetMX/MY */
 #include "test_harness.h"
 
 #define BH_SLOT 0
@@ -119,10 +126,23 @@ static bool bh_find_tile(ServerSim *sim, BYTE want, BYTE *ox, BYTE *oy) {
 
 /* Load a build order (1-based wire type at bx,by) into the pending-harvest
  * slot without executing it, exactly as a stall-dropped stale input would:
- * feed it at a tick already processed (10 <= lastProcessedInput 12) but never
- * acted on, so serverSimDequeueFresh harvests rather than applies it. Asserts
- * the man is idle+alive first so a later dispatch is a genuine primary request.
- * Returns the next fresh tick to fold on. */
+ * feed it at a tick already processed (staleTick <= lastProcessedInput) but
+ * never acted on (staleTick > lastActionAppliedTick), so serverSimDequeueFresh
+ * harvests rather than applies it. */
+static int bh_stash(ServerSim *sim, uint32_t staleTick, uint8_t buildAction,
+                    BYTE bx, BYTE by) {
+    bh_feed(sim, staleTick, 0, buildAction, bx, by);
+    serverSimTick(sim);                        /* harvested, not dispatched */
+
+    UT_ASSERT_MSG(sim->pendingHarvestBuildAction[BH_SLOT] == buildAction,
+                  "stale build should have been harvested (pending %u, want %u)",
+                  sim->pendingHarvestBuildAction[BH_SLOT], buildAction);
+    return 0;
+}
+
+/* Establish the stream and stash a build order, asserting the man is
+ * idle+alive first so a later dispatch is a genuine primary request. Returns
+ * the next fresh tick to fold on. */
 static uint32_t bh_arm_harvest(ServerSim *sim, uint8_t buildAction,
                                BYTE bx, BYTE by) {
     uint32_t next = bh_establish(sim);  /* lastProcessedInput == 12, next == 13 */
@@ -133,12 +153,9 @@ static uint32_t bh_arm_harvest(ServerSim *sim, uint8_t buildAction,
                   "precondition: builder should be idle (was %u)",
                   sim->sim.lgmen[BH_SLOT]->action);
 
-    bh_feed(sim, 10, 0, buildAction, bx, by);  /* stale: 10 <= lpi, unexecuted */
-    serverSimTick(sim);                        /* harvested, not dispatched */
-
-    UT_ASSERT_MSG(sim->pendingHarvestBuildAction[BH_SLOT] == buildAction,
-                  "stale build should have been harvested (pending %u, want %u)",
-                  sim->pendingHarvestBuildAction[BH_SLOT], buildAction);
+    if (bh_stash(sim, 10, buildAction, bx, by) != 0) {  /* 10 <= lpi 12 */
+        return 0;
+    }
     UT_ASSERT_MSG(sim->sim.lgmen[BH_SLOT]->action == LGM_IDLE,
                   "harvest must not dispatch the builder yet");
     return next;
@@ -233,5 +250,72 @@ int run_build_harvest_valid(void) {
         serverSimDestroy(sim);
     }
 
+    return 0;
+}
+
+/* The other guard: a harvested wall order that folds while the man is out
+ * fetching wood is queued as his next order, not thrown away. The tank holds
+ * no wood at that moment, so re-testing the order at replay time would refuse
+ * it for want of trees; the test the player expects is the one made when the
+ * man gets back in the tank, with the wood he brought. */
+int run_build_harvest_busy_queues(void) {
+    ServerSim *sim = ut_make_running_sim("Hauler");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    BYTE fx = 0, fy = 0, gx = 0, gy = 0;
+    UT_ASSERT_MSG(bh_find_tile(sim, FOREST, &fx, &fy),
+                  "no plain forest tile found on the map");
+    UT_ASSERT_MSG(bh_find_tile(sim, GRASS, &gx, &gy),
+                  "no plain grass tile found on the map");
+
+    uint32_t next = bh_establish(sim);  /* lastProcessedInput == 12, next == 13 */
+    UT_ASSERT_MSG(sim->sim.lgmen[BH_SLOT]->action == LGM_IDLE,
+                  "precondition: builder should be idle (was %u)",
+                  sim->sim.lgmen[BH_SLOT]->action);
+
+    /* No wood, and the man sent to fetch some. The tree order rides the game
+     * tick (even parity); the odd one is a keys tick and would not act. */
+    tankSetTrees(&sim->sim.tanks[BH_SLOT], 0);
+    bh_feed(sim, next,     0, 0, 0, 0);
+    bh_feed(sim, next + 1, 0, 1 /*BsTrees wire*/, fx, fy);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sim->sim.lgmen[BH_SLOT]->action == LGM_TREE_REQUEST,
+                  "builder should be out fetching wood (action %u)",
+                  sim->sim.lgmen[BH_SLOT]->action);
+    UT_ASSERT_MSG(sim->sim.lgmen[BH_SLOT]->nextAction == LGM_IDLE,
+                  "nothing should be queued yet (next %u)",
+                  sim->sim.lgmen[BH_SLOT]->nextAction);
+
+    /* Two blank ticks so the action marker (tick 14) falls behind the
+     * processed mark (16), leaving tick 16 both stale and unexecuted. */
+    bh_feed(sim, next + 2, 0, 0, 0, 0);
+    bh_feed(sim, next + 3, 0, 0, 0, 0);
+    serverSimTick(sim);
+
+    /* The wall order the player clicked while the man was away, lost to a
+     * stall and stashed. */
+    if (bh_stash(sim, next + 3, 3 /*BsBuilding wire*/, gx, gy) != 0) {
+        serverSimDestroy(sim);
+        return 1;
+    }
+
+    bh_fold(sim, next + 4);
+
+    UT_ASSERT_MSG(!bh_saw_assist(sim, ASSIST_MSG_INSUFFICIENT_TREES),
+                  "a wall queued behind a wood run was refused for wood at "
+                  "replay time");
+    UT_ASSERT_MSG(sim->sim.lgmen[BH_SLOT]->action == LGM_TREE_REQUEST,
+                  "the wood run should still be in progress (action %u)",
+                  sim->sim.lgmen[BH_SLOT]->action);
+    UT_ASSERT_MSG(sim->sim.lgmen[BH_SLOT]->nextAction == LGM_BUILDING_REQUEST,
+                  "the wall should be queued as the man's next order "
+                  "(next %u)", sim->sim.lgmen[BH_SLOT]->nextAction);
+    UT_ASSERT_MSG(sim->sim.lgmen[BH_SLOT]->nextX == gx &&
+                  sim->sim.lgmen[BH_SLOT]->nextY == gy,
+                  "queued wall should keep its target (%u,%u), got (%u,%u)",
+                  gx, gy, sim->sim.lgmen[BH_SLOT]->nextX,
+                  sim->sim.lgmen[BH_SLOT]->nextY);
+
+    serverSimDestroy(sim);
     return 0;
 }

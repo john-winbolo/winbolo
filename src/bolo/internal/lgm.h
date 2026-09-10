@@ -502,6 +502,19 @@ BYTE lgmGetFrame(lgm *lgman);
 bool lgmIsOut(lgm *lgman);
 
 /*********************************************************
+*NAME:          lgmIsIdle
+*PURPOSE:
+*  Returns whether the man has no order in hand. This is
+*  the test lgmAddRequest makes: an idle man acts on a new
+*  order at once, a busy one has it queued as his next order
+*  and checked when he gets back in the tank.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm structure
+*********************************************************/
+bool lgmIsIdle(lgm *lgman);
+
+/*********************************************************
 *NAME:          lgmGetStatus
 *AUTHOR:        John Morrison
 *CREATION DATE: 14/11/99

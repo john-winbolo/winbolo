@@ -1748,6 +1748,10 @@ bool lgmIsOut(lgm *lgman) {
   return !((*lgman)->inTank); 
 }
 
+bool lgmIsIdle(lgm *lgman) {
+  return (*lgman)->action == LGM_IDLE;
+}
+
 /*********************************************************
 *NAME:          lgmGetStatus
 *AUTHOR:        John Morrison
