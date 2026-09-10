@@ -1838,7 +1838,8 @@ BYTE startsConvertDir(BYTE dir) {
 *  Clamps every start field a map can supply to the range the
 *  rest of the codebase assumes. startsSetStart applies the dir
 *  clamp on the file-load path; the compressed path memcpys the
-*  structs wholesale and reaches it.
+*  structs wholesale and never reaches it, so it calls this
+*  instead.
 *
 *ARGUMENTS:
 *  value - Pointer to the starts structure
