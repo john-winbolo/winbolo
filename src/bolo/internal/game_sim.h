@@ -148,6 +148,24 @@ struct GameSim {
      * (pill shells, gap-fill, substitutes, client). */
     uint32_t    fireInputTick;
 
+    /* Client-side base-death prediction (client only; both 0 on the server,
+     * which holds the real armour and needs no prediction).
+     *
+     * basePredictedDeadTick[b] is the input tick at which this client's own
+     * predicted shell is expected to drop base b to MIN_ARMOUR_CAPTURE, or 0
+     * for none. tankBuildingCollision treats the square as drivable from that
+     * tick on, so a tank driving into a base it is killing does not spend a
+     * round trip fighting its own prediction. Cleared when the authoritative
+     * armour for that base arrives.
+     *
+     * replayTick is the input tick currently being simulated — set on the
+     * forward predicted tick and again for each tick of a reconciliation
+     * replay, so a replay spanning the death resolves every replayed tick
+     * against the state that actually applied at it rather than against the
+     * one current value. 0 outside prediction. */
+    uint32_t    replayTick;
+    uint32_t    basePredictedDeadTick[MAX_BASES];
+
     /* Identity — lets shared code know if it's running as server */
     BYTE        viewPlayer; /* which player's perspective we render from */
     bool        isServer;

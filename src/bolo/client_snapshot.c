@@ -288,6 +288,61 @@ static ClientPlayerStats *liveStatsSlot(ClientSim *csPtr, BYTE slot) {
 }
 
 /*********************************************************
+*NAME:          clientApplyBaseStock
+*PURPOSE:
+*  Applies one authoritative EVENT_BASE_STOCK — armour, shells
+*  and mines — and the two things that hang off the armour
+*  landing: it drops any base-death prediction we were running
+*  for that base, since the server has now spoken, and arms the
+*  enlarged-clamp window if the base just became drivable under
+*  us.
+*
+*  Shared by clientSimApplyGameEvents and the early pass in
+*  clientApplySnapshot, which has to run this before the local
+*  tank's reconciliation replay rather than after it. Applying
+*  the same event twice is harmless: the second pass sees no
+*  armour transition and stops at the assignments.
+*
+*ARGUMENTS:
+*  csPtr - ClientSim to apply to
+*  ev    - The event; data is [baseIndex, armour, shells, mines]
+*********************************************************/
+static void clientApplyBaseStock(ClientSim *csPtr, const GameEvent *ev) {
+  BYTE idx = ev->data[0];
+  BYTE oldArmour, newArmour;
+
+  if (idx >= MAX_BASES || csPtr->sim.bs == NULL) {
+    return;
+  }
+  oldArmour = (*csPtr->sim.bs).item[idx].armour;
+  newArmour = ev->data[1];
+  (*csPtr->sim.bs).item[idx].armour = newArmour;
+  (*csPtr->sim.bs).item[idx].shells = ev->data[2];
+  (*csPtr->sim.bs).item[idx].mines  = ev->data[3];
+
+  /* The server's armour supersedes whatever we predicted for this base —
+   * including a prediction that turned out wrong, which is how a mispredicted
+   * death gets taken back. */
+  csPtr->sim.basePredictedDeadTick[idx] = 0;
+
+  /* If an adjacent base just became drivable (armour fell to the
+   * capturable threshold), arm the enlarged-clamp window so the
+   * high-RTT catch-up onto the now-passable tile glides rather than
+   * snapping. Restricted to a base within one tile of the local tank
+   * so it stays a special case, not a global clamp raise. */
+  if (oldArmour > MIN_ARMOUR_CAPTURE && newArmour <= MIN_ARMOUR_CAPTURE &&
+      MY_TANK(csPtr) != NULL) {
+    int tankMX = tankGetMX(&MY_TANK(csPtr));
+    int tankMY = tankGetMY(&MY_TANK(csPtr));
+    int baseX = (*csPtr->sim.bs).item[idx].x;
+    int baseY = (*csPtr->sim.bs).item[idx].y;
+    if (abs(tankMX - baseX) <= 1 && abs(tankMY - baseY) <= 1) {
+      csPtr->basePassableSmoothSnapshots = CLIENT_BASE_UNBLOCK_SMOOTH_SNAPSHOTS;
+    }
+  }
+}
+
+/*********************************************************
 *NAME:          clientSimApplyGameEvents
 *PURPOSE:
 *  Buffers reliable game events for brain consumption and
@@ -526,32 +581,7 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         }
         break;
       case EVENT_BASE_STOCK:
-        /* data: [baseIndex, armour, shells, mines] */
-        {
-          BYTE idx = events[i].data[0];
-          if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
-            BYTE oldArmour = (*csPtr->sim.bs).item[idx].armour;
-            BYTE newArmour = events[i].data[1];
-            (*csPtr->sim.bs).item[idx].armour = newArmour;
-            (*csPtr->sim.bs).item[idx].shells = events[i].data[2];
-            (*csPtr->sim.bs).item[idx].mines  = events[i].data[3];
-            /* If an adjacent base just became drivable (armour fell to the
-             * capturable threshold), arm the enlarged-clamp window so the
-             * high-RTT catch-up onto the now-passable tile glides rather than
-             * snapping. Restricted to a base within one tile of the local tank
-             * so it stays a special case, not a global clamp raise. */
-            if (oldArmour > MIN_ARMOUR_CAPTURE && newArmour <= MIN_ARMOUR_CAPTURE &&
-                MY_TANK(csPtr) != NULL) {
-              int tankMX = tankGetMX(&MY_TANK(csPtr));
-              int tankMY = tankGetMY(&MY_TANK(csPtr));
-              int baseX = (*csPtr->sim.bs).item[idx].x;
-              int baseY = (*csPtr->sim.bs).item[idx].y;
-              if (abs(tankMX - baseX) <= 1 && abs(tankMY - baseY) <= 1) {
-                csPtr->basePassableSmoothSnapshots = CLIENT_BASE_UNBLOCK_SMOOTH_SNAPSHOTS;
-              }
-            }
-          }
-        }
+        clientApplyBaseStock(csPtr, &events[i]);
         break;
       case EVENT_PLAYER_LEAVE:
         /* Intentionally no player removal here. Removal rides the reliable
@@ -762,6 +792,31 @@ void clientApplySnapshot(ClientSim *csPtr,
       csPtr->clientState.lastAppliedServerTick;
   csPtr->clientState.lastAppliedServerTick = hdr->serverTick;
 
+  /* Base state goes in before the tank loop, because the local tank's
+   * reconciliation replay in that loop resolves collision against it. Applied
+   * after the replay — where the rest of the game events are still applied —
+   * the replay would re-derive the tank against a base the same snapshot has
+   * just told us is dead, drive it back into a wall that is no longer there,
+   * and hand the correction to the smoothing clamp before the window that
+   * widens the clamp has been armed. */
+  if (baseSnaps != NULL && csPtr->sim.bs != NULL) {
+    for (i = 0; i < baseCount && i < MAX_BASES; i++) {
+      (*csPtr->sim.bs).item[i].owner = baseSnaps[i].owner;
+      (*csPtr->sim.bs).item[i].armour = baseSnaps[i].armour;
+      (*csPtr->sim.bs).item[i].shells = baseSnaps[i].shells;
+      (*csPtr->sim.bs).item[i].mines = baseSnaps[i].mines;
+      /* Authoritative armour — drop any prediction for this base. */
+      csPtr->sim.basePredictedDeadTick[i] = 0;
+    }
+  }
+  if (events != NULL) {
+    for (i = 0; i < eventCount; i++) {
+      if (events[i].type == EVENT_BASE_STOCK) {
+        clientApplyBaseStock(csPtr, &events[i]);
+      }
+    }
+  }
+
   /* Update other players via interpolation */
   csPtr->interpCtx.localPlayer = playerNum;
   for (i = 0; i < tankCount; i++) {
@@ -937,6 +992,12 @@ void clientApplySnapshot(ClientSim *csPtr,
 
                 if (histPkt->tick != tick) continue;
 
+                /* Resolve this replayed tick against the state that applied at
+                 * it: a base our own shell killed part-way through the replay
+                 * stays solid for the ticks before the hit and drivable after,
+                 * rather than the whole replay seeing one current answer. */
+                csPtr->sim.replayTick = tick;
+
                 isKeysTick = (tick % 2) == 1;
                 accel = (histPkt->buttons & INPUT_BTN_ACCEL) != 0;
                 decel = (histPkt->buttons & INPUT_BTN_DECEL) != 0;
@@ -973,6 +1034,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                 }
               }
             }
+            csPtr->sim.replayTick = 0;
             csPtr->sim.isPredicting = FALSE;
 
             /* Deposit the correction into the render-only error offset so
@@ -1218,15 +1280,7 @@ void clientApplySnapshot(ClientSim *csPtr,
     }
   }
 
-  /* Apply base snapshots */
-  if (baseSnaps != NULL && csPtr->sim.bs != NULL) {
-    for (i = 0; i < baseCount && i < MAX_BASES; i++) {
-      (*csPtr->sim.bs).item[i].owner = baseSnaps[i].owner;
-      (*csPtr->sim.bs).item[i].armour = baseSnaps[i].armour;
-      (*csPtr->sim.bs).item[i].shells = baseSnaps[i].shells;
-      (*csPtr->sim.bs).item[i].mines = baseSnaps[i].mines;
-    }
-  }
+  /* Base snapshots were applied at the top, ahead of the tank loop. */
 
   /* Apply pill snapshots */
   if (pillSnaps != NULL && csPtr->sim.pb != NULL) {

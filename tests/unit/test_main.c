@@ -512,6 +512,8 @@ static const UnitTestEntry s_tests[] = {
     { "bases_closest_for_player",                run_bases_closest_for_player                },
     { "base_stock_visibility",                   run_base_stock_visibility                   },
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
+    { "base_armour_reveal_in_range",             run_base_armour_reveal_in_range             },
+    { "base_death_prediction_replay_tick",       run_base_death_prediction_replay_tick       },
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "voice_flags_snapshot_masking",            run_voice_flags_snapshot_masking            },
     { "voice_talking_codec",                     run_voice_talking_codec                     },

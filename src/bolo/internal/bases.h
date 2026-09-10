@@ -79,6 +79,16 @@ struct ClientSim;
 /* 7 map squares or 1792 WORLD units */
 #define BASE_STATUS_RANGE 1792
 
+/* Range within which a player is sent an enemy base's true armour instead of
+   BASE_FULL_ARMOUR. Their client needs it to work out for itself when its own
+   shell drops the base to MIN_ARMOUR_CAPTURE and the square becomes drivable;
+   without it the square stays solid on the client until the death event lands
+   a round trip later, and a tank driving in fights its own prediction the
+   whole way. Wide enough to cover shell flight plus a round trip at road
+   speed, and well short of BASE_STATUS_RANGE so shelling from standoff range
+   still tells you nothing. 4 map squares or 1024 WORLD units. */
+#define BASE_PREDICT_REVEAL_RANGE 1024
+
 /* This is for the half tick calculator these numbers are simply unique identifiers*/
 
 #define BASES_HALFTICK_TYPE_SHELL  1
@@ -543,6 +553,28 @@ bool basesCanHit(struct GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy);
 *  hitBy  - Person who fired the shell
 *********************************************************/
 bool basesCantDrive(struct GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy);
+
+/*********************************************************
+*NAME:          basesArmourVisibleToPlayer
+*PURPOSE:
+*  Returns whether a base's true armour may be sent to a
+*  player, rather than the BASE_FULL_ARMOUR stand-in the
+*  per-recipient cull substitutes for a live enemy base.
+*  True for a neutral/own/allied base, for one already at or
+*  below MIN_ARMOUR_CAPTURE (the capturable flip is public),
+*  and for an enemy base within BASE_PREDICT_REVEAL_RANGE of
+*  the player's tank, which is what lets their client predict
+*  the square becoming drivable.
+*
+*  Both server send sites call this, so the snapshot cull and
+*  the event cull cannot drift apart.
+*
+*ARGUMENTS:
+*  sim     - Pointer to the game sim
+*  baseIdx - Index of the base being considered
+*  player  - Player the send is destined for
+*********************************************************/
+bool basesArmourVisibleToPlayer(struct GameSim *sim, BYTE baseIdx, BYTE player);
 
 /*********************************************************
 *NAME:          basesGetBaseOwner
