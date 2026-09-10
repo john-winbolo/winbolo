@@ -34,6 +34,19 @@ fi
 # anything worth keeping into tests/fuzz/corpus/<target>/ deliberately.
 work="$builddir/fuzz-corpus-${target}"
 mkdir -p "$work" "$crashes"
+
+# The sanitizer symbolizes each newly covered function by starting
+# llvm-symbolizer. Where only a versioned llvm-symbolizer-N is installed that
+# start fails, the reply pipe never reaches EOF and the run stalls ~90 seconds
+# per attempt — single-digit exec/s instead of six figures. Prefer
+# unsymbolized output to stalling; replay an artifact without this to get
+# named frames back. macOS is exempt: its runtime falls back to atos, which
+# works, so only a host with neither tool gets symbolization turned off.
+if ! command -v llvm-symbolizer >/dev/null 2>&1 && \
+   ! command -v atos >/dev/null 2>&1; then
+    export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}symbolize=0"
+    echo "note: llvm-symbolizer not on PATH — running with symbolize=0" >&2
+fi
 # -print_final_stats reports the total executed inputs at exit
 # (stat::number_of_executed_units) alongside libFuzzer's periodic
 # "#<n> ... exec/s" lines — the run count stays visible even with the app's
