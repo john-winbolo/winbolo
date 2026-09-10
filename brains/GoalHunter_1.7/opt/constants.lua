@@ -7,16 +7,24 @@ local M = {}
 M.BRAIN_NAME = "GoalHunter"
 M.LOG_STANDOFF_CANDIDATES = false  -- print every standoff candidate (very verbose)
 
--- How hard this bot is asked to play: "easy", "medium" or "hard". Set from
--- the host's per-bot lobby choice, which arrives as a "difficulty=<word>"
--- token in BRAIN_INIT_ARG (see the init-arg block in init.lua); also
--- settable directly with cfg=DIFFICULTY=easy for a bench.
+-- Which mode this bot is asked to run in, and how hard it is asked to play.
+-- Both are the host's per-bot lobby choice and arrive as "mode=<key>" and
+-- "difficulty=<key>" tokens in BRAIN_INIT_ARG (see the init-arg block in
+-- init.lua); both are also settable directly with cfg=MODE=survival /
+-- cfg=DIFFICULTY=easy for a bench.
 --
--- NOTHING READS THIS YET. Every difficulty runs exactly this code, which is
--- what "hard" means, so the default is "hard" and the knobs that make easy
--- and medium actually easier come later. It is stored (and echoed in the
--- init-arg log, and on state.difficulty) so the plumbing can be trusted
--- before any behaviour hangs off it.
+-- The MANIFEST that decides which keys exist is modes.txt beside this file:
+-- it lists this brain's modes and, per mode, that mode's difficulty levels.
+-- The lobby reads it to fill its two dropdowns, so adding a mode or a level
+-- is an edit to modes.txt, not to any C or Lua code.
+--
+-- NOTHING READS EITHER OF THESE YET. Every mode and every difficulty runs
+-- exactly this code, which is what "default" / "hard" mean, so those are the
+-- defaults and the knobs that make the other settings differ come later.
+-- They are stored (and echoed in the init-arg log, and on state.mode /
+-- state.difficulty) so the plumbing can be trusted before any behaviour
+-- hangs off it.
+M.MODE = "default"
 M.DIFFICULTY = "hard"
 
 M.TWO_PI = 2 * math.pi

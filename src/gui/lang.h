@@ -1524,6 +1524,10 @@
 #define STR_BOT_DIFF_DESC_MEDIUM            2159
 #define STR_BOT_DIFF_DESC_HARD              2160
 
+/* Bot AiConfig: the Mode dropdown's label. The mode NAMES themselves are
+ * data (brains/<brain>/modes.txt), not strings, so this is the only one. */
+#define STR_DLGLOBBY_BOTCFG_MODE            2161
+
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
 #define STR_DLGLOBBY_BAL_BTN                1345

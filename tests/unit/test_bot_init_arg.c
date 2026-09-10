@@ -18,7 +18,10 @@
  */
 #include <string.h>
 
-#include "bot_manager.h"      /* botInitArgAppendToken, BRAIN_INIT_ARG_MAX */
+#include <SDL3/SDL.h>
+
+#include "bot_manager.h"      /* botInitArgAppend*, BRAIN_INIT_ARG_MAX */
+#include "brain_list.h"       /* BrainModes, brainListLoadModes */
 #include "server_sim.h"       /* BOT_DIFFICULTY_*, botDifficultyName/FromName */
 
 #include "test_harness.h"
@@ -80,6 +83,121 @@ int run_bot_init_arg_difficulty_token(void) {
     UT_ASSERT(!botInitArgAppendToken(arg, sizeof(arg), NULL));
     UT_ASSERT(!botInitArgAppendToken(arg, sizeof(arg), ""));
     UT_ASSERT_MSG(arg[0] == '\0', "refused append wrote into the buffer");
+
+    return 0;
+}
+
+/* The pair of tokens a bot is actually handed:
+ *   mode=<modekey>;difficulty=<levelkey>
+ * with the keys taken from the brain's own modes.txt (brain_list.h) and the
+ * stored indices clamped against it. This is what botManagerStageInitArg
+ * appends to whatever the caller staged, so it is what the brain parses. */
+int run_bot_init_arg_mode_tokens(void) {
+    char arg[BRAIN_INIT_ARG_MAX];
+    BrainModes modes;
+
+    /* No manifest for this name -> the synthesized default mode, which is
+     * exactly the pre-manifest behaviour: mode "default", hard. */
+    brainListLoadModes("wbtest_no_such_brain_at_all", &modes);
+
+    arg[0] = '\0';
+    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
+                               BOT_DIFFICULTY_HARD, 0);
+    UT_ASSERT_MSG(strcmp(arg, "mode=default;difficulty=hard") == 0,
+                  "default pair produced '%s'", arg);
+
+    /* Easy in the same mode, and a staged -bot-init suffix still in front. */
+    SDL_strlcpy(arg, "preset=keel", sizeof(arg));
+    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
+                               BOT_DIFFICULTY_EASY, 0);
+    UT_ASSERT_MSG(strcmp(arg, "preset=keel;mode=default;difficulty=easy") == 0,
+                  "append onto a staged arg produced '%s'", arg);
+
+    /* An index past the end of the list never names something the brain
+     * did not declare: the mode falls back to 0, the level to that mode's
+     * own default (hard here). */
+    arg[0] = '\0';
+    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 9, 9, 0);
+    UT_ASSERT_MSG(strcmp(arg, "mode=default;difficulty=hard") == 0,
+                  "out-of-range indices produced '%s'", arg);
+
+    /* A second mode, as brains/GoalHunter_1.7/modes.txt declares one: the
+     * mode key is the manifest's, not a hardcoded word. */
+    {
+        BrainModes two;
+        memset(&two, 0, sizeof(two));
+        two.modeCount = 2;
+        SDL_strlcpy(two.modes[0].key, "default", sizeof(two.modes[0].key));
+        two.modes[0].levelCount = 1;
+        SDL_strlcpy(two.modes[0].levels[0].key, "hard",
+                    sizeof(two.modes[0].levels[0].key));
+        SDL_strlcpy(two.modes[1].key, "survival", sizeof(two.modes[1].key));
+        two.modes[1].levelCount = 3;
+        SDL_strlcpy(two.modes[1].levels[0].key, "easy",
+                    sizeof(two.modes[1].levels[0].key));
+        SDL_strlcpy(two.modes[1].levels[1].key, "medium",
+                    sizeof(two.modes[1].levels[1].key));
+        SDL_strlcpy(two.modes[1].levels[2].key, "hard",
+                    sizeof(two.modes[1].levels[2].key));
+        two.modes[1].defaultLevel = 2;
+
+        arg[0] = '\0';
+        botInitArgAppendModeTokens(arg, sizeof(arg), &two, 1, 0, 0);
+        UT_ASSERT_MSG(strcmp(arg, "mode=survival;difficulty=easy") == 0,
+                      "survival pair produced '%s'", arg);
+
+        /* A level index the OTHER mode has but this one does not takes the
+         * mode's own default rather than reading off the end. */
+        arg[0] = '\0';
+        botInitArgAppendModeTokens(arg, sizeof(arg), &two, 0, 2, 0);
+        UT_ASSERT_MSG(strcmp(arg, "mode=default;difficulty=hard") == 0,
+                      "clamped level produced '%s'", arg);
+    }
+
+    /* Too long: each token is dropped whole and independently. Fill the
+     * buffer so the mode token fits exactly and the difficulty one cannot,
+     * and the mode token must still be there. */
+    {
+        const char *modeTok = "mode=default";              /* 12 chars */
+        const size_t fill = BRAIN_INIT_ARG_MAX - 1         /* 127 usable */
+                          - 1                              /* the ';'    */
+                          - strlen(modeTok);
+        memset(arg, 'x', fill);
+        arg[fill] = '\0';
+        botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
+                                   BOT_DIFFICULTY_HARD, 0);
+        UT_ASSERT_MSG(strlen(arg) == BRAIN_INIT_ARG_MAX - 1,
+                      "mode token left %zu chars, expected %d",
+                      strlen(arg), BRAIN_INIT_ARG_MAX - 1);
+        UT_ASSERT_MSG(strcmp(arg + fill, ";mode=default") == 0,
+                      "mode token mangled: '%s'", arg + fill);
+        UT_ASSERT_MSG(strstr(arg, "difficulty=") == NULL,
+                      "difficulty token was truncated in instead of dropped");
+    }
+
+    /* Neither token fits: the buffer is left exactly as it was. */
+    {
+        char before[BRAIN_INIT_ARG_MAX];
+        memset(arg, 'x', BRAIN_INIT_ARG_MAX - 1);
+        arg[BRAIN_INIT_ARG_MAX - 1] = '\0';
+        SDL_strlcpy(before, arg, sizeof(before));
+        botInitArgAppendModeTokens(arg, sizeof(arg), &modes, 0,
+                                   BOT_DIFFICULTY_HARD, 0);
+        UT_ASSERT_MSG(strcmp(arg, before) == 0,
+                      "a full buffer was still written to");
+    }
+
+    /* Degenerate inputs are refused, not crashed on. */
+    {
+        BrainModes empty;
+        memset(&empty, 0, sizeof(empty));
+        arg[0] = '\0';
+        botInitArgAppendModeTokens(NULL, sizeof(arg), &modes, 0, 0, 0);
+        botInitArgAppendModeTokens(arg, 0, &modes, 0, 0, 0);
+        botInitArgAppendModeTokens(arg, sizeof(arg), NULL, 0, 0, 0);
+        botInitArgAppendModeTokens(arg, sizeof(arg), &empty, 0, 0, 0);
+        UT_ASSERT_MSG(arg[0] == '\0', "a refused append wrote '%s'", arg);
+    }
 
     return 0;
 }

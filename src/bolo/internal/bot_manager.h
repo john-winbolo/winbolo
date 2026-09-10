@@ -27,6 +27,7 @@
 
 #include "global.h"
 #include "client_enums.h"  /* aiType, gameType */
+#include "brain_list.h"      /* BrainModes — the mode/level token pair */
 #include "brain_pathfinder.h"
 #include "brain_overlay.h"
 #include "server_sim.h"    /* BotInfo, BotPoolStats, BRAIN_GOAL_MAX_CANDIDATES, SubscriberHandle */
@@ -344,13 +345,18 @@ int  botManagerGetThreads(const struct ServerSim *sim);
  *********************************************************/
 int  botManagerGetPendingThreads(const struct ServerSim *sim);
 
-/* ── Bot difficulty ──────────────────────────────────────────────
- * LobbyBotConfig.difficulty is 0/1/2 on the wire (server_sim.h). These
- * turn it into the word the brain reads out of its BRAIN_INIT_ARG, and
- * back again for the dedicated server's -difficulty flag. Every
- * difficulty currently runs the same brain code — the token is
- * plumbing, so the brain can start honouring it without another
- * protocol change. */
+/* ── Bot mode and difficulty ─────────────────────────────────────
+ * LobbyBotConfig carries a mode index and a difficulty index (server_sim.h),
+ * both into the brain's own modes.txt manifest (brain_list.h). At brain
+ * create time bot_manager turns the pair into the two BRAIN_INIT_ARG tokens
+ * "mode=<modekey>;difficulty=<levelkey>" using the KEYS from that manifest.
+ *
+ * botDifficultyName / botDifficultyFromName below stay the 0/1/2 <-> word
+ * mapping for the DEFAULT mode only — the dedicated server's -difficulty
+ * flag, the "Chosen Difficulty" preference and the single-player skill
+ * guess. Every mode and difficulty currently runs the same brain code —
+ * the tokens are plumbing, so the brain can start honouring them without
+ * another protocol change. */
 
 /* botDifficultyName / botDifficultyFromName are declared on
  * public/server_sim.h — the GUI and the dedicated server's argument parse
@@ -372,6 +378,35 @@ int  botManagerGetPendingThreads(const struct ServerSim *sim);
  *  token - token to append, e.g. "difficulty=hard"
  *********************************************************/
 bool botInitArgAppendToken(char *arg, size_t argSz, const char *token);
+
+/*********************************************************
+ *NAME:          botInitArgAppendModeTokens
+ *PURPOSE:
+ *  Appends the pair "mode=<modekey>;difficulty=<levelkey>"
+ *  to a BRAIN_INIT_ARG string, using the KEYS out of the
+ *  brain's own mode manifest (brain_list.h). The indices are
+ *  clamped against that manifest first, so a stale index can
+ *  never name a mode or level the brain never declared: an
+ *  out-of-range mode falls back to mode 0 and an out-of-range
+ *  level to that mode's own default.
+ *
+ *  Each token is appended independently under the whole-token-
+ *  or-nothing rule of botInitArgAppendToken, mode first, so an
+ *  arg with room for only one keeps the mode and logs the
+ *  dropped difficulty.
+ *
+ *ARGUMENTS:
+ *  arg              - NUL-terminated buffer holding the arg so far
+ *  argSz            - full size of that buffer (BRAIN_INIT_ARG_MAX)
+ *  modes            - the brain's mode list; must hold >= 1 mode
+ *  modeIdx          - LobbyBotConfig.mode for this slot
+ *  levelIdx         - LobbyBotConfig.difficulty for this slot
+ *  playerNumForLog  - slot number, used only in the drop warning
+ *********************************************************/
+void botInitArgAppendModeTokens(char *arg, size_t argSz,
+                                const BrainModes *modes,
+                                uint8_t modeIdx, uint8_t levelIdx,
+                                int playerNumForLog);
 
 /*********************************************************
  *NAME:          botManagerAddBot

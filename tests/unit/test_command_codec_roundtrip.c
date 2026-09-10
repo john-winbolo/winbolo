@@ -53,13 +53,14 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.cmdSeq == 2);
     UT_ASSERT(out.u.ready.ready == true);
 
-    /* CMD_LOBBY_BOT_CONFIG — slot/difficulty/personality + variable name */
+    /* CMD_LOBBY_BOT_CONFIG — slot/difficulty/personality/mode + name */
     memset(&in, 0, sizeof(in));
     in.type = CMD_LOBBY_BOT_CONFIG;
     in.cmdSeq = 3;
     in.u.lobbyBotConfig.slot        = 4;
     in.u.lobbyBotConfig.difficulty  = 2;
     in.u.lobbyBotConfig.personality = 5;
+    in.u.lobbyBotConfig.mode        = 1;
     in.u.lobbyBotConfig.nameLen     = 7;
     memcpy(in.u.lobbyBotConfig.name, "BotName", 7);
     memset(&out, 0, sizeof(out));
@@ -69,6 +70,7 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.u.lobbyBotConfig.slot        == 4);
     UT_ASSERT(out.u.lobbyBotConfig.difficulty  == 2);
     UT_ASSERT(out.u.lobbyBotConfig.personality == 5);
+    UT_ASSERT(out.u.lobbyBotConfig.mode        == 1);
     UT_ASSERT(out.u.lobbyBotConfig.nameLen     == 7);
     UT_ASSERT(memcmp(out.u.lobbyBotConfig.name, "BotName", 7) == 0);
 

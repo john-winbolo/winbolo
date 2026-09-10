@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "bot_manager.h"              /* botManagerSetBrainIdx, botManagerAddBot */
+#include "brain_list.h"               /* BRAIN_MODES_MAX, BRAIN_LEVELS_MAX */
 #include "client_command.h"
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
 #include "log.h"
@@ -201,7 +202,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
         const CmdLobbyBotConfig *p = &cmd->u.lobbyBotConfig;
-        if (p->slot >= MAX_TANKS || p->difficulty > 2 || p->personality > 3 ||
+        /* mode indexes the brain's own mode list and difficulty that mode's
+         * level list, so the bounds are the manifest maxima rather than the
+         * old fixed 0..2 — the server does not read the client's brain
+         * files, and bot_manager clamps both against the real list when it
+         * builds the init tokens. */
+        if (p->slot >= MAX_TANKS || p->mode >= BRAIN_MODES_MAX ||
+            p->difficulty >= BRAIN_LEVELS_MAX || p->personality > 3 ||
             p->nameLen > 31 || !serverSimIsBot(sim, p->slot)) {
             return CMD_REJECT_INVALID;
         }
@@ -218,7 +225,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
             transportUdpServerSetBotName(p->slot, validatedName);
         }
-        serverSimSetBotConfig(sim, p->slot, p->difficulty, p->personality,
+        serverSimSetBotConfig(sim, p->slot, p->mode, p->difficulty,
+                              p->personality,
                               p->nameLen > 0 ? validatedName : NULL);
         return CMD_OK;
     }

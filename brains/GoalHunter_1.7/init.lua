@@ -113,25 +113,40 @@ do
       local pname = tok:match("^preset=(.+)$")
       local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
       local dname = tok:match("^difficulty=(.*)$")
+      local mname = tok:match("^mode=(.*)$")
       if pname then
         presets[#presets + 1] = pname
       elseif cname then
         cfgs[#cfgs + 1] = { cname, cval }
+      elseif mname then
+        -- "mode=<key>" -- the host's per-bot lobby choice of MODE, appended
+        -- to this arg by bot_manager.c at brain-create time. The key comes
+        -- from this brain's own modes.txt, so the vocabulary is whatever
+        -- that file lists ("default", "survival", ...) and this side only
+        -- checks the shape. Rides in as an ordinary cfg write of C.MODE,
+        -- so it is type-checked and logged like every other override, and a
+        -- bench can equally say cfg=MODE=survival.
+        mname = mname:lower()
+        if mname:match("^[a-z0-9_]+$") then
+          cfgs[#cfgs + 1] = { "MODE", mname }
+        else
+          _cfg_warn_add("[mode] BAD TOKEN '%s' -- want mode=<key> of [a-z0-9_]; IGNORED.", tok)
+        end
       elseif dname then
-        -- "difficulty=easy|medium|hard" -- the host's per-bot lobby choice,
-        -- appended to this arg by bot_manager.c at brain-create time. It
-        -- rides in as an ordinary cfg write of C.DIFFICULTY, so it is
-        -- type-checked and logged like every other override, and a bench can
-        -- equally say cfg=DIFFICULTY=easy. Queued with the cfgs (not applied
-        -- here) so it lands AFTER any preset=, same as a cfg= would.
-        -- "normal" is the old name for medium; the C side never sends it, but
-        -- a hand-written arg might.
+        -- "difficulty=<key>" -- the host's per-bot lobby choice of LEVEL
+        -- inside that mode, likewise appended by bot_manager.c. modes.txt
+        -- defines which keys a mode has, so any [a-z0-9_] key is accepted
+        -- here rather than the three the default mode happens to use.
+        -- Rides in as an ordinary cfg write of C.DIFFICULTY. Queued with
+        -- the cfgs (not applied here) so it lands AFTER any preset=, same
+        -- as a cfg= would. "normal" is the old name for medium; the C side
+        -- never sends it, but a hand-written arg might.
         dname = dname:lower()
         if dname == "normal" then dname = "medium" end
-        if dname == "easy" or dname == "medium" or dname == "hard" then
+        if dname:match("^[a-z0-9_]+$") then
           cfgs[#cfgs + 1] = { "DIFFICULTY", dname }
         else
-          _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want easy/medium/hard; IGNORED.", tok)
+          _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want difficulty=<key> of [a-z0-9_]; IGNORED.", tok)
         end
       elseif tok:sub(1, 4) == "cfg=" then
         _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
@@ -1407,11 +1422,14 @@ function Brain.think(info)
   -- force from tick 1 onward.
   if state._test_arg_parsed == nil then
     state._test_arg_parsed = true
-    -- Mirror the difficulty onto `state` so a reader inside think doesn't
-    -- have to know it came in as a constant. The parse and the warning
-    -- happened at chunk load (the init-arg block near the top of this file);
-    -- C.DIFFICULTY is "hard" unless a difficulty= / cfg=DIFFICULTY token
-    -- changed it. Nothing reads this yet -- it is plumbing.
+    -- Mirror the mode and difficulty onto `state` so a reader inside think
+    -- doesn't have to know they came in as constants. The parse and the
+    -- warnings happened at chunk load (the init-arg block near the top of
+    -- this file); C.MODE is "default" and C.DIFFICULTY is "hard" unless a
+    -- mode= / difficulty= (or cfg=MODE= / cfg=DIFFICULTY=) token changed
+    -- them. Both keys come from modes.txt, this brain's own manifest of
+    -- which modes and levels exist. Nothing reads either yet -- plumbing.
+    state.mode = C.MODE
     state.difficulty = C.DIFFICULTY
     local a = rawget(_G, "BRAIN_INIT_ARG")
     if type(a) == "string" and a ~= "" then

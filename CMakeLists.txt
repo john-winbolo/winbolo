@@ -3353,6 +3353,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
+    tests/unit/test_brain_modes.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
     tests/unit/test_pf_influence_tail.c
@@ -4123,6 +4124,13 @@ set(_unit_test_names
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
+    brain_modes_manifest_parses
+    brain_modes_missing_falls_back
+    brain_modes_malformed_lines_skipped
+    brain_modes_counts_clamped
+    bot_init_arg_difficulty_token
+    bot_init_arg_mode_tokens
+    bot_difficulty_names
     bolo_rand_golden_sequence
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut

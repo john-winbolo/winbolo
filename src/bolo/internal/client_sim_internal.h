@@ -458,6 +458,10 @@ struct ClientSim {
     uint8_t  lobbyTeamStartSide[16];    /* START_SIDE_* (start_sides.h) */
     char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
 
+    /* Per-bot mode index into the brain's own mode list (brain_list.h);
+     * 0 is the default mode every ordinary game uses. lobbyBotDifficulty
+     * is an index into THAT mode's level list. */
+    uint8_t  lobbyBotMode[16];
     uint8_t  lobbyBotDifficulty[16];
     uint8_t  lobbyBotPersonality[16];
 

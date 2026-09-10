@@ -316,10 +316,12 @@ void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, ControlEvent *e
     evt->u.lobbyBotConfig.slot = slot;
     memset(evt->u.lobbyBotConfig.name, 0, PACKET_MAX_PLAYER_NAME);
     if (slot >= MAX_TANKS) {
+        evt->u.lobbyBotConfig.mode        = 0;
         evt->u.lobbyBotConfig.difficulty  = 0;
         evt->u.lobbyBotConfig.personality = 0;
         return;
     }
+    evt->u.lobbyBotConfig.mode        = sim->botConfigs[slot].mode;
     evt->u.lobbyBotConfig.difficulty  = sim->botConfigs[slot].difficulty;
     evt->u.lobbyBotConfig.personality = sim->botConfigs[slot].personality;
     if (sim->playerConnected[slot]) {

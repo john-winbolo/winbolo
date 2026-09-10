@@ -446,6 +446,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_LOBBY_BOT_CONFIG: {
         uint8_t s = evt->u.lobbyBotConfig.slot;
         if (s >= MAX_TANKS) break;
+        cs->lobbyBotMode[s]        = evt->u.lobbyBotConfig.mode;
         cs->lobbyBotDifficulty[s]  = evt->u.lobbyBotConfig.difficulty;
         cs->lobbyBotPersonality[s] = evt->u.lobbyBotConfig.personality;
         /* Bot display name flows through the lobbySlot path; the
