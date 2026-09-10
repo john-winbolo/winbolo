@@ -38,6 +38,7 @@
 #include "../gui/lang.h"
 #include "../gui/sound.h"
 #include "../gui/ui_mode.h"
+#include "../gui/voice.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
@@ -68,7 +69,8 @@ bool showGunsight = TRUE;  /* WASM default: gunsight on unless synced prefs over
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
-int  soundVolume = 50;
+int  soundVolume = 50;         /* MENU / Sound Volume — the game sounds */
+int  windowMasterVolume = 100; /* MENU / Master Volume — sounds and voice */
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -333,6 +335,11 @@ static void main_loop_iteration(void) {
     /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
   }
 
+  /* Voice encode/decode runs here, beside the game tick and outside the
+   * catch-up gate — once per rendered frame, whatever the sim owes. cs is
+   * NULL until there is a connection, which the runtime expects. */
+  voiceTick(cs);
+
   /* Render. Frozen still draws, so the error dialog lands over the last frame
    * instead of a blank screen; the lobby is the one case that clears instead
    * of rendering (see below). */
@@ -459,6 +466,12 @@ int main(int argc, char *argv[]) {
    * not the browser filesystem. */
   prefsInit("/WinBolo.json");
 
+  /* Voice runs for the life of the process. It comes up before
+   * gameFrontStart, as on desktop. This platform has no capture or playback
+   * device yet (voice_wasm.c), so this only brings the codec up — every
+   * device-facing entry point declines. */
+  voiceInit();
+
   printf("[WASM] Starting gameFrontStart...\n");
   bool started = (gameFrontStart(cmdLine, &keys, FALSE, NULL) != FALSE);
   if (!started && !s_connFailed) {
@@ -557,6 +570,7 @@ int main(int argc, char *argv[]) {
   gameFrontEnd(&keys, TRUE, TRUE);
   clientMutexDestroy();
   sdl3ImguiCleanup();
+  voiceCleanup();
   sdl3DrawCleanup();
   SDL_Quit();
   return 0;
@@ -600,7 +614,15 @@ void windowApplyMenuChecks(ClientSim *cs) {
  * ------------------------------------------------------- */
 extern bool useAutoslow;   /* defined in gamefront_wasm.c */
 extern bool useAutohide;
-void windowSetSoundVolume(int pct);  /* defined below, after this function */
+void windowSetSoundVolume(int pct);   /* defined below, after this function */
+void windowSetMasterVolume(int pct);  /* likewise */
+/* Likewise the voice settings, defined below with the rest of them. */
+void windowSetVoiceEnabled(bool on);
+void windowSetVoiceMode(int mode);
+void windowSetVoiceMicGain(float gain);
+void windowSetVoiceVolume(float gain);
+void windowSetShowTankMicIcons(bool on);
+bool windowGetShowTankMicIcons(void);
 
 static bool prefBool(cJSON *o, const char *k, bool dflt) {
   cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
@@ -627,6 +649,13 @@ static float prefFloat(cJSON *o, const char *k, float dflt) {
   if (it == NULL) return dflt;
   if (cJSON_IsNumber(it)) return (float)it->valuedouble;
   if (cJSON_IsString(it) && it->valuestring) return (float)atof(it->valuestring);
+  return dflt;
+}
+
+static const char *prefStr(cJSON *o, const char *k, const char *dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsString(it) && it->valuestring) return it->valuestring;
   return dflt;
 }
 
@@ -695,6 +724,10 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
     windowSetSoundVolume(vol);
+    vol = prefInt(m, "Master Volume", windowMasterVolume);
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    windowSetMasterVolume(vol);
   }
 
   cJSON *g = cJSON_GetObjectItemCaseSensitive(root, "GAME OPTIONS");
@@ -722,6 +755,39 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
     g_buildDoubleTapRoad = prefBool(s, "Build Double Tap Road", g_buildDoubleTapRoad);
     g_buildHoldMomentary = prefBool(s, "Build Hold Momentary", g_buildHoldMomentary);
     g_buildAutoCloseOnExecute = prefBool(s, "Build Auto Close On Execute", g_buildAutoCloseOnExecute);
+  }
+
+  /* VOICE: written by the desktop, adopted here, so a player's voice
+   * settings follow them into the browser. Applied straight onto the
+   * running voice module. The mode names and the clamps are the desktop
+   * reader's — keep them in step with gamefront.c. "Echo Cancel" is not
+   * read: it is desktop-only, the browser gets cancellation from
+   * getUserMedia. */
+  cJSON *v = cJSON_GetObjectItemCaseSensitive(root, "VOICE");
+  if (cJSON_IsObject(v)) {
+    windowSetVoiceEnabled(prefBool(v, "Enabled", voiceIsEnabled()));
+
+    const char *mode = prefStr(v, "Mode", NULL);
+    if (mode != NULL) {
+      if (strcmp(mode, "Off") == 0) {
+        windowSetVoiceMode(VOICE_MODE_OFF);
+      } else if (strcmp(mode, "Open Mic") == 0) {
+        windowSetVoiceMode(VOICE_MODE_OPEN);
+      } else {
+        windowSetVoiceMode(VOICE_MODE_PTT);
+      }
+    }
+
+    /* An out-of-range value is rejected back to 1.0 rather than clamped to
+     * the edge, so this reader and the desktop's agree on it. */
+    float mg = prefFloat(v, "Mic Gain", voiceGetMicGain());
+    if (!(mg >= 0.0f && mg <= 4.0f)) mg = 1.0f;
+    windowSetVoiceMicGain(mg);
+    float vv = prefFloat(v, "Voice Volume", voiceGetOutputVolume());
+    if (!(vv >= 0.0f && vv <= 2.0f)) vv = 1.0f;
+    windowSetVoiceVolume(vv);
+
+    windowSetShowTankMicIcons(prefBool(v, "Tank Icons", windowGetShowTankMicIcons()));
   }
 
   cJSON_Delete(root);
@@ -806,12 +872,83 @@ void windowSoundKeepalive(void) {
     soundKeepalive(useSoundKeepalive);
   }
 }
+
 void windowSetSoundVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   soundVolume = pct;
-  soundSetVolume(pct);
+  soundSetEffectsVolume(pct);
 }
+
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * playback path and its own gain, and nothing downstream covers both. */
+void windowSetMasterVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  windowMasterVolume = pct;
+  soundSetMasterVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
+}
+
+/* Full screen from the screens outside a game. Here for the same reason as
+ * the setters below: the welcome, lobby and settings dialogs are shared and
+ * call this, and winbolo.c's copy is not part of this build. SDL maps it onto
+ * the browser's Fullscreen API, which needs a user gesture — every call site
+ * is inside a click handler, so that holds. No SDL_SyncWindow: the desktop
+ * copy waits because Wayland and X11 apply the change asynchronously under a
+ * dialog that is about to read the window position, and neither applies. */
+void windowFullScreenChoose(bool on) {
+  gameFrontFullScreen = on;
+  SDL_Window *win = sdl3DrawGetWindow();
+  if (win) {
+    SDL_SetWindowFullscreen(win, on);
+  }
+  gameFrontSaveCurrentPrefs();
+}
+
+/* -------------------------------------------------------
+ * Voice settings — apply a value to the running voice module
+ * and clamp it to the range the UI offers, the same way
+ * winbolo.c does for the desktop.  The settings dialog is
+ * shared and compiles into this target with WINBOLO_VOICE
+ * set, so it calls these here as well; winbolo.c, which holds
+ * the desktop copies, is not part of the wasm build.  Keep
+ * the clamps in step with that copy.
+ * ------------------------------------------------------- */
+void windowSetVoiceEnabled(bool on) {
+  voiceSetEnabled(on);
+}
+
+void windowSetVoiceMode(int mode) {
+  if (mode < VOICE_MODE_OFF || mode > VOICE_MODE_OPEN) {
+    mode = VOICE_MODE_PTT;
+  }
+  voiceSetMode((VoiceMode)mode);
+}
+
+void windowSetVoiceMicGain(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 4.0f) gain = 4.0f;
+  voiceSetMicGain(gain);
+}
+
+void windowSetVoiceVolume(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 2.0f) gain = 2.0f;
+  voiceSetOutputVolume(gain);
+}
+
+/* The mic icons live on the status pane, which is shared, so these are
+ * here for the same reason the setters above are: the settings dialog
+ * calls them and winbolo.c's copies are not part of this build. */
+void windowSetShowTankMicIcons(bool on) {
+  sdl3DrawStatusSetShowMicIcons(on);
+}
+
+bool windowGetShowTankMicIcons(void) {
+  return sdl3DrawStatusGetShowMicIcons();
+}
+
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);

@@ -163,6 +163,24 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+FetchContent_Declare(
+    opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG        v1.5.2
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+FetchContent_Declare(
+    speexdsp
+    GIT_REPOSITORY https://github.com/xiph/speexdsp.git
+    # Pinned to a commit rather than a release: the newest tag (SpeexDSP-1.2.1)
+    # ships autotools only, and the CMake build lives on main.  A commit hash
+    # rules out GIT_SHALLOW, which needs a branch or tag name.
+    GIT_TAG        ba75b509fb1c5940ea07fa2ba5552e44f3a3576b
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 # curl is only built from source on Windows (uses Schannel for SSL).
 # On Linux/macOS, the system libcurl is used via find_package().
 if(WIN32)
@@ -429,6 +447,28 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MAXMINDDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(libmaxminddb)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE}" CACHE BOOL "" FORCE)
+
+    # libopus — voice codec, forced static
+    set(BUILD_SHARED_LIBS_SAVE3 "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(opus)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
+
+    # SpeexDSP — the acoustic echo canceller in the voice capture path, forced
+    # static.  Its CMake build declares no test or program targets, so there is
+    # nothing of that kind to switch off; the one option it does carry picks
+    # fixed- over floating-point arithmetic, and every platform we build for
+    # has an FPU.
+    set(BUILD_SHARED_LIBS_SAVE4 "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(speexdsp)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE4}" CACHE BOOL "" FORCE)
 endif()
 
 # cJSON — force static.  Outside the guard above: the iOS target compiles
@@ -1113,6 +1153,15 @@ if(WB_NETDEBUG)
     add_compile_definitions(WB_NETDEBUG=1)
 endif()
 
+# Voice capture-chain recorder: WAV taps at each stage of the capture chain,
+# the two CSVs, and the WAV injection path (src/client_frontend/voice_debug.c).
+# OFF in every shipping build. The source is on the WinBolo target only, which
+# is the only target that compiles voice_client.c.
+option(WB_VOICEDEBUG "Build the voice capture-chain recorder" OFF)
+if(WB_VOICEDEBUG)
+    add_compile_definitions(WB_VOICEDEBUG=1)
+endif()
+
 # Fuzzing: libFuzzer targets over the wire parsers and the server packet
 # dispatcher (hardening plan §1.2). Linux + Clang only. This is a DEDICATED
 # build config, not mixed with a normal build: when ON, the whole build is
@@ -1442,6 +1491,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
+    src/client_frontend/voice_core.c
+    src/client_frontend/voice_client.c
+    src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
     # sits on the chooser + wbn_map_source stack the standalone MapEditor
@@ -1636,6 +1688,26 @@ endif()
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
     nanosvg stb_image utf8proc cjson)
+
+# Voice capture/playback (src/gui/sdl3/voice.c + src/client_frontend/voice_core.c).
+# WINBOLO_VOICE gates the settings-dialog controls, which also compile into
+# targets that do not build the voice sources.
+target_link_libraries(WinBolo PRIVATE Opus::opus)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE=1)
+
+# Acoustic echo cancellation of remote voice out of the microphone
+# (src/client_frontend/voice_aec.c).  This target only: the browser build uses
+# getUserMedia's own canceller and never sees SpeexDSP, and no other target
+# compiles the voice sources at all.
+target_sources(WinBolo PRIVATE src/client_frontend/voice_aec.c)
+target_link_libraries(WinBolo PRIVATE speexdsp)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE_AEC=1)
+
+# The capture-chain recorder (WB_VOICEDEBUG above). This target only: it is
+# called from voice_client.c and winbolo.c, which nothing else compiles.
+if(WB_VOICEDEBUG)
+    target_sources(WinBolo PRIVATE src/client_frontend/voice_debug.c)
+endif()
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
@@ -3048,6 +3120,42 @@ endif()
 
 enable_testing()
 
+# ---------------------------------------------------------------------------
+# warmup.* — pay each test binary's first-execution cost before anything timed
+#
+# macOS assesses a newly written executable the first time it runs, and the
+# assessment is not cheap: a freshly linked WinBoloDS takes ~1.05s to reach
+# -help with only ~0.04s of that on CPU, against ~0.50s once the result is
+# cached. Every dylib it pulls in (SDL3, onnxruntime, sentry) is assessed on
+# first load too.
+#
+# That lands squarely on the UDP baseline scenarios. tests/baseline/run.sh
+# waits a fixed 0.5s for the DS to come up and then schedules client commands
+# against server tick counts, so on the first run after a build the server is
+# still being assessed when the clients connect and the commands land at the
+# wrong ticks. The captures diverge, the run reports a broad set of failures,
+# and rerunning the identical tree passes — which makes the failures look
+# flaky rather than mechanical.
+#
+# Running each binary once with a flag that loads it and exits pays that cost
+# outside any timed window. FIXTURES_SETUP makes CTest schedule these first
+# and only once, including when a subset is selected with -R.
+#
+# WinBoloUnitTests takes --list, not --help: test_main.c only recognises
+# --list and --test, and anything else falls through to running all 600-odd
+# tests in one process — including the *_capture tests that are kept out of
+# CTest precisely because they rewrite committed fixtures. Getting this flag
+# wrong does not just make the fixture slow, it dirties the working tree.
+#
+# Not guarded on APPLE: the cost elsewhere is three sub-second process starts,
+# it warms the page cache on every platform, and a binary too broken to print
+# its own usage is worth catching before 600-odd tests try to use it.
+add_test(NAME warmup.headless  COMMAND $<TARGET_FILE:WinBoloHeadless> --help)
+add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -help)
+add_test(NAME warmup.unittests COMMAND $<TARGET_FILE:WinBoloUnitTests> --list)
+set_tests_properties(warmup.headless warmup.ds warmup.unittests
+                     PROPERTIES FIXTURES_SETUP warm_binaries TIMEOUT 60)
+
 # Per-scenario CTest entries. Scenario names must stay in sync with the
 # dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
 # no shared state and parallelize freely. UDP scenarios share a hardcoded
@@ -3100,7 +3208,9 @@ foreach(_name IN LISTS _baseline_fast)
                           --scenario ${_name}
                           $<TARGET_FILE:WinBoloHeadless>
                           $<TARGET_FILE:WinBoloDS>)
-    set_tests_properties(baseline.${_name} PROPERTIES TIMEOUT 60)
+    set_tests_properties(baseline.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
@@ -3112,7 +3222,8 @@ foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
                               $<TARGET_FILE:WinBoloDS>)
         set_tests_properties(baseline.${_name} PROPERTIES
                              TIMEOUT 60
-                             RESOURCE_LOCK "udp_${_port}")
+                             RESOURCE_LOCK "udp_${_port}"
+                             FIXTURES_REQUIRED warm_binaries)
     endforeach()
 endforeach()
 
@@ -3145,6 +3256,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_claim_start_dispatch.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_live_player_stats.c
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
@@ -3236,6 +3348,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_open_ideal.c
     tests/unit/test_start_sides.c
     tests/unit/test_lobby_side_axis.c
+    tests/unit/test_lobby_start_shared.c
     tests/unit/test_starts_scatter_separation.c
     tests/unit/test_starts_team_side.c
     tests/unit/test_lobby_team_side_dispatch.c
@@ -3244,6 +3357,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_voice_flags.c
+    tests/unit/test_voice_talking_codec.c
+    tests/unit/test_voice_talking_set.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
@@ -3283,6 +3399,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_channel.c
+    tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_download.c
@@ -3348,6 +3465,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lobby-chat event through the body tables, including the empty/max-length
     # messages and the out-of-range specIdx / msgLen-overrun rejections.
     tests/unit/test_spectator_chat_codec.c
+    # CTRL_STATS_SEED body-codec round-trip: encode/decode the mid-round live
+    # scoreboard seed through the body tables, including the full roster, the
+    # zero-row minimum, and the truncated / bad-slot rejections and the clamp.
+    tests/unit/test_stats_seed_codec.c
     # Spectator-chat routing: a published CTRL_SPECTATOR_CHAT reaches a player
     # bus subscriber and a live spectator (allowlist); broadcast CTRL_CHAT
     # reaches the spectator; team/unicast CTRL_CHAT does not.
@@ -3629,7 +3750,18 @@ endif()
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c
-    tests/unit/test_bot_name_pools.c)
+    tests/unit/test_bot_name_pools.c
+    src/client_frontend/voice_core.c
+    tests/unit/test_voice_core.c
+    tests/unit/test_voice_device.c
+    tests/unit/test_voice_peak.c
+    tests/unit/test_voice_jitter.c
+    tests/unit/test_voice_jitter_loss.c
+    tests/unit/test_voice_flood_cap.c
+    src/bolo/voice_segment.c
+    tests/unit/test_voice_segment.c
+    src/bolo/voice_talker_select.c
+    tests/unit/test_voice_talker_select.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -3687,7 +3819,9 @@ target_link_libraries(WinBoloUnitTests PRIVATE
     # mdns is header-only; linked for its include dir so test_mdns_discovery.c
     # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
     # so the include dir doesn't propagate transitively).
-    mdns)
+    mdns
+    # voice_core.c is compiled into this target for the codec round-trip test.
+    Opus::opus)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -3739,6 +3873,7 @@ set(_unit_test_names
     command_codec_view_state
     command_codec_view_cycle
     lobby_claim_start_host_swaps_occupied
+    lobby_claim_start_host_assign_onto_own
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected
     lobby_claim_start_non_host_other_slot_rejected
@@ -3749,6 +3884,12 @@ set(_unit_test_names
     command_rejected_parks_name_codes
     command_rejected_ignores_other_slot
     command_rejected_clear_resets_both_fields
+    live_stats_kill_credits_killer_and_victim
+    live_stats_suicide_counts_death_only
+    live_stats_lgm_loss_splits_victim_and_killer
+    live_stats_captures_credit_new_owner
+    live_stats_out_of_range_slot_ignored
+    live_stats_cleared_on_running_phase
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact
@@ -4012,6 +4153,10 @@ set(_unit_test_names
     lobby_side_axis_two_team_pair
     lobby_side_axis_pair_classification
     lobby_side_axis_click_targets
+    lobby_start_shared_prefix_len
+    lobby_start_shared_prefix_label
+    lobby_start_shared_name_label
+    lobby_start_shared_owner_fold
     starts_scatter_avoids_existing_tanks
     starts_scatter_falls_back_when_crowded
     starts_side_team_stays_on_its_side
@@ -4034,6 +4179,10 @@ set(_unit_test_names
     base_stock_visibility
     base_armour_fog_of_war
     two_clients_full_sync_independent
+    voice_flags_snapshot_masking
+    voice_talking_codec
+    voice_talking_stops_in_countdown
+    voice_talking_clears_on_leave
     fx_viewport_cull
     viewport_floor
     sound_event_codec
@@ -4138,6 +4287,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_channel
+    player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
     loopback_map_upload
@@ -4204,6 +4354,7 @@ set(_unit_test_names
     spectator_roster_publish
     spectator_slot_codec
     spectator_chat_codec
+    stats_seed_codec
     spectator_chat_routing
     spectator_chat_log
     spectator_chat_catchup
@@ -4305,6 +4456,17 @@ set(_unit_test_names
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
+    voice_core_roundtrip
+    voice_device_resolve
+    voice_peak
+    voice_segment_roundtrip
+    voice_segment_rejects_malformed
+    voice_jitter_ordering_and_plc
+    voice_jitter_undecodable_run
+    voice_jitter_under_loss
+    voice_flood_cap_enforced
+    voice_talker_select_ranks_recent
+    voice_talker_select_bounds
     active_sim_armed_on_lobby_tick
     active_sim_cleared_on_cross_thread_destroy
     skin_source_dir_and_zip
@@ -4340,14 +4502,18 @@ set(_unit_test_names
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
-    set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
+    set_tests_properties(unit.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 if(WB_NETDEBUG)
     foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss netdebug_error_offset_clamped)
         add_test(NAME netdebug.${_name}
                  COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
-        set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)
+        set_tests_properties(netdebug.${_name} PROPERTIES
+                             TIMEOUT 60
+                             FIXTURES_REQUIRED warm_binaries)
     endforeach()
 endif()
 
@@ -4389,6 +4555,22 @@ if(WB_FUZZ)
                      ${WB_FUZZ_CORPUS_DIR}/channel_frame ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.channel_frame PROPERTIES TIMEOUT 120)
 
+    # Tier 1 — the voice segment parsers (voiceSegmentUnpackUp / UnpackDown),
+    # the parse sites for everything carried on the best-effort CHANNEL_VOICE:
+    # nothing upstream validates a voice segment, and the opus slice each parse
+    # returns points into the caller's buffer. bolo_static only, like the wire
+    # codecs.
+    add_executable(fuzz_voice_segment tests/fuzz/fuzz_voice_segment.c)
+    bolo_apply_include_rules(fuzz_voice_segment unittests)
+    target_link_libraries(fuzz_voice_segment PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    target_compile_options(fuzz_voice_segment PRIVATE -fcommon)
+    target_link_options(fuzz_voice_segment PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_voice_segment "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.voice_segment
+             COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
+
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview
     # blobs off CHANNEL_BULK from wire-supplied, untrusted headers and bodies.
@@ -4405,7 +4587,8 @@ if(WB_FUZZ)
     set_tests_properties(fuzz.bulk_transfer PROPERTIES TIMEOUT 120)
 
     # Tier 2 — full server dispatcher via the WB_FUZZ-gated seam. Links
-    # server_static (which owns transport_udp_server.c, now carrying the seam).
+    # server_static (which owns udp/udp_server_test_hooks.c, the file that
+    # carries the seam).
     # test_stubs.c + the steam stub resolve the winbolonet / natPortMap /
     # frontend callbacks the server graph references but server_static doesn't
     # own — the same stub surface WinBoloUnitTests links.

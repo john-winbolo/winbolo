@@ -38,6 +38,7 @@ typedef struct {
   int  pillViewDecay;                        /* "pillviewdecay" secs; absent = 30 */
   int  baseViewDecay;                        /* "baseviewdecay" secs; absent = 30 */
   int  allyViewDecay;                        /* "allyviewdecay" secs; absent = 30 */
+  int  voiceMode;                            /* "voice" ServerVoiceMode; absent = on */
   bool mines;                                /* "mines" */
   bool password;                             /* "password" */
   bool randomMap;                            /* "random_map" */

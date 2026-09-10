@@ -209,6 +209,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     }
     evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
     evt->u.lobbySettings.lobbyAlliesInTrees = sim->alliesInTrees;
+    evt->u.lobbySettings.voiceMode = sim->voiceMode;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -397,7 +398,8 @@ static void serverSimSyncOrderingDeliver(void *ctx,
     }
 
     if (evt->type != CTRL_PLAYER_JOIN &&
-        evt->type != CTRL_LOBBY_SYNC_COMPLETE) {
+        evt->type != CTRL_LOBBY_SYNC_COMPLETE &&
+        evt->type != CTRL_STATS_SEED) {
         assert(!check->sawPlayerJoin &&
                "no non-CTRL_PLAYER_JOIN event may follow "
                "CTRL_PLAYER_JOIN in sync");
@@ -567,6 +569,30 @@ static void serverSimSyncSubscriber(
             deliver(ctx, &evt);
         }
     }
+
+    /* Live scoreboard seed. The client counts its per-slot board from the
+     * game-event stream, so a joiner knows only what has happened since it
+     * arrived; sim->roundStats already holds the running answer for every
+     * slot, so hand it over. Built through serverSimBuildRoundStatsSummary so
+     * the seed, the client's own counting and the end-of-round recap all read
+     * the same rows. Placed here deliberately: after the CTRL_GAME_PHASE_*
+     * echo that opens every replay (whose RUNNING arm wipes the client's
+     * per-game counters) and after the CTRL_PLAYER_JOIN roster the rows are
+     * indexed by. The running gate is also what limits this to a mid-round
+     * join — a lobby or countdown join syncs in another state and has nothing
+     * to seed. */
+#if POSTGAME_STATS_ENABLED
+    if (sim->state == serverStateRunning) {
+        RoundStatsSummary seedSummary;
+        serverSimBuildRoundStatsSummary(sim, &seedSummary);
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_STATS_SEED;
+        evt.u.statsSeed.playerCount = seedSummary.playerCount;
+        memcpy(evt.u.statsSeed.players, seedSummary.players,
+               sizeof(evt.u.statsSeed.players));
+        deliver(ctx, &evt);
+    }
+#endif
 
     /* Terminal marker: the roster replay above re-announces every existing
      * player/slot with the subscriber already in the lobby. This final event

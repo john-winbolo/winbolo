@@ -75,6 +75,12 @@ static TTF_Font     *gFallbackFontLabel = NULL;
 static int           gCurrentEdgeX  = 0;
 static int           gCurrentEdgeY  = 0;
 
+#if defined(WINBOLO_VOICE)
+/* Tank-label microphone icons; on unless the player turns them off in
+ * Settings.  Persisted by gamefront.c through the winbolo.c wrappers. */
+static bool          gShowMicIcons  = true;
+#endif
+
 static SDL_Texture  *gTankBarsTex   = NULL;
 static SDL_Texture  *gBaseBarsTex   = NULL;
 
@@ -750,6 +756,16 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
   tankLabelDraw(&gLabelCache, gRenderer, gFontMsg, str, playerNum,
                 sx, sy, 1.0f);
 }
+
+#if defined(WINBOLO_VOICE)
+void sdl3DrawStatusSetShowMicIcons(bool on) {
+  gShowMicIcons = on;
+}
+
+bool sdl3DrawStatusGetShowMicIcons(void) {
+  return gShowMicIcons;
+}
+#endif
 
 void sdl3DrawStatusGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
   *shells = gCachedTankShells;

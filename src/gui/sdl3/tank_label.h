@@ -10,8 +10,9 @@
  *  The one implementation of the in-game tank label: the
  *  player name split from its trailing "@location", drawn
  *  over its own shadow with a country flag or brain icon
- *  beside it. The classic view, the full screen map and
- *  the pop-out overview all draw through here — each host
+ *  beside it, and a voice glyph for the states worth
+ *  marking. The classic view, the full screen map
+ *  and the pop-out overview all draw through here — each host
  *  supplies only a renderer, a screen position and a
  *  scale, so a change to what a label renders shows up in
  *  every view at once.
@@ -52,6 +53,17 @@ typedef struct TankLabelCache {
     SDL_Texture  *nameTex[MAX_TANKS];
     SDL_Texture  *iconTex[MAX_TANKS];   /* flag or brain icon, NULL for none */
     char          str[MAX_TANKS][TANK_LABEL_NAME_LEN];
+#if defined(WINBOLO_VOICE)
+    /* The two voice glyphs a label can carry, built on demand and kept
+     * beside the pixel size they were rasterized at: they are drawn at a
+     * height that follows the font and the view's scale, and the barred
+     * microphone only reads when it was rasterized at that height rather than
+     * resampled to it. A size change rebuilds both; a steady size rebuilds
+     * neither. */
+    SDL_Texture  *speakerTex;
+    SDL_Texture  *micMutedTex;
+    int           voiceTexPx;
+#endif
 } TankLabelCache;
 
 /*********************************************************

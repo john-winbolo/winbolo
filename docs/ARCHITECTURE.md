@@ -26,7 +26,7 @@ document is the stable reference for the rules themselves.
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — GoalHunter, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. |
-| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `server_command_dispatch.c` and `servermessages.c` in this directory, plus the per-concern translation units under `src/server/sim/` that `server_sim.c` has been split into); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, `server_dedicated_log.c`, `server_dedicated_log_path.c`, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Two more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals) and `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI). The replay-log subscriber `server_dedicated_log.c` (with its `server_dedicated_log_path.c` name helper) is a member of `server_static` above — built under the `sim_owner` profile, so it keeps its T2 access at the target level rather than through a per-file grant. It carries private state instead of reaching servermain globals, and is installed against the ServerSim bus by each host: `servermain.c` for WinBoloDS and `gameFrontSetupServer` for client-hosted games (the SDL3 client links `server_static` to host). See "Per-file T2 grants" below for the mechanism. |
+| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `server_command_dispatch.c` and `servermessages.c` in this directory, plus the per-concern translation units under `src/server/sim/` that `server_sim.c` has been split into); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, `server_dedicated_log.c`, `server_dedicated_log_path.c`, plus the per-concern translation units under `src/server/udp/` that `transport_udp_server.c` has been split into, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Two more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals) and `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI). The replay-log subscriber `server_dedicated_log.c` (with its `server_dedicated_log_path.c` name helper) is a member of `server_static` above — built under the `sim_owner` profile, so it keeps its T2 access at the target level rather than through a per-file grant. It carries private state instead of reaching servermain globals, and is installed against the ServerSim bus by each host: `servermain.c` for WinBoloDS and `gameFrontSetupServer` for client-hosted games (the SDL3 client links `server_static` to host). See "Per-file T2 grants" below for the mechanism. |
 | `src/headless/` | T1 + T3 + T4 | Same as server. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the single-threaded driver (emscripten main loop in place of the SDL timer thread). See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
@@ -992,21 +992,37 @@ only source of truth for "byte-identical".
 ### Recipe — adding a new event type
 
 1. **Define the event.** Add a variant to `ControlEventType` in
-   `src/bolo/public/control_event.h` and the corresponding union
-   member to `ControlEvent.u`. If a typed populate helper makes
-   call sites cleaner, add a `serverSimFill<Name>Event` function
-   on `server_sim.h`.
+   `src/bolo/public/control_event.h`, **before the
+   `CTRL_EVENT_TYPE_COUNT` sentinel, which must stay last**, and the
+   corresponding union member to `ControlEvent.u`. If a typed populate
+   helper makes call sites cleaner, add a `serverSimFill<Name>Event`
+   function on `server_sim.h`.
 
-2. **Define the wire form (if any).** Add an encoder and a decoder
-   in `src/bolo/transport_control_codec.c`. Wire the encoder into
-   `s_encoders[]` (keyed by `ControlEventType`) and the decoder
-   into `transportControlCodecDecoder` (keyed by wire packet type).
-   The encoder receives a per-recipient `UdpServerClient *recipient`
-   it can ignore for fan-to-all variants or use for filtering
-   single-target events — though the established precedent is to
-   keep the codec recipient-agnostic and put the slot check in
+2. **Define the wire form.** Add `encode<Name>Body` and
+   `decode<Name>Body` in `src/bolo/transport_control_codec.c` and
+   register them in `s_bodyEncoders[]` and `s_bodyDecoders[]`, both
+   keyed by `ControlEventType`. That is the whole of it for a new
+   event: the reliable carrier calls these through
+   `transportControlCodecBodyEncoder` / `…BodyDecoder`, which is how
+   every control event on `CHANNEL_CONTROL` is carried.
+
+   **Do not add to `s_encoders[]` or `transportControlCodecDecoder`.**
+   Those are the pre-channel-mux full-packet path, keyed by wire packet
+   type, and they exist only for the events that still have a legacy
+   `PACKET_*` type. `transportControlCodecEncoder` — the accessor for
+   `s_encoders[]` — has no callers outside the codec file itself.
+   Every event added since the carrier landed is body-only:
+   `CTRL_VIEW_TARGET`, `CTRL_SPECTATOR_CHAT`, `CTRL_ROUND_RATING_POSTED`,
+   `CTRL_STATS_SEED`, `CTRL_VOICE_TALKING`.
+
+   The encoder receives a per-recipient `UdpServerClient *recipient`.
+   **Ignore it** — mark the function `/* recipient: safe — ignored. */`
+   and `(void)recipient;`, as its neighbours do. The codec is
+   recipient-agnostic by design: the bytes are identical for every
+   recipient and per-recipient filtering belongs in
    `udpClientDeliverControl` (`CTRL_ALLIANCE_REQUEST`'s target check
-   lives there).
+   lives there). A payload computed per recipient breaks the caching
+   and retransmission the carrier does on those bytes.
 
 3. **Publish from the server-side handler:**
    ```c
@@ -1026,7 +1042,36 @@ only source of truth for "byte-identical".
    in `clientSimApplyControl` (`src/bolo/client_sim_control.c`) —
    the dispatcher covers SP, bots, and network in one place.
 
-5. **Send wrapper (if client-originated).** A client-originated event
+5. **Register it everywhere else.** Steps 1–4 make the event work;
+   these make it debuggable, and each is easy to miss:
+
+   - `mpDiagCtrlName` in **both** `src/server/transport_udp_server.c`
+     and `src/bolo/transport_udp_client.c` — the name the MP diag log
+     prints. Without it the event logs as `<unknown>` on that side.
+   - `src/headless/headless_main.c` — the type name and, if the payload
+     is worth seeing, a case in the event logger.
+
+   The reliable way to find the rest is to sweep an existing event of a
+   similar shape: `rg -n "CTRL_ALLIANCE_RESET" src` names every site one
+   bitmap-carrying event touches. Some sites are deliberate non-entries
+   — `serverSpectatorDeliverControl`'s allowlist is drop-by-default, so
+   adding an event there is a decision about what spectators may see,
+   not a registration.
+
+6. **Add a body-codec round-trip test.** One file per event, following
+   `tests/unit/test_view_target_codec.c`: resolve the functions through
+   `transportControlCodecBodyEncoder` / `…BodyDecoder` the way the live
+   path does, encode, decode, and assert the payload survives. Cover the
+   boundaries the field can lose — the top bit of a bitmap, an empty
+   value, a short body being rejected.
+
+   **A new test file registers in four places**, all required:
+   `tests/unit/test_harness.h` (the `run_<name>` declaration), the
+   `s_tests[]` table in `tests/unit/test_main.c`, `WINBOLO_UNITTESTS_SOURCES`
+   in `CMakeLists.txt`, and `_unit_test_names` in `CMakeLists.txt`. Miss
+   the fourth and the build is green while the case never runs.
+
+7. **Send wrapper (if client-originated).** A client-originated event
    means there's a corresponding `CMD_*` command. See "Adding a new
    client→server command" below for the recipe. Briefly: add a
    `clientSimNetSend<Name>` wrapper on `client_net.h` that builds a

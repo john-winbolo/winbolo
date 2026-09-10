@@ -21,6 +21,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "platform_types.h"  /* PlayerBitMap */
+
 struct ClientSim;
 
 #ifdef __cplusplus
@@ -293,6 +295,67 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void);
 *********************************************************/
 SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
 
+#if defined(WINBOLO_VOICE)
+/* Which voice glyph to rasterize. The shape says which end the state belongs
+   to, the same way it does in the players panel: a speaker for what is played
+   here, a microphone for what is captured at the other end. */
+typedef enum {
+    MIC_GLYPH_MIC,
+    MIC_GLYPH_MIC_MUTED,
+    MIC_GLYPH_SPEAKER,
+    MIC_GLYPH_SPEAKER_MUTED
+} MicIconGlyph;
+
+/*********************************************************
+*NAME:          sdl3ImguiCreateMicIconSurface
+*PURPOSE:
+*  Rasterizes one voice glyph at exactly the pixel size
+*  asked for, for the two places that draw these from C at a
+*  size that follows the window: the game view's own mute
+*  indicator and the on-map tank labels. Neither wants any
+*  scaling at draw time — the barred glyphs cut their slash
+*  with a gap about a unit wide in the SVG's 24-unit
+*  viewBox, and a downscale averages it away.
+*
+*  Unlike the …Get…Surface accessors above, the surface is
+*  the CALLER'S: destroy it with SDL_DestroySurface once it
+*  has been textured. size is clamped to a legible range.
+*  Returns NULL if the SVG could not be loaded.
+*
+*ARGUMENTS:
+*  glyph - which of the four to draw
+*  size  - wanted width and height in pixels
+*********************************************************/
+SDL_Surface *sdl3ImguiCreateMicIconSurface(MicIconGlyph glyph, int size);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerFlags
+*PURPOSE:
+*  Returns the cached PLAYER_FLAG_* bits for a slot, as the
+*  server last published them, so a drawer outside this file
+*  can resolve a player's voice state the way the players
+*  panel does. Returns 0 for an out-of-range slot.
+*
+*ARGUMENTS:
+*  playerNum - slot to read
+*********************************************************/
+uint8_t sdl3ImguiPlayerFlags(unsigned char playerNum);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerIsSelf
+*PURPOSE:
+*  Returns true if the slot is the local player's. The slot
+*  is read once a frame in sdl3ImguiPumpAndRender, which is
+*  the only place with a ClientSim to ask; until the first
+*  read, and whenever that runs without one, the answer is
+*  false for every slot rather than for slot 0 by accident.
+*
+*ARGUMENTS:
+*  playerNum - slot to test
+*********************************************************/
+bool sdl3ImguiPlayerIsSelf(unsigned char playerNum);
+#endif
+
 /*********************************************************
 *NAME:          sdl3ImguiPlayerIsBot
 *PURPOSE:
@@ -341,6 +404,61 @@ SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
 *********************************************************/
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);
+
+#if defined(WINBOLO_VOICE)
+/*********************************************************
+*NAME:          renderPlayerMicCell
+*PURPOSE:
+*  Renders one player's voice cell for a player row: a
+*  size x size icon whose shape and tint reflect the
+*  player's voice state, resolved in precedence order
+*  (muted by this client, no microphone, talking, muted
+*  their own microphone, idle), with a tooltip naming that
+*  state. A talking player's speaker is drawn dim and filled
+*  from the bottom, in the talking colour, to how loud they
+*  are right now — the glyph is the meter, so a filled cell
+*  is the same size as an empty one.
+*
+*  The shape says which end the state belongs to. A speaker
+*  for the states about playback here — a remote player
+*  idle, talking, or muted by this client, which is what
+*  clicking the cell changes — and a microphone for the two
+*  about capture at the other end, no microphone and muted
+*  their own. Every state on the local player's own row is
+*  about this client's own capture, so that row is
+*  microphones throughout.
+*
+*  On another player's row the icon is a button that toggles
+*  this client's mute of that player, locally and on the
+*  server; on the local player's own row it is a plain
+*  image. If the icon texture failed to load a blank of the
+*  same size holds the column. Loads the icon textures on
+*  first use. Draws only — the caller owns layout
+*  (SameLine, cursor positioning).
+*
+*ARGUMENTS:
+*  cs          - client sim, for the server-side mute send
+*  playerNum   - player slot (0..MAX_PLAYERS-1); also keys
+*                the ImGui id so each row's button is unique
+*  clientFlags - that player's PLAYER_FLAG_* bits (HAS_MIC,
+*                VOICE_MUTED)
+*  talkingMap  - PlayerBitMap of players producing voice now
+*  isSelf      - true when playerNum is the local player
+*  size        - icon edge length in pixels
+*  inLobby     - true from the lobby table, false from the
+*                in-game players panel. Decides whether a
+*                remote player with no microphone is drawn at
+*                all: in game that icon is clutter, so the
+*                cell is left blank and only holds its width,
+*                while in the lobby knowing that someone
+*                cannot talk is the point. A player muted by
+*                this client is drawn either way — that state
+*                outranks it.
+*********************************************************/
+void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlags,
+                         PlayerBitMap talkingMap, bool isSelf, float size,
+                         bool inLobby);
+#endif
 
 /* Draws the country flag for an alpha-2 code and, on hover, a localized
  * country-name tooltip. Returns true iff a flag image was drawn (false for

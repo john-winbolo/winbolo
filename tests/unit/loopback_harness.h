@@ -64,10 +64,12 @@ struct ClientSim;
 typedef struct LoopbackHarness {
     struct ServerSim *sim;
     struct ClientSim *cs;
+    struct ClientSim *cs2;      /* second client, or NULL — see AddClient */
     unsigned short    port;     /* ephemeral localhost port the server bound */
     bool              threadsUp;
     bool              serverUp;
     bool              clientUp;
+    bool              client2Up;
 } LoopbackHarness;
 
 /* Predicate evaluated after each pump by loopbackHarnessPumpUntil. Returns
@@ -82,6 +84,16 @@ typedef bool (*LoopbackPredicate)(LoopbackHarness *h, void *user);
 bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
                           bool lobbyMode, const char *impairSpec,
                           uint64_t seed);
+
+/* Join a second player client to a harness that is already up, so a test can
+ * observe what one client's departure does to the other's server-side state
+ * (a mask keyed by player, a roster entry) — the single-client harness can
+ * only ever watch a slot it is itself sitting in. Connects on a clean path
+ * (the first client keeps whatever impairment it was constructed with) and
+ * pumps in the same phase as the first client. Returns false if the harness
+ * has no server, already has a second client, or the connect failed; the
+ * harness stays safe to Stop either way. */
+bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName);
 
 /* Bring up server + a tankless SPECTATOR client (clientSimConnectUdp with the
  * spectator flag set), on a clean path with no peer players. The server is

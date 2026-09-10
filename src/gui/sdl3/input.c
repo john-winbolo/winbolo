@@ -41,6 +41,9 @@
 #include "sdl3draw.h"
 #include "../ui_mode.h"
 #include "../clientmutex.h"
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"
+#endif
 
 extern bool smoothScrollingEnabled;
 
@@ -129,6 +132,75 @@ static bool keyDown(int sc) {
    the build cursor as well, and neither of those has moved. */
 static bool overviewOwnsScrollKeys(void) {
   return sdl3DrawIsOverviewInWindow();
+}
+
+/*********************************************************
+*NAME:          inputPushToTalkPoll
+*PURPOSE:
+*  Tells the voice runtime whether the push-to-talk key is
+*  held, once per poll of the keyboard.  Both key-reading
+*  entry points call it — inputGetKeys while the player is
+*  driving, inputScroll while a brain is — and both call it
+*  on their early returns too, so a key still down when a
+*  dialog takes the keyboard or the window loses focus
+*  cannot latch the microphone open.
+*
+*  The lobby calls it as well, from whichever loop is running
+*  the lobby: those loops read no keys otherwise, so a key
+*  held as the game ended would stay held for the whole
+*  lobby.  Each caller answers "am I reading input" for
+*  itself — the windows and the dialogs differ — but what
+*  held means stays here, said once.
+*
+*  An unbound key is scancode 0, which keyDown never reports
+*  as held, so an unbound push-to-talk simply never
+*  transmits.
+*
+*ARGUMENTS:
+*  setKeys - Structure that holds the key settings
+*  active  - FALSE when this poll is not reading input
+*********************************************************/
+void inputPushToTalkPoll(keyItems *setKeys, bool active) {
+#if defined(WINBOLO_VOICE)
+  voiceSetPushToTalkHeld(active && KEY_DOWN(setKeys->kiPushToTalk));
+#else
+  (void)setKeys;
+  (void)active;
+#endif
+}
+
+/*********************************************************
+*NAME:          muteMicPoll
+*PURPOSE:
+*  Toggles the player's own microphone on the press, once
+*  per poll of the keyboard.  Unlike push to talk this is a
+*  toggle, so it fires on the rising edge only — wired
+*  level-triggered it would flip on every poll the key was
+*  held down for.
+*
+*  Called from the same two key polls as
+*  inputPushToTalkPoll, with the same inactive polls, so a
+*  key held while a dialog owns the keyboard or the window
+*  has no focus does not toggle anything, and is not still
+*  down when focus returns.  It stays in-game only: the mute
+*  in the lobby is a checkbox there.
+*
+*ARGUMENTS:
+*  setKeys - Structure that holds the key settings
+*  active  - FALSE when this poll is not reading input
+*********************************************************/
+static void muteMicPoll(keyItems *setKeys, bool active) {
+#if defined(WINBOLO_VOICE)
+  static bool prevDown = false;
+  bool down = active && KEY_DOWN(setKeys->kiMuteMic);
+  if (down && !prevDown) {
+    voiceSetSelfMuted(!voiceIsSelfMuted());
+  }
+  prevDown = down;
+#else
+  (void)setKeys;
+  (void)active;
+#endif
 }
 
 /*********************************************************
@@ -507,8 +579,12 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   buildSelect curSelect;
 
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
+    inputPushToTalkPoll(setKeys, FALSE);
+    muteMicPoll(setKeys, FALSE);
     return TNONE;
   }
+  inputPushToTalkPoll(setKeys, TRUE);
+  muteMicPoll(setKeys, TRUE);
 
   tb = TNONE;
 
@@ -797,8 +873,14 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 *********************************************************/
 void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
+    inputPushToTalkPoll(setKeys, FALSE);
+    muteMicPoll(setKeys, FALSE);
     return;
   }
+  /* This is the key-reading path while a brain drives the tank; without it
+     push to talk would stop working the moment the player handed over. */
+  inputPushToTalkPoll(setKeys, TRUE);
+  muteMicPoll(setKeys, TRUE);
 
   /* An item view consumes the scroll keys (and the view keys) to step between
    * items; map scrolling is suppressed while one is active. */

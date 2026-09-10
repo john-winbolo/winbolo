@@ -317,6 +317,8 @@ static const char *logEventsTypeName(int type) {
     case CTRL_BALANCE_FAILED:        return "CTRL_BALANCE_FAILED";
     case CTRL_ROUND_STATS:           return "CTRL_ROUND_STATS";
     case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
+    case CTRL_STATS_SEED:            return "CTRL_STATS_SEED";
+    case CTRL_VOICE_TALKING:         return "CTRL_VOICE_TALKING";
     default:                         return NULL;
   }
 }
@@ -437,7 +439,7 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
                  ",\"lobbyAiType\":%u,\"lobbyTimeLimit\":%d"
                  ",\"lobbyPillCount\":%u,\"lobbyBaseCount\":%u"
                  ",\"lobbyStartCount\":%u,\"mapSkipAvailable\":%s"
-                 ",\"netStat\":%d,\"hasLobby\":%s",
+                 ",\"netStat\":%d,\"hasLobby\":%s,\"voiceMode\":%d",
               (int)evt->u.lobbySettings.lobbyGameType,
               evt->u.lobbySettings.lobbyHiddenMines ? "true" : "false",
               (unsigned)evt->u.lobbySettings.lobbyAiType,
@@ -447,7 +449,8 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.lobbySettings.lobbyStartCount,
               evt->u.lobbySettings.mapSkipAvailable ? "true" : "false",
               (int)evt->u.lobbySettings.netStat,
-              evt->u.lobbySettings.hasLobby ? "true" : "false");
+              evt->u.lobbySettings.hasLobby ? "true" : "false",
+              (int)evt->u.lobbySettings.voiceMode);
       break;
 
     case CTRL_LOBBY_MAP_CHANGE:
@@ -593,6 +596,16 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       fprintf(f, ",\"fromPlayer\":%u,\"keyPrefix\":",
               (unsigned)evt->u.ratingPosted.fromPlayer);
       logEventsJsonStr(f, evt->u.ratingPosted.key, 6);
+      break;
+
+    case CTRL_STATS_SEED:
+      fprintf(f, ",\"playerCount\":%u",
+              (unsigned)evt->u.statsSeed.playerCount);
+      break;
+
+    case CTRL_VOICE_TALKING:
+      fprintf(f, ",\"talking\":%u",
+              (unsigned)evt->u.voiceTalking.talking);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

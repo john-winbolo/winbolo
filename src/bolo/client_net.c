@@ -390,6 +390,11 @@ const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen) {
   return transportUdpClientGetMapData((Transport *)&cs->transport, outLen);
 }
 
+uint32_t clientSimGetMapInvalidateCount(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientGetMapInvalidateCount((Transport *)&cs->transport);
+}
+
 uint32_t clientSimGetViewTick(const ClientSim *cs) {
   if (cs == NULL) return 0;
   return cs->clientState.prevAppliedServerTick;
@@ -423,6 +428,23 @@ void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message) {
   cmd.u.chat.destPlayer = destPlayer;
   cmd.u.chat.bodyLen    = (uint16_t)msgLen;
   memcpy(cmd.u.chat.body, message, msgLen);
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (targetPlayer >= MAX_TANKS) return;
+  ClientCommand cmd = { .type = CMD_PLAYER_MUTE };
+  cmd.u.playerMute.targetPlayer = targetPlayer;
+  cmd.u.playerMute.muted        = muted ? 1 : 0;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimNetSendVoiceState(ClientSim *cs, bool hasMic, bool selfMuted) {
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_VOICE_STATE };
+  cmd.u.voiceState.hasMic    = hasMic ? 1 : 0;
+  cmd.u.voiceState.selfMuted = selfMuted ? 1 : 0;
   clientSimSubmitCommand(cs, &cmd);
 }
 
@@ -881,6 +903,25 @@ void clientSimNetSendPing(ClientSim *cs, uint8_t kind,
   cmd.u.ping.worldX = worldX;
   cmd.u.ping.worldY = worldY;
   clientSimSubmitCommand(cs, &cmd);
+}
+
+/* === Voice === */
+
+void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen,
+                           uint8_t flags) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendVoice(&cs->transport, opus, opusLen, flags);
+}
+
+int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
+                             uint8_t *flags, uint8_t *out, int outCap) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientReceiveVoice(&cs->transport, fromPlayer, seq,
+                                        flags, out, outCap);
+}
+
+bool clientSimNetHasVoiceTransport(const ClientSim *cs) {
+  return cs != NULL && cs->hasTransport && cs->isUdpTransport;
 }
 
 /* === Net stats === */

@@ -84,6 +84,10 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
   cJSON_AddNumberToObject(body, "pillviewdecay", s_lobbyInfo.pillViewDecay);
   cJSON_AddNumberToObject(body, "baseviewdecay", s_lobbyInfo.baseViewDecay);
   cJSON_AddNumberToObject(body, "allyviewdecay", s_lobbyInfo.allyViewDecay);
+  /* Sent as a number like the view policies, not a word: 0 on, 1 off,
+   * 2 proximity. A reader that finds no "voice" key reads on, which is
+   * what servers did before the field existed. */
+  cJSON_AddNumberToObject(body, "voice", s_lobbyInfo.voiceMode);
 }
 
 void winbolonetSendLobbyUpdate(void) {

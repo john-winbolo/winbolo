@@ -117,6 +117,10 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
     out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
     out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
     out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
+    /* The voice mode is two bits of the same flags byte rather than a
+     * flag; the memset above already left it serverVoiceOn for a legacy
+     * server that never sent them. */
+    out->voiceMode       = infoPacketReadVoiceMode(info->flags);
     out->spectatorCount  = info->spectator_count;
     /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
      * '\0' means "no md5" (random/unknown map). Copy 32 and NUL-terminate. */
@@ -452,6 +456,9 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
      * '\0' means "no md5" (random/unknown map). This path does not zero out,
      * so NUL-init before the conditional copy. */
     out->mapMd5[0] = '\0';
+    /* Same reason as mapMd5 above: this path does not zero out, so set the
+     * mode a server that sent no voice bits runs before reading them. */
+    out->voiceMode = serverVoiceOn;
     if (rich) {
       out->numHumans = info->num_humans;
       out->numBots   = info->num_bots;
@@ -462,6 +469,7 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
       out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
       out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
       out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
+      out->voiceMode       = infoPacketReadVoiceMode(info->flags);
       out->spectatorCount  = info->spectator_count;
       if (info->map_md5[0] != '\0') {
         memcpy(out->mapMd5, info->map_md5, 32);

@@ -1437,38 +1437,45 @@ static const LangEntry langTable[] = {
     {2029, "Allies in trees"},
 
     /* Lobby team start side: the header's Start: selector, the row cell's
-     * sea state and the start dropdown's two actions. 2041: {string1} =
+     * sea state and the start dropdown's two actions. 2113: {string1} =
      * side name, {number} = starts the side offers, {number2} = team
-     * members, {number3} = members left to start at sea. 2043: {string1}
+     * members, {number3} = members left to start at sea. 2115: {string1}
      * = side name. */
-    {2030, "Start:"},
-    {2031, "Any"},
-    {2032, "North"},
-    {2033, "East"},
-    {2034, "South"},
-    {2035, "West"},
-    {2036, "Sea"},
-    {2037, "Team side"},
-    {2038, "Auto"},
-    {2039, "Unassign"},
-    {2040, "(off-side)"},
-    {2041, "{string1}: {number} starts for {number2} players \xE2\x80\x94 {number3} will start at sea.\nChanging a side re-picks every player's start."},
-    {2042, "Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start."},
-    {2043, "Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player."},
+    {2102, "Start:"},
+    {2103, "Any"},
+    {2104, "North"},
+    {2105, "East"},
+    {2106, "South"},
+    {2107, "West"},
+    {2108, "Sea"},
+    {2109, "Team side"},
+    {2110, "Auto"},
+    {2111, "Unassign"},
+    {2112, "(off-side)"},
+    {2113, "{string1}: {number} starts for {number2} players \xE2\x80\x94 {number3} will start at sea.\nChanging a side re-picks every player's start."},
+    {2114, "Every start this team can use is taken, so this player\nwill start at sea beside a teammate's start."},
+    {2115, "Off-side: this start is not on {string1}, the team's side.\nThe host chose it for this player."},
 
     /* Map-preview compass, shown to the host when exactly two teams have
      * members. Hovering an axis of the rose offers to put both teams on
      * it, or, when they are already on it, to clear both back to Any.
      * {string1} = the axis, "N/S" or "E/W"; {player} / {other} = the two
      * team names; {string2} / {string3} = the side each would take. */
-    {2047, "Set the two teams to {string1}\n{player} starts {string2}, {other} starts {string3}"},
-    {2048, "Teams set to {string1}. Click to go back to custom starts."},
+    {2124, "Set the two teams to {string1}\n{player} starts {string2}, {other} starts {string3}"},
+    {2125, "Teams set to {string1}. Click to go back to custom starts."},
     /* Map-preview start-picker tooltips over a start the viewer's own
-     * team side rejects: 2044 for a player who cannot take it, 2045 for
-     * the host, who still can. {number} = start; 2045: {string1} = the
+     * team side rejects: 2116 for a player who cannot take it, 2117 for
+     * the host, who still can. {number} = start; 2117: {string1} = the
      * host's team. */
-    {2044, "Start #{number}\nNot on your team's side"},
-    {2045, "Start #{number}\nOff-side for {string1}"},
+    {2116, "Start #{number}\nNot on your team's side"},
+    {2117, "Start #{number}\nOff-side for {string1}"},
+
+    /* Map-preview start-picker tooltips over a start somebody else holds
+     * that the viewer may join (LOBBY_SHARED_STARTS): 2127 for a player,
+     * 2128 for the host, who can still drag and assign. {number} = start;
+     * {player} = the holder, or every holder comma-joined. */
+    {2127, "Start #{number} - {player}\nClick to start here too"},
+    {2128, "Start #{number} - {player}\nClick to start here too; drag to move; right-click to assign to someone else"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
@@ -1896,6 +1903,16 @@ static const LangEntry langTable[] = {
     {1919, "Log Directory"},
     {1920, "Applies to the next hosted / New Internet game."},
     {1937, "Send Replays to Players"},
+    /* Voice row of the Hosting tab: what the hosted server does with the
+     * voice its clients send it. 2123 is the tooltip on the combo. */
+    {2119, "Voice Chat"},
+    {2120, "On"},
+    {2121, "Off"},
+    {2122, "Proximity"},
+    {2123, "Off drops voice instead of carrying it to anyone. Proximity is not implemented yet and behaves the same as On."},
+    /* Shown to a connected client whose server was started with voice off,
+     * where the controls below it reach nothing. */
+    {2126, "This server has voice turned off"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
     {1866, "[Spectator] {string1}"},
@@ -1926,7 +1943,7 @@ static const LangEntry langTable[] = {
     {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
 
     /* soundSetup: none of the sound effects could be loaded. */
-    {2046, "Error loading sound effects"},
+    {2118, "Error loading sound effects"},
 
     /* Log viewer Options item: present the round on a game-relative clock. */
     {1921, "Hide Lobby"},
@@ -1972,32 +1989,101 @@ static const LangEntry langTable[] = {
     {1985, "Recommended filter:"},
     {1986, "(recommended)"},
 
+    /* Voice section of the Display/Sound settings tab */
+    {2030, "Voice"},
+    {2031, "Test microphone"},
+    {2032, "Mic gain"},
+    {2033, "Input level"},
+    {2034, "Enable voice"},
+    {2035, "Mode"},
+    {2036, "Off"},
+    {2037, "Push to talk"},
+    {2038, "Open mic"},
+    {2039, "Push-to-talk key"},
+    {2040, "Transmitting"},
+    {2041, "Not transmitting"},
+    {2042, "Voice volume"},
+
+    /* Key setup — push to talk binding */
+    {2043, "Push to talk"},
+
+    /* Players panel — microphone state icon */
+    {2044, "Talking — click to mute"},
+    {2045, "Has a microphone — click to mute"},
+    {2046, "Their microphone is off — click to mute"},
+    {2047, "No microphone — click to mute"},
+    {2048, "Muted by you — click to unmute"},
+    {2049, "Your microphone — click to mute"},
+    {2050, "You have no microphone"},
+    {2051, "Your microphone is off — click to unmute"},
+
+    /* Voice settings — tank-label microphone icons */
+    {2052, "Show microphone icons over tanks"},
+
+    /* Voice settings — acoustic echo cancellation */
+    {2053, "Echo cancellation"},
+
+    /* Voice settings — microphone test progress */
+    {2054, "Recording..."},
+    {2055, "Playing back..."},
+
+    /* Voice settings — echo canceller could not be created */
+    {2056, "Unavailable on this system"},
+
+    /* Voice settings — the platform cancels echo itself, so Speex does not */
+    {2057, "Handled by the system"},
+
+    /* Players menu — open the players panel */
+    {2058, "Players Panel"},
+
+    /* Key setup — self-mute binding */
+    {2059, "Mute microphone"},
+
+    /* Voice settings — which microphone and which speakers voice uses */
+    {2060, "Microphone"},
+    {2061, "Playback device"},
+    {2062, "System default"},
+
+    /* Players panel — per-player playback volume slider */
+    {2090, "How loud this player is played here"},
+
+    /* Lobby — the local player's voice sub-row */
+    {2095, "Your microphone and voice settings"},
+    {2096, "Voice is turned off"},
+
+    /* Players panel — a player muted here who is talking anyway */
+    {2097, "Muted by you, and talking — click to unmute"},
+
+    /* Sound settings — the three volumes, of which "Voice volume" is 2042 */
+    {2100, "Master volume"},
+    {2101, "Effects volume"},
+
     /* Smart ping: newswire lines, slice names, and the key-setup chord
        vocabulary. */
-    {2128, "{player}: Ping!"},
-    {2129, "{player}: Caution!"},
-    {2130, "{player}: Assist me!"},
-    {2131, "{player}: Attack!"},
-    {2132, "{player}: On my way!"},
-    {2133, "{player}: Bot command"},
-    {2134, "Ping"},
-    {2135, "Caution"},
-    {2136, "Assist Me"},
-    {2137, "Attack"},
-    {2138, "On My Way"},
-    {2139, "Bot Command"},
-    {2140, "Smart Ping"},
-    {2141, "Smart Ping Alternate Keys"},
-    {2142, "Press a key or mouse button"},
-    {2143, "Ctrl"},
-    {2144, "Alt"},
-    {2145, "Shift"},
-    {2146, "Left Mouse"},
-    {2147, "Middle Mouse"},
-    {2148, "Right Mouse"},
-    {2149, "Mouse 4"},
-    {2150, "Mouse 5"},
-    {2151, "Smart Ping Alternate Keys 2"},
+    {2129, "{player}: Ping!"},
+    {2130, "{player}: Caution!"},
+    {2131, "{player}: Assist me!"},
+    {2132, "{player}: Attack!"},
+    {2133, "{player}: On my way!"},
+    {2134, "{player}: Bot command"},
+    {2135, "Ping"},
+    {2136, "Caution"},
+    {2137, "Assist Me"},
+    {2138, "Attack"},
+    {2139, "On My Way"},
+    {2140, "Bot Command"},
+    {2141, "Smart Ping"},
+    {2142, "Smart Ping Alternate Keys"},
+    {2143, "Press a key or mouse button"},
+    {2144, "Ctrl"},
+    {2145, "Alt"},
+    {2146, "Shift"},
+    {2147, "Left Mouse"},
+    {2148, "Middle Mouse"},
+    {2149, "Right Mouse"},
+    {2150, "Mouse 4"},
+    {2151, "Mouse 5"},
+    {2152, "Smart Ping Alternate Keys 2"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

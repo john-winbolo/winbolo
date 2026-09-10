@@ -43,6 +43,7 @@
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
+#include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -95,6 +96,20 @@ typedef struct {
     uint8_t clientType;       /* ClientType enum */
     uint8_t clientFlags;      /* PLAYER_FLAG_* bits */
 } ClientSpectatorSlot;
+
+/* Live per-slot scoreboard counters, accumulated on the client from the
+ * reliable game-event stream (clientSimApplyGameEvents). Field names
+ * mirror RoundPlayerSummary so the end-of-round recap and the live board
+ * read the same way; dmgDealt and builds are absent because no client
+ * event carries them. */
+typedef struct {
+    uint16_t kills;
+    uint16_t deaths;
+    uint16_t baseCaptures;
+    uint16_t pillCaptures;
+    uint16_t lgmKills;
+    uint16_t lgmDeaths;
+} ClientPlayerStats;
 
 /* Callback typedefs for new transport message sending.
  *
@@ -539,6 +554,18 @@ BYTE         clientSimGetViewTarget(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
+
+/* Monotonic count of installed maps this client has discarded because a
+ * re-accept armed a fresh download (a mid-lobby map change, or a
+ * return-to-lobby). The initial join does not count — nothing was installed
+ * to discard. Never decreases.
+ *
+ * Sample it before triggering a map change and compare afterwards to
+ * establish that the change really did invalidate the installed map. The
+ * invalidation itself is a transient — the old map is gone only until the
+ * new one lands — so an observer polling clientSimGetServerMapData for NULL
+ * can step over the whole window and see nothing. */
+uint32_t     clientSimGetMapInvalidateCount(const ClientSim *cs);
 /* Map-download progress as 0..100. Returns 100 for the local transport
  * (no download needed) and 0 when no transport is bound. UDP path reads
  * mapDownloadReceived/Total from the transport. */
@@ -614,12 +641,42 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
  * returns NULL for pointer types, false/0 for scalars). */
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
 
+/* Live scoreboard counters for one player slot; out-of-range slot
+ * returns NULL. Zeroed at the start of each game. */
+const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
+                                                 BYTE playerNum);
+
 /* Spectator roster slot mirror; out-of-range idx returns NULL. */
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
 
 /* Count of currently-connected lobby slots (humans + bots).
  * Matches what the lobby UI's player table renders. */
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
+/*********************************************************
+ *NAME:          clientSimGetVoiceTalkingMap
+ *PURPOSE:
+ *  Who the server says is producing voice right now, one
+ *  bit per player slot.
+ *
+ *  Meaningful in the lobby and the countdown only. There
+ *  voice is all-talk, so the set says nothing a listener
+ *  could not already hear. In a running game voice follows
+ *  the alliance and the server does not send the set at
+ *  all, so this reads empty — by design, not because the
+ *  events were missed. The server sends one empty set as
+ *  the round starts, so nobody is left showing as talking.
+ *
+ *  The set is raw: it names everyone talking, including
+ *  players this client has muted. That is the point of it —
+ *  a muted player's voice never arrives, so this is the
+ *  only thing that says they are speaking. Intersecting it
+ *  with the local mute list is the caller's job.
+ *
+ *ARGUMENTS:
+ *  cs - The ClientSim to read
+ *********************************************************/
+PlayerBitMap clientSimGetVoiceTalkingMap(const ClientSim *cs);
+
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
 
@@ -895,6 +952,13 @@ bool        clientSimGetClassicMode(const ClientSim *cs);
  * event arrives, and a payload that predates the field leaves it false
  * too — which matches the classic behaviour the option turns off. */
 bool        clientSimGetAlliesInTrees(const ClientSim *cs);
+
+/* What the server does with the voice its clients send it, as last broadcast
+ * in the lobby-settings event. serverVoiceOff means voice sent from here is
+ * dropped, so a client on such a server captures and sends none. Reads back
+ * serverVoiceOn until the first event arrives, which is what every server did
+ * before the setting existed. */
+ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs);
 
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);

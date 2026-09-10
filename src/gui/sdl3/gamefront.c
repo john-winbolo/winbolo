@@ -107,6 +107,40 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
 
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"
+
+/* Voice settings live in the voice module; these apply them with the same
+   clamping the settings dialog uses, and read them back for the save.
+   Declared here rather than in winbolo.h so the voice build option does not
+   leak into the shared frontend header — the mobile targets compile this
+   file with no voice sources at all. */
+void  windowSetVoiceEnabled(bool on);
+bool  windowGetVoiceEnabled(void);
+void  windowSetVoiceMode(int mode);
+int   windowGetVoiceMode(void);
+void  windowSetVoiceMicGain(float gain);
+float windowGetVoiceMicGain(void);
+void  windowSetVoiceVolume(float gain);
+float windowGetVoiceVolume(void);
+void  windowSetVoiceRecordingDevice(const char *name);
+const char *windowGetVoiceRecordingDevice(void);
+void  windowSetVoicePlaybackDevice(const char *name);
+const char *windowGetVoicePlaybackDevice(void);
+void  windowSetShowTankMicIcons(bool on);
+bool  windowGetShowTankMicIcons(void);
+#if defined(WINBOLO_VOICE_AEC)
+void  windowSetVoiceEchoCancel(bool on);
+bool  windowGetVoiceEchoCancel(void);
+#endif
+
+/* Mode is stored as a name, not a number, so a hand-edited prefs file reads
+   as something. An unrecognised name falls back to the default. */
+#define VOICE_MODE_NAME_OFF  "Off"
+#define VOICE_MODE_NAME_PTT  "Push To Talk"
+#define VOICE_MODE_NAME_OPEN "Open Mic"
+#endif
+
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
 #endif
@@ -228,6 +262,10 @@ bool           gameFrontHostingLogging         = TRUE;
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
+/* How the hosted server handles the voice its clients send it. Holds a
+ * ServerVoiceMode; serverVoiceOn is what a client host did before this
+ * setting existed. */
+int            gameFrontHostingVoiceMode      = serverVoiceOn;
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Defaults match serverSimInit so hosting with an untouched INI leaves
@@ -574,6 +612,7 @@ extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
 extern int  soundVolume;
+extern int  windowMasterVolume;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
 extern bool showAIMessages;
@@ -588,6 +627,13 @@ extern bool showBaseLabels;
 extern bool labelSelf;
 extern labelLen labelMsg;
 extern labelLen labelTank;
+
+/* The two volumes go in through their setters rather than into the globals
+   above, so the load reaches everything a slider move would.  Declared here
+   for the same reason the voice ones are: they live in the per-platform
+   frontend, not in winbolo.h. */
+void windowSetSoundVolume(int pct);
+void windowSetMasterVolume(int pct);
 
 /* Helper: itoa replacement for portability */
 static void intToStr(int val, char *buf, int bufSize) {
@@ -2079,6 +2125,16 @@ void gameFrontSetHostingServeReplays(bool serve) {
   prefsSetString("HOSTING", "Serve Replays", TRUEFALSE_TO_STR(serve));
 }
 
+/* Stored as a word rather than the enum number so a hand-edited INI reads
+ * clearly, the same as Upload Policy. */
+void gameFrontSetHostingVoiceMode(int mode) {
+  gameFrontHostingVoiceMode = mode;
+  const char *str = (mode == serverVoiceOff)       ? "Off"
+                  : (mode == serverVoiceProximity) ? "Proximity"
+                                                   : "On";
+  prefsSetString("HOSTING", "Voice", str);
+}
+
 /* Visibility write-through setters. Same shape as the hosting ones
  * above: update the global and persist the [GAME OPTIONS] key now. The
  * policies are stored as words so a hand-edited INI reads clearly. */
@@ -2755,6 +2811,9 @@ bool gameFrontSetupServer(void) {
   cfg.uploadMaxFiles      = (uint8_t)gameFrontHostingUploadMaxFiles;
   cfg.uploadMaxStorageBytes =
       (uint32_t)gameFrontHostingUploadMaxStorage * 1024u * 1024u;
+  /* cfg is memset above, which would leave voiceMode at serverVoiceOn; this
+   * line is what carries the [HOSTING] Voice pref to the server instead. */
+  cfg.voiceMode           = (ServerVoiceMode)gameFrontHostingVoiceMode;
   /* Persist saves uploads to disk under the chosen directory. Create it on
    * use and refuse to host if that fails — no silent fallback. Off/Allow
    * never touch disk, so leave uploadPersistDir NULL (memset-zero) for them. */
@@ -2985,6 +3044,17 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
   prefsGetString("HOSTING", "Serve Replays", "Yes", buff, FILENAME_MAX);
   gameFrontHostingServeReplays = YESNO_TO_TRUEFALSE(buff[0]);
+  /* Anything the setter did not write — a mistyped word, or the key absent
+   * on an INI written before this setting existed — reads as On, which is
+   * what a client host did then. */
+  prefsGetString("HOSTING", "Voice", "On", buff, FILENAME_MAX);
+  if (strcmp(buff, "Off") == 0) {
+    gameFrontHostingVoiceMode = serverVoiceOff;
+  } else if (strcmp(buff, "Proximity") == 0) {
+    gameFrontHostingVoiceMode = serverVoiceProximity;
+  } else {
+    gameFrontHostingVoiceMode = serverVoiceOn;
+  }
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -3074,6 +3144,37 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
+  /* The voice keys shipped unbound, so every preferences file written before
+     they had defaults holds an explicit 0 for both and would never see the
+     defaults below. Apply them once over that stored 0, and record that it has
+     been done: after this the player's own binding stands, an empty one
+     included, so Clear in key setup is not undone on the next launch. */
+  prefsGetString("KEYS", "Voice Defaults Applied", "", buff, FILENAME_MAX);
+  bool voiceKeyDefaults = (buff[0] == '\0');
+
+  /* Push to talk — Q, which is bound to nothing else and sits under the left
+     hand beside the movement keys (E/D/S/F). A file saved while the key was
+     unbound holds 0, which the one-shot above turns into Q. */
+  intToStr(DEFAULT_PUSHTOTALK, def, sizeof(def));
+  prefsGetString("KEYS", "Push To Talk", def, buff, FILENAME_MAX);
+  keys->kiPushToTalk = atoi(buff);
+  if (voiceKeyDefaults && keys->kiPushToTalk == 0) {
+    keys->kiPushToTalk = DEFAULT_PUSHTOTALK;
+  }
+
+  /* Mute microphone — Z, on the same terms as the key above: unbound
+     elsewhere, and taking the default over a stored 0 the first time only. */
+  intToStr(DEFAULT_MUTEMIC, def, sizeof(def));
+  prefsGetString("KEYS", "Mute Mic", def, buff, FILENAME_MAX);
+  keys->kiMuteMic = atoi(buff);
+  if (voiceKeyDefaults && keys->kiMuteMic == 0) {
+    keys->kiMuteMic = DEFAULT_MUTEMIC;
+  }
+
+  /* Marked here rather than in gameFrontPutPrefs so a session that never
+     saves its preferences does not apply the defaults a second time. */
+  prefsSetString("KEYS", "Voice Defaults Applied", "Yes");
+
   /* Smart ping — three menu chord slots and one per ping kind for the direct
      pings. Stored as the same packed int the rest of the section uses, so an
      older build reading a newer file just sees a number it does not recognise
@@ -3098,7 +3199,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       keys->kiPingDirect[pi] = atoi(buff);
     }
   }
-
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
   prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);
   {
@@ -3367,10 +3467,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX);
   useSoundKeepalive = YESNO_TO_TRUEFALSE(buff[0]);
+  /* Through the setters, not into the globals: master has to reach the voice
+     module as well as the mixer, and a value that only landed in the global
+     would leave voice at the wrong gain until the slider was touched.  Both
+     setters clamp to 0-100, so a hand-edited file cannot get past them. */
   prefsGetString("MENU", "Sound Volume", "50", buff, FILENAME_MAX);
-  soundVolume = atoi(buff);
-  if (soundVolume < 0) soundVolume = 0;
-  if (soundVolume > 100) soundVolume = 100;
+  windowSetSoundVolume(atoi(buff));
+  prefsGetString("MENU", "Master Volume", "100", buff, FILENAME_MAX);
+  windowSetMasterVolume(atoi(buff));
   prefsGetString("MENU", "Show Newswire Messages", "Yes", buff, FILENAME_MAX);
   showNewswireMessages = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Assistant Messages", "Yes", buff, FILENAME_MAX);
@@ -3492,6 +3596,54 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
   labelTank = atoi(buff);
 
+#if defined(WINBOLO_VOICE)
+  /* Voice.  Applied straight onto the running voice module, which is already
+     up by the time this runs — winbolo.c brings it up before gameFrontStart. */
+  prefsGetString("VOICE", "Enabled", "Yes", buff, FILENAME_MAX);
+  windowSetVoiceEnabled(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("VOICE", "Mode", VOICE_MODE_NAME_PTT, buff, FILENAME_MAX);
+  if (strcmp(buff, VOICE_MODE_NAME_OFF) == 0) {
+    windowSetVoiceMode(VOICE_MODE_OFF);
+  } else if (strcmp(buff, VOICE_MODE_NAME_OPEN) == 0) {
+    windowSetVoiceMode(VOICE_MODE_OPEN);
+  } else {
+    windowSetVoiceMode(VOICE_MODE_PTT);
+  }
+  /* Clamp on read to the ranges the sliders offer, so a hand-edited file
+     cannot leave the microphone dead or the other players deafening. */
+  prefsGetString("VOICE", "Mic Gain", "1.0", buff, FILENAME_MAX);
+  {
+    float mg = (float)atof(buff);
+    if (!(mg >= 0.0f && mg <= 4.0f)) mg = 1.0f;
+    windowSetVoiceMicGain(mg);
+  }
+  prefsGetString("VOICE", "Voice Volume", "1.0", buff, FILENAME_MAX);
+  {
+    float vv = (float)atof(buff);
+    if (!(vv >= 0.0f && vv <= 2.0f)) vv = 1.0f;
+    windowSetVoiceVolume(vv);
+  }
+  /* The chosen audio devices, by display name — "" is the system default,
+     and so is a name nothing present answers to. Read into a bounded buffer
+     and truncated, because the name is free-form and comes from the driver.
+
+     Their own section, because it is device-local and the rest of VOICE is
+     not: a device name saved on a desktop means nothing on a Steam Deck, and
+     syncing it would overwrite the Deck's own choice on every adopt. The
+     section is listed in kDeviceLocalSections in prefs.c, which is what keeps
+     it out of the upload. */
+  prefsGetString("VOICE.DEVICE", "Recording Device", "", buff, FILENAME_MAX);
+  windowSetVoiceRecordingDevice(buff);
+  prefsGetString("VOICE.DEVICE", "Playback Device", "", buff, FILENAME_MAX);
+  windowSetVoicePlaybackDevice(buff);
+  prefsGetString("VOICE", "Tank Icons", "Yes", buff, FILENAME_MAX);
+  windowSetShowTankMicIcons(YESNO_TO_TRUEFALSE(buff[0]));
+#if defined(WINBOLO_VOICE_AEC)
+  prefsGetString("VOICE", "Echo Cancel", "Yes", buff, FILENAME_MAX);
+  windowSetVoiceEchoCancel(YESNO_TO_TRUEFALSE(buff[0]));
+#endif
+#endif
+
   /* Winbolo.net */
   prefsGetString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX);
   prefsGetString("WINBOLO.NET", "TokenExpiry", "", gameFrontWbnTokenExpiry, FILENAME_MAX);
@@ -3551,6 +3703,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
   prefsSetString("HOSTING", "Serve Replays",
                             TRUEFALSE_TO_STR(gameFrontHostingServeReplays));
+  prefsSetString("HOSTING", "Voice",
+                 gameFrontHostingVoiceMode == serverVoiceOff       ? "Off"
+                 : gameFrontHostingVoiceMode == serverVoiceProximity ? "Proximity"
+                                                                     : "On");
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",
@@ -3617,6 +3773,14 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "Quick Pillbox", buff);
   intToStr(keys->kiQuickMine, buff, sizeof(buff));
   prefsSetString("KEYS", "Quick Mine", buff);
+
+  /* Push to talk — 0 is unbound, and round-trips as such. */
+  intToStr(keys->kiPushToTalk, buff, sizeof(buff));
+  prefsSetString("KEYS", "Push To Talk", buff);
+
+  /* Mute microphone — 0 is unbound, and round-trips as such. */
+  intToStr(keys->kiMuteMic, buff, sizeof(buff));
+  prefsSetString("KEYS", "Mute Mic", buff);
 
   /* Smart ping — the menu chords, then the per-kind direct ones. */
   {
@@ -3749,6 +3913,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive));
   intToStr(soundVolume, buff, sizeof(buff));
   prefsSetString("MENU", "Sound Volume", buff);
+  intToStr(windowMasterVolume, buff, sizeof(buff));
+  prefsSetString("MENU", "Master Volume", buff);
   prefsSetString("MENU", "Show Newswire Messages", TRUEFALSE_TO_STR(showNewswireMessages));
   prefsSetString("MENU", "Show Assistant Messages", TRUEFALSE_TO_STR(showAssistantMessages));
   prefsSetString("MENU", "Show AI Messages", TRUEFALSE_TO_STR(showAIMessages));
@@ -3780,6 +3946,34 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Message Label Size", buff);
   intToStr(labelTank, buff, sizeof(buff));
   prefsSetString("MENU", "Tank Label Size", buff);
+
+#if defined(WINBOLO_VOICE)
+  /* Voice — read back out of the running voice module, which is what holds
+     these while the game is up. */
+  prefsSetString("VOICE", "Enabled", TRUEFALSE_TO_STR(windowGetVoiceEnabled()));
+  {
+    int vm = windowGetVoiceMode();
+    prefsSetString("VOICE", "Mode",
+                   vm == VOICE_MODE_OFF    ? VOICE_MODE_NAME_OFF
+                   : vm == VOICE_MODE_OPEN ? VOICE_MODE_NAME_OPEN
+                                           : VOICE_MODE_NAME_PTT);
+  }
+  snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceMicGain());
+  prefsSetString("VOICE", "Mic Gain", buff);
+  snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceVolume());
+  prefsSetString("VOICE", "Voice Volume", buff);
+  /* Written back even when the device is not plugged in at the moment, so
+     the choice survives it being away. In the device-local section, as on the
+     read side. */
+  prefsSetString("VOICE.DEVICE", "Recording Device",
+                 windowGetVoiceRecordingDevice());
+  prefsSetString("VOICE.DEVICE", "Playback Device",
+                 windowGetVoicePlaybackDevice());
+  prefsSetString("VOICE", "Tank Icons", TRUEFALSE_TO_STR(windowGetShowTankMicIcons()));
+#if defined(WINBOLO_VOICE_AEC)
+  prefsSetString("VOICE", "Echo Cancel", TRUEFALSE_TO_STR(windowGetVoiceEchoCancel()));
+#endif
+#endif
 
   /* Winbolo.net */
   prefsSetString("WINBOLO.NET", "Token", gameFrontWbnToken);
