@@ -6404,18 +6404,326 @@ function Brain.think(info)
   -- Throttle is never touched here -- the whole point of the feature is that
   -- the capture keeps its speed.
   do
+    -- Helpers are LOCAL to Brain.think (not module scope): hoisting them out made
+    -- think reference them as upvalues and blew past PUC-Lua's 60-upvalue cap, so
+    -- the brain failed to load.  As think-locals they cost nothing to think's
+    -- upvalue count, and they close over info / world directly.
+    --
+    -- Drive the crosshair so the shell impact lands nearest a WORLD target point
+    -- (px_w, py_w in wu): impact for sightLen L sits 128*L wu ahead on the current
+    -- heading, so the best length is round(along/128).  Returns TWO keys (held,
+    -- tap): >1 sightLen unit to go closes fast with a HELD key (2 packets/think =
+    -- 2 units); the FINAL unit is a TAP (one packet = one unit = 64 wu), because a
+    -- held key moves in steps of 2 and strands us a unit short on odd offsets.
+    local function capture_sight_step(px_w, py_w)
+      local G = info.gunrange or 14
+      local rad = (info.direction or 0) * C.TWO_PI / 256
+      local hx, hy = math.sin(rad), -math.cos(rad)
+      local along = (px_w - info.tankx) * hx + (py_w - info.tanky) * hy
+      local L = math.floor(along / 128 + 0.5)
+      if L < 2 then L = 2 elseif L > 14 then L = 14 end
+      if L == G then return 0, 0 end                                -- settled
+      local key = (L > G) and KEY_MORERANGE or KEY_LESSRANGE
+      if math.abs(L - G) == 1 then return 0, key end                -- final unit: TAP
+      return key, 0                                                 -- >1 unit away: HELD
+    end
+    -- A man is "solid" to lgm.c's death check (in-tile-only kill, no splash) when
+    -- he stands on a building, a half-build, a base, OR ANY DEPLOYED PILL.  The
+    -- engine (pillbox.c pillsScanExistPos) tests DEPLOYMENT, not armour, and the
+    -- dead corpse we're sweeping is still a deployed pill -- so a man on it is
+    -- solid, and only an in-tile hit kills him.  world.lua indexes pill_at only for
+    -- a deployed (not-carried) pill, so ANY pill_at entry means solid regardless of
+    -- health.  (This is a DIFFERENT rule from the shell-collision LOS check, which
+    -- correctly keeps health>0 because shells only collide with LIVE pills.)
+    local function lgm_on_solid(mx, my)
+      local tt = U.ttype(mx, my)
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+      if world.pill_at and world.pill_at[my * 256 + mx] then return true end
+      local bentry = world.base_at and world.base_at[my * 256 + mx]
+      if bentry and bentry.base then return true end
+      return false
+    end
+    -- Does the ray from (ox,oy) along unit (hx,hy), out to maxT wu, cross the
+    -- 256-wu tile box at (mx,my)?  Slab test.  Used for the solid-square kill gate:
+    -- on a solid square only an in-tile hit kills, so the man is a viable target
+    -- only if a shot along the current heading could actually enter his tile.
+    local function ray_crosses_tile(ox, oy, hx, hy, mx, my, maxT)
+      local x0, y0 = mx * 256, my * 256
+      local x1, y1 = x0 + 256, y0 + 256
+      local tmin, tmax = 0, maxT
+      if math.abs(hx) < 1e-9 then
+        if ox < x0 or ox > x1 then return false end
+      else
+        local ta, tb = (x0 - ox) / hx, (x1 - ox) / hx
+        if ta > tb then ta, tb = tb, ta end
+        if ta > tmin then tmin = ta end
+        if tb < tmax then tmax = tb end
+        if tmin > tmax then return false end
+      end
+      if math.abs(hy) < 1e-9 then
+        if oy < y0 or oy > y1 then return false end
+      else
+        local ta, tb = (y0 - oy) / hy, (y1 - oy) / hy
+        if ta > tb then ta, tb = tb, ta end
+        if ta > tmin then tmin = ta end
+        if tb < tmax then tmax = tb end
+        if tmin > tmax then return false end
+      end
+      return tmax >= tmin
+    end
+    -- Our OWN builder (LGM on foot) is NEVER in info.objects, but capture_pill sent
+    -- him to this very pill, so he is the likeliest friendly-fire victim.  Returns
+    -- his world (x,y) when he is OUT of the tank (and alive), else nil.
+    local function own_man_out_pos()
+      if info.man_x and info.man_y
+         and info.man_status ~= C.LGM_INTANK and info.man_status ~= C.LGM_DEAD then
+        return info.man_x, info.man_y
+      end
+      return nil
+    end
+    -- Squared distance from point (px,py) to segment (sx,sy)->(ex,ey).
+    local function seg_dist2(px, py, sx, sy, ex, ey)
+      local vx, vy = ex - sx, ey - sy
+      local vlen2 = vx * vx + vy * vy
+      local t = 0
+      if vlen2 > 0 then
+        t = ((px - sx) * vx + (py - sy) * vy) / vlen2
+        if t < 0 then t = 0 elseif t > 1 then t = 1 end
+      end
+      local qx, qy = sx + vx * t - px, sy + vy * t - py
+      return qx * qx + qy * qy
+    end
     local clh = state._clh
     if clh and clh.tick == now and not info.inboat then
       if clh.src == "lgm" then
-        if clh.target_sl then
-          keys = bit.bor(keys, kill_lgm.gunrange_key(info.gunrange or 14, clh.target_sl))
+        -- LGM in the radius: TARGET THE MAN.  Steering already biased the heading
+        -- toward him (the sweep-line nudge); here we own the GUN -- pick the best
+        -- candidate man, drive the sight onto him, and fire opportunistically.
+
+        -- ── STEP 4: candidate selection ──────────────────────────────────
+        -- t = tank, h = heading unit.  For each hostile LGM within the shoot
+        -- radius (CAPTURE_LGM_HUNT_RADIUS) of the pill: along = (p-t).h (must be
+        -- ahead and within max shell travel = 7 tiles), perp = |h x (p-t)|.  Pick
+        -- MIN perp, tie-break smaller along.  p = the man's lead-predicted
+        -- position (perception's predict_aim output; one think of lag is fine).
+        local rad  = (info.direction or 0) * C.TWO_PI / 256
+        local hx, hy = math.sin(rad), -math.cos(rad)
+        local MAX_ALONG = 14 * 128            -- sightLen 14 -> impact 7 tiles ahead
+        local R = C.CAPTURE_LGM_HUNT_RADIUS or 2
+        local CIRCLE = C.CAPTURE_LGM_HUNT_CIRCLE
+        local cand, cand_perp, cand_along = nil, math.huge, math.huge
+        if state.perc and state.perc.enemy_lgms then
+          for _, elm in ipairs(state.perc.enemy_lgms) do
+            local rdx = elm.mx - clh.pmx; if rdx < 0 then rdx = -rdx end
+            local rdy = elm.my - clh.pmy; if rdy < 0 then rdy = -rdy end
+            local in_radius
+            if CIRCLE then
+              in_radius = (rdx * rdx + rdy * rdy) <= R * R
+            else
+              in_radius = ((rdx > rdy) and rdx or rdy) <= R
+            end
+            if in_radius then
+              local pwx = elm.predicted_wx or elm.wx
+              local pwy = elm.predicted_wy or elm.wy
+              local rx, ry = pwx - info.tankx, pwy - info.tanky
+              local along = rx * hx + ry * hy
+              local perp  = math.abs(hx * ry - hy * rx)
+              if along > 0 and along <= MAX_ALONG
+                 and (perp < cand_perp or (perp == cand_perp and along < cand_along)) then
+                cand, cand_perp, cand_along = elm, perp, along
+              end
+            end
+          end
         end
-        -- _already_fired is set ONLY by the kill-LGM block above, so it is a
-        -- true "we shot at a man this tick" and not the opportunistic tank shot.
+        -- KILLABLE from this heading?  Open ground: within 128 wu of the ray
+        -- (splash reaches).  Solid square (live pill/base/building): the ray must
+        -- actually cross his tile -- splash won't kill there, only an in-tile hit.
+        -- Otherwise fall back to hovering the sight on the pill centre.
+        local killable = false
+        local cmx, cmy
+        if cand then
+          cmx, cmy = cand.predicted_mx or cand.mx, cand.predicted_my or cand.my
+          if lgm_on_solid(cmx, cmy) then
+            killable = ray_crosses_tile(info.tankx, info.tanky, hx, hy, cmx, cmy, MAX_ALONG)
+          else
+            killable = (cand_perp <= 128)
+          end
+        end
+
+        -- ── STEP 4: sight drive (yield to any earlier range key this think) ─
+        local tgt_wx, tgt_wy
+        if cand and killable then
+          tgt_wx, tgt_wy = (cand.predicted_wx or cand.wx), (cand.predicted_wy or cand.wy)
+          clh.lgm_id = cand.idnum          -- so the debug gate line tracks this man
+        else
+          tgt_wx, tgt_wy = clh.pmx * 256 + 128, clh.pmy * 256 + 128   -- pill hover
+        end
+        if bit.band(bit.bor(keys, taps), bit.bor(KEY_MORERANGE, KEY_LESSRANGE)) == 0 then
+          local hk, tk = 0, 0
+          if C.CAPTURE_LGM_HUNT_SIGHT_ON_PILL then
+            hk, tk = capture_sight_step(tgt_wx, tgt_wy)
+          else
+            local tsl = (cand and killable and cand.target_sightLen)
+                        or kill_lgm.sightlen_for(clh.dist_wu)
+            hk = kill_lgm.gunrange_key(info.gunrange or 14, tsl)
+          end
+          keys = bit.bor(keys, hk)
+          taps = bit.bor(taps, tk)
+        end
+
+        -- ── STEP 5: opportunistic capture-target shot ─────────────────────
+        -- Fire when the predicted impact lands within CAPTURE_LGM_HUNT_FIRE_WU of
+        -- the man (open ground) or IN HIS EXACT TILE (solid square).  This is
+        -- capture-only and does NOT touch the shared kill_lgm 64-wu evaluator.
+        -- Refire every reload-available tick, but cap consecutive misses.
+        -- Refire identity is keyed on cand.seen_since, NOT idnum: perception's
+        -- idnum churns frame-to-frame (identity is tracked by position match), so
+        -- keying on idnum would reset the counter every think and the cap would
+        -- never engage.  seen_since is carried through the position match and is
+        -- stable per tracked man.  On kill/leave the candidate goes nil, so we
+        -- DROP the record entirely -- losing the count when he leaves the radius
+        -- is the right trade (his next incarnation must not inherit a stale cap).
+        local refire = state._clh_refire
+        if not (cand and killable) then
+          state._clh_refire = nil
+          refire = nil
+        else
+          if refire == nil then refire = {}; state._clh_refire = refire end
+          if refire.id ~= cand.seen_since then
+            refire.id = cand.seen_since; refire.misses = 0; refire.last_fire = nil
+          end
+        end
+        local MAXM = C.CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES or 0
+        -- MISS CAP DISABLED for now (Andrew 2026-09-10): keep firing every reload
+        -- while killable, regardless of misses.  The miss ACCOUNTING below still
+        -- runs so the `capture_lgm_misses` visualizer can show the running count.
+        -- local capped = MAXM > 0 and cand and killable and refire
+        --                and refire.id == cand.seen_since and (refire.misses or 0) >= MAXM
+        local capped = false
+        if cand and killable and not capped
+           and not _no_shells and not _shoot_busy and not _already_fired
+           and (bit.band(taps, KEY_SHOOT)) == 0
+           and clh.dist_wu <= C.KILL_LGM_SHOOT_RANGE * 256 then
+          local cur_sl = info.gunrange or 14
+          -- FIX 3c: the engine applies the gunsight change BEFORE the shot in the
+          -- SAME tick (server_sim_tick.c: gunsight then shot), and the shoot tap
+          -- rides the same packet as the range key -- so a shot fired on a think
+          -- that also issues a range key actually flies at cur_sl +/- 1 (~128 wu
+          -- along the ray).  Held OR tap both count as one step in that packet.
+          -- Predict the impact at that EFFECTIVE length, not cur_sl, or the gate
+          -- (and the exact-tile test) is off by a tile.
+          local rk = bit.bor(keys, taps)
+          local sl_eff = cur_sl
+          if bit.band(rk, KEY_MORERANGE) ~= 0 then sl_eff = cur_sl + 1
+          elseif bit.band(rk, KEY_LESSRANGE) ~= 0 then sl_eff = cur_sl - 1 end
+          if sl_eff < 2 then sl_eff = 2 elseif sl_eff > 14 then sl_eff = 14 end
+          local ex_wx = info.tankx + hx * 128 * sl_eff   -- predicted impact this tick
+          local ex_wy = info.tanky + hy * 128 * sl_eff
+          local hit
+          if lgm_on_solid(cmx, cmy) then
+            local imx = bit.rshift(math.floor(ex_wx + 0.5), 8)
+            local imy = bit.rshift(math.floor(ex_wy + 0.5), 8)
+            hit = (imx == cmx and imy == cmy)           -- exact-tile only
+          else
+            local ddx, ddy = ex_wx - tgt_wx, ex_wy - tgt_wy
+            hit = (math.sqrt(ddx * ddx + ddy * ddy) <= (C.CAPTURE_LGM_HUNT_FIRE_WU or 64))
+          end
+          if hit then
+            -- LANE CHECK: shell path clear of friendly tanks/builders (mirror the
+            -- armour branch's segment sweep, endpoint = the man).
+            local lane_ok = true
+            local sx, sy = info.tankx, info.tanky
+            local vx, vy = tgt_wx - sx, tgt_wy - sy
+            local vlen2 = vx * vx + vy * vy
+            for _, ob in ipairs(info.objects or {}) do
+              if (ob.type == OBJECT_TANK or ob.type == OBJECT_BUILDMAN)
+                 and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
+                 and not (ob.type == OBJECT_TANK and ob.idnum == (info.player_number or -1)) then
+                local tt = 0
+                if vlen2 > 0 then
+                  tt = ((ob.x - sx) * vx + (ob.y - sy) * vy) / vlen2
+                  if tt < 0 then tt = 0 elseif tt > 1 then tt = 1 end
+                end
+                local qx, qy = sx + vx * tt - ob.x, sy + vy * tt - ob.y
+                if qx * qx + qy * qy <= 256 * 256 then
+                  lane_ok = false
+                  clh.lane_block = ob.type == OBJECT_TANK and "ally_tank" or "friendly_builder"
+                  break
+                end
+              end
+            end
+            -- FIX 3b: our OWN builder is never in info.objects, yet capture_pill
+            -- sent him to this very pill -- test him against the shell path too.
+            if lane_ok then
+              local mmx, mmy = own_man_out_pos()
+              if mmx and seg_dist2(mmx, mmy, sx, sy, tgt_wx, tgt_wy) <= 256 * 256 then
+                lane_ok = false
+                clh.lane_block = "own_builder"
+              end
+            end
+            -- IMPACT-RADIUS CHECK: no friendly tank / LGM within 128 wu of the
+            -- predicted impact point.  The lane sweep guards the PATH; this guards
+            -- the BLAST -- a team-mate standing on the corpse we're shelling.
+            local blast_ok = true
+            if lane_ok then
+              for _, ob in ipairs(info.objects or {}) do
+                if (ob.type == OBJECT_TANK or ob.type == OBJECT_BUILDMAN)
+                   and (bit.band(ob.info, OBJECT_HOSTILE)) == 0
+                   and not (ob.type == OBJECT_TANK and ob.idnum == (info.player_number or -1)) then
+                  local bdx, bdy = ob.x - ex_wx, ob.y - ex_wy
+                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                    blast_ok = false
+                    clh.lane_block = "friendly_blast"
+                    break
+                  end
+                end
+              end
+              -- FIX 3b: our own builder against the blast radius as well.
+              if blast_ok then
+                local mmx, mmy = own_man_out_pos()
+                if mmx then
+                  local bdx, bdy = mmx - ex_wx, mmy - ex_wy
+                  if bdx * bdx + bdy * bdy <= 128 * 128 then
+                    blast_ok = false
+                    clh.lane_block = "own_builder_blast"
+                  end
+                end
+              end
+            end
+            if lane_ok and blast_ok then
+              taps = bit.bor(taps, KEY_SHOOT)
+              _already_fired = true
+              clh.verdict = "fire"
+              -- Miss accounting: if the PREVIOUS shot at this man has finished its
+              -- flight and he is still our target, that shot missed.  Kills reset
+              -- the counter via the target-change reset above (he leaves the list).
+              if refire.last_fire and now >= refire.last_fire + (refire.last_flight or 0) then
+                refire.misses = (refire.misses or 0) + 1
+              end
+              refire.last_fire   = now
+              refire.last_flight = kill_lgm.flight_ticks(sl_eff)
+            end
+          end
+        end
+        -- Miss-count visualizer (toggle "capture_lgm_misses"): the running number
+        -- of consecutive missed capture-target shots at this man, drawn over the
+        -- tank.  Resets on kill/leave (record dropped) or target change.  The cap
+        -- is currently DISABLED, so this only reports -- it doesn't stop firing.
+        -- _already_fired may also be set by the shared kill-LGM evaluator above
+        -- (its own 64-wu gate); either way the verdict is "fire".
         if _already_fired then clh.verdict = "fire" end
       else
+        -- No LGM in the radius (armour-rise trigger): keep the crosshair ON THE
+        -- PILL we're sweeping (greedy sight-over-pill), parked on the corpse and
+        -- ready to snap onto a man the instant one enters the radius.
         local tsl = kill_lgm.sightlen_for(clh.dist_wu)
-        keys = bit.bor(keys, kill_lgm.gunrange_key(info.gunrange or 14, tsl))
+        if C.CAPTURE_LGM_HUNT_SIGHT_ON_PILL then
+          local hk, tk = capture_sight_step(clh.pmx * 256 + 128, clh.pmy * 256 + 128)
+          keys = bit.bor(keys, hk)
+          taps = bit.bor(taps, tk)
+        else
+          keys = bit.bor(keys, kill_lgm.gunrange_key(info.gunrange or 14, tsl))
+        end
         -- LANE CHECK for the pill-tile shot: no friendly / allied tank or
         -- builder within a tile of the shell's path or of the tile itself.
         -- The tile is a corpse (our shells cannot hurt it) but the shell
@@ -6442,6 +6750,14 @@ function Brain.think(info)
                 clh.lane_block = ob.type == OBJECT_TANK and "ally_tank" or "friendly_builder"
                 break
               end
+            end
+          end
+          -- FIX 3b: our OWN builder is never in info.objects; test him too.
+          if lane_ok then
+            local mmx, mmy = own_man_out_pos()
+            if mmx and seg_dist2(mmx, mmy, sx, sy, ex, ey) <= 256 * 256 then
+              lane_ok = false
+              clh.lane_block = "own_builder"
             end
           end
         end
@@ -6474,6 +6790,33 @@ function Brain.think(info)
     elseif state._clh_verdict ~= nil then
       -- Hunt over: forget the last verdict so re-entry prints again.
       state._clh_verdict = nil
+      state._clh_refire = nil     -- reset the capture-target miss counter
+    end
+  end
+
+  -- Post-sweep gunrange (C.CAPTURE_LGM_HUNT_SIGHT_ON_PILL): the instant the
+  -- capture-LGM hunt stops driving the sight -- the pill is swept, or the hunt
+  -- dropped -- snap the gunrange back to FULL, one notch/tick until maxed, so
+  -- the crosshair returns to long range right away. (Andrew 2026-09-09.)
+  if C.CAPTURE_LGM_HUNT_SIGHT_ON_PILL then
+    local hunting_now = state._clh ~= nil and state._clh.tick == now
+                        and not info.inboat
+    if hunting_now then
+      state._clh_extend = nil                 -- hunt drives the sight; not extending
+    elseif state._clh_sighting then
+      state._clh_extend = true                -- just stopped hunting -> go full
+    end
+    state._clh_sighting = hunting_now or nil
+    -- YIELD (Fable-5 review): only drive the extend when NOTHING else set a
+    -- range key this think, so we never override another goal's gunsight (a set
+    -- MORERANGE wins outright at the packer; a LESSRANGE we'd stomp). The
+    -- kill_lgm pre-charge/search both run earlier in the think, so this defers
+    -- to them. The clamp at 14 clears the flag on its own once maxed. Not in a
+    -- boat (the engine ignores it there anyway).
+    if state._clh_extend and not info.inboat
+       and bit.band(keys, bit.bor(KEY_MORERANGE, KEY_LESSRANGE)) == 0 then
+      local k = kill_lgm.gunrange_key(info.gunrange or 14, 14)   -- step toward full
+      if k ~= 0 then keys = bit.bor(keys, k) else state._clh_extend = nil end
     end
   end
 

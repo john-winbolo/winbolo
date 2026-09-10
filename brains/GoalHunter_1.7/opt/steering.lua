@@ -1395,12 +1395,16 @@ local function capture_lgm_hunt(state, world, info, goal)
         armour_hot = false
         armour_veto = "ally_claim"
       else
+        local _br = C.CAPTURE_LGM_HUNT_RADIUS or 2
         for _, ob in ipairs(info.objects or {}) do
           if ob.type == OBJECT_BUILDMAN
              and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then
             local dx = bit.rshift(ob.x, 8) - pmx; if dx < 0 then dx = -dx end
             local dy = bit.rshift(ob.y, 8) - pmy; if dy < 0 then dy = -dy end
-            if ((dx > dy) and dx or dy) <= (C.CAPTURE_LGM_HUNT_RADIUS or 2) then
+            local inside = C.CAPTURE_LGM_HUNT_CIRCLE
+                           and ((dx * dx + dy * dy) <= (_br * _br))
+                           or  (((dx > dy) and dx or dy) <= _br)
+            if inside then
               armour_hot = false
               armour_veto = "friendly_builder"
               break
@@ -1412,14 +1416,20 @@ local function capture_lgm_hunt(state, world, info, goal)
   end
 
   -- ── Nearest hostile LGM to the PILL ───────────────────────────────────
+  -- CAPTURE_LGM_HUNT_CIRCLE picks the region shape: a TRUE CIRCLE (Euclidean,
+  -- dx^2+dy^2 <= R^2) or the old CHEBYSHEV box (max(dx,dy) <= R). All distances
+  -- below follow the chosen metric so the region, the cap and the overlay agree.
+  local CIRCLE = C.CAPTURE_LGM_HUNT_CIRCLE
   local R = C.CAPTURE_LGM_HUNT_RADIUS or 2
-  -- Cap the box at our own distance to the pill (Chebyshev, the box's own
-  -- metric): only a man at least as close to the corpse as we are is worth a
-  -- turn. See CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST.
+  -- Cap the region at our own distance to the pill (same metric): only a man at
+  -- least as close to the corpse as we are is worth a turn. See
+  -- CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST.
   local tdx = bit.rshift(info.tankx, 8) - pmx; if tdx < 0 then tdx = -tdx end
   local tdy = bit.rshift(info.tanky, 8) - pmy; if tdy < 0 then tdy = -tdy end
-  local tank_cheb = (tdx > tdy) and tdx or tdy
-  if C.CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST and tank_cheb < R then R = tank_cheb end
+  local tank_d = CIRCLE and math.sqrt(tdx * tdx + tdy * tdy)
+                        or  ((tdx > tdy) and tdx or tdy)
+  if C.CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST and tank_d < R then R = tank_d end
+  local Rlim2 = R * R                       -- squared limit for the circle test
   local best, best_d = nil, nil
   local lgms = state.perc and state.perc.enemy_lgms
   if lgms then
@@ -1427,8 +1437,15 @@ local function capture_lgm_hunt(state, world, info, goal)
       local e = lgms[i]
       local dx = e.mx - pmx; if dx < 0 then dx = -dx end
       local dy = e.my - pmy; if dy < 0 then dy = -dy end
-      local d = (dx > dy) and dx or dy       -- Chebyshev: a (2R+1)^2 box
-      if d <= R and (best_d == nil or d < best_d) then best, best_d = e, d end
+      local d, inside
+      if CIRCLE then
+        local d2 = dx * dx + dy * dy
+        d, inside = math.sqrt(d2), (d2 <= Rlim2)   -- true tile distance
+      else
+        d = (dx > dy) and dx or dy                 -- Chebyshev
+        inside = d <= R
+      end
+      if inside and (best_d == nil or d < best_d) then best, best_d = e, d end
     end
   end
   if best == nil and not armour_hot then state._clh = nil; return nil end
@@ -4256,7 +4273,62 @@ local function steer_core(state, world, info, goal)
         _clh.err = U.adiff(move_dir, _clh.aim_dir)
         _clh.uturn = (state._uturn ~= nil) or nil
       end
-      if _clh and state._uturn == nil then
+      -- ── Sweep-line nudge (CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS) ─────────────
+      -- Within SWEEP_FOCUS_RADIUS of the pill, with a hostile LGM actually in the
+      -- shoot radius (src=="lgm"), BIAS the sweep heading a few brads toward the
+      -- man -- but only so far as the resulting ray still crosses the pill tile.
+      -- This is the OPPOSITE of the old tol-turn-blend below: that pointed the
+      -- nose fully at the man and pinned the heading in a deadband while full
+      -- throttle swept the tank past the shot (the 2062 stalemate).  The nudge
+      -- keeps the plow-through line to the corpse (the sweep move_dir is the
+      -- base) and merely leans it toward the shot, so the drive-over capture is
+      -- never traded away.  When it fires it OWNS the turn and the tol-blend is
+      -- SKIPPED, so the pin can never come back.  With NUDGE_BRADS==0 (keel) it
+      -- never fires and the tol-blend runs exactly as before -- keel bit-for-bit.
+      local _nudged = false
+      if _clh and _clh.src == "lgm"
+         and (C.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS or 0) > 0 then
+        local _pcx = _clh.pmx * 256 + 128            -- pill tile centre (wu)
+        local _pcy = _clh.pmy * 256 + 128
+        local _pdx, _pdy = _pcx - info.tankx, _pcy - info.tanky
+        local _pd = math.sqrt(_pdx * _pdx + _pdy * _pdy)   -- tank -> pill (wu)
+        if _pd <= (C.CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS or 2.5) * 256 then
+          -- Widest heading offset from the exact pill bearing whose ray still
+          -- passes within ½ tile (128 wu) of the pill centre at the pill's own
+          -- distance: perp = pd*sin(off) <= 128  ->  off <= asin(128/pd).  That
+          -- is the "the ray still crosses the pill tile" limit, in brads.
+          local _sinlim = (_pd > 0) and math.min(1.0, 128.0 / _pd) or 1.0
+          local _off_lim = math.asin(_sinlim) * 256.0 / C.TWO_PI
+          local _bearing = U.aim_at(info.tankx, info.tanky, _pcx, _pcy)
+          local _base_off = U.adiff(_bearing, move_dir)      -- sweep heading vs pill bearing
+          local _nb   = C.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS
+          local _bias = U.adiff(move_dir, _clh.aim_dir)      -- sweep heading -> man
+          if _bias >  _nb then _bias =  _nb elseif _bias < -_nb then _bias = -_nb end
+          -- Apply as much of the man-ward bias as keeps the RESULTING ray inside
+          -- the pill window (|_base_off + applied| <= _off_lim).  A bias that
+          -- happens to pull the heading TOWARD the pill line is allowed -- it is
+          -- harmless, even desirable (it improves the crossing); the clamp only
+          -- stops the bias pushing the ray OUT of the +/-asin(128/pd) window (off
+          -- the pill tile).
+          local _applied = _bias
+          if _bias > 0 then
+            local _room = _off_lim - _base_off
+            if _room < 0 then _room = 0 end
+            if _applied > _room then _applied = _room end
+          elseif _bias < 0 then
+            local _room = -_off_lim - _base_off
+            if _room > 0 then _room = 0 end
+            if _applied < _room then _applied = _room end
+          end
+          local _new_dir = (move_dir + _applied) % 256
+          turn_corr = U.adiff(info.direction, _new_dir)
+          _clh.steer     = "nudge"
+          _clh.verdict   = "nudge"
+          _clh.nudge_off = _applied
+          _nudged = true
+        end
+      end
+      if not _nudged and _clh and state._uturn == nil then
         local herr = _clh.err
         if math.abs(herr) <= _clh.tol then
           turn_corr = U.adiff(info.direction, _clh.aim_dir)
@@ -4264,6 +4336,13 @@ local function steer_core(state, world, info, goal)
           _clh.verdict = "turn"
         end
       end
+      -- ALWAYS-ON reference rings on the swept pill, EVERY capture_pill tick
+      -- (not just while the hunt is engaged): the OUTER ring is the shoot/search
+      -- radius (CAPTURE_LGM_HUNT_RADIUS) -- a hostile LGM inside it counts as on
+      -- this pill; the INNER ring is the fire distance (CAPTURE_LGM_HUNT_FIRE_WU,
+      -- in wu -> tiles).  NOTE the fire GATE in code is measured impact-to-MAN
+      -- (and exact-tile when he stands on a solid square), so this inner ring is
+      -- a distance REFERENCE drawn on the pill, not the literal gate centre.
     end
 
     if     turn_corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)

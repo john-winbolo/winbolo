@@ -261,12 +261,12 @@ static void vizSetCategory(int cat, bool on, void (*onToggle)(int)) {
 }
 
 /* ───────────────────────── Viz "sets" ─────────────────────────────────
- * Three named slots that capture/restore which overlays are enabled, plus
+ * Four named slots that capture/restore which overlays are enabled, plus
  * Select-all / Clear-all. A set stores the id (or label, for native rows)
  * of every currently-on entry; Load turns those on and everything else off.
  * Persisted to BrainTestVizSets.ini next to BrainTestViz.ini so slots and
  * their labels survive restarts. */
-#define VIZ_SET_COUNT      3
+#define VIZ_SET_COUNT      4
 #define VIZ_SET_LABEL_MAX  64
 #define VIZ_SET_KEY_MAX    (VIZ_REG_ID_MAX > VIZ_REG_LABEL_MAX ? VIZ_REG_ID_MAX : VIZ_REG_LABEL_MAX)
 
@@ -461,7 +461,7 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
      * underneath them. */
     ImGui::Separator();
 
-    /* Left group: 3 save/load slots + select/clear all. */
+    /* Left group: 4 save/load slots + select/clear all. */
     ImGui::BeginGroup();
     ImGui::TextColored(ImVec4(0.7f, 0.75f, 0.85f, 1.0f), "Sets");
     ImGui::SameLine();
