@@ -1567,6 +1567,16 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
   inputLen -= SIZEOF_STARTS;
   ptr += SIZEOF_STARTS;
 
+  /* The three setters above memcpy the wire structs wholesale, so none of the
+   * per-field clamps that basesSetBase/pillsSetPill/startsSetStart apply on
+   * the file-load path have run. Everything downstream — the terrain fixups
+   * below included — reads these values, and a map arrives from whatever
+   * server the player joined. Clamp here, once, so the rest of the codebase
+   * can trust the fields rather than each consumer having to re-check. */
+  basesValidate(bs);
+  pillsValidate(pb);
+  startsValidate(ss);
+
   /* Map */
   ptr2 = (BYTE *) (*value)->mapItem;
   mapSize = lzwdecoding(ptr, ptr2, inputLen, (int)sizeof((*value)->mapItem));

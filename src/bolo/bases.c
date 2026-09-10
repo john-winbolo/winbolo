@@ -1437,6 +1437,42 @@ void basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
 }
 
 
+/*********************************************************
+*NAME:          basesValidate
+*PURPOSE:
+*  Clamps every base field a map can supply to the range the
+*  rest of the codebase assumes. basesSetBase applies these on
+*  the file-load path; the compressed path memcpys the structs
+*  wholesale and reaches none of them, so a downloaded map can
+*  seat values no legitimate map holds. Idempotent, and pure
+*  clamping: no logging or side effects, so it is safe to call
+*  on a half-built map.
+*
+*ARGUMENTS:
+*  value - Pointer to the bases structure
+*********************************************************/
+void basesValidate(bases *value) {
+  BYTE count;
+
+  if (value == NULL || *value == NULL) {
+    return;
+  }
+  if ((*value)->numBases > MAX_BASES) {
+    (*value)->numBases = MAX_BASES;
+  }
+  for (count = 0; count < (*value)->numBases; count++) {
+    base *item = &((*value)->item[count]);
+    /* x and y are BYTE against a 256x256 map, so every value is in
+     * range by type and needs no clamp. */
+    if (item->owner > (MAX_TANKS - 1) && item->owner != NEUTRAL) {
+      item->owner = NEUTRAL;
+    }
+    if (item->armour > BASE_FULL_ARMOUR) item->armour = BASE_FULL_ARMOUR;
+    if (item->shells > BASE_FULL_SHELLS) item->shells = BASE_FULL_SHELLS;
+    if (item->mines  > BASE_FULL_MINES)  item->mines  = BASE_FULL_MINES;
+  }
+}
+
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_BASES);
   /* The wire blob carries numBases in its trailing byte; a hostile map can
