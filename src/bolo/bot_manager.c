@@ -1469,6 +1469,15 @@ void botManagerOnGameStart(ServerSim *sim) {
          * first running tick, before any think, and publishes it to every
          * bot then (serverLifecycleOpenBraindbgBlock) — exactly what a
          * bot born at server startup gets. */
+        /* A bot with no brain path never had a brain to rebuild: the unit
+         * tests wire ClientSims straight into bots[] without one (and main's
+         * game start only flags the old state first-tick). Keep that
+         * behaviour for such a bot instead of failing the reload and tearing
+         * down a slot that was never fully built. */
+        if (bot->brainPath[0] == '\0') {
+            bot->brain.isFirst = true;
+            continue;
+        }
         if (!botManagerReloadBrain(sim, bot, bot->brainPath)) {
             WB_LOG_WARN(WB_LOG_CAT_SIM,
                     "botManager: bot %d could not get a fresh brain for the new round; removing it",
@@ -1698,20 +1707,12 @@ void botManagerSyncClientAlliances(ServerSim *sim) {
         players cli = bot->cs->sim.plyrs;
         if (cli == NULL) continue;
         for (int i = 0; i < MAX_TANKS; i++) {
-            /* DEEP copy. allie is a heap list — assigning the pointer
-             * aliased the server's live lists into every bot ClientSim,
-             * and the next playersLeaveAlliance (scenario on_setup
-             * removing its seeded bots, any mid-game leaver) then
-             * destroyed/mutated the shared nodes from both sides:
-             * double-frees, and every bot's matrix silently emptied
-             * (teammates rendered/treated as enemies all round). */
-            allienceDestroy(&cli->item[i].allie);
-            cli->item[i].allie = allienceCreate();
-            for (int j = 0; j < MAX_TANKS; j++) {
-                if (j != i && allienceExist(&srv->item[i].allie, (BYTE)j)) {
-                    allienceAdd(&cli->item[i].allie, (BYTE)j);
-                }
-            }
+            /* allience is a PlayerBitMap, so this is a value copy of the server's
+             * row, self-bit included: main's alliance-reset tests pin that a bot's
+             * client table matches the server's bit for bit. (An older rebuild here
+             * re-added every bit but the bot's own; it predates allience becoming a
+             * bitmap and its heap-list warning no longer applies.) */
+            cli->item[i].allie = srv->item[i].allie;
         }
         synced++;
     }
