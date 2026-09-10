@@ -205,7 +205,7 @@ void lgmUpdate(GameSim *sim, lgm *lgman, tank *tnk) {
 	}
 }
 
-bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE *action, BYTE *pillNum, bool *isMine, BYTE *trees, BYTE *mines, bool perform);
+bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE *action, BYTE *pillNum, bool *isMine, BYTE *trees, BYTE *mines, bool perform, bool announce);
 
 /*********************************************************
 *NAME:          lgmAddRequest
@@ -246,7 +246,7 @@ void lgmAddRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BY
     BYTE trees;
     BYTE minesAmount;
     bool ok;
-    ok = lgmCheckNewRequest(sim, lgman, tnk, mapX, mapY, &action, &pillNum, &isMine, &trees, &minesAmount, FALSE);
+    ok = lgmCheckNewRequest(sim, lgman, tnk, mapX, mapY, &action, &pillNum, &isMine, &trees, &minesAmount, FALSE, TRUE);
     (*lgman)->numTrees = trees;
     (*lgman)->numMines = minesAmount;
     (*lgman)->numPills = pillNum;
@@ -303,7 +303,16 @@ void lgmTankDied(lgm *lgman) {
 *  minesAmount - Pointer to
 *  perform     -
 *********************************************************/
-bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE *action, BYTE *pillNum, bool *isMine, BYTE *trees, BYTE *minesAmount, bool perform) {
+/* Send an assistant message to the requesting player, unless this call is
+   only asking whether the request would be valid. A caller that wants the
+   answer without talking to the player passes announce == FALSE. */
+static void lgmAssist(GameSim *sim, bool announce, langid bodyId) {
+  if (announce == TRUE) {
+    sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, bodyId, NULL);
+  }
+}
+
+bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE *action, BYTE *pillNum, bool *isMine, BYTE *trees, BYTE *minesAmount, bool perform, bool announce) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
@@ -336,7 +345,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   switch (*action) {
   case LGM_TREE_REQUEST:
     if (pos != FOREST || isBase == TRUE || isPill == TRUE) {
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_TREE, NULL);
+      lgmAssist(sim, announce, LGM_NO_TREE);
       proceed = FALSE;
     }
     break;
@@ -347,17 +356,17 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     } else if (pos == BOAT || pos == DEEP_SEA || pos == BUILDING || pos == HALFBUILDING || isPill == TRUE || isBase == TRUE) {
 	  /* Clicked one of the following a boat, deep sea, building, half building, pill, base  */
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
+      lgmAssist(sim, announce, LGM_NO_BUILD);
     } else if (pos == ROAD) {
 	  /* Clicked on a road */
       proceed = FALSE;
     } else if (pos == RIVER && mapX == tankX && mapY == tankY && tankIsOnBoat(tnk)) {
 	  /* Clicked on a square that has a tank on a boat on it */
 	  proceed = FALSE;
-	  sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD_UNDER_BOAT, NULL);
+	  lgmAssist(sim, announce, LGM_NO_BUILD_UNDER_BOAT);
     } else if (tankGetLgmTrees(sim, tnk, LGM_COST_ROAD, perform) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
+      lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
 	} else {
       *trees = LGM_COST_ROAD;
     }
@@ -367,28 +376,28 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       *action = LGM_TREE_REQUEST;
     } else if (pos == BOAT || pos == DEEP_SEA || isPill == TRUE || isBase == TRUE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
+      lgmAssist(sim, announce, LGM_NO_BUILD);
     } else if (pos == RIVER && mapX == tankX && mapY == tankY && tankIsOnBoat(tnk)) {
 	  /* Clicked on a square that has a tank on a boat on it */
 	  proceed = FALSE;
-	  sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD_UNDER_BOAT, NULL);
+	  lgmAssist(sim, announce, LGM_NO_BUILD_UNDER_BOAT);
     } else if (pos == RIVER) {
 	  /* Build a wall on a river, that means build a boat */
       *action = LGM_BOAT_REQUEST;
       if (tankGetLgmTrees(sim, tnk, LGM_COST_BOAT, perform) == FALSE) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
+        lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
       } else {
         *trees = LGM_COST_BOAT;
       }
 
     } else if (tankX == mapX && tankY == mapY) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_BUILDTANK, NULL);
+      lgmAssist(sim, announce, LGM_BUILDTANK);
     } else if (pos == HALFBUILDING) {
       if (tankGetLgmTrees(sim, tnk, LGM_COST_REPAIRBUILDING, perform) == FALSE) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
+        lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
       } else {
         *trees = LGM_COST_REPAIRBUILDING;
       }
@@ -396,7 +405,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       proceed = FALSE;
     } else if (tankGetLgmTrees(sim, tnk, LGM_COST_BUILDING, perform) == FALSE) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
+        lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
     } else {
       *trees = LGM_COST_BUILDING;
     }
@@ -405,19 +414,19 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   case LGM_PILL_REQUEST:
     if (pos == BOAT || pos == DEEP_SEA || pos == BUILDING || pos == HALFBUILDING || pos == RIVER || isBase == TRUE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
+      lgmAssist(sim, announce, LGM_NO_BUILD);
     } else if (pos == FOREST && isPill == FALSE) {
       *action = LGM_TREE_REQUEST;
     } else if (tankX == mapX && tankY == mapY) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_BUILDTANK, NULL);
+      lgmAssist(sim, announce, LGM_BUILDTANK);
     } else if (isPill == TRUE) {
       if (pillsGetArmourPos(pb, mapX, mapY) == PILLS_MAX_ARMOUR) {
         proceed= FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_PILL_NO_NEED_REPAIR, NULL);
+        lgmAssist(sim, announce, LGM_PILL_NO_NEED_REPAIR);
       } else if (tankTrees<LGM_COST_PILLREPAIR) {
         proceed = FALSE;
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
+        lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
       } else {
         /* Take a full load rather than sizing it to the damage we can see
            now. The pill can be shot a lot more while the man walks over, and
@@ -431,10 +440,10 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       *pillNum = LGM_NO_PILL;
     } else if ((tankGetCarriedPill(tnk, pillNum, perform)) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_PILLS, NULL);
+      lgmAssist(sim, announce, LGM_NO_PILLS);
     } else if (tankGetLgmTrees(sim, tnk, LGM_COST_PILLNEW, perform) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
+      lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
     } else {
       *trees = LGM_COST_PILLNEW;
     }
@@ -452,10 +461,10 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     /* Case LGM_REQUEST_MINE */
     if (pos == DEEP_SEA || pos == RIVER || pos == BUILDING || pos == BOAT || pos == HALFBUILDING || isPill == TRUE || isBase == TRUE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_BUILD, NULL);
+      lgmAssist(sim, announce, LGM_NO_BUILD);
     } else if (tankGetLgmMines(sim, tnk, LGM_COST_MINE, perform) == FALSE) {
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_MINES, NULL);
+      lgmAssist(sim, announce, LGM_INSUFFICIENT_MINES);
     } else {
       *minesAmount = LGM_COST_MINE;
     }
@@ -466,14 +475,48 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     if ((minesExistPos(&sim->mns, &sim->mp, mapX, mapY)) == TRUE) {
       *isMine = TRUE;
       proceed = FALSE;
-      sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_PILL_NO_BUILD_ON_MINE, NULL);
-      if ((*lgman)->nextAction == LGM_MINE_REQUEST && (*lgman)->nextX == mapX && (*lgman)->nextY == mapY) {
+      lgmAssist(sim, announce, LGM_PILL_NO_BUILD_ON_MINE);
+      if (perform == TRUE && (*lgman)->nextAction == LGM_MINE_REQUEST && (*lgman)->nextX == mapX && (*lgman)->nextY == mapY) {
         (*lgman)->nextAction = LGM_IDLE;
       }
     }
   }
 
   return proceed;
+}
+
+/*********************************************************
+*NAME:          lgmRequestIsValid
+*PURPOSE:
+*  Answers whether a build request at mapX,mapY would be
+*  accepted right now, without acting on it and without
+*  sending the player an assistant message.
+*
+*  For a caller replaying an order the player commanded
+*  earlier: the target was frozen when they clicked, so it
+*  has to be re-tested against the map as it stands before
+*  it is dispatched. Asking here rather than repeating the
+*  terrain and cost conditions keeps the one copy in
+*  lgmCheckNewRequest.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm structure
+*  tnk    - Pointer to the tank structure
+*  mapX   - X Co-ordinate of the request
+*  mapY   - Y Co-ordinate of the request
+*  action - What the request is (LGM_*_REQUEST)
+*********************************************************/
+bool lgmRequestIsValid(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action) {
+  BYTE pillNum;
+  bool isMine;
+  BYTE trees;
+  BYTE minesAmount;
+
+  /* action is taken by value: lgmCheckNewRequest rewrites it for the
+     substitutions the game makes (a road order on forest becomes a tree
+     harvest), and a caller only asking the question keeps its own copy. */
+  return lgmCheckNewRequest(sim, lgman, tnk, mapX, mapY, &action, &pillNum,
+                            &isMine, &trees, &minesAmount, FALSE, FALSE);
 }
 
 /*********************************************************
@@ -505,7 +548,7 @@ void lgmNewPrimaryRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE m
   pillNum = LGM_NO_PILL;
 
   /* If its OK to proceed then set it up */
-  if (lgmCheckNewRequest(sim, lgman, tnk, mapX, mapY, &action, &pillNum, &isMine, &trees, &minesAmount, TRUE) == TRUE) {
+  if (lgmCheckNewRequest(sim, lgman, tnk, mapX, mapY, &action, &pillNum, &isMine, &trees, &minesAmount, TRUE, TRUE) == TRUE) {
     (*lgman)->numTrees = trees;
     (*lgman)->numMines = minesAmount;
     if (isMine == TRUE) {
@@ -1143,7 +1186,7 @@ void lgmBackInTank(GameSim *sim, lgm *lgman, tank *tnk, bool sendItems) {
       bool ok;
       BYTE action;
       action = (*lgman)->nextAction;
-      ok = lgmCheckNewRequest(sim, lgman, tnk, (*lgman)->nextX, (*lgman)->nextY, &action, &pillNum, &isMine, &trees, &minesAmount, FALSE);
+      ok = lgmCheckNewRequest(sim, lgman, tnk, (*lgman)->nextX, (*lgman)->nextY, &action, &pillNum, &isMine, &trees, &minesAmount, FALSE, TRUE);
       (*lgman)->numTrees = trees;
       (*lgman)->numMines = minesAmount;
 
@@ -1703,6 +1746,10 @@ BYTE lgmGetFrame(lgm *lgman) {
 
 bool lgmIsOut(lgm *lgman) {
   return !((*lgman)->inTank); 
+}
+
+bool lgmIsIdle(lgm *lgman) {
+  return (*lgman)->action == LGM_IDLE;
 }
 
 /*********************************************************

@@ -1598,6 +1598,22 @@ bool sdl3DrawSetup(int zoomFactor) {
   gZoomFactor = zoomFactor;
   sdl3DrawStatusSetZoom(gZoomFactor);
 
+#ifdef __APPLE__
+  /* Keep the native menu bar on screen in full screen. SDL's default for this
+     hint is "auto", which shows the menu bar only when the user took the window
+     full screen themselves (green button / ctrl-cmd-F) and hides it whenever the
+     app asked for it via SDL_SetWindowFullscreen -- which is exactly what
+     windowFullScreenChoose does. The hide is [NSMenu setMenuBarVisible:NO], a
+     hard removal rather than an auto-hide, so there is no pointer-to-the-top
+     gesture that brings it back and macOS is left with no menus at all: the
+     in-window ImGui bar is never drawn here (see the __APPLE__ guard around
+     renderMenuBar) because the native NSMenu is meant to be doing that job.
+     Costs no game area either way -- AppKit keeps the full screen window below
+     the menu bar strip whether or not the bar is drawn in it, so this only fills
+     a band that was otherwise left blank. */
+  SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY, "1");
+#endif
+
 #ifdef __EMSCRIPTEN__
   /* Pre-size the canvas so SDL3's external_size probe sees the right
      dimensions (it temporarily sets the canvas to 1x1 and checks CSS).

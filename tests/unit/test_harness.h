@@ -1267,6 +1267,22 @@ int run_stall_long_dry_advances(void);
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
 
+/* Stale build-order harvest (test_build_harvest_stale.c): a build commanded on
+ * a stall-substituted tick is stashed with its target tile frozen, so the
+ * replay must re-check that tile against the current map — a now-invalid one is
+ * dropped instead of nagging the player, a still-valid one still dispatches,
+ * and one that folds while the man is out is queued unchecked as his next
+ * order. */
+int run_build_harvest_stale(void);
+int run_build_harvest_valid(void);
+int run_build_harvest_busy_queues(void);
+
+/* Build-request validity (test_lgm_request_valid.c): lgmCheckNewRequest's
+ * verdicts over terrain and tank stores, and lgmRequestIsValid asking for one
+ * without dispatching, spending or messaging the player. */
+int run_lgm_request_valid(void);
+int run_lgm_request_quiet(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
