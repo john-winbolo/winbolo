@@ -34,6 +34,9 @@
 #include "bolo_map.h"              /* mapSetPos — clear the ground round the base */
 #include "tank.h"                  /* tankUpdate, tankSetWorld, tankGetMX/MY */
 #include "players.h"               /* playersIsAllie */
+#include "client_sim.h"            /* clientSimAlloc/Create/Destroy */
+#include "client_sim_internal.h"   /* ClientSim.sim */
+#include "client_snapshot.h"       /* clientBaseArmourArrived */
 #include "test_harness.h"
 
 /* A base's world centre, the same formula the visibility tests use. */
@@ -148,5 +151,98 @@ int run_base_death_prediction_replay_tick(void) {
                   "an own base must be drivable with no prediction in play");
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* Authoritative armour settling the prediction: clientBaseArmourArrived.
+ *
+ * A stamp used to be dropped by any authoritative armour for its base. A full
+ * sync, or a stock update for an earlier shell, can date from before the hit,
+ * and the predicted shell that armed the stamp is gone on impact, so nothing
+ * put it back: the tank went back to fighting the wall for the rest of the
+ * round trip. The rule now keys on the last input tick the server had
+ * processed when the armour was taken. */
+int run_base_death_prediction_authority(void) {
+    ClientSim *cs = clientSimAlloc();
+    UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+    clientSimCreate(cs);
+    GameSim *gs = &cs->sim;
+    const BYTE b = 1;
+
+    /* Armour from before the stamped tick, one hit from dead: the prediction
+     * stands. This is the full-sync case that used to wipe it. */
+    gs->basePredictedDeadTick[b] = 20;
+    gs->basePredictedHitTick[b] = 20;
+    clientBaseArmourArrived(cs, b, 12, 15);
+    UT_ASSERT_MSG(gs->basePredictedDeadTick[b] == 20,
+                  "armour dated before the hit must leave the stamp (got %u)",
+                  gs->basePredictedDeadTick[b]);
+    UT_ASSERT_MSG(gs->basePredictedHitTick[b] == 20,
+                  "the landing is still ahead of the server; keep it (got %u)",
+                  gs->basePredictedHitTick[b]);
+
+    /* The server has run the stamped tick and the base still stands: the
+     * prediction was wrong and is taken back, landing and all. */
+    clientBaseArmourArrived(cs, b, 12, 20);
+    UT_ASSERT_MSG(gs->basePredictedDeadTick[b] == 0,
+                  "a base alive at the stamped tick must clear the stamp (got %u)",
+                  gs->basePredictedDeadTick[b]);
+    UT_ASSERT_MSG(gs->basePredictedHitTick[b] == 0,
+                  "a landing the server has passed must clear (got %u)",
+                  gs->basePredictedHitTick[b]);
+
+    /* Dead armour: nothing left to predict, whatever the tick. */
+    gs->basePredictedDeadTick[b] = 20;
+    gs->basePredictedHitTick[b] = 20;
+    clientBaseArmourArrived(cs, b, MIN_ARMOUR_CAPTURE, 15);
+    UT_ASSERT_MSG(gs->basePredictedDeadTick[b] == 0,
+                  "dead armour must clear the stamp (got %u)",
+                  gs->basePredictedDeadTick[b]);
+
+    /* Refuelled past one hit from dead: the hit we predicted off cannot be
+     * the killing one, even though the server has not reached it. */
+    gs->basePredictedDeadTick[b] = 20;
+    gs->basePredictedHitTick[b] = 20;
+    clientBaseArmourArrived(cs, b, MIN_ARMOUR_CAPTURE + DAMAGE + 1, 15);
+    UT_ASSERT_MSG(gs->basePredictedDeadTick[b] == 0,
+                  "armour two hits from dead must clear the stamp (got %u)",
+                  gs->basePredictedDeadTick[b]);
+
+    /* Retroactive arm — the rapid-fire case. Our shell landed at tick 20
+     * while the mirror still read an earlier hit behind, so nothing stamped.
+     * The earlier hit's armour now lands, dated before tick 20, and says one
+     * more kills: that landing is the kill. */
+    gs->basePredictedDeadTick[b] = 0;
+    gs->basePredictedHitTick[b] = 20;
+    clientBaseArmourArrived(cs, b, 12, 15);
+    UT_ASSERT_MSG(gs->basePredictedDeadTick[b] == 20,
+                  "a pending landing must arm from a late one-hit-from-dead "
+                  "armour (got %u)", gs->basePredictedDeadTick[b]);
+
+    /* No retroactive arm once the server has processed the landing: its
+     * effect is already in the armour it sent. */
+    gs->basePredictedDeadTick[b] = 0;
+    gs->basePredictedHitTick[b] = 20;
+    clientBaseArmourArrived(cs, b, 12, 20);
+    UT_ASSERT_MSG(gs->basePredictedDeadTick[b] == 0 &&
+                  gs->basePredictedHitTick[b] == 0,
+                  "a landing the server has passed must not arm (%u/%u)",
+                  gs->basePredictedDeadTick[b], gs->basePredictedHitTick[b]);
+
+    /* No retroactive arm while one hit would not kill; the landing waits. */
+    gs->basePredictedDeadTick[b] = 0;
+    gs->basePredictedHitTick[b] = 20;
+    clientBaseArmourArrived(cs, b, MIN_ARMOUR_CAPTURE + DAMAGE + 1, 15);
+    UT_ASSERT_MSG(gs->basePredictedDeadTick[b] == 0,
+                  "armour two hits from dead must not arm (got %u)",
+                  gs->basePredictedDeadTick[b]);
+    UT_ASSERT_MSG(gs->basePredictedHitTick[b] == 20,
+                  "the landing must wait for the next armour (got %u)",
+                  gs->basePredictedHitTick[b]);
+
+    /* An out-of-range index is ignored rather than indexed. */
+    clientBaseArmourArrived(cs, MAX_BASES, 12, 15);
+
+    clientSimDestroy(cs);
     return 0;
 }

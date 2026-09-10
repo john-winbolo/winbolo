@@ -4188,6 +4188,7 @@ set(_unit_test_names
     base_armour_fog_of_war
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
+    base_death_prediction_authority
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec

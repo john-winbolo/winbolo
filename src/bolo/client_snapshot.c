@@ -288,20 +288,88 @@ static ClientPlayerStats *liveStatsSlot(ClientSim *csPtr, BYTE slot) {
 }
 
 /*********************************************************
+*NAME:          clientBaseArmourArrived
+*PURPOSE:
+*  Settles base-death prediction for one base against
+*  authoritative armour from the server — a full sync or an
+*  EVENT_BASE_STOCK — given the last input tick the server had
+*  processed when that armour was taken.
+*
+*  The stamp survives only while both hold: the server has not
+*  yet processed the stamped tick, and one more hit would still
+*  drop the armour to MIN_ARMOUR_CAPTURE. Armour from before the
+*  hit therefore leaves a live prediction alone (a full sync or
+*  a stock update for an earlier shell used to wipe it, and the
+*  shell that armed it was gone, so nothing put it back); armour
+*  from at or after the tick that still reads alive means the
+*  prediction was wrong and takes it back; a dead or refuelled
+*  base has nothing left to predict.
+*
+*  A landing that could not arm the stamp because the mirror was
+*  still an earlier hit behind is armed here instead: if the
+*  armour now says one more hit kills, and the server had not
+*  reached the tick our latest shell landed on, that landing is
+*  the hit that kills it. Two of our shells in flight on a short
+*  reload used to under-predict for exactly this reason.
+*
+*ARGUMENTS:
+*  csPtr           - ClientSim to apply to
+*  idx             - Zero-based base index
+*  armour          - Authoritative armour for that base
+*  serverInputTick - hdr->lastProcessedInput of the snapshot
+*                    that carried it
+*********************************************************/
+void clientBaseArmourArrived(ClientSim *csPtr, BYTE idx, BYTE armour,
+                             uint32_t serverInputTick) {
+  bool oneHitKills;
+  uint32_t stamp, hit;
+
+  if (idx >= MAX_BASES) {
+    return;
+  }
+  stamp = csPtr->sim.basePredictedDeadTick[idx];
+  hit = csPtr->sim.basePredictedHitTick[idx];
+  oneHitKills = armour > MIN_ARMOUR_CAPTURE &&
+                (int)armour - DAMAGE <= MIN_ARMOUR_CAPTURE;
+
+  if (!oneHitKills) {
+    /* Dead already (the real rule makes it drivable), or high enough that
+     * the hit we predicted off cannot have been the killing one. */
+    stamp = 0;
+  } else {
+    if (stamp != 0 && serverInputTick >= stamp) {
+      /* The server ran the stamped tick and the base is still standing. */
+      stamp = 0;
+    }
+    if (stamp == 0 && hit != 0 && serverInputTick < hit) {
+      /* Our latest landing is still ahead of this armour, and it kills. */
+      stamp = hit;
+    }
+  }
+  if (hit != 0 && serverInputTick >= hit) {
+    /* Whatever that landing did is in the authoritative state now. */
+    hit = 0;
+  }
+  csPtr->sim.basePredictedDeadTick[idx] = stamp;
+  csPtr->sim.basePredictedHitTick[idx] = hit;
+}
+
+/*********************************************************
 *NAME:          clientApplyBaseStock
 *PURPOSE:
 *  Applies one authoritative EVENT_BASE_STOCK — armour, shells
 *  and mines — and the two things that hang off the armour
-*  landing: it drops any base-death prediction we were running
-*  for that base, since the server has now spoken, and arms the
+*  landing: it settles any base-death prediction we were running
+*  for that base (clientBaseArmourArrived), and arms the
 *  enlarged-clamp window if the base just became drivable under
 *  us.
 *
-*  Shared by clientSimApplyGameEvents and the early pass in
+*  Shared by the transport's reliable drain (through
+*  clientSimApplyGameEvents) and the early pass in
 *  clientApplySnapshot, which has to run this before the local
-*  tank's reconciliation replay rather than after it. Applying
-*  the same event twice is harmless: the second pass sees no
-*  armour transition and stops at the assignments.
+*  tank's reconciliation replay rather than after it. The
+*  snapshot path applies it exactly once: the early pass takes
+*  it, and the later event pass skips the type.
 *
 *ARGUMENTS:
 *  csPtr - ClientSim to apply to
@@ -320,10 +388,12 @@ static void clientApplyBaseStock(ClientSim *csPtr, const GameEvent *ev) {
   (*csPtr->sim.bs).item[idx].shells = ev->data[2];
   (*csPtr->sim.bs).item[idx].mines  = ev->data[3];
 
-  /* The server's armour supersedes whatever we predicted for this base —
-   * including a prediction that turned out wrong, which is how a mispredicted
-   * death gets taken back. */
-  csPtr->sim.basePredictedDeadTick[idx] = 0;
+  /* An event carries no tick of its own; the snapshot it rode in on was
+   * built after it, so that snapshot's last-processed input is the latest
+   * the event's armour can date from. Using it can only keep a prediction
+   * that the event would have been entitled to clear, never the reverse. */
+  clientBaseArmourArrived(csPtr, idx, newArmour,
+                          csPtr->clientState.serverLastProcessedInput);
 
   /* If an adjacent base just became drivable (armour fell to the
    * capturable threshold), arm the enlarged-clamp window so the
@@ -356,8 +426,23 @@ static void clientApplyBaseStock(ClientSim *csPtr, const GameEvent *ev) {
 *  eventCount - Number of events in `events`
 *  playerNum  - Local player's slot
 *********************************************************/
+static void clientApplyGameEventsInner(ClientSim *csPtr,
+                                       const GameEvent *events,
+                                       int eventCount, BYTE playerNum,
+                                       bool baseStockApplied);
+
 void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
                               int eventCount, BYTE playerNum) {
+  clientApplyGameEventsInner(csPtr, events, eventCount, playerNum, false);
+}
+
+/* baseStockApplied: the caller has already put EVENT_BASE_STOCK through
+ * clientApplyBaseStock — clientApplySnapshot does, ahead of the tank
+ * replay — so the type is skipped here rather than applied a second time. */
+static void clientApplyGameEventsInner(ClientSim *csPtr,
+                                       const GameEvent *events,
+                                       int eventCount, BYTE playerNum,
+                                       bool baseStockApplied) {
   int i;
   bool isHuman = !csPtr->isBot;
   bool steamStatsUpdated = false;
@@ -581,7 +666,9 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         }
         break;
       case EVENT_BASE_STOCK:
-        clientApplyBaseStock(csPtr, &events[i]);
+        if (!baseStockApplied) {
+          clientApplyBaseStock(csPtr, &events[i]);
+        }
         break;
       case EVENT_PLAYER_LEAVE:
         /* Intentionally no player removal here. Removal rides the reliable
@@ -805,8 +892,11 @@ void clientApplySnapshot(ClientSim *csPtr,
       (*csPtr->sim.bs).item[i].armour = baseSnaps[i].armour;
       (*csPtr->sim.bs).item[i].shells = baseSnaps[i].shells;
       (*csPtr->sim.bs).item[i].mines = baseSnaps[i].mines;
-      /* Authoritative armour — drop any prediction for this base. */
-      csPtr->sim.basePredictedDeadTick[i] = 0;
+      /* Authoritative armour, dated by this snapshot's processed input:
+       * settles the prediction rather than blindly dropping it, so a full
+       * sync from just before our killing hit does not erase it. */
+      clientBaseArmourArrived(csPtr, (BYTE)i, baseSnaps[i].armour,
+                              hdr->lastProcessedInput);
     }
   }
   if (events != NULL) {
@@ -1307,8 +1397,9 @@ void clientApplySnapshot(ClientSim *csPtr,
 
   /* Buffer brain events and apply game-event side effects (sounds,
    * explosions, kills, captures, map changes). The client transport applies
-   * channel-delivered game events through this same entry point. */
-  clientSimApplyGameEvents(csPtr, events, eventCount, playerNum);
+   * channel-delivered game events through the public entry point; base stock
+   * is skipped here because the early pass above already applied it. */
+  clientApplyGameEventsInner(csPtr, events, eventCount, playerNum, true);
 
   bool steamStatsUpdated = false;
 

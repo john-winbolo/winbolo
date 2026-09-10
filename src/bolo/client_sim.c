@@ -1255,6 +1255,11 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
                                  &hitBaseIdx)) {
       if (hitBaseIdx < MAX_BASES && cs->sim.replayTick != 0) {
         int armour = (int)(*cs->sim.bs).item[hitBaseIdx].armour;
+        /* Remember the landing whatever the armour read: if the mirror was
+         * behind by an earlier hit still in flight from the server,
+         * clientBaseArmourArrived arms the stamp from this tick once that
+         * hit's armour lands. */
+        cs->sim.basePredictedHitTick[hitBaseIdx] = cs->sim.replayTick;
         if (armour > MIN_ARMOUR_CAPTURE &&
             armour - DAMAGE <= MIN_ARMOUR_CAPTURE) {
           cs->sim.basePredictedDeadTick[hitBaseIdx] = cs->sim.replayTick;
@@ -2356,6 +2361,11 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->predictedShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  /* Base-death prediction is stamped in input ticks, which restart with the
+   * round; a stamp carried over would compare against the wrong clock. */
+  memset(gs->basePredictedDeadTick, 0, sizeof(gs->basePredictedDeadTick));
+  memset(gs->basePredictedHitTick, 0, sizeof(gs->basePredictedHitTick));
+  gs->replayTick = 0;
   /* Rows render "---" until the first snapshot of the new round lands,
    * rather than a smoothed value carried over from the last one. */
   memset(cs->displayPing, 0, sizeof(cs->displayPing));

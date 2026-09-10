@@ -155,8 +155,20 @@ struct GameSim {
      * predicted shell is expected to drop base b to MIN_ARMOUR_CAPTURE, or 0
      * for none. tankBuildingCollision treats the square as drivable from that
      * tick on, so a tank driving into a base it is killing does not spend a
-     * round trip fighting its own prediction. Cleared when the authoritative
-     * armour for that base arrives.
+     * round trip fighting its own prediction. Authoritative armour for the
+     * base (a full sync or EVENT_BASE_STOCK) settles it through
+     * clientBaseArmourArrived: the stamp survives only while the server has
+     * not yet processed that tick and one more hit would still cross the
+     * threshold, so a stale update from before the hit leaves it alone and a
+     * prediction the server has disproved is taken back.
+     *
+     * basePredictedHitTick[b] is the input tick at which this client's latest
+     * predicted shell landed on base b, whatever the armour read at the time,
+     * or 0 for none. A landing that could not arm the stamp — the mirror
+     * armour still had an earlier hit outstanding — is armed retroactively
+     * when that earlier hit's armour lands and says one more would kill,
+     * provided the server had not yet processed the landing. Cleared once
+     * the server has.
      *
      * replayTick is the input tick currently being simulated — set on the
      * forward predicted tick and again for each tick of a reconciliation
@@ -165,6 +177,7 @@ struct GameSim {
      * one current value. 0 outside prediction. */
     uint32_t    replayTick;
     uint32_t    basePredictedDeadTick[MAX_BASES];
+    uint32_t    basePredictedHitTick[MAX_BASES];
 
     /* Identity — lets shared code know if it's running as server */
     BYTE        viewPlayer; /* which player's perspective we render from */

@@ -921,6 +921,10 @@ int run_two_clients_full_sync_independent(void);
  * being replayed, so a reconciliation replay spanning the hit sees a wall
  * before it and open ground after. */
 int run_base_death_prediction_replay_tick(void);
+/* Authoritative armour settles the stamp by the server's processed input
+ * tick: kept while still ahead and one hit from dead, dropped once disproved,
+ * and a landing that was waiting on an earlier hit's armour is armed. */
+int run_base_death_prediction_authority(void);
 
 /* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
  * inAnyViewport cover the recipient's tank screen and each owned/allied
