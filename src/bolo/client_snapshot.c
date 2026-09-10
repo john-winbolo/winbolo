@@ -57,6 +57,7 @@
 #include "screenbullet.h"
 #include "frontend.h"
 #include "../gui/lang.h"
+#include "../gui/ping_sounds.h"
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"
@@ -821,6 +822,15 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
                                           newsWireMessage, MESSAGE_NEWSWIRE,
                                           clientPingMessageId(kind), &args);
+          /* And its sound, out through the same seam the lobby sounds use:
+             the frontend owns every audio decision from here on, including
+             whether this kind has a sound of its own or plays the default
+             one. Not distance-attenuated — a ping is a message, not
+             something happening on the map — and the sender's own copy plays
+             too, as the confirmation that the ping went out. A replay does
+             not reach this code at all: the log viewer keeps its own ping
+             ring and plays nothing for it. */
+          frontEndPlaySound(csPtr, pingSoundEffect(kind));
         }
         break;
       }

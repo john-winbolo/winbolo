@@ -1641,6 +1641,8 @@ int run_ping_edge_size_from_distance(void);
 int run_ping_edge_name_anchor(void);
 int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
+int run_ping_sound_fallback(void);
+int run_ping_name_truncate(void);
 
 /* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's
  * running-game / occupied-slot / known-kind gates, the per-player rate limit
