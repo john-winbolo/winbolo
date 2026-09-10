@@ -1284,6 +1284,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         const bool showPingCol   = contentW >= needPingCol;
         const bool showStartCol  = contentW >= needStartCol;
         const bool showIconsCol  = contentW >= needIconsCol;
+        /* A bot's name / mode / difficulty pills go at the same width the
+         * start column goes: the row is shedding detail by then, and those
+         * three are detail. The BOT pill itself stays with the name tags. */
+        const bool showBotDetailTags = showNameTags && showStartCol;
 #if defined(WINBOLO_VOICE)
         /* Who is producing voice right now, read once for the whole list
          * rather than per row. */
@@ -1681,7 +1685,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                      * instead of the tags spilling into the start dropdown.
                      * Same recipe drawNameTag uses below: 70% font, 6px pad
                      * each side, 6px gap before each pill. */
-                    if (showNameTags && isBot) {
+                    if (showBotDetailTags && isBot) {
                         const char *extra[3] = { botBrainTag, botModeTag,
                                                  botDiffTag };
                         for (int t = 0; t < 3; t++) {
@@ -1772,14 +1776,14 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                      * themed colours so the run reads as one group; the
                      * difficulty is the one that changes, so it goes last
                      * where the eye lands after the name. */
-                    if (botBrainTag[0]) {
+                    if (showBotDetailTags && botBrainTag[0]) {
                         /* The bot's own colour: declared in its about.txt,
                          * else remembered / derived per bot name. */
                         ImU32 nBg, nFg, nBd;
                         lobbyBotBrainTagColors(cs, i, &nBg, &nFg, &nBd);
                         drawNameTag(botBrainTag, nBg, nFg, nBd);
                     }
-                    if (botModeTag[0]) {
+                    if (showBotDetailTags && botModeTag[0]) {
                         /* The mode, when it is not the default one. Wears
                          * the difficulty tag's colour scheme (so the run
                          * still reads as one group) in its amber set, which
@@ -1791,7 +1795,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                     g_theme->diffMediumTagText,
                                     g_theme->diffMediumTagBorder);
                     }
-                    if (botDiffTag[0]) {
+                    if (showBotDetailTags && botDiffTag[0]) {
                         /* Green / amber / red by level, the same reading the
                          * Easy./Medium./Hard. tagline token gives. A mode
                          * with more than three levels runs off the end of
