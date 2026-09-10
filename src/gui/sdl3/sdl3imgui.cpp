@@ -4883,12 +4883,18 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            Skipped entirely while Key Setup is learning a chord: the whole
            point of that press is to become the binding, and its capture hook
            sits further down the loop.
-           Given the RAW event, not the render-converted one: the rects the
-           pie is tested against come from sdl3DrawGameToWindowCoords, which
-           is window pixels. */
+           Given the CONVERTED event, not the raw one, unlike the game handler
+           at the bottom of the loop: the pie is painted on ImGui's draw list
+           and the overview hands it a rect it took from ImGui, so it has to
+           work in the renderer's coordinates throughout. The two are the same
+           until a logical presentation is set (Deck, Android desktop mode,
+           mobile tablet), where the raw event is in the scaled-up window
+           pixels outside the logical surface. Which window it came from is
+           asked of the raw copy only because the conversion leaves the
+           windowID alone either way. */
         if (!imguiKeySetupIsCapturingInGameKey() &&
             eventBelongsToMainWindow(&rawEv) &&
-            pingOverlayHandleEvent(cs, &rawEv)) {
+            pingOverlayHandleEvent(cs, &ev)) {
             continue;
         }
 

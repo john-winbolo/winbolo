@@ -1184,6 +1184,34 @@ bool sdl3DrawGameToWindowCoords(float gameX, float gameY,
   }
 }
 
+/* Game logical coordinates to the renderer's own coordinates — the space
+   ImGui draws in, and the one SDL_ConvertEventToRenderCoordinates puts an
+   event into. Two cases, and they are exclusive:
+
+     A logical presentation is set (Deck, Android desktop mode, mobile
+     tablet). The whole layout is drawn straight into that logical surface at
+     gZoomFactor, and the tablet viewport is laid out against the logical size
+     too, so game coordinates already ARE render coordinates and there is
+     nothing to do. SDL scales the surface to the window afterwards; that is
+     what makes window pixels a different space.
+
+     No logical presentation (desktop, wasm). The game went to a render target
+     that is blitted to gGameDestRect, render coordinates are the window's
+     pixels, and the window-pixel conversion is the right one. */
+bool sdl3DrawGameToRenderCoords(float gameX, float gameY,
+                                float *renderX, float *renderY) {
+  int logW = 0, logH = 0;
+  SDL_RendererLogicalPresentation logMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+  if (!gRenderer || !renderX || !renderY) return false;
+  SDL_GetRenderLogicalPresentation(gRenderer, &logW, &logH, &logMode);
+  if (logMode != SDL_LOGICAL_PRESENTATION_DISABLED && logW > 0 && logH > 0) {
+    *renderX = gameX;
+    *renderY = gameY;
+    return true;
+  }
+  return sdl3DrawGameToWindowCoords(gameX, gameY, renderX, renderY);
+}
+
 /* The 15x15 main view rectangle in game logical coordinates, plus the pixel
    size of one map square there. Desktop puts the view at the classic
    MAIN_OFFSET_* inside the chrome; tablet mode drops the chrome and centres

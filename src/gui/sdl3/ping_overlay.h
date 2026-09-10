@@ -39,6 +39,18 @@
  *  The geometry each half needs is in ping_pie.h and
  *  ping_edge.h; this file is the state machine and the
  *  drawing.
+ *
+ *  One coordinate space, everywhere: the renderer's own,
+ *  which is what ImGui draws and reports the mouse in and
+ *  what SDL_ConvertEventToRenderCoordinates turns an event
+ *  into. Every event handed to pingOverlayHandleEvent must
+ *  already be converted, every rect handed to the surface
+ *  setters must be in it, and anything read from SDL in
+ *  window coordinates (SDL_GetMouseState) is converted on
+ *  the way in. The two spaces are the same until a logical
+ *  presentation is set — Steam Deck, Android desktop mode,
+ *  mobile tablet — and mixing them there draws the pie
+ *  offset and hit-tests the map against the wrong pixels.
  *********************************************************/
 
 #ifndef WINBOLO_PING_OVERLAY_H
@@ -74,7 +86,7 @@ struct OverviewCamera;
 void pingOverlaySetClassicSurface(bool hoverable);
 
 /* The map overview filling the game window. (x, y, w, h) is where its image
- * was blitted, in the same pixels ImGui reports the mouse in; `cam` is the
+ * was blitted, in the same coordinates ImGui reports the mouse in; `cam` is the
  * camera it was drawn with (copied, so the caller may go on moving it) and
  * viewW/viewH the offscreen's size, which is what the camera's own
  * conversions are measured against. */
@@ -97,9 +109,10 @@ void pingOverlayInit(SDL_Renderer *renderer);
 /* Free the icon textures. */
 void pingOverlayShutdown(void);
 
-/* Offer one raw SDL event to the pie menu. Returns true when the menu
- * consumed it, so the caller stops treating it as a game input — a press
- * that opens the pie must not also drive a build or a shot.
+/* Offer one SDL event to the pie menu, in the renderer's coordinates (see the
+ * invariant above — the caller converts before offering). Returns true when
+ * the menu consumed it, so the caller stops treating it as a game input — a
+ * press that opens the pie must not also drive a build or a shot.
  *
  * Called from the top of the main window's event pump, before ImGui: an
  * event this takes is not offered to ImGui either, so the overview's pan
