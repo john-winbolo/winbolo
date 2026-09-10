@@ -713,6 +713,8 @@ static const UnitTestEntry s_tests[] = {
     { "ping_reaches_team_only",                  run_ping_reaches_team_only                  },
     { "ping_network",                            run_ping_network                            },
     { "lang_name_table",                         run_lang_name_table                         },
+    { "bot_init_arg_difficulty_token",           run_bot_init_arg_difficulty_token           },
+    { "bot_difficulty_names",                    run_bot_difficulty_names                    },
     { "screencalc_river_road_counts_as_water",   run_screencalc_river_road_counts_as_water   },
     { "screencalc_river_arms_of_road_centred_cross",
                                                  run_screencalc_river_arms_of_road_centred_cross },

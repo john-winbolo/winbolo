@@ -263,9 +263,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     /* ── Layout A lobby state — initial defaults ─────────────────
      * teams[] zeroed by the memset above (in_use=0 → renders with
-     * defaults). Same for botConfigs[] (difficulty=easy=0,
-     * personality=normal=0). serverLocks defaults to 0 — bolod
-     * --lock-* CLI flags set bits at server startup. */
+     * defaults). botConfigs[] is zeroed too (personality=normal=0) but
+     * difficulty is set explicitly below: zero is Easy, and a bot that
+     * says Easy on its lobby row while playing exactly like Hard —
+     * which every difficulty does today — is a lie. serverLocks
+     * defaults to 0 — bolod --lock-* CLI flags set bits at server
+     * startup. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        sim->botConfigs[count].difficulty = BOT_DIFFICULTY_HARD;
+    }
 
     /* Layout A — guarantee at least two teams always exist so the
      * lobby UI never shows fewer than 2. teams[1] gets the host

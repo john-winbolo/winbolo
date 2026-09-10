@@ -99,6 +99,15 @@ void luaBrainsSetNextInitArg(const char *arg) {
   (void)arg;
 }
 
+/* bot_manager reads the staged arg back so it can APPEND its
+ * "difficulty=<word>" token instead of clobbering a -bot-init suffix.
+ * Nothing is staged in the test binary, so this reports the empty string —
+ * the same answer the real one gives an unstaged create. */
+const char *luaBrainsPeekNextInitArg(void);
+const char *luaBrainsPeekNextInitArg(void) {
+  return "";
+}
+
 /* bot_manager.c seeds a freshly created brain's tick counter from the engine
  * tick through this, the same way it stages the init arg above. No test
  * creates a bot brain, so the symbol only has to resolve. */

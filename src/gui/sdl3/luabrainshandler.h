@@ -449,6 +449,21 @@ void luaBrainsSetAllowUnsafe(int enable);
 void luaBrainsSetNextInitArg(const char *arg);
 
 /*********************************************************
+*NAME:          luaBrainsPeekNextInitArg
+*PURPOSE:
+*  Reads back whatever luaBrainsSetNextInitArg last staged
+*  (an empty string when nothing is staged, never NULL) so a
+*  caller can APPEND to it rather than clobber it. bot_manager
+*  uses this to add the lobby's per-bot "difficulty=" token to
+*  a CLI -bot-init arg instead of replacing it.
+*
+*  Read-only: the value is still consumed (and cleared) by the
+*  next luaBrainInstanceCreate. The returned pointer is the
+*  module's own buffer, valid until the next Set/create call.
+*********************************************************/
+const char *luaBrainsPeekNextInitArg(void);
+
+/*********************************************************
 *NAME:          luaBrainsSetNextStartEngineTick
 *PURPOSE:
 *  Stages the server sim's current tick for the NEXT brain
@@ -470,11 +485,16 @@ void luaBrainsSetNextInitArg(const char *arg);
 *********************************************************/
 void luaBrainsSetNextStartEngineTick(unsigned int tick);
 
+/* Buffer size for a BRAIN_INIT_ARG string — 127 usable bytes plus the NUL.
+ * The staged buffer inside luabrainshandler.c and every BotInitSlot.arg use
+ * this one size, so a token that fits one fits the other. */
+#define BRAIN_INIT_ARG_MAX 128
+
 /* One resolved bot from a -bot-init spec. Indexed by player id. */
 typedef struct {
-  char path[512];  /* brain/init.lua path for this bot */
-  char arg[128];   /* BRAIN_INIT_ARG text, or "" if none */
-  int  covered;    /* 1 if a -bot-init entry named this id */
+  char path[512];                  /* brain/init.lua path for this bot   */
+  char arg[BRAIN_INIT_ARG_MAX];    /* BRAIN_INIT_ARG text, or "" if none */
+  int  covered;                    /* 1 if a -bot-init entry named this id */
 } BotInitSlot;
 
 /*********************************************************

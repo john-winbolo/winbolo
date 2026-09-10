@@ -64,4 +64,10 @@ bool brainListLoadMeta(const char *name,
                        char *tagline, size_t taglineSz,
                        char *desc, size_t descSz);
 
+/* Split "Name_<ver>" into base ("Name") + numeric version (1.7). No trailing
+ * _<digit> suffix → version 0 and the whole name as base. Used to sort the
+ * catalogue newest-first, and by the lobby to label a bot row "GoalHunter"
+ * rather than "GoalHunter_1.7". `base` is always NUL-terminated. */
+double brainListSplitVersion(const char *name, char *base, size_t baseSz);
+
 #endif /* BRAIN_LIST_H */

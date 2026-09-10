@@ -181,7 +181,7 @@ void luaBrainsSetRunScript(const char *path) {
 
 /* Staged per-bot init arg from -bot-init's [..] suffix. Consumed (cleared)
  * by the next luaBrainInstanceCreate, which injects BRAIN_INIT_ARG. */
-static char s_next_init_arg[128] = "";
+static char s_next_init_arg[BRAIN_INIT_ARG_MAX] = "";
 
 void luaBrainsSetNextInitArg(const char *arg) {
     if (arg && arg[0])
@@ -189,6 +189,8 @@ void luaBrainsSetNextInitArg(const char *arg) {
     else
         s_next_init_arg[0] = '\0';
 }
+
+const char *luaBrainsPeekNextInitArg(void) { return s_next_init_arg; }
 
 /* Staged engine tick for the NEXT brain instance created. Injected as the
  * BRAIN_START_ENGINE_TICK Lua global so a brain born mid-game (a Survival

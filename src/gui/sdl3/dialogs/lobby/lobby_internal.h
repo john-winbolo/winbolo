@@ -367,6 +367,13 @@ void lobbySendReadyToggle(ClientSim *cs, bool ready);
 const LobbyBrainMeta *lobbyBrainMetaFor(const char *name);
 void lobbyDrawTagline(const char *tag, float wrapPosX);
 void lobbyGearTooltip(ClientSim *cs, int slot, float s);
+/* Per-difficulty wording (lang ids) and the bot's brain name without its
+ * version suffix. Difficulty is a BOT_DIFFICULTY_* value; anything out of
+ * range reads as Hard. */
+unsigned int lobbyBotDifficultyLabelId(uint8_t difficulty);
+unsigned int lobbyBotDifficultyTaglineId(uint8_t difficulty);
+unsigned int lobbyBotDifficultyDescId(uint8_t difficulty);
+void lobbyBotBrainBaseName(ClientSim *cs, int slot, char *out, size_t outSz);
 bool lobbyAddBotPending(ClientSim *cs);
 void lobbySendAddBotDebounced(ClientSim *cs,
                               int namingPool, uint8_t teamNumber);

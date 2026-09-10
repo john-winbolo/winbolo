@@ -683,11 +683,21 @@ bool gameFrontPreferencesExist(void);
 bool gameFrontOnboardingComplete(void);
 void gameFrontSetOnboardingComplete(void);
 
-/* Player's explicitly-chosen bot brain (lobby wrench dropdown). Persisted as
- * the difficulty preference; overrides the single-player skill guess. Empty
- * string until the player first chooses one. */
-void gameFrontSetChosenBotBrain(const char *name);
-void gameFrontGetChosenBotBrain(char *out, size_t outLen);
+/* Player's explicitly-chosen bot difficulty (lobby wrench dropdown), a
+ * BOT_DIFFICULTY_* value persisted by name under BOT / "Chosen Difficulty".
+ * It overrides the single-player skill guess from then on. The getter
+ * returns false (leaving *out alone) until the player first chooses one; it
+ * also migrates the older BOT / "Chosen Brain" pref, where the one gentle
+ * brain meant Easy and any other meant Hard. */
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty);
+bool gameFrontGetChosenBotDifficulty(uint8_t *out);
+
+/* The difficulty a single-player bot should be created with: the player's
+ * own chosen difficulty when they have picked one, else the skill guess —
+ * Hard when signed in to WinBolo.net with more than 5 games on record, Easy
+ * for everybody else. One place so the auto-seeded bots and the lobby's
+ * Add Bot agree. Returns a BOT_DIFFICULTY_* value. */
+uint8_t gameFrontSpBotDifficulty(void);
 
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken

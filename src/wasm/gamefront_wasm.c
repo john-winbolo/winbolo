@@ -897,8 +897,15 @@ bool gameFrontHasLocalServer(void)            { return FALSE; }
  * returns (NULL for a netUdp lobby — the player is not the host). */
 ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
 void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
-void gameFrontGetChosenBotBrain(char *out, size_t outLen) { if (out && outLen) out[0] = '\0'; }
-void gameFrontSetChosenBotBrain(const char *name)    { (void)name; }
+/* No prefs file in the browser, so the player never has a stored bot
+ * difficulty: the getter always reports "not chosen" and the lobby /
+ * skill-guess callers fall back to their own default. */
+bool gameFrontGetChosenBotDifficulty(uint8_t *out) { (void)out; return false; }
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty) { (void)difficulty; }
+/* No WinBolo.net stats plumbing here either, so the skill guess has nothing
+ * to go on: the browser build gets the same Hard every difficulty currently
+ * plays like. */
+uint8_t gameFrontSpBotDifficulty(void) { return BOT_DIFFICULTY_HARD; }
 
 /* Client-hosting write-through setters. The desktop build persists each key
  * into [HOSTING] as it changes; there is no prefs file in the browser, so

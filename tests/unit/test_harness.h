@@ -1574,6 +1574,15 @@ int run_ping_network(void);
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
 
+/* Bot difficulty plumbing (test_bot_init_arg.c): the "difficulty=<word>"
+ * BRAIN_INIT_ARG token is appended after any existing tokens with a ';',
+ * takes an exact fit, and is dropped WHOLE (buffer untouched) when it would
+ * not fit — a truncated token would silently run the bot at a difficulty
+ * nobody asked for. Plus the difficulty <-> word round trip the CLI's
+ * -difficulty flag and the "Chosen Difficulty" preference share. */
+int run_bot_init_arg_difficulty_token(void);
+int run_bot_difficulty_names(void);
+
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */

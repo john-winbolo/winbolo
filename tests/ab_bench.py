@@ -151,9 +151,12 @@ def bot_range(lo, hi):
 
 
 # Per-side brain override (2026-09-07): --brain-a / --brain-b let one side run a
-# different brain TREE (e.g. brains/GoalHunter_1.6/opt/init.lua vs 1.7) -- the
-# -bot-init range syntax already carries a brain path per range. None = the
-# shared `brain` (the pre-existing one-tree behaviour).
+# different brain TREE (e.g. a frozen copy of the tree at brains/GH17_keel/opt/
+# init.lua vs the live brains/GoalHunter_1.7) -- the -bot-init range syntax
+# already carries a brain path per range. None = the shared `brain` (the
+# pre-existing one-tree behaviour), which is the normal case now that only one
+# brain tree ships: the frozen baseline is `--a "preset=keel"` on that tree,
+# not a second directory.
 BRAIN_A = None
 BRAIN_B = None
 

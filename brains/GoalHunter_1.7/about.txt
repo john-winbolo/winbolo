@@ -1,2 +1,2 @@
-Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together.
-This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent.
+GoalHunter. Captures pillboxes and bases, coordinates with allied bots, and picks its targets from what it has seen of the map.
+This bot hunts enemy pillboxes and bases, coordinates with its allied bots to strike key targets together, keeps its own pillboxes alive, and refuels when it runs low. How hard it plays is a per-bot setting made in the lobby, not a property of the brain: Easy, Medium and Hard all run this same code.

@@ -36,7 +36,7 @@ by the first `LOG_EVENT_SNAPSHOT` record.
 | Map name | 1 + N | Length byte + UTF-8 name                                        |
 | Game type | 1 | From `gameTypeGet()`                                            |
 | Allow hidden mines | 1 | Boolean                                                         |
-| AI type | 1 | AI difficulty                                                   |
+| AI type | 1 | `aiType` — whether brains are allowed, not a bot difficulty     |
 | Password | 1 | Boolean (game is password-protected)                            |
 | Max players | 1 | 1–16                                                            |
 | Version major / minor / revision | 3 | `BOLO_VERSION_*`                                                |
