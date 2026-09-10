@@ -21,8 +21,13 @@
  *   (19) a map change releases the reservations the new map puts
  *        off-side and keeps the rest;
  *   (20) a non-host may not self-claim an off-side start, the host may
- *        hand one over, and a swap that leaves the displaced holder
- *        off-side re-picks the holder.
+ *        hand one over, and a host claim of a held start either shares it
+ *        (LOBBY_SHARED_STARTS on) or displaces the holder, re-picking it
+ *        when the start it would inherit is off-side (the flag off).
+ *
+ * Tests (20) and (21) end on a host claim of a start someone else holds,
+ * so both assert against lobbySharedStartsEnabled(): with sharing on
+ * nobody is displaced and there is no re-pick to make.
  *
  * Layouts are injected into the lobby sim's start list the way
  * test_starts_team_side.c does (each start square forced to deep sea);
@@ -49,6 +54,7 @@
 #include "client_sim_control.h"    /* clientSimApplyControl */
 #include "control_event.h"         /* ControlEvent, CTRL_LOBBY_SLOT */
 #include "everard_map.h"
+#include "lobby_shared_starts.h"   /* lobbySharedStartsEnabled */
 #include "starts.h"                /* startsGetNumStarts, startsGetMaxs */
 #include "start_sides.h"           /* START_SIDE_*, startSideMaskFor */
 #include "server_sim.h"
@@ -552,19 +558,34 @@ int run_lobby_non_host_off_side_claim_rejected(void) {
     UT_ASSERT(apply_claim(sim, 0, 1, kSouth) == CMD_OK);
     UT_ASSERT(start_of(sim, 1) == kSouth);
 
-    /* Host swap: the host takes the south start, the displaced holder
-     * inherits the host's north start and keeps it. */
+    /* The host takes the south start the non-host holds. Sharing on, the
+     * two simply share it and nothing else moves; sharing off, the
+     * displaced holder inherits the host's north start and keeps it. */
     UT_ASSERT(apply_claim(sim, 0, 0, kSouth) == CMD_OK);
     UT_ASSERT(start_of(sim, 0) == kSouth);
-    UT_ASSERT_MSG(start_of(sim, 1) == n0,
-                  "displaced holder should keep inherited north start %u, holds %u",
-                  (unsigned)n0, (unsigned)start_of(sim, 1));
+    if (lobbySharedStartsEnabled()) {
+        UT_ASSERT_MSG(start_of(sim, 1) == kSouth,
+                      "holder should keep the shared south start %u, holds %u",
+                      (unsigned)kSouth, (unsigned)start_of(sim, 1));
+    } else {
+        UT_ASSERT_MSG(start_of(sim, 1) == n0,
+                      "displaced holder should keep inherited north start %u, holds %u",
+                      (unsigned)n0, (unsigned)start_of(sim, 1));
+    }
 
-    /* Host swap the other way: the displaced holder would inherit the
-     * south start, so it is re-picked onto a free north start instead. */
+    /* The host moves back to its old north start. Sharing on there is
+     * still no displacement, so the non-host stays on the south start the
+     * host put it on — off its team's side, but the host's doing, which
+     * the side rules allow. Sharing off, the displaced holder would
+     * inherit the south start, so it is re-picked onto a free north
+     * start instead. */
     UT_ASSERT(apply_claim(sim, 0, 0, n0) == CMD_OK);
     UT_ASSERT(start_of(sim, 0) == n0);
-    {
+    if (lobbySharedStartsEnabled()) {
+        UT_ASSERT_MSG(start_of(sim, 1) == kSouth,
+                      "holder should be left alone on south start %u, holds %u",
+                      (unsigned)kSouth, (unsigned)start_of(sim, 1));
+    } else {
         BYTE r = start_of(sim, 1);
         UT_ASSERT_MSG(r != kSouth,
                       "displaced holder was left on south start %u", (unsigned)kSouth);
@@ -630,12 +651,18 @@ int run_lobby_any_team_claim_kept_off_chosen_side(void) {
     UT_ASSERT(apply_claim(sim, 0, 1, freeNorth) == CMD_OK);
     UT_ASSERT(start_of(sim, 1) == freeNorth);
 
-    /* Host swap: the host takes that north start back; the displaced
-     * no-side holder would inherit the host's other north start, which
-     * its rules reject, so it is re-picked onto a south start instead. */
+    /* The host takes that north start back. Sharing on, nobody is
+     * displaced: the no-side slot keeps the north start the host handed
+     * it and the two share it. Sharing off, the displaced no-side holder
+     * would inherit the host's other north start, which its rules reject,
+     * so it is re-picked onto a south start instead. */
     UT_ASSERT(apply_claim(sim, 0, 0, freeNorth) == CMD_OK);
     UT_ASSERT(start_of(sim, 0) == freeNorth);
-    {
+    if (lobbySharedStartsEnabled()) {
+        UT_ASSERT_MSG(start_of(sim, 1) == freeNorth,
+                      "no-side holder should keep the shared north start %u, holds %u",
+                      (unsigned)freeNorth, (unsigned)start_of(sim, 1));
+    } else {
         BYTE r = start_of(sim, 1);
         UT_ASSERT_MSG(r != n0,
                       "displaced no-side holder was left on north start %u", (unsigned)n0);
