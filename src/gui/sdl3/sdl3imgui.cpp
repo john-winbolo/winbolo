@@ -5212,10 +5212,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Mouse half of the Key Setup modal's smart-ping chord capture: a
          * ping binding can be a mouse button, and the scancode hook below
          * cannot carry one. Before that hook so the two arms read in the
-         * order the player uses them. */
+         * order the player uses them.
+         *
+         * The hook refuses a press made on an ImGui widget, and that press
+         * then falls through — it has already been handed to ImGui above, so
+         * the Cancel or Change button under it does its job. A press the hook
+         * does take was over the map or over nothing, where ImGui had no item
+         * to give it to, and taking it also disarms the row, so the matching
+         * release is not intercepted either: ImGui sees the pair. Whichever
+         * way it goes, the capture-flag block below drops the click before the
+         * game — the modal is up, so it wants the mouse. */
         if (imguiKeySetupIsCapturingInGamePing() &&
-            ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-            imguiKeySetupHandleInGamePingMouse((int)ev.button.button);
+            ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            imguiKeySetupHandleInGamePingMouse((int)ev.button.button)) {
             continue;
         }
 
