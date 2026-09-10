@@ -650,6 +650,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_compress_capacity_refuses",           run_map_compress_capacity_refuses           },
     { "map_compress_incompressible",           run_map_compress_incompressible           },
     { "map_compress_roundtrip_mutated",          run_map_compress_roundtrip_mutated          },
+    { "map_compress_rejects_null_handles",       run_map_compress_rejects_null_handles       },
     { "map_checksum_ignores_mines",              run_map_checksum_ignores_mines              },
     { "map_resync_base_crater_converges",        run_map_resync_base_crater_converges        },
     { "map_shadow_tracks_real",                  run_map_shadow_tracks_real                  },
