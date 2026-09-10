@@ -123,13 +123,19 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
  *  scale     - multiplier on the rendered glyph size; 1
  *              draws the face at the size it was opened
  *  alpha     - 0..1 fade, applied to the name and its shadow
+ *  grey      - 0..255 grey the text itself is drawn at. A
+ *              tank label is 200; the ping marker asks for
+ *              PING_NAME_GREY, a little brighter, so a name
+ *              on the ground is not taken for a tank's. The
+ *              shadow is black whatever this is.
  *RETURNS:
  *  true if the name was drawn; false when there is nothing
  *  to draw (no font, empty name, bad slot, alpha 0).
  *********************************************************/
 bool tankLabelDrawNameCentred(TankLabelCache *c, SDL_Renderer *r,
                               TTF_Font *font, const char *name, BYTE playerNum,
-                              float cx, float y, float scale, float alpha);
+                              float cx, float y, float scale, float alpha,
+                              Uint8 grey);
 
 /*********************************************************
  *NAME:          tankLabelCacheFlush

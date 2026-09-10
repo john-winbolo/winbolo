@@ -46,6 +46,7 @@
 
 #include "ping_overlay.h"
 
+#include <float.h>   /* FLT_MAX — "no wrap" for ImFont::CalcTextSizeA */
 #include <math.h>
 #include <string.h>
 
@@ -919,8 +920,10 @@ void pingOverlayDraw(struct ClientSim *cs) {
                point of the indicator is knowing who is on their way without
                having to find them on the map first. In the overlay's own font
                rather than the tank labels' TTF face, which this ImGui draw
-               list has no way to render, but over the same black shadow at
-               the same 200-grey, so the two read as one thing.
+               list has no way to render, but over the same black shadow and
+               at the same PING_NAME_SCALE of the text around it and the same
+               PING_NAME_GREY the marker's own name uses, so a ping name is
+               one thing wherever it is drawn.
 
                Unlike the bar it does not shrink with the distance: a name too
                small to read says nothing at all. */
@@ -934,7 +937,14 @@ void pingOverlayDraw(struct ClientSim *cs) {
                                                   PING_NAME_ELLIPSIS,
                                                   shown, sizeof(shown));
                 if (who[0] != '\0') {
-                    ImVec2          sz = ImGui::CalcTextSize(who);
+                    /* Measured at the size it is drawn at, not at the font's
+                       own: the anchor box centres the text on the icon and
+                       clamps it into the view off these two numbers, so a
+                       width from the wrong size would put it off centre and
+                       let it hang out of the rectangle at a corner. */
+                    ImFont *fnt  = ImGui::GetFont();
+                    float   fpx  = ImGui::GetFontSize() * PING_NAME_SCALE;
+                    ImVec2  sz   = fnt->CalcTextSizeA(fpx, FLT_MAX, 0.0f, who);
                     PingEdgeNameBox box;
                     int   ia = (int)(alpha * 255.0f + 0.5f);
                     float sh = vr.scale;
@@ -942,10 +952,11 @@ void pingOverlayDraw(struct ClientSim *cs) {
                     if (pingEdgeNameAnchor(m.side, ix, iy, iconPx, gap,
                                            sz.x, sz.y, vr.x, vr.y, vr.w, vr.h,
                                            &box)) {
-                        dl->AddText(ImVec2(box.x + sh, box.y + sh),
+                        dl->AddText(fnt, fpx, ImVec2(box.x + sh, box.y + sh),
                                     IM_COL32(0, 0, 0, ia), who);
-                        dl->AddText(ImVec2(box.x, box.y),
-                                    IM_COL32(200, 200, 200, ia), who);
+                        dl->AddText(fnt, fpx, ImVec2(box.x, box.y),
+                                    IM_COL32(PING_NAME_GREY, PING_NAME_GREY,
+                                             PING_NAME_GREY, ia), who);
                     }
                 }
             }
