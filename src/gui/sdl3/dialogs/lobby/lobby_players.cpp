@@ -1755,10 +1755,11 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                      * difficulty is the one that changes, so it goes last
                      * where the eye lands after the name. */
                     if (botBrainTag[0]) {
-                        drawNameTag(botBrainTag,
-                                    g_theme->brainTagBg,
-                                    g_theme->brainTagText,
-                                    g_theme->brainTagBorder);
+                        /* The bot's own colour: declared in its about.txt,
+                         * else remembered / derived per bot name. */
+                        ImU32 nBg, nFg, nBd;
+                        lobbyBotBrainTagColors(cs, i, &nBg, &nFg, &nBd);
+                        drawNameTag(botBrainTag, nBg, nFg, nBd);
                     }
                     if (botDiffTag[0]) {
                         /* Green / amber / red by level, the same reading the

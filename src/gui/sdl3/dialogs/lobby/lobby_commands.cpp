@@ -36,6 +36,7 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "../../wb_theme.h"  /* g_theme — the BOT pill's colours, the name tag's fallback */
 #include "lobby_internal.h"
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, ClientLobbySlot, aiType */
@@ -179,7 +180,61 @@ const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
     SDL_strlcpy(m->name, name, sizeof(m->name));
     brainListLoadMeta(name, m->tagline, sizeof(m->tagline),
                       m->desc, sizeof(m->desc));
+    /* The bot's tag colour, decided once per catalogue entry:
+     *   1. the brain's own "color: #RRGGBB" line in about.txt (wins, and is
+     *      the same on every machine that has the brain files);
+     *   2. else the colour this machine remembered for the bot's base name
+     *      ("GoalHunter", version dropped, so a new version keeps it);
+     *   3. else one derived from that name — a hue hashed from the letters
+     *      at a fixed, readable saturation and brightness — and written to
+     *      the prefs so it is remembered from then on. */
+    char base[BRAIN_LIST_NAME_LEN];
+    brainListSplitVersion(name, base, sizeof(base));
+    uint32_t rgb = 0;
+    if (!brainListLoadColor(name, &rgb) && !gameFrontGetBotTagColor(base, &rgb)) {
+        uint32_t h = 2166136261u;                     /* FNV-1a over the name */
+        for (const char *c = base; *c; c++) {
+            h ^= (uint32_t)SDL_tolower((unsigned char)*c);
+            h *= 16777619u;
+        }
+        float hue = (float)(h % 360u);                /* 0..359 degrees */
+        float sat = 0.55f, val = 0.85f;
+        float r, g, b;
+        ImGui::ColorConvertHSVtoRGB(hue / 360.0f, sat, val, r, g, b);
+        rgb = ((uint32_t)(r * 255.0f + 0.5f) << 16) |
+              ((uint32_t)(g * 255.0f + 0.5f) << 8)  |
+               (uint32_t)(b * 255.0f + 0.5f);
+        gameFrontSetBotTagColor(base, rgb);
+    }
+    m->color = rgb;
     return m;
+}
+
+void lobbyBotBrainTagColors(ClientSim *cs, int slot,
+                            ImU32 *bg, ImU32 *fg, ImU32 *border) {
+    /* Fall back to the BOT pill's colours when the catalogue has nothing. */
+    ImU32 oBg = g_theme->botTagBg, oFg = g_theme->botTagText, oBd = g_theme->botTagBorder;
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    if (bl && bl->count > 0) {
+        uint8_t cur = clientSimGetLobbyBotBrain(cs, (BYTE)slot);
+        if (cur == 0xFF || cur >= bl->count) cur = 0;
+        const LobbyBrainMeta *m = lobbyBrainMetaFor(bl->entries[cur].name);
+        if (m) {
+            /* Border is the colour itself, dimmed a little; the text is the
+             * same colour lifted toward white so it reads on the dark pill;
+             * the pill background matches the other row badges. */
+            int r = (int)((m->color >> 16) & 0xFF);
+            int g = (int)((m->color >> 8) & 0xFF);
+            int b = (int)(m->color & 0xFF);
+            oBd = IM_COL32(r * 72 / 100, g * 72 / 100, b * 72 / 100, 255);
+            oFg = IM_COL32(r + (255 - r) * 45 / 100,
+                           g + (255 - g) * 45 / 100,
+                           b + (255 - b) * 45 / 100, 255);
+        }
+    }
+    if (bg) *bg = oBg;
+    if (fg) *fg = oFg;
+    if (border) *border = oBd;
 }
 
 /* ── Bot difficulty presentation ─────────────────────────────────────

@@ -65,9 +65,6 @@ static const WbTheme s_themeDark = {
     /* botTagBg      */ IM_COL32( 73,  76,  72, 255),  /* match HOST bg */
     /* botTagBorder  */ IM_COL32( 95, 110, 125, 255),  /* cool slate    */
     /* botTagText    */ IM_COL32(220, 230, 245, 255),  /* near-white    */
-    /* brainTagBg     */ IM_COL32( 73,  76,  72, 255),  /* match HOST/BOT bg */
-    /* brainTagBorder */ IM_COL32(120, 100, 165, 255),  /* muted violet  */
-    /* brainTagText   */ IM_COL32(205, 185, 240, 255),  /* pale lavender */
     /* diffEasyTagBg      */ IM_COL32( 73,  76,  72, 255),
     /* diffEasyTagBorder  */ IM_COL32( 70, 140,  80, 255),  /* Easy. green  */
     /* diffEasyTagText    */ IM_COL32(140, 220, 150, 255),

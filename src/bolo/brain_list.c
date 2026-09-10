@@ -274,6 +274,61 @@ static size_t brainListReadAbout(const char *parent, const char *name,
     return n;
 }
 
+/* Read "<name>/about.txt" from the first brains parent that has it (working
+ * directory brains/ and Brains/, then the ones beside the executable). */
+static size_t brainListReadAboutAny(const char *name, char *blob, size_t blobSz) {
+    size_t got = brainListReadAbout("brains", name, blob, blobSz);
+    if (!got) got = brainListReadAbout("Brains", name, blob, blobSz);
+    if (!got) {
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            char p[1024];
+            SDL_snprintf(p, sizeof(p), "%sbrains", base);
+            got = brainListReadAbout(p, name, blob, blobSz);
+            if (!got) {
+                SDL_snprintf(p, sizeof(p), "%sBrains", base);
+                got = brainListReadAbout(p, name, blob, blobSz);
+            }
+        }
+    }
+    return got;
+}
+
+/* Is this line of about.txt a "color:" key line? Points *value past the
+ * colon and any spaces when it is. Case-insensitive, "colour:" accepted. */
+static bool brainListColorLine(const char *line, const char **value) {
+    const char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    size_t n = 0;
+    if (SDL_strncasecmp(p, "colour", 6) == 0) n = 6;
+    else if (SDL_strncasecmp(p, "color", 5) == 0) n = 5;
+    if (!n) return false;
+    p += n;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != ':' && *p != '=') return false;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (value) *value = p;
+    return true;
+}
+
+/* Drop the "color:" key lines from an about.txt blob in place, so the
+ * tagline/description split below never shows one to the player. */
+static void brainListStripColorLines(char *blob) {
+    char *src = blob, *dst = blob;
+    while (*src) {
+        char *eol = src;
+        while (*eol && *eol != '\n') eol++;
+        size_t len = (size_t)(eol - src) + (*eol ? 1u : 0u);
+        if (!brainListColorLine(src, NULL)) {
+            if (dst != src) memmove(dst, src, len);
+            dst += len;
+        }
+        src += len;
+    }
+    *dst = '\0';
+}
+
 bool brainListLoadMeta(const char *name,
                        char *tagline, size_t taglineSz,
                        char *desc, size_t descSz) {
@@ -282,23 +337,41 @@ bool brainListLoadMeta(const char *name,
     if (!name || !name[0]) return false;
 
     char blob[2048];
-    size_t got = brainListReadAbout("brains", name, blob, sizeof(blob));
-    if (!got) got = brainListReadAbout("Brains", name, blob, sizeof(blob));
-    if (!got) {
-        const char *base = SDL_GetBasePath();
-        if (base) {
-            char p[1024];
-            SDL_snprintf(p, sizeof(p), "%sbrains", base);
-            got = brainListReadAbout(p, name, blob, sizeof(blob));
-            if (!got) {
-                SDL_snprintf(p, sizeof(p), "%sBrains", base);
-                got = brainListReadAbout(p, name, blob, sizeof(blob));
-            }
-        }
-    }
-    if (!got) return false;
+    if (!brainListReadAboutAny(name, blob, sizeof(blob))) return false;
+    brainListStripColorLines(blob);
     brainListSplitMeta(blob, tagline, taglineSz, desc, descSz);
     return true;
+}
+
+bool brainListLoadColor(const char *name, uint32_t *rgb) {
+    if (!name || !name[0] || !rgb) return false;
+    char blob[2048];
+    if (!brainListReadAboutAny(name, blob, sizeof(blob))) return false;
+    const char *line = blob;
+    while (*line) {
+        const char *eol = line;
+        while (*eol && *eol != '\n' && *eol != '\r') eol++;
+        const char *val = NULL;
+        if (brainListColorLine(line, &val) && val < eol) {
+            /* "#RRGGBB" or "RRGGBB"; anything else is ignored so a typo in a
+             * brain's about.txt falls back to the derived colour. */
+            if (*val == '#') val++;
+            if (eol - val >= 6) {
+                char hex[7];
+                memcpy(hex, val, 6);
+                hex[6] = '\0';
+                char *end = NULL;
+                unsigned long v = strtoul(hex, &end, 16);
+                if (end == hex + 6) {
+                    *rgb = (uint32_t)v & 0xFFFFFFu;
+                    return true;
+                }
+            }
+        }
+        while (*eol == '\n' || *eol == '\r') eol++;
+        line = eol;
+    }
+    return false;
 }
 
 void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {

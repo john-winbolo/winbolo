@@ -64,6 +64,13 @@ bool brainListLoadMeta(const char *name,
                        char *tagline, size_t taglineSz,
                        char *desc, size_t descSz);
 
+/* A brain's own tag colour, from a "color: #RRGGBB" line anywhere in its
+ * about.txt (the line is kept out of the tagline/description). The lobby
+ * paints the bot's name tag with it; a brain that declares none gets a
+ * colour derived from its name instead. Returns true iff a valid colour was
+ * found; *rgb is 0xRRGGBB. */
+bool brainListLoadColor(const char *name, uint32_t *rgb);
+
 /* Split "Name_<ver>" into base ("Name") + numeric version (1.7). No trailing
  * _<digit> suffix → version 0 and the whole name as base. Used to sort the
  * catalogue newest-first, and by the lobby to label a bot row "GoalHunter"

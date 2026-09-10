@@ -692,6 +692,13 @@ void gameFrontSetOnboardingComplete(void);
 void gameFrontSetChosenBotDifficulty(uint8_t difficulty);
 bool gameFrontGetChosenBotDifficulty(uint8_t *out);
 
+/* The colour the lobby paints a bot's name tag with, remembered per bot name
+ * ("GoalHunter") in the prefs as "#RRGGBB" so a bot that declares no colour
+ * of its own still looks the same every launch. Get returns false when none
+ * is remembered yet. */
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb);
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb);
+
 /* The difficulty a single-player bot should be created with: the player's
  * own chosen difficulty when they have picked one, else the skill guess —
  * Hard when signed in to WinBolo.net with more than 5 games on record, Easy
