@@ -44,6 +44,9 @@
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/positions.h"
 #include "../gui/tiles.h"
+#include "../gui/ping_kinds.h"
+#include "../gui/sdl3/ping_icons.h"   /* pingIconsInit -- the replay shares the game's icons */
+#include "../gui/sdl3/ping_marker.h"  /* pingMarkerDraw */
 
 #include "game_view.h"
 
@@ -55,6 +58,10 @@
 
 /* --- Logviewer-side accessors. Declared extern (no logviewer header
  *     include) so this TU stays on bolo types. --- */
+extern bool lv_screenGetPing(int index, unsigned char *kind, uint16_t *worldX,
+                             uint16_t *worldY, uint32_t *ageMs);
+extern int  lv_screenGetPingCapacity(void);
+
 extern void *lv_gameViewGetScreen(void);
 extern void *lv_gameViewGetMineView(void);
 extern void *lv_gameViewGetBases(void);
@@ -631,6 +638,49 @@ void lv_drawGameViewTeardown(void) {
   s_displayZoom = 0;
 }
 
+/* --- Smart-ping markers ------------------------------------------
+ * The replay's half of the live game's ping pass: the same square, icon and
+ * pulse (ping_marker.c) over the same ground for the same five seconds,
+ * drawn where the live frame draws them -- after the terrain and before the
+ * sprites, so the tanks, shells and builders a ping points at stay on top.
+ *
+ * No edge markers here. Those point from the viewer's own tank towards a ping
+ * they cannot see, and a replay's camera is not a player: whose tank the
+ * arrow would start from is not a question the recording answers. */
+static void gv_drawPings(SDL_Renderer *renderer,
+                         int originX, int originY, int tileW, int tileH,
+                         int edgeX, int edgeY) {
+  int cap = lv_screenGetPingCapacity();
+  int i;
+
+  pingIconsInit(renderer);
+
+  for (i = 0; i < cap; i++) {
+    unsigned char kind = 0;
+    uint16_t wx = 0, wy = 0;
+    uint32_t ageMs = 0;
+    float alpha, cx, cy;
+
+    if (!lv_screenGetPing(i, &kind, &wx, &wy, &ageMs)) continue;
+    alpha = pingDisplayAlpha((int)ageMs);
+    if (alpha <= 0.0f) continue;
+
+    /* WORLD units are 256 to a map square; the marker names the square the
+     * ping landed in, so anchor on that square's centre. The view shows
+     * squares xOffset+1 .. xOffset+MAIN_SCREEN_SIZE_X and pans sub-square by
+     * edgeX/edgeY, the same arithmetic mapViewDrawTanks uses for a sprite. */
+    cx = (float)originX
+       + ((float)(wx >> 8) + 0.5f - (float)(lv_screenGetXOffset() + 1)) * (float)tileW
+       - (float)edgeX;
+    cy = (float)originY
+       + ((float)(wy >> 8) + 0.5f - (float)(lv_screenGetYOffset() + 1)) * (float)tileH
+       - (float)edgeY;
+
+    pingMarkerDraw(renderer, kind, cx, cy, (float)tileW, (float)tileH,
+                   ageMs, alpha);
+  }
+}
+
 /* --- Frame assembly (mirrors sdl3DrawMainScreen step-for-step) ---- */
 
 void lv_drawGameViewFrame(void *screenView, void *mineView,
@@ -700,6 +750,12 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   mapViewDrawTiles(&ctx, view, mines,
                    originX, originY, tileW, tileH,
                    edgeX, edgeY);
+
+  /* Smart pings: on the ground, under everything that moves. Inside the
+   * step-3 clip so a marker near the edge of the view is trimmed at the
+   * border rather than painting over the chrome. A replay has no team, so
+   * every ping in the recording is shown. */
+  gv_drawPings(renderer, originX, originY, tileW, tileH, edgeX, edgeY);
 
   /* Steps 4-5 — sprites. lv_screenUpdate already populated tks/shells/
    * lgmList just before calling us via lv_drawMainScreen. */

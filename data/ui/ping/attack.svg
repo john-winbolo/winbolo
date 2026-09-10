@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Smart ping: Attack. A target — crossed swords carry too much detail to
+     survive at map-square size, and the game already trains the eye on a
+     reticle. Ring, four ticks and a centre dot, all as filled shapes with
+     the ring's inside cut out by fill-rule="evenodd". Authored solid black
+     and used as an alpha mask; see standard.svg. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path fill-rule="evenodd" d="M12 2.2 A9.8 9.8 0 1 1 12 21.8 A9.8 9.8 0 1 1 12 2.2 Z M12 4.6 A7.4 7.4 0 1 0 12 19.4 A7.4 7.4 0 1 0 12 4.6 Z M10.9 0 L13.1 0 L13.1 5.2 L10.9 5.2 Z M10.9 18.8 L13.1 18.8 L13.1 24 L10.9 24 Z M0 10.9 L5.2 10.9 L5.2 13.1 L0 13.1 Z M18.8 10.9 L24 10.9 L24 13.1 L18.8 13.1 Z M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5 Z"/>
+</svg>

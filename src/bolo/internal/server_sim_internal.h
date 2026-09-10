@@ -406,6 +406,41 @@ struct ServerSim {
     uint8_t      viewKind[MAX_TANKS];     /* 0=tank, 1=pill, 2=base, 3=ally */
     uint8_t      viewTarget[MAX_TANKS];
 
+    /* Smart-ping rate limit (CMD_PING). One ping per PING_RATE_MIN_GAP_TICKS
+     * stops a held key machine-gunning the team's view; the burst rule on top
+     * of it caps a determined spammer at PING_RATE_BURST inside
+     * PING_RATE_WINDOW_TICKS. Ticks are 20ms, so this reads as 300ms apart and
+     * 6 per 5 seconds. */
+#define PING_RATE_MIN_GAP_TICKS   15
+#define PING_RATE_BURST            6
+#define PING_RATE_WINDOW_TICKS   250
+
+    /* Smart-ping rate limit, per slot. Both hold the accepted tick PLUS ONE,
+     * so 0 means "no ping yet": tick 0 is a real tick — the first one of a
+     * round — and storing it raw would read as never having pinged and let
+     * the second ping of the game through on the same tick as the first.
+     * pingBurstTicks is a ring of the last PING_RATE_BURST accepted ticks,
+     * oldest overwritten first, so the burst rule is "the
+     * PING_RATE_BURST-th ping back must be older than PING_RATE_WINDOW_TICKS".
+     * Ticks, not wall clock: a paused or slow server slows the allowance with
+     * everything else. */
+    uint32_t     pingLastTick[MAX_TANKS];
+    uint32_t     pingBurstTicks[MAX_TANKS][PING_RATE_BURST];
+    uint8_t      pingBurstIdx[MAX_TANKS];
+
+    /* Pings accepted since the last frame's event drain, one slot per sender
+     * (a sender is rate-limited to at most one accepted ping per frame). This
+     * is the queue for an accepted ping: the CMD_PING arm records it here and
+     * nowhere else, because commands run during packet receive — before
+     * serverSimTick clears the per-frame event buffer, which would wipe
+     * anything buffered at dispatch time before the post-tick UDP drain could
+     * send it. serverSimFlushPendingPings buffers these into the freshly-
+     * cleared buffer at the top of the running tick, and is the single point at
+     * which an EVENT_PING enters sim->events — so every recipient, wire or
+     * in-process, sees the ping exactly once. */
+    GameEvent    pendingPing[MAX_TANKS];
+    bool         hasPendingPing[MAX_TANKS];
+
     /* Last map square the builder saw this player's tank at; keeps a dead
      * or tankless player's view anchored instead of falling back to the
      * whole map. */
@@ -692,6 +727,37 @@ bool serverSimPillPosVisible(ServerSim *sim, BYTE slot, BYTE pillIdx,
  * bit clear. */
 void serverSimFogPillUpdateEvent(ServerSim *sim, BYTE slot, GameEvent *ev,
                                  const ViewportRect *vps, int numVps);
+
+/* Does an EVENT_PING from `sender` reach `recipient`? A ping is a team
+ * signal: the sender always sees its own, and so does anyone on the sender's
+ * lobby team or in an alliance with it. Team 0 is "unassigned", not a team, so
+ * a teamless sender pings only for itself. The single source of truth for both
+ * copies of the delivery filter — the per-client snapshot build in
+ * server_sim_snapshot.c and the UDP drain in transport_udp_server.c. */
+bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender);
+
+/* Buffer any pings accepted since the last drain (recorded in pendingPing) into
+ * the per-frame event buffer, then clear their pending flags. Called at the top
+ * of a running serverSimTick, right after the event buffer is cleared: the
+ * CMD_PING arm runs during packet receive, before that clear, so it records the
+ * ping instead of buffering it and this is the single point at which an
+ * EVENT_PING enters sim->events. A ping therefore survives to the UDP event
+ * drain that runs after the tick, and is delivered exactly once.
+ *
+ * A ping the frame's event buffer has no room for keeps its pending flag and
+ * is buffered by a later tick instead of being dropped: EVENT_PING is a
+ * reliable event and its sender was already told CMD_OK. */
+void serverSimFlushPendingPings(ServerSim *sim);
+
+/* Return every slot's smart-ping state to what a fresh sim has: the pings
+ * accepted but not yet buffered, and the rate limiter that governs them.
+ * Called wherever a round starts, because sim->tick restarts at 0 there. A
+ * stamp left over from the last round is a tick number on a clock that has
+ * since been rewound, so the new round's clock walks back through it: the
+ * arm measures "now + 1 - stamp" against a ping sent minutes ago in another
+ * round and refuses one the player is entitled to. One call, so the pending
+ * record and the limiter that produced it can never be cleared apart. */
+void serverSimResetPingState(ServerSim *sim);
 
 /* serverSimGetCompressedMap over one slot's copy of the terrain and its record
  * of the pill squares, with the live bases and starts. The blob a client

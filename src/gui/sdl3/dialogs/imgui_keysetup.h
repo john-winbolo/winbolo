@@ -59,6 +59,18 @@ void imguiKeySetupRenderInGamePopup(struct ClientSim *cs);
 bool imguiKeySetupIsCapturingInGameKey(void);
 void imguiKeySetupHandleInGameScancode(int scancode);
 
+/* Mouse half of the smart-ping chord capture. A ping binding can be a mouse
+ * button, which the scancode hook above cannot carry, so while a ping row is
+ * armed the event pump asks here and hands over the button instead of letting
+ * the click reach the game. Keys, including Escape to cancel, still come
+ * through imguiKeySetupHandleInGameScancode.
+ *
+ * The mouse hook returns false when the pointer was on an ImGui widget: that
+ * press is the dialog's own (Cancel, another row's Change) and the caller must
+ * leave it alone rather than bind it. */
+bool imguiKeySetupIsCapturingInGamePing(void);
+bool imguiKeySetupHandleInGamePingMouse(int sdlMouseButton);
+
 /* Same idea for the Controller tab: while a controller row is armed,
  * the event pump routes a gamepad button-down (SDL_GamepadButton) or a
  * trigger (SDL_GamepadAxis) here to bind it. Escape cancels via the

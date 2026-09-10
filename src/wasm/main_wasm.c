@@ -692,6 +692,17 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
     keys.kiQuickWall    = prefInt(k, "Quick Wall",     keys.kiQuickWall);
     keys.kiQuickPillbox = prefInt(k, "Quick Pillbox",  keys.kiQuickPillbox);
     keys.kiQuickMine    = prefInt(k, "Quick Mine",     keys.kiQuickMine);
+    keys.kiPing[0]      = prefInt(k, "Ping 1",         keys.kiPing[0]);
+    keys.kiPing[1]      = prefInt(k, "Ping 2",         keys.kiPing[1]);
+    keys.kiPing[2]      = prefInt(k, "Ping 3",         keys.kiPing[2]);
+    {
+      int pi;
+      for (pi = 0; pi < PING_BIND_DIRECT_SLOTS; pi++) {
+        char name[32];
+        snprintf(name, sizeof(name), "Ping Direct %d", pi + 1);
+        keys.kiPingDirect[pi] = prefInt(k, name, keys.kiPingDirect[pi]);
+      }
+    }
   }
 
   cJSON *m = cJSON_GetObjectItemCaseSensitive(root, "MENU");

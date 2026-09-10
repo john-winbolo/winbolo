@@ -2027,3 +2027,29 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_SET=Поставить обе команды на {
 STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Команды на {string1}. Нажмите, чтобы вернуться к своим точкам старта.
 
 STR_SOUND_LOAD_FAILED=Ошибка загрузки звуковых эффектов
+
+# Умный пинг (круговое меню)
+MESSAGE_PING_STANDARD={player}: Пинг!
+MESSAGE_PING_CAUTION={player}: Осторожно!
+MESSAGE_PING_ASSIST={player}: Помогите!
+MESSAGE_PING_ATTACK={player}: Атака!
+MESSAGE_PING_ON_MY_WAY={player}: Уже иду!
+MESSAGE_PING_BOT_COMMAND={player}: Команда боту
+STR_PING_STANDARD=Пинг
+STR_PING_CAUTION=Осторожно
+STR_PING_ASSIST=Помогите
+STR_PING_ATTACK=Атака
+STR_PING_ON_MY_WAY=Уже иду
+STR_PING_BOT_COMMAND=Команда боту
+STR_DLGKEYSETUP_PING=Умный пинг
+STR_DLGKEYSETUP_PING_ALT=Умный пинг — альтернативные клавиши
+STR_DLGKEYSETUP_PRESSACHORD=Нажмите клавишу или кнопку мыши
+STR_PING_MOD_CTRL=Ctrl
+STR_PING_MOD_ALT=Alt
+STR_PING_MOD_SHIFT=Shift
+STR_PING_MOUSE_LEFT=Левая кнопка мыши
+STR_PING_MOUSE_MIDDLE=Средняя кнопка мыши
+STR_PING_MOUSE_RIGHT=Правая кнопка мыши
+STR_PING_MOUSE_X1=Мышь 4
+STR_PING_MOUSE_X2=Мышь 5
+STR_DLGKEYSETUP_PING_ALT2=Умный пинг — альтернативные клавиши 2
