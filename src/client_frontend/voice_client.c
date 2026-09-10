@@ -66,11 +66,17 @@
  * arbitrarily deep backlog in one go. */
 #define VOICE_PLAYBACK_MAX_POPS_PER_CALL 4
 
-/* Open mic: the 0..1 frame RMS, measured after mic gain, at which the
- * open-mic decision counts what it hears as speech.  0.013, about -38 dBFS,
- * was measured rather than picked: onsets were being lost at 0.0131, and
- * room noise in the same recording topped out at 0.0100 across 431 quiet
- * frames.
+/* Open mic: the 0..1 frame RMS at which the open-mic decision counts what it
+ * hears as speech.  0.013, about -38 dBFS, was measured rather than picked:
+ * onsets were being lost at 0.0131, and room noise in the same recording
+ * topped out at 0.0100 across 431 quiet frames.
+ *
+ * The signal it applies to is the microphone after mic gain and after the
+ * echo canceller, and before the preprocessor's automatic gain - which is
+ * what voiceAecProcess hands back, and is the signal the numbers above were
+ * measured on.  Not the frame that comes out of it: the automatic gain aims
+ * every frame at a fixed target, so downstream of it a quiet room and a
+ * talker read alike and no absolute number tells them apart.
  *
  * It costs open-microphone time.  At 0.02 the microphone was open for 34%
  * of that recording; at 0.013 it is open for 54%, because every low-level
@@ -126,7 +132,9 @@
 static bool isInitialised = false;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
-static bool voiceEnabled = true;
+/* Off until the prefs say otherwise, and the same answer the prefs default
+   gives, so nothing captures before they are read. */
+static bool voiceEnabled = false;
 static VoiceMode voiceMode = VOICE_MODE_PTT;
 static bool pushToTalkHeld = false;
 static float micGain = 1.0f;
@@ -167,10 +175,17 @@ static int micTestRecorded = 0;
 static int micTestPlayed = 0;
 
 /* Whether the connection we are on carries this client's voice at all - it
- * has to exist, and a viewer's voice is not passed to the players.  Refreshed
- * every tick, because voiceIsTransmitting is asked by the settings dialog,
- * which has no client of its own to ask. */
+ * has to exist, the server it reaches has to be carrying voice, and a viewer's
+ * voice is not passed to the players.  Refreshed every tick, because
+ * voiceIsTransmitting is asked by the settings dialog, which has no client of
+ * its own to ask. */
 static bool connectionCarriesVoice = false;
+
+/* Whether the server we are on has voice turned off, for the settings section
+ * and the lobby row to say so.  Separate from connectionCarriesVoice, which is
+ * also false in single player and for a viewer - neither is the server
+ * declining to carry voice, and neither should be reported as one. */
+static bool serverVoiceIsOff = false;
 
 /* Previous tick's captureIsWanted.  The microphone is first asked for on the
  * rising edge - a reason for it appearing is what asks - so starting the game,
@@ -613,6 +628,7 @@ void voiceReset(void) {
     reportedSelfMuted = false;
     reportedAtMs = 0;
     connectionCarriesVoice = false;
+    serverVoiceIsOff = false;
     wasCaptureWanted = false;
     wasSending = false;
     captureRetryTicks = 0;
@@ -935,6 +951,27 @@ bool voiceIsTransmitting(void) {
 *********************************************************/
 bool voiceConnectionCarriesVoice(void) {
     return connectionCarriesVoice;
+}
+
+/*********************************************************
+*NAME:          voiceServerHasVoiceOff
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether the server we are on was started with
+*  voice off, so the settings section and the lobby row can
+*  say the feature is unavailable here rather than offering
+*  controls that reach nothing.  False in single player and
+*  at the main menu: there is no server there declining
+*  anything, and a client that has not yet been told the
+*  mode reads the on it always ran with.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceServerHasVoiceOff(void) {
+    return serverVoiceIsOff;
 }
 
 /*********************************************************
@@ -1858,6 +1895,9 @@ void voiceTick(struct ClientSim *cs) {
     /* Samples the mic gain pushed out of the int16 range, counted per frame
      * before the clamp writes them back. */
     int clipped = 0;
+    /* What the frame reads once the automatic gain has had it - the level
+     * the encoder sees, recorded so a run shows it against the gate's. */
+    float gainedLevel = 0.0f;
 #endif
 
     if (!isInitialised) {
@@ -1878,11 +1918,17 @@ void voiceTick(struct ClientSim *cs) {
     /* The connection has to be one that carries voice at all - the local
      * transport single-player attaches goes nowhere - and a viewer captures
      * for the microphone test like anyone else, but its voice is not carried
-     * to the players, so there is nothing to send.  Kept here rather than
+     * to the players, so there is nothing to send.  A server started with
+     * -voice off drains and discards what it is sent, so it is no more a
+     * destination than the local transport is: without this the microphone
+     * would be opened and frames encoded for nothing.  Kept here rather than
      * asked for inside voiceIsTransmitting, which the settings dialog calls
      * with no client of its own. */
+    serverVoiceIsOff = clientSimNetHasVoiceTransport(cs) &&
+                       clientSimGetServerVoiceMode(cs) == serverVoiceOff;
     connectionCarriesVoice =
-        clientSimNetHasVoiceTransport(cs) && !clientSimIsSpectator(cs);
+        clientSimNetHasVoiceTransport(cs) && !clientSimIsSpectator(cs) &&
+        !serverVoiceIsOff;
 
     /* Settled once for the tick, above everything that acts on it: the
      * settings section's asking is taken back at the end of this call, so
@@ -1991,15 +2037,17 @@ void voiceTick(struct ClientSim *cs) {
         gateLevel = inputLevel;
 #if defined(WINBOLO_VOICE_AEC)
         /* Below the level meter, which reports the microphone as it is, and
-         * above both consumers of the cleaned signal - the open-mic gate and
-         * the encoder.  Above the transmit test too: every captured frame
-         * goes through, sent or not, because the filter tracks the room
-         * continuously and a frame it never sees is a hole in that. */
-        voiceAecProcess(pcm, pcm);
-
-        /* The gate's own reading, taken off the frame the canceller has just
-         * cleaned rather than off the meter's. */
-        gateLevel = voiceFrameRms(pcm, VOICE_FRAME_SAMPLES);
+         * above the encoder, which wants the frame cleaned and brought up to
+         * a level listeners can hear.  Above the transmit test too: every
+         * captured frame goes through, sent or not, because the filter tracks
+         * the room continuously and a frame it never sees is a hole in that.
+         *
+         * The gate's reading comes back out of the call rather than off the
+         * frame it wrote.  Echo the canceller is about to remove must not
+         * open the microphone, and the automatic gain that runs in the same
+         * call would leave any reading taken afterwards saying only that the
+         * gain had reached its target. */
+        gateLevel = voiceAecProcess(pcm, pcm);
 #endif
 
 #if defined(WB_VOICEDEBUG)
@@ -2007,13 +2055,18 @@ void voiceTick(struct ClientSim *cs) {
          * the same frame as gained, and writing it anyway keeps the set of
          * files the same shape either way. */
         voiceDebugTap(VOICE_TAP_CLEANED, 0, pcm);
+        /* The gained level beside the gate's, so a recording shows what the
+         * automatic gain did to the frame the decision is no longer read
+         * off.  Where no canceller is built the two are the same number. */
+        gainedLevel = voiceFrameRms(pcm, VOICE_FRAME_SAMPLES);
 #endif
 
-        /* Open mic decides on the signal that will actually be sent, not on
-         * what the meter reports, so echo the canceller has just taken out
-         * cannot open the microphone.  Over the threshold opens the gate and
-         * re-arms the hangover, under it counts the hangover down so the tail
-         * of a word is not cut off. */
+        /* Open mic decides on the cancelled signal rather than on what the
+         * meter reports, so echo the canceller has just taken out cannot open
+         * the microphone, and on it before the automatic gain, so a quiet
+         * room stays a quiet room to the decision.  Over the threshold opens
+         * the gate and re-arms the hangover, under it counts the hangover
+         * down so the tail of a word is not cut off. */
         if (voiceMode == VOICE_MODE_OPEN) {
             if (gateLevel >= VOICE_OPEN_MIC_RMS_THRESHOLD) {
                 gateOpen = true;
@@ -2083,8 +2136,9 @@ void voiceTick(struct ClientSim *cs) {
             /* Recorded before the frame is dropped: a frame that would not
              * encode is one a hole in the audio is found in. */
             voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
-                                 clipped, gateOpen, sending, 0, false,
-                                 selfMuteRequested, connectionCarriesVoice);
+                                 gainedLevel, clipped, gateOpen, sending, 0,
+                                 false, selfMuteRequested,
+                                 connectionCarriesVoice);
 #endif
             continue;
         }
@@ -2112,7 +2166,8 @@ void voiceTick(struct ClientSim *cs) {
 
 #if defined(WB_VOICEDEBUG)
         voiceDebugFrameStats(voiceBackendNowMs(), inputLevel, gateLevel,
-                             clipped, gateOpen, sending, encodedLen,
+                             gainedLevel, clipped, gateOpen, sending,
+                             encodedLen,
                              encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES,
                              selfMuteRequested, connectionCarriesVoice);
 #endif

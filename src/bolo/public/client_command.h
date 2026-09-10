@@ -410,9 +410,10 @@ typedef struct {
 /* CMD_PING — place a smart ping on the map for the sender's team. kind is
  * a PING_KIND_* (input_packet.h); worldX/worldY are WORLD units (256 per map
  * tile), so the marker sits where the cursor was, not on a tile centre. The
- * server checks the game is running, the sender holds a tank, the kind is
- * known and the point is on the map, then rate-limits before turning it into
- * an EVENT_PING. */
+ * server checks the game is running, the sender still occupies a player slot
+ * (dead is fine — a player waiting to respawn may still ping; only an empty
+ * slot is refused), the kind is known and the point is on the map, then
+ * rate-limits before turning it into an EVENT_PING. */
 typedef struct {
     uint8_t  kind;
     uint16_t worldX;

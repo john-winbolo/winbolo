@@ -180,12 +180,24 @@ void voiceAecAddReference(const int16_t *pcm, int playbackDelayFrames);
 *  through the noise suppression and the automatic gain, so
 *  what comes out is not what went in.
 *
+*  Returns the frame's 0..1 RMS taken after the cancelling and
+*  before the automatic gain, which is a different number from
+*  the level of the frame it writes out.  A caller deciding
+*  whether it is hearing speech has to compare against this
+*  one: the automatic gain drives every frame towards a fixed
+*  target, so a quiet room downstream of it reads much like a
+*  talker and an absolute threshold there measures nothing.
+*  Handed back rather than left to the caller to take off the
+*  output, because this is the only point the frame exists in
+*  that state - the two SpeexDSP stages run in one call, and
+*  the preprocessor has to see every captured frame.
+*
 *ARGUMENTS:
 *  micIn - VOICE_FRAME_SAMPLES mono S16 samples
 *  out   - VOICE_FRAME_SAMPLES mono S16 samples; may be the
 *          same buffer as micIn
 *********************************************************/
-void voiceAecProcess(const int16_t *micIn, int16_t *out);
+float voiceAecProcess(const int16_t *micIn, int16_t *out);
 
 #ifdef __cplusplus
 }

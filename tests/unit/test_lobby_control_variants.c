@@ -102,6 +102,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.viewDecaySecs[viewCategoryAlly] = 5;
     in.u.lobbySettings.lobbyClassicMode                = true;
     in.u.lobbySettings.lobbyAlliesInTrees              = true;
+    in.u.lobbySettings.voiceMode                       = serverVoiceOff;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -148,13 +149,16 @@ int run_lobby_settings_codec_and_apply(void) {
                   "lobbyClassicMode did not survive codec round-trip");
     UT_ASSERT_MSG(out.u.lobbySettings.lobbyAlliesInTrees == true,
                   "lobbyAlliesInTrees did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.voiceMode == serverVoiceOff,
+                  "voiceMode did not survive codec round-trip (got %d)",
+                  (int)out.u.lobbySettings.voiceMode);
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is eleven bytes shorter (3 policies + 3 u16 decay values +
-     * classic mode + allies in trees). */
+     * that is twelve bytes shorter (3 policies + 3 u16 decay values +
+     * classic mode + allies in trees + voice mode). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -167,9 +171,9 @@ int run_lobby_settings_codec_and_apply(void) {
         ControlEvent shortOut;
         /* winbolo2: the scenario layer appends its own tail AFTER main's view
          * fields (scenarioMap(1) + scenarioExtraTeams(1) + desc length(1), the
-         * desc itself being empty here), so the eleven-byte cut has to start
+         * desc itself being empty here), so the twelve-byte cut has to start
          * past those three bytes to land on the view tail as main's test does. */
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 11 - 3;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 12 - 3;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -186,6 +190,46 @@ int run_lobby_settings_codec_and_apply(void) {
                       "short payload must leave classic mode off");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyAlliesInTrees == false,
                       "short payload must leave allies in trees off");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.voiceMode == serverVoiceOn,
+                      "short payload must leave voice on, got %d",
+                      (int)shortOut.u.lobbySettings.voiceMode);
+    }
+
+    /* The voice mode over the body tables, which is what the reliable
+     * carrier actually calls. Every mode survives, and a byte outside the
+     * enum reads as on rather than silently disabling voice. */
+    {
+        ControlEncodeBodyFn benc =
+            transportControlCodecBodyEncoder(CTRL_LOBBY_SETTINGS);
+        ControlDecodeBodyFn bdec =
+            transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+        UT_ASSERT(benc != NULL && bdec != NULL);
+
+        const ServerVoiceMode modes[] = { serverVoiceOn, serverVoiceOff,
+                                          serverVoiceProximity };
+        for (size_t m = 0; m < sizeof(modes) / sizeof(modes[0]); m++) {
+            uint8_t body[MAX_CONTROL_PACKET];
+            size_t bodyLen = 0;
+            ControlEvent bin = in, bout;
+            bin.u.lobbySettings.voiceMode = modes[m];
+            UT_ASSERT(benc(&bin, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
+            memset(&bout, 0, sizeof(bout));
+            UT_ASSERT_MSG(bdec(body, bodyLen, &bout),
+                          "body decode failed for voice mode %d", (int)modes[m]);
+            UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == modes[m],
+                          "body round-trip lost voice mode %d (got %d)",
+                          (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
+
+            /* winbolo2: the scenario tail (scenarioMap, scenarioExtraTeams and
+             * an empty desc's length byte) follows the mode, so it is the
+             * fourth byte from the end here rather than main's last one. */
+            body[bodyLen - 4] = 0x7F;
+            memset(&bout, 0, sizeof(bout));
+            UT_ASSERT(bdec(body, bodyLen, &bout));
+            UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,
+                          "an unknown voice-mode byte must read as on, got %d",
+                          (int)bout.u.lobbySettings.voiceMode);
+        }
     }
 
     ClientSim *cs = fresh_client_sim();
@@ -219,6 +263,9 @@ int run_lobby_settings_codec_and_apply(void) {
                   "classic mode did not reach the client mirror");
     UT_ASSERT_MSG(clientSimGetAlliesInTrees(cs) == true,
                   "allies in trees did not reach the client mirror");
+    UT_ASSERT_MSG(clientSimGetServerVoiceMode(cs) == serverVoiceOff,
+                  "voice mode did not reach the client mirror (got %d)",
+                  (int)clientSimGetServerVoiceMode(cs));
     clientSimDestroy(cs);
     return 0;
 }

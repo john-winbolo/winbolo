@@ -35,6 +35,7 @@
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
+#include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -296,6 +297,10 @@ typedef struct ControlEvent {
             bool     lobbyClassicMode;  /* server is running classic mode */
             bool     lobbyAlliesInTrees; /* server sends allies standing in
                                           * trees to their allies */
+            ServerVoiceMode voiceMode;  /* what the server does with the voice
+                                         * its clients send it. serverVoiceOff
+                                         * means a client here has nowhere to
+                                         * send voice, so it captures none. */
             bool     lobbyScenarioMap; /* current map has a scenario
                                         * sidecar loaded — gates the
                                         * "Scenario" game-type option */

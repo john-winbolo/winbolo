@@ -1471,11 +1471,11 @@ static const LangEntry langTable[] = {
     {2117, "Start #{number}\nOff-side for {string1}"},
 
     /* Map-preview start-picker tooltips over a start somebody else holds
-     * that the viewer may join (LOBBY_SHARED_STARTS): 2126 for a player,
-     * 2127 for the host, who can still drag and assign. {number} = start;
+     * that the viewer may join (LOBBY_SHARED_STARTS): 2127 for a player,
+     * 2128 for the host, who can still drag and assign. {number} = start;
      * {player} = the holder, or every holder comma-joined. */
-    {2126, "Start #{number} - {player}\nClick to start here too"},
-    {2127, "Start #{number} - {player}\nClick to start here too; drag to move; right-click to assign to someone else"},
+    {2127, "Start #{number} - {player}\nClick to start here too"},
+    {2128, "Start #{number} - {player}\nClick to start here too; drag to move; right-click to assign to someone else"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
@@ -1910,6 +1910,9 @@ static const LangEntry langTable[] = {
     {2121, "Off"},
     {2122, "Proximity"},
     {2123, "Off drops voice instead of carrying it to anyone. Proximity is not implemented yet and behaves the same as On."},
+    /* Shown to a connected client whose server was started with voice off,
+     * where the controls below it reach nothing. */
+    {2126, "This server has voice turned off"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
     {1866, "[Spectator] {string1}"},
@@ -2048,6 +2051,9 @@ static const LangEntry langTable[] = {
     {2095, "Your microphone and voice settings"},
     {2096, "Voice is turned off"},
 
+    /* Lobby chat — said once when somebody else is heard and voice is off here */
+    {2153, "Someone is using voice chat. Yours is off — turn it on with the cog beside your name."},
+
     /* Players panel — a player muted here who is talking anyway */
     {2097, "Muted by you, and talking — click to unmute"},
 
@@ -2060,30 +2066,30 @@ static const LangEntry langTable[] = {
 
     /* Smart ping: newswire lines, slice names, and the key-setup chord
        vocabulary. */
-    {2128, "{player}: Ping!"},
-    {2129, "{player}: Caution!"},
-    {2130, "{player}: Assist me!"},
-    {2131, "{player}: Attack!"},
-    {2132, "{player}: On my way!"},
-    {2133, "{player}: Bot command"},
-    {2134, "Ping"},
-    {2135, "Caution"},
-    {2136, "Assist Me"},
-    {2137, "Attack"},
-    {2138, "On My Way"},
-    {2139, "Bot Command"},
-    {2140, "Smart Ping"},
-    {2141, "Smart Ping Alternate Keys"},
-    {2142, "Press a key or mouse button"},
-    {2143, "Ctrl"},
-    {2144, "Alt"},
-    {2145, "Shift"},
-    {2146, "Left Mouse"},
-    {2147, "Middle Mouse"},
-    {2148, "Right Mouse"},
-    {2149, "Mouse 4"},
-    {2150, "Mouse 5"},
-    {2151, "Smart Ping Alternate Keys 2"},
+    {2129, "{player}: Ping!"},
+    {2130, "{player}: Caution!"},
+    {2131, "{player}: Assist me!"},
+    {2132, "{player}: Attack!"},
+    {2133, "{player}: On my way!"},
+    {2134, "{player}: Bot command"},
+    {2135, "Ping"},
+    {2136, "Caution"},
+    {2137, "Assist Me"},
+    {2138, "Attack"},
+    {2139, "On My Way"},
+    {2140, "Bot Command"},
+    {2141, "Smart Ping"},
+    {2142, "Smart Ping Alternate Keys"},
+    {2143, "Press a key or mouse button"},
+    {2144, "Ctrl"},
+    {2145, "Alt"},
+    {2146, "Shift"},
+    {2147, "Left Mouse"},
+    {2148, "Middle Mouse"},
+    {2149, "Right Mouse"},
+    {2150, "Mouse 4"},
+    {2151, "Mouse 5"},
+    {2152, "Smart Ping Alternate Keys 2"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -401,16 +401,27 @@ void voiceAecAddReference(const int16_t *pcm, int playbackDelayFrames) {
 *  preprocessor that could not be created leaves the encoder
 *  the frame the microphone gave, sample for sample.
 *
+*  Returns the frame's level with the echo out of it and the
+*  automatic gain not yet on it - the one reading in the chain
+*  that still says how loud the room is, which is what a caller
+*  deciding whether anyone is speaking has to compare against.
+*  Taken here because this is where the frame is in that state:
+*  a caller that measured what it gets back would be measuring
+*  a frame the gain has already driven towards its target.
+*  Zero when there is nothing to measure, which reads as
+*  silence.
+*
 *ARGUMENTS:
 *  micIn - VOICE_FRAME_SAMPLES mono S16 samples
 *  out   - VOICE_FRAME_SAMPLES mono S16 samples, which may be
 *          the same buffer as micIn
 *********************************************************/
-void voiceAecProcess(const int16_t *micIn, int16_t *out) {
+float voiceAecProcess(const int16_t *micIn, int16_t *out) {
     int16_t cleaned[VOICE_FRAME_SAMPLES];
+    float level;
 
     if (micIn == NULL || out == NULL) {
-        return;
+        return 0.0f;
     }
 
     if (aecEnabled && echoState != NULL) {
@@ -418,6 +429,7 @@ void voiceAecProcess(const int16_t *micIn, int16_t *out) {
          * both: the canceller reads the whole microphone frame while it
          * writes its output. */
         speex_echo_cancellation(echoState, micIn, refRing[refTick], cleaned);
+        level = voiceFrameRms(cleaned, VOICE_FRAME_SAMPLES);
         if (preprocessState != NULL) {
             speex_preprocess_run(preprocessState, cleaned);
         }
@@ -429,7 +441,7 @@ void voiceAecProcess(const int16_t *micIn, int16_t *out) {
          * damages speech rather than cleaning it. */
         memset(refRing[refTick], 0, sizeof(refRing[refTick]));
         refTick = (refTick + 1) % VOICE_AEC_REF_FRAMES;
-        return;
+        return level;
     }
 
     /* Nothing to cancel, so the frame only has to reach out before the
@@ -437,7 +449,12 @@ void voiceAecProcess(const int16_t *micIn, int16_t *out) {
     if (out != micIn) {
         memcpy(out, micIn, VOICE_FRAME_SAMPLES * sizeof(int16_t));
     }
+    /* Nothing was taken out of the frame here, so this is the microphone's
+     * own level - the same quantity the branch above returns, which is what
+     * lets one threshold serve both. */
+    level = voiceFrameRms(out, VOICE_FRAME_SAMPLES);
     if (preprocessState != NULL) {
         speex_preprocess_run(preprocessState, out);
     }
+    return level;
 }

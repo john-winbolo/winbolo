@@ -488,13 +488,13 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
  * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
- * + alliesInTrees(1) + scenarioMap(1) + scenarioExtraTeams(1)
+ * + alliesInTrees(1) + voiceMode(1) + scenarioMap(1) + scenarioExtraTeams(1)
  * + scenarioDesc(1 len + up to 255 bytes, length-prefixed — the payload
  * macro reserves the maximum; the encoder emits only the actual
  * length). main's fields come first on the wire so main's layout is
  * unchanged and the scenario fields stay the trailing tail. */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 \
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 \
      + 1 + 1 + 1 + 255)
 
 /* recipient: safe — ignored. */
@@ -543,6 +543,7 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     }
     buf[pos++] = evt->u.lobbySettings.lobbyClassicMode ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAlliesInTrees ? 1 : 0;
+    buf[pos++] = (uint8_t)evt->u.lobbySettings.voiceMode;
     buf[pos++] = evt->u.lobbySettings.lobbyScenarioMap ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyScenarioExtraTeams ? 1 : 0;
     {
@@ -2027,6 +2028,21 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyAlliesInTrees = buf[pos++] ? true : false;
+    }
+    if (len >= pos + 1) {
+        /* A byte this build does not recognise reads as ON, so an unknown
+         * mode leaves voice working rather than silently disabling it. */
+        switch (buf[pos++]) {
+        case (uint8_t)serverVoiceOff:
+            outEvt->u.lobbySettings.voiceMode = serverVoiceOff;
+            break;
+        case (uint8_t)serverVoiceProximity:
+            outEvt->u.lobbySettings.voiceMode = serverVoiceProximity;
+            break;
+        default:
+            outEvt->u.lobbySettings.voiceMode = serverVoiceOn;
+            break;
+        }
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyScenarioMap = buf[pos++] ? true : false;

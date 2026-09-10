@@ -232,8 +232,9 @@ bool voiceIsTransmitting(void);
 *NAME:          voiceConnectionCarriesVoice
 *PURPOSE:
 *  Returns whether the connection we are on carries this
-*  client's voice at all - a transport that passes it, and
-*  not a viewer, whose voice does not reach the players.
+*  client's voice at all - a transport that passes it, a
+*  server that has voice on, and not a viewer, whose voice
+*  does not reach the players.
 *  Refreshed once a tick by voiceTick. What the game view
 *  reads to decide whether a mute indicator means anything
 *  on this connection.
@@ -242,6 +243,21 @@ bool voiceIsTransmitting(void);
 *  (none)
 *********************************************************/
 bool voiceConnectionCarriesVoice(void);
+
+/*********************************************************
+*NAME:          voiceServerHasVoiceOff
+*PURPOSE:
+*  Returns whether the server we are on was started with
+*  voice off. Refreshed once a tick by voiceTick. What the
+*  settings section and the lobby's own row read to say the
+*  feature is unavailable here, rather than showing controls
+*  with nothing at the other end. False in single player and
+*  at the main menu, where no server is declining anything.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceServerHasVoiceOff(void);
 
 /*********************************************************
 *NAME:          voiceReset

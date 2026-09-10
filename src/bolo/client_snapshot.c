@@ -57,7 +57,6 @@
 #include "screenbullet.h"
 #include "frontend.h"
 #include "../gui/lang.h"
-#include "../gui/ping_kinds.h"   /* pingKindMessageId — the newswire line a ping posts */
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"
@@ -84,6 +83,36 @@
 #include "client_net.h"
 #include "server_sim.h"
 #include "../steam/steam_wrapper.h"
+
+/* The newswire line a received ping posts ("{player}: Attack!"), per
+ * PING_KIND_*. The sim knows lang ids — every message it raises is one — but
+ * it must not reach into src/gui for a drawing table, so the ids live here and
+ * the pie menu's copy (pingKindMessageId, src/gui/ping_kinds.h) stays with the
+ * colours and icons it belongs to.
+ *
+ * Designated indices with no declared size: the array is exactly as long as
+ * the highest kind listed, so a kind added to input_packet.h and forgotten
+ * here leaves it short and the check below fails the build. Nothing can drift
+ * silently in either direction. */
+static const langid kPingMessageIds[] = {
+    [PING_KIND_STANDARD]    = MESSAGE_PING_STANDARD,
+    [PING_KIND_CAUTION]     = MESSAGE_PING_CAUTION,
+    [PING_KIND_ASSIST]      = MESSAGE_PING_ASSIST,
+    [PING_KIND_ATTACK]      = MESSAGE_PING_ATTACK,
+    [PING_KIND_ON_MY_WAY]   = MESSAGE_PING_ON_MY_WAY,
+    [PING_KIND_BOT_COMMAND] = MESSAGE_PING_BOT_COMMAND
+};
+BOLO_STATIC_ASSERT(sizeof(kPingMessageIds) / sizeof(kPingMessageIds[0])
+                       == PING_KIND_COUNT,
+                   every_ping_kind_needs_a_newswire_line);
+
+/* A kind this build does not know falls back to the plain ping line, the same
+ * clamp pingKindMessageId makes — a ping from a newer build reaching an older
+ * one should still say something. */
+static langid clientPingMessageId(uint8_t kind) {
+  if (kind >= PING_KIND_COUNT) kind = PING_KIND_STANDARD;
+  return kPingMessageIds[kind];
+}
 
 /*********************************************************
 *NAME:          clientBuildInputPacket
@@ -674,7 +703,7 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
           playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
           csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
                                           newsWireMessage, MESSAGE_NEWSWIRE,
-                                          pingKindMessageId(kind), &args);
+                                          clientPingMessageId(kind), &args);
         }
         break;
       }

@@ -2030,6 +2030,72 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Takımlar {string1} olarak ayarlandı. Özel 
 
 STR_SOUND_LOAD_FAILED=Ses efektleri yüklenirken hata oluştu
 
+STR_DLGLOBBY_AWAITING_MAP=Sunucu bekleniyor...
+STR_DLGSETTINGS_HOSTING_VOICE=Sesli Sohbet
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Açık
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Kapalı
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Yakınlık
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Kapalı, sesi herhangi birine iletmek yerine atar. Yakınlık henüz uygulanmadı ve Açık ile aynı şekilde davranır.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Sesli Sohbet
+STR_DLGSETTINGS_VOICE_LOOPBACK=Mikrofonu Test Et
+STR_DLGSETTINGS_VOICE_MICGAIN=Mikrofon Kazancı
+STR_DLGSETTINGS_VOICE_LEVEL=Giriş Seviyesi
+STR_DLGSETTINGS_VOICE_ENABLE=Sesli Sohbeti Etkinleştir
+STR_DLGSETTINGS_VOICE_MODE=Mod
+STR_DLGSETTINGS_VOICE_MODE_OFF=Kapalı
+STR_DLGSETTINGS_VOICE_MODE_PTT=Bas-Konuş
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Ses Aktivasyonu
+STR_DLGSETTINGS_VOICE_PTTKEY=Bas-Konuş Tuşu
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Yayında
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Yayında Değil
+STR_DLGSETTINGS_VOICE_VOLUME=Sesli sohbet düzeyi
+STR_DLGSETTINGS_VOICE_TANKICONS=Tankların Üzerinde Mikrofon Simgelerini Göster
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Yankı Giderme
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Kaydediliyor...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Çalınıyor...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Bu sistemde kullanılamıyor
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Sistem tarafından yönetiliyor
+STR_DLGSETTINGS_VOICE_MICDEVICE=Mikrofon
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Çalma Aygıtı
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Sistem Varsayılanı
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Bu sunucuda sesli sohbet kapalı
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Bas-Konuş
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Mikrofonu Sustur
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Konuşuyor — susturmak için tıklayın
+STR_PLAYER_TIP_VOICE_IDLE=Mikrofonu var — susturmak için tıklayın
+STR_PLAYER_TIP_VOICE_SELFMUTED=Mikrofonu kapalı — susturmak için tıklayın
+STR_PLAYER_TIP_VOICE_NOMIC=Mikrofonu yok — susturmak için tıklayın
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Sizin tarafınızdan susturuldu — sesini açmak için tıklayın
+STR_PLAYER_TIP_VOICE_SELF=Mikrofonunuz — susturmak için tıklayın
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=Mikrofonunuz yok
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Mikrofonunuz kapalı — açmak için tıklayın
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=Bu oyuncunun burada ne kadar yüksek sesle duyulacağı
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Mikrofon ve sesli sohbet ayarlarınız
+STR_DLGLOBBY_VOICE_OFF=Sesli sohbet kapalı
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Birisi sesli sohbeti kullanıyor. Sizinki kapalı — adınızın yanındaki dişli simgesiyle açabilirsiniz.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Sizin tarafınızdan susturuldu ve yine de konuşuyor — sesini açmak için tıklayın
+STR_DLGSETTINGS_MASTER_VOLUME=Ana ses düzeyi
+STR_DLGSETTINGS_EFFECTS_VOLUME=Efekt ses düzeyi
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Oyuncular Paneli
+
 # Akıllı ping (dairesel menü)
 MESSAGE_PING_STANDARD={player}: Ping!
 MESSAGE_PING_CAUTION={player}: Dikkat!

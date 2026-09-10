@@ -4883,12 +4883,18 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            Skipped entirely while Key Setup is learning a chord: the whole
            point of that press is to become the binding, and its capture hook
            sits further down the loop.
-           Given the RAW event, not the render-converted one: the rects the
-           pie is tested against come from sdl3DrawGameToWindowCoords, which
-           is window pixels. */
+           Given the CONVERTED event, not the raw one, unlike the game handler
+           at the bottom of the loop: the pie is painted on ImGui's draw list
+           and the overview hands it a rect it took from ImGui, so it has to
+           work in the renderer's coordinates throughout. The two are the same
+           until a logical presentation is set (Deck, Android desktop mode,
+           mobile tablet), where the raw event is in the scaled-up window
+           pixels outside the logical surface. Which window it came from is
+           asked of the raw copy only because the conversion leaves the
+           windowID alone either way. */
         if (!imguiKeySetupIsCapturingInGameKey() &&
             eventBelongsToMainWindow(&rawEv) &&
-            pingOverlayHandleEvent(cs, &rawEv)) {
+            pingOverlayHandleEvent(cs, &ev)) {
             continue;
         }
 
@@ -5212,10 +5218,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Mouse half of the Key Setup modal's smart-ping chord capture: a
          * ping binding can be a mouse button, and the scancode hook below
          * cannot carry one. Before that hook so the two arms read in the
-         * order the player uses them. */
+         * order the player uses them.
+         *
+         * The hook refuses a press made on an ImGui widget, and that press
+         * then falls through — it has already been handed to ImGui above, so
+         * the Cancel or Change button under it does its job. A press the hook
+         * does take was over the map or over nothing, where ImGui had no item
+         * to give it to, and taking it also disarms the row, so the matching
+         * release is not intercepted either: ImGui sees the pair. Whichever
+         * way it goes, the capture-flag block below drops the click before the
+         * game — the modal is up, so it wants the mouse. */
         if (imguiKeySetupIsCapturingInGamePing() &&
-            ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-            imguiKeySetupHandleInGamePingMouse((int)ev.button.button);
+            ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            imguiKeySetupHandleInGamePingMouse((int)ev.button.button)) {
             continue;
         }
 
@@ -5977,6 +5992,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 windowLeaveGame();
 #endif
             }
+            /* The lobby's copy of the Key Setup popup. This host draws the
+               lobby inside the shared frame and returns below, before the
+               in-game popup draw further down, so a binding opened from the
+               lobby would otherwise have nothing drawing it. NULL rather than
+               cs: the popup seeds its checkboxes from a live tank when it is
+               given one, and a lobby has no tank. */
+            imguiKeySetupRenderInGamePopup(NULL);
             keyboardUpdate();
             dialogDrawNavOutline();
             ImGui::Render();
@@ -7149,7 +7171,8 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
  *
  * Never runs on the local player's own row from a decoded level: the talking
  * map carries no self bit, so the caller's talking branch is unreachable
- * there. */
+ * there. That row is filled all the same, from this client's own capture
+ * level, which is what the game view's indicator draws from too. */
 static void micDrawLevelFill(SDL_Texture *micTex, float level, ImVec4 tint) {
     if (level <= 0.0f) return;
     if (level > 1.0f) level = 1.0f;   /* over 1 would sample off the texture */
@@ -7224,6 +7247,7 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
     langid       micTip;
     bool         micLevelFill = false;
     bool         micPulseFill = false;
+    bool         micInputFill = false;
     if (mutedByMe) {
         /* Their voice never arrives, so the server's own set of who is
          * talking is the only thing that can say they are speaking. It is
@@ -7259,10 +7283,19 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
                          : STR_PLAYER_TIP_VOICE_SELFMUTED;
     } else {
+        /* On the own row the microphone is a meter rather than an idle icon:
+         * dim, with this client's capture level filled over it. Green while
+         * the frame is actually going out and white while the level is only
+         * being measured, so push-to-talk between presses reads as a live
+         * microphone that is not sending rather than as silence — the same
+         * two colours the game view's own indicator uses. A remote player
+         * idle here keeps the flat dim speaker; there is nothing to measure
+         * until they speak. */
         micTex  = isSelf ? s_iconMic[iconSlot] : s_iconSpeaker[iconSlot];
-        micTint = isSelf ? MIC_TINT_NORMAL : MIC_TINT_DIM;
+        micTint = MIC_TINT_DIM;
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
                          : STR_PLAYER_TIP_VOICE_IDLE;
+        micInputFill = isSelf;
     }
 
     /* A bot has no microphone and nothing to play back, so its cell is drawn
@@ -7287,6 +7320,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
                              MIC_TINT_TALKING);
         } else if (micPulseFill) {
             micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        } else if (micInputFill) {
+            micDrawLevelFill(micTex, voiceGetInputMeter(),
+                             voiceIsTransmitting() ? MIC_TINT_TALKING
+                                                   : MIC_TINT_NORMAL);
         }
         imguiHelpTooltip(langGetText(micTip));
     } else {
@@ -7311,6 +7348,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
                              MIC_TINT_TALKING);
         } else if (micPulseFill) {
             micDrawLevelFill(micTex, micTalkPulse(), MIC_TINT_MUTED);
+        } else if (micInputFill) {
+            micDrawLevelFill(micTex, voiceGetInputMeter(),
+                             voiceIsTransmitting() ? MIC_TINT_TALKING
+                                                   : MIC_TINT_NORMAL);
         }
         imguiHelpTooltip(langGetText(micTip));
         imguiHandOnHover();

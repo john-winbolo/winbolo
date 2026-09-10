@@ -3177,6 +3177,42 @@ endif()
 
 enable_testing()
 
+# ---------------------------------------------------------------------------
+# warmup.* — pay each test binary's first-execution cost before anything timed
+#
+# macOS assesses a newly written executable the first time it runs, and the
+# assessment is not cheap: a freshly linked WinBoloDS takes ~1.05s to reach
+# -help with only ~0.04s of that on CPU, against ~0.50s once the result is
+# cached. Every dylib it pulls in (SDL3, onnxruntime, sentry) is assessed on
+# first load too.
+#
+# That lands squarely on the UDP baseline scenarios. tests/baseline/run.sh
+# waits a fixed 0.5s for the DS to come up and then schedules client commands
+# against server tick counts, so on the first run after a build the server is
+# still being assessed when the clients connect and the commands land at the
+# wrong ticks. The captures diverge, the run reports a broad set of failures,
+# and rerunning the identical tree passes — which makes the failures look
+# flaky rather than mechanical.
+#
+# Running each binary once with a flag that loads it and exits pays that cost
+# outside any timed window. FIXTURES_SETUP makes CTest schedule these first
+# and only once, including when a subset is selected with -R.
+#
+# WinBoloUnitTests takes --list, not --help: test_main.c only recognises
+# --list and --test, and anything else falls through to running all 600-odd
+# tests in one process — including the *_capture tests that are kept out of
+# CTest precisely because they rewrite committed fixtures. Getting this flag
+# wrong does not just make the fixture slow, it dirties the working tree.
+#
+# Not guarded on APPLE: the cost elsewhere is three sub-second process starts,
+# it warms the page cache on every platform, and a binary too broken to print
+# its own usage is worth catching before 600-odd tests try to use it.
+add_test(NAME warmup.headless  COMMAND $<TARGET_FILE:WinBoloHeadless> --help)
+add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -help)
+add_test(NAME warmup.unittests COMMAND $<TARGET_FILE:WinBoloUnitTests> --list)
+set_tests_properties(warmup.headless warmup.ds warmup.unittests
+                     PROPERTIES FIXTURES_SETUP warm_binaries TIMEOUT 60)
+
 # Per-scenario CTest entries. Scenario names must stay in sync with the
 # dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
 # no shared state and parallelize freely. UDP scenarios share a hardcoded
@@ -3229,7 +3265,9 @@ foreach(_name IN LISTS _baseline_fast)
                           --scenario ${_name}
                           $<TARGET_FILE:WinBoloHeadless>
                           $<TARGET_FILE:WinBoloDS>)
-    set_tests_properties(baseline.${_name} PROPERTIES TIMEOUT 60)
+    set_tests_properties(baseline.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
@@ -3241,7 +3279,8 @@ foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
                               $<TARGET_FILE:WinBoloDS>)
         set_tests_properties(baseline.${_name} PROPERTIES
                              TIMEOUT 60
-                             RESOURCE_LOCK "udp_${_port}")
+                             RESOURCE_LOCK "udp_${_port}"
+                             FIXTURES_REQUIRED warm_binaries)
     endforeach()
 endforeach()
 
@@ -3401,6 +3440,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
+    tests/unit/test_voice_talking_set.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
@@ -3588,6 +3628,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # gates, the per-player rate limit, the GameEvent it builds, and the
     # team-only delivery predicate both snapshot filters share.
     tests/unit/test_ping_dispatch.c
+    # Smart ping over the wire: the full client -> server -> client path on the
+    # real loopback UDP transport, driven through serverInstanceTick so the
+    # per-frame event-buffer clear that drops a networked ping is exercised.
+    tests/unit/test_ping_network.c
     # Generated lang-name table: K_LANG_NAME_TABLE_SIZE vs the real array
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
@@ -3597,6 +3641,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # game vs log-viewer copies of screenCalcRiver never disagreeing.
     tests/unit/test_screencalc_river.c
     tests/unit/test_client_type.c
+    # The client's tank and lgm live at its slot index; a second JOIN_ACCEPT
+    # with a different slot has to carry them across rather than read slot 0.
+    tests/unit/test_client_slot_reassign.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
     # Mid-sim-frame player removal vs the arrays simRunHalfStep snapshots for
@@ -3931,6 +3978,7 @@ set(_unit_test_names
     command_codec_rating_posted
     command_codec_view_state
     command_codec_view_cycle
+    command_codec_ping
     lobby_claim_start_host_swaps_occupied
     lobby_claim_start_host_assign_onto_own
     lobby_claim_start_host_swap_into_none
@@ -4171,6 +4219,7 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    log_roundtrip_ping
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
@@ -4255,6 +4304,8 @@ set(_unit_test_names
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
+    voice_talking_stops_in_countdown
+    voice_talking_clears_on_leave
     fx_viewport_cull
     viewport_floor
     sound_event_codec
@@ -4452,6 +4503,24 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    ping_binding_encode_decode
+    ping_binding_match
+    ping_binding_direct
+    ping_binding_format
+    ping_pie_slices
+    ping_edge_sides
+    ping_edge_corner
+    ping_rect_inset
+    ping_event_wire
+    ping_dispatch_accepts_and_builds_event
+    ping_dispatch_rejects_lobby
+    ping_dispatch_rejects_empty_slot_and_out_of_range
+    ping_dispatch_map_range_bound
+    ping_dispatch_rejects_bad_kind
+    ping_dispatch_rate_limit
+    ping_dispatch_new_round_clears_rate_limit
+    ping_reaches_team_only
+    ping_network
     lang_name_table
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
@@ -4459,6 +4528,9 @@ set(_unit_test_names
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
+    client_slot_reassign_carries_tank_and_lgm
+    client_slot_reassign_same_slot_is_stable
+    client_slot_reassign_back_to_zero
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
@@ -4590,14 +4662,18 @@ set(_unit_test_names
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
-    set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
+    set_tests_properties(unit.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 if(WB_NETDEBUG)
     foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss netdebug_error_offset_clamped)
         add_test(NAME netdebug.${_name}
                  COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
-        set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)
+        set_tests_properties(netdebug.${_name} PROPERTIES
+                             TIMEOUT 60
+                             FIXTURES_REQUIRED warm_binaries)
     endforeach()
 endif()
 
@@ -4671,7 +4747,8 @@ if(WB_FUZZ)
     set_tests_properties(fuzz.bulk_transfer PROPERTIES TIMEOUT 120)
 
     # Tier 2 — full server dispatcher via the WB_FUZZ-gated seam. Links
-    # server_static (which owns transport_udp_server.c, now carrying the seam).
+    # server_static (which owns udp/udp_server_test_hooks.c, the file that
+    # carries the seam).
     # test_stubs.c + the steam stub resolve the winbolonet / natPortMap /
     # frontend callbacks the server graph references but server_static doesn't
     # own — the same stub surface WinBoloUnitTests links.

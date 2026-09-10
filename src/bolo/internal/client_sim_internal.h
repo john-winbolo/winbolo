@@ -368,6 +368,12 @@ struct ClientSim {
                                      * to their allies; raw mirror of the
                                      * lobby-settings event, false until the
                                      * first one lands */
+    ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
+                                       * its clients send it; raw mirror of
+                                       * the lobby-settings event. Zero is
+                                       * serverVoiceOn, so a client that has
+                                       * not been told yet behaves as it did
+                                       * before the server carried the mode */
     /* The client's own copy of the proximity clocks a viewPolicyDecay
      * category runs on, for the local player as the viewer. The server keeps
      * the same clocks and they are what decides which rects it sends; these
@@ -915,5 +921,15 @@ void clientSimSpectatorFeedClear(ClientSim *cs);
  * read (clientSimGetPlayerPing / clientSimGetPlayerPingBand in client_sim.h),
  * so the reset has no business on the public API. */
 void clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum);
+
+/* Record a ping this client should draw. T2: the EVENT_PING arm of the
+ * snapshot ingest is the only caller, and it must stay that way — a ping is
+ * something the server decided this client may see, so a frontend that could
+ * call this could paint a marker nobody sent. A local echo needs no separate
+ * path either, because the server sends the sender its own ping back like
+ * everyone else's. Frontends only read the ring, through clientSimGetPings
+ * (client_sim.h). */
+void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
+                      uint16_t worldX, uint16_t worldY, uint32_t nowMs);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

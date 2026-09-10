@@ -43,6 +43,7 @@
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
+#include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -557,6 +558,18 @@ bool         clientSimIsInLobby(const ClientSim *cs);
  * newswire and must not consult it. */
 bool         clientSimNewswireMuted(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
+
+/* Monotonic count of installed maps this client has discarded because a
+ * re-accept armed a fresh download (a mid-lobby map change, or a
+ * return-to-lobby). The initial join does not count — nothing was installed
+ * to discard. Never decreases.
+ *
+ * Sample it before triggering a map change and compare afterwards to
+ * establish that the change really did invalidate the installed map. The
+ * invalidation itself is a transient — the old map is gone only until the
+ * new one lands — so an observer polling clientSimGetServerMapData for NULL
+ * can step over the whole window and see nothing. */
+uint32_t     clientSimGetMapInvalidateCount(const ClientSim *cs);
 /* Map-download progress as 0..100. Returns 100 for the local transport
  * (no download needed) and 0 when no transport is bound. UDP path reads
  * mapDownloadReceived/Total from the transport. */
@@ -767,12 +780,6 @@ const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
 int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
                       ClientPing *out, int maxOut);
 
-/* Record a ping this client should draw. Called by the EVENT_PING arm of the
- * snapshot ingest; a local echo has no separate path, because the server
- * sends the sender its own ping back like everyone else's. */
-void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
-                      uint16_t worldX, uint16_t worldY, uint32_t nowMs);
-
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained
  * every display tick. NULL when cs is NULL. */
@@ -955,6 +962,13 @@ bool        clientSimGetClassicMode(const ClientSim *cs);
  * event arrives, and a payload that predates the field leaves it false
  * too — which matches the classic behaviour the option turns off. */
 bool        clientSimGetAlliesInTrees(const ClientSim *cs);
+
+/* What the server does with the voice its clients send it, as last broadcast
+ * in the lobby-settings event. serverVoiceOff means voice sent from here is
+ * dropped, so a client on such a server captures and sends none. Reads back
+ * serverVoiceOn until the first event arrives, which is what every server did
+ * before the setting existed. */
+ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs);
 
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);

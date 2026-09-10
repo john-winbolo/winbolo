@@ -140,6 +140,16 @@ typedef struct {
 static lvPing s_pings[LV_MAX_PINGS];
 static int    s_pingWrite = 0;
 
+/* Drop every stored ping. A new log restarts the playback clock at zero, so
+   the previous log's pings all read as "in the future" and are hidden — until
+   playback runs past the time they were stored at, when they would come back
+   over a replay they were never part of. Called from lv_screenSetup, which
+   every load path runs through. */
+static void lv_pingReset(void) {
+  memset(s_pings, 0, sizeof(s_pings));
+  s_pingWrite = 0;
+}
+
 static void lv_pingAdd(BYTE sender, BYTE kind, uint16_t wx, uint16_t wy) {
   s_pings[s_pingWrite].sender = sender;
   s_pings[s_pingWrite].kind   = kind;
@@ -526,6 +536,7 @@ void lv_screenSetup() {
      settings before the new one's walk can collect its own. */
   lv_screenStoreGameSettings(NULL, 0);
   s_gameSettingsWalked = FALSE;
+  lv_pingReset();
   g_lv->gmeStartDelay = 0;
   g_lv->gmeLength = UNLIMITED_GAME_TIME;
   g_lv->isPlaying = FALSE;

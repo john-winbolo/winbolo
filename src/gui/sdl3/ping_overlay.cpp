@@ -12,23 +12,26 @@
  *   WORLD    - what the wire and the sim carry. 256 units to
  *              a map square, so a ping keeps its sub-square
  *              position instead of snapping to a tile.
- *   game     - the renderer's logical space, the one the
+ *   game     - the game's own layout space, the one the
  *              window->game transform hands back. The 15x15
  *              view sits at a fixed offset inside it.
- *   window   - actual on-screen pixels, which is what ImGui
- *              draws in.
+ *   screen   - the renderer's coordinates: what ImGui draws
+ *              in and reports the mouse in. Equal to window
+ *              pixels until a logical presentation is set,
+ *              when SDL scales that space up to the window
+ *              (see the invariant in ping_overlay.h).
  *
- * The pie menu lives entirely in window pixels (it is drawn
- * at the cursor and never moves with the map). Received
- * pings are stored in WORLD and converted out to window
- * pixels every frame, so a marker stays over the same ground
- * while the view scrolls under it.
+ * The pie menu lives entirely in screen coordinates (it is
+ * drawn at the cursor and never moves with the map). Received
+ * pings are stored in WORLD and converted out to screen
+ * coordinates every frame, so a marker stays over the same
+ * ground while the view scrolls under it.
  *
  * Two maps can be the one on screen, and the conversion is
  * not the same for both:
  *
  *   the classic 15x15 view - xOffset/yOffset plus the
- *     sub-square scroll, the arithmetic in worldToWindow.
+ *     sub-square scroll, the arithmetic in classicWorldToScreen.
  *   the map overview filling the window - its own camera,
  *     through overviewCameraScreenToWorld and
  *     overviewCameraWorldToScreen, which work in whole map
@@ -72,11 +75,18 @@ extern "C" {
  * viewer's replay draw shares.
  * ------------------------------------------------------------------ */
 
+/* The renderer everything here is drawn through. Kept for the two questions
+   only it can answer: which window the pie belongs to, and where a point SDL
+   reports in window coordinates lands in the renderer's own space. */
+static SDL_Renderer *s_renderer = nullptr;
+
 void pingOverlayInit(SDL_Renderer *renderer) {
+    s_renderer = renderer;
     pingIconsInit(renderer);
 }
 
 void pingOverlayShutdown(void) {
+    s_renderer = nullptr;
     pingIconsShutdown();
 }
 
@@ -86,9 +96,9 @@ void pingOverlayShutdown(void) {
 
 static bool  s_open        = false;
 static int   s_triggerCode = 0;      /* the key/mouse code that opened it */
-static float s_anchorX     = 0.0f;   /* window pixels: where the press landed */
+static float s_anchorX     = 0.0f;   /* screen coords: where the press landed */
 static float s_anchorY     = 0.0f;
-static float s_cursorX     = 0.0f;   /* window pixels: where the cursor is now */
+static float s_cursorX     = 0.0f;   /* screen coords: where the cursor is now */
 static float s_cursorY     = 0.0f;
 static uint16_t s_worldX   = 0;      /* the ground under the press */
 static uint16_t s_worldY   = 0;
@@ -111,20 +121,36 @@ static void pingOverlayCancel(void) {
  * Coordinate helpers
  * ------------------------------------------------------------------ */
 
-/* The main view in window pixels, plus the window-pixel size of one map
- * square. Everything the drawer and the hit test need in one call. */
+/* A point SDL reports in window coordinates — SDL_GetMouseState's, or any
+ * event that has not been through SDL_ConvertEventToRenderCoordinates — moved
+ * into the screen space everything here works in. The identity until a
+ * logical presentation is set. */
+static void windowToScreen(float wx, float wy, float *sx, float *sy) {
+    if (s_renderer == nullptr ||
+        !SDL_RenderCoordinatesFromWindow(s_renderer, wx, wy, sx, sy)) {
+        *sx = wx;
+        *sy = wy;
+    }
+}
+
+/* The main view in screen coordinates, plus the size of one map square there.
+ * Everything the drawer and the hit test need in one call. */
 typedef struct {
-    float x, y, w, h;    /* the 15x15 view, window pixels */
-    float tileW, tileH;  /* one map square, window pixels */
-    float scale;         /* window pixels per game logical pixel */
+    float x, y, w, h;    /* the 15x15 view, screen coordinates */
+    float tileW, tileH;  /* one map square, screen coordinates */
+    float scale;         /* screen units per game logical pixel */
 } PingViewRect;
 
 static bool viewRect(PingViewRect *out) {
     float gx, gy, gw, gh, gtw, gth;
     float wx0, wy0, wx1, wy1;
     if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return false;
-    if (!sdl3DrawGameToWindowCoords(gx, gy, &wx0, &wy0)) return false;
-    if (!sdl3DrawGameToWindowCoords(gx + gw, gy + gh, &wx1, &wy1)) return false;
+    /* Render coordinates rather than window pixels: the pie is painted on
+       ImGui's draw list and hit-tested against events ImGui has already
+       converted, and under a logical presentation those are not the same
+       space. */
+    if (!sdl3DrawGameToRenderCoords(gx, gy, &wx0, &wy0)) return false;
+    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &wx1, &wy1)) return false;
     if (wx1 <= wx0 || wy1 <= wy0) return false;
     out->x = wx0;
     out->y = wy0;
@@ -136,14 +162,17 @@ static bool viewRect(PingViewRect *out) {
     return true;
 }
 
-/* Where in the view a WORLD position lands, in window pixels.
+/* Where in the view a WORLD position lands, in screen coordinates.
  *
  * The view shows map squares xOffset+1 .. xOffset+MAIN_SCREEN_SIZE_X, and
  * scrolls sub-square by clientSimGetSubPos* (0..255 of a square) — the same
- * two numbers the cursor hit test in cursor.c runs backwards. */
-static void worldToWindow(struct ClientSim *cs, const PingViewRect *vr,
-                          uint16_t worldX, uint16_t worldY,
-                          float *outX, float *outY) {
+ * two numbers the cursor hit test in cursor.c runs backwards, and the same
+ * arithmetic sdl3draw.c places the on-the-ground markers with. Both of those
+ * work in game coordinates; this one works in a rect that is that space
+ * scaled and shifted as a whole, which every term here follows. */
+static void classicWorldToScreen(struct ClientSim *cs, const PingViewRect *vr,
+                                 uint16_t worldX, uint16_t worldY,
+                                 float *outX, float *outY) {
     float squaresX = (float)worldX / 256.0f - (float)(clientSimGetXOffset(cs) + 1);
     float squaresY = (float)worldY / 256.0f - (float)(clientSimGetYOffset(cs) + 1);
     float edgeX = (float)clientSimGetSubPosX(cs) * vr->tileW / 256.0f;
@@ -152,18 +181,18 @@ static void worldToWindow(struct ClientSim *cs, const PingViewRect *vr,
     *outY = vr->y + squaresY * vr->tileH - edgeY;
 }
 
-/* The inverse: which ground a window pixel is over. Returns false when the
+/* The inverse: which ground a screen point is over. Returns false when the
  * point is outside the view or off the map. */
-static bool windowToWorld(struct ClientSim *cs, const PingViewRect *vr,
-                          float winX, float winY,
-                          uint16_t *outX, uint16_t *outY) {
+static bool classicScreenToWorld(struct ClientSim *cs, const PingViewRect *vr,
+                                 float sx, float sy,
+                                 uint16_t *outX, uint16_t *outY) {
     float edgeX, edgeY, sqX, sqY;
-    if (winX < vr->x || winX >= vr->x + vr->w) return false;
-    if (winY < vr->y || winY >= vr->y + vr->h) return false;
+    if (sx < vr->x || sx >= vr->x + vr->w) return false;
+    if (sy < vr->y || sy >= vr->y + vr->h) return false;
     edgeX = (float)clientSimGetSubPosX(cs) * vr->tileW / 256.0f;
     edgeY = (float)clientSimGetSubPosY(cs) * vr->tileH / 256.0f;
-    sqX = (winX - vr->x + edgeX) / vr->tileW + (float)(clientSimGetXOffset(cs) + 1);
-    sqY = (winY - vr->y + edgeY) / vr->tileH + (float)(clientSimGetYOffset(cs) + 1);
+    sqX = (sx - vr->x + edgeX) / vr->tileW + (float)(clientSimGetXOffset(cs) + 1);
+    sqY = (sy - vr->y + edgeY) / vr->tileH + (float)(clientSimGetYOffset(cs) + 1);
     if (sqX < 0.0f || sqY < 0.0f) return false;
     {
         float wx = sqX * 256.0f;
@@ -261,7 +290,7 @@ static bool pingSurfaceWorldAt(struct ClientSim *cs, float px, float py,
     if (s_surface.kind == PING_SURFACE_CLASSIC) {
         PingViewRect vr;
         if (!viewRect(&vr)) return false;
-        return windowToWorld(cs, &vr, px, py, outX, outY);
+        return classicScreenToWorld(cs, &vr, px, py, outX, outY);
     }
     return false;
 }
@@ -375,10 +404,21 @@ bool pingOverlayHandleEvent(struct ClientSim *cs, const SDL_Event *ev) {
             py = ev->button.y;
         } else if (ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat) {
             float mx = 0.0f, my = 0.0f;
+            /* The keyboard put this press in the game window; the pointer may
+               be somewhere else entirely. SDL_GetMouseState answers against
+               whichever window holds the POINTER, so with a pop-out under the
+               cursor its pixels would be hit-tested against the game's map and
+               could open a pie on ground the player never pointed at. The two
+               focuses have to agree. */
+            if (s_renderer == nullptr ||
+                SDL_GetMouseFocus() != SDL_GetRenderWindow(s_renderer)) {
+                return false;
+            }
             code = (int)ev->key.scancode;
             SDL_GetMouseState(&mx, &my);
-            px = mx;
-            py = my;
+            /* Window coordinates, unlike the events, which the caller has
+               already converted. */
+            windowToScreen(mx, my, &px, &py);
         } else {
             return false;
         }
@@ -617,7 +657,7 @@ static void pingWorldToScreen(struct ClientSim *cs, const PingDrawView *v,
         PingViewRect vr;
         vr.x = v->ox; vr.y = v->oy; vr.w = v->w; vr.h = v->h;
         vr.tileW = v->tileW; vr.tileH = v->tileH; vr.scale = v->scale;
-        worldToWindow(cs, &vr, worldX, worldY, outX, outY);
+        classicWorldToScreen(cs, &vr, worldX, worldY, outX, outY);
     }
 }
 

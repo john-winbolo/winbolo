@@ -86,6 +86,28 @@ void imguiSettingsRenderLanguagePicker(LangFileEntry *entries, int count,
  * frame in its own way.  In-game-only controls stay inline in that shell. */
 void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx);
 
+#if defined(WINBOLO_VOICE)
+/* Render the shared voice mode combo (off, push to talk, open mic).  The pick
+ * applies through windowSetVoiceMode as it is made. */
+void imguiSettingsVoiceModeCombo(float comboWidth);
+
+/* Render the shared voice device combo — the microphone when recording is
+ * true, the playback device when it is false.  Returns false having drawn
+ * nothing where there is no device to choose between. */
+bool imguiSettingsVoiceDeviceCombo(bool recording, float comboWidth);
+
+/* Render the shared microphone gain slider. */
+void imguiSettingsVoiceMicGainSlider(float sliderWidth);
+
+/* Render the shared input level meter, with the transmitting / not
+ * transmitting text beside it. */
+void imguiSettingsVoiceLevelMeter(float barWidth);
+
+/* Render the shared microphone test: the loopback button while it is idle,
+ * and cancel plus the recording / playing progress while it runs. */
+void imguiSettingsVoiceMicTest(float barWidth);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

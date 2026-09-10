@@ -4,7 +4,8 @@
  *
  *   WinBoloUnitTests --test <name>      run a single test
  *   WinBoloUnitTests --list             print test names
- *   WinBoloUnitTests                    run every test in sequence
+ *   WinBoloUnitTests                    run every test in sequence,
+ *                                      bar the fixture writers
  */
 #include <string.h>
 #include <stdio.h>
@@ -22,6 +23,28 @@ typedef struct {
     const char *name;
     int (*fn)(void);
 } UnitTestEntry;
+
+/* Tests that rewrite a committed fixture. Running one is how the fixture is
+ * meant to be regenerated, so they stay dispatchable by name, but the
+ * run-everything path below skips them — otherwise invoking the binary bare
+ * silently rewrites tests/fixtures and leaves the tree dirty. CMake leaves
+ * these out of _unit_test_names for the same reason; this list is what keeps
+ * the two from disagreeing. */
+static const char *const s_fixtureWriters[] = {
+    "wire_corpus_capture",
+    "wbv_v2_capture",
+    "spectator_seed_capture",
+};
+
+static bool isFixtureWriter(const char *name) {
+    size_t i;
+    for (i = 0; i < sizeof(s_fixtureWriters) / sizeof(s_fixtureWriters[0]); i++) {
+        if (strcmp(name, s_fixtureWriters[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 static const UnitTestEntry s_tests[] = {
     { "transport_local_passive_threads", run_transport_local_passive_threads },
@@ -525,6 +548,8 @@ static const UnitTestEntry s_tests[] = {
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "voice_flags_snapshot_masking",            run_voice_flags_snapshot_masking            },
     { "voice_talking_codec",                     run_voice_talking_codec                     },
+    { "voice_talking_stops_in_countdown",        run_voice_talking_stops_in_countdown        },
+    { "voice_talking_clears_on_leave",           run_voice_talking_clears_on_leave           },
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
     { "viewport_floor",                          run_viewport_floor                          },
     { "sound_event_codec",                       run_sound_event_codec                       },
@@ -694,11 +719,15 @@ static const UnitTestEntry s_tests[] = {
     { "ping_event_wire",                         run_ping_event_wire                         },
     { "ping_dispatch_accepts_and_builds_event",  run_ping_dispatch_accepts_and_builds_event  },
     { "ping_dispatch_rejects_lobby",             run_ping_dispatch_rejects_lobby             },
-    { "ping_dispatch_rejects_tankless_and_spectator",
-                                                 run_ping_dispatch_rejects_tankless_and_spectator },
+    { "ping_dispatch_rejects_empty_slot_and_out_of_range",
+                                                 run_ping_dispatch_rejects_empty_slot_and_out_of_range },
+    { "ping_dispatch_map_range_bound",           run_ping_dispatch_map_range_bound           },
     { "ping_dispatch_rejects_bad_kind",          run_ping_dispatch_rejects_bad_kind          },
     { "ping_dispatch_rate_limit",                run_ping_dispatch_rate_limit                },
+    { "ping_dispatch_new_round_clears_rate_limit",
+                                                 run_ping_dispatch_new_round_clears_rate_limit },
     { "ping_reaches_team_only",                  run_ping_reaches_team_only                  },
+    { "ping_network",                            run_ping_network                            },
     { "lang_name_table",                         run_lang_name_table                         },
     { "screencalc_river_road_counts_as_water",   run_screencalc_river_road_counts_as_water   },
     { "screencalc_river_arms_of_road_centred_cross",
@@ -707,6 +736,11 @@ static const UnitTestEntry s_tests[] = {
     { "mdns_discovery",                          run_mdns_discovery                          },
     { "client_type_matches_platform",            run_client_type_matches_platform            },
     { "client_type_name_round_trips",            run_client_type_name_round_trips            },
+    { "client_slot_reassign_carries_tank_and_lgm",
+                                                 run_client_slot_reassign_carries_tank_and_lgm },
+    { "client_slot_reassign_same_slot_is_stable",
+                                                 run_client_slot_reassign_same_slot_is_stable },
+    { "client_slot_reassign_back_to_zero",       run_client_slot_reassign_back_to_zero       },
     { "players_oob_index_safe",                  run_players_oob_index_safe                  },
     { "control_oob_player_dropped",              run_control_oob_player_dropped              },
     { "control_overflow_defers_disconnect",      run_control_overflow_defers_disconnect      },
@@ -823,10 +857,14 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-    /* Default: run them all in sequence. */
+    /* Default: run them all in sequence, bar the fixture writers. */
     int fail = 0;
     int i;
     for (i = 0; i < NUM_TESTS; i++) {
+        if (isFixtureWriter(s_tests[i].name)) {
+            printf("SKIP %s (regenerates a committed fixture)\n", s_tests[i].name);
+            continue;
+        }
         if (run_one(s_tests[i].name) != 0) {
             fail = 1;
         }

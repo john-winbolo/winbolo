@@ -190,6 +190,26 @@ bool sdl3DrawGameToWindowCoords(float gameX, float gameY,
                                 float *winX, float *winY);
 
 /*********************************************************
+*NAME:          sdl3DrawGameToRenderCoords
+*PURPOSE:
+*  Game logical coordinates -> the renderer's own coordinate
+*  space: what ImGui draws in, and what
+*  SDL_ConvertEventToRenderCoordinates turns an event into.
+*  The two differ only when a logical presentation is set
+*  (Steam Deck, Android desktop mode, mobile tablet), where
+*  the game is drawn straight into the logical surface and
+*  window pixels are the scaled-up ones outside it. Overlays
+*  that ImGui paints want this one, not the window-pixel
+*  version above.
+*
+*ARGUMENTS:
+*  gameX/gameY     - point in game logical coordinates
+*  renderX/renderY - receive the position in render coordinates
+*********************************************************/
+bool sdl3DrawGameToRenderCoords(float gameX, float gameY,
+                                float *renderX, float *renderY);
+
+/*********************************************************
 *NAME:          sdl3DrawGetMainViewGameRect
 *PURPOSE:
 *  The 15x15 main view rectangle in game logical coordinates

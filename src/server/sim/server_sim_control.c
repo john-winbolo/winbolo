@@ -58,6 +58,7 @@ bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
     if (sLp->teamNumber == 0) return false;
     return sLp->teamNumber == rLp->teamNumber;
 }
+
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
@@ -107,6 +108,36 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
         sim->events[sim->eventCount] = *event;
         sim->eventCount++;
     }
+}
+
+void serverSimFlushPendingPings(ServerSim *sim) {
+    int i;
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->hasPendingPing[i]) continue;
+        /* A full frame buffer is a wait, not a loss. serverSimAddEvent drops
+         * silently once the buffer is full, and this event must not be one of
+         * the drops: EVENT_PING is reliable, and its sender has already been
+         * answered CMD_OK, so a dropped one is a marker the player watched
+         * themselves place that nobody — including them — ever sees. Leave the
+         * pending flag set and let a later tick, with room again, buffer it.
+         * Late by a frame or two beats gone. */
+        if (sim->eventCount >= MAX_SNAPSHOT_EVENTS) break;
+        sim->hasPendingPing[i] = false;
+        /* Buffer the ping into the freshly-cleared per-frame event buffer so
+         * both the per-client snapshot build and the UDP event drain (both run
+         * after the tick) see it. The dispatch arm records but never buffers,
+         * so this is the one and only add for this ping. */
+        serverSimAddEvent(sim, &sim->pendingPing[i]);
+    }
+}
+
+void serverSimResetPingState(ServerSim *sim) {
+    if (sim == NULL) return;
+    memset(sim->hasPendingPing, 0, sizeof(sim->hasPendingPing));
+    memset(sim->pingLastTick, 0, sizeof(sim->pingLastTick));
+    memset(sim->pingBurstTicks, 0, sizeof(sim->pingBurstTicks));
+    memset(sim->pingBurstIdx, 0, sizeof(sim->pingBurstIdx));
 }
 
 void serverSimClearBalanceProposal(ServerSim *sim) {
@@ -196,6 +227,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     }
     evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
     evt->u.lobbySettings.lobbyAlliesInTrees = sim->alliesInTrees;
+    evt->u.lobbySettings.voiceMode = sim->voiceMode;
     evt->u.lobbySettings.lobbyScenarioMap         = scenarioIsActive(sim);
     SDL_strlcpy(evt->u.lobbySettings.lobbyScenarioDesc,
                 scenarioGetDescription(sim),
@@ -586,6 +618,7 @@ static void serverSimSyncSubscriber(
         deliver(ctx, &evt);
     }
 #endif
+
     /* Newswire mute — only when it is actually on, so a normal join replay
      * is unchanged. A client that connects while a scripted wave is filing
      * on or off the field must start muted, or it newswires the half of the

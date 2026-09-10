@@ -2028,6 +2028,72 @@ STR_DLGLOBBY_TOOLTIP_COMPASS_CLEAR=Týmy nastaveny na {string1}. Kliknutím se v
 
 STR_SOUND_LOAD_FAILED=Chyba při načítání zvukových efektů
 
+STR_DLGLOBBY_AWAITING_MAP=Čekání na server...
+STR_DLGSETTINGS_HOSTING_VOICE=Hlasový chat
+STR_DLGSETTINGS_HOSTING_VOICE_ON=Zapnuto
+STR_DLGSETTINGS_HOSTING_VOICE_OFF=Vypnuto
+STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Blízkost
+STR_DLGSETTINGS_HOSTING_VOICE_TIP=Vypnuto zahodí hlas, místo aby ho přeneslo komukoliv. Blízkost zatím není implementována a chová se stejně jako Zapnuto.
+
+# Voice section of the Display/Sound settings tab
+STR_DLGSETTINGS_VOICE=Hlas
+STR_DLGSETTINGS_VOICE_LOOPBACK=Otestovat mikrofon
+STR_DLGSETTINGS_VOICE_MICGAIN=Zisk mikrofonu
+STR_DLGSETTINGS_VOICE_LEVEL=Úroveň vstupu
+STR_DLGSETTINGS_VOICE_ENABLE=Povolit hlas
+STR_DLGSETTINGS_VOICE_MODE=Režim
+STR_DLGSETTINGS_VOICE_MODE_OFF=Vypnuto
+STR_DLGSETTINGS_VOICE_MODE_PTT=Stisknout a mluvit
+STR_DLGSETTINGS_VOICE_MODE_OPEN=Otevřený mikrofon
+STR_DLGSETTINGS_VOICE_PTTKEY=Klávesa pro mluvení
+STR_DLGSETTINGS_VOICE_TRANSMITTING=Vysílá
+STR_DLGSETTINGS_VOICE_NOTTRANSMITTING=Nevysílá
+STR_DLGSETTINGS_VOICE_VOLUME=Hlasitost hlasu
+STR_DLGSETTINGS_VOICE_TANKICONS=Zobrazovat ikony mikrofonu nad tanky
+STR_DLGSETTINGS_VOICE_ECHOCANCEL=Potlačení ozvěny
+STR_DLGSETTINGS_VOICE_MICTEST_RECORDING=Nahrávání...
+STR_DLGSETTINGS_VOICE_MICTEST_PLAYING=Přehrávání...
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE=Na tomto systému není k dispozici
+STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM=Zajišťuje systém
+STR_DLGSETTINGS_VOICE_MICDEVICE=Mikrofon
+STR_DLGSETTINGS_VOICE_OUTDEVICE=Výstupní zařízení
+STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT=Výchozí systémové
+STR_DLGSETTINGS_VOICE_SERVER_OFF=Tento server má hlasový chat vypnutý
+
+# Key setup — push to talk binding
+STR_DLGKEYSETUP_PUSHTOTALK=Stisknout a mluvit
+
+# Key setup — self-mute binding
+STR_DLGKEYSETUP_MUTEMIC=Ztlumit mikrofon
+
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Mluví — klikni pro ztlumení
+STR_PLAYER_TIP_VOICE_IDLE=Má mikrofon — klikni pro ztlumení
+STR_PLAYER_TIP_VOICE_SELFMUTED=Má vypnutý mikrofon — klikni pro ztlumení
+STR_PLAYER_TIP_VOICE_NOMIC=Nemá mikrofon — klikni pro ztlumení
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Ztlumeno tebou — klikni pro zapnutí zvuku
+STR_PLAYER_TIP_VOICE_SELF=Tvůj mikrofon — klikni pro ztlumení
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=Nemáš mikrofon
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Tvůj mikrofon je vypnutý — klikni pro zapnutí zvuku
+
+# Players panel — per-player playback volume slider
+STR_PLAYER_TIP_VOICE_VOLUME=Jak hlasitě se ti tento hráč přehrává
+
+# Lobby — the local player's voice sub-row
+STR_DLGLOBBY_TOOLTIP_VOICE=Tvůj mikrofon a nastavení hlasu
+STR_DLGLOBBY_VOICE_OFF=Hlas je vypnutý
+
+# Lobby chat — said once when somebody else is heard and voice is off here
+STR_DLGLOBBY_VOICE_HINT=Někdo používá hlasový chat. Ten tvůj je vypnutý — zapni ho ozubeným kolečkem vedle svého jména.
+
+# Players panel — a player muted here who is talking anyway
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING=Ztlumeno tebou a mluví — klikni pro zapnutí zvuku
+STR_DLGSETTINGS_MASTER_VOLUME=Hlavní hlasitost
+STR_DLGSETTINGS_EFFECTS_VOLUME=Hlasitost efektů
+
+# Players menu — open the players panel
+STR_MENU_PLAYERS_PANEL=Panel hráčů
+
 # Chytrý ping (kruhové menu)
 MESSAGE_PING_STANDARD={player}: Ping!
 MESSAGE_PING_CAUTION={player}: Pozor!

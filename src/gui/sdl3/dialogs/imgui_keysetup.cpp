@@ -230,6 +230,32 @@ static int pingCaptureMods(void) {
     return mods;
 }
 
+/* Is the pointer resting on an ImGui widget? A press there belongs to the
+ * dialog — this row's own Cancel, another row's Change — and must not be
+ * taken as the chord, or the slot silently becomes a bare "Left Mouse", every
+ * later click opens the pie, and Cancel can never be reached with the mouse.
+ *
+ * The answer is the hover from the frame already drawn, which is the only one
+ * either capture path can have: the standalone dialog asks before
+ * ImGui_ImplSDL3_ProcessEvent and the in-game popup after it, but ImGui only
+ * settles hovering inside NewFrame, so both read the frame the player was
+ * looking at when they pressed. A pointer that lands on a button and clicks
+ * inside the same frame reads one frame stale, and costs that click.
+ *
+ * Why the item test and not the two obvious flags: io.WantCaptureMouse is
+ * true over the whole screen while any popup is open, and the in-game dialog
+ * IS a popup, so nothing could ever be bound in game. IsWindowHovered
+ * (AnyWindow) is true everywhere in the standalone dialog, which lays a
+ * transparent full-screen host window under its panel, so nothing could ever
+ * be bound there. "On a widget" is false over the game map, false over the
+ * map overview's pan item while the modal blocks it, and false over the
+ * dialog's own empty space — and true over exactly the buttons a press has to
+ * be left to. */
+static bool pingPointerOnWidget(void) {
+    if (ImGui::GetCurrentContext() == nullptr) return false;
+    return ImGui::IsAnyItemHovered();
+}
+
 /* Commit a captured code (a scancode, or pingBindingMouseCode of a button)
  * into the armed slot, with whatever modifiers are down at that moment. */
 static void pingAssignCaptured(int code) {
@@ -237,6 +263,15 @@ static void pingAssignCaptured(int code) {
     if (slot == nullptr) return;
     *slot = pingBindingEncode(pingCaptureMods(), code);
     s_pingWaitSlot = -1;
+}
+
+/* A mouse press offered to the armed row. True when it became the chord;
+ * false when the pointer was on a widget, in which case the caller has to let
+ * the click through to that widget instead of swallowing it. */
+static bool pingCaptureFromMouse(int sdlMouseButton) {
+    if (pingPointerOnWidget()) return false;
+    pingAssignCaptured(pingBindingMouseCode(sdlMouseButton));
+    return true;
 }
 
 /* The chord as display text: the modifier words and the key or button name,
@@ -597,6 +632,7 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             keyRow(langGetText(STR_DLGKEYSETUP_MUTEMIC),    ksMuteMic);
             endSection();
 #endif
+
             section(langGetText(STR_DLGKEYSETUP_PING));
             /* The three chords that open the pie, then one row per kind for
                the direct pings — same order the kinds are numbered in, so the
@@ -886,8 +922,11 @@ extern "C" int imguiKeySetupShow(void) {
                     }
                     continue;
                 }
-                if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-                    pingAssignCaptured(pingBindingMouseCode(ev.button.button));
+                /* A press on the dialog's own buttons is not a chord: it falls
+                   through to ImGui below so Cancel cancels and another row's
+                   Change arms that row instead. */
+                if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                    pingCaptureFromMouse((int)ev.button.button)) {
                     continue;
                 }
             }
@@ -1085,6 +1124,21 @@ extern "C" void imguiKeySetupOpenInGame(void) {
     s_inGameShowRequested = true;
 }
 
+/* Forget a pending open and any armed row. Called by a host that owns its
+ * own event loop as that loop ends: the flags below outlive the ImGui
+ * context the popup was drawn in, and the next context to run reads them.
+ * Keys and pad bindings are pushed out only when OK is pressed, and both
+ * working copies are re-read on the next open, so this is a Cancel — it
+ * drops nothing that was saved. Touches no ImGui state: it can be called
+ * outside a frame, and after a context has been destroyed. */
+extern "C" void imguiKeySetupCancelInGame(void) {
+    s_inGameShowRequested = false;
+    s_inGameOpen          = false;
+    s_inGameFadeAlpha     = 0.0f;
+    s_waiting             = ksNone;
+    s_padWaitAction       = -1;
+}
+
 extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     char title[128];
     snprintf(title, sizeof(title), "%s###keysetup",
@@ -1171,8 +1225,8 @@ extern "C" bool imguiKeySetupIsCapturingInGamePing(void) {
     return pingCapturing();
 }
 
-extern "C" void imguiKeySetupHandleInGamePingMouse(int sdlMouseButton) {
-    pingAssignCaptured(pingBindingMouseCode(sdlMouseButton));
+extern "C" bool imguiKeySetupHandleInGamePingMouse(int sdlMouseButton) {
+    return pingCaptureFromMouse(sdlMouseButton);
 }
 
 /* In-game controller-binding capture — mirror of the scancode hooks above.

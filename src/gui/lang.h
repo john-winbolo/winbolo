@@ -510,9 +510,9 @@
 #define STR_STARTPICK_SLOT_FALLBACK         1519
 #define STR_STARTPICK_TIP_OFFSIDE           2116
 #define STR_STARTPICK_TIP_OFFSIDE_HOST      2117
-/* Held start you may join (LOBBY_SHARED_STARTS): non-host / host */
-#define STR_STARTPICK_TIP_HELD_JOIN         2126
-#define STR_STARTPICK_TIP_HELD_JOIN_HOST    2127
+/* Held start you may join (LOBBY_SHARED_STARTS): non-host / host. */
+#define STR_STARTPICK_TIP_HELD_JOIN         2127
+#define STR_STARTPICK_TIP_HELD_JOIN_HOST    2128
 
 /* Player-row badge tooltips */
 #define STR_PLAYER_TIP_AI                   1520
@@ -1721,6 +1721,7 @@
 #define STR_DLGSETTINGS_VOICE_MICDEVICE         2060
 #define STR_DLGSETTINGS_VOICE_OUTDEVICE         2061
 #define STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT    2062
+#define STR_DLGSETTINGS_VOICE_SERVER_OFF        2126
 
 /* Key setup — push to talk binding */
 #define STR_DLGKEYSETUP_PUSHTOTALK              2043
@@ -1744,6 +1745,9 @@
 /* Lobby — the local player's voice sub-row */
 #define STR_DLGLOBBY_TOOLTIP_VOICE              2095
 #define STR_DLGLOBBY_VOICE_OFF                  2096
+
+/* Lobby chat — said once when somebody else is heard and voice is off here */
+#define STR_DLGLOBBY_VOICE_HINT                 2153
 
 /* Players panel — a player muted here who is talking anyway */
 #define STR_PLAYER_TIP_VOICE_MUTEDBYYOU_TALKING 2097
@@ -2211,30 +2215,30 @@
  * heads that section and labels its first chord row, with the two _ALT names
  * for the other two; the rest name the binding chord pieces the key-setup
  * field shows. */
-#define MESSAGE_PING_STANDARD               2128
-#define MESSAGE_PING_CAUTION                2129
-#define MESSAGE_PING_ASSIST                 2130
-#define MESSAGE_PING_ATTACK                 2131
-#define MESSAGE_PING_ON_MY_WAY              2132
-#define MESSAGE_PING_BOT_COMMAND            2133
-#define STR_PING_STANDARD                   2134
-#define STR_PING_CAUTION                    2135
-#define STR_PING_ASSIST                     2136
-#define STR_PING_ATTACK                     2137
-#define STR_PING_ON_MY_WAY                  2138
-#define STR_PING_BOT_COMMAND                2139
-#define STR_DLGKEYSETUP_PING                2140
-#define STR_DLGKEYSETUP_PING_ALT            2141
-#define STR_DLGKEYSETUP_PRESSACHORD         2142
-#define STR_PING_MOD_CTRL                   2143
-#define STR_PING_MOD_ALT                    2144
-#define STR_PING_MOD_SHIFT                  2145
-#define STR_PING_MOUSE_LEFT                 2146
-#define STR_PING_MOUSE_MIDDLE               2147
-#define STR_PING_MOUSE_RIGHT                2148
-#define STR_PING_MOUSE_X1                   2149
-#define STR_PING_MOUSE_X2                   2150
-#define STR_DLGKEYSETUP_PING_ALT2           2151
+#define MESSAGE_PING_STANDARD               2129
+#define MESSAGE_PING_CAUTION                2130
+#define MESSAGE_PING_ASSIST                 2131
+#define MESSAGE_PING_ATTACK                 2132
+#define MESSAGE_PING_ON_MY_WAY              2133
+#define MESSAGE_PING_BOT_COMMAND            2134
+#define STR_PING_STANDARD                   2135
+#define STR_PING_CAUTION                    2136
+#define STR_PING_ASSIST                     2137
+#define STR_PING_ATTACK                     2138
+#define STR_PING_ON_MY_WAY                  2139
+#define STR_PING_BOT_COMMAND                2140
+#define STR_DLGKEYSETUP_PING                2141
+#define STR_DLGKEYSETUP_PING_ALT            2142
+#define STR_DLGKEYSETUP_PRESSACHORD         2143
+#define STR_PING_MOD_CTRL                   2144
+#define STR_PING_MOD_ALT                    2145
+#define STR_PING_MOD_SHIFT                  2146
+#define STR_PING_MOUSE_LEFT                 2147
+#define STR_PING_MOUSE_MIDDLE               2148
+#define STR_PING_MOUSE_RIGHT                2149
+#define STR_PING_MOUSE_X1                   2150
+#define STR_PING_MOUSE_X2                   2151
+#define STR_DLGKEYSETUP_PING_ALT2           2152
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

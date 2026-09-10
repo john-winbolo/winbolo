@@ -712,6 +712,148 @@ static int voiceFillDeviceNames(bool recording,
     }
     return count;
 }
+
+/* Brings both lists up to date for this frame, called by each device combo.
+ * The first check is for the second combo of a pair: both are drawn in the
+ * same frame off one enumeration, so only the first of them does the work.
+ * ImGui::GetFrameCount() counts frames in the current context, so a caller
+ * drawing in a context of its own refills on its first draw, which is the
+ * same answer the frame comparison gives. */
+static void voiceRefreshDeviceLists(void) {
+    int frame = ImGui::GetFrameCount();
+    if (frame == s_voiceDeviceFrame) return;  /* second combo, same frame */
+    if (frame != s_voiceDeviceFrame + 1) {
+        s_voiceMicCount = voiceFillDeviceNames(true, s_voiceMicNames);
+        s_voiceOutCount = voiceFillDeviceNames(false, s_voiceOutNames);
+    }
+    s_voiceDeviceFrame = frame;
+}
+
+/* The voice controls below are drawn by more than one caller, each passing
+ * the width its own layout gives the control. */
+
+extern "C" void imguiSettingsVoiceModeCombo(float comboWidth) {
+    const char *voiceModeLabels[] = {
+        langGetText(STR_DLGSETTINGS_VOICE_MODE_OFF),
+        langGetText(STR_DLGSETTINGS_VOICE_MODE_PTT),
+        langGetText(STR_DLGSETTINGS_VOICE_MODE_OPEN),
+    };
+    int curModeIdx = (int)voiceGetMode();
+    if (curModeIdx < 0 || curModeIdx > 2) curModeIdx = 0;
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MODE));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(comboWidth);
+    if (ImGui::BeginCombo("##voicemode", voiceModeLabels[curModeIdx])) {
+        for (int i = 0; i < 3; i++) {
+            if (ImGui::Selectable(voiceModeLabels[i], curModeIdx == i)) {
+                windowSetVoiceMode(i);
+            }
+        }
+        ImGui::EndCombo();
+    }
+}
+
+extern "C" bool imguiSettingsVoiceDeviceCombo(bool recording, float comboWidth) {
+    voiceRefreshDeviceLists();
+    int count = recording ? s_voiceMicCount : s_voiceOutCount;
+    /* Left out entirely where there is nothing to choose between — the web
+       build has the browser pick — rather than drawn as an empty control. */
+    if (count <= 0) return false;
+    char (*names)[VOICE_DEVICE_NAME_MAX] =
+        recording ? s_voiceMicNames : s_voiceOutNames;
+    /* Copied because picking an entry rewrites what the getter returns,
+       and the rest of the list is compared against it after that. */
+    char wanted[VOICE_DEVICE_NAME_MAX];
+    SDL_strlcpy(wanted,
+                recording ? voiceGetRecordingDevice() : voiceGetPlaybackDevice(),
+                sizeof(wanted));
+    /* The closed combo names the chosen device even when it is not
+       plugged in, so an absent headset still reads as the choice rather
+       than silently as the default it is running on. */
+    ImGui::TextUnformatted(langGetText(recording
+                                           ? STR_DLGSETTINGS_VOICE_MICDEVICE
+                                           : STR_DLGSETTINGS_VOICE_OUTDEVICE));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(comboWidth);
+    if (ImGui::BeginCombo(recording ? "##voicemicdev" : "##voiceoutdev",
+                          wanted[0] != '\0'
+                              ? wanted
+                              : langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT))) {
+        if (ImGui::Selectable(langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT),
+                              wanted[0] == '\0')) {
+            if (recording) {
+                voiceSetRecordingDevice("");
+            } else {
+                voiceSetPlaybackDevice("");
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            /* Scoped by index: two devices can carry the same name. */
+            ImGui::PushID(i);
+            if (ImGui::Selectable(names[i], strcmp(names[i], wanted) == 0)) {
+                if (recording) {
+                    voiceSetRecordingDevice(names[i]);
+                } else {
+                    voiceSetPlaybackDevice(names[i]);
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    return true;
+}
+
+extern "C" void imguiSettingsVoiceMicGainSlider(float sliderWidth) {
+    float gain = voiceGetMicGain();
+    ImGui::SetNextItemWidth(sliderWidth);
+    if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_MICGAIN), &gain,
+                           0.0f, 4.0f, "%.2fx")) {
+        windowSetVoiceMicGain(gain);
+    }
+}
+
+extern "C" void imguiSettingsVoiceLevelMeter(float barWidth) {
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
+    ImGui::SameLine();
+    ImGui::ProgressBar(voiceGetInputMeter(), ImVec2(barWidth, 0.0f));
+    ImGui::SameLine();
+    /* Spelt out both ways rather than a colour that only means something
+       to players who can tell the two greens apart. */
+    if (voiceIsTransmitting()) {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
+                           langGetText(STR_DLGSETTINGS_VOICE_TRANSMITTING));
+    } else {
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING));
+    }
+}
+
+extern "C" void imguiSettingsVoiceMicTest(float barWidth) {
+    /* Records first and plays back after, rather than monitoring live:
+       on laptop speakers a live monitor is a feedback loop that howls.
+       Scoped, because the cancel shares its label with the buttons the
+       in-game overlay puts in this same window. */
+    ImGui::PushID("voiceMicTest");
+    VoiceMicTestState micTest = voiceMicTestGetState();
+    if (micTest == VOICE_MICTEST_IDLE) {
+        if (ImGui::Button(langGetText(STR_DLGSETTINGS_VOICE_LOOPBACK))) {
+            voiceMicTestStart();
+        }
+    } else {
+        if (ImGui::Button(langGetText(STR_CANCEL))) {
+            voiceMicTestCancel();
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(
+            langGetText(micTest == VOICE_MICTEST_RECORDING
+                            ? STR_DLGSETTINGS_VOICE_MICTEST_RECORDING
+                            : STR_DLGSETTINGS_VOICE_MICTEST_PLAYING));
+        ImGui::SameLine();
+        ImGui::ProgressBar(voiceMicTestProgress(), ImVec2(barWidth, 0.0f));
+    }
+    ImGui::PopID();
+}
 #endif
 
 /* -------------------------------------------------------
@@ -1579,27 +1721,14 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ENABLE), &voiceOn)) {
         windowSetVoiceEnabled(voiceOn);
     }
-    if (!voiceOn) ImGui::BeginDisabled();
-    {
-        const char *voiceModeLabels[] = {
-            langGetText(STR_DLGSETTINGS_VOICE_MODE_OFF),
-            langGetText(STR_DLGSETTINGS_VOICE_MODE_PTT),
-            langGetText(STR_DLGSETTINGS_VOICE_MODE_OPEN),
-        };
-        int curModeIdx = (int)voiceGetMode();
-        if (curModeIdx < 0 || curModeIdx > 2) curModeIdx = 0;
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MODE));
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(140);
-        if (ImGui::BeginCombo("##voicemode", voiceModeLabels[curModeIdx])) {
-            for (int i = 0; i < 3; i++) {
-                if (ImGui::Selectable(voiceModeLabels[i], curModeIdx == i)) {
-                    windowSetVoiceMode(i);
-                }
-            }
-            ImGui::EndCombo();
-        }
+    /* Said once, above the controls, on a server that drops what it is sent:
+       the devices, the level meter and the microphone test below are all
+       local and still worth having, but nothing said here reaches anyone. */
+    if (voiceServerHasVoiceOff()) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
     }
+    if (!voiceOn) ImGui::BeginDisabled();
+    imguiSettingsVoiceModeCombo(140.0f);
     /* The binding itself is set in Key Setup; showing it here is so the
        player can see which key push to talk is on without leaving. */
     if (voiceGetMode() == VOICE_MODE_PTT) {
@@ -1614,120 +1743,11 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         ImGui::SameLine();
         ImGui::TextUnformatted(pttName);
     }
-    {
-        int frame = ImGui::GetFrameCount();
-        if (frame != s_voiceDeviceFrame + 1) {
-            s_voiceMicCount = voiceFillDeviceNames(true, s_voiceMicNames);
-            s_voiceOutCount = voiceFillDeviceNames(false, s_voiceOutNames);
-        }
-        s_voiceDeviceFrame = frame;
-    }
-    /* Left out entirely where there is nothing to choose between — the web
-       build has the browser pick — rather than drawn as an empty control. */
-    if (s_voiceMicCount > 0) {
-        /* Copied because picking an entry rewrites what the getter returns,
-           and the rest of the list is compared against it after that. */
-        char wanted[VOICE_DEVICE_NAME_MAX];
-        SDL_strlcpy(wanted, voiceGetRecordingDevice(), sizeof(wanted));
-        /* The closed combo names the chosen device even when it is not
-           plugged in, so an absent headset still reads as the choice rather
-           than silently as the default it is running on. */
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MICDEVICE));
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(240);
-        if (ImGui::BeginCombo("##voicemicdev",
-                              wanted[0] != '\0'
-                                  ? wanted
-                                  : langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT))) {
-            if (ImGui::Selectable(langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT),
-                                  wanted[0] == '\0')) {
-                voiceSetRecordingDevice("");
-            }
-            for (int i = 0; i < s_voiceMicCount; i++) {
-                /* Scoped by index: two devices can carry the same name. */
-                ImGui::PushID(i);
-                if (ImGui::Selectable(s_voiceMicNames[i],
-                                      strcmp(s_voiceMicNames[i], wanted) == 0)) {
-                    voiceSetRecordingDevice(s_voiceMicNames[i]);
-                }
-                ImGui::PopID();
-            }
-            ImGui::EndCombo();
-        }
-    }
-    if (s_voiceOutCount > 0) {
-        char wanted[VOICE_DEVICE_NAME_MAX];
-        SDL_strlcpy(wanted, voiceGetPlaybackDevice(), sizeof(wanted));
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_OUTDEVICE));
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(240);
-        if (ImGui::BeginCombo("##voiceoutdev",
-                              wanted[0] != '\0'
-                                  ? wanted
-                                  : langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT))) {
-            if (ImGui::Selectable(langGetText(STR_DLGSETTINGS_VOICE_DEVICE_DEFAULT),
-                                  wanted[0] == '\0')) {
-                voiceSetPlaybackDevice("");
-            }
-            for (int i = 0; i < s_voiceOutCount; i++) {
-                ImGui::PushID(i);
-                if (ImGui::Selectable(s_voiceOutNames[i],
-                                      strcmp(s_voiceOutNames[i], wanted) == 0)) {
-                    voiceSetPlaybackDevice(s_voiceOutNames[i]);
-                }
-                ImGui::PopID();
-            }
-            ImGui::EndCombo();
-        }
-    }
-    {
-        float gain = voiceGetMicGain();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_MICGAIN), &gain,
-                               0.0f, 4.0f, "%.2fx")) {
-            windowSetVoiceMicGain(gain);
-        }
-    }
-    {
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
-        ImGui::SameLine();
-        ImGui::ProgressBar(voiceGetInputMeter(), ImVec2(200.0f, 0.0f));
-        ImGui::SameLine();
-        /* Spelt out both ways rather than a colour that only means something
-           to players who can tell the two greens apart. */
-        if (voiceIsTransmitting()) {
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
-                               langGetText(STR_DLGSETTINGS_VOICE_TRANSMITTING));
-        } else {
-            ImGui::TextDisabled("%s",
-                                langGetText(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING));
-        }
-    }
-    {
-        /* Records first and plays back after, rather than monitoring live:
-           on laptop speakers a live monitor is a feedback loop that howls.
-           Scoped, because the cancel shares its label with the buttons the
-           in-game overlay puts in this same window. */
-        ImGui::PushID("voiceMicTest");
-        VoiceMicTestState micTest = voiceMicTestGetState();
-        if (micTest == VOICE_MICTEST_IDLE) {
-            if (ImGui::Button(langGetText(STR_DLGSETTINGS_VOICE_LOOPBACK))) {
-                voiceMicTestStart();
-            }
-        } else {
-            if (ImGui::Button(langGetText(STR_CANCEL))) {
-                voiceMicTestCancel();
-            }
-            ImGui::SameLine();
-            ImGui::TextUnformatted(
-                langGetText(micTest == VOICE_MICTEST_RECORDING
-                                ? STR_DLGSETTINGS_VOICE_MICTEST_RECORDING
-                                : STR_DLGSETTINGS_VOICE_MICTEST_PLAYING));
-            ImGui::SameLine();
-            ImGui::ProgressBar(voiceMicTestProgress(), ImVec2(200.0f, 0.0f));
-        }
-        ImGui::PopID();
-    }
+    imguiSettingsVoiceDeviceCombo(true, 240.0f);
+    imguiSettingsVoiceDeviceCombo(false, 240.0f);
+    imguiSettingsVoiceMicGainSlider(200.0f);
+    imguiSettingsVoiceLevelMeter(200.0f);
+    imguiSettingsVoiceMicTest(200.0f);
 #if defined(WINBOLO_VOICE_AEC)
     {
         /* Three states, and the checkbox shows the saved preference in all

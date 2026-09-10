@@ -144,7 +144,7 @@ static int lobbyDefaultBrainIdx(const BrainList *bl) {
         }
     }
     for (int i = 0; i < bl->count; i++) {
-        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.6") == 0) return i;
+        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.7") == 0) return i;
     }
     return 0;  /* sorted newest-first → entry 0 is the newest GoalHunter */
 }

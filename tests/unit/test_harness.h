@@ -950,6 +950,14 @@ int run_voice_flags_snapshot_masking(void);
  * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
 int run_voice_talking_codec(void);
 
+/* The lobby's talking set over the loopback transport (test_voice_talking_set.c),
+ * read off the watching client's mirror of it: a talker who goes quiet after the
+ * countdown has begun still ages out of the set (the silence is measured on a
+ * clock that keeps running while the sim's tick does not), and the only talker
+ * leaving empties the set on every other client rather than leaving them lit. */
+int run_voice_talking_stops_in_countdown(void);
+int run_voice_talking_clears_on_leave(void);
+
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
@@ -1569,15 +1577,25 @@ int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
 
 /* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's
- * running-game / has-a-tank / known-kind gates, the per-player rate limit,
- * the GameEvent an accepted ping turns into, and the team-only delivery
- * predicate both copies of the snapshot filter call. */
+ * running-game / occupied-slot / known-kind gates, the per-player rate limit
+ * and its reset at a round change, the GameEvent an accepted ping turns into
+ * (including the retry when the frame's event buffer is full), and the
+ * team-only delivery predicate both copies of the snapshot filter call. */
 int run_ping_dispatch_accepts_and_builds_event(void);
 int run_ping_dispatch_rejects_lobby(void);
-int run_ping_dispatch_rejects_tankless_and_spectator(void);
+int run_ping_dispatch_rejects_empty_slot_and_out_of_range(void);
+int run_ping_dispatch_map_range_bound(void);
 int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
+int run_ping_dispatch_new_round_clears_rate_limit(void);
 int run_ping_reaches_team_only(void);
+
+/* Smart ping across the wire (test_ping_network.c): the full client -> server
+ * -> client path over the real loopback UDP transport, driven through
+ * serverInstanceTick so the per-frame event-buffer clear is exercised. A lone
+ * player's ping must echo back to itself, and a teammate's ping must reach the
+ * other client. Red while the EVENT_PING is cleared before the wire drain. */
+int run_ping_network(void);
 
 /* Generated lang-name lookup table pin (test_lang_name_table.c): the
  * K_LANG_NAME_TABLE_SIZE macro matches the real kLangNameTable[] length,
@@ -1596,6 +1614,16 @@ int run_mdns_discovery(void);
  * and bolo_client_type_name() maps every enumerator to its exact name. */
 int run_client_type_matches_platform(void);
 int run_client_type_name_round_trips(void);
+
+/* Client slot bookkeeping (test_client_slot_reassign.c): the client's single
+ * tank and lgm live at its slot index, and clientSimSetPlayerNum has to carry
+ * them across when a second JOIN_ACCEPT assigns a different slot. The move
+ * used to read slot 0 unconditionally, which is only where they sit on the
+ * first assignment — later ones wrote NULL over the live pointers and orphaned
+ * both objects. Asserts one live tank and one live lgm, at the current slot. */
+int run_client_slot_reassign_carries_tank_and_lgm(void);
+int run_client_slot_reassign_same_slot_is_stable(void);
+int run_client_slot_reassign_back_to_zero(void);
 int run_players_oob_index_safe(void);
 int run_control_oob_player_dropped(void);
 
