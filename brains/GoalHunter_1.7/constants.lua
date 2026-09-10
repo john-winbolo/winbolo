@@ -1897,11 +1897,36 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
 -- kill_lgm), so the crosshair sat wherever the last goal left it and the
 -- impact-point gate almost never opened.  The hunt drives the gunsight too.
 M.CAPTURE_LGM_HUNT               = true  -- master switch (KEEL: false)
-M.CAPTURE_LGM_HUNT_RADIUS        = 2     -- tiles, CHEBYSHEV, measured FROM THE
-                                         -- TARGET PILL (goal.mx/my), not from
-                                         -- the tank: a 5x5 box around the
-                                         -- corpse.  A builder further out than
-                                         -- that is not working on THIS pill.
+M.CAPTURE_LGM_HUNT_CIRCLE        = true  -- true: the hunt region is a TRUE
+                                         -- CIRCLE (Euclidean, dx^2+dy^2 <= R^2)
+                                         -- around the target pill; false: the
+                                         -- old CHEBYSHEV box (a (2R+1)^2 square).
+                                         -- Andrew (2026-09-09) wanted a circle.
+                                         -- KEEL: false (box), but moot -- the
+                                         -- whole feature is keel-off.
+M.CAPTURE_LGM_HUNT_RADIUS        = 7     -- tiles, measured FROM THE TARGET PILL
+                                         -- (goal.mx/my), not from the tank.
+                                         -- Euclidean when CAPTURE_LGM_HUNT_CIRCLE.
+                                         -- Andrew (2026-09-10): widened 2.5 -> 7
+                                         -- to cast a much wider net for hostile
+                                         -- LGMs near the swept pill. NOTE the
+                                         -- SHOT still needs the man within max
+                                         -- shell travel (7 tiles along the ray)
+                                         -- and KILL_LGM_SHOOT_RANGE of the TANK,
+                                         -- and the sweep-line NUDGE only applies
+                                         -- inside CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS
+                                         -- (still 2.5) -- so widening this grows
+                                         -- who we AIM/FIRE at, not who we steer for.
+M.CAPTURE_LGM_HUNT_SIGHT_ON_PILL  = true  -- while sweeping with NO LGM in the
+                                         -- radius, rest the crosshair on the
+                                         -- target pill: step the gunrange toward
+                                         -- whichever length lands the sight
+                                         -- Euclidean-closest to it. The instant
+                                         -- an LGM enters the radius we target the
+                                         -- MAN instead (see init.lua's lgm
+                                         -- branch), and the instant the sweep
+                                         -- ends the gunrange drives back to full.
+                                         -- KEEL: false.
 -- Heading tolerance: how far the aim may pull the nose off the navigation
 -- heading before we give the turn back to navigation.  The engine's direction
 -- unit is 256 per full turn ("brads"), so 26 ~= 36 deg ~= 20% of a half turn,
@@ -1930,6 +1955,52 @@ M.CAPTURE_LGM_HUNT_ARMOUR_TICKS   = 100  -- how long one armour rise keeps the
 -- +4.1, 7 of 10 games tick-identical (the cap never engaged) -- Andrew:
 -- "sweep, uncapped it is!".  Off by default; kept as the option.
 M.CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = false
+
+-- ── Capture-target LGM hunt: sweep-line nudge + opportunistic kill (2026-09-09)
+-- Design (Andrew, approved): "efficient sweep, opportunistic kill, with a small
+-- heading nudge."  The old tol-turn-blend aimed the nose FULLY at the man and
+-- pinned the heading in a deadband while the throttle stayed at full -- the 2062
+-- stalemate, where the tank swept past the shot forever.  Instead we keep the
+-- SWEEP heading (toward the pill/waypoint) as the base and only BIAS it a few
+-- brads toward the man, and only so far as the resulting ray still crosses the
+-- pill tile, so the drive-over capture is never sacrificed for the shot.  The
+-- shot itself is opportunistic: drive the gunsight onto the man and fire when
+-- the predicted impact lands within a tile of him (or in his exact tile if he
+-- stands on a solid square -- see below).
+--
+-- SWEEP_FOCUS_RADIUS: within this Euclidean distance (tiles) of the swept pill
+-- the sweep owns the heading and the nudge applies.  Kept SEPARATE from the
+-- shoot radius (CAPTURE_LGM_HUNT_RADIUS) so the "how close before we bias the
+-- heading" and "how close a man counts as on this pill" can be tuned apart.
+-- KEEL: 2.5 (moot -- the whole feature is keel-off).
+M.CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5
+-- SWEEP_NUDGE_BRADS: the MAX heading nudge (brads, 256 = full turn) toward the
+-- best-candidate man, applied on top of the sweep heading and clamped so the
+-- ray still crosses the pill tile.  This is a bounded bias, NOT a chase -- it
+-- can never re-introduce the 2062 pin because it can't pull the heading off the
+-- pill line.  KEEL: 0 (no nudge -- the old tol-turn-blend runs unchanged).
+M.CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 10
+-- FIRE_WU: open-ground impact tolerance (wu) for the capture-target shot -- fire
+-- when the predicted shell impact lands within this of the man's predicted
+-- position.  The engine's real LGM splash kill radius is 128 wu (a full tile,
+-- lgm.c), so 100 leaves a margin.  BUT a man standing on a SOLID square (a live
+-- pill, a base, or a building) is killed by lgm.c's death check ONLY when the
+-- shell lands in his EXACT tile (lgmDeathCheckAtPosition: solid square =>
+-- same-square-only, no splash); for those the shot requires impact-tile ==
+-- man-tile instead of this radius.  The SHARED kill_lgm evaluator's ½-tile
+-- (64 wu) gate is UNCHANGED -- only the capture-target man gets this wider gate.
+-- KEEL: 64 (equals the shared gate, so the wider shot can never fire beyond it).
+M.CAPTURE_LGM_HUNT_FIRE_WU       = 100
+-- REFIRE_MAX_MISSES: keep firing at the same man every reload-available tick,
+-- but give up after this many consecutive misses (a shot whose flight completed
+-- with the man still alive).  Counter resets on a kill or a target change, and
+-- is DROPPED when he leaves the hunt radius.  A miss is only counted at the NEXT
+-- fire (once the prior shot's flight is over), so =3 means up to 4 shells go out
+-- before the cap engages.  Stops us dumping the whole magazine at a man we can't
+-- actually hit (e.g. one weaving just off the pill line).  =0 disables the CAP
+-- (not the refire -- the block still re-fires every reload tick; moot anyway
+-- while the master switch is keel-off).  KEEL: 0.
+M.CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 3
 
 -- ── Capture-target LGM PRIORITY (2026-09-08) ─────────────────────────────
 -- Andrew's alternative to the sweep above, and an INDEPENDENT knob so the two
@@ -2780,6 +2851,18 @@ M.BLITZ_SUICIDER_MAX_TICKS = 1600  -- ticks (~32s) hard backstop on a blitz-desi
 M.BLITZ_CONTESTED_RANGE = 9  -- EUCLIDEAN tiles: the take of a pill is CONTESTED when a live hostile TANK is seen this close to that pill. Only REAL sightings count (perception's enemy_tanks, which is hostile-only) -- never a ghost, which is a guess at where an unseen tank went and is no basis for rewriting the whole party's role. 9 is a bit over tank gun range, so "an enemy that can already shoot at the take, plus slack"
 M.BLITZ_CONTESTED_ALL_SUICIDERS = false  -- master ON/OFF switch for the whole CONTESTED-TAKE rule (see BLITZ_CONTESTED_RANGE). The rule: on a contested take the commander designates BLITZ_CONTESTED_SUICIDERS of the party temporary pill_suiciders at GO, regardless of BLITZ_MIN_SUICIDERS, and re-checks on its replans while the take is live in case an enemy arrives later. The idea was that a contested take is the one that usually gets undone -- the defender's LGM walks back out and repairs the pill while our survivors reload -- and a suicider is the role that hunts that LGM instead of backing off. OFF BY DEFAULT since 2026-09-05: ten-seed benches against stock KEEL said the rule costs games even in its one-suicider form -- 2v2 DH-Oil Rig KEEL 7-3, 6v6 Easter KEEL 6-3 (9 played). (The first form designated EVERY blitzer, which is where the name comes from; cutting it to one did not rescue it.) MECHANISM KEPT, not deleted: opt in per bot with `cfg=BLITZ_CONTESTED_ALL_SUICIDERS=true`, which is how tests/blitz_contested_test.py still exercises it, and how the next bench can re-test it without a rebuild. Precedence is unchanged: permanent "suicider"/"nosuicider" token > blitz temp designation > harasser slate; a "noblitz" bot is in no blitz so it is never designated
 M.BLITZ_CONTESTED_SUICIDERS = 1  -- how many members of a CONTESTED take become suiciders, for ANY party of 2 or more (party COUNTS THE COMMANDER). Picked exactly like the BLITZ_MIN_SUICIDERS quota: SOLDIERS first, uniformly at random with the brain's seeded RNG (so a -brain-lua-seed run designates the same tank every time), and the commander designates ITSELF only when the soldiers cannot cover the number. Members that are ALREADY suiciders (permanent token, harasser slate, or a designation queued this same tick) COUNT toward it, so a party whose only soldier is already a suicider designates nobody new. A party of 1 (a solo take, no blitz call) designates nothing at all. 2026-09-05 evening: bench said all-suiciders loses; one per take. The designation is a once-per-take latch -- a party that GROWS after the designation designates nothing more.
+-- ── Blitz "only swerve when hit" (2026-09-10) ─────────────────────────────
+-- When >= BLITZ_ONLY_WHEN_HIT_MIN tanks are COMMITTED to blitzing ONE pill, a
+-- committed blitzer holds its PROACTIVE swerves (kill-locked, anger, LGM-near)
+-- until it takes ANY hit -- armour dropping below the value it committed with.
+-- The idea: with enough bodies on the pill the overwhelm only works if nobody
+-- peels off early; an undamaged blitzer that curves away on a kill-lock or an
+-- angry pill just thins the rush.  Hits-taken swerves and the pill-DEAD swerve
+-- (the hand-off to capture, not a dodge) are UNCHANGED, as is the ARMOUR_CRITICAL
+-- drain-disengage safety net.  Below the threshold, or once hit, behaviour is
+-- exactly as today.  A/B: preset=keel vs preset=keel;cfg=BLITZ_SWERVE_ONLY_WHEN_HIT=1.
+M.BLITZ_SWERVE_ONLY_WHEN_HIT = true   -- default ON; KEEL false
+M.BLITZ_ONLY_WHEN_HIT_MIN    = 3      -- committed-blitzer threshold (self + allies on the same pill)
 M.BLITZ_ABORT_BUILD_ON_READY = true  -- if a soldier JOINS while the commander is mid build_walls (laying its guard pills/shield), abandon the remaining blocks and rally NOW (build_walls -> blitz_wait, unshielded charge route). The joiner's simultaneous overwhelm replaces the shield as protection ??? same routing as if the joiner had answered before the in-position decision. Off = finish the shield first, then rally (original behavior).
 M.BLITZ_MIN_READY_TO_CHARGE = 2  -- (used with BLITZ_ABORT_BUILD_ON_READY) DEFAULT ONLY, see SQUAD_BLITZ_GO_EARLY_READY: minimum READY blitzers ??? total tanks in position and aimed (rdy=1) ??? required before the commander abandons the build and charges. The commander itself always counts as 1 (it's at its standoff). 2 = commander + one ready soldier; a still-approaching 3rd is left to keep closing and joins the charge when it arrives. Default 2 = original abort-on-join behavior.
 -- Outbound /info batching: several internal-channel messages are packed into the
@@ -4015,6 +4098,8 @@ M.PRESETS = {
     -- it is false and are pinned here only so a later tweak to one of their
     -- DEFAULTS cannot leak into the baseline.
     CAPTURE_LGM_HUNT              = false,
+    CAPTURE_LGM_HUNT_CIRCLE       = false,  -- box (Chebyshev); moot, feature keel-off
+    CAPTURE_LGM_HUNT_SIGHT_ON_PILL = false, -- no sight-over-pill; moot, feature keel-off
     CAPTURE_LGM_HUNT_RADIUS       = 2,
     CAPTURE_LGM_HUNT_TOL_BRADS    = 26,
     CAPTURE_LGM_HUNT_TOL_NEAR_BRADS = 45,
@@ -4022,6 +4107,10 @@ M.PRESETS = {
     CAPTURE_LGM_HUNT_ARMOUR_TRIGGER = true,
     CAPTURE_LGM_HUNT_ARMOUR_TICKS = 100,
     CAPTURE_LGM_HUNT_RADIUS_CAP_BY_DIST = true,  -- 2026-09-08: pinned (feature is keel-off)
+    CAPTURE_LGM_HUNT_SWEEP_FOCUS_RADIUS = 2.5,  -- moot, feature keel-off
+    CAPTURE_LGM_HUNT_SWEEP_NUDGE_BRADS = 0,     -- no heading nudge (no-op value)
+    CAPTURE_LGM_HUNT_FIRE_WU      = 64,         -- capture fire gate = the shared ½-tile gate (no wider shot)
+    CAPTURE_LGM_HUNT_REFIRE_MAX_MISSES = 0,     -- no capture-target refire (off)
     -- 2026-09-08: a hostile LGM within CAPTURE_LGM_PRIORITY_RADIUS tiles
     -- (Chebyshev) of the pill the capture flow is driving at now gets his
     -- kill_lgm pool row capped at CAPTURE_LGM_PRIORITY_MAX_COST, so kill_lgm
@@ -4058,6 +4147,11 @@ M.PRESETS = {
     DEFEND_ALARM_MODE             = false,
     -- 2026-09-05: raised to 3, i.e. the default blitz party went 2..2 -> 2..4.
     SQUAD_MAX_SIZE                = 1,
+    -- 2026-09-10: undamaged committed blitzers hold proactive swerves once 3+
+    -- are on one pill.  KEEL keeps the boolean off (bit-for-bit); the MIN is
+    -- pinned at its default so it's neutral even if the boolean were flipped on.
+    BLITZ_SWERVE_ONLY_WHEN_HIT    = false,
+    BLITZ_ONLY_WHEN_HIT_MIN       = 3,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its
