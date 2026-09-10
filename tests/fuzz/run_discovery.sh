@@ -40,8 +40,10 @@ mkdir -p "$work" "$crashes"
 # start fails, the reply pipe never reaches EOF and the run stalls ~90 seconds
 # per attempt — single-digit exec/s instead of six figures. Prefer
 # unsymbolized output to stalling; replay an artifact without this to get
-# named frames back.
-if ! command -v llvm-symbolizer >/dev/null 2>&1; then
+# named frames back. macOS is exempt: its runtime falls back to atos, which
+# works, so only a host with neither tool gets symbolization turned off.
+if ! command -v llvm-symbolizer >/dev/null 2>&1 && \
+   ! command -v atos >/dev/null 2>&1; then
     export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}symbolize=0"
     echo "note: llvm-symbolizer not on PATH — running with symbolize=0" >&2
 fi

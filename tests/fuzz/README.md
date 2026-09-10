@@ -78,10 +78,11 @@ start fails, the reply pipe never reaches EOF, and the run stalls about 90
 seconds per attempt — `Done 22 runs in 90 second(s)` at 0% CPU, with the main
 thread in `pipe_read`. It hits the targets linking the most code hardest.
 
-`run_discovery.sh` detects this and sets `ASAN_OPTIONS=symbolize=0`. Setting
-`ASAN_SYMBOLIZER_PATH` does *not* help, and neither does libFuzzer's
-`-symbolize=0`. Replaying an artifact symbolizes fine, so leave the variable
-unset when you replay one and you still get named frames.
+`run_discovery.sh` detects this and sets `ASAN_OPTIONS=symbolize=0`. macOS is
+not affected, since its runtime falls back to `atos`, so the guard leaves it
+alone. Setting `ASAN_SYMBOLIZER_PATH` does *not* help, and neither does
+libFuzzer's `-symbolize=0`. Replaying an artifact symbolizes fine, so leave
+the variable unset when you replay one and you still get named frames.
 
 ### Long unattended runs (parallel)
 
