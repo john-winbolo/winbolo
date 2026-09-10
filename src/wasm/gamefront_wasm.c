@@ -300,8 +300,10 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiQuickMine    = DEFAULT_QUICKMINE;
   keys->kiPushToTalk   = DEFAULT_PUSHTOTALK;
   keys->kiMuteMic      = DEFAULT_MUTEMIC;
-  /* Smart-ping chord slots. The web client has no pie menu yet, but the
-     defaults are seeded so a shared prefs file round-trips unchanged. */
+  /* Smart-ping chord slots. The web client runs the same pie menu as the
+     desktop (ping_overlay.cpp is in the wasm build and shared sdl3imgui.cpp
+     drives it), so it starts on the same chords: Ctrl and Alt with the right
+     mouse button open the menu, the third slot is spare. */
   keys->kiPing[0]      = DEFAULT_PING1;
   keys->kiPing[1]      = DEFAULT_PING2;
   keys->kiPing[2]      = DEFAULT_PING3;
