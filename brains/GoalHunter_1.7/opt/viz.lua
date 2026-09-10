@@ -411,6 +411,9 @@ M.IDS = {
   kill_lgm_status = { short = "Kill-LGM status",
                       long  = "Per-LGM kill-evaluation labels (dist / aim corr / LOS clear-blocked / would-fire) plus a HUD summary line for the chosen target. Always shows when at least one hostile LGM is in view." },
 
+  capture_lgm_misses = { short = "Capture-LGM miss count",
+                      long  = "During a capture_pill LGM hunt, a 'misses=N' label over the tank: the running count of consecutive capture-target shots at the current man whose flight completed with him still alive. Resets on a kill/leave (record dropped) or target change. The miss CAP is currently disabled, so this only reports -- it does not stop firing." },
+
 
   builder_pool_job = { short = "Builder pool: active job",
                        long  = "The side-quest the LGM is currently out on (builder_pool.lua): a line from the TANK to the target tile, a ring on the target, and a '<type> <phase> eta=Nt' label. The line starts at the tank because the tank is both ends of the trip -- that round trip is what BUILDER_POOL_TRIP_W is charged on. Colour is the phase: pale blue outbound, green working (he is standing on the tile), amber returning. Nothing renders when no job is live." },
