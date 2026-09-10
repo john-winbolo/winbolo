@@ -13,6 +13,7 @@
 #include "client_command.h"
 #include "transport_command_codec.h"
 #include "netpacks.h"               /* BOLO_NEW_MAGIC_*, PACKET_HEADER_SIZE */
+#include "input_packet.h"           /* PING_KIND_* — CMD_PING's kind byte */
 #include "test_harness.h"
 
 /* Encode `in` then decode back into `out`. Returns 0 on success;
@@ -715,6 +716,64 @@ int run_command_codec_view_cycle(void) {
         memset(&sink, 0, sizeof(sink));
         UT_ASSERT_MSG(commandCodecDecode(buf, outLen + 1, &sink) == false,
                       "decoder must reject an over-long VIEW_CYCLE packet");
+    }
+
+    return 0;
+}
+
+/* CMD_PING — kind + two big-endian u16 coordinates, a fixed five-byte body.
+ * The coordinates are WORLD units, so the whole u16 range is legal and the
+ * extremes have to survive: a sub-square position is the whole point of not
+ * sending map squares. The decoder must refuse a packet that is not exactly
+ * the fixed length. */
+int run_command_codec_ping(void) {
+    ClientCommand in, out;
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t outLen = 0;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_PING;
+    in.cmdSeq = 80;
+    in.u.ping.kind   = PING_KIND_ON_MY_WAY;
+    in.u.ping.worldX = 0x1234;
+    in.u.ping.worldY = 0xABCD;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_PING");
+    UT_ASSERT(out.type == CMD_PING);
+    UT_ASSERT(out.cmdSeq == 80);
+    UT_ASSERT(out.u.ping.kind   == PING_KIND_ON_MY_WAY);
+    UT_ASSERT_MSG(out.u.ping.worldX == 0x1234, "worldX = 0x%04X",
+                  out.u.ping.worldX);
+    UT_ASSERT_MSG(out.u.ping.worldY == 0xABCD, "worldY = 0x%04X",
+                  out.u.ping.worldY);
+
+    /* Both ends of the coordinate range, and a kind the dispatcher will
+     * later reject — range is the dispatcher's business, not the codec's. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_PING;
+    in.cmdSeq = 81;
+    in.u.ping.kind   = 200;
+    in.u.ping.worldX = 0;
+    in.u.ping.worldY = 0xFFFF;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_PING extremes");
+    UT_ASSERT(out.cmdSeq == 81);
+    UT_ASSERT(out.u.ping.kind   == 200);
+    UT_ASSERT(out.u.ping.worldX == 0);
+    UT_ASSERT(out.u.ping.worldY == 0xFFFF);
+
+    /* Fixed length: one byte short and one byte long are both refused. */
+    UT_ASSERT(commandCodecEncode(&in, buf, sizeof(buf), &outLen) == true);
+    UT_ASSERT_MSG(outLen == PACKET_HEADER_SIZE + 4 + 5, "wire len = %zu", outLen);
+    {
+        ClientCommand sink;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen - 1, &sink) == false,
+                      "decoder must reject a short PING packet");
+        buf[outLen] = 0;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen + 1, &sink) == false,
+                      "decoder must reject an over-long PING packet");
     }
 
     return 0;

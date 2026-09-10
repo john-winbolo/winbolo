@@ -33,6 +33,17 @@
 #define SI_ACTION_BUILD_CANCEL  "build_cancel"    /* exit build mode without building */
 #define SI_ACTION_LOCK_HEADING  "lock_heading"    /* hold — freeze tank facing */
 #define SI_ACTION_TANK_VIEW     "tank_view"       /* recentre on / return to tank view */
+/* Smart ping. The menu one is held — the pie opens under it and the right
+ * stick (map_scroll) picks a sector — and the six below send one kind
+ * outright. All unbound in the shipped controller configs; the player binds
+ * what they want in the Steam configurator. */
+#define SI_ACTION_PING_MENU        "ping_menu"
+#define SI_ACTION_PING_STANDARD    "ping_standard"
+#define SI_ACTION_PING_CAUTION     "ping_caution"
+#define SI_ACTION_PING_ASSIST      "ping_assist"
+#define SI_ACTION_PING_ATTACK      "ping_attack"
+#define SI_ACTION_PING_ON_MY_WAY   "ping_on_my_way"
+#define SI_ACTION_PING_BOT_COMMAND "ping_bot_command"
 
 /* Analog actions — InGame set */
 #define SI_ANALOG_TANK_MOVE     "tank_move"       /* Left stick */
