@@ -1195,7 +1195,7 @@ static void logStateVerbose(int tickNum) {
  *   tank      tx ty x y dir speed on_boat dead armor shells mines trees
  *             reload pills_carried
  *   man       status (in_tank | dead | out) mx my
- *   pillboxes [tx ty owner armor in_tank speed cooldown] in map order
+ *   pillboxes [tx ty owner armor in_tank speed] in map order
  *   bases     [tx ty owner armor shells mines] in map order
  *   counts    forest (FOREST squares, mined ones included) mines (live)
  *   terrain   [tx ty from to] per map square whose terrain moved since the
@@ -1412,17 +1412,17 @@ static void logChangesBuild(TextBuf *b) {
     BYTE np = serverSimGetPillCount(fastServerSim);
     BYTE pi;
     for (pi = 1; pi <= np; pi++) {
-      BYTE px, py, powner, parmour, pspeed, pcool;
+      BYTE px, py, powner, parmour, pspeed;
       bool pinTank;
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
-      if (!serverSimGetPillStats(fastServerSim, pi, &pspeed, NULL, &pcool)) continue;
+      if (!serverSimGetPillSpeed(fastServerSim, pi, &pspeed)) continue;
       textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
-                       ",\"in_tank\":%s,\"speed\":%u,\"cooldown\":%u}",
+                       ",\"in_tank\":%s,\"speed\":%u}",
                     pi > 1 ? "," : "",
                     (unsigned)px, (unsigned)py,
                     verboseOwnerStr(powner, selfPlayer, alliesBits),
                     (unsigned)parmour, pinTank ? "true" : "false",
-                    (unsigned)pspeed, (unsigned)pcool);
+                    (unsigned)pspeed);
     }
   }
   textBufPrintf(b, "]");
