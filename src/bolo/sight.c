@@ -72,14 +72,33 @@ static bool sightIsTree(map *mp, int x, int y) {
   return (SIGHT_TREE(terrain) ? TRUE : FALSE);
 }
 
+/* Whether a square is close enough to the origin that trees never hide it.
+ * Measured on each axis rather than as a distance, so the ground it covers is
+ * a box - the shape the tank hide uses, for the same reason. */
+static bool sightNearOrigin(int x0, int y0, int x, int y) {
+  int dx; /* Squares across, either way round */
+  int dy; /* Squares down */
+
+  dx = (x > x0) ? (x - x0) : (x0 - x);
+  dy = (y > y0) ? (y - y0) : (y0 - y);
+  return (dx <= SIGHT_TREE_NEAR && dy <= SIGHT_TREE_NEAR);
+}
+
 /* Walks the line from one square to another and says whether it arrives.
- * Neither end is tested for what is on it; every square the walk passes
- * through in between is. The walk also carries the run of forest squares it
+ * Neither end is tested for a building; every square in between is, and the
+ * far end is counted as a tree. The walk carries the run of forest squares it
  * has come through back to back, which is what makes the depth a thickness of
  * wood rather than a tally of every tree on the line: one square that is not
- * forest puts it back to zero. */
+ * forest puts it back to zero.
+ *
+ * The run hides nothing inside SIGHT_TREE_NEAR of the origin, so a wood the
+ * player is standing beside is seen into as far as that and stopped at beyond
+ * it. Passing over an exempt square leaves the run standing rather than
+ * clearing it: the wood is still that deep, and a square further out behind it
+ * is still behind it. */
 static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1) {
-  int trees; /* Forest squares passed through in a row */
+  int trees;     /* Forest squares passed through in a row */
+  bool atTarget; /* Is the walk standing on the square being asked about */
   int dx;    /* Squares across, counted up */
   int dy;    /* Squares down, counted down, so one error term serves both */
   int sx;    /* Which way x moves */
@@ -126,19 +145,22 @@ static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1) {
 
     x += stepX;
     y += stepY;
-    if (x == x1 && y == y1) {
-      return TRUE;
-    }
-    if (sightBlocks(mp, x, y) == TRUE) {
+    atTarget = (x == x1 && y == y1);
+
+    if (atTarget == FALSE && sightBlocks(mp, x, y) == TRUE) {
       return FALSE;
     }
     if (sightIsTree(mp, x, y) == TRUE) {
       trees++;
-      if (trees > SIGHT_TREE_MAX_DEPTH) {
+      if (trees >= SIGHT_TREE_BLOCK_RUN &&
+          sightNearOrigin(x0, y0, x, y) == FALSE) {
         return FALSE;
       }
     } else {
       trees = 0;
+    }
+    if (atTarget == TRUE) {
+      return TRUE;
     }
   }
   return TRUE;

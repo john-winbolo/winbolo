@@ -293,107 +293,150 @@ static int sight_oversize_block_is_refused(void) {
     return 0;
 }
 
-/* Trees stop a line only once there are more than SIGHT_TREE_MAX_DEPTH of them
- * in a row, so a hedge one or two squares thick is seen straight through. */
-static int sight_shallow_trees_are_seen_through(void) {
+/* One row of trees is seen straight through: the run never reaches
+ * SIGHT_TREE_BLOCK_RUN, so the ground behind a hedge is ground the player has.
+ * Well outside SIGHT_TREE_NEAR, so it is the run being tested and not the
+ * exemption. */
+static int sight_one_row_of_trees_is_seen_through(void) {
     OverviewRect block = sightBlock(86, 86, 114, 114);
 
     sightMapFill(GRASS);
-    sightMapSet(103, 100, FOREST);
+    sightMapSet(105, 100, FOREST);
     sightRun(100, 100, &block);
-    UT_ASSERT_MSG(sightSeen(&block, 106, 100),
+    UT_ASSERT_MSG(sightSeen(&block, 105, 100),
+                  "the one tree on the line is itself hidden");
+    UT_ASSERT_MSG(sightSeen(&block, 108, 100),
                   "one tree on the line hid the ground behind it");
-
-    sightMapSet(104, 100, FOREST);
-    sightRun(100, 100, &block);
-    UT_ASSERT_MSG(sightSeen(&block, 106, 100),
-                  "two trees in a row hid the ground behind them");
     return sightGuardIntact();
 }
 
-/* Three in a row do stop it. The third tree is seen itself — the square at the
- * far end of a line is never tested, so the player sees the wood they cannot
- * see into — and the ground past it is not. */
-static int sight_three_trees_in_a_row_block(void) {
+/* Two deep and the line stops, on the near edge of the wood rather than inside
+ * it: the first tree is seen, the second is the first square that is not.
+ * Stopping short of the second is the whole point - a tank in there is
+ * withheld from the player anyway, so drawing ground a square or two in would
+ * say they can see something they cannot. */
+static int sight_a_wood_is_stopped_at_its_near_edge(void) {
     OverviewRect block = sightBlock(86, 86, 114, 114);
     int x; /* Looping variable */
 
     sightMapFill(GRASS);
-    sightMapSet(103, 100, FOREST);
-    sightMapSet(104, 100, FOREST);
     sightMapSet(105, 100, FOREST);
+    sightMapSet(106, 100, FOREST);
+    sightMapSet(107, 100, FOREST);
     sightRun(100, 100, &block);
 
     for (x = 101; x <= 105; x++) {
         UT_ASSERT_MSG(sightSeen(&block, x, 100),
-                      "square %d,100 — up to and including the third tree at "
-                      "105 — is hidden", x);
+                      "square %d,100 - up to and including the near edge of "
+                      "the wood at 105 - is hidden", x);
     }
     for (x = 106; x <= 114; x++) {
         UT_ASSERT_MSG(!sightSeen(&block, x, 100),
-                      "square %d,100 behind three trees in a row is seen", x);
+                      "square %d,100 is seen, expected the line to stop on the "
+                      "wood\'s near edge at 105", x);
     }
     return sightBlockFullyWritten(&block);
 }
 
+/* Close to, the player does see into a wood, because the tank hide gives up at
+ * the same range: within SIGHT_TREE_NEAR squares on both axes the run hides
+ * nothing, and the square past that is where the wood closes. Without this the
+ * fog would cover a tank standing in the trees beside the player that the
+ * server had already sent them. */
+static int sight_a_wood_close_by_is_seen_into(void) {
+    OverviewRect block = sightBlock(86, 86, 114, 114);
+    int x; /* Looping variable */
+
+    sightMapFill(GRASS);
+    for (x = 101; x <= 108; x++) {
+        sightMapSet(x, 100, FOREST);
+    }
+    sightRun(100, 100, &block);
+
+    for (x = 101; x <= 102; x++) {
+        UT_ASSERT_MSG(sightSeen(&block, x, 100),
+                      "square %d,100 is hidden, expected the trees within "
+                      "%d squares to be seen into", x, SIGHT_TREE_NEAR);
+    }
+    UT_ASSERT_MSG(!sightSeen(&block, 103, 100),
+                  "the wood is still seen into %d squares out, past the range "
+                  "the tank hide gives up at", SIGHT_TREE_NEAR + 1);
+
+    /* The exemption is a box, so it reaches the same distance on the diagonal
+     * as it does along an axis. */
+    sightMapFill(GRASS);
+    sightMapSet(101, 101, FOREST);
+    sightMapSet(102, 102, FOREST);
+    sightMapSet(103, 103, FOREST);
+    sightRun(100, 100, &block);
+    UT_ASSERT_MSG(sightSeen(&block, 102, 102),
+                  "the second tree of a wood on the diagonal is hidden two "
+                  "squares out, where the same tree on an axis is seen");
+    UT_ASSERT_MSG(!sightSeen(&block, 103, 103),
+                  "the third tree on the diagonal is seen, past the exemption");
+    return sightGuardIntact();
+}
+
 /* A mined tree is still a tree. The square reads back as MINE_FOREST, so
- * without that in the count a mine laid in the middle of a wood would open a
- * hole in it - a change the player cannot see on the map, on ground that has
- * not moved. */
+ * without that in the count a mine laid in a wood would open a hole in it - a
+ * change the player cannot see on the map, on ground that has not moved. */
 static int sight_a_mined_tree_still_counts_as_a_tree(void) {
     OverviewRect block = sightBlock(86, 86, 114, 114);
 
     sightMapFill(GRASS);
-    sightMapSet(103, 100, FOREST);
-    sightMapSet(104, 100, MINE_FOREST);
     sightMapSet(105, 100, FOREST);
+    sightMapSet(106, 100, MINE_FOREST);
     sightRun(100, 100, &block);
     UT_ASSERT_MSG(sightSeen(&block, 105, 100),
-                  "the third tree of the run is hidden");
+                  "the near edge of the wood is hidden");
     UT_ASSERT_MSG(!sightSeen(&block, 106, 100),
-                  "the ground behind three trees is seen because the mine on "
-                  "the middle one took it out of the count");
+                  "the mined tree is seen, so the mine on it took the square "
+                  "out of the count and opened the wood up");
     return sightGuardIntact();
 }
 
-/* The run is consecutive rather than cumulative. Two bands of two trees with a
- * square of grass between them are four trees on the line and stop nothing,
+/* The run is consecutive rather than cumulative. Two single trees with a
+ * square of grass between them are two trees on the line and stop nothing,
  * where a tally of every tree the line passed through would have shut it;
- * filling the gap makes one run of five and does stop it. */
+ * filling the gap makes one run of three and does stop it. */
 static int sight_a_gap_between_bands_of_trees_resets_the_run(void) {
     OverviewRect block = sightBlock(86, 86, 114, 114);
 
     sightMapFill(GRASS);
-    sightMapSet(101, 100, FOREST);
-    sightMapSet(102, 100, FOREST);
-    sightMapSet(104, 100, FOREST);
     sightMapSet(105, 100, FOREST);
+    sightMapSet(107, 100, FOREST);
     sightRun(100, 100, &block);
-    UT_ASSERT_MSG(sightSeen(&block, 106, 100),
-                  "two bands of two trees with a square of grass between them "
-                  "hid the ground behind them, so the count is being carried "
+    UT_ASSERT_MSG(sightSeen(&block, 109, 100),
+                  "two single trees with a square of grass between them hid "
+                  "the ground behind them, so the count is being carried "
                   "across the gap");
 
-    sightMapSet(103, 100, FOREST);
+    sightMapSet(106, 100, FOREST);
     sightRun(100, 100, &block);
-    UT_ASSERT_MSG(!sightSeen(&block, 106, 100),
-                  "filling the gap makes one run of five trees and the ground "
+    UT_ASSERT_MSG(!sightSeen(&block, 109, 100),
+                  "filling the gap makes one run of three trees and the ground "
                   "behind it is still seen");
+    UT_ASSERT_MSG(sightSeen(&block, 105, 100),
+                  "the near edge of that run is hidden too, so the line "
+                  "stopped short of the wood rather than on it");
     return sightGuardIntact();
 }
 
 /* Trees never close the diagonal corner two buildings do: the depth rule is
  * about how far into a wood a player sees, and a pair of trees is not a wall. */
 static int sight_corner_between_two_trees_stays_open(void) {
-    OverviewRect block = sightBlock(96, 96, 104, 104);
+    OverviewRect block = sightBlock(96, 96, 114, 114);
 
+    /* Out past SIGHT_TREE_NEAR, so what is being read is the corner and not
+     * the exemption. The two trees sit either side of the diagonal step into
+     * 105,105, which is the step two buildings there would close. */
     sightMapFill(GRASS);
-    sightMapSet(101, 100, FOREST);
-    sightMapSet(100, 101, FOREST);
+    sightMapSet(105, 104, FOREST);
+    sightMapSet(104, 105, FOREST);
     sightRun(100, 100, &block);
-    UT_ASSERT_MSG(sightSeen(&block, 101, 101),
+    UT_ASSERT_MSG(sightSeen(&block, 105, 105),
                   "sight was stopped at the corner where two trees meet");
-    UT_ASSERT_MSG(sightSeen(&block, 102, 102),
+    UT_ASSERT_MSG(sightSeen(&block, 106, 106),
                   "the ground past that corner is hidden");
     return sightGuardIntact();
 }
@@ -409,8 +452,9 @@ int run_sight(void) {
     rc = sight_one_square_blocks_only_if_it_is_a_building(); if (rc) return rc;
     rc = sight_block_away_from_the_origin();               if (rc) return rc;
     rc = sight_oversize_block_is_refused();                if (rc) return rc;
-    rc = sight_shallow_trees_are_seen_through();           if (rc) return rc;
-    rc = sight_three_trees_in_a_row_block();               if (rc) return rc;
+    rc = sight_one_row_of_trees_is_seen_through();         if (rc) return rc;
+    rc = sight_a_wood_is_stopped_at_its_near_edge();       if (rc) return rc;
+    rc = sight_a_wood_close_by_is_seen_into();             if (rc) return rc;
     rc = sight_a_mined_tree_still_counts_as_a_tree();      if (rc) return rc;
     rc = sight_a_gap_between_bands_of_trees_resets_the_run(); if (rc) return rc;
     rc = sight_corner_between_two_trees_stays_open();      if (rc) return rc;
