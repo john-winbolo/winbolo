@@ -646,6 +646,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
+        /* Inherit the mode and difficulty the host last picked for a bot,
+         * written BEFORE the brain is created so it reaches the brain as its
+         * init-arg tokens and publishes nothing. Adding five bots at Medium
+         * should mean choosing Medium once. */
+        serverSimApplyLastBotConfig(sim, slot, serverSimGetBotBrainPath(sim));
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),

@@ -33,6 +33,7 @@
 #include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
 #include "wire_limits.h"            /* the LST_* selectors carried in PACKET_LOBBY_SET_SETTING */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolCount — the per-team naming-pool uniqueness pass */
+#include "brain_list.h"             /* BrainModes — the remembered mode/level keys */
 #include "start_sides.h"            /* START_SIDE_ANY / START_SIDE_COUNT — the team start-side range */
 
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
@@ -124,6 +125,77 @@ const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) 
     return sim->brainPaths[brainIdx];
 }
 
+/* The brain a lobby slot is running, or NULL when it has none (a human, or
+ * a bot wired up without one). Same path botManagerOnGameStart reloads from,
+ * so a manifest read through it describes the brain that will actually run. */
+static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
+    const char *path;
+    if (sim == NULL || slot >= MAX_TANKS) return NULL;
+    path = sim->botMgr.bots[slot].brainPath;
+    return (path[0] != '\0') ? path : NULL;
+}
+
+/* Remember what the host just picked, as the brain's own key strings, so
+ * serverSimApplyLastBotConfig can give it to the next bot added. Called on
+ * every config write; a brain with no manifest names no keys, and then there
+ * is nothing meaningful to carry forward, so the previous memory stands. */
+static void rememberBotConfig(ServerSim *sim, BYTE slot,
+                              uint8_t mode, uint8_t difficulty) {
+    BrainModes modes;
+    const BrainMode *m;
+    const char *path = slotBrainPath(sim, slot);
+
+    if (path == NULL) return;
+    if (!brainListLoadModesForPath(path, &modes)) return;
+    if (mode >= (uint8_t)modes.modeCount) return;
+    m = &modes.modes[mode];
+    if (difficulty >= (uint8_t)m->levelCount) return;
+
+    SDL_strlcpy(sim->lastBotModeKey, m->key, sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotLevelKey, m->levels[difficulty].key,
+                sizeof(sim->lastBotLevelKey));
+}
+
+/* Start a newly added bot on the mode and difficulty the host last chose for
+ * any bot, rather than the lobby default. Call it IMMEDIATELY BEFORE
+ * botManagerAddBot: botManagerStageInitArg reads botConfigs at brain-create
+ * time, so a write landing first reaches the brain through the init arg that
+ * create already stages, and this publishes nothing at all. That matters --
+ * a publish per bot here would add control events to exactly the bursts
+ * (a ten-bot seed, a host adding bots quickly) that can overrun a client's
+ * reliable-channel window and disconnect them.
+ *
+ * A no-op until the host picks something, when the remembered keys are ones
+ * this bot's brain does not declare, or when it ships no manifest at all. In
+ * every one of those cases the slot keeps the ordinary lobby default. */
+void serverSimApplyLastBotConfig(ServerSim *sim, BYTE slot,
+                                 const char *brainPath) {
+    BrainModes modes;
+    LobbyBotConfig *bc;
+    int modeIdx;
+    int lvlIdx;
+
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (sim->lastBotModeKey[0] == '\0') return;
+    if (brainPath == NULL || brainPath[0] == '\0') return;
+    if (!brainListLoadModesForPath(brainPath, &modes)) return;
+
+    modeIdx = brainModesFindMode(&modes, sim->lastBotModeKey);
+    if (modeIdx < 0) return;          /* a different brain: no such mode */
+    lvlIdx = modes.modes[modeIdx].defaultLevel;
+    if (sim->lastBotLevelKey[0] != '\0') {
+        int found = brainModeFindLevel(&modes.modes[modeIdx],
+                                       sim->lastBotLevelKey);
+        if (found >= 0) lvlIdx = found;
+    }
+
+    bc = serverSimGetBotConfigMut(sim, slot);
+    if (bc != NULL) {
+        bc->mode       = (uint8_t)modeIdx;
+        bc->difficulty = (uint8_t)lvlIdx;
+    }
+}
+
 void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
                             uint8_t mode, uint8_t difficulty,
                             uint8_t personality,
@@ -137,6 +209,7 @@ void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
             bc->personality = personality;
         }
     }
+    rememberBotConfig(sim, slot, mode, difficulty);
     if (validatedName != NULL && validatedName[0] != '\0') {
         serverSimRenameBotSlot(sim, slot, validatedName);
     }
