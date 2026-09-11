@@ -14070,16 +14070,22 @@ local function apply_blitz_join_discount(state, info, world)
   if not calls then return end
   local cache = state.cost_cache
   if not cache then return end
-  -- "noblitz" (BRAIN_INIT_ARG): never join, so no call gets a discount. Mark the
-  -- pool-6 rows the discount WOULD have touched so the Term Breakdown / DECISION
-  -- line says why the row is at its plain solo cost instead of silently
-  -- differing from a normal bot.
-  if state.blitz_disabled then
+  -- "noblitz" (BRAIN_INIT_ARG) OR BLITZ_ENABLED=false (e.g. Easy difficulty):
+  -- never join, so no call gets a discount. This is the ONE join path that does
+  -- NOT run through M.availability -- the distance-scaled pool-6 discount is what
+  -- pulls a bot toward a blitz, decoupled from negotiation -- so gating it here is
+  -- required for BLITZ_ENABLED=false to mean "solo only" (the three availability /
+  -- membership / suicider gates alone would leave the discount live and still
+  -- steer a "solo" bot onto a commander's pill). Mark the pool-6 rows the discount
+  -- WOULD have touched so the Term Breakdown / DECISION line says why the row is at
+  -- its plain solo cost instead of silently differing from a normal bot.
+  if state.blitz_disabled or not C.BLITZ_ENABLED then
+    local why = state.blitz_disabled and "noblitz" or "blitz_off"
     for _, call in pairs(calls) do
       local pid = call.pill
       if pid then
         for _, e in pairs(cache) do
-          if e._p == 6 and e._id == pid then e._blitz_off = "noblitz" end
+          if e._p == 6 and e._id == pid then e._blitz_off = why end
         end
       end
     end
@@ -16368,6 +16374,26 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── Behind-team attack surcharge (lead gate) ──
+    -- "Press when ahead": when our team is NOT ahead (state.team_ahead, set in
+    -- strategy.lua from AHEAD_PILL_FRAC / AHEAD_BASE_FRAC), multiply the offensive
+    -- rows -- attack_pill / attack_base / attack_tank -- by BEHIND_ATTACK_MULT so
+    -- the bot picks fewer fights while behind and leans on defend / refuel /
+    -- placement instead. Same selection layer as the suicider / refuel passes
+    -- above. No-op at the 1.0 default, and team_ahead is always true when the
+    -- fracs are 0, so Hard is unchanged. _ahead_mult is stashed for the WINNERS-row
+    -- reconciliation exactly like _suicider_mult / _refuel_mult.
+    if C.BEHIND_ATTACK_MULT ~= 1.0 and not state.team_ahead then
+      for _, c in ipairs(pool) do
+        if c.goal and (c.goal.kind == "attack_pill" or c.goal.kind == "attack_base"
+                       or c.goal.kind == "attack_tank")
+           and c.cost and c.cost > 0 and not c._reject_sentinel then
+          c.cost = c.cost * C.BEHIND_ATTACK_MULT
+          c._ahead_mult = C.BEHIND_ATTACK_MULT
+        end
+      end
+    end
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -18368,6 +18394,17 @@ function M.get_pool_breakdown_json(state)
         detail_map[#detail_map + 1] = string.format(
           "refuelmult:the refuel GOAL_GROUP (refuel_at_base + flee_to_base) costs x%.2f for this bot (%s) -- REFUEL_COST_MULT, per-bot overridable with the \"refuel=X\" init token",
           refuel_mult_d, M.refuel_mult_source)
+      end
+
+      -- Behind-team attack surcharge, same layer as suicider/refuel, so the row's
+      -- numbers still reconcile (base x pw x inf x suicider x refuelmult x ahead
+      -- + penalties = total).
+      local ahead_mult_d = (gc and gc.ahead_mult) or 1.0
+      if ahead_mult_d ~= 1.0 then
+        detail_formula = string.format("%s * ahead{x%.2f}", detail_formula, ahead_mult_d)
+        detail_map[#detail_map + 1] = string.format(
+          "ahead:team NOT ahead (state.team_ahead false: pill lead %.2f < AHEAD_PILL_FRAC %.2f AND base lead %.2f < AHEAD_BASE_FRAC %.2f) -> this offensive row (attack_pill / attack_base / attack_tank) costs x%.2f (BEHIND_ATTACK_MULT), so the bot picks fewer fights while behind",
+          state.strength or 0, C.AHEAD_PILL_FRAC, state.base_strength or 0, C.AHEAD_BASE_FRAC, ahead_mult_d)
       end
 
       if w.imminent then

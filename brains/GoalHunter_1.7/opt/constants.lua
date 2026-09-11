@@ -2885,6 +2885,51 @@ M.BLITZ_SWERVE_ONLY_WHEN_HIT = true   -- default ON; KEEL false
 M.BLITZ_ONLY_WHEN_HIT_MIN    = 3      -- committed-blitzer threshold (self + allies on the same pill)
 M.BLITZ_ABORT_BUILD_ON_READY = true  -- if a soldier JOINS while the commander is mid build_walls (laying its guard pills/shield), abandon the remaining blocks and rally NOW (build_walls -> blitz_wait, unshielded charge route). The joiner's simultaneous overwhelm replaces the shield as protection ??? same routing as if the joiner had answered before the in-position decision. Off = finish the shield first, then rally (original behavior).
 M.BLITZ_MIN_READY_TO_CHARGE = 2  -- (used with BLITZ_ABORT_BUILD_ON_READY) DEFAULT ONLY, see SQUAD_BLITZ_GO_EARLY_READY: minimum READY blitzers ??? total tanks in position and aimed (rdy=1) ??? required before the commander abandons the build and charges. The commander itself always counts as 1 (it's at its standoff). 2 = commander + one ready soldier; a still-approaching 3rd is left to keep closing and joins the charge when it arrives. Default 2 = original abort-on-join behavior.
+-- ── DIFFICULTY (Stage 3 Pass A) control-flow knobs ───────────────────────
+-- All default to the NO-OP value so Hard (MODE_LEVELS.default.hard = {}) stays
+-- bit-for-bit today's brain; Easy/Medium set them in MODE_LEVELS below. Read on
+-- C. only (both C and state are already Brain.think upvalues). PURE control
+-- flow -- no math.random anywhere, fully deterministic.
+M.BLITZ_ENABLED   = true   -- false => this bot never OPENS or JOINS a blitz (solo
+                           -- takes only). Reuses the tested state.blitz_disabled
+                           -- "noblitz" path at every gate; the noblitz token still
+                           -- wins. Easy = false.
+M.AHEAD_PILL_FRAC = 0      -- team is "ahead" when state.strength (pill lead ratio)
+                           -- >= this. 0 => always ahead => no downstream change.
+M.AHEAD_BASE_FRAC = 0      -- ...OR state.base_strength (base lead ratio) >= this.
+M.BEHIND_ATTACK_MULT = 1.0 -- when NOT state.team_ahead, multiply attack_pill /
+                           -- attack_base / attack_tank cost by this at the pool
+                           -- choke point. 1.0 = no-op. Medium = 1.3.
+M.AHEAD_BLITZ_ONLY = false -- true => only OPEN a blitz call while team_ahead; still
+                           -- ANSWERS someone else's call (availability). Medium = true.
+M.OUTNUMBERED_DISENGAGE = false -- true => tank_combat breaks off (substate=disengage)
+                                -- when local enemies outnumber allies (see below).
+                                -- Keeps the opening-phase land-grab exemption.
+M.OUTNUMBERED_NET = 2      -- n_enemy - n_ally >= this triggers the disengage above.
+-- ── DIFFICULTY (Stage 3 Pass B) aim/fire/reaction handicaps ──────────────
+-- All default to the NO-OP value so Hard (MODE_LEVELS.default.hard = {}) stays
+-- bit-for-bit today's brain; Easy/Medium set them in MODE_LEVELS below. The
+-- three read sites early-out at the default so nothing (not even the hash /
+-- float rotation) is computed at 0. DETERMINISTIC: the only randomness is a
+-- (tick-block + target + per-bot) hash in util.aim_error_point -- NO math.random.
+M.AIM_ERROR_BRADS = 0      -- >0 => a deterministic per-bot/per-target aim-point
+                           -- offset (up to +/- this many brads, changing on a slow
+                           -- period) added to the aim POINT BEFORE the shell-path
+                           -- check, so moving-target shots (tank engage + kill_lgm)
+                           -- miss a little. 0 = no offset. Easy = 4, Medium = 1.
+M.FIRE_HOLD_TICKS = 0      -- >0 => brain-side reload gate: after a combat shot,
+                           -- suppress the next KEY_SHOOT for this many THINKS
+                           -- (state.tick is per-think). UNITS: a think = 1 frame
+                           -- = 2 engine ticks, and TANK_RELOAD_TIME is 13 engine
+                           -- ticks ~= 6.5 thinks, so a value <= ~7 has NO effect
+                           -- (the engine's own reload already dominates). Base
+                           -- close-out is exempt. 0 = no gate. Easy = 16
+                           -- (~0.3s between shots), Medium = 8 (just past reload).
+M.REACTION_DELAY_TICKS = 0 -- >0 => queue the URGENT goal re-decision this many
+                           -- ticks instead of running it the tick the trigger
+                           -- fires (bot reacts slower). Never delays safety
+                           -- (cliff/swerve/drain-disengage/flee). 0 = no delay.
+                           -- Easy = 20, Medium = 8.
 -- Outbound /info batching: several internal-channel messages are packed into the
 -- one BrainInfo.sendmessage buffer per tick (joined by comms.MSG_SEP), capped here
 -- so the packed string stays under PACKET_MAX_CHAT_MESSAGE (128; bot_manager.c
@@ -4321,6 +4366,110 @@ M.PRESETS = {
     CAPTURE_BASE_NO_LGM_DANGER_MULT = 0,
     KILL_ME_ENABLED                 = false,
   },
+}
+
+-- ── PER-(MODE, DIFFICULTY) LEVEL BUNDLES ──────────────────────────────────
+-- Beside M.PRESETS, and applied the same way (init.lua, right after
+-- require("constants"), through the shared _cfg_set): a flat CONST -> scalar
+-- map per (mode, difficulty). `difficulty=` is parsed today but nothing read
+-- it (every bot played Hard); this wires it to per-level knob bundles.
+--
+-- Precedence is level < preset < cfg: MODE_LEVELS[mode][difficulty] applies
+-- FIRST, then any preset=, then any cfg=. So `preset=keel` still reproduces
+-- keel at any difficulty and a cfg= token still overrides one knob.
+--
+-- hard = {} is EMPTY by definition: default/Hard is today's constants,
+-- bit-for-bit. Every value below is a plain scalar the same _cfg_set writes
+-- and type-checks (unknown names, tables and type changes are refused). The
+-- All Stage 3 handicap knobs are now LANDED below: the control-flow set
+-- (BLITZ_ENABLED, AHEAD_PILL_FRAC, AHEAD_BASE_FRAC, BEHIND_ATTACK_MULT,
+-- AHEAD_BLITZ_ONLY, OUTNUMBERED_DISENGAGE) and the aim/fire/reaction trio
+-- (AIM_ERROR_BRADS, FIRE_HOLD_TICKS, REACTION_DELAY_TICKS). Each defaults to
+-- its no-op so Hard (empty bundle) is bit-for-bit today's brain.
+--
+-- Every value below is FIRST-PASS -- to be benched preset=keel vs
+-- difficulty=<level> per the approve-values rule; expect them to move.
+-- Two values are deliberate (Andrew's) calls worth naming:
+--   * DEFEND_ALARM_BASE_COST at Easy makes Easy defend its pills MORE SLOWLY
+--     (a steal window for new players) -- detection range (DEFEND_ALARM_ENEMY_TILES)
+--     is left at 11 so it still notices and turns up ("defends its own").
+--   * ATTACK_PILL_RISKY_ARMOUR = 40 at Easy == TANK_FULL_ARMOUR, so Easy pays
+--     the risky-take penalty on essentially EVERY pill take -- intended.
+M.MODE_LEVELS = {
+  default = {
+    hard = {},                    -- empty = today's constants (no-op)
+    medium = {
+      SQUAD_MAX_SIZE = 1,
+      HARD_TAKE_MIN_HP = 13, BLITZ_SWERVE_ONLY_WHEN_HIT = false, SQUAD_HELP_RANGE = 18,
+      -- press when ahead (Stage 3 Pass A)
+      AHEAD_PILL_FRAC = 0.55, AHEAD_BASE_FRAC = 0.55, BEHIND_ATTACK_MULT = 1.3, AHEAD_BLITZ_ONLY = true,
+      -- skill (mild) — Stage 3 Pass B aim/fire/reaction trio
+      AIM_ERROR_BRADS = 1, FIRE_HOLD_TICKS = 8, REACTION_DELAY_TICKS = 8,
+      TANK_COMBAT_STEADY_TICKS = 5, TANK_COMBAT_STEADY_MIN_SPEED = 6,
+      TANK_COMBAT_JINK_PERIOD = 15, TANK_COMBAT_JINK_ANGLE = 24, GHOST_TANK_TTL_TICKS = 60,
+      -- gives ground
+      TANK_COMBAT_FLEE_ARMOUR = 12, TANK_COMBAT_FLEE_SHELLS = 4, OUTNUMBERED_DISENGAGE = true,
+      ARMOUR_CRITICAL = 8, ENGAGE_MAX_INCOMING_TICKS = 40,
+      -- picks its fights
+      ATTACK_PILL_RISKY_ARMOUR = 34, ATTACK_PILL_RISKY_PENALTY = 150, TANK_COMBAT_BASE_COST = 40,
+      GOAL_CROSSFIRE_PENALTY = 150,
+      -- placement (moderate forward)
+      STRATEGIC_PLACE_FRONT_WEIGHT = 2.0, STRATEGIC_PLACE_BASE_WEIGHT = 3.0,
+      STRATEGIC_PLACE_THREAT_WEIGHT = 2.0, STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 150,
+      STRATEGIC_PLACE_SPIKE_BONUS = 40,
+      -- defend / carry (a step down from Hard)
+      DEFEND_ALARM_BASE_COST = 140,
+      STRATEGIC_PLACE_CARRY_DISCOUNT_PER_TICK = 0.35, STRATEGIC_PLACE_CARRY_DISCOUNT_MAX = 200,
+      SEEK_TREES_CARRY_DISCOUNT = 4,
+      -- no rebuild under fire (softer than Easy)
+      REPAIR_UNDER_FIRE_MULT = 8.0, REPAIR_QUIET_TICKS = 150, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.10,
+      -- fuelled
+      ARMOUR_LOW = 18, SHELLS_LOW = 22, ARMOUR_COMBAT = 33, SHELLS_COMBAT = 33,
+    },
+    easy = {
+      -- Blitz: solo, never gangs up (BLITZ_ENABLED=false is the Stage 3 Pass A
+      -- "solo" switch -- NOT SQUAD_MAX_SIZE=1, which never reaches quorum)
+      BLITZ_ENABLED = false,
+      SQUAD_MAX_SIZE = 1, HARD_TAKE_MIN_HP = 15,
+      BLITZ_SWERVE_ONLY_WHEN_HIT = false,
+      -- Skill: bad at moving targets; pills/bases stay accurate
+      -- Stage 3 Pass B aim/fire/reaction trio
+      AIM_ERROR_BRADS = 4, FIRE_HOLD_TICKS = 16, REACTION_DELAY_TICKS = 20,
+      CAPTURE_LGM_HUNT = false,                 -- drives straight; won't snipe a builder off a corpse
+      TANK_COMBAT_STEADY_TICKS = 10, TANK_COMBAT_STEADY_MIN_SPEED = 10,
+      TANK_COMBAT_JINK_PERIOD = 30, TANK_COMBAT_JINK_ANGLE = 12,
+      TANK_COMBAT_OPPORTUNISTIC_RANGE = 0, GHOST_TANK_TTL_TICKS = 25,
+      -- Aggression / refuse takes
+      ATTACK_PILL_RISKY_ARMOUR = 40, ATTACK_PILL_RISKY_PENALTY = 250,
+      ATTACK_PILL_UNSAFE_HP_THRESHOLD = 9, ATTACK_PILL_UNSAFE_ARMOUR_FLOOR = 28,
+      ATTACK_RUSH_MIN_ARMOUR = 41,              -- >full armour -> never point-blank rushes
+      GOAL_CROSSFIRE_PENALTY = 250, TANK_COMBAT_BASE_COST = 60,
+      -- Caution: peels off, gives ground
+      ATTACK_CURVE_AFTER_HITS = 1, SWERVE_SKIP_ARMOUR_PER_HP = 40,  -- NB 40 not 0
+      TANK_COMBAT_FLEE_ARMOUR = 18, TANK_COMBAT_FLEE_SHELLS = 6,    -- keep < SHELLS_LOW
+      OUTNUMBERED_DISENGAGE = true,                                -- gives ground when outnumbered
+      ENGAGE_MAX_INCOMING_TICKS = 25, ARMOUR_CRITICAL = 12,        -- keep <= ARMOUR_LOW
+      -- Steady / predictable (goal hysteresis)
+      GOAL_SWITCH_PENALTY = 60, GOAL_SWITCH_RATIO = 0.5, GOAL_COMMITMENT_CAP = 150,
+      GOAL_MIN_COMMIT_TICKS = 75, REFUEL_LOCK_IN = true, ATTACK_PILL_COMMITMENT_BONUS = 120,
+      -- Placement: back / defensive
+      STRATEGIC_PLACE_FRONT_WEIGHT = 1.0, STRATEGIC_PLACE_BASE_WEIGHT = 4.0,
+      STRATEGIC_PLACE_THREAT_WEIGHT = 3.0, STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 250,
+      STRATEGIC_PLACE_SPIKE_BONUS = 0, STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 80,
+      -- Defend slow / loaded ambush target
+      DEFEND_ALARM_BASE_COST = 220,             -- ENEMY_TILES unchanged at 11 ("defends its own")
+      KILL_ME_ENABLED = false,
+      STRATEGIC_PLACE_CARRY_DISCOUNT_PER_TICK = 0.2, STRATEGIC_PLACE_CARRY_DISCOUNT_MAX = 120,
+      SEEK_TREES_CARRY_DISCOUNT = 2, ATTACK_NO_BUILDER_MULT = 20,   -- a RESTRAINT, raise it
+      -- No rebuild under fire
+      REPAIR_UNDER_FIRE_MULT = 20.0, REPAIR_QUIET_TICKS = 300, REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.0,
+      -- Route caution (multiplicative on coverage -- safe vs absolute thresholds)
+      CROSSFIRE_MULTIPLIER_ENABLED = true,
+      -- Refuel: predictable, fuelled
+      ARMOUR_LOW = 22, SHELLS_LOW = 24, ARMOUR_COMBAT = 36, SHELLS_COMBAT = 36,
+    },
+  },
+  survival = { hard = {}, medium = {}, easy = {} },  -- placeholders (see modes.txt)
 }
 
 return M

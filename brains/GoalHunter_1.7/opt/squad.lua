@@ -536,8 +536,9 @@ function M.availability(state, info, help_target_id)
   -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
   -- commander-level armour before diving in and risking the pill it's holding.
   local ok, reason
-  if state.blitz_disabled then
-    -- "noblitz" BRAIN_INIT_ARG: this bot never joins anyone's blitz. Answered
+  if state.blitz_disabled or not C.BLITZ_ENABLED then
+    -- "noblitz" BRAIN_INIT_ARG (or BLITZ_ENABLED=false, e.g. Easy difficulty):
+    -- this bot never joins anyone's blitz. Answered
     -- here (rather than at every call site) because availability() is the one
     -- gate every join path runs through — the squad-layer pick AND
     -- goals.apply_blitz_target, which is what would force the commander's pill
@@ -911,8 +912,8 @@ function M.update(state, info, now, world)
     local bs   = state.blitz_suicider
     local why  = nil
     local p    = world and world.pills and world.pills[bs.pill]
-    if state.blitz_disabled then
-      -- "noblitz": we take no part in blitzes, so we hold no designation either
+    if state.blitz_disabled or not C.BLITZ_ENABLED then
+      -- "noblitz" / BLITZ_ENABLED=false: we take no part in blitzes, so we hold no designation either
       -- (comms.lua already ignores incoming bsu; this drops any that predates
       -- the flag).
       why = "noblitz"
@@ -1037,6 +1038,16 @@ function M.update(state, info, now, world)
       -- mid-fight; a leader that then stays starved is caught by the gate above.
       if role == M.ROLE_COMMANDER and not is_leading
          and (info.shells or 0) <= pill_hp then
+        role = M.ROLE_SOLDIER
+      end
+      -- AHEAD_BLITZ_ONLY (difficulty gate): only OPEN a blitz call while our team
+      -- is ahead. When behind, a FRESH would-be commander stays a SOLDIER so it
+      -- doesn't initiate a gang-up -- but it can still ANSWER someone else's call
+      -- via M.availability. Established leaders (is_leading) are exempt so an
+      -- in-progress take isn't collapsed if the lead slips mid-fight. Default
+      -- false (and team_ahead defaults true) -> no-op, Hard unchanged.
+      if C.AHEAD_BLITZ_ONLY and not state.team_ahead
+         and role == M.ROLE_COMMANDER and not is_leading then
         role = M.ROLE_SOLDIER
       end
       -- Don't elect a SECOND commander of a pill an ally is already blitzing:
@@ -1226,7 +1237,7 @@ function M.update(state, info, now, world)
   -- never flips the goal to _blitz / blitz_wait), and no soldier branch (so
   -- BLITZ_SCAN / BLITZ_PICK never run and we answer nobody). The bot keeps its
   -- elected role for everything else and just takes pills solo.
-  if state.blitz_disabled then
+  if state.blitz_disabled or not C.BLITZ_ENABLED then
     state.squad_blitz_accepted = nil
     state.squad_blitz_roster   = nil
     state.squad_blitz_reject   = nil

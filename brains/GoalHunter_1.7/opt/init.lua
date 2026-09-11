@@ -38,8 +38,9 @@ local C       = require("constants")
 --                          as a number if it looks like one, as a boolean for
 --                          "true"/"false", and as a plain string otherwise.
 --
--- Presets are applied FIRST and every cfg= afterwards, so an explicit cfg=
--- always wins no matter where in the token list it sits.
+-- The per-(mode,difficulty) LEVEL bundle (C.MODE_LEVELS) is applied FIRST,
+-- then presets, then every cfg=, so precedence is level < preset < cfg and
+-- an explicit cfg= always wins no matter where in the token list it sits.
 --
 -- WHY IT IS UP HERE AND NOT IN THE TICK-1 TOKEN BLOCK (search BRAIN_INIT_ARG,
 -- ~line 1250) where every other token is parsed: several modules CAPTURE a
@@ -123,12 +124,13 @@ do
         -- to this arg by bot_manager.c at brain-create time. The key comes
         -- from this brain's own modes.txt, so the vocabulary is whatever
         -- that file lists ("default", "survival", ...) and this side only
-        -- checks the shape. Rides in as an ordinary cfg write of C.MODE,
-        -- so it is type-checked and logged like every other override, and a
-        -- bench can equally say cfg=MODE=survival.
+        -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
+        -- cfgs) so the level bundle below can read the chosen mode; it is
+        -- type-checked and logged like every other override. Precedence:
+        -- level < preset < cfg (a later cfg=MODE= would still win).
         mname = mname:lower()
         if mname:match("^[a-z0-9_]+$") then
-          cfgs[#cfgs + 1] = { "MODE", mname }
+          _cfg_set("MODE", mname, "mode")
         else
           _cfg_warn_add("[mode] BAD TOKEN '%s' -- want mode=<key> of [a-z0-9_]; IGNORED.", tok)
         end
@@ -137,14 +139,14 @@ do
         -- inside that mode, likewise appended by bot_manager.c. modes.txt
         -- defines which keys a mode has, so any [a-z0-9_] key is accepted
         -- here rather than the three the default mode happens to use.
-        -- Rides in as an ordinary cfg write of C.DIFFICULTY. Queued with
-        -- the cfgs (not applied here) so it lands AFTER any preset=, same
-        -- as a cfg= would. "normal" is the old name for medium; the C side
-        -- never sends it, but a hand-written arg might.
+        -- Written into C.DIFFICULTY RIGHT HERE (not queued) so the level
+        -- bundle below reads it; MODE_LEVELS[C.MODE][C.DIFFICULTY] then
+        -- applies BEFORE any preset=. "normal" is the old name for medium;
+        -- the C side never sends it, but a hand-written arg might.
         dname = dname:lower()
         if dname == "normal" then dname = "medium" end
         if dname:match("^[a-z0-9_]+$") then
-          cfgs[#cfgs + 1] = { "DIFFICULTY", dname }
+          _cfg_set("DIFFICULTY", dname, "difficulty")
         else
           _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want difficulty=<key> of [a-z0-9_]; IGNORED.", tok)
         end
@@ -152,6 +154,37 @@ do
         _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
       end
       -- Everything else is one of the tick-1 tokens; not our business.
+    end
+    -- LEVEL BUNDLE (lowest precedence, applied BEFORE presets): the per-(mode,
+    -- difficulty) scalar overrides from C.MODE_LEVELS, pushed through the same
+    -- _cfg_set path so its type/table refusals and logging apply with no new
+    -- validation. MODE and DIFFICULTY were resolved inline above. A missing
+    -- mode/difficulty key (or hard = {}) simply applies nothing.
+    --
+    -- The level is selected by the difficulty= (and mode=) TOKEN only. A later
+    -- cfg=DIFFICULTY= changes the label C.DIFFICULTY but does NOT apply a
+    -- different bundle -- the bundle was already chosen when this block ran.
+    -- That is intended: cfg= is a single-knob override, not a level selector,
+    -- so bench a level with difficulty=<level>, not cfg=DIFFICULTY=<level>.
+    -- Every bundle value is FIRST-PASS, to be benched preset=keel vs
+    -- difficulty=<level> per the approve-values rule; hard = {} is empty by
+    -- design so a default game is bit-for-bit today's brain.
+    do
+      local mode, diff = C.MODE, C.DIFFICULTY
+      local mtbl = C.MODE_LEVELS and C.MODE_LEVELS[mode]
+      local ltbl = mtbl and mtbl[diff]
+      if type(ltbl) == "table" then
+        -- Sorted so the log reads the same on every run (see the preset loop).
+        local keys = {}
+        for k in pairs(ltbl) do keys[#keys + 1] = k end
+        table.sort(keys)
+        local n = 0
+        for _, k in ipairs(keys) do
+          if _cfg_set(k, ltbl[k], "level " .. tostring(mode) .. "/" .. tostring(diff)) then n = n + 1 end
+        end
+        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+          string.format("[level] %s/%s applied (%d values)", tostring(mode), tostring(diff), n)
+      end
     end
     -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
     for _, pname in ipairs(presets) do
@@ -5055,6 +5088,31 @@ function Brain.think(info)
     local replan_floor_ok =
       (now - (state._last_full_replan_tick or -1e9)) >= (C.REPLAN_MIN_INTERVAL or 5)
     local urgent_replan = urgent_hard or (urgent_soft and replan_floor_ok)
+    -- DIFFICULTY REACTION_DELAY_TICKS: hold the URGENT GOAL RE-DECISION for N
+    -- ticks after its trigger fires, so an Easy/Medium bot reacts to new
+    -- threats/opportunities a beat late. This only gates urgent_replan (the goal
+    -- pool re-run); it does NOT touch force_replan / refuel_done (line ~6476) nor
+    -- the safety layers -- cliff guards, swerve arming, drain-disengage and
+    -- flee_to_base run every tick in steering / goal-invalidation, independent of
+    -- this flag. Byte-inert at 0 (guard skips the whole block, no state write).
+    -- A SECOND urgent trigger while a window is already pending is absorbed into
+    -- that same window (the replan runs once, at the original deadline) rather
+    -- than resetting the timer -- fine, and arguably the point: one delayed
+    -- reaction per burst of triggers, not an ever-postponed one.
+    if C.REACTION_DELAY_TICKS > 0 then
+      if urgent_replan and not state._rxn_pending then
+        -- First trigger: start the delay window and hold this tick's replan.
+        state._rxn_pending = now + C.REACTION_DELAY_TICKS
+        urgent_replan = false
+      elseif state._rxn_pending then
+        if now >= state._rxn_pending then
+          state._rxn_pending = nil   -- window elapsed: run the delayed replan now
+          urgent_replan = true
+        else
+          urgent_replan = false      -- still holding
+        end
+      end
+    end
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -6181,6 +6239,13 @@ function Brain.think(info)
         -- fields (shouldn't happen, but be defensive).
         local aim_wx = elm.predicted_wx or elm.wx
         local aim_wy = elm.predicted_wy or elm.wy
+        -- DIFFICULTY AIM_ERROR_BRADS: deflect the LGM aim POINT here, BEFORE the
+        -- LOS raycast and the impact-offset fire gate below both read aim_wx/
+        -- aim_wy (so the validated shell line is the deflected line). Keyed on
+        -- elm.idnum so the crosshair search (below) deflects by the SAME amount
+        -- for the primary LGM. No-op at 0 (moving-target miss on Easy/Medium).
+        aim_wx, aim_wy = U.aim_error_point(state, C.AIM_ERROR_BRADS,
+                                           info.tankx, info.tanky, aim_wx, aim_wy, elm.idnum)
         local target_sl = elm.target_sightLen
         local aim_dir = U.aim_at(info.tankx, info.tanky, aim_wx, aim_wy)
         local aim_corr = U.adiff(info.direction, aim_dir)
@@ -6354,6 +6419,11 @@ function Brain.think(info)
                 or (_primary_lgm.wx + (_primary_lgm.v_ema_x or 0))
     local lgm_wy = _primary_lgm.predicted_wy
                 or (_primary_lgm.wy + (_primary_lgm.v_ema_y or 0))
+    -- DIFFICULTY AIM_ERROR_BRADS: deflect the search target by the SAME offset
+    -- the fire gate above used (same idnum + tick-block seed), so the crosshair
+    -- drives to the deflected point and the gate fires on it. No-op at 0.
+    lgm_wx, lgm_wy = U.aim_error_point(state, C.AIM_ERROR_BRADS,
+                                       tank_wx, tank_wy, lgm_wx, lgm_wy, _primary_lgm.idnum)
     -- Build the turn/speed/gun descriptor tables ONCE (cached on state)
     -- rather than reallocating 9 records every tick the goal is kill_lgm.
     -- Built lazily here, not at module scope, because the KEY_* globals
