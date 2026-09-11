@@ -533,6 +533,8 @@ static const UnitTestEntry s_tests[] = {
     { "tank_damage_overkill_destroys",           run_tank_damage_overkill_destroys           },
     { "tank_damage_partial_survives",            run_tank_damage_partial_survives            },
     { "tank_destroyed_snapshot_round_trip",      run_tank_destroyed_snapshot_round_trip      },
+    { "tank_status_wire_bits",                   run_tank_status_wire_bits                   },
+    { "tank_status_wire_start_find_round_trip",  run_tank_status_wire_start_find_round_trip  },
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "voice_flags_snapshot_masking",            run_voice_flags_snapshot_masking            },
     { "voice_talking_codec",                     run_voice_talking_codec                     },

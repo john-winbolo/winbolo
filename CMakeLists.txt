@@ -3381,6 +3381,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_base_death_prediction.c
     tests/unit/test_tank_death_state.c
+    tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
@@ -4248,6 +4249,8 @@ set(_unit_test_names
     tank_damage_overkill_destroys
     tank_damage_partial_survives
     tank_destroyed_snapshot_round_trip
+    tank_status_wire_bits
+    tank_status_wire_start_find_round_trip
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec

@@ -970,12 +970,21 @@ int run_base_death_prediction_authority(void);
 /* Tank destroyed state (test_tank_death_state.c): armour is a plain
  * 0..TANK_FULL_ARMOUR value that clamps at zero and the destroyed state is
  * stored on the tank, so a hit greater than the armour remaining destroys it
- * while a hit that exactly empties the armour leaves it alive at zero. The
- * wire's sentinel is put on by the encoder and taken off by the decode. */
+ * while a hit that exactly empties the armour leaves it alive at zero. A
+ * destroyed tank still reads as destroyed after a snapshot round trip. */
 int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
 int run_tank_destroyed_snapshot_round_trip(void);
+
+/* The destroyed state on the wire (test_tank_status_wire.c): tankStatus
+ * carries TANK_STATUS_DEAD (in the respawn wait) and TANK_STATUS_DESTROYED
+ * (destroyed, not yet respawned) to every recipient, and armour is a plain
+ * 0..TANK_FULL_ARMOUR value with no death sentinel. The round trip holds a
+ * tank destroyed with its wait over — the state only the destroyed bit can
+ * carry — and checks the client reads it as dead, then alive again. */
+int run_tank_status_wire_bits(void);
+int run_tank_status_wire_start_find_round_trip(void);
 
 /* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
  * inAnyViewport cover the recipient's tank screen and each owned/allied

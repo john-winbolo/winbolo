@@ -22,8 +22,8 @@
  * partial:  armour > DAMAGE survives with the expected armour left.
  * wire:     a destroyed tank reads as destroyed through the predicate, and
  *           still does after a snapshot has carried it to a client — the
- *           sentinel the wire uses is put on by the encoder and taken back off
- *           by the decode, so neither end infers death from an armour value.
+ *           destroyed bit rides in tankStatus, so neither end infers death
+ *           from an armour value (test_tank_status_wire.c pins the bits).
  */
 
 #include <string.h>
@@ -229,9 +229,9 @@ int run_tank_destroyed_snapshot_round_trip(void) {
     UT_ASSERT_MSG(tankIsDestroyed(&sgs->tanks[me]) == TRUE,
                   "the server's destroyed tank does not read as destroyed");
 
-    /* Carry it over the wire. The encoder puts the sentinel on, the decode
-     * takes it back off, and the client agrees without either end comparing a
-     * live tank's armour against anything. */
+    /* Carry it over the wire. The destroyed bit in tankStatus is what the
+     * client reads, so it agrees without either end comparing a live tank's
+     * armour against anything. */
     for (i = 0; i < TD_WARMUP_TICKS; i++) {
         td_pump(cs, me, &inputTick);
     }
