@@ -324,19 +324,26 @@ bool basesAmOwner(struct GameSim *sim, BYTE owner, BYTE xValue, BYTE yValue);
 *LAST MODIFIED: 2/11/99
 *PURPOSE:
 * Sets the base to be owned by paremeter passed.
-* Returns the previous owner. If it was not neutral we
-* assume then it was "stolen" and subsequently remove
-* all its possessions. If migrate is set to TRUE then
-* it has migrated from a alliance when a player left 
-* and we shouldn't make a message
+* Returns the previous owner. A base taken off another
+* player is "stolen" and loses everything it was holding,
+* unless keepStock says to hand it over as it stands.
+* If migrate is set to TRUE then it has migrated from a
+* alliance when a player left and we shouldn't make a
+* message.
+*
+* The two flags are separate because a hand-over may want
+* either half on its own: an alliance migration is quiet
+* and keeps the stock, while a scripted hand-over can
+* announce the capture and still keep it.
 *
 *ARGUMENTS:
-*  value   - Pointer to the bases structure
-*  baseNum - Base number to set
-*  owner   - Who owns it
-*  migrate - TRUE if it has migrated from an alliance
+*  value     - Pointer to the bases structure
+*  baseNum   - Base number to set
+*  owner     - Who owns it
+*  migrate   - TRUE if it has migrated from an alliance
+*  keepStock - TRUE to leave the base's stock alone
 *********************************************************/
-BYTE basesSetBaseOwner(struct GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate);
+BYTE basesSetBaseOwner(struct GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYTE keepStock);
 
 /*********************************************************
 *NAME:          basesSetOwner
@@ -738,6 +745,28 @@ void basesMigrate(struct GameSim *sim, BYTE oldOwner, BYTE newOwner);
 *  addAmount - Amount of items to add
 *********************************************************/
 void basesServerRefuel(struct GameSim *sim, BYTE baseNum, BYTE addAmount);
+
+/*********************************************************
+*NAME:          basesSetStock
+*PURPOSE:
+*  Writes what a base is holding. Where basesServerRefuel
+*  adds to each stock, this one says what each is to be,
+*  capped at its full amount, and -1 leaves that stock
+*  where it was. Records the same log_BaseSetStock the
+*  periodic update writes, so a replay follows the change.
+*
+*  baseNum counts from zero, as basesServerRefuel beside
+*  it does.
+*
+*ARGUMENTS:
+*  sim     - Pointer to the game sim
+*  baseNum - The base to write, counting from zero
+*  armour  - Armour to hold, or -1 to leave it alone
+*  shells  - Shells to hold, or -1 to leave it alone
+*  mines   - Mines to hold, or -1 to leave it alone
+*********************************************************/
+void basesSetStock(struct GameSim *sim, BYTE baseNum, int16_t armour,
+                   int16_t shells, int16_t mines);
 
 /*********************************************************
 *NAME:          baseIsCapturable

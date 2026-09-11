@@ -125,7 +125,7 @@ int run_replay_roundtrip_world(void) {
                   firstBase.shells);
     shellsBefore = firstBase.shells;
 
-    basesSetBaseOwner(gs, 1, 0, TRUE);
+    basesSetBaseOwner(gs, 1, 0, TRUE, TRUE);
     basesNetGiveShells(&gs->bs, 0);   /* the give path counts bases from 0 */
 
     memset(&firstBase, 0, sizeof(firstBase));

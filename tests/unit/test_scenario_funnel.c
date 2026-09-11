@@ -124,7 +124,17 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_LGM_RECALL ||
            t == SCN_OP_LGM_KILL ||
            t == SCN_OP_LGM_PARACHUTE ||
-           t == SCN_OP_LGM_SET_CARRIED;
+           t == SCN_OP_LGM_SET_CARRIED ||
+           t == SCN_OP_PILL_SET_OWNER ||     /* test_scenario_pill_base_arms.c */
+           t == SCN_OP_PILL_SET_ARMOUR ||
+           t == SCN_OP_PILL_SET_SPEED ||
+           t == SCN_OP_PILL_MOVE ||
+           t == SCN_OP_BASE_SET_OWNER ||
+           t == SCN_OP_BASE_SET_STOCK ||
+           t == SCN_OP_MAP_SET_TILE ||       /* test_scenario_map_arms.c */
+           t == SCN_OP_MAP_FILL_RECT ||
+           t == SCN_OP_MAP_PLACE_MINE ||
+           t == SCN_OP_MAP_REMOVE_MINE;
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The
@@ -220,7 +230,14 @@ int run_scenario_op_refused_in_policy(void) {
 }
 
 /* A start rebuilds the roster, the tanks and the state, so nothing may
- * be written until it finishes. */
+ * be written until it finishes.
+ *
+ * The op is one the sim would otherwise carry out — a square well inside
+ * the map, terrain a map holds, and an arm that asks nothing of the round
+ * state — so the two calls answer differently and the difference is the
+ * whole of what the flag does. Refusing on the flag and refusing on the
+ * op's own contract are both SCN_OP_WRONG_STATE, so an op the sim would
+ * turn down anyway would leave this case unable to tell them apart. */
 int run_scenario_op_refused_during_start(void) {
     ServerSim *sim = makeLobbySim();
     ScenarioOp op;
@@ -228,13 +245,17 @@ int run_scenario_op_refused_during_start(void) {
 
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_MAP_SET_TILE;
+    op.u.mapSetTile.x = 100;
+    op.u.mapSetTile.y = 100;
+    op.u.mapSetTile.terrain = GRASS;
 
     sim->startInProgress = true;
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_WRONG_STATE,
                   "an op issued during a start must be refused");
 
     sim->startInProgress = false;
-    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_UNSUPPORTED);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
+                  "clearing the flag must let the op through");
 
     serverSimDestroy(sim);
     return 0;

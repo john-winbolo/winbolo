@@ -47,6 +47,20 @@
 /* Buffer for a brain path or a "package:NAME" reference. */
 #define SCN_PATH_MAX 256
 
+/* How many tiles a fill may change in one tick. A rectangle that
+ * changes more than this applies what the budget allows, keeps the
+ * remainder and answers SCN_OP_QUEUED; the sim carries the rest on
+ * later ticks, one budget each. A fill with no budget left in the
+ * tick it arrives in is refused rather than queued, so nothing that
+ * cannot move is left on the sim. A whole-map fill takes 256 ticks.
+ *
+ * The number is also the depth of the server's per-frame map event
+ * buffer, which is a collision rather than a design: a fill spending
+ * the whole budget fills that buffer on its own and the frame's other
+ * terrain changes are dropped where they are recorded. Lowering this
+ * is what would leave them room. */
+#define SCN_TILES_PER_TICK 256
+
 /* The init and hint tables: how many pairs, and how long a key and a
  * value may be. */
 #define SCN_TABLE_MAX         16

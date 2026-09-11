@@ -1901,6 +1901,25 @@ int run_scenario_lgm_parachute(void);
 int run_scenario_lgm_set_carried(void);
 int run_scenario_lgm_kill_record(void);
 
+int run_scenario_pill_set_owner(void);
+int run_scenario_pill_set_armour(void);
+int run_scenario_pill_set_speed(void);
+int run_scenario_pill_move(void);
+int run_scenario_base_set_owner(void);
+int run_scenario_base_owner_keep_stock(void);
+int run_scenario_base_set_stock(void);
+int run_scenario_pill_base_arm_records(void);
+
+int run_scenario_map_set_tile(void);
+int run_scenario_map_fill_rect(void);
+int run_scenario_map_fill_paced(void);
+int run_scenario_map_fill_no_budget_refused(void);
+int run_scenario_map_fill_dropped_at_round_start(void);
+int run_scenario_map_fill_dropped_at_map_swap(void);
+int run_scenario_map_place_mine(void);
+int run_scenario_map_remove_mine(void);
+int run_scenario_map_arm_records(void);
+
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
 int run_console_read_reports_eof(void);

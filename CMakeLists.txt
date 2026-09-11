@@ -3320,6 +3320,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
     tests/unit/test_scenario_builder_arms.c
+    # The pill and base ops: the six arms, the refusals each one answers with,
+    # an empty slot as an owner, the drain a hand-over makes and the flag that
+    # keeps the stock, and the records the five changes leave in a recording.
+    tests/unit/test_scenario_pill_base_arms.c
+    # The map ops: the four arms, the refusals each one answers with, deep sea
+    # as a terrain a script may write, one publish per square a fill changes,
+    # the budget that carries an oversized fill over two ticks, the answer a
+    # fill with no budget left gets, and the round start and lobby map swap
+    # that drop a remainder rather than painting the map that replaced it.
+    tests/unit/test_scenario_map_arms.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -4671,6 +4681,23 @@ set(_unit_test_names
     scenario_lgm_parachute
     scenario_lgm_set_carried
     scenario_lgm_kill_record
+    scenario_pill_set_owner
+    scenario_pill_set_armour
+    scenario_pill_set_speed
+    scenario_pill_move
+    scenario_base_set_owner
+    scenario_base_owner_keep_stock
+    scenario_base_set_stock
+    scenario_pill_base_arm_records
+    scenario_map_set_tile
+    scenario_map_fill_rect
+    scenario_map_fill_paced
+    scenario_map_fill_no_budget_refused
+    scenario_map_fill_dropped_at_round_start
+    scenario_map_fill_dropped_at_map_swap
+    scenario_map_place_mine
+    scenario_map_remove_mine
+    scenario_map_arm_records
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

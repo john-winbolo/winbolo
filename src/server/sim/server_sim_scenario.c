@@ -35,8 +35,10 @@
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
 #include "tank.h"          /* the tank arms mutate through these */
 #include "lgm.h"           /* the builder arms mutate through these */
-#include "bolo_map.h"      /* mapGetPos — the terrain the tank arms test */
-#include "pillbox.h"       /* the pill reads the give and drop arms make */
+#include "bolo_map.h"      /* mapGetPos and mapSetPos — what the map arms write through */
+#include "pillbox.h"       /* the pill arms read and write through these */
+#include "bases.h"         /* the base arms mutate through these */
+#include "mines.h"         /* the mine list the map arms add to and clear */
 #include "starts.h"        /* startsGetStart — the teleport arm's start mode */
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
 #include "log.h"           /* logAddEvent — the arm's record */
@@ -633,6 +635,457 @@ static ScnOpResult scenarioOpLgmSetCarried(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* What every pill arm starts with: the op's index turned into the number the
+ * pill list wants, and the pill's own record, which each arm edits one field
+ * of and writes back. Op indices count from zero and the list counts from one.
+ *
+ * No state check: a pill belongs to the map rather than to a round, so dealing
+ * the estate out before the round starts is as legal as re-dealing it mid-round
+ * and the lobby's own map is what a scenario sets up against. */
+static ScnOpResult scenarioPillFor(ServerSim *sim, BYTE pill, BYTE *outNum,
+                                   pillbox *out) {
+    if (pill >= pillsGetNumPills(&sim->sim.pb)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    *outNum = (BYTE)(pill + 1);
+    memset(out, 0, sizeof(*out));
+    pillsGetPill(&sim->sim.pb, out, *outNum);
+    return SCN_OP_OK;
+}
+
+/* A slot or nobody. Every seat is a legal owner for a pill or a base, whether
+ * or not somebody is sitting in it: a scenario hands the wave's guns back to
+ * empty seats so the map is fought against them with nobody behind them. */
+static bool scenarioOwnerIsLegal(BYTE owner) {
+    return owner < MAX_TANKS || owner == NEUTRAL;
+}
+
+/* Whether a square will take a pill. This is the test the builder's place-pill
+ * arm makes in lgmDoWork before it puts one down: no pill, no base, no mine
+ * the players can see, and ground that is not a building, a half-building, a
+ * river, a boat or deep sea. It is written inline there and lgm.c has no call
+ * that asks it on its own, so it is repeated here. The mine subtraction is the
+ * builder's too — a mined square is tested on the terrain underneath it. */
+static bool scenarioSquareTakesPill(ServerSim *sim, BYTE mx, BYTE my) {
+    GameSim *gs = &sim->sim;
+    BYTE terrain = mapGetPos(&gs->mp, mx, my);
+
+    if (terrain >= MINE_START && terrain <= MINE_END) {
+        terrain = (BYTE)(terrain - MINE_SUBTRACT);
+    }
+    return pillsExistPos(&gs->pb, mx, my) == FALSE &&
+           basesExistPos(&gs->bs, mx, my) == FALSE &&
+           minesExistPos(&gs->mns, &gs->mp, mx, my) == FALSE &&
+           terrain != BUILDING && terrain != HALFBUILDING &&
+           terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA;
+}
+
+/* Hand a pill to a slot. The capture goes through the setter a tank driving
+ * over one reaches, so the newswire line, the capture event and the record are
+ * that capture's. migrate is false because this is a hand-over players are
+ * meant to hear about, not an alliance tidying itself up when someone quits. */
+static ScnOpResult scenarioOpPillSetOwner(ServerSim *sim,
+                                          const ScnOpPillSetOwner *p) {
+    pillbox item;
+    BYTE pillNum = 0;
+    ScnOpResult r = scenarioPillFor(sim, p->pill, &pillNum, &item);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (!scenarioOwnerIsLegal(p->owner)) {
+        return SCN_OP_RANGE;
+    }
+    /* A pill in a tank already answers to whoever is carrying it, and dropping
+       it is what hands it on. */
+    if (item.inTank) {
+        return SCN_OP_CARRIED;
+    }
+
+    pillsSetPillOwner(&sim->sim, &sim->sim.pb, pillNum, p->owner, FALSE);
+    return SCN_OP_OK;
+}
+
+/* Write a pill's armour. Zero is a dead pill lying on the ground, which is
+ * what a script wanting a wreck to repair asks for. */
+static ScnOpResult scenarioOpPillSetArmour(ServerSim *sim,
+                                           const ScnOpPillSetArmour *p) {
+    pillbox item;
+    BYTE pillNum = 0;
+    ScnOpResult r = scenarioPillFor(sim, p->pill, &pillNum, &item);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* pillsSetPill clamps, because a map file may carry anything. A script is
+       told instead: asking for more armour than a pill can hold is a mistake
+       worth reporting, the same answer the tank's own stock op gives. */
+    if (p->armour > PILLS_MAX_ARMOUR) {
+        return SCN_OP_RANGE;
+    }
+    if (item.inTank) {
+        return SCN_OP_CARRIED;
+    }
+
+    item.armour = p->armour;
+    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    return SCN_OP_OK;
+}
+
+/* Write how often a pill fires. A carried pill is allowed: it takes the new
+ * rate with it and fires at it when it is put down. */
+static ScnOpResult scenarioOpPillSetSpeed(ServerSim *sim,
+                                          const ScnOpPillSetSpeed *p) {
+    pillbox item;
+    BYTE pillNum = 0;
+    ScnOpResult r = scenarioPillFor(sim, p->pill, &pillNum, &item);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* The attack interval runs from the fastest a hurt pill fires to the rate
+       an untouched one sits at. pillsSetPill clamps into that pair and arms the
+       cooldown for anything under the top of it. */
+    if (p->speed < PILLBOX_MAX_FIRERATE || p->speed > PILLBOX_ATTACK_NORMAL) {
+        return SCN_OP_RANGE;
+    }
+
+    item.speed = p->speed;
+    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    return SCN_OP_OK;
+}
+
+/* Put a pill on another square. */
+static ScnOpResult scenarioOpPillMove(ServerSim *sim, const ScnOpPillMove *p) {
+    pillbox item;
+    BYTE pillNum = 0;
+    ScnOpResult r = scenarioPillFor(sim, p->pill, &pillNum, &item);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* A pill in a tank is nowhere on the map, so there is no move to make. */
+    if (item.inTank) {
+        return SCN_OP_CARRIED;
+    }
+    if (p->x <= MAP_MINE_EDGE_LEFT || p->x >= MAP_MINE_EDGE_RIGHT ||
+        p->y <= MAP_MINE_EDGE_TOP || p->y >= MAP_MINE_EDGE_BOTTOM) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    if (!scenarioSquareTakesPill(sim, p->x, p->y)) {
+        return SCN_OP_BAD_TERRAIN;
+    }
+
+    item.x = p->x;
+    item.y = p->y;
+    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    return SCN_OP_OK;
+}
+
+/* Hand a base to a slot. The capture is the one a tank driving on to a base
+ * makes, so the event and the record are that capture's, and taking a base off
+ * another player empties it as a capture does. keepStock is how a script
+ * re-deals the map without stripping what it deals. */
+static ScnOpResult scenarioOpBaseSetOwner(ServerSim *sim,
+                                          const ScnOpBaseSetOwner *p) {
+    if (p->base >= basesGetNumBases(&sim->sim.bs)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    if (!scenarioOwnerIsLegal(p->owner)) {
+        return SCN_OP_RANGE;
+    }
+
+    /* migrate false, so the hand-over announces itself. The base list counts
+       from one. */
+    basesSetBaseOwner(&sim->sim, (BYTE)(p->base + 1), p->owner, FALSE,
+                      p->keepStock ? TRUE : FALSE);
+    return SCN_OP_OK;
+}
+
+/* Write what a base is holding. */
+static ScnOpResult scenarioOpBaseSetStock(ServerSim *sim,
+                                          const ScnOpBaseSetStock *p) {
+    if (p->base >= basesGetNumBases(&sim->sim.bs)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    /* -1 is the payload's "leave this one alone"; any other negative is a
+       script that has worked something out wrong. An amount past a base's full
+       load is not: basesSetStock caps it, so "fill it up" can be written as a
+       number bigger than the cap. */
+    if (p->armour < -1 || p->shells < -1 || p->mines < -1) {
+        return SCN_OP_RANGE;
+    }
+
+    /* basesSetStock counts from zero, as basesServerRefuel beside it does. */
+    basesSetStock(&sim->sim, p->base, p->armour, p->shells, p->mines);
+    return SCN_OP_OK;
+}
+
+/* Where a map op may write. mapGetPos answers DEEP_SEA for anything outside
+ * this box whatever the array underneath holds, so a write outside it would
+ * reach every client's copy of the map and none of the sim's own reads — the
+ * players would see ground the server does not believe is there. The bounds
+ * are the ones the tank, builder and pill arms already refuse on. */
+static bool scenarioSquareOnMap(BYTE x, BYTE y) {
+    return x > MAP_MINE_EDGE_LEFT && x < MAP_MINE_EDGE_RIGHT &&
+           y > MAP_MINE_EDGE_TOP && y < MAP_MINE_EDGE_BOTTOM;
+}
+
+/* Terrain a scenario may write: the sixteen map codes, the mined variants
+ * among them, and deep sea. Deep sea is the one that has to be said out loud —
+ * it is not a code in the 0..15 run, and a script putting open water back under
+ * a pill it has taken away needs it. */
+static bool scenarioTerrainIsLegal(BYTE terrain) {
+    return terrain <= MINE_END || terrain == DEEP_SEA;
+}
+
+/* Write one square. Any mine under it goes first: the terrain byte being
+ * written carries no mine, so a visible-mine record left behind would mark a
+ * square nothing can clear and nothing would set off. mapSetPos does the rest —
+ * its registered callback queues the map event and its own logAddEvent is the
+ * record, so neither is repeated here. */
+static void scenarioWriteTile(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
+    minesRemoveItem(&sim->sim.mns, x, y);
+    mapSetPos(&sim->sim, &sim->sim.mp, x, y, terrain, TRUE, FALSE);
+}
+
+/* Put one square's terrain where the op says. */
+static ScnOpResult scenarioOpMapSetTile(ServerSim *sim,
+                                        const ScnOpMapSetTile *p) {
+    if (!scenarioSquareOnMap(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    if (!scenarioTerrainIsLegal(p->terrain)) {
+        return SCN_OP_RANGE;
+    }
+
+    scenarioWriteTile(sim, p->x, p->y, p->terrain);
+    return SCN_OP_OK;
+}
+
+/* Carry the pending fill along for as much of this tick's budget as is left.
+ * Only a square whose terrain differs is written, so both the budget and the
+ * publish count are counted in squares changed rather than squares looked at:
+ * painting grass over grass costs a scan and nothing else.
+ *
+ * The tile budget is the only thing that stops the walk. Reading the frame's
+ * map event buffer as a second bound looked safer and was not: that counter is
+ * only cleared on a running frame, so a round that ended with it full left
+ * every lobby fill writing nothing, answering queued, and never releasing the
+ * funnel — after which every later fill is refused behind it, for good. The
+ * buffer has its own guard at the point events are recorded, and one producer
+ * second-guessing it bought nothing.
+ *
+ * Returns whether the rectangle is finished, and through `wrote` how many
+ * squares this call changed. */
+static bool scenarioFillStep(ServerSim *sim, uint16_t *wrote) {
+    BYTE x = sim->scenarioFillX;
+    BYTE y = sim->scenarioFillY;
+    uint16_t before = sim->scenarioFillSpent;
+    bool finished = true;
+
+    while (y <= sim->scenarioFillY1) {
+        bool budgetGone = false;
+        while (x <= sim->scenarioFillX1) {
+            if (sim->scenarioFillSpent >= SCN_TILES_PER_TICK) {
+                budgetGone = true;
+                break;
+            }
+            if (mapGetPos(&sim->sim.mp, x, y) != sim->scenarioFillTerrain) {
+                scenarioWriteTile(sim, x, y, sim->scenarioFillTerrain);
+                sim->scenarioFillSpent++;
+            }
+            x++;
+        }
+        if (budgetGone) {
+            sim->scenarioFillX = x;
+            sim->scenarioFillY = y;
+            finished = false;
+            break;
+        }
+        x = sim->scenarioFillX0;
+        y++;
+    }
+
+    if (finished) {
+        sim->scenarioFillPending = false;
+    }
+    if (wrote != NULL) {
+        *wrote = (uint16_t)(sim->scenarioFillSpent - before);
+    }
+    return finished;
+}
+
+/* Paint a rectangle. A rectangle bigger than one tick's budget applies what it
+ * can and leaves the rest on the sim, which carries it on later ticks — so the
+ * answer is SCN_OP_QUEUED rather than SCN_OP_OK and the script knows the work
+ * is not finished.
+ *
+ * One at a time: a second fill arriving while one is outstanding is refused, so
+ * that the squares the first still owes are never dropped for it. A script that
+ * wants both waits for the first to finish.
+ *
+ * A fill that cannot write a single square is refused rather than queued.
+ * SCN_OP_QUEUED says the work has started and the rest is coming; answering it
+ * for a fill that wrote nothing tells a script something it cannot act on, and
+ * leaves a rectangle on the sim that every later fill is then refused behind.
+ * SCN_OP_RATE is the same answer a second fill gets, and means the same thing:
+ * the funnel had no room this tick, ask again on the next one. */
+static ScnOpResult scenarioOpMapFillRect(ServerSim *sim,
+                                         const ScnOpMapFillRect *p) {
+    uint16_t wrote = 0;
+    /* Corners either way round name the same rectangle, which is what a caller
+       handing over two points it read off the map means by them. */
+    BYTE x0 = (p->x0 <= p->x1) ? p->x0 : p->x1;
+    BYTE x1 = (p->x0 <= p->x1) ? p->x1 : p->x0;
+    BYTE y0 = (p->y0 <= p->y1) ? p->y0 : p->y1;
+    BYTE y1 = (p->y0 <= p->y1) ? p->y1 : p->y0;
+
+    if (!scenarioSquareOnMap(x0, y0) || !scenarioSquareOnMap(x1, y1)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    if (!scenarioTerrainIsLegal(p->terrain)) {
+        return SCN_OP_RANGE;
+    }
+    if (sim->scenarioFillPending) {
+        return SCN_OP_RATE;
+    }
+    /* The budget this frame is already gone — spent by a fill the same hook
+       finished earlier in it. Refused here, before anything is written down,
+       so there is no half-started rectangle to unwind. */
+    if (sim->scenarioFillSpent >= SCN_TILES_PER_TICK) {
+        return SCN_OP_RATE;
+    }
+
+    sim->scenarioFillPending = true;
+    sim->scenarioFillX0 = x0;
+    sim->scenarioFillX1 = x1;
+    sim->scenarioFillY1 = y1;
+    sim->scenarioFillTerrain = p->terrain;
+    sim->scenarioFillX = x0;
+    sim->scenarioFillY = y0;
+
+    if (scenarioFillStep(sim, &wrote)) {
+        return SCN_OP_OK;
+    }
+    if (wrote == 0) {
+        /* The check above is the only way a first step writes nothing while
+           the budget is the only bound, so this cannot fire today. It stays
+           so that a bound added to the walk later cannot quietly leave a fill
+           on the sim that never moves. */
+        sim->scenarioFillPending = false;
+        return SCN_OP_RATE;
+    }
+    return SCN_OP_QUEUED;
+}
+
+void serverSimScenarioDrainFill(ServerSim *sim) {
+    if (sim == NULL) {
+        return;
+    }
+    if (sim->scenarioFillPending) {
+        (void)scenarioFillStep(sim, NULL);
+    }
+    /* The budget belongs to the frame and is shared with any fill a hook
+       started in it, so it is handed back here — after the hook has had its
+       turn at it — rather than at the top of the tick. An op issued from
+       outside a tick altogether spends the budget the next frame would have
+       had, so its remainder waits a frame longer than a hook's would; that
+       costs a fill one frame and never lets a frame carry more squares than
+       its map event buffer holds, which is the way round to be wrong. */
+    sim->scenarioFillSpent = 0;
+}
+
+void serverSimScenarioResetFill(ServerSim *sim) {
+    if (sim == NULL) {
+        return;
+    }
+    sim->scenarioFillPending = false;
+    sim->scenarioFillX0 = 0;
+    sim->scenarioFillX1 = 0;
+    sim->scenarioFillY1 = 0;
+    sim->scenarioFillTerrain = 0;
+    sim->scenarioFillX = 0;
+    sim->scenarioFillY = 0;
+    sim->scenarioFillSpent = 0;
+}
+
+/* Put a mine on a square. The pairing is the one tankLayMine and the builder's
+ * mine order make: the terrain byte gains MINE_SUBTRACT and the mine list is
+ * told who laid it, so a later detonation credits somebody. The ground it will
+ * go on is the builder's list.
+ *
+ * visible is the difference between a mine every client draws and one that is
+ * there to be driven over: the mine list learns of a visible one and the event
+ * carries it to every client, while a hidden one is known only to the map byte,
+ * which is what a laid mine is to everyone but its owner. */
+static ScnOpResult scenarioOpMapPlaceMine(ServerSim *sim,
+                                          const ScnOpMapPlaceMine *p) {
+    GameSim *gs = &sim->sim;
+    BYTE terrain;
+
+    if (!scenarioSquareOnMap(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    if (!scenarioOwnerIsLegal(p->owner)) {
+        return SCN_OP_RANGE;
+    }
+    terrain = mapGetPos(&gs->mp, p->x, p->y);
+    if (terrain >= MINE_START && terrain <= MINE_END) {
+        return SCN_OP_ALREADY;
+    }
+    if (terrain != SWAMP && terrain != CRATER && terrain != ROAD &&
+        terrain != FOREST && terrain != RUBBLE && terrain != GRASS) {
+        return SCN_OP_BAD_TERRAIN;
+    }
+    /* A pill or a base owns its square and writes the terrain back itself. */
+    if (pillsExistPos(&gs->pb, p->x, p->y) == TRUE ||
+        basesExistPos(&gs->bs, p->x, p->y) == TRUE) {
+        return SCN_OP_BAD_TERRAIN;
+    }
+
+    /* The mine list first, so the brain map mapSetPos refreshes underneath is
+       told about a finished square rather than a mined byte nobody can see. */
+    if (p->visible) {
+        minesAddItem(&gs->mns, p->x, p->y);
+    }
+    minesSetOwner(&gs->mns, p->x, p->y, p->owner);
+    mapSetPos(gs, &gs->mp, p->x, p->y, (BYTE)(terrain + MINE_SUBTRACT), TRUE,
+              FALSE);
+    if (p->visible) {
+        /* Bit 7 is what the per-client event filter reads as "everyone", the
+           same bit a tank's own mine sets. Without it the event reaches the
+           named owner and their allies alone. */
+        gs->callbacks.mineVisible(gs->callbacks.ctx, p->x, p->y,
+                                  (BYTE)(p->owner | 0x80));
+    }
+    return SCN_OP_OK;
+}
+
+/* Take a mine off a square without setting it off. The pairing is the one a
+ * mine explosion and a flood both make: the mine list forgets the square, then
+ * the terrain byte loses MINE_SUBTRACT. No explosion, so nothing standing on it
+ * is hurt and no crater is left — the ground comes back as it was under the
+ * mine. */
+static ScnOpResult scenarioOpMapRemoveMine(ServerSim *sim,
+                                           const ScnOpMapRemoveMine *p) {
+    GameSim *gs = &sim->sim;
+    BYTE terrain;
+
+    if (!scenarioSquareOnMap(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    terrain = mapGetPos(&gs->mp, p->x, p->y);
+    if (terrain < MINE_START || terrain > MINE_END) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+
+    minesRemoveItem(&gs->mns, p->x, p->y);
+    mapSetPos(gs, &gs->mp, p->x, p->y, (BYTE)(terrain - MINE_SUBTRACT), TRUE,
+              FALSE);
+    return SCN_OP_OK;
+}
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     assert(sim != NULL);
@@ -680,22 +1133,32 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpLgmParachute(sim, &op->u.lgmParachute);
         case SCN_OP_LGM_SET_CARRIED:
             return scenarioOpLgmSetCarried(sim, &op->u.lgmSetCarried);
-        case SCN_OP_PILL_SET_OWNER:      return SCN_OP_UNSUPPORTED;
-        case SCN_OP_PILL_SET_ARMOUR:     return SCN_OP_UNSUPPORTED;
-        case SCN_OP_PILL_SET_SPEED:      return SCN_OP_UNSUPPORTED;
-        case SCN_OP_PILL_MOVE:           return SCN_OP_UNSUPPORTED;
-        case SCN_OP_BASE_SET_OWNER:      return SCN_OP_UNSUPPORTED;
-        case SCN_OP_BASE_SET_STOCK:      return SCN_OP_UNSUPPORTED;
+        case SCN_OP_PILL_SET_OWNER:
+            return scenarioOpPillSetOwner(sim, &op->u.pillSetOwner);
+        case SCN_OP_PILL_SET_ARMOUR:
+            return scenarioOpPillSetArmour(sim, &op->u.pillSetArmour);
+        case SCN_OP_PILL_SET_SPEED:
+            return scenarioOpPillSetSpeed(sim, &op->u.pillSetSpeed);
+        case SCN_OP_PILL_MOVE:
+            return scenarioOpPillMove(sim, &op->u.pillMove);
+        case SCN_OP_BASE_SET_OWNER:
+            return scenarioOpBaseSetOwner(sim, &op->u.baseSetOwner);
+        case SCN_OP_BASE_SET_STOCK:
+            return scenarioOpBaseSetStock(sim, &op->u.baseSetStock);
         case SCN_OP_ENTITY_ADD_PILL:     return SCN_OP_UNSUPPORTED;
         case SCN_OP_ENTITY_REMOVE_PILL:  return SCN_OP_UNSUPPORTED;
         case SCN_OP_ENTITY_ADD_BASE:     return SCN_OP_UNSUPPORTED;
         case SCN_OP_ENTITY_REMOVE_BASE:  return SCN_OP_UNSUPPORTED;
         case SCN_OP_ENTITY_ADD_START:    return SCN_OP_UNSUPPORTED;
         case SCN_OP_ENTITY_REMOVE_START: return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MAP_SET_TILE:        return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MAP_FILL_RECT:       return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MAP_PLACE_MINE:      return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MAP_REMOVE_MINE:     return SCN_OP_UNSUPPORTED;
+        case SCN_OP_MAP_SET_TILE:
+            return scenarioOpMapSetTile(sim, &op->u.mapSetTile);
+        case SCN_OP_MAP_FILL_RECT:
+            return scenarioOpMapFillRect(sim, &op->u.mapFillRect);
+        case SCN_OP_MAP_PLACE_MINE:
+            return scenarioOpMapPlaceMine(sim, &op->u.mapPlaceMine);
+        case SCN_OP_MAP_REMOVE_MINE:
+            return scenarioOpMapRemoveMine(sim, &op->u.mapRemoveMine);
         case SCN_OP_ROSTER_SPAWN_BOT:    return SCN_OP_UNSUPPORTED;
         case SCN_OP_ROSTER_REMOVE_BOT:   return SCN_OP_UNSUPPORTED;
         case SCN_OP_ROSTER_SET_TEAM:     return SCN_OP_UNSUPPORTED;

@@ -640,19 +640,21 @@ bool basesAmOwner(GameSim *sim, BYTE owner, BYTE xValue, BYTE yValue) {
 *LAST MODIFIED: 04/04/02
 *PURPOSE:
 * Sets the base to be owned by paremeter passed.
-* Returns the previous owner. If it was not neutral we
-* assume then it was "stolen" and subsequently remove
-* all its possessions. If migrate is set to TRUE then
-* it has migrated from a alliance when a player left 
-* and we shouldn't make a message
+* Returns the previous owner. A base taken off another
+* player is "stolen" and loses everything it was holding,
+* unless keepStock says to hand it over as it stands.
+* If migrate is set to TRUE then it has migrated from a
+* alliance when a player left and we shouldn't make a
+* message.
 *
 *ARGUMENTS:
-*  value   - Pointer to the bases structure
-*  baseNum - Base number to set
-*  owner   - Who owns it
-*  migrate - TRUE if it has migrated from an alliance
+*  value     - Pointer to the bases structure
+*  baseNum   - Base number to set
+*  owner     - Who owns it
+*  migrate   - TRUE if it has migrated from an alliance
+*  keepStock - TRUE to leave the base's stock alone
 *********************************************************/
-BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
+BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYTE keepStock) {
   bases *value = &sim->bs;
   bool isServer = sim->isServer;
   BYTE returnValue;         /* Value to return */
@@ -661,19 +663,17 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
   if (baseNum > 0 && baseNum <= (*value)->numBases) {
     baseNum--;
     returnValue = (*value)->item[baseNum].owner;
-    if (migrate == TRUE) {
-      (*value)->item[baseNum].owner = owner;
-    } else if (owner == NEUTRAL) {
-      (*value)->item[baseNum].owner = owner;
-    } else if ((*value)->item[baseNum].owner != owner) {
-      if (returnValue != NEUTRAL) {
-        (*value)->item[baseNum].armour = 0;
-        (*value)->item[baseNum].shells = 0;
-        (*value)->item[baseNum].mines = 0;
-        (*value)->item[baseNum].baseTime = 0;
-      }
-      (*value)->item[baseNum].owner = owner;
+    /* Taking a base off another player empties it. Neutralising one, or
+       handing it to the player who already holds it, takes nothing; nor does
+       a caller that asked to keep the stock. */
+    if (keepStock == FALSE && owner != NEUTRAL && returnValue != NEUTRAL &&
+        returnValue != owner) {
+      (*value)->item[baseNum].armour = 0;
+      (*value)->item[baseNum].shells = 0;
+      (*value)->item[baseNum].mines = 0;
+      (*value)->item[baseNum].baseTime = 0;
     }
+    (*value)->item[baseNum].owner = owner;
     logAddEvent(log_BaseSetOwner, baseNum, owner, migrate, 0, 0, NULL);
 
     /* Emit event so networked clients receive the capture message */
@@ -1756,6 +1756,52 @@ void basesServerRefuel(GameSim *sim, BYTE baseNum, BYTE addAmount) {
         (*value)->item[baseNum].mines = BASE_FULL_MINES;
       }
     }
+  }
+}
+
+/*********************************************************
+*NAME:          basesSetStock
+*PURPOSE:
+*  Writes what a base is holding. Where basesServerRefuel
+*  above adds to each stock, this one says what each is to
+*  be, capped at its full amount, and -1 leaves that stock
+*  where it was.
+*
+*  No frontend status call: the one caller is the scenario
+*  funnel, which runs on the server, and the new stock
+*  reaches a client as the periodic update's does.
+*
+*ARGUMENTS:
+*  sim     - Pointer to the game sim
+*  baseNum - The base to write, counting from zero
+*  armour  - Armour to hold, or -1 to leave it alone
+*  shells  - Shells to hold, or -1 to leave it alone
+*  mines   - Mines to hold, or -1 to leave it alone
+*********************************************************/
+void basesSetStock(GameSim *sim, BYTE baseNum, int16_t armour, int16_t shells, int16_t mines) {
+  bases *value = &sim->bs;
+
+  if (baseNum < (*value)->numBases) {
+    if (armour >= 0) {
+      if (armour > BASE_FULL_ARMOUR) {
+        armour = BASE_FULL_ARMOUR;
+      }
+      (*value)->item[baseNum].armour = (BYTE) armour;
+    }
+    if (shells >= 0) {
+      if (shells > BASE_FULL_SHELLS) {
+        shells = BASE_FULL_SHELLS;
+      }
+      (*value)->item[baseNum].shells = (BYTE) shells;
+    }
+    if (mines >= 0) {
+      if (mines > BASE_FULL_MINES) {
+        mines = BASE_FULL_MINES;
+      }
+      (*value)->item[baseNum].mines = (BYTE) mines;
+    }
+    /* The same record the periodic stock update writes, in the same order. */
+    logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
   }
 }
 

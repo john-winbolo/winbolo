@@ -450,7 +450,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                         break;
                     }
                 }
-                basesSetBaseOwner(&sim->sim, i, newOwner, TRUE);
+                basesSetBaseOwner(&sim->sim, i, newOwner, TRUE, TRUE);
             }
         }
     }

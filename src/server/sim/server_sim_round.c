@@ -883,6 +883,10 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 6. Clear events */
     sim->eventCount = 0;
+    /* And any fill a scenario still had squares owing on. Its rectangle was
+       aimed at the map that has just been replaced above, so carrying it on
+       would paint the reloaded one. */
+    serverSimScenarioResetFill(sim);
     /* Drop any ping accepted but not yet buffered, so it can't leak a stale
      * marker into the next round's first running tick — and the rate limiter
      * with it, because sim->tick is rewound to 0 below and last round's tick
@@ -1074,6 +1078,11 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * snapshot's own arrays, not these queues, so flushing loses nothing. */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+    /* A fill queued by a lobby hook is lobby work too, and this path does not
+       reload the map, so nothing else would drop it: without this the squares
+       it still owes land partway into the round that is starting. The
+       full-reset path clears this in serverSimResetGameWorld. */
+    serverSimScenarioResetFill(sim);
     serverSimResetPingState(sim);
 
     /* Drop the lobby-chat catch-up buffer: this is an authoritative game start
@@ -1374,8 +1383,10 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
     /* A different map is installed — restart every slot's copy of the terrain
      * from it, so a lobby client's snapshot checksum is taken against the map
-     * the lobby now holds. */
+     * the lobby now holds. A fill still owing squares was aimed at the map
+     * that has just gone, so it goes with it. */
     serverSimShadowSeedAll(sim);
+    serverSimScenarioResetFill(sim);
 
     /* Update cached map data */
     len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));

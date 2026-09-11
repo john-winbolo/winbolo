@@ -1102,10 +1102,20 @@ void serverSimTick(ServerSim *sim) {
         simRunHalfStep(sim);
         simRunHalfStep(sim);
         /* Ahead of the shadow tick so terrain a scenario edits from here
-         * lands in the same frame's map events instead of the next one's. */
+         * lands in the same frame's map events instead of the next one's.
+         * The half-steps drop the map-change callback on their way out, so
+         * it goes back on for the length of the hook and the fill drain and
+         * comes off again before the shadow tick: without it a scenario's
+         * terrain writes would reach the server's map and nobody else's. */
+        mapSetChangeCallback(simMapChangeCallback);
         if (sim->scenarioTick != NULL) {
             sim->scenarioTick(sim->scenarioTickCtx);
         }
+        /* After the hook, so a fill it has just started and the tail of an
+         * older one are paced out of the one tile budget rather than each
+         * spending a full one in the same frame. */
+        serverSimScenarioDrainFill(sim);
+        mapSetChangeCallback(NULL);
         /* Both half-steps have finished filling mapEvents and no transport has
          * drained them yet, so this is where each client's copy of the terrain
          * takes the frame's changes. Here rather than in the UDP drain so
@@ -1119,6 +1129,11 @@ void serverSimTick(ServerSim *sim) {
         if (sim->scenarioTick != NULL) {
             sim->scenarioTick(sim->scenarioTickCtx);
         }
+        /* The non-running states run no simulation and publish no map
+         * events — a lobby client is handed the whole map on download and
+         * again at the start — so the callback stays off here and a fill is
+         * paced only so one frame's work stays one frame's work. */
+        serverSimScenarioDrainFill(sim);
     }
 }
 

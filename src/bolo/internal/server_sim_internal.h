@@ -576,6 +576,24 @@ struct ServerSim {
     void                 (*scenarioTick)(void *ctx);
     void                  *scenarioTickCtx;
 
+    /* What is left of a fill-rect that did not fit in one tick, and how
+     * much of this tick's tile budget has been spent on one. The
+     * rectangle is walked row by row, so what the next tick needs is the
+     * column the rows start at, the two the walk ends on, and the square
+     * it stopped at — the top row is behind the cursor by then and is
+     * not kept. The op and serverSimScenarioDrainFill share the one
+     * budget, so a fill started by a hook and a remainder drained after
+     * it cannot together change more squares in a frame than the map
+     * event buffer holds. Only fill queues, so there is one of these
+     * rather than a list: a fill arriving while another is outstanding
+     * is refused rather than replacing it. */
+    bool                   scenarioFillPending;
+    BYTE                   scenarioFillX0;
+    BYTE                   scenarioFillX1, scenarioFillY1;
+    BYTE                   scenarioFillTerrain;
+    BYTE                   scenarioFillX, scenarioFillY;
+    uint16_t               scenarioFillSpent;
+
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
      * spectator; NULL when no enumerator is registered. */
@@ -603,6 +621,23 @@ BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
  * scenario's. */
 void serverSimScenarioPolicyEnter(ServerSim *sim);
 void serverSimScenarioPolicyLeave(ServerSim *sim);
+
+/* Carry a queued fill-rect forward by whatever is left of this tick's
+ * tile budget, then hand the budget back for the next tick. serverSimTick
+ * calls it once a frame beside the scenario hook, after it, so a fill the
+ * hook has just started and the remainder of an older one are paced out of
+ * the same budget. Declared here rather than on the scenario surface: the
+ * caller is the sim's own tick, not a scenario. */
+void serverSimScenarioDrainFill(ServerSim *sim);
+
+/* Forget an outstanding fill and hand its budget back. The rectangle names
+ * squares on the map the fill was issued against, so once a different map is
+ * installed under it — or the round it belongs to is over — those squares are
+ * other ground and finishing the fill would paint terrain nobody asked for.
+ * Called at the round boundaries in server_sim_round.c. Here rather than on
+ * the scenario surface for the same reason as the drain, and beside it so the
+ * one function knows every field the funnel keeps. */
+void serverSimScenarioResetFill(ServerSim *sim);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

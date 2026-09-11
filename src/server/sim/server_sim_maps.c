@@ -1067,6 +1067,11 @@ static void serverSimApplyMapChange(ServerSim *sim) {
      * Without this a slot's copy would still hold the previous map and the
      * checksum in its snapshot header would not match what it was sent. */
     serverSimShadowSeedAll(sim);
+    /* A fill still owing squares was aimed at the map that has just gone, so
+       it goes with it. This is the reload, the map-list pick, an uploaded map
+       and the random regenerate: none of them reaches serverSimResetGameWorld,
+       where the round starts drop theirs. */
+    serverSimScenarioResetFill(sim);
 
     /* A reservation from the previous map can index past the new map's
      * start list, or sit on a side the slot's team may not use now the

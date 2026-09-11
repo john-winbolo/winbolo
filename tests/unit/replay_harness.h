@@ -87,9 +87,9 @@
  *   basesSetOwner / basesSetBaseOwner zero a base's armour, shells and
  *   mines when it is STOLEN from another player, and write only
  *   log_BaseSetOwner. The viewer sets the owner and keeps the old stock, so
- *   the two disagree until the next log_BaseSetStock. Handing a base over
- *   the migrate way, as the bundled case does, does not zero the stock and
- *   so does not hit this.
+ *   the two disagree until the next log_BaseSetStock. A hand-over that keeps
+ *   the stock — basesSetBaseOwner's keepStock, which the bundled case passes
+ *   — does not zero it and so does not hit this.
  *
  *   basesDamagePos changes a base's armour with no event at all. It needs a
  *   player-owned shell to hit a base.
