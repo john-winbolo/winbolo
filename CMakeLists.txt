@@ -3298,6 +3298,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
+    tests/unit/test_lobby_bot_config_memory.c
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c

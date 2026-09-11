@@ -1895,6 +1895,15 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  * scenario map, or when the script names no mode for that team. */
 void serverSimApplyScenarioBotDefaults(ServerSim *sim, BYTE slot, int team,
                                        const char *brainPath);
+/* Start a newly added bot on the mode and difficulty the host last chose
+ * for any bot, instead of the lobby default — so setting up a lobby means
+ * picking a difficulty once rather than once per bot. Call it IMMEDIATELY
+ * BEFORE botManagerAddBot; the pair then rides the init arg the brain
+ * create already stages and costs no control event. A no-op until the host
+ * picks something, and when the new bot's brain does not declare the
+ * remembered mode. */
+void serverSimApplyLastBotConfig(ServerSim *sim, BYTE slot,
+                                 const char *brainPath);
 
 void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx);
 

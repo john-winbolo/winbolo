@@ -28,6 +28,7 @@
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
+#include "brain_list.h"      /* BRAIN_MODE_KEY_LEN — the remembered bot mode/level keys */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "view_policy.h"    /* ViewPolicy / ViewCategory — broadcast in lobby-settings event */
 #include "server_voice_mode.h" /* ServerVoiceMode — the voiceMode field below */
@@ -107,6 +108,26 @@ struct ServerSim {
      * the lobby state. */
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
+
+    /* The mode and difficulty the host last chose for ANY bot, so the next
+     * bot added starts there instead of back at the lobby default. Setting
+     * up a lobby means picking a difficulty once and adding five bots, and
+     * re-picking it five times is the kind of chore nobody should have to
+     * do twice.
+     *
+     * Stored as the brain's own KEYS, not the indices that are kept in
+     * botConfigs. An index only means something against one manifest: mode
+     * 1 is "survival" in GoalHunter and could be anything at all in another
+     * brain, so copying the number onto a bot running a different brain
+     * would silently pick the wrong mode. Keys are re-resolved against
+     * whatever brain the new bot actually runs, and a key that brain has
+     * never heard of is simply dropped.
+     *
+     * Empty strings mean "nothing chosen yet this lobby" — a fresh server
+     * adds bots at the ordinary default. Lobby state, so it persists across
+     * rounds with the rest and is cleared with it. */
+    char            lastBotModeKey[BRAIN_MODE_KEY_LEN];
+    char            lastBotLevelKey[BRAIN_MODE_KEY_LEN];
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 

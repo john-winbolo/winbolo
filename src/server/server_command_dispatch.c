@@ -690,11 +690,23 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
-        /* The scenario's own default mode for the side this bot is joining
-         * (survival for the horde, on a Survival map), written BEFORE the
-         * brain is created so it reaches the brain through the init arg and
-         * publishes nothing — see serverSimApplyScenarioBotDefaults. The
-         * team is already known: it picked the slot above. */
+        /* Both defaults are written BEFORE the brain is created, so they
+         * reach it through the init arg botManagerStageInitArg stages and
+         * publish nothing at all. ORDER MATTERS, and it is this:
+         *
+         *   1. what the host last picked for any bot — the general rule,
+         *      so adding five bots at Medium means choosing Medium once;
+         *   2. what the map asks for this side — the specific rule, which
+         *      wins, because a scenario naming a mode for its own team is
+         *      making a requirement, not a suggestion. On a Survival map
+         *      the horde comes up in survival mode however the host had
+         *      the last bot set.
+         *
+         * Off a scenario map, or for a side the script names no mode for
+         * (the defenders), step 2 does nothing and the inherited pair
+         * stands. Either way the host can still change any bot afterwards.
+         */
+        serverSimApplyLastBotConfig(sim, slot, serverSimGetBotBrainPath(sim));
         serverSimApplyScenarioBotDefaults(sim, slot, (int)p->teamNumber,
                                           serverSimGetBotBrainPath(sim));
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
