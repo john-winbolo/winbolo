@@ -769,6 +769,7 @@ EVERARD_MAP="$MAPS/Everard Island.map"
 FOREST_MAP="$MAPS/Forest Rig.map"
 SLUGFEST_MAP="$MAPS/Slugfest IV.map"
 ROAD_SPIT_MAP="$MAPS/Road Spit Minefield.map"
+BOAT_BANK_MAP="$MAPS/Boat Bank.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -806,6 +807,31 @@ dispatch_scenario() {
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 340 "" ;;
     road_spit_drown_open)
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 280 "" ;;
+
+    # Getting out of a boat and back into one, on the purpose-built Boat
+    # Bank. The exit rule the engine applies turns on the terrain the boat
+    # reaches and on the speed it reaches it at: road is a hard surface
+    # and lands the tank whatever its speed, grass is soft and only lands
+    # it at the boat's top speed, and below that speed the boat is held a
+    # quarter square short of the bank instead. Entry is neither: driving
+    # onto a parked boat takes it at any speed and off any ground, which
+    # the road runs show from the road and the grass run from the grass.
+    # The tick budgets cover the last boat change in each run plus the
+    # stop after it; the grass run that never lands is cut shortly after
+    # it settles against the bank, where it logs a line a tick because the
+    # client's prediction overshoots the hold and the server pulls it back.
+    # The fast road run is also recorded, and its .wbv is the source of the
+    # committed tests/fixtures/wbv/boat_bank_road_fast.wbv: the summary's
+    # terrain hash covers the boat moving from one map square to another,
+    # which the change log has no field for.
+    boat_bank_road_slow)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_slow.lua" open 165 "" ;;
+    boat_bank_road_fast)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_fast.lua" open 130 record ;;
+    boat_bank_grass_slow)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_slow.lua" open 120 "" ;;
+    boat_bank_grass_fast)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_fast.lua" open 130 "" ;;
 
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
@@ -902,6 +928,12 @@ echo "Road Spit Minefield:"
 for n in road_spit_shell_open road_spit_shell_strict \
          road_spit_shell_tournament road_spit_mine_open \
          road_spit_drown_open; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Boat Bank:"
+for n in boat_bank_road_slow boat_bank_road_fast \
+         boat_bank_grass_slow boat_bank_grass_fast; do
   dispatch_scenario "$n" || fail=1
 done
 

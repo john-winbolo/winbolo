@@ -3187,6 +3187,10 @@ set(_baseline_fast
     road_spit_shell_tournament
     road_spit_mine_open
     road_spit_drown_open
+    boat_bank_road_slow
+    boat_bank_road_fast
+    boat_bank_grass_slow
+    boat_bank_grass_fast
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)

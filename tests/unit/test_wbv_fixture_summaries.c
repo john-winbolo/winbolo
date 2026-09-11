@@ -30,6 +30,10 @@
 
 static const char *const s_fixtures[] = {
     "road_spit_shell_open",
+    /* The boat run is here for its terrain hash: its tank picks a parked
+     * boat up on one square and puts it down on another, which moves a
+     * map square that the scenario's change log has no field for. */
+    "boat_bank_road_fast",
 };
 #define NUM_FIXTURES (sizeof(s_fixtures) / sizeof(s_fixtures[0]))
 

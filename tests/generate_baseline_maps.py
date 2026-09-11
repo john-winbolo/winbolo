@@ -31,8 +31,8 @@ map whose squares are not where the brains expect them.
 import sys
 from pathlib import Path
 
-from generate_test_map import (MAP_SIZE, DEEP_SEA, SWAMP, ROAD, FOREST,
-                               GRASS)
+from generate_test_map import (MAP_SIZE, DEEP_SEA, RIVER, SWAMP, ROAD, FOREST,
+                               GRASS, BOAT)
 # The writer that copes with deep sea between land segments on one row.
 from generate_boat_diagonal_map import write_bmap
 
@@ -127,8 +127,59 @@ def road_spit_minefield():
     return t, pills, bases, starts
 
 
+def boat_bank():
+    """Two ways out of a boat from one start: a road ford and a grass bank.
+
+    The start at (120, 130) is deep sea, so the tank spawns afloat facing
+    east, and two channels lead away from it.
+
+    East along row 130 runs the ford lane: river on squares 121..124, then
+    road on 125..127, a parked boat on 128 and road again on 129..133. A
+    boat driven east leaves at road square 125 whatever its speed, because
+    road is a hard surface; it drops the boat it was in back on river
+    square 124. Driving on, the tank picks the parked boat up at square
+    128 and is put ashore again at road square 129, and the road out to
+    133 leaves room to stop from full speed.
+
+    North along column 120 runs the bank lane: river on rows 126..129 and
+    a grass headland on rows 124..125, three squares wide so a heading a
+    degree off north still lands on it. Grass is soft, so a boat that
+    reaches row 126 below BOAT_FAST_EXIT_SPEED is held a quarter square
+    short of the bank and never lands, while one at full speed drives
+    straight out onto the grass. Past the headland a second parked boat
+    sits on (120, 123) with river behind it on (120, 122), so a tank that
+    did land can take to the water again from soft ground.
+
+    Nothing else is on the map: no pills, no bases, and deep sea on every
+    side of both channels, so the only land a boat can meet is the ford's
+    road and the headland's grass. The bounding box of it all (119..133 by
+    122..130) is centred on (126, 126).
+    """
+    t = blank()
+
+    for y in range(126, 130):
+        t[y][120] = RIVER
+    for y in (124, 125):
+        for x in range(119, 122):
+            t[y][x] = GRASS
+    t[123][120] = BOAT
+    t[122][120] = RIVER
+
+    for x in range(121, 125):
+        t[130][x] = RIVER
+    for x in range(125, 128):
+        t[130][x] = ROAD
+    t[130][128] = BOAT
+    for x in range(129, 134):
+        t[130][x] = ROAD
+
+    starts = [(120, 130, FILE_DIR_EAST)]
+    return t, [], [], starts
+
+
 MAPS = {
     "Road Spit Minefield": road_spit_minefield,
+    "Boat Bank": boat_bank,
 }
 
 
