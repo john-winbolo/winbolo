@@ -3202,6 +3202,7 @@ set(_baseline_fast
     base_yard_steal
     pill_yard_capture
     pill_yard_anger
+    grass_flat_growth
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)
@@ -3221,6 +3222,7 @@ set(_baseline_udp_50008
     centralize_events_chat_unicast_3client_udp
     centralize_events_chat_alliance_3client_udp
 )
+set(_baseline_udp_50009 watch_road_capture_2client_udp)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}
@@ -3233,7 +3235,7 @@ foreach(_name IN LISTS _baseline_fast)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
-foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
+foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008 50009)
     foreach(_name IN LISTS _baseline_udp_${_port})
         add_test(NAME baseline.${_name}
                  COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh

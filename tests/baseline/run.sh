@@ -771,6 +771,93 @@ run_events_udp_two_clients_ticklimit() {
   return 1
 }
 
+# One WinBoloDS and two WinBoloHeadless --server clients, both running the
+# same brain and each diffed on what its own brain wrote to stdout. The brain
+# decides from the square it spawned on whether to drive the road or to watch
+# it, so one client takes the neutral items standing on it and the other only
+# ever hears about them, which is the point: a capture in a --fast run never
+# leaves the process, and here it has to cross the wire to be reported at all.
+#
+# The DS takes -seed 42, which the other multi-client helpers do not need. The
+# start a joining tank is given is drawn from the sim's random stream
+# (startsGetStartOpen), and on a map with one start to drive from and one to
+# watch from, that draw decides which client does which. Joins are kept off
+# that stream on purpose (serverNextConnId has its own), so the draw lands the
+# same way every run.
+#
+# The brain writes a line only when something happens and never writes the
+# same one twice, so neither capture file carries a tick or a count of ticks
+# and the wire's timing cannot reach it. Nothing is sorted or normalized here.
+run_captures_udp_two_clients() {
+  local name="$1"
+  local map="$2"
+  local brain="$3"
+  local ticks="$4"
+  local port=50009
+  echo -n "  $name ... "
+
+  reap_stale_ds "$port"
+  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+            -seed 42 \
+            -nowinbolonet -quiet -threads 1 \
+            -logfile "$ACTUAL/$name.dslog" \
+            > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
+  local ds_pid=$!
+  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+
+  sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+
+  # Client 1 first, then a brief delay so it lands in slot 0 deterministically
+  # before client 2 joins into slot 1. Distinct --name args so the server
+  # doesn't reject c2 as a duplicate.
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+         --brain "$brain" \
+         --ticks "$ticks" --seed 42 --quiet \
+         > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
+  local c1_pid=$!
+  sleep 0.3
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+         --brain "$brain" \
+         --ticks "$ticks" --seed 43 --quiet \
+         > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
+  local c2_pid=$!
+
+  trap 'kill "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true; \
+        wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
+
+  local c1_rc=0 c2_rc=0
+  wait "$c1_pid" || c1_rc=$?
+  wait "$c2_pid" || c2_rc=$?
+
+  kill "$ds_pid" 2>/dev/null || true
+  wait "$ds_pid" 2>/dev/null || true
+  trap - EXIT
+
+  if [ "$c1_rc" -ne 0 ] || [ "$c2_rc" -ne 0 ]; then
+    echo "CRASH (c1=$c1_rc c2=$c2_rc)"
+    return 1
+  fi
+
+  local fail=0
+  for which in c1 c2; do
+    if diff -q "$EXPECTED/${name}_${which}.out" \
+               "$ACTUAL/${name}_${which}.out" >/dev/null 2>&1; then
+      :
+    else
+      [ "$fail" -eq 0 ] && echo "DIFF"
+      diff -u "$EXPECTED/${name}_${which}.out" \
+              "$ACTUAL/${name}_${which}.out" 2>&1 | head -40
+      fail=1
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then
+    echo "OK"
+    return 0
+  fi
+  return 1
+}
+
 # Scenario name → helper invocation. The set of names here must stay in
 # sync with CMakeLists.txt's baseline.${name} CTest entries.
 EVERARD_MAP="$MAPS/Everard Island.map"
@@ -781,6 +868,8 @@ BOAT_BANK_MAP="$MAPS/Boat Bank.map"
 BUILDER_YARD_MAP="$MAPS/Builder Yard.map"
 BASE_YARD_MAP="$MAPS/Base Yard.map"
 PILL_YARD_MAP="$MAPS/Pill Yard.map"
+GRASS_FLAT_MAP="$MAPS/Grass Flat.map"
+WATCH_ROAD_MAP="$MAPS/Watch Road.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -926,6 +1015,20 @@ dispatch_scenario() {
     pill_yard_anger)
       run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_own_pillbox_four_times.lua" open 210 "" ;;
 
+    # Tree growth on the purpose-built Grass Flat, where a tank idles offshore
+    # and the only thing that moves in the whole run is one square of the
+    # plain turning to forest. treeGrowUpdate runs once per tank per world
+    # update: it samples one map square and takes one off the TREEGROW_TIME
+    # countdown of 3000. The fast loop runs a server frame on its keys pass as
+    # well as its game pass, so two of those updates land on every tick the
+    # log counts and the countdown is 1500 ticks rather than 3000. The budget
+    # covers the growth, the tick after it where the terrain field is gone
+    # again, and a margin past that. The terrain flag is what makes the run
+    # legible: a grown tree is a map square and nothing else, and the forest
+    # count beside it only says how many there are.
+    grass_flat_growth)
+      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 1520 "" terrain ;;
+
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
 
@@ -981,6 +1084,18 @@ dispatch_scenario() {
                          "$COMMANDS/centralize_events_chat_alliance.c1.jsonl" \
                          "$COMMANDS/centralize_events_chat_alliance.c2.jsonl" \
                          "$COMMANDS/centralize_events_chat_alliance.c3.jsonl" ;;
+
+    # A pillbox and a base taken on the purpose-built Watch Road with a second
+    # client watching, over a real socket. Every other capture scenario runs
+    # --fast, where the sim the log reads is the one in the same process; this
+    # one has the capture reach a client that did not make it. Both clients
+    # report the same new owner from the events they were sent, and each
+    # reports what the base on the map became from where it stands: the tank
+    # that took it calls it friendly and the tank watching calls it hostile.
+    # The budget covers the drive, both captures and the stop after them.
+    watch_road_capture_2client_udp)
+      run_captures_udp_two_clients "$name" "$WATCH_ROAD_MAP" \
+                         "$BRAINS/take_pill_and_base_watched.lua" 400 ;;
 
     *) echo "unknown scenario: $name" >&2; return 2 ;;
   esac
@@ -1047,6 +1162,9 @@ for n in pill_yard_capture pill_yard_anger; do
   dispatch_scenario "$n" || fail=1
 done
 
+echo "Grass Flat:"
+dispatch_scenario grass_flat_growth || fail=1
+
 echo "Dedicated server (Everard Island):"
 dispatch_scenario ds_4bot_melee || fail=1
 dispatch_scenario ds_2v2_team   || fail=1
@@ -1072,5 +1190,8 @@ for n in centralize_events_teams_fast \
          centralize_events_chat_alliance_3client_udp; do
   dispatch_scenario "$n" || fail=1
 done
+
+echo "Capture over the wire (Watch Road):"
+dispatch_scenario watch_road_capture_2client_udp || fail=1
 
 exit $fail

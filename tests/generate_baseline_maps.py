@@ -283,6 +283,78 @@ def base_yard():
     return t, [], bases, starts
 
 
+def watch_road():
+    """One road with a pillbox lying in it and a base at the end, and two
+    starts: one to drive it and one to watch from.
+
+    The start at (116, 124) is deep sea, so the first tank spawns afloat
+    facing east; three squares of open water lead to road square 120 and the
+    road runs east from there to 137. Two things stand on it:
+
+        (128, 124) pillbox neutral, no armour, picked up by driving over it
+        (133, 124) base    neutral, full, taken by stopping on it
+
+    Neither has to be shot first. A pillbox on zero armour never fires and is
+    carried off by the tank that drives over it; a neutral base is never solid
+    and hands itself over to the tank that arrives. So the whole run is one
+    tank holding the throttle and then the brake, with nothing in it that
+    turns on when a shell lands.
+
+    The second start at (131, 128) is deep sea four squares south of the road,
+    between the pillbox and the base and within sight of both. The tank that
+    spawns there never moves: it is the second client's eyes, and what it
+    reports about the two captures is the point of the map.
+
+    The bounding box of it all (116..137 by 124..128, both starts included) is
+    centred on (126, 126).
+    """
+    t = blank()
+    for x in range(120, 138):
+        t[124][x] = ROAD
+
+    pills = [(128, 124, NEUTRAL, 0, 100)]
+    bases = [(133, 124, NEUTRAL, 90, 90, 90)]
+    starts = [(116, 124, FILE_DIR_EAST), (131, 128, FILE_DIR_EAST)]
+    return t, pills, bases, starts
+
+
+def grass_flat():
+    """A plain of grass with nothing on it but the tank watching it.
+
+    Tree growth is the only thing that ever happens here. treeGrowUpdate
+    samples one random map square of the whole 256 by 256 per tank per world
+    update, and skips deep sea, mines, pills and bases, so the squares it can
+    do anything with are the grass and nothing else. A plain 49 by 45 is 2205
+    of them, which is a sample in every thirty or so.
+
+    Every square of the plain is grass, so treeGrowCalcScore returns the same
+    225 for every square away from the shore — nine grass squares at
+    TREE_GROW_GRASS each — and 200 or less on the shore, where the deep sea
+    in the ring scores nothing. A candidate only replaces the standing one
+    when it scores strictly higher, so once a square away from the shore has
+    been sampled nothing can displace it and the TREEGROW_TIME countdown runs
+    clean to the end. That is what keeps the run short: the countdown starts
+    again at every improvement, and on a plain of one terrain the improvements
+    are over within the first few dozen ticks.
+
+    The start at (126, 102) is deep sea four squares north of the plain, so
+    the tank spawns afloat and idles in open water, off the grass and nowhere
+    near the square that grows. Nothing else is on the map: no pills, no
+    bases and no trees, so the run starts on a forest count of zero and the
+    growth takes it to one.
+
+    The bounding box of it all (102..150 by 102..150, the start included) is
+    centred on (126, 126).
+    """
+    t = blank()
+    for y in range(106, 151):
+        for x in range(102, 151):
+            t[y][x] = GRASS
+
+    starts = [(126, 102, FILE_DIR_EAST)]
+    return t, [], [], starts
+
+
 def pill_yard():
     """One road with a pillbox beside it and another standing in it.
 
@@ -329,6 +401,8 @@ MAPS = {
     "Builder Yard": builder_yard,
     "Base Yard": base_yard,
     "Pill Yard": pill_yard,
+    "Grass Flat": grass_flat,
+    "Watch Road": watch_road,
 }
 
 
