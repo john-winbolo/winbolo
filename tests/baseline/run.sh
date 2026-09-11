@@ -180,6 +180,42 @@ run() {
   fi
 }
 
+# Run WinBoloHeadless --fast with --log-changes and diff the JSONL byte for
+# byte. Arguments: name, map, brain, game type, game ticks, a record flag
+# (when non-empty the run is also recorded to $ACTUAL/$name.wbv) and a
+# terrain flag (when non-empty each record also names the map squares whose
+# terrain moved since the last one). The terrain flag is off by default: it
+# adds a field, and the goldens captured before it existed are byte for byte
+# what they were without it.
+run_changes() {
+  local name="$1"
+  local map="$2"
+  local brain="$3"
+  local gametype="$4"
+  local ticks="$5"
+  local record="$6"
+  local terrain="$7"
+  echo -n "  $name ... "
+  local args=( --fast --map "$map" --brain "$brain" --gametype "$gametype"
+               --ticks "$ticks" --seed 42
+               --log-changes "$ACTUAL/$name.jsonl" --quiet )
+  if [ -n "$record" ]; then
+    args+=( --record "$ACTUAL/$name.wbv" )
+  fi
+  if [ -n "$terrain" ]; then
+    args+=( --log-terrain )
+  fi
+  "$BIN" "${args[@]}" \
+      > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
+  if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
+    echo "OK"
+  else
+    echo "DIFF"
+    diff -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
+    return 1
+  fi
+}
+
 run_ds() {
   local name="$1"
   local bots="$2"
@@ -735,11 +771,105 @@ run_events_udp_two_clients_ticklimit() {
   return 1
 }
 
+# One WinBoloDS and two WinBoloHeadless --server clients, both running the
+# same brain and each diffed on what its own brain wrote to stdout. The brain
+# decides from the square it spawned on whether to drive the road or to watch
+# it, so one client takes the neutral items standing on it and the other only
+# ever hears about them, which is the point: a capture in a --fast run never
+# leaves the process, and here it has to cross the wire to be reported at all.
+#
+# The DS takes -seed 42, which the other multi-client helpers do not need. The
+# start a joining tank is given is drawn from the sim's random stream
+# (startsGetStartOpen), and on a map with one start to drive from and one to
+# watch from, that draw decides which client does which. Joins are kept off
+# that stream on purpose (serverNextConnId has its own), so the draw lands the
+# same way every run.
+#
+# The brain writes a line only when something happens and never writes the
+# same one twice, so neither capture file carries a tick or a count of ticks
+# and the wire's timing cannot reach it. Nothing is sorted or normalized here.
+run_captures_udp_two_clients() {
+  local name="$1"
+  local map="$2"
+  local brain="$3"
+  local ticks="$4"
+  local port=50009
+  echo -n "  $name ... "
+
+  reap_stale_ds "$port"
+  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+            -seed 42 \
+            -nowinbolonet -quiet -threads 1 \
+            -logfile "$ACTUAL/$name.dslog" \
+            > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
+  local ds_pid=$!
+  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+
+  sleep 0.5
+  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+
+  # Client 1 first, then a brief delay so it lands in slot 0 deterministically
+  # before client 2 joins into slot 1. Distinct --name args so the server
+  # doesn't reject c2 as a duplicate.
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+         --brain "$brain" \
+         --ticks "$ticks" --seed 42 --quiet \
+         > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
+  local c1_pid=$!
+  sleep 0.3
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+         --brain "$brain" \
+         --ticks "$ticks" --seed 43 --quiet \
+         > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
+  local c2_pid=$!
+
+  trap 'kill "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true; \
+        wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
+
+  local c1_rc=0 c2_rc=0
+  wait "$c1_pid" || c1_rc=$?
+  wait "$c2_pid" || c2_rc=$?
+
+  kill "$ds_pid" 2>/dev/null || true
+  wait "$ds_pid" 2>/dev/null || true
+  trap - EXIT
+
+  if [ "$c1_rc" -ne 0 ] || [ "$c2_rc" -ne 0 ]; then
+    echo "CRASH (c1=$c1_rc c2=$c2_rc)"
+    return 1
+  fi
+
+  local fail=0
+  for which in c1 c2; do
+    if diff -q "$EXPECTED/${name}_${which}.out" \
+               "$ACTUAL/${name}_${which}.out" >/dev/null 2>&1; then
+      :
+    else
+      [ "$fail" -eq 0 ] && echo "DIFF"
+      diff -u "$EXPECTED/${name}_${which}.out" \
+              "$ACTUAL/${name}_${which}.out" 2>&1 | head -40
+      fail=1
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then
+    echo "OK"
+    return 0
+  fi
+  return 1
+}
+
 # Scenario name → helper invocation. The set of names here must stay in
 # sync with CMakeLists.txt's baseline.${name} CTest entries.
 EVERARD_MAP="$MAPS/Everard Island.map"
 FOREST_MAP="$MAPS/Forest Rig.map"
 SLUGFEST_MAP="$MAPS/Slugfest IV.map"
+ROAD_SPIT_MAP="$MAPS/Road Spit Minefield.map"
+BOAT_BANK_MAP="$MAPS/Boat Bank.map"
+BUILDER_YARD_MAP="$MAPS/Builder Yard.map"
+BASE_YARD_MAP="$MAPS/Base Yard.map"
+PILL_YARD_MAP="$MAPS/Pill Yard.map"
+GRASS_FLAT_MAP="$MAPS/Grass Flat.map"
+WATCH_ROAD_MAP="$MAPS/Watch Road.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -759,6 +889,145 @@ dispatch_scenario() {
     slugfest_iv_1bot_drive)    run "$name" "$SLUGFEST_MAP" "$BRAINS/drive_forward.lua" ;;
     slugfest_iv_1bot_shoot)    run "$name" "$SLUGFEST_MAP" "$BRAINS/shoot_and_log.lua" ;;
     slugfest_iv_1bot_watch)    run "$name" "$SLUGFEST_MAP" "$BRAINS/watch_objects.lua" ;;
+
+    # Tank deaths and respawns on the purpose-built spit: a parked tank
+    # shelled to death by the neutral pill under each game type, a tank
+    # that lays a mine and drives into the minefield, and a tank that
+    # drives off the road into deep sea. Each tick budget covers the
+    # death, the whole respawn wait and the respawn loadout with a margin
+    # after it. The open shell run is also recorded; its .wbv is the
+    # source of the committed tests/fixtures/wbv/road_spit_shell_open.wbv.
+    road_spit_shell_open)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" open 720 record ;;
+    road_spit_shell_strict)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" strict 720 "" ;;
+    road_spit_shell_tournament)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" tournament 720 "" ;;
+    road_spit_mine_open)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 340 "" ;;
+    road_spit_drown_open)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 280 "" ;;
+
+    # Getting out of a boat and back into one, on the purpose-built Boat
+    # Bank. The exit rule the engine applies turns on the terrain the boat
+    # reaches and on the speed it reaches it at: road is a hard surface
+    # and lands the tank whatever its speed, grass is soft and only lands
+    # it at the boat's top speed, and below that speed the boat is held a
+    # quarter square short of the bank instead. Entry is neither: driving
+    # onto a parked boat takes it at any speed and off any ground, which
+    # the road runs show from the road and the grass run from the grass.
+    # The tick budgets cover the last boat change in each run plus the
+    # stop after it; the grass run that never lands is cut shortly after
+    # it settles against the bank, where it logs a line a tick because the
+    # client's prediction overshoots the hold and the server pulls it back.
+    # The fast road run is also recorded, and its .wbv is the source of the
+    # committed tests/fixtures/wbv/boat_bank_road_fast.wbv: the summary's
+    # terrain hash covers the boat moving from one map square to another,
+    # which the change log has no field for.
+    boat_bank_road_slow)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_slow.lua" open 165 "" ;;
+    boat_bank_road_fast)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_fast.lua" open 130 record ;;
+    boat_bank_grass_slow)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_slow.lua" open 120 "" ;;
+    boat_bank_grass_fast)
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_fast.lua" open 130 "" ;;
+
+    # The builder at work on the purpose-built Builder Yard. Each run comes
+    # ashore, stops on road square 122 and sends the man out to the work
+    # squares in the apron beside it; the pillbox runs drive further east
+    # first. What each job costs is charged when the order is accepted, not
+    # when the man arrives, so the tank's stock moves a step ahead of the
+    # square. These runs pass the terrain flag, because almost everything
+    # the builder does is a change to the map and the other fields say
+    # nothing about it: a road laid or a wall raised moves no stock beyond
+    # the charge, and neither shows in the counts.
+    #
+    # The farm run is under strict rules, where a tank starts with no trees
+    # at all, so each load the man carries home lands in the stock whole
+    # instead of vanishing into the 40-tree cap.
+    #
+    # The tick budgets cover the last job of each run and the man's climb
+    # back into the tank. The pill-placing run is also recorded, and its
+    # .wbv is the source of the committed
+    # tests/fixtures/wbv/builder_yard_pill_place.wbv: its summary carries
+    # the moved pillbox and the terrain the run left behind.
+    builder_yard_farm)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/farm_two_forest_squares.lua" strict 175 "" terrain ;;
+    builder_yard_road)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_road_on_grass_and_swamp.lua" open 145 "" terrain ;;
+    builder_yard_building)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_wall_then_repair_wall.lua" open 160 "" terrain ;;
+    builder_yard_mine)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/lay_mine_beside_road.lua" open 110 "" terrain ;;
+    builder_yard_pill_place)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/place_carried_pillbox.lua" open 145 record terrain ;;
+    builder_yard_pill_repair)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/repair_own_pillbox.lua" open 175 "" terrain ;;
+
+    # Bases on the purpose-built Base Yard, where three of them stand on one
+    # road. What a base is worth to the tank that takes it turns on who held
+    # it before: a neutral base hands its stocks over whole, and a base taken
+    # from a live owner is emptied of all three the moment it changes hands.
+    #
+    # The capture run stops on the first base under open rules, where the
+    # tank is already full, so the base has nothing to give and its stocks
+    # stand still for a whole refuel interval after it changes hands.
+    #
+    # The refuel run is under strict rules, where a tank starts with no
+    # shells and no mines at all. A base gives armour first, then shells,
+    # then mines, and only moves on when the tank is full or the base is
+    # out; the base it parks on holds three shells, so the run reaches the
+    # mines without waiting out forty gives of shells.
+    #
+    # The steal run drives into the base at the end of the road, which is
+    # solid until it is shelled under MIN_ARMOUR_CAPTURE, leans on it with
+    # the trigger held and rolls in under the third shell.
+    #
+    # Both of those runs cross the mined road square, which is the only
+    # reason either tank is short of armour, and both pass the terrain flag:
+    # nothing else in the record says what became of that square, which
+    # craters under the mine and then floods.
+    #
+    # The tick budgets cover the last thing each run does and the stop after
+    # it; the capture run's covers a refuel interval on the base with nothing
+    # to hand over.
+    base_yard_capture)
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/drive_onto_neutral_base.lua" open 125 "" ;;
+    base_yard_refuel)
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 222 "" terrain ;;
+    base_yard_steal)
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/shell_and_take_enemy_base.lua" open 215 "" terrain ;;
+
+    # Pillboxes on the purpose-built Pill Yard. The capture run flattens the
+    # neutral pill standing in the road and drives over it, which is how a
+    # pill changes hands; it is shot at on the way in, because a pill with
+    # armour left shoots at anything that is not its own.
+    #
+    # The anger run works on the pill the tank owns, which never shoots back.
+    # Four shells halve its firing interval each time, from
+    # PILLBOX_ATTACK_NORMAL down to the PILLBOX_MAX_FIRERATE floor, and the
+    # run then sits still long enough to watch the interval climb back one
+    # step at a time, PILLBOX_COOLDOWN_TIME apart. Its budget covers three of
+    # those steps, which is where the cadence is established.
+    pill_yard_capture)
+      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_and_take_neutral_pillbox.lua" open 200 "" ;;
+    pill_yard_anger)
+      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_own_pillbox_four_times.lua" open 210 "" ;;
+
+    # Tree growth on the purpose-built Grass Flat, where a tank idles offshore
+    # and the only thing that moves in the whole run is one square of the
+    # plain turning to forest. treeGrowUpdate runs once per tank per world
+    # update: it samples one map square and takes one off the TREEGROW_TIME
+    # countdown of 3000. The fast loop runs a server frame on its keys pass as
+    # well as its game pass, so two of those updates land on every tick the
+    # log counts and the countdown is 1500 ticks rather than 3000. The budget
+    # covers the growth, the tick after it where the terrain field is gone
+    # again, and a margin past that. The terrain flag is what makes the run
+    # legible: a grown tree is a map square and nothing else, and the forest
+    # count beside it only says how many there are.
+    grass_flat_growth)
+      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 1520 "" terrain ;;
 
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
@@ -816,6 +1085,18 @@ dispatch_scenario() {
                          "$COMMANDS/centralize_events_chat_alliance.c2.jsonl" \
                          "$COMMANDS/centralize_events_chat_alliance.c3.jsonl" ;;
 
+    # A pillbox and a base taken on the purpose-built Watch Road with a second
+    # client watching, over a real socket. Every other capture scenario runs
+    # --fast, where the sim the log reads is the one in the same process; this
+    # one has the capture reach a client that did not make it. Both clients
+    # report the same new owner from the events they were sent, and each
+    # reports what the base on the map became from where it stands: the tank
+    # that took it calls it friendly and the tank watching calls it hostile.
+    # The budget covers the drive, both captures and the stop after them.
+    watch_road_capture_2client_udp)
+      run_captures_udp_two_clients "$name" "$WATCH_ROAD_MAP" \
+                         "$BRAINS/take_pill_and_base_watched.lua" 400 ;;
+
     *) echo "unknown scenario: $name" >&2; return 2 ;;
   esac
 }
@@ -851,6 +1132,39 @@ for n in slugfest_iv_1bot_idle slugfest_iv_1bot_sit \
   dispatch_scenario "$n" || fail=1
 done
 
+echo "Road Spit Minefield:"
+for n in road_spit_shell_open road_spit_shell_strict \
+         road_spit_shell_tournament road_spit_mine_open \
+         road_spit_drown_open; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Boat Bank:"
+for n in boat_bank_road_slow boat_bank_road_fast \
+         boat_bank_grass_slow boat_bank_grass_fast; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Builder Yard:"
+for n in builder_yard_farm builder_yard_road builder_yard_building \
+         builder_yard_mine builder_yard_pill_place \
+         builder_yard_pill_repair; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Base Yard:"
+for n in base_yard_capture base_yard_refuel base_yard_steal; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Pill Yard:"
+for n in pill_yard_capture pill_yard_anger; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Grass Flat:"
+dispatch_scenario grass_flat_growth || fail=1
+
 echo "Dedicated server (Everard Island):"
 dispatch_scenario ds_4bot_melee || fail=1
 dispatch_scenario ds_2v2_team   || fail=1
@@ -876,5 +1190,8 @@ for n in centralize_events_teams_fast \
          centralize_events_chat_alliance_3client_udp; do
   dispatch_scenario "$n" || fail=1
 done
+
+echo "Capture over the wire (Watch Road):"
+dispatch_scenario watch_road_capture_2client_udp || fail=1
 
 exit $fail

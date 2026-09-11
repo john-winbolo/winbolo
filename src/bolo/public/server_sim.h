@@ -1757,6 +1757,13 @@ BYTE         serverSimGetStartCount(const ServerSim *sim);
 bool         serverSimGetPill(ServerSim *sim, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
                               bool *inTank);
+/* A pill's firing interval alongside serverSimGetPill: the ticks between
+ * shots, which halve towards PILLBOX_MAX_FIRERATE as the pill is hit and
+ * climb back as it calms. Reader for binaries that own a ServerSim
+ * directly. The pill's reload and coolDown counters are deliberately not
+ * exposed: pillsGetPill does not copy them, and both move every half-step,
+ * so they suit a recording rather than a change-only log. */
+bool         serverSimGetPillSpeed(ServerSim *sim, BYTE i, BYTE *speed);
 bool         serverSimGetBase(ServerSim *sim, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner);
 bool         serverSimGetBaseStats(ServerSim *sim, BYTE i,

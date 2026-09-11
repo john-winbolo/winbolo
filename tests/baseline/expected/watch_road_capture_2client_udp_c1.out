@@ -1,0 +1,5 @@
+{"event":"open","player":0,"role":"drive"}
+{"event":"pill_captured","player":0,"new":0,"prev":255}
+{"event":"base_captured","player":0,"new":0,"prev":255}
+{"event":"base_seen","player":0,"tx":133,"ty":124,"from":"neutral","to":"friendly"}
+{"event":"close","player":0,"role":"drive","pill_captures":1,"base_captures":1}

@@ -33,6 +33,7 @@ typedef struct {
 static const char *const s_fixtureWriters[] = {
     "wire_corpus_capture",
     "wbv_v2_capture",
+    "wbv_summary_capture",
     "spectator_seed_capture",
 };
 
@@ -169,6 +170,9 @@ static const UnitTestEntry s_tests[] = {
     { "round_stats_mine_owner_api",                 run_round_stats_mine_owner_api                 },
     { "round_stats_mine_damage",                    run_round_stats_mine_damage                    },
     { "round_stats_leaver_clears_mines",            run_round_stats_leaver_clears_mines            },
+    { "mine_kill_publishes_event",                  run_mine_kill_publishes_event                  },
+    { "mine_kill_on_boat_publishes_event",          run_mine_kill_on_boat_publishes_event          },
+    { "mine_kill_own_mine_names_self",              run_mine_kill_own_mine_names_self              },
     { "awards_basic_winners",                       run_awards_basic_winners                       },
     { "awards_tiebreak",                            run_awards_tiebreak                            },
     { "awards_omission",                            run_awards_omission                            },
@@ -443,6 +447,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_game_settings_from_walk",              run_lv_game_settings_from_walk              },
     { "lv_game_settings_absent",                 run_lv_game_settings_absent                 },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
+    { "wbv_fixture_summaries",                   run_wbv_fixture_summaries                   },
+    { "wbv_summary_capture",                     run_wbv_summary_capture                     },
     { "spectator_seed_capture",                  run_spectator_seed_capture                  },
     { "blocks_stream",                           run_blocks_stream                           },
     { "stream_load",                             run_stream_load                             },

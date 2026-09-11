@@ -1,0 +1,5 @@
+{"event":"open","player":1,"role":"watch"}
+{"event":"pill_captured","player":1,"new":0,"prev":255}
+{"event":"base_captured","player":1,"new":0,"prev":255}
+{"event":"base_seen","player":1,"tx":133,"ty":124,"from":"neutral","to":"hostile"}
+{"event":"close","player":1,"role":"watch","pill_captures":1,"base_captures":1}
