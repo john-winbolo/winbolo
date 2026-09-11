@@ -701,6 +701,15 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               arrives mid-window is muted
                                               too. */
 
+#define PACKET_PLAYER_PING_MUTE        220  /* client → server
+                                              { targetPlayer 1, muted 1 }
+                                              per-recipient smart-ping mute,
+                                              independent of PLAYER_MUTE: the
+                                              server stops delivering that
+                                              player's EVENT_PING to the
+                                              sender. Not echoed to anyone
+                                              else. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

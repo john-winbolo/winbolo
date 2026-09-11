@@ -353,6 +353,19 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
          * Broadcasting it would tell the muted player they were muted. */
         return CMD_OK;
     }
+    case CMD_PLAYER_PING_MUTE: {
+        const CmdPlayerPingMute *p = &cmd->u.playerPingMute;
+        if (p->targetPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Muting yourself is meaningless — you always see your own ping. */
+        if ((int)p->targetPlayer == senderSlot) return CMD_REJECT_INVALID;
+        /* Sim-level state (unlike the voice mute, which lives in the UDP
+         * transport): serverSimPingReachesClient is a sim predicate and reads
+         * this mask, so the mask has to live where it can. No transport stub
+         * needed as a result. Private to the muting client, so no event. */
+        serverSimSetPingMute(sim, (BYTE)senderSlot, p->targetPlayer,
+                             p->muted != 0);
+        return CMD_OK;
+    }
     case CMD_VOICE_STATE: {
         const CmdVoiceState *p = &cmd->u.voiceState;
         GameSim *gs = serverSimGetGameSim(sim);
@@ -911,7 +924,6 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         const CmdPing *p = &cmd->u.ping;
         BYTE slot = (BYTE)senderSlot;
         uint32_t now = sim->tick;
-        uint32_t oldest;
         if (serverSimGetState(sim) != serverStateRunning) {
             return CMD_REJECT_BAD_STATE;
         }
@@ -929,22 +941,35 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             (p->worldY >> M_W_SHIFT_SIZE) >= MAP_ARRAY_SIZE) {
             return CMD_REJECT_INVALID;
         }
-        /* Rate limit: a minimum gap, and a burst cap on top of it. Both are
-         * measured in sim ticks, which only advance while the game runs — the
-         * only state this arm accepts. Both stores hold tick+1 so that 0 can
-         * mean "never", because tick 0 is itself a real tick. */
+        /* Rate limit: a minimum gap, and two nested sliding windows on top of
+         * it. All measured in sim ticks, which only advance while the game
+         * runs — the only state this arm accepts. Every store holds tick+1 so
+         * that 0 can mean "never", because tick 0 is itself a real tick. */
         if (sim->pingLastTick[slot] != 0 &&
             now + 1 - sim->pingLastTick[slot] < PING_RATE_MIN_GAP_TICKS) {
             return CMD_REJECT_COOLDOWN;
         }
-        oldest = sim->pingBurstTicks[slot][sim->pingBurstIdx[slot]];
-        if (oldest != 0 && now + 1 - oldest < PING_RATE_WINDOW_TICKS) {
-            return CMD_REJECT_COOLDOWN;
+        /* Count accepted pings still inside each window. The ring is small
+         * (PING_SPAM_RING == the 30s cap), so a linear pass per ping is cheap.
+         * A ping is refused when the ring already holds PING_SPAM_MAX_5S inside
+         * the 5s window, or PING_SPAM_MAX_30S inside the 30s window. */
+        {
+            int count5 = 0, count30 = 0, j;
+            for (j = 0; j < PING_SPAM_RING; j++) {
+                uint32_t stamp = sim->pingBurstTicks[slot][j];
+                uint32_t age;
+                if (stamp == 0) continue;
+                age = now + 1 - stamp;
+                if (age < PING_SPAM_WINDOW_30S_TICKS) count30++;
+                if (age < PING_SPAM_WINDOW_5S_TICKS)  count5++;
+            }
+            if (count5 >= PING_SPAM_MAX_5S)  return CMD_REJECT_COOLDOWN;
+            if (count30 >= PING_SPAM_MAX_30S) return CMD_REJECT_COOLDOWN;
         }
         sim->pingLastTick[slot] = now + 1;
         sim->pingBurstTicks[slot][sim->pingBurstIdx[slot]] = now + 1;
         sim->pingBurstIdx[slot] =
-            (uint8_t)((sim->pingBurstIdx[slot] + 1) % PING_RATE_BURST);
+            (uint8_t)((sim->pingBurstIdx[slot] + 1) % PING_SPAM_RING);
 
         {
             GameEvent ev;

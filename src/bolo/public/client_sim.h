@@ -787,6 +787,13 @@ const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
 int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
                       ClientPing *out, int maxOut);
 
+/* Reflect and persist (within the session) this client's per-player smart-ping
+ * mute — the state the players-menu toggle shows. Setting it only records the
+ * toggle; the caller sends CMD_PLAYER_PING_MUTE separately, and the server is
+ * the authority that actually stops delivering the muted player's pings. */
+void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted);
+bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player);
+
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained
  * every display tick. NULL when cs is NULL. */

@@ -77,7 +77,8 @@ typedef enum {
     CMD_VIEW_CYCLE,
     CMD_PLAYER_MUTE,
     CMD_VOICE_STATE,
-    CMD_PING
+    CMD_PING,
+    CMD_PLAYER_PING_MUTE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -357,6 +358,16 @@ typedef struct {
     uint8_t muted;        /* 0 = unmute, non-zero = mute */
 } CmdPlayerMute;
 
+/* CMD_PLAYER_PING_MUTE — mute or unmute one player's smart pings for the
+ * sending client only, independent of the voice/chat mute above. The server
+ * stops delivering that player's EVENT_PING to the sender. Session-scoped:
+ * nothing is persisted, and the mask is cleared when the sender's slot is
+ * released. Mirrors CmdPlayerMute so the two read as siblings. */
+typedef struct {
+    uint8_t targetPlayer;
+    uint8_t muted;        /* 0 = unmute, non-zero = mute */
+} CmdPlayerPingMute;
+
 /* CMD_VOICE_STATE — the sender's own mic status. Sent when it changes,
  * not per tick. Self-reported and untrusted, like the client hint bits:
  * a client lying about its own mic costs nothing. */
@@ -468,6 +479,7 @@ typedef struct ClientCommand {
         CmdPlayerMute          playerMute;
         CmdVoiceState          voiceState;
         CmdPing                ping;
+        CmdPlayerPingMute      playerPingMute;
     } u;
 } ClientCommand;
 

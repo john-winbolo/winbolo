@@ -417,6 +417,26 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.u.playerMute.targetPlayer == 9);
     UT_ASSERT(out.u.playerMute.muted        == 0);
 
+    /* CMD_PLAYER_PING_MUTE — same wire shape as CMD_PLAYER_MUTE, separate id */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_PLAYER_PING_MUTE;
+    in.cmdSeq = 35;
+    in.u.playerPingMute.targetPlayer = 7;
+    in.u.playerPingMute.muted        = 1;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_PLAYER_PING_MUTE");
+    UT_ASSERT(out.type == CMD_PLAYER_PING_MUTE);
+    UT_ASSERT(out.cmdSeq == 35);
+    UT_ASSERT(out.u.playerPingMute.targetPlayer == 7);
+    UT_ASSERT(out.u.playerPingMute.muted        == 1);
+    in.cmdSeq = 36;
+    in.u.playerPingMute.muted = 0;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_PLAYER_PING_MUTE unmute");
+    UT_ASSERT(out.type == CMD_PLAYER_PING_MUTE);
+    UT_ASSERT(out.u.playerPingMute.targetPlayer == 7);
+    UT_ASSERT(out.u.playerPingMute.muted        == 0);
+
     /* CMD_PLAYER_MUTE decoder rejections — the bytes come off the wire, so
      * a short body and an out-of-range slot must both be refused. */
     {

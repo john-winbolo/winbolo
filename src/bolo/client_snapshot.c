@@ -805,13 +805,49 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
       case EVENT_PING: {
         /* data: [sender, kind, xHi, xLo, yHi, yLo] — a teammate's smart
            ping. The server has already decided this client is entitled to
-           see it, including the sender's own copy, so there is nothing to
-           filter here. Held in a ring the GUI overlay draws from; bots get
-           it through the brain event buffer above and act on it themselves. */
+           see it (including the sender's own copy) and rate-limited the
+           sender, so the only thing left to do here is a render backstop:
+           cap how many of one sender's pings this client will actually draw,
+           using the same 5s/30s windows as the server limiter, so a peer or
+           server flooding pings cannot bury the view. Held in a ring the GUI
+           overlay draws from; bots get it through the brain event buffer above
+           and act on it themselves. */
+        uint8_t  sender = events[i].data[0];
         uint8_t  kind = events[i].data[1];
         uint16_t px = (uint16_t)((events[i].data[2] << 8) | events[i].data[3]);
         uint16_t py = (uint16_t)((events[i].data[4] << 8) | events[i].data[5]);
-        clientSimAddPing(csPtr, events[i].data[0], kind, px, py, SDL_GetTicks());
+        uint32_t nowMs = SDL_GetTicks();
+        /* The local player's own pings are exempt: it must always see its own,
+           and the server already capped how many it could have sent. */
+        if (sender < MAX_TANKS && sender != playerNum) {
+          int c5 = 0, c30 = 0, j;
+          /* Deliberately looser than the server: the server enforces the real
+             cap in sim ticks, and this backstop only catches a flooding peer
+             or server. It counts in wall-clock ms, so each window is shortened
+             by PING_SPAM_CLIENT_SLACK_MS — otherwise jitter on a ping the
+             server accepted at a window edge could make the client drop a
+             server-approved ping, which the sender would never see go missing.
+             See input_packet.h. */
+          uint32_t w5  = (uint32_t)PING_SPAM_WINDOW_5S_SECONDS  * 1000u
+                         - PING_SPAM_CLIENT_SLACK_MS;
+          uint32_t w30 = (uint32_t)PING_SPAM_WINDOW_30S_SECONDS * 1000u
+                         - PING_SPAM_CLIENT_SLACK_MS;
+          for (j = 0; j < PING_SPAM_MAX_30S; j++) {
+            uint32_t st = csPtr->pingRenderMs[sender][j];
+            uint32_t age;
+            if (st == 0 || nowMs < st) continue;
+            age = nowMs - st;
+            if (age < w30) c30++;
+            if (age < w5)  c5++;
+          }
+          if (c5 >= PING_SPAM_MAX_5S || c30 >= PING_SPAM_MAX_30S) {
+            break;  /* drop: no marker, no sound, no newswire line */
+          }
+          csPtr->pingRenderMs[sender][csPtr->pingRenderIdx[sender]] = nowMs;
+          csPtr->pingRenderIdx[sender] =
+              (uint8_t)((csPtr->pingRenderIdx[sender] + 1) % PING_SPAM_MAX_30S);
+        }
+        clientSimAddPing(csPtr, sender, kind, px, py, nowMs);
         if (isHuman) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));

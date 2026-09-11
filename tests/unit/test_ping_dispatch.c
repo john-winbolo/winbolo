@@ -152,7 +152,7 @@ int run_ping_dispatch_accepts_and_builds_event(void) {
      * place that nobody ever sees. Filling the buffer is a single assignment —
      * what it holds doesn't matter, only that serverSimAddEvent would refuse. */
     pd_clear_events(sim);
-    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    pd_advance(sim, PING_SPAM_WINDOW_30S_TICKS);
     UT_ASSERT(pd_send(sim, 0, PING_KIND_ATTACK, PD_WORLD_X, PD_WORLD_Y)
                   == CMD_OK);
     sim->eventCount = MAX_SNAPSHOT_EVENTS;
@@ -182,16 +182,16 @@ int run_ping_dispatch_new_round_clears_rate_limit(void) {
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
     pd_clear_events(sim);
 
-    /* Spend the whole burst allowance in the round that is ending, so the
-     * ring is full and its oldest entry is the round's first tick. That is
-     * the state that goes wrong: the rate limiter stamps sim->tick, and the
-     * next round rewinds sim->tick to 0, so a stamp left behind sits in the
-     * new round's future — the arm then measures the new round's first ping
-     * against a ping sent in the last one and calls it a cooldown. */
-    for (i = 0; i < PING_RATE_BURST; i++) {
+    /* Spend the 5s allowance in the round that is ending, so the ring holds
+     * stamps whose oldest is the round's first tick. That is the state that
+     * goes wrong: the rate limiter stamps sim->tick, and the next round
+     * rewinds sim->tick to 0, so a stamp left behind sits in the new round's
+     * future — the arm then measures the new round's first ping against a ping
+     * sent in the last one and calls it a cooldown. */
+    for (i = 0; i < PING_SPAM_MAX_5S; i++) {
         UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD,
                               PD_WORLD_X, PD_WORLD_Y) == CMD_OK,
-                      "ping %d of the previous round's burst was refused", i);
+                      "ping %d of the previous round's allowance was refused", i);
         pd_advance(sim, PING_RATE_MIN_GAP_TICKS);
         pd_clear_events(sim);
     }
@@ -214,13 +214,13 @@ int run_ping_dispatch_new_round_clears_rate_limit(void) {
     UT_ASSERT_MSG(pd_has_pending(sim, 0),
                   "the accepted ping left no pending record");
 
-    /* And the fresh allowance is a whole burst, not the remains of one. */
+    /* And the fresh allowance is a whole 5s window, not the remains of one. */
     pd_clear_events(sim);
-    for (i = 1; i < PING_RATE_BURST; i++) {
+    for (i = 1; i < PING_SPAM_MAX_5S; i++) {
         pd_advance(sim, PING_RATE_MIN_GAP_TICKS);
         UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD,
                               PD_WORLD_X, PD_WORLD_Y) == CMD_OK,
-                      "ping %d of the new round's burst was refused", i + 1);
+                      "ping %d of the new round's allowance was refused", i + 1);
         pd_clear_events(sim);
     }
 
@@ -309,14 +309,14 @@ int run_ping_dispatch_map_range_bound(void) {
     UT_ASSERT_MSG(pd_has_pending(sim, 0), "an accepted ping was not recorded");
     pd_clear_events(sim);
 
-    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    pd_advance(sim, PING_SPAM_WINDOW_30S_TICKS);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, UINT16_MAX)
                       == CMD_OK,
                   "the last valid square on Y was refused");
     UT_ASSERT_MSG(pd_has_pending(sim, 0), "an accepted ping was not recorded");
     pd_clear_events(sim);
 
-    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    pd_advance(sim, PING_SPAM_WINDOW_30S_TICKS);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, UINT16_MAX, UINT16_MAX)
                       == CMD_OK,
                   "the map's far corner was refused");
@@ -325,7 +325,7 @@ int run_ping_dispatch_map_range_bound(void) {
     /* Nothing off-map to reject, but the origin must not be mistaken for one
      * either — 0 is square 0, a real square, not a "no position" sentinel. */
     pd_clear_events(sim);
-    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    pd_advance(sim, PING_SPAM_WINDOW_30S_TICKS);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, 0, 0) == CMD_OK,
                   "the map's origin was refused");
     UT_ASSERT_MSG(pd_has_pending(sim, 0), "an accepted ping was not recorded");
@@ -353,7 +353,7 @@ int run_ping_dispatch_rejects_bad_kind(void) {
     {
         int k;
         for (k = 0; k < PING_KIND_COUNT; k++) {
-            pd_advance(sim, PING_RATE_WINDOW_TICKS);
+            pd_advance(sim, PING_SPAM_WINDOW_30S_TICKS);
             UT_ASSERT_MSG(pd_send(sim, 0, (uint8_t)k, PD_WORLD_X, PD_WORLD_Y)
                               == CMD_OK, "kind %d refused", k);
         }
@@ -363,6 +363,8 @@ int run_ping_dispatch_rejects_bad_kind(void) {
     return 0;
 }
 
+/* The minimum gap and the 5s window: a held key cannot machine-gun the view,
+ * and no more than PING_SPAM_MAX_5S pings land inside any 5-second window. */
 int run_ping_dispatch_rate_limit(void) {
     ServerSim *sim = ut_make_running_sim("Pinger");
     int i;
@@ -395,35 +397,80 @@ int run_ping_dispatch_rate_limit(void) {
     UT_ASSERT_MSG(!pd_has_pending(sim, 0),
                   "a rate-limited ping was still queued for sending");
 
-    /* Past the gap it lands again — up to the burst cap. The first ping
-     * above used one of the PING_RATE_BURST slots, so PING_RATE_BURST-1
-     * more fit before the window closes. */
-    for (i = 1; i < PING_RATE_BURST; i++) {
+    /* Past the gap it lands again — up to the 5s cap. The first ping above
+     * used one of the PING_SPAM_MAX_5S slots, so PING_SPAM_MAX_5S-1 more fit
+     * before the 5s window closes. The min gap alone lets them through; the
+     * window cap is what stops the next one. */
+    for (i = 1; i < PING_SPAM_MAX_5S; i++) {
         pd_advance(sim, PING_RATE_MIN_GAP_TICKS);
         UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD,
                               PD_WORLD_X, PD_WORLD_Y) == CMD_OK,
-                      "ping %d of the burst was refused", i + 1);
+                      "ping %d of the 5s allowance was refused", i + 1);
     }
 
-    /* One past the burst, still inside the window: refused even though the
+    /* One past the 5s cap, still inside the window: refused even though the
      * minimum gap has passed. */
     pd_advance(sim, PING_RATE_MIN_GAP_TICKS);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_REJECT_COOLDOWN,
-                  "the burst cap must hold once the allowance is spent");
+                  "the 5s cap must hold once the allowance is spent");
     pd_clear_events(sim);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_REJECT_COOLDOWN,
-                  "the burst cap must hold on a retry too");
+                  "the 5s cap must hold on a retry too");
     UT_ASSERT_MSG(!pd_has_pending(sim, 0),
-                  "a burst-capped ping was still queued for sending");
+                  "a capped ping was still queued for sending");
 
-    /* Once the window has rolled past the oldest of the burst, the
-     * allowance comes back. */
-    pd_advance(sim, PING_RATE_WINDOW_TICKS);
+    /* Once the window has rolled past the oldest of the allowance, it comes
+     * back. Stepping the whole 5s window clears every stamp out of it. */
+    pd_advance(sim, PING_SPAM_WINDOW_5S_TICKS);
     UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
                       == CMD_OK,
-                  "the allowance must return once the window has passed");
+                  "the allowance must return once the 5s window has passed");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The 30s window: a spammer can keep the ping rate under the 5s cap by
+ * spacing pings out, so the wider window is the backstop — no more than
+ * PING_SPAM_MAX_30S land in any 30 seconds. Pings are spaced far enough apart
+ * (PING_SPAM_30S_SPACING) that the 5s cap never fires, so the only thing that
+ * can stop the run is the 30s cap itself. */
+#define PING_SPAM_30S_SPACING  (PING_SPAM_WINDOW_5S_TICKS / PING_SPAM_MAX_5S + 1)
+
+int run_ping_dispatch_spam_30s_window(void) {
+    ServerSim *sim = ut_make_running_sim("Pinger");
+    int i;
+    UT_ASSERT(sim != NULL);
+    pd_clear_events(sim);
+
+    /* PING_SPAM_MAX_30S land, one every PING_SPAM_30S_SPACING ticks. The
+     * spacing keeps at most PING_SPAM_MAX_5S-1 inside any 5s window, so the
+     * 5s cap never trips; the whole run fits inside the 30s window. */
+    for (i = 0; i < PING_SPAM_MAX_30S; i++) {
+        UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD,
+                              PD_WORLD_X, PD_WORLD_Y) == CMD_OK,
+                      "ping %d of the 30s allowance was refused", i);
+        pd_clear_events(sim);
+        pd_advance(sim, PING_SPAM_30S_SPACING);
+    }
+
+    /* The whole run so far spans (PING_SPAM_MAX_30S-1)*spacing ticks, well
+     * inside the 30s window, so all PING_SPAM_MAX_30S stamps are still live —
+     * one more is refused by the 30s cap even though the 5s window is clear. */
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
+                      == CMD_REJECT_COOLDOWN,
+                  "the 30s cap must hold once %d pings are inside the window",
+                  PING_SPAM_MAX_30S);
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "a 30s-capped ping was still queued for sending");
+
+    /* Step the whole 30s window past the run and the allowance returns. */
+    pd_advance(sim, PING_SPAM_WINDOW_30S_TICKS);
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
+                      == CMD_OK,
+                  "the allowance must return once the 30s window has passed");
 
     serverSimDestroy(sim);
     return 0;
@@ -471,6 +518,77 @@ int run_ping_reaches_team_only(void) {
     UT_ASSERT(!serverSimPingReachesClient(sim, MAX_TANKS, 0));
     UT_ASSERT(!serverSimPingReachesClient(sim, 0, MAX_TANKS));
     UT_ASSERT(!serverSimPingReachesClient(NULL, 0, 0));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Send one CMD_PLAYER_PING_MUTE through the real dispatcher, as pd_send does
+ * for CMD_PING, so the arm's own guards (self-mute reject, range) are exercised
+ * rather than calling serverSimSetPingMute directly. */
+static CmdResult pd_send_ping_mute(ServerSim *sim, int senderSlot,
+                                   uint8_t target, bool muted) {
+    ClientCommand cmd;
+    CmdResult r;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_PLAYER_PING_MUTE;
+    cmd.cmdSeq = 1;
+    cmd.u.playerPingMute.targetPlayer = target;
+    cmd.u.playerPingMute.muted        = muted ? 1 : 0;
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, senderSlot, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+/* The ping-mute relay skip: a recipient who has muted a sender does not
+ * receive that sender's ping, through the SAME serverSimPingReachesClient the
+ * team/ally filter uses, while the sender's own copy and the reverse direction
+ * are untouched. Mirrors the voice mute, but sim-level (its mask lives on the
+ * ServerSim, not the UDP transport). */
+int run_ping_mute_relay_skip(void) {
+    ServerSim *sim = ut_make_running_sim("Pinger");
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 1, "Mate", false);
+
+    /* Both on one team so the baseline is "reaches". */
+    threadsWaitForMutex();
+    serverSimSetTeamBatch(sim, 0, 1);
+    serverSimSetTeamBatch(sim, 1, 1);
+    serverSimReapplyTeamAlliances(sim);
+    threadsReleaseMutex();
+    UT_ASSERT_MSG(serverSimPingReachesClient(sim, 1, 0),
+                  "teammates must reach each other before any mute");
+
+    /* Slot 1 mutes slot 0's pings. */
+    UT_ASSERT_MSG(pd_send_ping_mute(sim, 1, 0, true) == CMD_OK,
+                  "muting another player's pings must be accepted");
+    UT_ASSERT_MSG((sim->pingMuteMask[1] & ((PlayerBitMap)1u << 0)) != 0,
+                  "the mute bit did not set");
+    UT_ASSERT_MSG(!serverSimPingReachesClient(sim, 1, 0),
+                  "a muted sender's ping must not reach the muting recipient");
+    /* The sender still sees its own, and the mute is one-directional. */
+    UT_ASSERT_MSG(serverSimPingReachesClient(sim, 0, 0),
+                  "the sender must still see its own ping while muted by others");
+    UT_ASSERT_MSG(serverSimPingReachesClient(sim, 0, 1),
+                  "the reverse direction must be unaffected by the mute");
+
+    /* Unmute restores delivery. */
+    UT_ASSERT_MSG(pd_send_ping_mute(sim, 1, 0, false) == CMD_OK,
+                  "unmuting must be accepted");
+    UT_ASSERT_MSG((sim->pingMuteMask[1] & ((PlayerBitMap)1u << 0)) == 0,
+                  "the mute bit did not clear");
+    UT_ASSERT_MSG(serverSimPingReachesClient(sim, 1, 0),
+                  "delivery must return after an unmute");
+
+    /* Muting yourself is meaningless and rejected — the bit must never set. */
+    UT_ASSERT_MSG(pd_send_ping_mute(sim, 0, 0, true) == CMD_REJECT_INVALID,
+                  "a self ping-mute must be rejected");
+    UT_ASSERT_MSG((sim->pingMuteMask[0] & ((PlayerBitMap)1u << 0)) == 0,
+                  "a rejected self-mute still set a bit");
+    /* An out-of-range target is rejected before it can touch the mask. */
+    UT_ASSERT_MSG(pd_send_ping_mute(sim, 0, MAX_TANKS, true) == CMD_REJECT_INVALID,
+                  "an out-of-range ping-mute target must be rejected");
 
     serverSimDestroy(sim);
     return 0;

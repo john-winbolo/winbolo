@@ -35,6 +35,7 @@
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
+#include "input_packet.h"   /* PING_SPAM_MAX_5S / PING_SPAM_MAX_30S — ping anti-spam caps */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -488,26 +489,32 @@ struct ServerSim {
     uint8_t      viewKind[MAX_TANKS];     /* 0=tank, 1=pill, 2=base, 3=ally */
     uint8_t      viewTarget[MAX_TANKS];
 
-    /* Smart-ping rate limit (CMD_PING). One ping per PING_RATE_MIN_GAP_TICKS
-     * stops a held key machine-gunning the team's view; the burst rule on top
-     * of it caps a determined spammer at PING_RATE_BURST inside
-     * PING_RATE_WINDOW_TICKS. Ticks are 20ms, so this reads as 300ms apart and
-     * 6 per 5 seconds. */
-#define PING_RATE_MIN_GAP_TICKS   15
-#define PING_RATE_BURST            6
-#define PING_RATE_WINDOW_TICKS   250
+    /* Smart-ping anti-spam limit (CMD_PING). A minimum gap stops a held key
+     * machine-gunning the team's view; on top of it two nested sliding windows
+     * cap a determined spammer at PING_SPAM_MAX_5S pings per 5 seconds AND
+     * PING_SPAM_MAX_30S per 30 seconds (the caps and the window durations are
+     * shared with the client render backstop — see input_packet.h). Ticks are
+     * 20ms (50/s), so the min gap reads as 300ms and the windows as 5s / 30s. */
+#define PING_RATE_MIN_GAP_TICKS     15
+    /* Sim ticks per second — reuse the engine's own constant (game_sim.h,
+     * 1000/20 = 50) so the window sizes cannot drift from the real tick rate. */
+#define PING_SPAM_WINDOW_5S_TICKS   (PING_SPAM_WINDOW_5S_SECONDS  * GAME_NUMGAMETICKS_SEC)
+#define PING_SPAM_WINDOW_30S_TICKS  (PING_SPAM_WINDOW_30S_SECONDS * GAME_NUMGAMETICKS_SEC)
+    /* One ring entry per accepted ping, so the 30s cap (the larger) fixes the
+     * ring size; the 5s cap is a count over the recent tail of the same ring. */
+#define PING_SPAM_RING              PING_SPAM_MAX_30S
 
-    /* Smart-ping rate limit, per slot. Both hold the accepted tick PLUS ONE,
-     * so 0 means "no ping yet": tick 0 is a real tick — the first one of a
-     * round — and storing it raw would read as never having pinged and let
-     * the second ping of the game through on the same tick as the first.
-     * pingBurstTicks is a ring of the last PING_RATE_BURST accepted ticks,
-     * oldest overwritten first, so the burst rule is "the
-     * PING_RATE_BURST-th ping back must be older than PING_RATE_WINDOW_TICKS".
-     * Ticks, not wall clock: a paused or slow server slows the allowance with
-     * everything else. */
+    /* Smart-ping limit state, per slot. Every stored tick holds the accepted
+     * tick PLUS ONE, so 0 means "no ping yet": tick 0 is a real tick — the
+     * first one of a round — and storing it raw would read as never having
+     * pinged and let the second ping of the game through on the same tick as
+     * the first. pingBurstTicks is a ring of the last PING_SPAM_RING accepted
+     * ticks, oldest overwritten first; a new ping is refused when the ring
+     * already holds PING_SPAM_MAX_5S entries inside the 5s window or
+     * PING_SPAM_MAX_30S inside the 30s window. Ticks, not wall clock: a paused
+     * or slow server slows the allowance with everything else. */
     uint32_t     pingLastTick[MAX_TANKS];
-    uint32_t     pingBurstTicks[MAX_TANKS][PING_RATE_BURST];
+    uint32_t     pingBurstTicks[MAX_TANKS][PING_SPAM_RING];
     uint8_t      pingBurstIdx[MAX_TANKS];
 
     /* Pings accepted since the last frame's event drain, one slot per sender
@@ -535,6 +542,16 @@ struct ServerSim {
      * serverSimSetSoundSquares; never reachable from the wire. Cleared when
      * the slot is joined or freed. */
     bool         soundSquares[MAX_TANKS];
+
+    /* Per-recipient smart-ping mute. Bit N of pingMuteMask[r] set = recipient
+     * r has muted player N's pings; serverSimPingReachesClient consults it so a
+     * muted sender's EVENT_PING never reaches r (its own copy is unaffected —
+     * a player cannot mute itself). Set through serverSimSetPingMute from the
+     * CMD_PLAYER_PING_MUTE dispatch arm; independent of the transport's
+     * voiceMuteMask, which gates voice and chat. Session-scoped: cleared, both
+     * a leaver's own row and every other row's bit for the leaver, when a slot
+     * is released (server_sim_players.c). */
+    PlayerBitMap pingMuteMask[MAX_TANKS];
 
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */

@@ -925,6 +925,32 @@ static bool commandDecodePlayerMute(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_PLAYER_PING_MUTE — PACKET_PLAYER_PING_MUTE
+ * Wire: [header 8] [targetPlayer 1] [muted 1]. Byte-for-byte the same shape as
+ * PLAYER_MUTE; a separate packet id keeps the two mutes independent. */
+static bool commandEncodePlayerPingMute(const ClientCommand *cmd,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_PLAYER_PING_MUTE, 0);
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.playerPingMute.targetPlayer;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.playerPingMute.muted ? 1 : 0;
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodePlayerPingMute(const uint8_t *buf, size_t len,
+                                        ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
+    uint8_t targetPlayer = buf[CMD_PACKET_BODY_OFFSET];
+    if (targetPlayer >= MAX_TANKS) return false;
+    cmd->type = CMD_PLAYER_PING_MUTE;
+    cmd->u.playerPingMute.targetPlayer = targetPlayer;
+    cmd->u.playerPingMute.muted = buf[CMD_PACKET_BODY_OFFSET + 1] ? 1 : 0;
+    return true;
+}
+
 /* CMD_VOICE_STATE — PACKET_VOICE_STATE
  * Wire: [header 8] [hasMic 1] [selfMuted 1] */
 static bool commandEncodeVoiceState(const ClientCommand *cmd,
@@ -1074,6 +1100,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_VIEW_STATE:            ok = commandEncodeViewState(cmd, buf, bufCap, outLen); break;
         case CMD_VIEW_CYCLE:            ok = commandEncodeViewCycle(cmd, buf, bufCap, outLen); break;
         case CMD_PING:                  ok = commandEncodePing(cmd, buf, bufCap, outLen); break;
+        case CMD_PLAYER_PING_MUTE:      ok = commandEncodePlayerPingMute(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
         default:                        return false;
     }
@@ -1125,6 +1152,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_VIEW_STATE:            return commandDecodeViewState(buf, len, cmd);
         case PACKET_VIEW_CYCLE:            return commandDecodeViewCycle(buf, len, cmd);
         case PACKET_MAP_PING:              return commandDecodePing(buf, len, cmd);
+        case PACKET_PLAYER_PING_MUTE:      return commandDecodePlayerPingMute(buf, len, cmd);
         default:                           return false;
     }
 }
