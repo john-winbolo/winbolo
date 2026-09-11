@@ -57,6 +57,9 @@
 #define RETURN_REASON_SURRENDER   2
 #define RETURN_REASON_BASE_WIN    3
 #define RETURN_REASON_ABANDONED   4
+/* A scenario op ended the round: it brings its own lobby line and credits
+ * nobody, so the base sweep neither speaks for it nor wins for it. */
+#define RETURN_REASON_SCENARIO    5
 
 /* roundLogStartTick before the round's first log entry has been written. Not a
  * plausible tick, so it doubles as the "not latched yet" flag. */

@@ -95,6 +95,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 57 | `log_EntityChange` | One pillbox, base or start joined the map or left it (below) |
 | 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
 | 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
+| 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `ticks:i32` big-endian |
 
 ### `log_GameSettings` payload
 

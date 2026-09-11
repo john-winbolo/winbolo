@@ -3342,6 +3342,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # decoder addresses a rebuilt line to every recipient, and the in-process
     # filter reads 0xFF as everyone at a client that is not slot 0.
     tests/unit/test_scenario_comms_arms.c
+    # The flow ops: a scripted end to the round — its state, its reason, the
+    # line it leaves the returning lobby and the WinBolo.net crediting it does
+    # not do — and the game-time change, the four lengths it refuses, and the
+    # new length on the sim, at a subscriber and in a recording.
+    tests/unit/test_scenario_flow_arms.c
     # The init table a bot is created with: one table per brain VM, an
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
@@ -4773,6 +4778,12 @@ set(_unit_test_names
     scenario_comms_arm_records
     scenario_comms_decoder_dest_player
     scenario_comms_apply_non_zero_slot
+    scenario_flow_end_round
+    scenario_flow_end_round_resolve
+    scenario_flow_end_round_refusals
+    scenario_flow_set_game_time
+    scenario_flow_set_game_time_refusals
+    scenario_flow_arm_records
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

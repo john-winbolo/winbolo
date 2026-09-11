@@ -822,6 +822,17 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
     break;
+  case log_GameTimeSet:
+    /* The round's game time after the change, as a big-endian int32 of ticks
+       across the four opt bytes. The settings blob states the length once at
+       the head of a round and never restates it, so this is the only thing
+       that tells a replay the round's clock moved. */
+    out[off++] = log_GameTimeSet;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
   default:
     return 0;
   }

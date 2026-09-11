@@ -29,6 +29,7 @@
  *********************************************************/
 
 #include <assert.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -36,7 +37,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_shared.h"     /* publishServerMessage + the team variant, serverSimCbSoundDist */
 #include "server_sim_scenario.h"
-#include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
+#include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange, serverSimEnterGameOver */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
 #include "netpacks.h"      /* lobbyBotNameAcceptable — the lobby's own name check */
 #include "../../common/wb_log.h"   /* the line a dropped roster change leaves */
@@ -2006,6 +2007,93 @@ static ScnOpResult scenarioOpLog(ServerSim *sim, const ScnOpLog *p) {
     return SCN_OP_OK;
 }
 
+/* ── Flow ──────────────────────────────────────────────────────────────
+ *
+ * Two arms over the round itself: one ends it, one changes how much time is
+ * left in it. Both are running-only — there is no round to end or to time
+ * from a lobby, and the lobby has its own controls for the length of the
+ * round it is about to start. */
+
+/* End the round now, on the script's terms.
+ *
+ * The text is the line the returning lobby is given. It is held as the
+ * pending win message and RETURN_REASON_SCENARIO is what keeps it: without
+ * that reason serverSimResolveGameOver falls into the base sweep's arm,
+ * which overwrites the line with the sweep's own and credits a WinBolo.net
+ * win nobody asked for.
+ *
+ * The round-end records are the lifecycle's, so this arm writes none of its
+ * own. */
+static ScnOpResult scenarioOpEndRound(ServerSim *sim, const ScnOpEndRound *p) {
+    ScnOpResult r = scenarioRequireRunning(sim);
+    if (r != SCN_OP_OK) return r;
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    sim->returnToLobbyReason = RETURN_REASON_SCENARIO;
+    /* Nothing reads the team under this reason — its one reader is the
+       surrender arm of serverSimResolveGameOver, which credits the side that
+       did not give up. The op carries a winner, so it is written where the
+       other reasons write theirs rather than dropped on the floor. */
+    sim->returnToLobbyTeamId = p->winnerTeam;
+    /* pendingWinMessage is 512 bytes and the op's field is SCN_TEXT_MAX, so
+       a line that passed the terminator check above always fits. */
+    SDL_strlcpy(sim->pendingWinMessage, p->text,
+                sizeof(sim->pendingWinMessage));
+    serverSimEnterGameOver(sim);
+    return SCN_OP_OK;
+}
+
+/* Change how much time the running round has left, as a new length or as a
+ * delta on the one it has. The setter is a bare write with no clamp of its
+ * own, so every bound the length has is checked here.
+ *
+ * The new length reaches a client through the settings event, which carries
+ * gameLength out as lobbyTimeLimit, and reaches a replay through the record
+ * below — the settings blob is written once at the head of a round and never
+ * restated. */
+static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
+                                         const ScnOpSetGameTime *p) {
+    int64_t asked;
+    ScnOpResult r = scenarioRequireRunning(sim);
+    if (r != SCN_OP_OK) return r;
+
+    if (p->relative) {
+        /* An endless round has no length to add to: gameLength is -1, and a
+           delta on top of that would quietly turn a round with no time limit
+           into one of a few ticks. A script that wants to put a limit on such
+           a round says what the limit is. */
+        if (sim->gameLength == UNLIMITED_GAME_TIME) {
+            return SCN_OP_RANGE;
+        }
+        /* Summed at 64 bits so a delta near the end of the range cannot wrap
+           past the bounds below and land back inside them. */
+        asked = (int64_t)sim->gameLength + (int64_t)p->ticks;
+    } else {
+        asked = (int64_t)p->ticks;
+    }
+    /* Zero is not "no time left". The running tick counts the length down
+       only while it is above zero, so a round set to zero never reaches its
+       time limit at all — it runs forever, the opposite of what a script
+       asking for zero means. One tick is the shortest round that ends. */
+    if (asked < 1) {
+        return SCN_OP_RANGE;
+    }
+    /* The field is an int32; a length past the end of it is refused rather
+       than truncated into a round of some other length. */
+    if (asked > (int64_t)INT32_MAX) {
+        return SCN_OP_RANGE;
+    }
+
+    serverSimSetGameLength(sim, (int32_t)asked);
+    logAddEvent(log_GameTimeSet,
+                (BYTE)((asked >> 24) & 0xFF), (BYTE)((asked >> 16) & 0xFF),
+                (BYTE)((asked >> 8) & 0xFF), (BYTE)(asked & 0xFF), 0, NULL);
+    serverSimPublishLobbySettings(sim);
+    return SCN_OP_OK;
+}
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     assert(sim != NULL);
@@ -2110,8 +2198,10 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
         case SCN_OP_SCORE:               return SCN_OP_UNSUPPORTED;
         case SCN_OP_ANNOUNCE:            return SCN_OP_UNSUPPORTED;
         case SCN_OP_MARKER:              return SCN_OP_UNSUPPORTED;
-        case SCN_OP_END_ROUND:           return SCN_OP_UNSUPPORTED;
-        case SCN_OP_SET_GAME_TIME:       return SCN_OP_UNSUPPORTED;
+        case SCN_OP_END_ROUND:
+            return scenarioOpEndRound(sim, &op->u.endRound);
+        case SCN_OP_SET_GAME_TIME:
+            return scenarioOpSetGameTime(sim, &op->u.setGameTime);
         case SCN_OP_SET_RULE:            return SCN_OP_UNSUPPORTED;
     }
 

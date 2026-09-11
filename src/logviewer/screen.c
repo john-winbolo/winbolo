@@ -955,6 +955,20 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
+    case log_GameTimeSet:
+      /* The round's game time, as a big-endian int32 of ticks. The viewer
+         counts gmeLength down a tick at a time the way the server does, so
+         adopting the recorded value keeps a replay's clock on the round's own
+         remaining time instead of the length the round opened with. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes(&opt4, 1);
+      g_lv->gmeLength = (int32_t)(((uint32_t)opt1 << 24) |
+                                  ((uint32_t)opt2 << 16) |
+                                  ((uint32_t)opt3 << 8)  |
+                                  (uint32_t)opt4);
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -1855,6 +1869,7 @@ static int walkSkipEventBody(BYTE code) {
     case log_BaseSetStock:
     case log_LgmLocation:
     case log_Shell:
+    case log_GameTimeSet:
       { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
       return 4;
     case log_PlayerLocation:

@@ -2018,6 +2018,16 @@ int run_scenario_comms_arm_records(void);
 int run_scenario_comms_decoder_dest_player(void);
 int run_scenario_comms_apply_non_zero_slot(void);
 
+/* The two flow ops (test_scenario_flow_arms.c). A scripted end to the round,
+ * the lobby line it leaves and the crediting it does not do; the game-time
+ * change, the lengths it refuses and where the new length shows up. */
+int run_scenario_flow_end_round(void);
+int run_scenario_flow_end_round_resolve(void);
+int run_scenario_flow_end_round_refusals(void);
+int run_scenario_flow_set_game_time(void);
+int run_scenario_flow_set_game_time_refusals(void);
+int run_scenario_flow_arm_records(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

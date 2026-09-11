@@ -1594,6 +1594,13 @@ void serverSimResolveGameOver(ServerSim *sim) {
         sim->pendingWinMessage[0] = '\0';
         break;
 
+    case RETURN_REASON_SCENARIO:
+        /* A scenario op ended the round and wrote the returning lobby's line
+         * as it did. The message stands exactly as the op left it, and
+         * nobody is credited: the round ended because a script said so,
+         * whatever the map looked like at the end. */
+        break;
+
     case RETURN_REASON_BASE_WIN:
     case RETURN_REASON_NONE:
     default:
