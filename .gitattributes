@@ -18,6 +18,10 @@ tests/baseline/commands/*.jsonl text eol=lf
 # ASCII-hex wire fixtures, compared byte for byte by the codec tests.
 tests/fixtures/wire/*.hex       text eol=lf
 
+# Plain-text summaries of the recorded .wbv fixtures, compared byte for
+# byte by wbv_fixture_summaries.
+tests/fixtures/wbv/*.summary    text eol=lf
+
 # Binary data that git's own detection gets wrong. It calls a file text
 # when there is no NUL byte in the first 8000, which is not true of a Bolo
 # map (data/maps, tests/baseline/maps, the brains' bundled maps) or of a

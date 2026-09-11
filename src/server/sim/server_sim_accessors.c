@@ -378,6 +378,18 @@ bool serverSimGetPill(ServerSim *sim, BYTE i,
     return true;
 }
 
+/* Reader for binaries that own a ServerSim directly. Only speed: pillsGetPill
+   copies six fields and reload and coolDown are not among them, so reading
+   them here read whatever was on the stack. */
+bool serverSimGetPillSpeed(ServerSim *sim, BYTE i, BYTE *speed) {
+    pillbox p;
+    BYTE n = pillsGetNumPills(&sim->sim.pb);
+    if (i == 0 || i > n) return false;
+    pillsGetPill(&sim->sim.pb, &p, i);
+    if (speed) *speed = p.speed;
+    return true;
+}
+
 bool serverSimGetBase(ServerSim *sim, BYTE i,
                       BYTE *x, BYTE *y, BYTE *owner) {
     base b;

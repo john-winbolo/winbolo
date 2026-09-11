@@ -3182,6 +3182,27 @@ set(_baseline_fast
     centralize_events_alliance_fast
     centralize_events_name_change_fast
     centralize_events_map_skip_fast
+    road_spit_shell_open
+    road_spit_shell_strict
+    road_spit_shell_tournament
+    road_spit_mine_open
+    road_spit_drown_open
+    boat_bank_road_slow
+    boat_bank_road_fast
+    boat_bank_grass_slow
+    boat_bank_grass_fast
+    builder_yard_farm
+    builder_yard_road
+    builder_yard_building
+    builder_yard_mine
+    builder_yard_pill_place
+    builder_yard_pill_repair
+    base_yard_capture
+    base_yard_refuel
+    base_yard_steal
+    pill_yard_capture
+    pill_yard_anger
+    grass_flat_growth
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)
@@ -3201,6 +3222,7 @@ set(_baseline_udp_50008
     centralize_events_chat_unicast_3client_udp
     centralize_events_chat_alliance_3client_udp
 )
+set(_baseline_udp_50009 watch_road_capture_2client_udp)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}
@@ -3213,7 +3235,7 @@ foreach(_name IN LISTS _baseline_fast)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
-foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
+foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008 50009)
     foreach(_name IN LISTS _baseline_udp_${_port})
         add_test(NAME baseline.${_name}
                  COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
@@ -3279,6 +3301,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # stays public through both.
     tests/unit/test_vote_surrender_privacy.c
     tests/unit/test_round_stats.c
+    tests/unit/test_mine_kill_event.c
     tests/unit/test_lv_stats_time.c
     tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
@@ -3685,6 +3708,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
+    # Recorded headless runs: each committed <name>.wbv is decoded through
+    # the viewer and its summary compared with <name>.summary; the same
+    # file holds the on-demand capture that rewrites those summaries.
+    tests/unit/test_wbv_fixture_summaries.c
     tests/unit/test_attribution_reader.c
     # Calibration anchor walk: synthetic v2 logs prove the highlight
     # clip-time fit resolves base cells from the log's own snapshots
@@ -3965,6 +3992,9 @@ set(_unit_test_names
     round_stats_mine_owner_api
     round_stats_mine_damage
     round_stats_leaver_clears_mines
+    mine_kill_publishes_event
+    mine_kill_on_boat_publishes_event
+    mine_kill_own_mine_names_self
     awards_basic_winners
     awards_tiebreak
     awards_omission
@@ -4571,6 +4601,7 @@ set(_unit_test_names
     console_kick_host_without_newline
     console_read_reports_eof
     console_read_timeout_then_eof
+    wbv_fixture_summaries
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -4580,6 +4611,9 @@ set(_unit_test_names
 # wbv_v2_capture is omitted for the same reason: it (re)writes the committed
 # spectator_v2.wbv fixture and is invoked on demand via
 # `WinBoloUnitTests --test wbv_v2_capture`; CTest only runs wbv_reader_v1/v2.
+# wbv_summary_capture is omitted for the same reason: it (re)writes the
+# committed tests/fixtures/wbv/*.summary files that wbv_fixture_summaries
+# compares against, via `WinBoloUnitTests --test wbv_summary_capture`.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
