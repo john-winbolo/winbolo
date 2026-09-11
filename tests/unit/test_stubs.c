@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 #include "global.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"  /* clientSimGetBoundServerSim — the brain stub */
 #include "frontend.h"
 #include "server_sim.h"
 #include "../../src/winbolonet/winbolonet_server.h"
@@ -50,13 +51,73 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
  * link-time stubs are sufficient — and they let us avoid pulling
  * luabrainshandler.c (and its clientmutex.c / gamefront.c / lang.c
  * dependency closure) into the test binary. */
+/* The create stub doubles as a fixture brain. It refuses by default, which
+ * is what every test that never meant to build a bot wants and what the
+ * unit binary did before it could be armed. A test that drives a bot all
+ * the way through botManagerAddBot arms it, and it then reports success and
+ * writes down what its bot was made with: the init table, which is the last
+ * thing the sim does with that table before a real brain VM would read it,
+ * and the team the slot held at that moment, which is the team the add had
+ * already picked the slot's lobby start from. */
+static bool     s_brainStubArmed = false;
+static ScnTable s_brainStubInit[MAX_TANKS];
+static bool     s_brainStubMade[MAX_TANKS];
+static BYTE     s_brainStubTeam[MAX_TANKS];
+
+void ut_brain_stub_arm(bool succeed) {
+  s_brainStubArmed = succeed;
+  memset(s_brainStubInit, 0, sizeof(s_brainStubInit));
+  memset(s_brainStubMade, 0, sizeof(s_brainStubMade));
+  memset(s_brainStubTeam, 0, sizeof(s_brainStubTeam));
+}
+
+int ut_brain_stub_team(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return 0;
+  return (int)s_brainStubTeam[player_num];
+}
+
+bool ut_brain_stub_made(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return false;
+  return s_brainStubMade[player_num];
+}
+
+const ScnTable *ut_brain_stub_init(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return NULL;
+  if (!s_brainStubMade[player_num]) return NULL;
+  return &s_brainStubInit[player_num];
+}
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
                             int player_num, const ScnTable *init) {
-  (void)inst; (void)path; (void)name; (void)cs;
-  (void)aiMode; (void)debug_mode; (void)player_num; (void)init;
-  return false;
+  (void)path; (void)name; (void)aiMode; (void)debug_mode;
+  if (!s_brainStubArmed) {
+    (void)cs; (void)player_num; (void)init;
+    return false;
+  }
+  /* Zeroed the way the real create leaves an instance it is about to fill:
+   * bot_manager reads L, pathfinder and worldsim straight after this and
+   * skips each one when it is NULL. */
+  memset(inst, 0, sizeof(*inst));
+  if (player_num >= 0 && player_num < MAX_TANKS) {
+    struct ServerSim *sim = cs ? clientSimGetBoundServerSim(cs) : NULL;
+    s_brainStubMade[player_num] = true;
+    if (init != NULL) {
+      s_brainStubInit[player_num] = *init;
+    } else {
+      memset(&s_brainStubInit[player_num], 0, sizeof(s_brainStubInit[0]));
+    }
+    /* The team on the slot as the brain is made. serverSimAddBot has
+     * already run by this point in the add, so this is the team it wrote
+     * and picked the slot's lobby start from — a caller that sets the team
+     * after the add records 0 here. */
+    if (sim != NULL) {
+      const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, (BYTE)player_num);
+      s_brainStubTeam[player_num] = lp ? lp->teamNumber : 0;
+    }
+  }
+  return true;
 }
 
 bool luaBrainInstanceTick(LuaBrainInstance *inst) {

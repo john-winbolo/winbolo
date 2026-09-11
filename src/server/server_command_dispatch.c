@@ -640,11 +640,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
         /* A lobby Add Bot carries no configuration: NULL init, so the
-         * brain sees an empty BRAIN_INIT. */
+         * brain sees an empty BRAIN_INIT. The team stays out of the add
+         * and is written below, which is where this arm has always put
+         * it. */
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
-                              serverSimGetGameSim(sim)->hiddenMines, NULL)) {
+                              serverSimGetGameSim(sim)->hiddenMines, 0, NULL)) {
             fprintf(stderr, "ADD_BOT reject INVALID: botManagerAddBot failed (slot=%d name='%s' brain='%s')\n",
                     (int)slot, botName, serverSimGetBotBrainPath(sim));
             return CMD_REJECT_INVALID;

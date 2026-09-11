@@ -48,6 +48,13 @@
 /* Buffer for a brain path or a "package:NAME" reference. */
 #define SCN_PATH_MAX 256
 
+/* How many roster changes may be outstanding at once. Spawns and
+ * removals share one first-in first-out queue and the sim drains one of
+ * them a tick, so a script that asks for ten bots gets them over ten
+ * ticks without knowing the rate. The one past the last is refused
+ * SCN_OP_FULL rather than displacing anything already accepted. */
+#define SCN_ROSTER_QUEUE_MAX 32
+
 /* How many tiles a fill may change in one tick. A rectangle that
  * changes more than this applies what the budget allows, keeps the
  * remainder and answers SCN_OP_QUEUED; the sim carries the rest on

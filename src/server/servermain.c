@@ -2230,8 +2230,10 @@ int main(int argc, char **argv) {
           fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
                   initText[0] ? " init=" : "", initText);
         }
+        /* No team in the add: -allybots and -teams place these bots through
+         * serverSimSetTeamBatch below, once the whole set is in. */
         if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game,
-                              hiddenMines, &botInit[i].init)) {
+                              hiddenMines, 0, &botInit[i].init)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round

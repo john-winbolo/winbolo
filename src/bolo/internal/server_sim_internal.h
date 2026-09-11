@@ -62,6 +62,15 @@
  * plausible tick, so it doubles as the "not latched yet" flag. */
 #define ROUND_LOG_START_UNSET     0xFFFFFFFFu
 
+/* One roster change waiting its turn. A spawn carries the whole payload
+ * because the seat, the brain and the init table are all read when it
+ * lands rather than when it was asked for; a removal needs only the slot. */
+typedef struct {
+    bool                isSpawn;
+    ScnOpRosterSpawnBot spawn;        /* read when isSpawn */
+    BYTE                removeSlot;   /* read when it is not */
+} ScnRosterQueueEntry;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -594,6 +603,17 @@ struct ServerSim {
     BYTE                   scenarioFillX, scenarioFillY;
     uint16_t               scenarioFillSpent;
 
+    /* Roster changes a scenario has asked for and the sim has not made
+     * yet. Adding a bot builds a Lua VM and a ClientSim and removing one
+     * tears them down, which is more than a frame should do on demand, so
+     * both queue here and serverSimScenarioDrainRoster makes one of them a
+     * tick. Spawns and removals share the one queue so they land in the
+     * order they were asked for: a spawn into the seat a removal is about
+     * to free must not overtake it. A ring, so a drain costs no shuffle. */
+    ScnRosterQueueEntry    scenarioRoster[SCN_ROSTER_QUEUE_MAX];
+    uint8_t                scenarioRosterHead;   /* the next one to drain */
+    uint8_t                scenarioRosterCount;
+
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
      * spectator; NULL when no enumerator is registered. */
@@ -638,6 +658,21 @@ void serverSimScenarioDrainFill(ServerSim *sim);
  * the scenario surface for the same reason as the drain, and beside it so the
  * one function knows every field the funnel keeps. */
 void serverSimScenarioResetFill(ServerSim *sim);
+
+/* Make one queued roster change. serverSimTick calls it once a running
+ * frame, beside the fill drain: a spawn builds a Lua VM and a ClientSim
+ * and a removal tears them down, so one a tick is the rate a script gets
+ * whatever it asks for. The world is re-checked as the change lands — a
+ * seat taken or freed since it was queued drops that entry rather than
+ * stalling the ones behind it. Declared here rather than on the scenario
+ * surface: the caller is the sim's own tick, not a scenario. */
+void serverSimScenarioDrainRoster(ServerSim *sim);
+
+/* Forget every queued roster change. The seats a queue names belong to the
+ * round it was filled in, so a round that ends takes its queue with it
+ * rather than spawning into the next one. Called at the game starts in
+ * server_sim_round.c, beside the fill reset. */
+void serverSimScenarioResetRoster(ServerSim *sim);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

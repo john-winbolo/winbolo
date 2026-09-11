@@ -140,7 +140,13 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_MAP_SET_TILE ||       /* test_scenario_map_arms.c */
            t == SCN_OP_MAP_FILL_RECT ||
            t == SCN_OP_MAP_PLACE_MINE ||
-           t == SCN_OP_MAP_REMOVE_MINE;
+           t == SCN_OP_MAP_REMOVE_MINE ||
+           t == SCN_OP_ROSTER_SPAWN_BOT ||   /* test_scenario_roster_arms.c */
+           t == SCN_OP_ROSTER_REMOVE_BOT ||
+           t == SCN_OP_ROSTER_SET_TEAM ||
+           t == SCN_OP_LOBBY_ADD_BOT ||
+           t == SCN_OP_LOBBY_REMOVE_BOT ||
+           t == SCN_OP_LOBBY_SET_TEAM;
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The
@@ -164,8 +170,13 @@ int run_scenario_op_every_type_unsupported(void) {
         op.type = kAllOpTypes[i];
         r = serverSimApplyScenarioOp(sim, &op, &out);
         if (opArmHasLanded(op.type)) {
-            /* The sim is in the lobby, so a landed arm refuses on the state
-               or the slot — what it must not do is claim it has no arm. */
+            /* The sim is in the lobby, so most landed arms refuse on the
+               state or the slot — what none of them may do is claim to have
+               no arm. A zeroed payload names slot 0, which this sim fills
+               with a ready human: the two remove arms answer IS_HUMAN and
+               the lobby team arm accepts, moving that slot to team 0, which
+               is where it already is. This test reads the answers and then
+               drops the sim, so a write here costs the sweep nothing. */
             UT_ASSERT_MSG(r != SCN_OP_UNSUPPORTED,
                           "op type %d has an arm but still answers "
                           "SCN_OP_UNSUPPORTED", (int)op.type);

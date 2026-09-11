@@ -29,9 +29,16 @@
  *********************************************************/
 
 #include <assert.h>
+#include <string.h>
+
+#include <SDL3/SDL.h>
 
 #include "server_sim_internal.h"
 #include "server_sim_scenario.h"
+#include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
+#include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
+#include "netpacks.h"      /* lobbyBotNameAcceptable — the lobby's own name check */
+#include "../../common/wb_log.h"   /* the line a dropped roster change leaves */
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
 #include "tank.h"          /* the tank arms mutate through these */
 #include "lgm.h"           /* the builder arms mutate through these */
@@ -1445,6 +1452,439 @@ static ScnOpResult scenarioOpEntityRemoveStart(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* ── Roster ──────────────────────────────────────────────────────────
+ *
+ * Six arms over two states: three change the roster of a running round and
+ * three change a lobby's. The lobby three carry the validation of the
+ * matching CMD_LOBBY_* arms in server_command_dispatch.c without the
+ * sender's permission check, so a script and a host's click are refused
+ * for the same reasons.
+ *
+ * Adding a bot builds a Lua VM and a ClientSim and removing one tears them
+ * down. That is more than a running frame should do on demand, so the two
+ * in-round arms queue and the sim makes one change a tick; the lobby is
+ * between rounds and its three arms apply where they stand.
+ *
+ * The state each arm needs is its own business rather than the prelude's:
+ * the arms already landed are ones a lobby and a round both take, and the
+ * prelude has no per-op table to put this in. */
+
+static ScnOpResult scenarioRequireRunning(ServerSim *sim) {
+    return (sim->state == serverStateRunning) ? SCN_OP_OK : SCN_OP_WRONG_STATE;
+}
+
+/* The lobby's own two conditions, as CMD_LOBBY_ADD_BOT and its neighbours
+ * read them: a lobby that is taking part, and the server still in it. */
+static ScnOpResult scenarioRequireLobby(ServerSim *sim) {
+    if (!serverSimIsLobbyEnabled(sim) || sim->state != serverStateLobby) {
+        return SCN_OP_WRONG_STATE;
+    }
+    return SCN_OP_OK;
+}
+
+/* Whether a fixed-size text field out of an op ends inside its buffer. One
+ * that does not is refused rather than read past the end of it. */
+static bool scenarioTextTerminated(const char *buf, size_t cap) {
+    size_t i;
+    for (i = 0; i < cap; i++) {
+        if (buf[i] == '\0') return true;
+    }
+    return false;
+}
+
+/* The name a new bot takes. A name in the op goes through the check the
+ * lobby's Add Bot puts a host's typing through — the same characters
+ * refused, and the same collision with a name already in the game — and an
+ * op that carries none is given the lobby's own default for its seat.
+ *
+ * Called twice for a queued spawn: once as it is accepted, where the seat
+ * may not be chosen yet and only the refusals matter, and again as it
+ * lands, where the seat is known and the name is the one the bot joins
+ * under. */
+static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
+                                   char *out, size_t outCap) {
+    char validated[PACKET_MAX_PLAYER_NAME];
+
+    if (!scenarioTextTerminated(asked, PLAYER_NAME_LEN)) {
+        return SCN_OP_TOO_BIG;
+    }
+    if (asked[0] == '\0') {
+        SDL_snprintf(out, outCap, "Bot %d", (int)slot + 1);
+        return SCN_OP_OK;
+    }
+    if (!lobbyBotNameAcceptable(asked, validated, sizeof(validated), -1,
+                                transportUdpServerGetPlayerName, NULL, NULL)) {
+        return SCN_OP_RANGE;
+    }
+    SDL_strlcpy(out, validated, outCap);
+    return SCN_OP_OK;
+}
+
+/* The brain a new bot runs: the one the op names, or the server's own
+ * configured brain when it names none.
+ *
+ * A "package:NAME" brain is one carried by a scenario's package. Nothing on
+ * the sim opens a package, so the name is refused here rather than handed to
+ * the loader as a path — a file called "package:NAME" is not what the script
+ * meant. The host that unpacks a scenario is what resolves these, and it
+ * will resolve the name to a path before the op reaches this funnel. */
+static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
+                                     const char **out) {
+    const char *path;
+    SDL_PathInfo info;
+
+    if (!scenarioTextTerminated(asked, SCN_PATH_MAX)) {
+        return SCN_OP_TOO_BIG;
+    }
+    path = (asked[0] != '\0') ? asked : serverSimGetBotBrainPath(sim);
+    if (path == NULL || path[0] == '\0') {
+        return SCN_OP_NOT_FOUND;
+    }
+    if (SDL_strncmp(path, "package:", 8) == 0) {
+        return SCN_OP_NOT_FOUND;
+    }
+    /* Read before the add rather than after it: botManagerAddBot registers
+       the slot and then unwinds it when the brain will not load, and an arm
+       that refuses should not have touched the roster on its way out. */
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+        return SCN_OP_NOT_FOUND;
+    }
+    *out = path;
+    return SCN_OP_OK;
+}
+
+/* The seat a spawn takes. 0xFF asks for the first free one, which is
+ * chosen as the spawn lands and not as it is queued: ten spawns asked for
+ * in one tick would otherwise every one of them name the same seat. */
+static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
+    int freeSlot;
+
+    if (asked != SCN_NONE) {
+        if (asked >= MAX_TANKS) {
+            return SCN_OP_RANGE;
+        }
+        if (sim->playerConnected[asked] || botManagerIsBot(sim, asked)) {
+            return SCN_OP_ALREADY;
+        }
+        *out = asked;
+        return SCN_OP_OK;
+    }
+    freeSlot = serverSimFindFreeSlot(sim);
+    if (freeSlot < 0) {
+        return SCN_OP_FULL;
+    }
+    *out = (BYTE)freeSlot;
+    return SCN_OP_OK;
+}
+
+/* Put a bot in a seat, on its team.
+ *
+ * The team goes down the add with the rest of the config rather than being
+ * written onto the slot afterwards. serverSimAddBot writes the team it is
+ * handed and then picks the slot's lobby start from it, clustering the bot
+ * near the reservations its team already holds; a team written after that
+ * call has missed the pick, and the bot is placed as though it had no team.
+ *
+ * The alliance rebake still belongs here, after the add. serverSimAddBot
+ * does not bake alliances, and a rebake before the add cannot reach a slot
+ * that is not in the game yet — so this is the first point where the bot
+ * can be allied with the team it just joined. */
+static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
+                                 const char *name, BYTE team,
+                                 const ScnTable *init) {
+    if (!botManagerAddBot(sim, slot, brain, name,
+                          serverSimGetBotAiType(sim),
+                          gameTypeGet(&sim->sim.game),
+                          sim->sim.hiddenMines, team, init)) {
+        return false;
+    }
+    transportUdpServerSetBotName(slot, name);
+    if (team > 0) {
+        serverSimReapplyTeamAlliances(sim);
+    }
+    serverSimPublishLobbySlot(sim, slot);
+    return true;
+}
+
+/* The slot a remove names: a seat with somebody in it, and that somebody a
+ * bot. Both remove arms ask the same two questions in the same order. */
+static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
+    if (slot >= MAX_TANKS || !sim->playerConnected[slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (!botManagerIsBot(sim, slot)) {
+        return SCN_OP_IS_HUMAN;
+    }
+    return SCN_OP_OK;
+}
+
+/* Put one change on the queue. The one past the last is refused rather than
+ * displacing something already accepted: a script told QUEUED has been
+ * promised that change. */
+static ScnOpResult scenarioRosterQueue(ServerSim *sim,
+                                       const ScnRosterQueueEntry *entry) {
+    uint8_t at;
+
+    if (sim->scenarioRosterCount >= SCN_ROSTER_QUEUE_MAX) {
+        return SCN_OP_FULL;
+    }
+    at = (uint8_t)((sim->scenarioRosterHead + sim->scenarioRosterCount) %
+                   SCN_ROSTER_QUEUE_MAX);
+    sim->scenarioRoster[at] = *entry;
+    sim->scenarioRosterCount++;
+    return SCN_OP_QUEUED;
+}
+
+/* Add a bot to a running round. What is checked here is the payload — the
+ * team, the name, the brain and a named seat — so a script hears about its
+ * own mistakes at once; what the world looks like is asked again as the
+ * spawn lands, because by then it may be a different world. */
+static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
+                                            const ScnOpRosterSpawnBot *p,
+                                            ScnOpOut *out) {
+    ScnRosterQueueEntry entry;
+    const char *brain = NULL;
+    char name[PLAYER_NAME_LEN];
+    BYTE slot = SCN_NONE;
+    ScnOpResult r;
+
+    r = scenarioRequireRunning(sim);
+    if (r != SCN_OP_OK) return r;
+    /* A server with no bot AI runs no brains, which is the answer the lobby's
+       own Add Bot gives a host on such a server. */
+    if (serverSimGetBotAiType(sim) == aiNone) {
+        return SCN_OP_WRONG_STATE;
+    }
+    /* Nothing downstream refuses a team past the end of the table: the add
+       writes what the config holds straight onto the slot, and the setter a
+       team change goes through coerces it to 1 instead. Either way a script
+       would be told its bot joined the team it asked for when it had not. */
+    if (p->team >= MAX_TANKS) {
+        return SCN_OP_RANGE;
+    }
+    r = scenarioSpawnSeat(sim, p->slot, &slot);
+    if (r != SCN_OP_OK) return r;
+    r = scenarioBotName(p->name, slot, name, sizeof(name));
+    if (r != SCN_OP_OK) return r;
+    r = scenarioBrainPath(sim, p->brain, &brain);
+    if (r != SCN_OP_OK) return r;
+
+    memset(&entry, 0, sizeof(entry));
+    entry.isSpawn = true;
+    entry.spawn = *p;
+    r = scenarioRosterQueue(sim, &entry);
+    if (r != SCN_OP_QUEUED) return r;
+
+    if (out != NULL) {
+        /* The seat, when the op named one. A spawn that asked for the first
+           free seat is not promised one of them yet — the seat it takes is
+           chosen as it lands. */
+        out->slot = p->slot;
+    }
+    return SCN_OP_QUEUED;
+}
+
+/* Take a bot out of a running round. */
+static ScnOpResult scenarioOpRosterRemoveBot(ServerSim *sim,
+                                             const ScnOpRosterRemoveBot *p) {
+    ScnRosterQueueEntry entry;
+    ScnOpResult r;
+
+    r = scenarioRequireRunning(sim);
+    if (r != SCN_OP_OK) return r;
+    r = scenarioRemovableBot(sim, p->slot);
+    if (r != SCN_OP_OK) return r;
+
+    memset(&entry, 0, sizeof(entry));
+    entry.isSpawn = false;
+    entry.removeSlot = p->slot;
+    return scenarioRosterQueue(sim, &entry);
+}
+
+/* Move a player to a team mid-round. The same three steps the lobby's own
+ * team command makes, minus the auto-unready that only means something
+ * while the lobby is still gathering. */
+static ScnOpResult scenarioOpRosterSetTeam(ServerSim *sim,
+                                           const ScnOpRosterSetTeam *p) {
+    ScnOpResult r = scenarioRequireRunning(sim);
+    if (r != SCN_OP_OK) return r;
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (p->team >= MAX_TANKS) {
+        return SCN_OP_RANGE;
+    }
+
+    serverSimSetTeam(sim, p->slot, p->team);
+    logAddEvent(log_TeamSet, p->slot, p->team, 0, 0, 0, NULL);
+    serverSimPublishLobbySlot(sim, p->slot);
+    return SCN_OP_OK;
+}
+
+/* Add a bot to the lobby. CMD_LOBBY_ADD_BOT's own checks in order — the
+ * operator's bot cap, the name, a free seat — and then the same add.
+ *
+ * An unfielded seat is a lobby entry the sim does not have: every add here
+ * goes through botManagerAddBot, which fields the bot. Until a seat can be
+ * held without one, an op asking for that is refused rather than quietly
+ * given a fielded bot instead. */
+static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
+                                         const ScnOpLobbyAddBot *p,
+                                         ScnOpOut *out) {
+    const char *brain = NULL;
+    char name[PLAYER_NAME_LEN];
+    BYTE maxBots;
+    BYTE slot = 0;
+    ScnOpResult r;
+    int freeSlot;
+
+    r = scenarioRequireLobby(sim);
+    if (r != SCN_OP_OK) return r;
+    if (serverSimGetBotAiType(sim) == aiNone) {
+        return SCN_OP_WRONG_STATE;
+    }
+    if (!p->fielded) {
+        return SCN_OP_RANGE;
+    }
+    if (p->team >= MAX_TANKS) {
+        return SCN_OP_RANGE;
+    }
+    maxBots = serverSimGetMaxBots(sim);
+    if (maxBots > 0 && serverSimGetLobbyBotCount(sim) >= maxBots) {
+        return SCN_OP_FULL;
+    }
+    /* The name before the seat, which is the order the command arm asks in,
+       so an op that is wrong about both hears about the same one a host
+       would. The seat is not known yet and only the refusals matter here. */
+    r = scenarioBotName(p->name, 0, name, sizeof(name));
+    if (r != SCN_OP_OK) return r;
+    r = scenarioBrainPath(sim, p->brain, &brain);
+    if (r != SCN_OP_OK) return r;
+    freeSlot = serverSimFindFreeSlot(sim);
+    if (freeSlot < 0) {
+        return SCN_OP_FULL;
+    }
+    slot = (BYTE)freeSlot;
+    /* Again with the seat, because an op that named no name is given the
+       lobby's default for the one it got. */
+    (void)scenarioBotName(p->name, slot, name, sizeof(name));
+
+    if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, NULL)) {
+        /* The path named a file and the file would not load as a brain. */
+        return SCN_OP_NOT_FOUND;
+    }
+    serverSimPublishLobbyBotBrain(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
+    if (out != NULL) {
+        out->slot = slot;
+    }
+    return SCN_OP_OK;
+}
+
+/* Take a bot out of the lobby, as CMD_LOBBY_REMOVE_BOT does. */
+static ScnOpResult scenarioOpLobbyRemoveBot(ServerSim *sim,
+                                            const ScnOpLobbyRemoveBot *p) {
+    ScnOpResult r = scenarioRequireLobby(sim);
+    if (r != SCN_OP_OK) return r;
+    r = scenarioRemovableBot(sim, p->slot);
+    if (r != SCN_OP_OK) return r;
+
+    serverSimRemoveBot(sim, p->slot);
+    return SCN_OP_OK;
+}
+
+/* Move a lobby slot to a team, as CMD_TEAM_SET does — the auto-unready
+ * included, so a roster change a script makes puts the lobby back to
+ * gathering exactly as a host's click does. */
+static ScnOpResult scenarioOpLobbySetTeam(ServerSim *sim,
+                                          const ScnOpLobbySetTeam *p) {
+    ScnOpResult r = scenarioRequireLobby(sim);
+    if (r != SCN_OP_OK) return r;
+    /* The command arm range-checks the slot and leaves it there, because a
+       client can only send its own or the host's pick. A script names any
+       slot it likes, so an empty one is refused here. */
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (p->team >= MAX_TANKS) {
+        return SCN_OP_RANGE;
+    }
+
+    serverSimSetTeam(sim, p->slot, p->team);
+    logAddEvent(log_TeamSet, p->slot, p->team, 0, 0, 0, NULL);
+    serverSimPublishLobbySlot(sim, p->slot);
+    lobbyAutoUnreadyOnChange(sim);
+    return SCN_OP_OK;
+}
+
+/* Make a queued spawn.
+ *
+ * Every question the arm asked is asked again here. The seat may have been
+ * taken, the brain file moved, the server's brain changed — and there is
+ * nobody left to tell: the script was answered when it asked. A spawn that
+ * no longer holds is dropped with a line in the log rather than stalling
+ * the changes queued behind it. */
+static void scenarioRosterSpawnNow(ServerSim *sim,
+                                   const ScnOpRosterSpawnBot *p) {
+    const char *brain = NULL;
+    char name[PLAYER_NAME_LEN];
+    BYTE slot = 0;
+
+    if (scenarioSpawnSeat(sim, p->slot, &slot) != SCN_OP_OK ||
+        scenarioBrainPath(sim, p->brain, &brain) != SCN_OP_OK ||
+        scenarioBotName(p->name, slot, name, sizeof(name)) != SCN_OP_OK) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: queued bot spawn dropped, its seat or brain is gone");
+        return;
+    }
+    if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, &p->init)) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: queued bot spawn for slot %d would not start",
+                    (int)slot);
+        return;
+    }
+    if (p->team > 0) {
+        logAddEvent(log_TeamSet, slot, p->team, 0, 0, 0, NULL);
+    }
+}
+
+/* Make a queued removal. A bot that has gone in the meantime — it left, or
+ * the round took it — leaves nothing to do. */
+static void scenarioRosterRemoveNow(ServerSim *sim, BYTE slot) {
+    if (scenarioRemovableBot(sim, slot) != SCN_OP_OK) {
+        return;
+    }
+    serverSimRemoveBot(sim, slot);
+}
+
+void serverSimScenarioDrainRoster(ServerSim *sim) {
+    ScnRosterQueueEntry entry;
+
+    if (sim == NULL || sim->scenarioRosterCount == 0) {
+        return;
+    }
+    /* Off the queue before it runs, so what the change does to the roster
+       cannot be read back out of the entry making it. */
+    entry = sim->scenarioRoster[sim->scenarioRosterHead];
+    sim->scenarioRosterHead =
+        (uint8_t)((sim->scenarioRosterHead + 1) % SCN_ROSTER_QUEUE_MAX);
+    sim->scenarioRosterCount--;
+
+    if (entry.isSpawn) {
+        scenarioRosterSpawnNow(sim, &entry.spawn);
+    } else {
+        scenarioRosterRemoveNow(sim, entry.removeSlot);
+    }
+}
+
+void serverSimScenarioResetRoster(ServerSim *sim) {
+    if (sim == NULL) {
+        return;
+    }
+    sim->scenarioRosterHead = 0;
+    sim->scenarioRosterCount = 0;
+}
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     assert(sim != NULL);
@@ -1522,12 +1962,18 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpMapPlaceMine(sim, &op->u.mapPlaceMine);
         case SCN_OP_MAP_REMOVE_MINE:
             return scenarioOpMapRemoveMine(sim, &op->u.mapRemoveMine);
-        case SCN_OP_ROSTER_SPAWN_BOT:    return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ROSTER_REMOVE_BOT:   return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ROSTER_SET_TEAM:     return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LOBBY_ADD_BOT:       return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LOBBY_REMOVE_BOT:    return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LOBBY_SET_TEAM:      return SCN_OP_UNSUPPORTED;
+        case SCN_OP_ROSTER_SPAWN_BOT:
+            return scenarioOpRosterSpawnBot(sim, &op->u.rosterSpawnBot, out);
+        case SCN_OP_ROSTER_REMOVE_BOT:
+            return scenarioOpRosterRemoveBot(sim, &op->u.rosterRemoveBot);
+        case SCN_OP_ROSTER_SET_TEAM:
+            return scenarioOpRosterSetTeam(sim, &op->u.rosterSetTeam);
+        case SCN_OP_LOBBY_ADD_BOT:
+            return scenarioOpLobbyAddBot(sim, &op->u.lobbyAddBot, out);
+        case SCN_OP_LOBBY_REMOVE_BOT:
+            return scenarioOpLobbyRemoveBot(sim, &op->u.lobbyRemoveBot);
+        case SCN_OP_LOBBY_SET_TEAM:
+            return scenarioOpLobbySetTeam(sim, &op->u.lobbySetTeam);
         case SCN_OP_BOT_HINT:            return SCN_OP_UNSUPPORTED;
         case SCN_OP_MSG_ALL:             return SCN_OP_UNSUPPORTED;
         case SCN_OP_MSG_TEAM:            return SCN_OP_UNSUPPORTED;

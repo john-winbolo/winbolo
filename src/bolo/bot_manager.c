@@ -616,7 +616,7 @@ bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
                       aiType ai, gameType game, bool hiddenMines,
-                      const ScnTable *init) {
+                      BYTE team, const ScnTable *init) {
     BotContext *bot;
 
     if (sim == NULL || playerNum >= MAX_TANKS) {
@@ -643,13 +643,18 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     }
 
     {
+        /* The team goes in with the rest of the config rather than being
+         * written onto the slot afterwards: serverSimAddBot writes it and
+         * then picks the slot's start from it, clustering the new bot near
+         * its team's reservations. A team set after that call has already
+         * missed the pick. */
         ServerSimBotConfig cfg = {
             .brainPath   = bot->brainPath,
             .brainName   = brainName,
             .ai          = ai,
             .gameType    = game,
             .hiddenMines = hiddenMines,
-            .teamNumber  = 0,
+            .teamNumber  = team,
         };
         if (!serverSimAddBot(sim, playerNum, &cfg)) {
             return false;

@@ -1872,7 +1872,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                   }
                 }
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy,
-                                   spGameType, hiddenMines, NULL);
+                                   spGameType, hiddenMines, 0, NULL);
                 /* serverSimCreateBot loads the brain from the path but leaves
                  * the lobby brain-INDEX at the 0xFF "default" sentinel, so the
                  * lobby Bot Code dropdown renders "(none)". Resolve the index

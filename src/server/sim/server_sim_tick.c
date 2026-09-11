@@ -1126,6 +1126,10 @@ void serverSimTick(ServerSim *sim) {
          * older one are paced out of the one tile budget rather than each
          * spending a full one in the same frame. */
         serverSimScenarioDrainFill(sim);
+        /* One roster change a frame, from the same queue the hook has just
+         * added to. Inside the map callback's bracket because a bot joining
+         * takes a copy of the terrain on its way in. */
+        serverSimScenarioDrainRoster(sim);
         mapSetChangeCallback(NULL);
         /* Both half-steps have finished filling mapEvents and no transport has
          * drained them yet, so this is where each client's copy of the terrain

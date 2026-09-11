@@ -895,8 +895,10 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->eventCount = 0;
     /* And any fill a scenario still had squares owing on. Its rectangle was
        aimed at the map that has just been replaced above, so carrying it on
-       would paint the reloaded one. */
+       would paint the reloaded one. The roster changes it had queued name
+       seats in the round that is ending, so they go the same way. */
     serverSimScenarioResetFill(sim);
+    serverSimScenarioResetRoster(sim);
     /* Drop any ping accepted but not yet buffered, so it can't leak a stale
      * marker into the next round's first running tick — and the rate limiter
      * with it, because sim->tick is rewound to 0 below and last round's tick
@@ -1093,6 +1095,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
        it still owes land partway into the round that is starting. The
        full-reset path clears this in serverSimResetGameWorld. */
     serverSimScenarioResetFill(sim);
+    serverSimScenarioResetRoster(sim);
     serverSimResetPingState(sim);
 
     /* Drop the lobby-chat catch-up buffer: this is an authoritative game start

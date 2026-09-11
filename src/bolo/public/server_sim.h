@@ -492,6 +492,10 @@ void serverSimSetBotPreThinkHook(ServerSim *sim, void (*hook)(int playerNum));
  * serverSimAddBot, which only registers the lobby slot — the
  * full constructor calls serverSimAddBot internally.
  *
+ * team is the slot's team, 0 for none. It travels in the bot config so
+ * the add writes it before it picks the slot's lobby start from it; a
+ * caller that sets the team afterwards has already missed that pick.
+ *
  * init is this bot's configuration, reaching its brain as the
  * BRAIN_INIT Lua table; it is copied, and NULL means no pairs. Each
  * bot carries its own, so a caller creating several in a row hands
@@ -499,7 +503,7 @@ void serverSimSetBotPreThinkHook(ServerSim *sim, void (*hook)(int playerNum));
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
                         aiType ai, gameType game, bool hiddenMines,
-                        const ScnTable *init);
+                        BYTE team, const ScnTable *init);
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum);
 void serverSimDestroyBots(ServerSim *sim);

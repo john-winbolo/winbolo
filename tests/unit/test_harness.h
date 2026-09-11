@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "scenario_table.h"  /* ScnTable — the fixture brain's record below */
+
 #define UT_FAIL(fmt, ...)                                                   \
     do {                                                                    \
         fprintf(stderr, "FAIL %s:%d: " fmt "\n",                            \
@@ -1988,6 +1990,19 @@ int run_scenario_map_place_mine(void);
 int run_scenario_map_remove_mine(void);
 int run_scenario_map_arm_records(void);
 
+/* The six roster ops (test_scenario_roster_arms.c). Spawning and removing
+ * queue and the sim makes one change a tick; the lobby three apply where
+ * they stand and refuse for the reasons their command arms refuse. */
+int run_scenario_roster_spawn_refusals(void);
+int run_scenario_roster_spawn_lands(void);
+int run_scenario_roster_spawn_paced(void);
+int run_scenario_roster_team_during_add(void);
+int run_scenario_roster_remove_bot(void);
+int run_scenario_roster_set_team(void);
+int run_scenario_lobby_add_bot(void);
+int run_scenario_lobby_remove_bot(void);
+int run_scenario_lobby_set_team(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */
@@ -2021,6 +2036,18 @@ struct ServerSim *ut_make_running_sim(const char *player_name);
 void ut_sound_reset(void);
 int  ut_sound_count(void);
 int  ut_sound_get(int index);
+
+/* The fixture brain in test_stubs.c. The unit binary has no Lua brain, so
+ * luaBrainInstanceCreate is a stub there; arming it makes the stub report
+ * success, so a test can drive a bot through botManagerAddBot, and record
+ * the init table each bot was created with. ut_brain_stub_arm(false) puts
+ * it back to refusing, which is how every other test finds it. */
+void ut_brain_stub_arm(bool succeed);
+bool ut_brain_stub_made(int player_num);
+const ScnTable *ut_brain_stub_init(int player_num);
+/* The team the slot held as its brain was made — the team serverSimAddBot
+ * had already written and picked the slot's lobby start from. */
+int ut_brain_stub_team(int player_num);
 
 #ifdef __cplusplus
 }

@@ -231,7 +231,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i + 1);
             if (serverSimCreateBot(bg->sim, i, brainPath, name, aiFull, gameTournament,
-                                   false, NULL)) {
+                                   false, 0, NULL)) {
                 bg->numBots++;
             }
         }

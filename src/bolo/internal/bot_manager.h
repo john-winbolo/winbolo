@@ -312,6 +312,11 @@ int  botManagerGetPendingThreads(const struct ServerSim *sim);
  *  ai          - AI advantage level
  *  game        - Game type
  *  hiddenMines - Whether hidden mines are enabled
+ *  team        - Team for the slot, 0 for none. Goes into the
+ *                config serverSimAddBot takes, which writes it
+ *                and then picks the slot's lobby start from it,
+ *                so a bot lands near its team rather than being
+ *                moved onto the team afterwards.
  *  init        - This bot's configuration, reaching its brain
  *                as the BRAIN_INIT table. Copied into the
  *                BotContext, so the caller keeps ownership.
@@ -320,7 +325,7 @@ int  botManagerGetPendingThreads(const struct ServerSim *sim);
 bool botManagerAddBot(struct ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
                       aiType ai, gameType game, bool hiddenMines,
-                      const ScnTable *init);
+                      BYTE team, const ScnTable *init);
 
 /* Swap the brain script on an already-added bot, identified by its
  * catalogue index. brainIdx == 0xFF resolves to the CLI-configured

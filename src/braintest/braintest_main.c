@@ -6099,8 +6099,10 @@ int main(int argc, char *argv[]) {
                         initText[0] ? " init=" : "", initText);
             }
             SDL_PumpEvents(); /* keep window responsive during brain.open() */
+            /* No team in the add: -teams places these bots through
+             * serverSimSetTeamBatch below, once the whole set is in. */
             bool ok = serverSimCreateBot(app.sim, (BYTE)i, botInit[i].path, name,
-                                       optAI, optGame, false, &botInit[i].init);
+                                       optAI, optGame, false, 0, &botInit[i].init);
             SDL_PumpEvents();
             g_currentInitBot = -1;
             g_currentInitBrainName[0] = '\0';
