@@ -151,6 +151,19 @@ typedef enum {
     SCN_OP_SET_RULE
 } ScenarioOpType;
 
+/* A payload byte holding 0xFF means there is nothing there: no slot, no
+ * item, or leave the field as it is. Which of the three a field means is
+ * on the field. */
+#define SCN_NONE 0xFF
+
+/* ScnOpTankSetStocks.mode. Absolute writes the value; delta adds it. */
+#define SCN_STOCK_ABSOLUTE 0
+#define SCN_STOCK_DELTA    1
+
+/* ScnOpTankTeleport.mode. Square takes x and y; start takes a start index. */
+#define SCN_TELEPORT_SQUARE 0
+#define SCN_TELEPORT_START  1
+
 /* ── Tank ──────────────────────────────────────────────────────── */
 
 typedef struct {

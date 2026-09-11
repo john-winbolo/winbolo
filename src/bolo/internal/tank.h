@@ -350,6 +350,25 @@ BYTE tankGet256Dir(tank *value);
 void tankUpdate(struct GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool inBrain);
 
 /*********************************************************
+*NAME:          tankKillNow
+*PURPOSE:
+*  Kills the tank where it stands: the tankKill callback,
+*  the pills it was carrying spilled, armour emptied and
+*  the wait before it comes back started. What every death
+*  has in common, shared by the drowning path and by a
+*  death ordered from outside the sim. The caller records
+*  the cause and plays any sound the death deserves.
+*
+*ARGUMENTS:
+*  sim    - The game the tank belongs to
+*  value  - Pointer to the tank structure
+*  killer - Slot credited with the kill; a death nobody
+*           caused names the dying tank's own slot
+*  cause  - A LAST_DEATH_BY_* value
+*********************************************************/
+void tankKillNow(struct GameSim *sim, tank *value, BYTE killer, BYTE cause);
+
+/*********************************************************
 *NAME:          tankIsMoving
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/11/98
@@ -949,6 +968,40 @@ void tankCheckPillCapture(struct GameSim *sim, tank *value);
 void tankDropPills(struct GameSim *sim, tank *value);
 
 /*********************************************************
+*NAME:          tankTakePill
+*PURPOSE:
+*  Puts one pillbox into a tank: marks it carried, records
+*  the pickup, adds it to the carry list and moves the
+*  ownership across. Shared by the drive-over capture and
+*  by a pill handed to a tank from outside the sim; the
+*  caller decides whether the pill may be taken.
+*
+*ARGUMENTS:
+*  sim     - The game the tank belongs to
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*********************************************************/
+void tankTakePill(struct GameSim *sim, tank *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          tankDropPillAt
+*PURPOSE:
+*  Drops one carried pillbox on a named map square and
+*  takes it off the tank's carry list. Returns FALSE and
+*  changes nothing when the square will not hold a pill,
+*  so a caller laying several out can try the next square.
+*  The pill lands dead, owned by the tank that carried it.
+*
+*ARGUMENTS:
+*  sim     - The game the tank belongs to
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*  mx      - X map square to drop it on
+*  my      - Y map square to drop it on
+*********************************************************/
+bool tankDropPillAt(struct GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my);
+
+/*********************************************************
 *NAME:          tankIsOnBoat
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/1/99
@@ -1488,6 +1541,17 @@ BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim);
 BYTE tankBoatExitSpeed(tank value);
 
 void tankGetCarriedPillNum(tank *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          tankIsCarryingPill
+*PURPOSE:
+*  Returns whether this tank is carrying a named pillbox.
+*
+*ARGUMENTS:
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*********************************************************/
+bool tankIsCarryingPill(tank *value, BYTE pillNum);
 void tankPutPill(struct GameSim *sim, tank *value, BYTE pillNum);
 
 
@@ -1504,6 +1568,29 @@ void tankPutPill(struct GameSim *sim, tank *value, BYTE pillNum);
 *  onBoat - On Boat value to set
 *********************************************************/
 void tankSetOnBoat(tank *value, bool onBoat);
+
+/*********************************************************
+*NAME:          tankClearBoatTrail
+*PURPOSE:
+*  Forgets the river square the tank was last afloat on, so
+*  leaving the boat does not turn a square the tank never
+*  sailed from into a boat tile.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+void tankClearBoatTrail(tank *value);
+
+/*********************************************************
+*NAME:          tankClearResidualSpeed
+*PURPOSE:
+*  Throws away the sub-tick movement the tank had banked,
+*  for a tank put somewhere it did not drive to.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+void tankClearResidualSpeed(tank *value);
 
 /*********************************************************
 *NAME:          tankSetSpeed

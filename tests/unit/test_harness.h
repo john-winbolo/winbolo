@@ -1886,6 +1886,14 @@ int run_scenario_read_builder_info(void);
 int run_scenario_read_terrain_buffer(void);
 int run_scenario_read_num_fielded(void);
 
+int run_scenario_tank_set_stocks(void);
+int run_scenario_tank_kill(void);
+int run_scenario_tank_teleport(void);
+int run_scenario_tank_set_boat(void);
+int run_scenario_tank_give_pill(void);
+int run_scenario_tank_drop_pill(void);
+int run_scenario_tank_arm_records(void);
+
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
 int run_console_read_reports_eof(void);

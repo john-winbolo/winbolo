@@ -33,7 +33,11 @@
 #include "server_sim_internal.h"
 #include "server_sim_scenario.h"
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
-#include "tank.h"          /* tankSetModifiers — the set-modifiers arm */
+#include "tank.h"          /* the tank arms mutate through these */
+#include "bolo_map.h"      /* mapGetPos — the terrain the tank arms test */
+#include "pillbox.h"       /* the pill reads the give and drop arms make */
+#include "starts.h"        /* startsGetStart — the teleport arm's start mode */
+#include "gametype.h"      /* TANK_FULL_* — the stock caps */
 #include "log.h"           /* logAddEvent — the arm's record */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
@@ -44,6 +48,336 @@
 BOLO_STATIC_ASSERT(
     1 + 2 + 1 + 1 + 2 + SCN_PANEL_MAX <= CHANNEL_CONTROL_SEG,
     scn_panel_max_fits_one_control_segment);
+
+/* The two checks every tank arm makes before it looks at its own payload:
+ * the round is running, and the slot names a connected player with a tank in
+ * the world. Hands the tank back so the arm does not look it up again.
+ * Checked before anything else so the two refusals do not depend on whether a
+ * tank happens to exist in a state that has none. */
+static ScnOpResult scenarioTankFor(ServerSim *sim, BYTE slot, tank **out) {
+    if (sim->state != serverStateRunning) {
+        return SCN_OP_WRONG_STATE;
+    }
+    if (slot >= MAX_TANKS || !sim->playerConnected[slot] ||
+        sim->sim.tanks[slot] == NULL) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    *out = &sim->sim.tanks[slot];
+    return SCN_OP_OK;
+}
+
+/* What one stock should end up at, or -1 to leave it alone. Absolute takes
+ * the value as written and refuses one past the cap, because a script that
+ * asks for 500 shells has made a mistake worth telling it about. A delta is
+ * allowed to aim outside the range and lands on the nearest end of it, which
+ * is what "give them ten more" should do to a nearly full tank. */
+static int scenarioStockTarget(BYTE mode, int16_t asked, BYTE current,
+                               BYTE cap, bool *bad) {
+    int want;
+    if (mode == SCN_STOCK_ABSOLUTE) {
+        if (asked == -1) {
+            return -1;
+        }
+        if (asked < 0 || asked > (int)cap) {
+            *bad = true;
+            return -1;
+        }
+        return (int)asked;
+    }
+    if (asked == 0) {
+        return -1;
+    }
+    want = (int)current + (int)asked;
+    if (want < 0) {
+        want = 0;
+    } else if (want > (int)cap) {
+        want = cap;
+    }
+    return want;
+}
+
+/* Write a tank's stocks, either as the values to hold or as amounts to add.
+ * Nothing is published: the next snapshot carries the group, and the tick's
+ * own pass writes the stock record. */
+static ScnOpResult scenarioOpTankSetStocks(ServerSim *sim,
+                                           const ScnOpTankSetStocks *p) {
+    tank *t = NULL;
+    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+    int shells, mines, armour, trees;
+    bool bad = false;
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (p->mode != SCN_STOCK_ABSOLUTE && p->mode != SCN_STOCK_DELTA) {
+        return SCN_OP_RANGE;
+    }
+
+    shells = scenarioStockTarget(p->mode, p->shells, tankGetShells(t),
+                                 TANK_FULL_SHELLS, &bad);
+    mines  = scenarioStockTarget(p->mode, p->mines,  tankGetMines(t),
+                                 TANK_FULL_MINES,  &bad);
+    armour = scenarioStockTarget(p->mode, p->armour, tankGetArmour(t),
+                                 TANK_FULL_ARMOUR, &bad);
+    trees  = scenarioStockTarget(p->mode, p->trees,  tankGetTrees(t),
+                                 TANK_FULL_TREES,  &bad);
+    if (bad) {
+        return SCN_OP_RANGE;
+    }
+    /* A destroyed tank takes no armour, the same answer tankAddArmour gives.
+       Asked before the first write so the other three do not land on a tank
+       the op is about to refuse. */
+    if (armour >= 0 && tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+
+    if (shells >= 0) {
+        tankSetShells(t, (BYTE)shells);
+    }
+    if (mines >= 0) {
+        tankSetMines(t, (BYTE)mines);
+    }
+    if (armour >= 0) {
+        tankSetArmour(t, (BYTE)armour);
+    }
+    if (trees >= 0) {
+        tankSetTrees(t, (BYTE)trees);
+    }
+    return SCN_OP_OK;
+}
+
+/* Kill a tank where it stands. The death goes through tankKillNow, so the
+ * kill event, the pills it was carrying and the wait before it comes back
+ * are the ones a drowning produces. */
+static ScnOpResult scenarioOpTankKill(ServerSim *sim,
+                                      const ScnOpTankKill *p) {
+    tank *t = NULL;
+    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+    BYTE killer;
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+    /* A death nobody caused is credited to the dying tank, as drowning is, so
+       the kill event and the WinBolo.net report never carry a slot that is
+       not a player. A named killer has to be one. */
+    killer = (p->killer == SCN_NONE) ? p->slot : p->killer;
+    if (killer >= MAX_TANKS || !sim->playerConnected[killer]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+
+    tankSetLastTankDeath(t, p->cause);
+    tankKillNow(&sim->sim, t, killer, p->cause);
+    return SCN_OP_OK;
+}
+
+/* Put a tank on a square, or on one of the map's starts. The position lands
+ * at the middle of the square, as a respawn's does, and the tank arrives
+ * stopped and afloat or not according to what it is standing on.
+ *
+ * The two modes are checked differently on purpose. A square named by a
+ * script is a square nobody has vetted, so the terrain is tested. A start is
+ * resolved by the engine into a square it would itself spawn a tank on, so
+ * there is nothing left to test — and testing it anyway would refuse every
+ * start there is, because a start record sits on deep sea. */
+static ScnOpResult scenarioOpTankTeleport(ServerSim *sim,
+                                          const ScnOpTankTeleport *p) {
+    tank *t = NULL;
+    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+    BYTE mx, my, pos;
+    TURNTYPE angle;
+    bool resolved = false;   /* the destination came from the start resolver */
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+
+    if (p->mode == SCN_TELEPORT_SQUARE) {
+        mx = p->x;
+        my = p->y;
+        angle = (p->dir == SCN_NONE) ? tankGetAngle(t) : (TURNTYPE)p->dir;
+    } else if (p->mode == SCN_TELEPORT_START) {
+        BYTE sx = 0;
+        BYTE sy = 0;
+        TURNTYPE sdir = 0.0f;
+
+        if (startsGetNumStarts(&sim->sim.ss) == 0) {
+            return SCN_OP_NO_SUCH_ITEM;
+        }
+        if (p->start != SCN_NONE &&
+            p->start >= startsGetNumStarts(&sim->sim.ss)) {
+            return SCN_OP_NO_SUCH_ITEM;
+        }
+
+        /* startsGetStart is the only thing that turns a start record into a
+           square a tank can stand on: the record itself names deep sea, and
+           the square the tank arrives at is the nearest free one the scatter
+           search finds around it. inStartFind keeps the rest of the sim from
+           acting on a tank that is between places, as the respawn path does. */
+        if (p->start == SCN_NONE) {
+            sim->sim.inStartFind = TRUE;
+            startsGetStart(&sim->sim, &sim->sim.ss, &sx, &sy, &sdir, p->slot);
+            sim->sim.inStartFind = FALSE;
+        } else {
+            /* Naming a start is asking for that same resolution on a chosen
+               record, which is what the reserved-start slot already means to
+               startsGetStart. The slot is borrowed and handed back: a start
+               reserved for this player's next respawn is not this op's to
+               spend. */
+            BYTE reserved = sim->sim.pendingStartIdx[p->slot];
+            sim->sim.pendingStartIdx[p->slot] = p->start;
+            sim->sim.inStartFind = TRUE;
+            startsGetStart(&sim->sim, &sim->sim.ss, &sx, &sy, &sdir, p->slot);
+            sim->sim.inStartFind = FALSE;
+            sim->sim.pendingStartIdx[p->slot] = reserved;
+        }
+
+        mx = sx;
+        my = sy;
+        angle = (p->dir == SCN_NONE) ? sdir : (TURNTYPE)p->dir;
+        resolved = true;
+    } else {
+        return SCN_OP_RANGE;
+    }
+
+    pos = mapGetPos(&sim->sim.mp, mx, my);
+    if (!resolved) {
+        if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
+            my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
+            return SCN_OP_BAD_SQUARE;
+        }
+        if (pos == DEEP_SEA || pos == BUILDING || pos == HALFBUILDING) {
+            return SCN_OP_BAD_TERRAIN;
+        }
+        /* A dead pill is drivable and can be picked up; a live one is solid,
+           the same split mapGetSpeed makes. */
+        if (pillsExistPos(&sim->sim.pb, mx, my) == TRUE &&
+            pillsDeadPos(&sim->sim.pb, mx, my) == FALSE) {
+            return SCN_OP_BAD_TERRAIN;
+        }
+    }
+
+    tankSetWorld(&sim->sim, t,
+                 (WORLD)(((WORLD)mx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                 (WORLD)(((WORLD)my << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                 angle, FALSE);
+    tankSetSpeed(t, 0);
+    tankClearResidualSpeed(t);
+    /* Water of any kind carries a boat, and a tank left standing on deep sea
+       without one drowns on the next tick. A start always lands on deep sea,
+       so this is what puts the arriving tank in its boat the way a respawn
+       does. */
+    tankSetOnBoat(t, (pos == DEEP_SEA || pos == RIVER || pos == BOAT));
+    tankClearBoatTrail(t);
+    return SCN_OP_OK;
+}
+
+/* Put a tank on a boat or take it off one. Going afloat needs water under it,
+ * because a boat on grass is a tank that can drive anywhere at boat speed. */
+static ScnOpResult scenarioOpTankSetBoat(ServerSim *sim,
+                                         const ScnOpTankSetBoat *p) {
+    tank *t = NULL;
+    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+    if (p->onBoat) {
+        BYTE pos = mapGetPos(&sim->sim.mp, tankGetMX(t), tankGetMY(t));
+        if (pos != RIVER && pos != BOAT) {
+            return SCN_OP_BAD_TERRAIN;
+        }
+    }
+
+    tankSetOnBoat(t, p->onBoat);
+    /* The square the tank was last afloat on turns back into a boat when it
+       lands. It never sailed from wherever it is now, so forget it. */
+    tankClearBoatTrail(t);
+    return SCN_OP_OK;
+}
+
+/* Hand a pill to a tank. Unlike driving over one this does not ask whether
+ * the pill is capturable: a script may take an armoured pill with a man
+ * standing on it, which is the point of being able to hand one over. */
+static ScnOpResult scenarioOpTankGivePill(ServerSim *sim,
+                                          const ScnOpTankGivePill *p) {
+    tank *t = NULL;
+    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+    pillbox item;
+    BYTE pillNum;
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+    if (p->pill >= pillsGetNumPills(&sim->sim.pb)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    pillNum = (BYTE)(p->pill + 1);   /* the pill list counts from 1 */
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&sim->sim.pb, &item, pillNum);
+    if (item.inTank) {
+        return SCN_OP_CARRIED;
+    }
+    /* A map holds at most as many pills as the carry list does, so today one
+       tank can hold every pill there is and this never fires. It stays
+       because the answer is the arm's to give if the two caps ever part. */
+    if (tankGetNumCarriedPills(t) >= MAX_PILLS) {
+        return SCN_OP_FULL;
+    }
+
+    tankTakePill(&sim->sim, t, pillNum);
+    return SCN_OP_OK;
+}
+
+/* Drop a pill the tank is carrying onto a square, or onto the one it is
+ * standing on. */
+static ScnOpResult scenarioOpTankDropPill(ServerSim *sim,
+                                          const ScnOpTankDropPill *p) {
+    tank *t = NULL;
+    ScnOpResult r = scenarioTankFor(sim, p->slot, &t);
+    BYTE pillNum, mx, my;
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (p->pill >= pillsGetNumPills(&sim->sim.pb)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    pillNum = (BYTE)(p->pill + 1);   /* the pill list counts from 1 */
+    if (!tankIsCarryingPill(t, pillNum)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+
+    if (p->x == SCN_NONE && p->y == SCN_NONE) {
+        mx = tankGetMX(t);
+        my = tankGetMY(t);
+    } else {
+        mx = p->x;
+        my = p->y;
+    }
+    if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
+        my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    /* tankDropPillAt makes the same square test the drop-on-death path makes
+       and changes nothing when the square will not hold a pill. */
+    if (!tankDropPillAt(&sim->sim, t, pillNum, mx, my)) {
+        return SCN_OP_BAD_TERRAIN;
+    }
+    return SCN_OP_OK;
+}
 
 /* Replace a tank's whole modifier set. The op carries every value, so a
  * script that wants to change one reads the tank first. Nothing is published:
@@ -103,12 +437,18 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
 
     switch (op->type) {
         case SCN_OP_NONE:                return SCN_OP_UNSUPPORTED;
-        case SCN_OP_TANK_SET_STOCKS:     return SCN_OP_UNSUPPORTED;
-        case SCN_OP_TANK_KILL:           return SCN_OP_UNSUPPORTED;
-        case SCN_OP_TANK_TELEPORT:       return SCN_OP_UNSUPPORTED;
-        case SCN_OP_TANK_SET_BOAT:       return SCN_OP_UNSUPPORTED;
-        case SCN_OP_TANK_GIVE_PILL:      return SCN_OP_UNSUPPORTED;
-        case SCN_OP_TANK_DROP_PILL:      return SCN_OP_UNSUPPORTED;
+        case SCN_OP_TANK_SET_STOCKS:
+            return scenarioOpTankSetStocks(sim, &op->u.tankSetStocks);
+        case SCN_OP_TANK_KILL:
+            return scenarioOpTankKill(sim, &op->u.tankKill);
+        case SCN_OP_TANK_TELEPORT:
+            return scenarioOpTankTeleport(sim, &op->u.tankTeleport);
+        case SCN_OP_TANK_SET_BOAT:
+            return scenarioOpTankSetBoat(sim, &op->u.tankSetBoat);
+        case SCN_OP_TANK_GIVE_PILL:
+            return scenarioOpTankGivePill(sim, &op->u.tankGivePill);
+        case SCN_OP_TANK_DROP_PILL:
+            return scenarioOpTankDropPill(sim, &op->u.tankDropPill);
         case SCN_OP_TANK_SET_MODIFIERS:
             return scenarioOpTankSetModifiers(sim, &op->u.tankSetModifiers);
         case SCN_OP_LGM_DISPATCH:        return SCN_OP_UNSUPPORTED;

@@ -113,7 +113,13 @@ int run_scenario_op_unknown_type_unsupported(void) {
 /* The ops whose arms are written. Each one is covered by its own tests; this
  * list is what keeps the sweep below honest as they land one at a time. */
 static bool opArmHasLanded(ScenarioOpType t) {
-    return t == SCN_OP_TANK_SET_MODIFIERS;   /* test_tank_modifiers.c */
+    return t == SCN_OP_TANK_SET_MODIFIERS ||  /* test_tank_modifiers.c */
+           t == SCN_OP_TANK_SET_STOCKS ||     /* test_scenario_tank_arms.c */
+           t == SCN_OP_TANK_KILL ||
+           t == SCN_OP_TANK_TELEPORT ||
+           t == SCN_OP_TANK_SET_BOAT ||
+           t == SCN_OP_TANK_GIVE_PILL ||
+           t == SCN_OP_TANK_DROP_PILL;
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The
@@ -196,8 +202,12 @@ int run_scenario_op_refused_in_policy(void) {
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_IN_POLICY,
                   "an op issued from inside a policy call must be refused");
 
+    /* What the second call proves is that the prelude stopped refusing, not
+       what the op then went on to answer. SCN_OP_IN_POLICY is the prelude's
+       alone, so asking only that it is gone keeps this case true whatever
+       state the op's own arm is in — including having no arm at all. */
     serverSimScenarioPolicyLeave(sim);
-    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_UNSUPPORTED,
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) != SCN_OP_IN_POLICY,
                   "leaving the policy call must let ops through again");
 
     serverSimDestroy(sim);

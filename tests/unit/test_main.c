@@ -832,6 +832,13 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_read_builder_info",              run_scenario_read_builder_info              },
     { "scenario_read_terrain_buffer",            run_scenario_read_terrain_buffer            },
     { "scenario_read_num_fielded",               run_scenario_read_num_fielded               },
+    { "scenario_tank_set_stocks",                run_scenario_tank_set_stocks                },
+    { "scenario_tank_kill",                      run_scenario_tank_kill                      },
+    { "scenario_tank_teleport",                  run_scenario_tank_teleport                  },
+    { "scenario_tank_set_boat",                  run_scenario_tank_set_boat                  },
+    { "scenario_tank_give_pill",                 run_scenario_tank_give_pill                 },
+    { "scenario_tank_drop_pill",                 run_scenario_tank_drop_pill                 },
+    { "scenario_tank_arm_records",               run_scenario_tank_arm_records               },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

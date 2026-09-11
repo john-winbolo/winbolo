@@ -3314,6 +3314,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
+    # The tank ops: the six arms, the refusals each one answers with, and the
+    # records they leave through the functions a player's own action reaches.
+    tests/unit/test_scenario_tank_arms.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -4652,6 +4655,13 @@ set(_unit_test_names
     scenario_read_builder_info
     scenario_read_terrain_buffer
     scenario_read_num_fielded
+    scenario_tank_set_stocks
+    scenario_tank_kill
+    scenario_tank_teleport
+    scenario_tank_set_boat
+    scenario_tank_give_pill
+    scenario_tank_drop_pill
+    scenario_tank_arm_records
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

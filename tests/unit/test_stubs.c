@@ -307,15 +307,25 @@ bool wbnStubLastLockReported = FALSE;
 int      wbnStubWinEventCalls = 0;
 uint16_t wbnStubWinEventMask  = 0;   /* bit i = a win credited to slot i */
 
+/* winbolonetAddEvent TANK_KILL spy: the tank-arm tests watch these to prove a
+ * scripted kill is reported the way any other kill is, and with which slots. */
+int  wbnStubKillEventCalls = 0;
+BYTE wbnStubLastKiller = 0xFF;
+BYTE wbnStubLastKilled = 0xFF;
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
-  (void)isServer; (void)playerB; (void)aIsBot; (void)bIsBot;
+  (void)isServer; (void)aIsBot; (void)bIsBot;
   if (eventType == WINBOLO_NET_EVENT_WIN) {
     wbnStubWinEventCalls++;
     if (playerA < MAX_TANKS) {
       wbnStubWinEventMask |= (uint16_t)(1u << playerA);
     }
+  } else if (eventType == WINBOLO_NET_EVENT_TANK_KILL) {
+    wbnStubKillEventCalls++;
+    wbnStubLastKiller = playerA;
+    wbnStubLastKilled = playerB;
   }
 }
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }

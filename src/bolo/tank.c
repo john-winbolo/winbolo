@@ -587,23 +587,49 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
 	  tankDeath(sim, value);
     }
   } else if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
-      /* Death by drowning — server-authoritative */
+      /* Death by drowning — server-authoritative. The sink sound and the
+         message belong to drowning; the death itself is tankKillNow, which a
+         death ordered from outside the sim goes through too. */
       BYTE drownedPlayer = gameSimGetTankPlayer(sim, value);
       tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
       sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
       if (!isServer) {
         sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
       }
-      sim->callbacks.tankKill(sim->callbacks.ctx, drownedPlayer, drownedPlayer, LAST_DEATH_BY_DEEPSEA, tankGetNumCarriedPills(value));
-      tankDropPills(sim, value);
-      (*value)->armour = 0;
-      (*value)->destroyed = TRUE;
-      (*value)->deathWait = TANK_DEATH_WAIT;
+      tankKillNow(sim, value, drownedPlayer, LAST_DEATH_BY_DEEPSEA);
   } else {
     /* Tank Movement (unified boat/land) */
     (*value)->newTank = FALSE;
     tankMoveUnified(sim, value, bmx, bmy, tb, inBrain);
   }
+}
+
+/*********************************************************
+*NAME:          tankKillNow
+*PURPOSE:
+*  Kills the tank where it stands: tells the host through
+*  the tankKill callback, spills whatever pills it was
+*  carrying, empties its armour and starts the wait before
+*  it comes back. The caller records the cause and plays
+*  whatever sound the death deserves; this is the part
+*  every death has in common.
+*
+*ARGUMENTS:
+*  sim    - The game the tank belongs to
+*  value  - Pointer to the tank structure
+*  killer - Slot credited with the kill. A death nobody
+*           caused names the dying tank's own slot, the
+*           way drowning does.
+*  cause  - A LAST_DEATH_BY_* value
+*********************************************************/
+void tankKillNow(GameSim *sim, tank *value, BYTE killer, BYTE cause) {
+  sim->callbacks.tankKill(sim->callbacks.ctx, killer,
+                          gameSimGetTankPlayer(sim, value), cause,
+                          tankGetNumCarriedPills(value));
+  tankDropPills(sim, value);
+  (*value)->armour = 0;
+  (*value)->destroyed = TRUE;
+  (*value)->deathWait = TANK_DEATH_WAIT;
 }
 
 /*********************************************************
@@ -2155,7 +2181,6 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 	BYTE bmx;       /* MAP x-coord of the probe being tested */
 	BYTE bmy;       /* MAP y-coord of the probe being tested */
 	BYTE pillNum;   /* The pill number */
-	tankCarryPb q;  /* Temp pointer for adding PBs to tank */
 	bool captured = FALSE;
 	int p;
 
@@ -2189,21 +2214,7 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 			if (bmx != 0 && bmy != 0 && pillsIsCapturable(pb, bmx,bmy) == TRUE) {
 				pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
 				while (pillNum != PILL_NOT_FOUND) {
-					pillsSetPillInTank(pb,pillNum, TRUE);
-					if (sim->callbacks.recordPillPickup) {
-						sim->callbacks.recordPillPickup(sim->callbacks.ctx, gameSimGetTankPlayer(sim, value), pillNum, bmx, bmy);
-					}
-					/* We are a client.. which should only happen in a single player game */
-					if (!isServer) {
-						frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
-					}
-					New(q);
-					q->pillNum = pillNum;
-					q->next = (*value)->carryPills;
-					(*value)->carryPills = q;
-					if ((pillsGetPillOwner(pb, pillNum)) != gameSimGetTankPlayer(sim, value)) {
-						pillsSetPillOwner(sim, pb, pillNum, gameSimGetTankPlayer(sim, value), FALSE);
-					}
+					tankTakePill(sim, value, pillNum);
 					if (pillsExistPos(pb, bmx, bmy) == TRUE) {
 						pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
 					} else {
@@ -2215,6 +2226,91 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 		}
 		if (captured && !sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
 	}
+}
+
+/*********************************************************
+*NAME:          tankTakePill
+*PURPOSE:
+* Puts one pillbox into a tank: marks it carried, tells the
+* host so the pickup is recorded, adds it to the tank's
+* carry list and moves the ownership across. The caller
+* decides whether the pill may be taken; this is what
+* taking it does.
+*
+*ARGUMENTS:
+*  sim     - The game the tank belongs to
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*********************************************************/
+void tankTakePill(GameSim *sim, tank *value, BYTE pillNum) {
+  pillboxes *pb = &sim->pb;
+  pillbox p;      /* The pill, read for the square the pickup is recorded at */
+
+  memset(&p, 0, sizeof(p));
+  pillsGetPill(pb, &p, pillNum);
+  pillsSetPillInTank(pb, pillNum, TRUE);
+  if (sim->callbacks.recordPillPickup) {
+    sim->callbacks.recordPillPickup(sim->callbacks.ctx, gameSimGetTankPlayer(sim, value), pillNum, p.x, p.y);
+  }
+  tankPutPill(sim, value, pillNum);
+  if ((pillsGetPillOwner(pb, pillNum)) != gameSimGetTankPlayer(sim, value)) {
+    pillsSetPillOwner(sim, pb, pillNum, gameSimGetTankPlayer(sim, value), FALSE);
+  }
+}
+
+/*********************************************************
+*NAME:          tankDropPillAt
+*PURPOSE:
+* Drops one carried pillbox on a named map square. Answers
+* FALSE and changes nothing when the square will not hold a
+* pill — off the minable area, or already holding a pill, a
+* base, a building, a half-building or a boat — so a caller
+* laying several out can move along and try the next one.
+* The pill lands dead, owned by the tank that carried it,
+* at the normal firing interval.
+*
+*ARGUMENTS:
+*  sim     - The game the tank belongs to
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*  mx      - X map square to drop it on
+*  my      - Y map square to drop it on
+*********************************************************/
+bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
+  map *mp = &sim->mp;
+  pillboxes *pb = &sim->pb;
+  bases *bs = &sim->bs;
+  bool isServer = sim->isServer;
+  pillbox item;   /* Item to add to the pillbox */
+  BYTE pos;       /* The Map position */
+
+  if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
+      my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
+    return FALSE;
+  }
+  pos = mapGetPos(mp, mx, my);
+  if (pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE ||
+      pos == BUILDING || pos == HALFBUILDING || pos == BOAT) {
+    return FALSE;
+  }
+
+  item.x = mx;
+  item.y = my;
+  item.armour = 0;
+  item.owner = gameSimGetTankPlayer(sim, value);
+  item.speed = PILLBOX_ATTACK_NORMAL;
+  item.reload = PILLBOX_ATTACK_NORMAL;
+  item.coolDown = 0;
+  item.inTank = FALSE;
+  item.justSeen = FALSE;
+  if (isServer) {
+    pillsSetPill(pb,&item,pillNum);
+  }
+  if (!isServer) {
+    frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
+  }
+  tankGetCarriedPillNum(value, pillNum);
+  return TRUE;
 }
 
 /*********************************************************
@@ -2233,9 +2329,6 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 *  bs     - Pointer to the bases structure
 *********************************************************/
 void tankDropPills(GameSim *sim, tank *value) {
-  map *mp = &sim->mp;
-  pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
   bool isServer = sim->isServer;
   WORLD conv;     /* Used for conversion */
   BYTE bmx;       /* Current Position of Tank */
@@ -2243,9 +2336,7 @@ void tankDropPills(GameSim *sim, tank *value) {
   BYTE numPills;  /* The number of pills on the tank */
   BYTE width;     /* How wide the pills length should be */
   tankCarryPb q;  /* Temp pointer for removing pills */
-  pillbox item;   /* Item to add to the pillbox */
   BYTE count;     /* Looping variable */
-  BYTE pos;       /* The Map position */
 
 
   /* Get the number of pills on the tank */
@@ -2257,13 +2348,6 @@ void tankDropPills(GameSim *sim, tank *value) {
   }
   if (numPills > 0 && (isServer)) {
     count = 0;
-    item.armour = 0;
-    item.owner = gameSimGetTankPlayer(sim, value);
-    item.speed = PILLBOX_ATTACK_NORMAL;
-    item.reload = PILLBOX_ATTACK_NORMAL;
-    item.coolDown = 0;
-    item.inTank = FALSE;
-    item.justSeen = FALSE;
     /* Get tank location */
     conv = (*value)->x;
     conv >>= TANK_SHIFT_MAPSIZE;
@@ -2291,25 +2375,10 @@ void tankDropPills(GameSim *sim, tank *value) {
     while (NonEmpty((*value)->carryPills)) {
       q = (*value)->carryPills;
       if (isServer) {
-        item.x = bmx;
-        item.y = bmy+count;
-        if (item.x > MAP_MINE_EDGE_LEFT && item.x < MAP_MINE_EDGE_RIGHT && item.y > MAP_MINE_EDGE_TOP && item.y < MAP_MINE_EDGE_BOTTOM) {
-          pos = mapGetPos(mp, item.x, item.y);
-          if (pillsExistPos(pb, item.x, item.y) == FALSE && basesExistPos(bs, item.x, item.y) == FALSE && pos != BUILDING && pos != HALFBUILDING && pos != BOAT) {
-            if (isServer) {
-              pillsSetPill(pb,&item,q->pillNum);
-            }
-            if (!isServer) {
-              frontEndStatusPillbox(clientSimFromSim(sim), q->pillNum, (pillsGetAllianceNum(sim, pb, q->pillNum)));
-            }
-            (*value)->carryPills = TankPillsTail(q);
-            Dispose(q);
-          }
-        }
+        tankDropPillAt(sim, value, q->pillNum, bmx, (BYTE)(bmy+count));
         count++;
         if (count == width) {
           count = 0;
-          item.y = bmy;
           bmx++;
         }
       } else {
@@ -2506,6 +2575,28 @@ bool tankGetCarriedPill(tank *value, BYTE *pillNum, bool perform) {
     returnValue = TRUE;
   }
   return returnValue;
+}
+
+/*********************************************************
+*NAME:          tankIsCarryingPill
+*PURPOSE:
+* Returns whether this tank is carrying a named pillbox.
+*
+*ARGUMENTS:
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*********************************************************/
+bool tankIsCarryingPill(tank *value, BYTE pillNum) {
+  tankCarryPb q;
+
+  q = (*value)->carryPills;
+  while (NonEmpty(q)) {
+    if (q->pillNum == pillNum) {
+      return TRUE;
+    }
+    q = TankPillsTail(q);
+  }
+  return FALSE;
 }
 
 void tankGetCarriedPillNum(tank *value, BYTE pillNum) {
@@ -3434,6 +3525,37 @@ int tankCalcCRCSetup(tank *value) {
 void tankSetOnBoat(tank *value, bool onBoat) {
   (*value)->onBoat = onBoat;
   (*value)->boatState = onBoat ? BoatState_InBoat : BoatState_NotOnBoat;
+}
+
+/*********************************************************
+*NAME:          tankClearBoatTrail
+*PURPOSE:
+*  Forgets the river square the tank was last on while
+*  afloat. Leaving a boat turns that square back into a
+*  boat tile, so anything that moves a tank or changes its
+*  boat state without sailing there clears the square
+*  first, as a fresh tank has it.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+void tankClearBoatTrail(tank *value) {
+  (*value)->lastBoatRiverX = 0;
+  (*value)->lastBoatRiverY = 0;
+}
+
+/*********************************************************
+*NAME:          tankClearResidualSpeed
+*PURPOSE:
+*  Throws away the sub-tick movement the tank had banked.
+*  A tank put somewhere it did not drive to keeps no part
+*  of the step it was halfway through.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+void tankClearResidualSpeed(tank *value) {
+  (*value)->residualSpeed = 0;
 }
 
 void tankSetSpeed(tank *value, SPEEDTYPE speed) {
