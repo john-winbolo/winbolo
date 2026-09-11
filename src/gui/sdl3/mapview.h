@@ -102,16 +102,14 @@ static inline SDL_Texture *mapViewSpriteSrc(const MapViewCtx *ctx,
 }
 
 /* Draw pre-built tile buffer. hiddenView marks the squares the player cannot
-   see into; those are drawn dimmed, because the tile they carry is what was
-   last seen there rather than what is there now. NULL draws every square at
-   full brightness. */
+   see into; those are washed over with fog, because the tile they carry is
+   what was last seen there rather than what is there now. NULL draws every
+   square clear. The colour and the strength are in fog_look.h, shared with
+   the full screen map so the same ground reads the same in both. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       screenHidden *hiddenView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY);
-
-/* How much of a hidden square's tile is drawn, out of 255. */
-#define MAPVIEW_HIDDEN_ALPHA 110
 
 /* The layer both views draw over their terrain — build cursor, these three
    passes, tank names, gunsight and the pill and base numbers, in one order —

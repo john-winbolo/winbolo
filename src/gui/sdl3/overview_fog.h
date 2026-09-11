@@ -43,11 +43,13 @@
 
 #include "types.h"          /* BYTE, MAP_ARRAY_SIZE */
 #include "overview_types.h" /* OverviewRect */
+#include "fog_look.h"       /* FOG_LOOK_ALPHA — shared with the classic view */
 
 /* Fog over ground the player is not looking at, as an alpha blended over the
- * terrain. 145 leaves 110/255 of the colour through, which is the multiply
- * the two-pass renderer used to dim remembered squares with. */
-#define OVERVIEW_FOG_ALPHA 145
+ * terrain. The mask this file builds carries that alpha per square, so full
+ * fog here is whatever the shared look says it is and the classic view washes
+ * its own tiles by the same amount. */
+#define OVERVIEW_FOG_ALPHA FOG_LOOK_ALPHA
 
 /* Squares the fade takes to reach that, counted outside the live region. At 0
  * a region's edge is its edge: a square the region covers is lit to the

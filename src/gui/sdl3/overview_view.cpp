@@ -369,9 +369,9 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
      * keeps the edge where the mask puts it. The view target above is set the
      * same way. */
     SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
-    /* Black fog — src is white, so this alone picks the colour a future tint
-     * would change. */
-    SDL_SetTextureColorMod(v->fog, 0, 0, 0);
+    /* The fog's colour — src is white, so this alone picks it. Grey rather
+     * than black: see fog_look.h for why a darkening had nothing to work on. */
+    SDL_SetTextureColorMod(v->fog, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B);
     v->fogRenderer = r;
     return true;
 }
