@@ -280,6 +280,31 @@ typedef struct {
 #define PING_DISPLAY_MS  5000
 #define PING_FADE_MS     1000
 
+/* Smart-ping anti-spam caps, per sender, shared by the two ends that enforce
+ * them so they cannot drift apart: the server relay limiter (the CMD_PING arm
+ * in server_command_dispatch.c, measured in sim ticks) and the client render
+ * backstop (the EVENT_PING arm in client_snapshot.c, measured in wall-clock
+ * ms). At most PING_SPAM_MAX_5S pings in any PING_SPAM_WINDOW_5S_SECONDS, AND
+ * at most PING_SPAM_MAX_30S in any PING_SPAM_WINDOW_30S_SECONDS; over EITHER
+ * window the ping is dropped (server: not relayed; client: not drawn/sounded).
+ * The two windows are nested, so the ring that tracks them is sized to the
+ * larger cap. */
+#define PING_SPAM_MAX_5S              3
+#define PING_SPAM_WINDOW_5S_SECONDS   5
+#define PING_SPAM_MAX_30S            10
+#define PING_SPAM_WINDOW_30S_SECONDS 30
+
+/* The client render backstop measures its windows in wall-clock ms while the
+ * server measures the authoritative limit in sim ticks. Network and frame
+ * jitter mean a ping the server accepted right at a window edge can arrive a
+ * little early on the client, so if the client used the exact same window it
+ * could drop a server-APPROVED ping (no marker, sound or line — invisible to
+ * the sender). The backstop only exists to catch a peer or server flooding,
+ * so it must never be the stricter end: the client shortens each counting
+ * window by this slack, which lets an edge ping through and keeps the real
+ * flood cap intact. */
+#define PING_SPAM_CLIENT_SLACK_MS  1000
+
 /* Sound event payloads. EVENT_SOUND, EVENT_SOUND_TANK_HIT and
  * EVENT_SOUND_SHOOT each carry four bytes, and the middle two carry one of two
  * shapes:

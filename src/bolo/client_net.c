@@ -440,6 +440,16 @@ void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendPlayerPingMute(ClientSim *cs, BYTE targetPlayer,
+                                    bool muted) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (targetPlayer >= MAX_TANKS) return;
+  ClientCommand cmd = { .type = CMD_PLAYER_PING_MUTE };
+  cmd.u.playerPingMute.targetPlayer = targetPlayer;
+  cmd.u.playerPingMute.muted        = muted ? 1 : 0;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendVoiceState(ClientSim *cs, bool hasMic, bool selfMuted) {
   if (cs == NULL || !cs->hasTransport) return;
   ClientCommand cmd = { .type = CMD_VOICE_STATE };

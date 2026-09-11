@@ -460,6 +460,27 @@ void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlag
                          bool inLobby);
 #endif
 
+/*********************************************************
+*NAME:          renderPlayerPingMuteCell
+*PURPOSE:
+*  Renders one player's smart-ping mute toggle for a player
+*  row, beside the voice cell: a size x size button that
+*  hides or shows that player's smart pings for this client,
+*  locally and on the server (CMD_PLAYER_PING_MUTE). Muting
+*  is independent of the voice/chat mute, so this is not
+*  gated on WINBOLO_VOICE. The local player's own row draws a
+*  blank of the same size — you always see your own pings.
+*  Draws only; the caller owns layout (SameLine, sizing).
+*ARGUMENTS:
+*  cs        - client sim, for the server-side mute send and
+*              the reflected client-side muted state
+*  playerNum - player slot; also keys the ImGui id
+*  isSelf    - true when playerNum is the local player
+*  size      - cell edge length in pixels
+*********************************************************/
+void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
+                              float size);
+
 /* Draws the country flag for an alpha-2 code and, on hover, a localized
  * country-name tooltip. Returns true iff a flag image was drawn (false for
  * the "XX" sentinel, a null/too-short code, or a missing SVG). Caller owns

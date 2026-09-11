@@ -120,6 +120,10 @@ void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);
 /* Mute or unmute one player for this client: the server stops forwarding
  * that player's voice and chat. Session-scoped. */
 void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted);
+/* Mute or unmute one player's smart pings for this client, independent of the
+ * voice/chat mute above: the server stops delivering that player's EVENT_PING
+ * to this client. Session-scoped. */
+void clientSimNetSendPlayerPingMute(ClientSim *cs, BYTE targetPlayer, bool muted);
 /* Report this client's own mic status. hasMic is voice enabled with an input
  * device open; selfMuted is having one but not transmitting. The server keeps
  * it in the sender's clientFlags and shows it to the players who could hear

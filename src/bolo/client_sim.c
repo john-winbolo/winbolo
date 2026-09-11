@@ -2191,6 +2191,24 @@ int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
   return count;
 }
 
+void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted) {
+  if (cs == NULL || player >= MAX_TANKS) {
+    return;
+  }
+  if (muted) {
+    cs->pingMutedByMe |= (PlayerBitMap)1u << player;
+  } else {
+    cs->pingMutedByMe &= ~((PlayerBitMap)1u << player);
+  }
+}
+
+bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player) {
+  if (cs == NULL || player >= MAX_TANKS) {
+    return false;
+  }
+  return (cs->pingMutedByMe & ((PlayerBitMap)1u << player)) != 0;
+}
+
 const OverviewMap *clientSimGetOverviewMap(const ClientSim *cs) {
   if (cs == NULL) {
     return NULL;
