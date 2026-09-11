@@ -261,6 +261,24 @@ bool pillsRemoveItem(pillboxes *value, BYTE pillNum);
 bool pillsIsActive(pillboxes *value, BYTE pillNum);
 
 /*********************************************************
+*NAME:          pillsSetActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Puts a pillbox on the map or takes it off it, leaving its
+*  record alone either way. The flag is all that moves, so a
+*  pillbox put back is the one the slot already held. Returns
+*  FALSE for a number out of range.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool pillsSetActive(pillboxes *value, BYTE pillNum, bool onMap);
+
+/*********************************************************
 *NAME:          pillsGetPill
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/99

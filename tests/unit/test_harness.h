@@ -686,6 +686,17 @@ int run_entity_event_client_add_lands_on_the_server_index(void);
 int run_entity_event_removed_index_sends_no_delta(void);
 int run_entity_event_wire_corpus_fixture(void);
 
+/* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
+ * carries three 16-bit masks, one per item list, saying which indices hold
+ * an item that is on the map — the part the compressed map blob leaves out,
+ * sent to a client once it holds the blob. */
+int run_entity_sync_codec_roundtrip(void);
+int run_entity_sync_client_clears_the_holes(void);
+int run_entity_sync_client_restores_the_live(void);
+int run_entity_sync_mask_above_the_count_ignored(void);
+int run_entity_sync_loopback_join(void);
+int run_entity_sync_wire_corpus_fixture(void);
+
 /* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
  * cluster / farthest-first selection that auto-assigns a lobby start on
  * join, shared with startsAssignBatch's distance + validity logic. */

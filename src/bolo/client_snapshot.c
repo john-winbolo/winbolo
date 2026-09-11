@@ -1586,6 +1586,63 @@ void clientApplyEntityChange(ClientSim *cs, const struct ControlEvent *evt) {
 }
 
 /*********************************************************
+*NAME:          clientApplyEntitySync
+*PURPOSE:
+*  Applies a CTRL_ENTITY_SYNC to this client's own pill,
+*  base and start lists. Bit i of a mask stands for index i:
+*  set puts the item at that index on the map, clear takes
+*  it off. Only the live flags move — the counts are the
+*  ones the compressed map installed, and a bit at or above
+*  a list's count names no item and is ignored.
+*
+*  The records are left alone too. Every index a mask can
+*  reach is one the install wrote, and taking an item off
+*  the map keeps its record, so an index put back on the map
+*  holds the item it always held.
+*
+*  The wire index is 0 based and the three list modules
+*  number from 1, so the number is one higher throughout.
+*
+*ARGUMENTS:
+*  cs  - Pointer to the ClientSim
+*  evt - The control event to apply
+*********************************************************/
+void clientApplyEntitySync(ClientSim *cs, const struct ControlEvent *evt) {
+  BYTE num;   /* the item's number in its list */
+  BYTE count; /* how many numbers that list has  */
+
+  if (cs == NULL || evt == NULL) {
+    return;
+  }
+
+  if (cs->sim.pb != NULL) {
+    count = pillsGetNumPills(&cs->sim.pb);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.pills & (1u << (num - 1))) != 0;
+      pillsSetActive(&cs->sim.pb, num, onMap);
+    }
+  }
+  if (cs->sim.bs != NULL) {
+    count = basesGetNumBases(&cs->sim.bs);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.bases & (1u << (num - 1))) != 0;
+      basesSetActive(&cs->sim.bs, num, onMap);
+    }
+  }
+  if (cs->sim.ss != NULL) {
+    count = startsGetNumStarts(&cs->sim.ss);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.starts & (1u << (num - 1))) != 0;
+      startsSetActive(&cs->sim.ss, num, onMap);
+    }
+  }
+
+  /* A pill or base leaving changes what the screen draws over its square,
+   * the same way one leaving on a CTRL_ENTITY_CHANGE does. */
+  clientSimRecalc(cs);
+}
+
+/*********************************************************
 *NAME:          clientSnapshotRenderInterp
 *PURPOSE:
 *  Per-render-frame display update for other players' tanks.  Computes each

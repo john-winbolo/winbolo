@@ -1402,6 +1402,22 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *ev
 void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 
+/*********************************************************
+ *NAME:          serverSimFillEntitySyncEvent
+ *PURPOSE:
+ *  Populate a CTRL_ENTITY_SYNC from the live pill, base and
+ *  start lists: bit i of a mask is set when index i holds an
+ *  item that is on the map.
+ *
+ *  Returns false, leaving *evt untouched, when every index of
+ *  every list is on the map. Installing a compressed map
+ *  marks exactly that, so a caller sending this to a client
+ *  that has just installed one would be saying what the
+ *  install already said; every caller therefore skips the
+ *  send on false.
+ *********************************************************/
+bool serverSimFillEntitySyncEvent(ServerSim *sim, struct ControlEvent *evt);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);

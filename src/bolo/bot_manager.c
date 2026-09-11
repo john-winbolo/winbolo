@@ -372,6 +372,20 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
                                   buf, len);
     }
     free(buf);
+
+    /* The blob carries every pillbox, base and start the map has and not
+     * which of them are still on it, so the load above puts them all back on
+     * the map. Correct that straight away, while the load is still on this
+     * call stack and nothing can have read the lists: the bot takes its map
+     * directly rather than over a channel, so there is no transfer whose
+     * completion could carry the masks. The fill says nothing when every
+     * item is on the map, which is every round that runs no entity op. */
+    if (ok) {
+        ControlEvent evt;
+        if (serverSimFillEntitySyncEvent(sim, &evt)) {
+            clientSimApplyControl(bot->cs, &evt);
+        }
+    }
     return ok;
 }
 

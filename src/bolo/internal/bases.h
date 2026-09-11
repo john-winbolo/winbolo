@@ -249,6 +249,24 @@ bool basesRemoveItem(bases *value, BYTE baseNum);
 bool basesIsActive(bases *value, BYTE baseNum);
 
 /*********************************************************
+*NAME:          basesSetActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Puts a base on the map or takes it off it, leaving its
+*  record alone either way. The flag is all that moves, so a
+*  base put back is the one the slot already held. Returns
+*  FALSE for a number out of range.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool basesSetActive(bases *value, BYTE baseNum, bool onMap);
+
+/*********************************************************
 *NAME:          basesGetBase
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/98

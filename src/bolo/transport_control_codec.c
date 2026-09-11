@@ -1273,6 +1273,40 @@ static bool decodeEntityChangeBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_ENTITY_SYNC body wire format (fixed length):
+ *   [pills 2 BE] [bases 2 BE] [starts 2 BE]
+ * One mask per list, bit i standing for index i, 0 based. Every list holds
+ * at most 16 items, so the whole of one fits a u16 and the body is one size
+ * whatever the lists hold; the decoder rejects any other length outright.
+ * Delivered body-only on CHANNEL_CONTROL, as CTRL_ENTITY_CHANGE is: there is
+ * no full-packet wrapper or PACKET_* type for this event. */
+#define ENTITY_SYNC_BODY_LEN 6
+
+/* recipient: safe — ignored. Which items are on the map is public. */
+static EncodeResult encodeEntitySyncBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < ENTITY_SYNC_BODY_LEN) return ENCODE_OVERFLOW;
+    packU16(buf,     evt->u.entitySync.pills);
+    packU16(buf + 2, evt->u.entitySync.bases);
+    packU16(buf + 4, evt->u.entitySync.starts);
+    *outLen = ENTITY_SYNC_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (len != ENTITY_SYNC_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ENTITY_SYNC;
+    outEvt->u.entitySync.pills  = unpackU16(buf);
+    outEvt->u.entitySync.bases  = unpackU16(buf + 2);
+    outEvt->u.entitySync.starts = unpackU16(buf + 4);
+    return true;
+}
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -2472,6 +2506,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_STATS_SEED]            = encodeStatsSeedBody,
     [CTRL_VOICE_TALKING]         = encodeVoiceTalkingBody,
     [CTRL_ENTITY_CHANGE]         = encodeEntityChangeBody,
+    [CTRL_ENTITY_SYNC]           = encodeEntitySyncBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2515,6 +2550,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_STATS_SEED]            = decodeStatsSeedBody,
     [CTRL_VOICE_TALKING]         = decodeVoiceTalkingBody,
     [CTRL_ENTITY_CHANGE]         = decodeEntityChangeBody,
+    [CTRL_ENTITY_SYNC]           = decodeEntitySyncBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

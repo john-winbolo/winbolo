@@ -320,6 +320,33 @@ bool startsIsActive(starts *value, BYTE startNum) {
 }
 
 /*********************************************************
+*NAME:          startsSetActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Puts a start on the map or takes it off it, leaving its
+*  record alone either way. The flag is all that moves, so a
+*  start put back is the one the slot already held. Returns
+*  FALSE for a number out of range.
+*
+*ARGUMENTS:
+*  value   - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool startsSetActive(starts *value, BYTE startNum, bool onMap) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (startNum == 0 || startNum > (*value)->numStarts) {
+    return FALSE;
+  }
+  (*value)->active[startNum - 1] = onMap ? TRUE : FALSE;
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          startsExistPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 2/7/00

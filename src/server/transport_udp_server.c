@@ -863,7 +863,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
          * loop stops as soon as a frame comes back empty). */
         if (serverSimGetState(sim) != serverStateRunning) {
             int frames;
-            serverServiceMapTransfer(i);
+            serverServiceMapTransfer(sim, i);
             bulkSenderPump(&udpServer.bulkSend[i], &udpServer.channelMux[i]);
             channelTick(&udpServer.channelMux[i], udpServer.tickCount,
                         udpServer.clients[i].pingMs);

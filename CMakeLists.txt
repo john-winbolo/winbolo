@@ -3399,6 +3399,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_pill_repair_load.c
     tests/unit/test_entity_lifecycle.c
     tests/unit/test_entity_event.c
+    tests/unit/test_entity_sync.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -4252,6 +4253,12 @@ set(_unit_test_names
     entity_event_client_add_lands_on_the_server_index
     entity_event_removed_index_sends_no_delta
     entity_event_wire_corpus_fixture
+    entity_sync_codec_roundtrip
+    entity_sync_client_clears_the_holes
+    entity_sync_client_restores_the_live
+    entity_sync_mask_above_the_count_ignored
+    entity_sync_loopback_join
+    entity_sync_wire_corpus_fixture
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken

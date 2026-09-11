@@ -385,6 +385,51 @@ void serverSimFillMapSkipStateEvent(const ServerSim *sim,
     }
 }
 
+/* Fill a CTRL_ENTITY_SYNC event from the live pill, base and start lists:
+ * bit i of a mask is set when index i holds an item that is on the map.
+ * Returns false with *evt untouched when every index of every list is on
+ * the map — installing a compressed map marks exactly that, so there would
+ * be nothing in the event a recipient did not already have. */
+bool serverSimFillEntitySyncEvent(ServerSim *sim, ControlEvent *evt) {
+    uint16_t pills  = 0;
+    uint16_t bases  = 0;
+    uint16_t starts = 0;
+    uint16_t allPills, allBases, allStarts;
+    BYTE nPills, nBases, nStarts;
+    BYTE i;
+
+    if (sim == NULL || evt == NULL) return false;
+
+    nPills  = sim->sim.pb != NULL ? pillsGetNumPills(&sim->sim.pb)   : 0;
+    nBases  = sim->sim.bs != NULL ? basesGetNumBases(&sim->sim.bs)   : 0;
+    nStarts = sim->sim.ss != NULL ? startsGetNumStarts(&sim->sim.ss) : 0;
+
+    for (i = 1; i <= nPills; i++) {
+        if (pillsIsActive(&sim->sim.pb, i)) pills |= (uint16_t)(1u << (i - 1));
+    }
+    for (i = 1; i <= nBases; i++) {
+        if (basesIsActive(&sim->sim.bs, i)) bases |= (uint16_t)(1u << (i - 1));
+    }
+    for (i = 1; i <= nStarts; i++) {
+        if (startsIsActive(&sim->sim.ss, i)) starts |= (uint16_t)(1u << (i - 1));
+    }
+
+    /* Every index within a count set — what the install produces. */
+    allPills  = (uint16_t)((1u << nPills)  - 1u);
+    allBases  = (uint16_t)((1u << nBases)  - 1u);
+    allStarts = (uint16_t)((1u << nStarts) - 1u);
+    if (pills == allPills && bases == allBases && starts == allStarts) {
+        return false;
+    }
+
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_ENTITY_SYNC;
+    evt->u.entitySync.pills  = pills;
+    evt->u.entitySync.bases  = bases;
+    evt->u.entitySync.starts = starts;
+    return true;
+}
+
 /* Wrapper used to enforce the documented sync ordering:
  *   a CTRL_GAME_PHASE_* event first; CTRL_PLAYER_JOIN events last
  *   (a regression that reorders sync would silently mis-initialize a
@@ -575,6 +620,19 @@ static void serverSimSyncSubscriber(
     if (sim->lobbyEnabled && sim->state == serverStateLobby
         && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
         serverSimFillMapSkipStateEvent(sim, &evt);
+        deliver(ctx, &evt);
+    }
+
+    /* Which items are on the map. An in-process subscriber installs the
+     * compressed map before it registers, so this replay lands on top of
+     * that install and its holes stick. A wire client's map arrives later,
+     * on the bulk channel, and its install would wipe these holes — the
+     * copy that settles it there is the one the transfer-completion send
+     * makes. Nothing is emitted while every item is on the map, which is
+     * every round that runs no entity op. Placed ahead of the player-join
+     * roster: the ordering check refuses a non-join event after the first
+     * join. */
+    if (serverSimFillEntitySyncEvent(sim, &evt)) {
         deliver(ctx, &evt);
     }
 

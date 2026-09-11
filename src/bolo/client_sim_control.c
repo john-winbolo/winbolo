@@ -1127,5 +1127,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * the map is as public as the map. */
         clientApplyEntityChange(cs, evt);
         break;
+
+    case CTRL_ENTITY_SYNC:
+        /* Which pillboxes, bases and starts are on the map, sent once this
+         * client holds the compressed map the lists came out of. The install
+         * marks everything the blob carries as on the map, so this is how a
+         * client that arrived after a removal learns about it. Beside the
+         * entity-change apply for the same reason: the lists live behind
+         * client_snapshot.c. */
+        clientApplyEntitySync(cs, evt);
+        break;
     }
 }

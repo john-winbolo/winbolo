@@ -163,6 +163,24 @@ typedef enum {
      * item, and the record the event carries is the item's map data only.
      * Broadcast: which items are on the map is public, the way the map is. */
     CTRL_ENTITY_CHANGE,
+    /* CTRL_ENTITY_SYNC — which pillboxes, bases and starts are on the map
+     * right now, as one bit per index. A client builds its three item lists
+     * from the compressed map blob, and the blob carries the items but not
+     * which of them are still on the map, so installing one marks every item
+     * up to the count as on the map. That is right for a map as it loads and
+     * wrong for a client that arrives after a removal, which is what this
+     * corrects: the server sends it once the client has the blob, and the
+     * client clears the live flag of every index the mask does not name. The
+     * counts stay the blob's — a mask says which of those slots hold an item,
+     * never how many slots there are.
+     *
+     * Sent to one recipient rather than published: it answers a map the
+     * recipient has just taken a copy of, so the send sites are the ones that
+     * hand a copy over — the subscriber sync replay and the completion of a
+     * client's bulk map transfer. The masks read the same for everyone, so
+     * the body carries no per-recipient state; a change after this event
+     * travels as a CTRL_ENTITY_CHANGE to everyone at once. */
+    CTRL_ENTITY_SYNC,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -557,6 +575,18 @@ typedef struct ControlEvent {
                 } start;
             } rec;
         } entityChange;
+
+        /* CTRL_ENTITY_SYNC — one bit per 0-based index in each list: bit i
+         * set means index i holds an item that is on the map, clear means
+         * the index is in range but its item has been taken off. Each list
+         * holds at most 16 items (MAX_PILLS, MAX_BASES and MAX_STARTS are
+         * all 16), so 16 bits covers every index a list can name. Bits at
+         * or above a list's own count name no item and are ignored. */
+        struct {
+            uint16_t pills;
+            uint16_t bases;
+            uint16_t starts;
+        } entitySync;
     } u;
 } ControlEvent;
 
