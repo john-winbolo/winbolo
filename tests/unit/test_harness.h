@@ -1934,6 +1934,23 @@ int run_scenario_base_owner_keep_stock(void);
 int run_scenario_base_set_stock(void);
 int run_scenario_pill_base_arm_records(void);
 
+/* The six entity arms (test_scenario_entity_arms.c). Adding and removing a
+ * pillbox, a base or a start: the list chooses the slot and reports it, a
+ * removal is a tombstone that keeps the slot and the count, and every change
+ * goes out as a CTRL_ENTITY_CHANGE. */
+int run_scenario_entity_add_pill(void);
+int run_scenario_entity_remove_pill(void);
+int run_scenario_entity_add_base(void);
+int run_scenario_entity_remove_base(void);
+int run_scenario_entity_add_start(void);
+int run_scenario_entity_remove_start(void);
+int run_scenario_entity_publish(void);
+int run_scenario_entity_add_out_null(void);
+
+/* One pillbox removed and put back over the real loopback transport
+ * (test_loopback_entity_change.c): the client's list follows the server's. */
+int run_loopback_entity_change(void);
+
 int run_scenario_map_set_tile(void);
 int run_scenario_map_fill_rect(void);
 int run_scenario_map_fill_paced(void);

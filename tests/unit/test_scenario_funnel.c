@@ -131,6 +131,12 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_PILL_MOVE ||
            t == SCN_OP_BASE_SET_OWNER ||
            t == SCN_OP_BASE_SET_STOCK ||
+           t == SCN_OP_ENTITY_ADD_PILL ||    /* test_scenario_entity_arms.c */
+           t == SCN_OP_ENTITY_REMOVE_PILL ||
+           t == SCN_OP_ENTITY_ADD_BASE ||
+           t == SCN_OP_ENTITY_REMOVE_BASE ||
+           t == SCN_OP_ENTITY_ADD_START ||
+           t == SCN_OP_ENTITY_REMOVE_START ||
            t == SCN_OP_MAP_SET_TILE ||       /* test_scenario_map_arms.c */
            t == SCN_OP_MAP_FILL_RECT ||
            t == SCN_OP_MAP_PLACE_MINE ||

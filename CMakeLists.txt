@@ -3324,6 +3324,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # an empty slot as an owner, the drain a hand-over makes and the flag that
     # keeps the stock, and the records the five changes leave in a recording.
     tests/unit/test_scenario_pill_base_arms.c
+    tests/unit/test_scenario_entity_arms.c
     # The map ops: the four arms, the refusals each one answers with, deep sea
     # as a terrain a script may write, one publish per square a fill changes,
     # the budget that carries an oversized fill over two ticks, the answer a
@@ -3473,6 +3474,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
+    tests/unit/test_loopback_entity_change.c
     tests/unit/test_loopback_map_cull.c
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
@@ -4706,6 +4708,15 @@ set(_unit_test_names
     scenario_base_owner_keep_stock
     scenario_base_set_stock
     scenario_pill_base_arm_records
+    scenario_entity_add_pill
+    scenario_entity_remove_pill
+    scenario_entity_add_base
+    scenario_entity_remove_base
+    scenario_entity_add_start
+    scenario_entity_remove_start
+    scenario_entity_publish
+    scenario_entity_add_out_null
+    loopback_entity_change
     scenario_map_set_tile
     scenario_map_fill_rect
     scenario_map_fill_paced

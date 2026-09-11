@@ -1086,6 +1086,312 @@ static ScnOpResult scenarioOpMapRemoveMine(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* ── Entities ────────────────────────────────────────────────────────
+ *
+ * The three item lists are the map's, not the round's, so these arms make no
+ * state check for the reason the pill and base arms above make none: dealing
+ * the estate out before a round starts is as legal as re-dealing it mid-round.
+ *
+ * An add lets the list choose the slot — the lowest removed one, or the end —
+ * and reports it back, because the index is the item's identity everywhere
+ * else and only the list knows which one is free. A remove is a tombstone: the
+ * slot and the count stay, so every index above it goes on naming the same
+ * item.
+ */
+
+/* Tell every subscriber that one pillbox has joined the map or left it. The
+ * index counts from zero, as the snapshots, the game events and the brain API
+ * do, while the list counts from one, so the arm passes the op's own index.
+ * Published after the list has been written, so a subscriber that reads the
+ * sim from its callback sees the change the event describes. The record is the
+ * item's map data: reload, coolDown and justSeen are this server's per-tick
+ * working state and no client rebuilds them. */
+static void scenarioPublishPill(ServerSim *sim, BYTE index0,
+                                const pillbox *item, bool added) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ENTITY_CHANGE;
+    evt.u.entityChange.kind   = ENTITY_KIND_PILL;
+    evt.u.entityChange.index  = index0;
+    evt.u.entityChange.added  = added ? 1u : 0u;
+    evt.u.entityChange.rec.pill.x      = item->x;
+    evt.u.entityChange.rec.pill.y      = item->y;
+    evt.u.entityChange.rec.pill.owner  = item->owner;
+    evt.u.entityChange.rec.pill.armour = item->armour;
+    evt.u.entityChange.rec.pill.speed  = item->speed;
+    evt.u.entityChange.rec.pill.inTank = item->inTank ? 1u : 0u;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* The same for a base. refuelTime, baseTime and justStopped stay behind for
+ * the same reason the pillbox's three do. */
+static void scenarioPublishBase(ServerSim *sim, BYTE index0,
+                                const base *item, bool added) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ENTITY_CHANGE;
+    evt.u.entityChange.kind   = ENTITY_KIND_BASE;
+    evt.u.entityChange.index  = index0;
+    evt.u.entityChange.added  = added ? 1u : 0u;
+    evt.u.entityChange.rec.base.x      = item->x;
+    evt.u.entityChange.rec.base.y      = item->y;
+    evt.u.entityChange.rec.base.owner  = item->owner;
+    evt.u.entityChange.rec.base.armour = item->armour;
+    evt.u.entityChange.rec.base.shells = item->shells;
+    evt.u.entityChange.rec.base.mines  = item->mines;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* And for a start, whose whole record is its square and the way it faces. */
+static void scenarioPublishStart(ServerSim *sim, BYTE index0,
+                                 const start *item, bool added) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ENTITY_CHANGE;
+    evt.u.entityChange.kind   = ENTITY_KIND_START;
+    evt.u.entityChange.index  = index0;
+    evt.u.entityChange.added  = added ? 1u : 0u;
+    evt.u.entityChange.rec.start.x   = item->x;
+    evt.u.entityChange.rec.start.y   = item->y;
+    evt.u.entityChange.rec.start.dir = item->dir;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Whether a square will take a start. This is startsIsValidSquare, the test
+ * the placement passes make before they put a tank on a start: deep sea with
+ * no mine. It is the reverse of the pill and base rule above, and it is not a
+ * mistake — a start record names open water and the scatter search walks out
+ * from it to the nearest square a tank can sit on, which is why startsIsUsable
+ * asks the same thing of a record before the pickers will choose it. A start
+ * put on land is a start no picker will ever use. startsIsValidSquare is
+ * static to starts.c with no caller that asks it on its own, so it is repeated
+ * here the way scenarioSquareTakesPill repeats the builder's test. */
+static bool scenarioSquareTakesStart(ServerSim *sim, BYTE mx, BYTE my) {
+    GameSim *gs = &sim->sim;
+    return mapGetPos(&gs->mp, mx, my) == DEEP_SEA &&
+           mapIsMine(&gs->mp, mx, my) == FALSE;
+}
+
+/* How many starts are on the map. A map with none is one no tank can be
+ * placed on: startsGetStart leaves its caller's square untouched when there
+ * is nothing to choose, so the last one is not the scenario's to take away. */
+static BYTE scenarioLiveStarts(ServerSim *sim) {
+    BYTE n = startsGetNumStarts(&sim->sim.ss);
+    BYTE live = 0;
+    BYTE i;
+    for (i = 1; i <= n; i++) {
+        if (startsIsActive(&sim->sim.ss, i) != FALSE) {
+            live++;
+        }
+    }
+    return live;
+}
+
+/* Put a pillbox on the map. The square test is the builder's place-pill test,
+ * the same one the move arm uses, so a script may only put one where a man
+ * could have built it. The stocks are checked rather than clamped: pillsAddItem
+ * stores the record as handed to it, so a value past its range would stay there
+ * where pillsSetPill would have folded it away. */
+static ScnOpResult scenarioOpEntityAddPill(ServerSim *sim,
+                                           const ScnOpEntityAddPill *p,
+                                           ScnOpOut *out) {
+    pillbox item;
+    BYTE pillNum = 0;
+
+    if (!scenarioSquareOnMap(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    if (!scenarioOwnerIsLegal(p->owner)) {
+        return SCN_OP_RANGE;
+    }
+    if (p->armour > PILLS_MAX_ARMOUR) {
+        return SCN_OP_RANGE;
+    }
+    if (p->speed < PILLBOX_MAX_FIRERATE || p->speed > PILLBOX_ATTACK_NORMAL) {
+        return SCN_OP_RANGE;
+    }
+    if (!scenarioSquareTakesPill(sim, p->x, p->y)) {
+        return SCN_OP_BAD_TERRAIN;
+    }
+
+    memset(&item, 0, sizeof(item));
+    item.x      = p->x;
+    item.y      = p->y;
+    item.owner  = p->owner;
+    item.armour = p->armour;
+    item.speed  = p->speed;
+    item.inTank = FALSE;
+    /* Loaded, which is what pillsCreate leaves a slot nothing has fired from:
+       the firing pass counts reload up to speed and shoots at the top of it. */
+    item.reload = p->speed;
+
+    /* The last refusal, and it writes nothing on its way out: every slot in
+       the count is live and the count is already MAX_PILLS. */
+    if (!pillsAddItem(&sim->sim.pb, &item, &pillNum)) {
+        return SCN_OP_FULL;
+    }
+
+    if (out != NULL) {
+        out->index = (BYTE)(pillNum - 1);
+    }
+    scenarioPublishPill(sim, (BYTE)(pillNum - 1), &item, true);
+    return SCN_OP_OK;
+}
+
+/* Take a pillbox off the map. The slot and every index above it stay where
+ * they are; the record goes out with the event so a script that means to put
+ * it back has it. */
+static ScnOpResult scenarioOpEntityRemovePill(ServerSim *sim,
+                                              const ScnOpEntityRemovePill *p) {
+    pillbox item;
+    BYTE pillNum = 0;
+    ScnOpResult r = scenarioPillFor(sim, p->pill, &pillNum, &item);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* In range but already off the map is the same answer as out of range:
+       there is no pillbox of that number to take away. */
+    if (pillsIsActive(&sim->sim.pb, pillNum) == FALSE) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    /* A carried pill is on some tank's list of what it is carrying. Taking it
+       off the map would strand that list, so the script drops it first. */
+    if (item.inTank) {
+        return SCN_OP_CARRIED;
+    }
+
+    pillsRemoveItem(&sim->sim.pb, pillNum);
+    scenarioPublishPill(sim, p->pill, &item, false);
+    return SCN_OP_OK;
+}
+
+/* Put a base on the map. The square test is the pill's: a base owns its square
+ * the way a pill owns its own, and the ground under it has to be ground. */
+static ScnOpResult scenarioOpEntityAddBase(ServerSim *sim,
+                                           const ScnOpEntityAddBase *p,
+                                           ScnOpOut *out) {
+    base item;
+    BYTE baseNum = 0;
+
+    if (!scenarioSquareOnMap(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    if (!scenarioOwnerIsLegal(p->owner)) {
+        return SCN_OP_RANGE;
+    }
+    /* Checked rather than clamped, for the reason the pill add checks: the
+       list stores what it is handed. */
+    if (p->armour > BASE_FULL_ARMOUR || p->shells > BASE_FULL_SHELLS ||
+        p->mines > BASE_FULL_MINES) {
+        return SCN_OP_RANGE;
+    }
+    if (!scenarioSquareTakesPill(sim, p->x, p->y)) {
+        return SCN_OP_BAD_TERRAIN;
+    }
+
+    memset(&item, 0, sizeof(item));
+    item.x      = p->x;
+    item.y      = p->y;
+    item.owner  = p->owner;
+    item.armour = p->armour;
+    item.shells = p->shells;
+    item.mines  = p->mines;
+
+    if (!basesAddItem(&sim->sim.bs, &item, &baseNum)) {
+        return SCN_OP_FULL;
+    }
+
+    if (out != NULL) {
+        out->index = (BYTE)(baseNum - 1);
+    }
+    scenarioPublishBase(sim, (BYTE)(baseNum - 1), &item, true);
+    return SCN_OP_OK;
+}
+
+/* Take a base off the map. Nothing carries a base, so there is no carried
+ * case to refuse. */
+static ScnOpResult scenarioOpEntityRemoveBase(ServerSim *sim,
+                                              const ScnOpEntityRemoveBase *p) {
+    base item;
+    BYTE baseNum;
+
+    if (p->base >= basesGetNumBases(&sim->sim.bs)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    baseNum = (BYTE)(p->base + 1);
+    if (basesIsActive(&sim->sim.bs, baseNum) == FALSE) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+
+    memset(&item, 0, sizeof(item));
+    basesGetBase(&sim->sim.bs, &item, baseNum);
+    basesRemoveItem(&sim->sim.bs, baseNum);
+    scenarioPublishBase(sim, p->base, &item, false);
+    return SCN_OP_OK;
+}
+
+/* Put a start on the map. */
+static ScnOpResult scenarioOpEntityAddStart(ServerSim *sim,
+                                            const ScnOpEntityAddStart *p,
+                                            ScnOpOut *out) {
+    start item;
+    BYTE startNum = 0;
+
+    if (!scenarioSquareOnMap(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    /* The direction towards land, in sixteenths of a turn. startsSetStart
+       folds anything above the range to zero; a script is told instead. */
+    if (p->dir > 15) {
+        return SCN_OP_RANGE;
+    }
+    if (!scenarioSquareTakesStart(sim, p->x, p->y)) {
+        return SCN_OP_BAD_TERRAIN;
+    }
+
+    memset(&item, 0, sizeof(item));
+    item.x   = p->x;
+    item.y   = p->y;
+    item.dir = p->dir;
+
+    if (!startsAddItem(&sim->sim.ss, &item, &startNum)) {
+        return SCN_OP_FULL;
+    }
+
+    if (out != NULL) {
+        out->index = (BYTE)(startNum - 1);
+    }
+    scenarioPublishStart(sim, (BYTE)(startNum - 1), &item, true);
+    return SCN_OP_OK;
+}
+
+/* Take a start off the map, unless it is the only one left. */
+static ScnOpResult scenarioOpEntityRemoveStart(ServerSim *sim,
+                                               const ScnOpEntityRemoveStart *p) {
+    start item;
+    BYTE startNum;
+
+    if (p->start >= startsGetNumStarts(&sim->sim.ss)) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    startNum = (BYTE)(p->start + 1);
+    if (startsIsActive(&sim->sim.ss, startNum) == FALSE) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    /* A map with nowhere to put a tank is not a state the sim can be left in,
+       so the last one stays whatever the script asks. */
+    if (scenarioLiveStarts(sim) <= 1) {
+        return SCN_OP_RANGE;
+    }
+
+    memset(&item, 0, sizeof(item));
+    startsGetStartStruct(&sim->sim.ss, &item, startNum);
+    startsRemoveItem(&sim->sim.ss, startNum);
+    scenarioPublishStart(sim, p->start, &item, false);
+    return SCN_OP_OK;
+}
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     assert(sim != NULL);
@@ -1104,8 +1410,6 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
     if (sim->startInProgress) {
         return SCN_OP_WRONG_STATE;
     }
-
-    (void)out;
 
     switch (op->type) {
         case SCN_OP_NONE:                return SCN_OP_UNSUPPORTED;
@@ -1145,12 +1449,18 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpBaseSetOwner(sim, &op->u.baseSetOwner);
         case SCN_OP_BASE_SET_STOCK:
             return scenarioOpBaseSetStock(sim, &op->u.baseSetStock);
-        case SCN_OP_ENTITY_ADD_PILL:     return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ENTITY_REMOVE_PILL:  return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ENTITY_ADD_BASE:     return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ENTITY_REMOVE_BASE:  return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ENTITY_ADD_START:    return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ENTITY_REMOVE_START: return SCN_OP_UNSUPPORTED;
+        case SCN_OP_ENTITY_ADD_PILL:
+            return scenarioOpEntityAddPill(sim, &op->u.entityAddPill, out);
+        case SCN_OP_ENTITY_REMOVE_PILL:
+            return scenarioOpEntityRemovePill(sim, &op->u.entityRemovePill);
+        case SCN_OP_ENTITY_ADD_BASE:
+            return scenarioOpEntityAddBase(sim, &op->u.entityAddBase, out);
+        case SCN_OP_ENTITY_REMOVE_BASE:
+            return scenarioOpEntityRemoveBase(sim, &op->u.entityRemoveBase);
+        case SCN_OP_ENTITY_ADD_START:
+            return scenarioOpEntityAddStart(sim, &op->u.entityAddStart, out);
+        case SCN_OP_ENTITY_REMOVE_START:
+            return scenarioOpEntityRemoveStart(sim, &op->u.entityRemoveStart);
         case SCN_OP_MAP_SET_TILE:
             return scenarioOpMapSetTile(sim, &op->u.mapSetTile);
         case SCN_OP_MAP_FILL_RECT:
