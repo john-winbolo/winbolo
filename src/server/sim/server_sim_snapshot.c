@@ -123,6 +123,7 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
     int my = ev->data[2];
     uint8_t tier = SOUND_TIER_NEAR;
     uint8_t dir = SOUND_DIR_CENTRE;
+    bool everywhere = (mx == 0xFF && my == 0xFF);
     bool inRange;
     int ax, ay, dist;
 
@@ -140,10 +141,19 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
         return;
     }
 
-    /* Worked out for every sound, including the tank hit below that skips
-     * the range cull, so the winner always has a tier and a bearing. */
-    inRange = soundTierAndDirection(listenerMX, listenerMY, mx, my,
-                                    &tier, &dir);
+    /* 0xFF, 0xFF is a sound with no square: it is in range at every listener,
+     * near and centred, and at distance 0 so it always takes its dedup slot.
+     * A scenario publishes one when the sound belongs to the round rather than
+     * to a place on the map. Measured normally it would sit far off the
+     * map's south-east corner and every listener would cull it. */
+    if (everywhere) {
+        inRange = true;
+    } else {
+        /* Worked out for every sound, including the tank hit below that skips
+         * the range cull, so the winner always has a tier and a bearing. */
+        inRange = soundTierAndDirection(listenerMX, listenerMY, mx, my,
+                                        &tier, &dir);
+    }
 
     /* A tank hit reaches the player hit at any range: they play hitTankSelf
      * at full volume. Everything else stops at SDIST_NONE. */
@@ -161,10 +171,16 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
         return;
     }
 
-    /* Closest instance of each sound id wins, measured on the real squares. */
-    ax = (mx > listenerMX) ? (mx - listenerMX) : (listenerMX - mx);
-    ay = (my > listenerMY) ? (my - listenerMY) : (listenerMY - my);
-    dist = ax + ay;
+    /* Closest instance of each sound id wins, measured on the real squares.
+     * A sound with no square counts as distance 0, so it wins its slot against
+     * any positioned instance of the same id in the same tick. */
+    if (everywhere) {
+        dist = 0;
+    } else {
+        ax = (mx > listenerMX) ? (mx - listenerMX) : (listenerMX - mx);
+        ay = (my > listenerMY) ? (my - listenerMY) : (listenerMY - my);
+        dist = ax + ay;
+    }
     if (pick->has[soundId] && dist >= pick->dist[soundId]) return;
 
     /* Shaped into the pick's own copy: the sim's event array is shared by

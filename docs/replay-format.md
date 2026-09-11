@@ -94,6 +94,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 55 | `log_TankSetStock` | Tank stocks: player, shells, mines, armour, trees (below) |
 | 57 | `log_EntityChange` | One pillbox, base or start joined the map or left it (below) |
 | 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
+| 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
 
 ### `log_GameSettings` payload
 

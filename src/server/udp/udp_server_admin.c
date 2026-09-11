@@ -421,6 +421,7 @@ void serverSendServerEnglishBroadcast(ServerSim *sim, const char *message) {
     size_t maxChars = sizeof(evt.u.serverText.text) - 1; /* PACKET_MAX_CHAT_MESSAGE */
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;
+    evt.u.serverText.destPlayer = 0xFF;  /* everyone, not slot 0 */
     if (SDL_strlen(message) <= maxChars) {
         SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
     } else {

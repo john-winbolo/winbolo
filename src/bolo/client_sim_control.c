@@ -909,6 +909,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             const ClientLobbySlot *ms = clientSimGetLobbySlot(cs, myPN);
             if (!ms || ms->teamNumber != evt->u.serverText.destTeam) break;
         }
+        /* Player-scoped server text: only the addressed slot sees it. 0xFF is
+         * everyone — 0 is slot 0, so an event that never set the field would
+         * land here as a unicast. */
+        if (evt->u.serverText.destPlayer != 0xFF &&
+            clientSimGetMyPlayerNum(cs) != evt->u.serverText.destPlayer) {
+            break;
+        }
         if (cs->inLobby) {
             clientSimAppendLobbyChat(cs, "Server", text);
             if (cs->lobbySyncSettled) frontEndPlaySound(cs, lobbyChatReceived);

@@ -146,25 +146,31 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_ROSTER_SET_TEAM ||
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
-           t == SCN_OP_LOBBY_SET_TEAM;
+           t == SCN_OP_LOBBY_SET_TEAM ||
+           t == SCN_OP_MSG_ALL ||            /* test_scenario_comms_arms.c */
+           t == SCN_OP_MSG_TEAM ||
+           t == SCN_OP_MSG_PLAYER ||
+           t == SCN_OP_SOUND ||
+           t == SCN_OP_LOG;
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The
  * count check catches a member added to the enum without a line in
  * kAllOpTypes, which would otherwise leave it untested. */
 int run_scenario_op_every_type_unsupported(void) {
-    ServerSim *sim = makeLobbySim();
     int i;
-    UT_ASSERT(sim != NULL);
 
     UT_ASSERT_MSG(NUM_OP_TYPES == (int)SCN_OP_SET_RULE + 1,
                   "kAllOpTypes covers %d types but the enum declares %d",
                   NUM_OP_TYPES, (int)SCN_OP_SET_RULE + 1);
 
     for (i = 0; i < NUM_OP_TYPES; i++) {
+        ServerSim *sim = makeLobbySim();
         ScenarioOp op;
         ScnOpOut out;
         ScnOpResult r;
+        UT_ASSERT(sim != NULL);
+
         memset(&op, 0, sizeof(op));
         memset(&out, 0, sizeof(out));
         op.type = kAllOpTypes[i];
@@ -173,22 +179,24 @@ int run_scenario_op_every_type_unsupported(void) {
             /* The sim is in the lobby, so most landed arms refuse on the
                state or the slot — what none of them may do is claim to have
                no arm. A zeroed payload names slot 0, which this sim fills
-               with a ready human: the two remove arms answer IS_HUMAN and
-               the lobby team arm accepts, moving that slot to team 0, which
-               is where it already is. This test reads the answers and then
-               drops the sim, so a write here costs the sweep nothing. */
+               with a ready human, so an accepting arm writes: the lobby team
+               arm moves that slot, and the comms arms publish a line and
+               write a console message. Each op therefore gets a sim of its
+               own, built and dropped inside the loop, so what one arm leaves
+               behind is not what the next one is asked against. */
             UT_ASSERT_MSG(r != SCN_OP_UNSUPPORTED,
                           "op type %d has an arm but still answers "
                           "SCN_OP_UNSUPPORTED", (int)op.type);
+            serverSimDestroy(sim);
             continue;
         }
         UT_ASSERT_MSG(r == SCN_OP_UNSUPPORTED,
                       "op type %d returned %d, expected SCN_OP_UNSUPPORTED — "
                       "an arm has landed without a line in opArmHasLanded",
                       (int)op.type, (int)r);
+        serverSimDestroy(sim);
     }
 
-    serverSimDestroy(sim);
     return 0;
 }
 

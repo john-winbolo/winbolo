@@ -1135,6 +1135,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             evt.type = CTRL_SERVER_TEXT;
             SDL_strlcpy(evt.u.serverText.text, msg,
                         sizeof(evt.u.serverText.text));
+            evt.u.serverText.destPlayer = 0xFF;  /* everyone, not slot 0 */
             serverSimPublishControl(sim, &evt);
 
             WB_LOG_WARN(WB_LOG_CAT_LUA,

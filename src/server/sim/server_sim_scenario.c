@@ -34,6 +34,7 @@
 #include <SDL3/SDL.h>
 
 #include "server_sim_internal.h"
+#include "server_sim_shared.h"     /* publishServerMessage + the team variant, serverSimCbSoundDist */
 #include "server_sim_scenario.h"
 #include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
@@ -1885,6 +1886,126 @@ void serverSimScenarioResetRoster(ServerSim *sim) {
     sim->scenarioRosterCount = 0;
 }
 
+/* ── Comms ─────────────────────────────────────────────────────────────── */
+
+/* The record every server line a script writes leaves behind: the destination
+ * it was published with, then the line itself. The viewer has no other way to
+ * tell a line the whole game saw from one held to a team or a player, because
+ * neither destination byte goes on the wire. */
+static void scenarioRecordServerText(BYTE destTeam, BYTE destPlayer,
+                                     const char *text) {
+    char pstr[1 + SCN_TEXT_MAX];
+    size_t len = strlen(text);
+
+    /* The arm has already refused a field with no terminator, so the line is
+       inside SCN_TEXT_MAX and its length is inside the one length byte a
+       pascal string has. The clamp states that rather than trusting it. */
+    if (len > SCN_TEXT_MAX - 1) len = SCN_TEXT_MAX - 1;
+    pstr[0] = (char)len;
+    memcpy(pstr + 1, text, len);
+    logAddEvent(log_ServerText, destTeam, destPlayer, 0, 0, 0, pstr);
+}
+
+/* Say something to the whole game, as the server says it. */
+static ScnOpResult scenarioOpMsgAll(ServerSim *sim, const ScnOpMsgAll *p) {
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    scenarioRecordServerText(0, 0xFF, p->text);
+    publishServerMessage(sim, p->text);
+    return SCN_OP_OK;
+}
+
+/* Say something to one team. */
+static ScnOpResult scenarioOpMsgTeam(ServerSim *sim, const ScnOpMsgTeam *p) {
+    /* Team 0 is "everyone" to both delivery filters and SCN_OP_MSG_ALL is the
+       op for that, so a script that means the whole game says so rather than
+       arriving here with a zero. The upper bound is the one ServerSim.teams[]
+       is keyed by: teams run 1..MAX_TANKS-1. */
+    if (p->team == 0 || p->team >= MAX_TANKS) {
+        return SCN_OP_RANGE;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    scenarioRecordServerText(p->team, 0xFF, p->text);
+    publishServerMessageToTeam(sim, p->text, p->team);
+    return SCN_OP_OK;
+}
+
+/* Say something to one player. */
+static ScnOpResult scenarioOpMsgPlayer(ServerSim *sim,
+                                       const ScnOpMsgPlayer *p) {
+    ControlEvent evt;
+
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    scenarioRecordServerText(0, p->slot, p->text);
+    /* There is no helper for one player — publishServerMessage and its team
+       variant are the two that exist — so the event is built here the way
+       those two build theirs, with the slot in destPlayer for the two
+       delivery filters to read. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SERVER_TEXT;
+    SDL_strlcpy(evt.u.serverText.text, p->text, sizeof(evt.u.serverText.text));
+    evt.u.serverText.destPlayer = p->slot;
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
+/* Play a sound, at a square or at everyone.
+ *
+ * 0xFF, 0xFF is the square that is nowhere: soundPickOffer hands it to every
+ * listener rather than measuring it. What "everywhere" reaches is every
+ * recipient that has a tank, wherever that tank is and whether it is alive or
+ * dead — both sound passes skip a recipient with no tank position at all, so a
+ * spectator, an unfielded seat and a slot that has not spawned hear nothing.
+ *
+ * The record is the log_Sound* the callback writes for itself, so this arm
+ * writes none of its own. */
+static ScnOpResult scenarioOpSound(ServerSim *sim, const ScnOpSound *p) {
+    bool everywhere = (p->x == 0xFF && p->y == 0xFF);
+
+    if (p->sound > (BYTE)lobbyPlayerLeave) {
+        return SCN_OP_RANGE;
+    }
+    /* bubbles, tankSinkNear and tankSinkFar reach only the player named in the
+       event's fourth byte, and serverSimCbSoundDist fills that byte from
+       sim->currentTickPlayer — for an op run from the host's drain, whatever
+       the last player of the previous tick happened to be. The op carries no
+       field naming a listener, so rather than play one of the three at an
+       arbitrary slot, the three are refused. */
+    if (p->sound == (BYTE)bubbles || p->sound == (BYTE)tankSinkNear ||
+        p->sound == (BYTE)tankSinkFar) {
+        return SCN_OP_RANGE;
+    }
+    if (!everywhere && !scenarioSquareOnMap(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+
+    serverSimCbSoundDist(sim, (sndEffects)p->sound, p->x, p->y);
+    return SCN_OP_OK;
+}
+
+/* Write a line to the server's console. It goes nowhere else: no event, no
+ * record. */
+static ScnOpResult scenarioOpLog(ServerSim *sim, const ScnOpLog *p) {
+    (void)sim;   /* the console message goes through the active sim */
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    serverSimConsoleMessage(p->text);
+    return SCN_OP_OK;
+}
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     assert(sim != NULL);
@@ -1975,11 +2096,16 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
         case SCN_OP_LOBBY_SET_TEAM:
             return scenarioOpLobbySetTeam(sim, &op->u.lobbySetTeam);
         case SCN_OP_BOT_HINT:            return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MSG_ALL:             return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MSG_TEAM:            return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MSG_PLAYER:          return SCN_OP_UNSUPPORTED;
-        case SCN_OP_SOUND:               return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LOG:                 return SCN_OP_UNSUPPORTED;
+        case SCN_OP_MSG_ALL:
+            return scenarioOpMsgAll(sim, &op->u.msgAll);
+        case SCN_OP_MSG_TEAM:
+            return scenarioOpMsgTeam(sim, &op->u.msgTeam);
+        case SCN_OP_MSG_PLAYER:
+            return scenarioOpMsgPlayer(sim, &op->u.msgPlayer);
+        case SCN_OP_SOUND:
+            return scenarioOpSound(sim, &op->u.sound);
+        case SCN_OP_LOG:
+            return scenarioOpLog(sim, &op->u.log);
         case SCN_OP_PANEL:               return SCN_OP_UNSUPPORTED;
         case SCN_OP_SCORE:               return SCN_OP_UNSUPPORTED;
         case SCN_OP_ANNOUNCE:            return SCN_OP_UNSUPPORTED;

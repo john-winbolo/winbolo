@@ -2003,6 +2003,21 @@ int run_scenario_lobby_add_bot(void);
 int run_scenario_lobby_remove_bot(void);
 int run_scenario_lobby_set_team(void);
 
+/* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
+ * team and to one player, with the destination filtered where the recipient
+ * is; a sound at a square and a sound at no square; a console line. Plus the
+ * two cases that keep the destination honest: the body decoder addresses a
+ * rebuilt line to every recipient, and the in-process filter reads 0xFF as
+ * everyone at a client that is not slot 0. */
+int run_scenario_comms_msg_all(void);
+int run_scenario_comms_msg_team(void);
+int run_scenario_comms_msg_player(void);
+int run_scenario_comms_sound(void);
+int run_scenario_comms_log(void);
+int run_scenario_comms_arm_records(void);
+int run_scenario_comms_decoder_dest_player(void);
+int run_scenario_comms_apply_non_zero_slot(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

@@ -1645,6 +1645,10 @@ static bool decodeServerTextBody(const uint8_t *buf, size_t bodyLen,
     if (bodyLen < 2) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SERVER_TEXT;
+    outEvt->u.serverText.destPlayer = 0xFF;  /* every recipient: udpClientDeliverControl
+                                                already applied the destination filter
+                                                server-side, so an event that arrives
+                                                here is addressed to this client. */
     size_t textLen = bodyLen - 2;
     if (textLen >= sizeof(outEvt->u.serverText.text)) {
         textLen = sizeof(outEvt->u.serverText.text) - 1;

@@ -116,6 +116,7 @@ void publishServerMessage(ServerSim *sim, const char *message) {
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;
     SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    evt.u.serverText.destPlayer = 0xFF;   /* every slot; 0 would be slot 0 alone */
     /* In-process subscribers display via client_sim_control.c's
      * CTRL_SERVER_TEXT handler (newswire / lobby chat); UDP clients
      * receive the codec-encoded PACKET_CHAT_BROADCAST(fromPlayer=0xFE)
@@ -123,18 +124,19 @@ void publishServerMessage(ServerSim *sim, const char *message) {
     serverSimPublishControl(sim, &evt);
 }
 
-/* Like publishServerMessage but delivered ONLY to members of teamId (1-16).
+/* Like publishServerMessage but delivered ONLY to members of teamId (1-15).
  * destTeam rides the ControlEvent and is filtered per-recipient in
  * udpClientDeliverControl + the in-process CTRL_SERVER_TEXT handler — used to
  * keep surrender-vote notices private to the surrendering team. */
-static void publishServerMessageToTeam(ServerSim *sim, const char *message,
-                                       BYTE teamId) {
+void publishServerMessageToTeam(ServerSim *sim, const char *message,
+                                BYTE teamId) {
     ControlEvent evt;
     if (!sim || !message) return;
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;
     SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
     evt.u.serverText.destTeam = teamId;
+    evt.u.serverText.destPlayer = 0xFF;   /* the team, not one slot within it */
     serverSimPublishControl(sim, &evt);
 }
 

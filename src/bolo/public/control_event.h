@@ -423,9 +423,17 @@ typedef struct ControlEvent {
          * subscribers (SP / host) see the same lines. */
         struct {
             char    text[PACKET_MAX_CHAT_MESSAGE + 1];
-            uint8_t destTeam;  /* 0 = everyone; 1-16 = deliver only to that team.
+            uint8_t destTeam;  /* 0 = everyone; 1-15 = deliver only to that team
+                                  (teams run 1..MAX_TANKS-1, see ServerSim.teams[]).
                                   Server-side recipient filter (udpClientDeliver +
                                   the in-process handler); not sent on the wire. */
+            uint8_t destPlayer; /* 0xFF = everyone; otherwise deliver only to that
+                                   slot. Server-side recipient filter like destTeam,
+                                   and not sent on the wire either. 0 is a real
+                                   slot, so a memset-zeroed event would unicast to
+                                   slot 0: every producer of this variant — the
+                                   sim-side publishers and the body decoder that
+                                   rebuilds it — must set 0xFF explicitly. */
         } serverText;
 
         /* CTRL_GAME_VOTE_STATE — mirrors PACKET_GAME_VOTE_STATE. */

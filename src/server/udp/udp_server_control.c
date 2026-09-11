@@ -187,6 +187,18 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
             return;
         }
     }
+    if (evt->type == CTRL_SERVER_TEXT &&
+        evt->u.serverText.destPlayer != 0xFF) {
+        /* Player-scoped server text (a scenario talking to one player): only
+         * the addressed slot receives it. */
+        if (client->playerNum != evt->u.serverText.destPlayer) {
+            mpDiagLog("[srv] deliver FILTER slot=%d type=SERVER_TEXT "
+                      "reason=not-addressed destPlayer=%d clientPlayerNum=%d",
+                      idx, (int)evt->u.serverText.destPlayer,
+                      (int)client->playerNum);
+            return;
+        }
+    }
     if (evt->type == CTRL_GAME_VOTE_STATE &&
         evt->u.gameVoteState.kind == GAME_VOTE_KIND_SURRENDER &&
         evt->u.gameVoteState.teamId != 0) {

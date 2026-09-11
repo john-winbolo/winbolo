@@ -47,11 +47,22 @@
 
 /* A file for the brain path to name. The fixture brain never opens it — the
  * arm reads the path to refuse one that names nothing, which is the check
- * being satisfied here. */
-#define RA_BRAIN "test_scenario_roster_brain.lua"
+ * being satisfied here.
+ *
+ * The name carries the case's own name, because ctest runs the cases as
+ * concurrent processes in one working directory. With one name between them,
+ * the first case to reach its drop removes the file the others are still
+ * naming, scenarioBrainPath then answers SCN_OP_NOT_FOUND, and the case that
+ * lost the file fails on an assertion about its arm instead. The tag is a
+ * required argument so a case added later cannot quietly share a name. */
+static char raBrainPath[128];
 
-static bool raMakeBrainFile(void) {
-    FILE *f = fopen(RA_BRAIN, "wb");
+static bool raMakeBrainFile(const char *tag) {
+    FILE *f;
+
+    SDL_snprintf(raBrainPath, sizeof(raBrainPath),
+                 "test_scenario_roster_brain_%s.lua", tag);
+    f = fopen(raBrainPath, "wb");
     if (f == NULL) return false;
     fputs("-- fixture\n", f);
     fclose(f);
@@ -59,7 +70,7 @@ static bool raMakeBrainFile(void) {
 }
 
 static void raDropBrainFile(void) {
-    remove(RA_BRAIN);
+    remove(raBrainPath);
 }
 
 /* A running round with one human in slot 0 and a server configured to run
@@ -69,7 +80,7 @@ static ServerSim *raRunningSim(void) {
     ServerSim *sim = ut_make_running_sim("Human");
     if (sim == NULL) return NULL;
     serverSimSetBotAiType(sim, aiFull);
-    serverSimSetBotBrainPath(sim, RA_BRAIN);
+    serverSimSetBotBrainPath(sim, raBrainPath);
     return sim;
 }
 
@@ -84,7 +95,7 @@ static ServerSim *raLobbySim(void) {
     serverSimAddPlayer(sim, 0, "Human", false);
     sim->lobbyPlayers[0].ready = true;
     serverSimSetBotAiType(sim, aiFull);
-    serverSimSetBotBrainPath(sim, RA_BRAIN);
+    serverSimSetBotBrainPath(sim, raBrainPath);
     return sim;
 }
 
@@ -159,7 +170,7 @@ int run_scenario_roster_spawn_refusals(void) {
     ScenarioOp op;
     int i;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_refusals"));
     ut_brain_stub_arm(false);
 
     /* An in-round arm in a lobby is refused on the state. */
@@ -241,7 +252,7 @@ int run_scenario_roster_spawn_lands(void) {
     int i;
     BYTE slot = SCN_NONE;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_lands"));
     ut_brain_stub_arm(true);
     sim = raRunningSim();
     UT_ASSERT(sim != NULL);
@@ -294,7 +305,7 @@ int run_scenario_roster_spawn_paced(void) {
     ScenarioOp op;
     int i;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_paced"));
     ut_brain_stub_arm(true);
     sim = raRunningSim();
     UT_ASSERT(sim != NULL);
@@ -365,7 +376,7 @@ int run_scenario_roster_team_during_add(void) {
     BYTE slot = SCN_NONE;
     int i;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_roster_team_during_add"));
     ut_brain_stub_arm(true);
 
     /* A lobby whose one human is on team 2 and holds a start, so the team
@@ -416,7 +427,7 @@ int run_scenario_roster_remove_bot(void) {
     BYTE slot = SCN_NONE;
     int i;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_roster_remove_bot"));
     ut_brain_stub_arm(true);
 
     /* In a lobby the in-round arm is refused on the state. */
@@ -468,7 +479,7 @@ int run_scenario_roster_set_team(void) {
     ServerSim *sim;
     ScenarioOp op;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_roster_set_team"));
     ut_brain_stub_arm(false);
 
     sim = raLobbySim();
@@ -520,7 +531,7 @@ int run_scenario_lobby_add_bot(void) {
     ScenarioOp op;
     ScnOpOut out;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_lobby_add_bot"));
     ut_brain_stub_arm(true);
 
     /* A lobby arm in a running round is refused on the state. */
@@ -582,7 +593,7 @@ int run_scenario_lobby_remove_bot(void) {
     ScenarioOp op;
     ScnOpOut out;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_lobby_remove_bot"));
     ut_brain_stub_arm(true);
 
     sim = raRunningSim();
@@ -623,7 +634,7 @@ int run_scenario_lobby_set_team(void) {
     ServerSim *sim;
     ScenarioOp op;
 
-    UT_ASSERT(raMakeBrainFile());
+    UT_ASSERT(raMakeBrainFile("scenario_lobby_set_team"));
     ut_brain_stub_arm(false);
 
     sim = raRunningSim();

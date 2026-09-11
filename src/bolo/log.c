@@ -810,6 +810,18 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = (BYTE)((short1 >> 8) & 0xFF);
     out[off++] = (BYTE)(short1 & 0xFF);
     break;
+  case log_ServerText:
+    /* The destination the line was published with, then the line: destTeam
+       (0 = everyone), destPlayer (0xFF = everyone), pascal text. Both bytes
+       are recorded because the viewer has no other way to know a line went to
+       one team or one player rather than to the whole game. */
+    out[off++] = log_ServerText;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
   default:
     return 0;
   }

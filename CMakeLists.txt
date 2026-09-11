@@ -3335,6 +3335,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # queue that paces a spawn and a removal one to a tick, and the init
     # table a spawned bot's brain is created with.
     tests/unit/test_scenario_roster_arms.c
+    # The comms ops: the five arms, the refusals each one answers with, who
+    # sees a line held to a team or to one player, the sound that reaches a
+    # listener wherever they stand, and the records the three lines leave in a
+    # recording. Plus the two cases that keep the destination honest: the body
+    # decoder addresses a rebuilt line to every recipient, and the in-process
+    # filter reads 0xFF as everyone at a client that is not slot 0.
+    tests/unit/test_scenario_comms_arms.c
     # The init table a bot is created with: one table per brain VM, an
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
@@ -4758,6 +4765,14 @@ set(_unit_test_names
     scenario_lobby_add_bot
     scenario_lobby_remove_bot
     scenario_lobby_set_team
+    scenario_comms_msg_all
+    scenario_comms_msg_team
+    scenario_comms_msg_player
+    scenario_comms_sound
+    scenario_comms_log
+    scenario_comms_arm_records
+    scenario_comms_decoder_dest_player
+    scenario_comms_apply_non_zero_slot
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

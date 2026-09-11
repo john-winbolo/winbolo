@@ -925,6 +925,36 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
+    case log_ServerText:
+      /* A server line with the destination it was published to: opt1 the team
+         it was held to, opt2 the slot. A line the whole game saw carries 0 and
+         0xFF and reads like any other server line; one that reached a single
+         team or a single player says so, because the recording is the only
+         place that difference is visible. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, str);
+      {
+        MessageArgs args = {0};
+        /* The destination and the line share one 64-byte argument, so each
+           part carries its own precision — the same defence the message cases
+           above use against a name or a line longer than the field. */
+        if (opt2 != 0xFF) {
+          lv_playersGetPlayerName(opt2, name, sizeof(name));
+          snprintf(args.string1, sizeof(args.string1), "[to %.*s] %.*s",
+                   16, name, 36, str);
+        } else if (opt1 != 0) {
+          snprintf(args.string1, sizeof(args.string1), "[to team %u] %.*s",
+                   (unsigned)opt1, 36, str);
+        } else {
+          snprintf(args.string1, sizeof(args.string1), "%.*s",
+                   (int)sizeof(args.string1) - 1, str);
+        }
+        lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
+      }
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -1871,6 +1901,7 @@ static int walkSkipEventBody(BYTE code) {
         if (rc != lenByte) return -1; }
       return 2 + lenByte;
     case log_MessagePlayers:
+    case log_ServerText:
       /* 2 opt bytes + pascal string */
       { BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;

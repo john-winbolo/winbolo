@@ -914,6 +914,14 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_lobby_add_bot",                  run_scenario_lobby_add_bot                  },
     { "scenario_lobby_remove_bot",               run_scenario_lobby_remove_bot               },
     { "scenario_lobby_set_team",                 run_scenario_lobby_set_team                 },
+    { "scenario_comms_msg_all",                  run_scenario_comms_msg_all                  },
+    { "scenario_comms_msg_team",                 run_scenario_comms_msg_team                 },
+    { "scenario_comms_msg_player",               run_scenario_comms_msg_player               },
+    { "scenario_comms_sound",                    run_scenario_comms_sound                    },
+    { "scenario_comms_log",                      run_scenario_comms_log                      },
+    { "scenario_comms_arm_records",              run_scenario_comms_arm_records              },
+    { "scenario_comms_decoder_dest_player",      run_scenario_comms_decoder_dest_player      },
+    { "scenario_comms_apply_non_zero_slot",      run_scenario_comms_apply_non_zero_slot      },
     { "bot_init_table_two_bots_keep_own",        run_bot_init_table_two_bots_keep_own        },
     { "bot_init_table_empty_when_none",          run_bot_init_table_empty_when_none          },
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
@@ -960,6 +968,13 @@ static int run_one(const char *name) {
 }
 
 int main(int argc, char **argv) {
+    /* This binary calls neither wb_log_init nor SDL_SetLogPriorities of its
+     * own, so every custom log category sits at its default of ERROR and a
+     * WB_LOG_WARN — the line a dropped or refused path leaves — prints
+     * nothing. Opening the categories at WARN makes those visible when a case
+     * fails. It relaxes no assertion and changes no code under test. */
+    SDL_SetLogPriorities(SDL_LOG_PRIORITY_WARN);
+
     /* SDL_Init(0) brings up the SDL3 runtime so SDL_CreateMutex /
      * SDL_CreateThread are usable from the unit tests without
      * dragging in any subsystem-specific init. */

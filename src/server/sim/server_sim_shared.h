@@ -107,6 +107,12 @@ void publishMapSkipState(ServerSim *sim);
  * it. */
 void publishServerMessage(ServerSim *sim, const char *message);
 
+/* The same line held to one team (1..MAX_TANKS-1), through destTeam on the
+ * event. The surrender vote's private notices use it, and so does the scenario
+ * funnel's team-text arm in server_sim_scenario.c. */
+void publishServerMessageToTeam(ServerSim *sim, const char *message,
+                                BYTE teamId);
+
 /* Defined in server_sim_control.c — the one control-event filler with a caller
  * outside that translation unit. */
 
