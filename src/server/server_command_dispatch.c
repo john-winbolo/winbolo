@@ -101,7 +101,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         if (idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
-            (idx < 1 || idx > numStarts)) {
+            (idx < 1 || idx > numStarts ||
+             startsIsActive(&sim->sim.ss, idx) == FALSE)) {
             return CMD_REJECT_INVALID;
         }
         bool isHost = lobbyClientMayEdit(sim, senderSlot);
@@ -388,11 +389,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         switch (kind) {
         case VIEW_KIND_PILL:
             inRange = (sim->sim.pb != NULL &&
-                       target < pillsGetNumPills(&sim->sim.pb));
+                       target < pillsGetNumPills(&sim->sim.pb) &&
+                       pillsIsActive(&sim->sim.pb, (BYTE)(target + 1)));
             break;
         case VIEW_KIND_BASE:
             inRange = (sim->sim.bs != NULL &&
-                       target < basesGetNumBases(&sim->sim.bs));
+                       target < basesGetNumBases(&sim->sim.bs) &&
+                       basesIsActive(&sim->sim.bs, (BYTE)(target + 1)));
             break;
         case VIEW_KIND_ALLY:
             inRange = (target < MAX_TANKS && target != (uint8_t)senderSlot);

@@ -174,6 +174,60 @@ BYTE basesGetNumBases(bases *value);
 void basesSetBase(bases *value, base *item, BYTE bsaeNum);
 
 /*********************************************************
+*NAME:          basesAddItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Puts a base into the list and returns its number in
+*  outBaseNum. The lowest removed slot is reused; when
+*  every slot in the count is live the list is extended and
+*  the count raised. Returns FALSE with outBaseNum
+*  untouched when all MAX_BASES bases are live.
+*
+*ARGUMENTS:
+*  value      - Pointer to the bases structure
+*  item       - The base to store
+*  outBaseNum - Receives the base number, 1 based
+*********************************************************/
+bool basesAddItem(bases *value, const base *item, BYTE *outBaseNum);
+
+/*********************************************************
+*NAME:          basesRemoveItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Clears a base's live flag. The slot, the count and every
+*  base number above it are left alone, so the numbers the
+*  wire and the recordings use keep meaning the same base.
+*  Returns FALSE for a number out of range or one already
+*  removed.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesRemoveItem(bases *value, BYTE baseNum);
+
+/*********************************************************
+*NAME:          basesIsActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Returns whether a base number names a base that is on the
+*  map. A removed base keeps its slot and its number, so a
+*  number in range is not on its own enough. A number out of
+*  range returns FALSE.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesIsActive(bases *value, BYTE baseNum);
+
+/*********************************************************
 *NAME:          basesGetBase
 *AUTHOR:        John Morrison
 *CREATION DATE: 9/2/98

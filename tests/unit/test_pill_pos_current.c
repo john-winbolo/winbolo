@@ -45,10 +45,11 @@
  * the state a map install leaves. Pills sit ten squares apart along one row so
  * a case can move one onto another's square deliberately. */
 static void pc_make_pills(struct pillsObj *pills, BYTE count) {
+    pillboxes handle = pills;
     BYTE i;
 
     memset(pills, 0, sizeof(*pills));
-    pills->numPills = count;
+    pillsSetNumPills(&handle, count);
     for (i = 0; i < count; i++) {
         pills->item[i].x      = (BYTE)(20 + i * 10);
         pills->item[i].y      = 40;

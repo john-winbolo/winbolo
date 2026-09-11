@@ -70,6 +70,11 @@ struct basesObj {
    * are not clobbered by basesSetBaseCompressData's memcpy. */
   BYTE _wirePad[3];
   baseStealDebounceSlot stealDebounce[BASE_STEAL_TABLE_SIZE];
+  /* Which base numbers name a base that is on the map. 1 is a live base, 0 a
+   * removed slot whose index is kept, so the numbers above a removal go on
+   * meaning the same base. It sits past the wire region because the blob is
+   * the map, and an item removed during a round is the sim's own state. */
+  BYTE active[MAX_BASES];
 };
 
 #define MAP_ARRAY_SIZE 256 /* maps are 256x256 units square */
@@ -115,6 +120,11 @@ struct pillsObj {
    * — the value pillsCreate's memset and every map install leave — is the
    * confirmed state, so the server's own list is never affected. */
   BYTE posStale[MAX_PILLS];
+  /* Which pill numbers name a pill that is on the map. 1 is a live pill, 0 a
+   * removed slot whose index is kept, so the numbers above a removal go on
+   * meaning the same pill. It sits past the wire region because the blob is
+   * the map, and an item removed during a round is the sim's own state. */
+  BYTE active[MAX_PILLS];
 };
 
 /* 25B = 25x8 = 200b needed to be allocated */
@@ -260,6 +270,12 @@ typedef struct startsObj *starts;
 struct startsObj {
   start item[MAX_STARTS];
   BYTE numStarts;
+  /* Wire format ends here at SIZEOF_STARTS (49 bytes). Past it: which start
+   * numbers name a start that is on the map. 1 is a live start, 0 a removed
+   * slot whose index is kept, so the numbers above a removal go on meaning
+   * the same start. It sits past the wire region because the blob is the
+   * map, and an item removed during a round is the sim's own state. */
+  BYTE active[MAX_STARTS];
 };
 
 #pragma pack(pop)
@@ -283,5 +299,10 @@ BOLO_STATIC_ASSERT(offsetof(struct basesObj, stealDebounce) == SIZEOF_BASES,
 BOLO_STATIC_ASSERT(offsetof(struct pillsObj, posStale) == SIZEOF_PILLS,
                    pills_pos_stale_after_wire_format);
 BOLO_STATIC_ASSERT(sizeof(start) == 3,   start_must_be_3_bytes);
+/* Same rule for startsObj: the live flags sit strictly past the SIZEOF_STARTS
+ * bytes startsSetStartCompressData copies in. start holds only BYTE, so
+ * item[] and numStarts pack to exactly 49. */
+BOLO_STATIC_ASSERT(offsetof(struct startsObj, active) == SIZEOF_STARTS,
+                   starts_active_after_wire_format);
 
 #endif

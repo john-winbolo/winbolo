@@ -662,6 +662,19 @@ int run_pill_repair_tops_up_from_arrival_armour(void);
 int run_pill_repair_short_load_spends_what_it_has(void);
 int run_pill_repair_full_load_covers_a_dead_pill(void);
 
+/* Entity lifecycle (test_entity_lifecycle.c). Pillboxes, bases and starts
+ * carry an active flag: removal is a tombstone that keeps the slot, the
+ * count and every index above it, and addition takes the lowest removed
+ * slot before it extends the list. */
+int run_entity_removed_pill_is_gone_from_gameplay(void);
+int run_entity_removed_base_is_gone_from_gameplay(void);
+int run_entity_removed_start_is_never_chosen(void);
+int run_entity_add_reuses_lowest_removed_slot(void);
+int run_entity_add_refused_when_full(void);
+int run_entity_remove_refuses_already_removed(void);
+int run_entity_remove_keeps_indices_above(void);
+int run_entity_blob_load_marks_every_item_live(void);
+
 /* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
  * cluster / farthest-first selection that auto-assigns a lobby start on
  * join, shared with startsAssignBatch's distance + validity logic. */

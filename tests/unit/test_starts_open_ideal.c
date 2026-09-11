@@ -48,7 +48,7 @@ static void build_open_scene(GameSim *gs, BYTE playerNum) {
         gs->ss->item[i].y = sy[i];
         gs->ss->item[i].dir = 0;
     }
-    gs->ss->numStarts = 3;
+    startsSetNumStarts(&gs->ss, 3);
 
     gs->bs->numBases = 0;   /* open path ignores bases; keep the scene clean */
 
@@ -64,7 +64,7 @@ static void build_open_scene(GameSim *gs, BYTE playerNum) {
     gs->pb->item[1].owner = NEUTRAL;
     gs->pb->item[1].armour = 15;
     gs->pb->item[1].inTank = FALSE;
-    gs->pb->numPills = 2;
+    pillsSetNumPills(&gs->pb, 2);
 
     gs->game = gameOpen;
 }

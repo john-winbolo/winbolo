@@ -1816,11 +1816,10 @@ typedef struct ServerSimPillInfo {
     BYTE armour;   /* 0-15; 0 = dead on the ground */
     BYTE speed;    /* ticks between shots */
     bool in_tank;  /* being carried rather than sitting on a square */
-    bool active;   /* This index holds a live pill. Every index up to the
-                      count holds one today; once a removed pill leaves
-                      its index in place so the indices above it keep
-                      their numbers, this is what tells a live pill from
-                      a removed one at an index that is still in range. */
+    bool active;   /* This index holds a live pill. A removed pill leaves its
+                      index in place so the indices above it keep their
+                      numbers, so this is what tells a live pill from a
+                      removed one at an index that is still in range. */
 } ServerSimPillInfo;
 
 /* Populate *out for pill i (1-based, as serverSimGetPill). Returns false
@@ -1842,6 +1841,19 @@ typedef struct ServerSimBaseInfo {
 /* Populate *out for base i (1-based, as serverSimGetBase). Returns false
  * (without touching *out) if i is 0 or past the base count. */
 bool serverSimGetBaseInfo(ServerSim *sim, BYTE i, ServerSimBaseInfo *out);
+
+/* One start in one call, alongside serverSimGetStart, which stays for its
+ * callers. */
+typedef struct ServerSimStartInfo {
+    BYTE x;
+    BYTE y;
+    BYTE dir;     /* 0-15, as serverSimGetStart reports it */
+    bool active;  /* This index holds a live start — as ServerSimPillInfo. */
+} ServerSimStartInfo;
+
+/* Populate *out for start i (1-based, as serverSimGetStart). Returns false
+ * (without touching *out) if i is 0 or past the start count. */
+bool serverSimGetStartInfo(ServerSim *sim, BYTE i, ServerSimStartInfo *out);
 
 /* Bytes in the terrain array serverSimGetMapTerrainBuffer copies out. */
 #define SERVER_SIM_TERRAIN_BYTES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)

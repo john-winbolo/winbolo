@@ -545,7 +545,7 @@ int run_overview_snapshot_mirror(void) {
      * goes off the picture with it. */
     int dir = snapAwayFromEdge(f.tankMX);
     BYTE pillX = (BYTE)((int)f.tankMX + dir * 40);
-    f.gs->pb->numPills = 1;
+    pillsSetNumPills(&f.gs->pb, 1);
     f.gs->pb->item[0].owner  = f.me;
     f.gs->pb->item[0].armour = PILLBOX_15;
     f.gs->pb->item[0].inTank = FALSE;

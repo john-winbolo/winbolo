@@ -441,8 +441,7 @@ bool serverSimGetPillInfo(ServerSim *sim, BYTE i, ServerSimPillInfo *out) {
     out->armour  = p.armour;
     out->speed   = p.speed;
     out->in_tank = p.inTank;
-    /* Every index up to the pill count holds a live pill. */
-    out->active  = true;
+    out->active  = pillsIsActive(&sim->sim.pb, i);
     return true;
 }
 
@@ -484,8 +483,7 @@ bool serverSimGetBaseInfo(ServerSim *sim, BYTE i, ServerSimBaseInfo *out) {
     out->armour = b.armour;
     out->shells = b.shells;
     out->mines  = b.mines;
-    /* Every index up to the base count holds a live base. */
-    out->active = true;
+    out->active = basesIsActive(&sim->sim.bs, i);
     return true;
 }
 
@@ -498,6 +496,25 @@ bool serverSimGetStart(ServerSim *sim, BYTE i,
     if (x)   *x   = s.x;
     if (y)   *y   = s.y;
     if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    return true;
+}
+
+bool serverSimGetStartInfo(ServerSim *sim, BYTE i, ServerSimStartInfo *out) {
+    start s;
+    BYTE n;
+    if (sim == NULL || out == NULL) return false;
+    n = startsGetNumStarts(&sim->sim.ss);
+    if (i == 0 || i > n) return false;
+    /* startsGetStartStruct fills the fields read below and leaves the rest of
+       the struct alone, so start from a cleared one. */
+    memset(&s, 0, sizeof(s));
+    startsGetStartStruct(&sim->sim.ss, &s, i);
+
+    memset(out, 0, sizeof(*out));
+    out->x      = s.x;
+    out->y      = s.y;
+    out->dir    = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    out->active = startsIsActive(&sim->sim.ss, i);
     return true;
 }
 

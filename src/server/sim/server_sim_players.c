@@ -820,8 +820,10 @@ bool serverSimReleaseIneligibleStart(ServerSim *sim, BYTE slot) {
     r = sim->lobbyPlayers[slot].startIdx;
     if (r == 0xFF) return false;
     numStarts = startsGetNumStarts(&sim->sim.ss);
-    /* An index off the start list can never be eligible, so it goes too. */
+    /* An index off the start list, or one whose start has been removed, can
+       never be eligible, so it goes too. */
     if (r >= 1 && r <= numStarts &&
+        startsIsActive(&sim->sim.ss, r) &&
         startSideEligible(serverSimLobbyStartSideMask(sim, r),
                           lobbySlotSide(sim, slot),
                           serverSimLobbyClosedMaskFor(sim, slot))) {

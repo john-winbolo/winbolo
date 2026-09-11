@@ -111,8 +111,15 @@ void startsDestroy(starts *value) {
 *  numStarts - The number of starts 
 *********************************************************/
 void startsSetNumStarts(starts *value, BYTE numStarts) {
+  BYTE count; /* Looping variable */
+
   if (numStarts <= MAX_STARTS) {
     (*value)->numStarts = numStarts;
+    /* Every start a map brings in is live. Removal happens after the list is
+       loaded, so the count and the live set agree here. */
+    for (count = 0; count < numStarts; count++) {
+      (*value)->active[count] = TRUE;
+    }
   }
 }
 
@@ -183,6 +190,98 @@ void startsGetStartStruct(starts *value, start *item, BYTE startNum) {
 }
 
 /*********************************************************
+*NAME:          startsAddItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Puts a start into the list and returns its number in
+*  outStartNum. The lowest removed slot is reused; when
+*  every slot in the count is live the list is extended and
+*  the count raised. Returns FALSE with outStartNum
+*  untouched when all MAX_STARTS starts are live.
+*
+*ARGUMENTS:
+*  value       - Pointer to the starts structure
+*  item        - The start to store
+*  outStartNum - Receives the start number, 1 based
+*********************************************************/
+bool startsAddItem(starts *value, const start *item, BYTE *outStartNum) {
+  BYTE count; /* Looping variable */
+
+  for (count = 0; count < (*value)->numStarts; count++) {
+    if ((*value)->active[count] == FALSE) {
+      (*value)->item[count] = *item;
+      (*value)->active[count] = TRUE;
+      *outStartNum = (BYTE) (count + 1);
+      return TRUE;
+    }
+  }
+  if ((*value)->numStarts >= MAX_STARTS) {
+    return FALSE;
+  }
+  count = (*value)->numStarts;
+  (*value)->item[count] = *item;
+  (*value)->active[count] = TRUE;
+  (*value)->numStarts++;
+  *outStartNum = (BYTE) (count + 1);
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          startsRemoveItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Clears a start's live flag. The slot, the count and every
+*  start number above it are left alone, so the numbers the
+*  map blob and the recordings use keep meaning the same
+*  start. Returns FALSE for a number out of range or one
+*  already removed.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsRemoveItem(starts *value, BYTE startNum) {
+  if (startNum == 0 || startNum > (*value)->numStarts) {
+    return FALSE;
+  }
+  startNum--;
+  if ((*value)->active[startNum] == FALSE) {
+    return FALSE;
+  }
+  (*value)->active[startNum] = FALSE;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          startsIsActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Returns whether a start number names a start that is on
+*  the map. A removed start keeps its slot and its number, so
+*  a number in range is not on its own enough. A number out
+*  of range returns FALSE.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsIsActive(starts *value, BYTE startNum) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (startNum == 0 || startNum > (*value)->numStarts) {
+    return FALSE;
+  }
+  return ((*value)->active[startNum - 1] != FALSE);
+}
+
+/*********************************************************
 *NAME:          startsExistPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 2/7/00
@@ -202,7 +301,7 @@ bool startsExistPos(starts *value, BYTE xValue, BYTE yValue) {
   returnValue = FALSE;
   count = 0;
   while (count < (*value)->numStarts && returnValue == FALSE) {
-    if ((*value)->item[count].x == xValue && (*value)->item[count].y == yValue) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].x == xValue && (*value)->item[count].y == yValue) {
       returnValue = TRUE;
     }
     count++;
@@ -226,6 +325,13 @@ bool startsExistPos(starts *value, BYTE xValue, BYTE yValue) {
 *********************************************************/
 static bool startsIsValidSquare(GameSim *sim, BYTE mx, BYTE my) {
   return (mapGetPos(&sim->mp, mx, my) == DEEP_SEA && mapIsMine(&sim->mp, mx, my) == FALSE);
+}
+
+/* A start the placement passes may put a tank on: a live slot whose square is
+   valid. A removed slot keeps its record and its index but is never chosen. */
+static bool startsIsUsable(GameSim *sim, starts *value, BYTE idx) {
+  return ((*value)->active[idx] != FALSE &&
+          startsIsValidSquare(sim, (*value)->item[idx].x, (*value)->item[idx].y));
 }
 
 static int startsMapDistance(int x1, int y1, int x2, int y2);
@@ -410,6 +516,9 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
 
   for (count = 0; count < numStarts; count++) {
     idx = (BYTE)((offset + count) % numStarts);
+    if ((*value)->active[idx] == FALSE) {
+      continue;
+    }
     sx = (*value)->item[idx].x;
     sy = (*value)->item[idx].y;
 
@@ -550,13 +659,17 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   /* Count neutral bases to decide if neutral is preferred */
   neutralCount = 0;
   for (baseCount = 0; baseCount < numBases; baseCount++) {
-    if (sim->bs->item[baseCount].owner == NEUTRAL) {
+    if (sim->bs->active[baseCount] != FALSE &&
+        sim->bs->item[baseCount].owner == NEUTRAL) {
       neutralCount++;
     }
   }
   neutralPreferred = (numBases > 0 && (neutralCount * 100 / numBases) > START_NEUTRAL_THRESHOLD_PCT);
 
   for (count = 0; count < numStarts; count++) {
+    if ((*value)->active[count] == FALSE) {
+      continue;
+    }
     sx = (*value)->item[count].x;
     sy = (*value)->item[count].y;
 
@@ -749,6 +862,9 @@ static void startsSideMasks(starts *value, BYTE *sideMask) {
   int bottomPos;
   BYTE i;
   startsGetMaxs(value, &leftPos, &rightPos, &topPos, &bottomPos);
+  /* Every slot gets its mask, removed ones included: mask 0 means centre,
+     which every team accepts, so a removed start is kept out by the live
+     test its candidate pass makes, not by its side bits. */
   for (i = 0; i < (*value)->numStarts; i++) {
     sideMask[i] = startSideMaskFor((*value)->item[i].x, (*value)->item[i].y,
                                    leftPos, topPos, rightPos, bottomPos);
@@ -764,6 +880,7 @@ static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
   for (j = 0; j < numStarts; j++) {
     int d;
     if (!startClaimed[j]) continue;
+    if ((*value)->active[j] == FALSE) continue;
     d = startsMapDistance((*value)->item[idx].x, (*value)->item[idx].y,
                           (*value)->item[j].x, (*value)->item[j].y);
     if (d < minD) minD = d;
@@ -899,6 +1016,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
       if (!connected[i]) continue;
       r = reservedStartIdx0[i];
       if (r >= numStarts) continue;       /* MAX_STARTS sentinel or stale index */
+      if ((*value)->active[r] == FALSE) continue; /* start has been removed */
       if (reservedLocked[r] && !lobbySharedStartsEnabled()) {
         continue;                          /* duplicate: honor the first */
       }
@@ -965,7 +1083,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
       found = FALSE;
       for (i = 0; i < numStarts && !found; i++) {
         if (startSideAccepts(sideMask[i], groupSide[g]) &&
-            startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y)) {
+            startsIsUsable(sim, value, (BYTE)i)) {
           found = TRUE;
         }
       }
@@ -980,7 +1098,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
       for (i = 0; i < numStarts && !found; i++) {
         if (reservedLocked[i]) continue;
         if (startSideEligible(sideMask[i], START_SIDE_ANY, groupOtherMask[g]) &&
-            startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y)) {
+            startsIsUsable(sim, value, (BYTE)i)) {
           found = TRUE;
         }
       }
@@ -1050,7 +1168,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
     bits = startSideBits(groupSide[g]);
     sumX = 0; sumY = 0; cnt = 0;
     for (i = 0; i < numStarts; i++) {
-      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
       if ((sideMask[i] & bits) != 0) {
         sumX += (*value)->item[i].x;
         sumY += (*value)->item[i].y;
@@ -1118,11 +1236,14 @@ void startsAssignBatch(GameSim *sim, starts *value,
       stripeUsed[s] = FALSE;
     }
     for (i = 0; i < numStarts; i++) {
-      int sx = (*value)->item[i].x;
-      int sy = (*value)->item[i].y;
+      int sx;
+      int sy;
       int cellX;
       int cellY;
       int cellIdx;
+      if ((*value)->active[i] == FALSE) continue;
+      sx = (*value)->item[i].x;
+      sy = (*value)->item[i].y;
       if (spanX <= 0) cellX = 0;
       else {
         cellX = (sx - leftPos) * divX / (spanX + 1);
@@ -1244,7 +1365,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
     /* Count what is left to hand out, in total and per team. */
     for (i = 0; i < numStarts; i++) {
       if (startClaimed[i]) continue;
-      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
       validStartCount++;
       for (g = 0; g < numGroups; g++) {
         if (groups[g].isSolo) continue;
@@ -1343,7 +1464,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
         int dist;
         int score;
         if (startClaimed[i]) continue;
-        if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+        if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
         if (!startSideEligible(sideMask[i], groupSide[g], groupOtherMask[g])) continue;
         dist = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                                  groups[g].anchorX, groups[g].anchorY);
@@ -1390,11 +1511,12 @@ void startsAssignBatch(GameSim *sim, starts *value,
       int minD = INT_MAX;
       BYTE j;
       if (startClaimed[i]) continue;
-      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
       if (!startSideEligible(sideMask[i], START_SIDE_ANY, closedMask)) continue;
       for (j = 0; j < numStarts; j++) {
         int d;
         if (!startClaimed[j]) continue;
+        if ((*value)->active[j] == FALSE) continue;
         d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                               (*value)->item[j].x, (*value)->item[j].y);
         if (d < minD) minD = d;
@@ -1450,7 +1572,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
     for (s = 0; s < numStarts; s++) {
       int d;
       if (startClaimed[s]) continue;
-      if (startsIsValidSquare(sim, (*value)->item[s].x, (*value)->item[s].y) == FALSE) continue;
+      if (startsIsUsable(sim, value, (BYTE)s) == FALSE) continue;
       if (!startSideEligible(sideMask[s], groupSide[g], groupOtherMask[g])) continue;
       d = startsMapDistance((*value)->item[s].x, (*value)->item[s].y,
                             groups[g].anchorX, groups[g].anchorY);
@@ -1498,7 +1620,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
       if (host < 0) {
         for (s = 0; s < numStarts; s++) {
           int d;
-          if (startsIsValidSquare(sim, (*value)->item[s].x, (*value)->item[s].y) == FALSE) continue;
+          if (startsIsUsable(sim, value, (BYTE)s) == FALSE) continue;
           if (!startSideEligible(sideMask[s], groupSide[g], groupOtherMask[g])) continue;
           d = startsMapDistance((*value)->item[s].x, (*value)->item[s].y,
                                 groups[g].anchorX, groups[g].anchorY);
@@ -1515,7 +1637,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
         bool onlyAllowed = (pass == 0);
         for (s = 0; s < numStarts; s++) {
           int d;
-          if (startsIsValidSquare(sim, (*value)->item[s].x, (*value)->item[s].y) == FALSE) continue;
+          if (startsIsUsable(sim, value, (BYTE)s) == FALSE) continue;
           if (onlyAllowed && !startSideEligible(sideMask[s], groupSide[g], groupOtherMask[g])) continue;
           d = startsBatchMinDistToClaimed(value, numStarts, startClaimed, (BYTE)s);
           if (host < 0 || riders[s] < hostRiders ||
@@ -1597,7 +1719,7 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
   for (i = 0; i < numStarts; i++) {
     startTier[i] = 0;
     if (taken[i]) continue;
-    if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+    if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
     if (!startSideEligible(sideMask[i], side, closedMask)) continue;
     if (ownBits == 0) {
       startTier[i] = 1;
@@ -1615,7 +1737,8 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
   usableRefs = 0;
   for (j = 0; j < teammateCount; j++) {
     BYTE t0 = teammateStarts0[j];
-    if (t0 < numStarts && startSideAccepts(sideMask[t0], side)) usableRefs++;
+    if (t0 < numStarts && (*value)->active[t0] != FALSE &&
+        startSideAccepts(sideMask[t0], side)) usableRefs++;
   }
 
   for (tier = 1; tier <= 3 && bestStart < 0; tier++) {
@@ -1629,6 +1752,7 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
           BYTE t0 = teammateStarts0[j];
           int d;
           if (t0 >= numStarts) continue;
+          if ((*value)->active[t0] == FALSE) continue;
           if (!startSideAccepts(sideMask[t0], side)) continue;
           d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                                 (*value)->item[t0].x, (*value)->item[t0].y);
@@ -1648,6 +1772,7 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
         for (j = 0; j < numStarts; j++) {
           int d;
           if (!taken[j]) continue;
+          if ((*value)->active[j] == FALSE) continue;
           d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                                 (*value)->item[j].x, (*value)->item[j].y);
           if (d < minD) minD = d;
@@ -1699,15 +1824,20 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     BYTE ry;
     BYTE bt;
     if (idx >= (*value)->numStarts) idx = 0;   /* clamp to a valid start */
-    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
-    bt = startsConvertDir((*value)->item[idx].dir);
-    *x = rx;
-    *y = ry;
-    *dir = (TURNTYPE)(bt * START_TIMES_16);
-    return;
+    /* A removed start falls through to the pickers below, which choose
+       among the live starts. */
+    if ((*value)->active[idx] != FALSE) {
+      startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
+      bt = startsConvertDir((*value)->item[idx].dir);
+      *x = rx;
+      *y = ry;
+      *dir = (TURNTYPE)(bt * START_TIMES_16);
+      return;
+    }
   }
 
-  if (playerNum < MAX_TANKS && sim->pendingStartIdx[playerNum] < (*value)->numStarts) {
+  if (playerNum < MAX_TANKS && sim->pendingStartIdx[playerNum] < (*value)->numStarts &&
+      (*value)->active[sim->pendingStartIdx[playerNum]] != FALSE) {
     BYTE idx = sim->pendingStartIdx[playerNum];
     BYTE rx;
     BYTE ry;
@@ -1748,12 +1878,31 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
 void startsGetRandStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir) {
   int rnd;      /* Random number */
   BYTE bt;      /* Used to convert the BMAP starts (0 = east) to my starts */
+  BYTE live;    /* Number of live starts */
+  BYTE count;   /* Looping variable */
 
-  if ((*value)->numStarts > 0) {
-    rnd = (int)bolo_rand_below((uint32_t)(*value)->numStarts);
-    *x = (*value)->item[rnd].x;
-    *y = (*value)->item[rnd].y;
-    bt = startsConvertDir((*value)->item[rnd].dir);
+  /* Draw from the live starts only, so a removed slot is never parachuted on
+     and the draw stays uniform over the starts that are left. */
+  live = 0;
+  for (count = 0; count < (*value)->numStarts; count++) {
+    if ((*value)->active[count] != FALSE) {
+      live++;
+    }
+  }
+  if (live > 0) {
+    rnd = (int)bolo_rand_below((uint32_t)live);
+    for (count = 0; count < (*value)->numStarts; count++) {
+      if ((*value)->active[count] == FALSE) {
+        continue;
+      }
+      if (rnd == 0) {
+        break;
+      }
+      rnd--;
+    }
+    *x = (*value)->item[count].x;
+    *y = (*value)->item[count].y;
+    bt = startsConvertDir((*value)->item[count].dir);
     *dir = (TURNTYPE) (bt * START_TIMES_16);
   } else {
     *x = BRADIANS_GAP;
@@ -1859,6 +2008,12 @@ void startsValidate(starts *value) {
     if ((*value)->item[count].dir > 15) {
       (*value)->item[count].dir = 0;
     }
+    /* active rides the blob, so a hostile map can put any byte here. Every
+       value but 0 reads as live, which is what a start list without the flag
+       would have meant. */
+    if ((*value)->active[count] != FALSE) {
+      (*value)->active[count] = TRUE;
+    }
   }
 }
 
@@ -1869,6 +2024,13 @@ void startsSetStartCompressData(starts *value, BYTE *buff, int dataLen) {
   if ((*value)->numStarts > MAX_STARTS) {
     (*value)->numStarts = MAX_STARTS;
   }
+  /* The live flags sit past the wire format, so the copy above leaves them
+     describing whatever list was here before. A blob is a map, and every start
+     a map carries is on it: mark the count live and the slots above it
+     removed. */
+  memset((*value)->active, TRUE, (*value)->numStarts);
+  memset((*value)->active + (*value)->numStarts, FALSE,
+         (size_t)(MAX_STARTS - (*value)->numStarts));
 }
 
 /*********************************************************
@@ -1955,6 +2117,10 @@ void startsGetMaxs(starts *value, int *leftPos, int *rightPos, int *topPos, int 
 
   count = 0;
   while (count < ((*value)->numStarts)) {
+    if ((*value)->active[count] == FALSE) {
+      count++;
+      continue;
+    }
     if ((*value)->item[count].x < *leftPos) {
       *leftPos = (*value)->item[count].x;
     }

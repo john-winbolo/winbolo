@@ -3396,6 +3396,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_pill_repair_load.c
+    tests/unit/test_entity_lifecycle.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -4233,6 +4234,14 @@ set(_unit_test_names
     pill_repair_tops_up_from_arrival_armour
     pill_repair_short_load_spends_what_it_has
     pill_repair_full_load_covers_a_dead_pill
+    entity_removed_pill_is_gone_from_gameplay
+    entity_removed_base_is_gone_from_gameplay
+    entity_removed_start_is_never_chosen
+    entity_add_reuses_lowest_removed_slot
+    entity_add_refused_when_full
+    entity_remove_refuses_already_removed
+    entity_remove_keeps_indices_above
+    entity_blob_load_marks_every_item_live
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken

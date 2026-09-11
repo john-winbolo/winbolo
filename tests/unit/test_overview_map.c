@@ -146,7 +146,7 @@ int run_overview_regions(void) {
     /* One pill of the player's own, alive and on the map. The tank's rect
      * comes first and the pill's follows it — the order the farewell stamp
      * replays. */
-    gs->pb->numPills = 1;
+    pillsSetNumPills(&gs->pb, 1);
     gs->pb->item[0].owner = 0;
     gs->pb->item[0].armour = PILLBOX_15;
     gs->pb->item[0].inTank = FALSE;
@@ -206,7 +206,7 @@ int run_overview_regions(void) {
         const int maxOut = 4;
         BYTE i;
 
-        gs->pb->numPills = MAX_PILLS;
+        pillsSetNumPills(&gs->pb, MAX_PILLS);
         for (i = 0; i < MAX_PILLS; i++) {
             gs->pb->item[i].owner = 0;
             gs->pb->item[i].armour = PILLBOX_15;
@@ -507,7 +507,7 @@ int run_overview_reveal(void) {
      * on its own. */
     BYTE pillX = (BYTE)((int)f.tankMX + overviewAwayFromEdge(f.tankMX) * 100);
     BYTE pillY = f.tankMY;
-    f.gs->pb->numPills = 1;
+    pillsSetNumPills(&f.gs->pb, 1);
     f.gs->pb->item[0].owner = f.me;
     f.gs->pb->item[0].armour = PILLBOX_15;
     f.gs->pb->item[0].inTank = FALSE;
@@ -718,7 +718,7 @@ int run_overview_pill_capture(void) {
                   "no base-free square near %u,%u for the pill",
                   (unsigned)pillX, (unsigned)f.tankMY);
 
-    f.gs->pb->numPills = 1;
+    pillsSetNumPills(&f.gs->pb, 1);
     f.gs->pb->item[0].x = pillX;
     f.gs->pb->item[0].y = pillY;
     f.gs->pb->item[0].inTank = FALSE;
@@ -1223,7 +1223,7 @@ int run_overview_entities(void) {
      * One pill of the client's own, forty squares off, so its 15x15 block is
      * nowhere near the tank's square. */
     BYTE pillX = (BYTE)((int)f.tankMX + dir * 40);
-    f.gs->pb->numPills = 1;
+    pillsSetNumPills(&f.gs->pb, 1);
     f.gs->pb->item[0].owner = f.me;
     f.gs->pb->item[0].armour = PILLBOX_15;
     f.gs->pb->item[0].inTank = FALSE;
@@ -1478,7 +1478,7 @@ int run_overview_decay_mirror(void) {
                   "no base-free square near %u,%u for the far pill",
                   (unsigned)farX, (unsigned)f.tankMY);
 
-    f.gs->pb->numPills = 2;
+    pillsSetNumPills(&f.gs->pb, 2);
     f.gs->pb->item[0].owner = f.me;
     f.gs->pb->item[0].armour = PILLBOX_15;
     f.gs->pb->item[0].inTank = FALSE;
@@ -1701,7 +1701,7 @@ int run_overview_decay_view_exit(void) {
     /* One pill of the client's own, a hundred squares off, so the tank is
      * never near enough to re-stamp its clock. */
     BYTE pillX = (BYTE)((int)f.tankMX + overviewAwayFromEdge(f.tankMX) * 100);
-    f.gs->pb->numPills = 1;
+    pillsSetNumPills(&f.gs->pb, 1);
     f.gs->pb->item[0].owner = f.me;
     f.gs->pb->item[0].armour = PILLBOX_15;
     f.gs->pb->item[0].inTank = FALSE;

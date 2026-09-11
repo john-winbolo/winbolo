@@ -123,6 +123,60 @@ BYTE startsGetNumStarts(starts *value);
 void startsSetStart(starts *value, start *item, BYTE startNum);
 
 /*********************************************************
+*NAME:          startsAddItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Puts a start into the list and returns its number in
+*  outStartNum. The lowest removed slot is reused; when
+*  every slot in the count is live the list is extended and
+*  the count raised. Returns FALSE with outStartNum
+*  untouched when all MAX_STARTS starts are live.
+*
+*ARGUMENTS:
+*  value       - Pointer to the starts structure
+*  item        - The start to store
+*  outStartNum - Receives the start number, 1 based
+*********************************************************/
+bool startsAddItem(starts *value, const start *item, BYTE *outStartNum);
+
+/*********************************************************
+*NAME:          startsRemoveItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Clears a start's live flag. The slot, the count and every
+*  start number above it are left alone, so the numbers the
+*  map blob and the recordings use keep meaning the same
+*  start. Returns FALSE for a number out of range or one
+*  already removed.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsRemoveItem(starts *value, BYTE startNum);
+
+/*********************************************************
+*NAME:          startsIsActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Returns whether a start number names a start that is on
+*  the map. A removed start keeps its slot and its number, so
+*  a number in range is not on its own enough. A number out
+*  of range returns FALSE.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsIsActive(starts *value, BYTE startNum);
+
+/*********************************************************
 *NAME:          startsExistPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 2/7/00

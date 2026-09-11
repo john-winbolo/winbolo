@@ -827,28 +827,36 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * convergence point for all three. Reads cs->sim.{bs,plyrs,game}
          * and the per-game counters set by client_snapshot during play. */
         BYTE numBases = basesGetNumBases(&cs->sim.bs);
+        BYTE liveBases = 0;
         BYTE first    = NEUTRAL;
         bool allOwned = true;
         bool localWon = false;
         BYTE b;
 
+        /* A removed base is not on the map, so it neither blocks the win nor
+           counts toward it; the first live base sets the owner to match. */
         for (b = 1; b <= numBases && allOwned; b++) {
-            BYTE owner = basesGetBaseOwner(&cs->sim.bs, b);
+            BYTE owner;
             BYTE shellsAmt, minesAmt, armourAmt;
+            if (basesIsActive(&cs->sim.bs, b) == FALSE) {
+                continue;
+            }
+            owner = basesGetBaseOwner(&cs->sim.bs, b);
             basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
             if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
                 allOwned = false;
-            } else if (b == 1) {
+            } else if (liveBases == 0) {
                 first = owner;
             } else {
                 allOwned = playersIsAllie(&cs->sim.plyrs, owner, first);
             }
+            liveBases++;
         }
 
         /* Steam stats/achievements are for the local human only — bots run
          * this same game-over path with their own ClientSim and must not
          * credit wins/losses to the local user. */
-        if (allOwned && numBases > 0 && !cs->isBot) {
+        if (allOwned && liveBases > 0 && !cs->isBot) {
             localWon = (cs->myPlayerNum == first) ||
                        playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
 

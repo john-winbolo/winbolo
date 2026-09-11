@@ -52,7 +52,7 @@ static void build_hostile_blob(BYTE *blob) {
     memset(blob, 0, BLOB_LEN);
 
     basesCreate(&bsSrc);
-    bsSrc->numBases = MAX_BASES;
+    basesSetNumBases(&bsSrc, MAX_BASES);
     for (i = 0; i < MAX_BASES; i++) {
         bsSrc->item[i].x      = i;
         bsSrc->item[i].y      = i;
@@ -65,7 +65,7 @@ static void build_hostile_blob(BYTE *blob) {
     basesDestroy(&bsSrc);
 
     pillsCreate(&pbSrc);
-    pbSrc->numPills = MAX_PILLS;
+    pillsSetNumPills(&pbSrc, MAX_PILLS);
     for (i = 0; i < MAX_PILLS; i++) {
         pbSrc->item[i].x      = i;
         pbSrc->item[i].y      = i;
@@ -77,7 +77,7 @@ static void build_hostile_blob(BYTE *blob) {
     pillsDestroy(&pbSrc);
 
     startsCreate(&ssSrc);
-    ssSrc->numStarts = MAX_STARTS;
+    startsSetNumStarts(&ssSrc, MAX_STARTS);
     for (i = 0; i < MAX_STARTS; i++) {
         ssSrc->item[i].x   = i;
         ssSrc->item[i].y   = i;

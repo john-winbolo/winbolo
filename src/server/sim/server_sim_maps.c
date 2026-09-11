@@ -1093,7 +1093,8 @@ static void serverSimApplyMapChange(ServerSim *sim) {
             if (!sim->playerConnected[k]) continue;
             if (sim->lobbyPlayers[k].startIdx == 0xFF) continue;
             if (sim->lobbyPlayers[k].startIdx < 1 ||
-                sim->lobbyPlayers[k].startIdx > numStarts) {
+                sim->lobbyPlayers[k].startIdx > numStarts ||
+                startsIsActive(&sim->sim.ss, sim->lobbyPlayers[k].startIdx) == FALSE) {
                 sim->lobbyPlayers[k].startIdx = 0xFF;
             }
         }

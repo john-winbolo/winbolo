@@ -556,6 +556,7 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     BYTE numBases = basesGetNumBases(bs);
     BYTE bi;
     for (bi = 0; bi < numBases; bi++) {
+      if (basesIsActive(bs, (BYTE)(bi + 1)) == FALSE) continue;
       (*value)->mapItem[(*bs)->item[bi].x][(*bs)->item[bi].y] = ROAD;
     }
   }
@@ -565,7 +566,9 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
-      BYTE t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
+      BYTE t;
+      if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
       }
@@ -1603,6 +1606,7 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     BYTE numBases = basesGetNumBases(bs);
     BYTE bi;
     for (bi = 0; bi < numBases; bi++) {
+      if (basesIsActive(bs, (BYTE)(bi + 1)) == FALSE) continue;
       (*value)->mapItem[(*bs)->item[bi].x][(*bs)->item[bi].y] = ROAD;
     }
   }
@@ -1612,7 +1616,9 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
-      BYTE t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
+      BYTE t;
+      if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
       }
@@ -1779,6 +1785,7 @@ uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb) {
     BYTE numBases = basesGetNumBases(bs);
     BYTE bi;
     for (bi = 0; bi < numBases; bi++) {
+      if (basesIsActive(bs, (BYTE)(bi + 1)) == FALSE) continue;
       masked[(size_t)(*bs)->item[bi].x * MAP_ARRAY_SIZE + (*bs)->item[bi].y] = ROAD;
     }
   }
@@ -1786,8 +1793,11 @@ uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
-      size_t idx = (size_t)(*pb)->item[pi].x * MAP_ARRAY_SIZE + (*pb)->item[pi].y;
-      BYTE t = masked[idx];
+      size_t idx;
+      BYTE t;
+      if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      idx = (size_t)(*pb)->item[pi].x * MAP_ARRAY_SIZE + (*pb)->item[pi].y;
+      t = masked[idx];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         masked[idx] = ROAD;
       }

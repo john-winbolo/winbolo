@@ -300,6 +300,7 @@ bool serverSimSaveMap(ServerSim *sim, char *fileName) {
 BYTE serverSimWinningOwner(ServerSim *sim) {
     BYTE count;
     BYTE max;
+    BYTE live = 0;
     BYTE first = NEUTRAL;
     BYTE current;
 
@@ -308,20 +309,29 @@ BYTE serverSimWinningOwner(ServerSim *sim) {
         return NEUTRAL;
     }
 
+    /* A removed base is not on the map, so it neither blocks the win nor
+       counts toward it; the first live base sets the owner to match. */
     for (count = 1; count <= max; count++) {
         BYTE shellsAmt, minesAmt, armourAmt;
+        if (basesIsActive(&sim->sim.bs, count) == FALSE) {
+            continue;
+        }
         current = basesGetBaseOwner(&sim->sim.bs, count);
         basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
         if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
             return NEUTRAL;
         }
-        if (count == 1) {
+        if (live == 0) {
             first = current;
         } else if (!playersIsAllie(&sim->sim.plyrs, current, first)) {
             return NEUTRAL;
         }
+        live++;
     }
 
+    if (live == 0) {
+        return NEUTRAL;
+    }
     return first;
 }
 

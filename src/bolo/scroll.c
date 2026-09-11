@@ -164,6 +164,7 @@ static bool isThreatTank(GameSim *sim, BYTE viewPlayer, int i, int *outX, int *o
 
 static bool isThreatPill(GameSim *sim, BYTE viewPlayer, int pillNum, pillbox *outPill) {
   pillsGetPill(&sim->pb, outPill, pillNum);
+  if (pillsIsActive(&sim->pb, (BYTE)pillNum) == FALSE) return FALSE;
   if (outPill->armour == 0) return FALSE;
   if (outPill->owner == NEUTRAL) return TRUE;        /* shoots everyone */
   if (outPill->owner == viewPlayer) return FALSE;

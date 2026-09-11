@@ -657,6 +657,7 @@ static bool viewCategorySweeps(const ServerSim *sim, ViewCategory cat) {
  * and serverSimValidateViewTargets can hand them an unchecked value. */
 static bool viewPillQualifies(ServerSim *sim, BYTE clientIdx, BYTE p) {
     if (sim->sim.pb == NULL || p >= pillsGetNumPills(&sim->sim.pb)) return false;
+    if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) return false;
     if (!playersIsAllie(&sim->sim.plyrs, (*sim->sim.pb).item[p].owner,
                         clientIdx)) return false;
     if ((*sim->sim.pb).item[p].armour == 0) return false;
@@ -667,6 +668,7 @@ static bool viewPillQualifies(ServerSim *sim, BYTE clientIdx, BYTE p) {
 static bool viewBaseQualifies(ServerSim *sim, BYTE clientIdx, BYTE b) {
     BYTE owner;
     if (sim->sim.bs == NULL || b >= basesGetNumBases(&sim->sim.bs)) return false;
+    if (basesIsActive(&sim->sim.bs, (BYTE)(b + 1)) == FALSE) return false;
     owner = (*sim->sim.bs).item[b].owner;
     if (owner == NEUTRAL) return false;
     return playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
@@ -999,6 +1001,7 @@ void serverSimUpdateViewDecay(ServerSim *sim) {
             BYTE np = pillsGetNumPills(&sim->sim.pb);
             BYTE p;
             for (p = 0; p < np; p++) {
+                if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) continue;
                 if (viewNearSquare(mx, my, (*sim->sim.pb).item[p].x,
                                    (*sim->sim.pb).item[p].y)) {
                     sim->pillNearTick[c][p] = stamp;
@@ -1009,6 +1012,7 @@ void serverSimUpdateViewDecay(ServerSim *sim) {
             BYTE nb = basesGetNumBases(&sim->sim.bs);
             BYTE b;
             for (b = 0; b < nb; b++) {
+                if (basesIsActive(&sim->sim.bs, (BYTE)(b + 1)) == FALSE) continue;
                 if (viewNearSquare(mx, my, (*sim->sim.bs).item[b].x,
                                    (*sim->sim.bs).item[b].y)) {
                     sim->baseNearTick[c][b] = stamp;

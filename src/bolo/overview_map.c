@@ -343,6 +343,9 @@ static bool overviewPillLive(struct GameSim *sim, BYTE myPlayerNum,
                              BYTE *outAlpha) {
   bool canView = pillsCanView(sim, &sim->pb, i, myPlayerNum);
 
+  if (pillsIsActive(&sim->pb, (BYTE)(i + 1)) == FALSE) {
+    return FALSE;
+  }
   return overviewItemLive(in, viewCategoryPill, canView, VIEW_KIND_PILL, i,
                           in == NULL ? NULL : in->pillNearTick, outAlpha);
 }
@@ -352,6 +355,9 @@ static bool overviewBaseLive(struct GameSim *sim, BYTE myPlayerNum,
                              BYTE *outAlpha) {
   bool canView = basesCanView(sim, &sim->bs, i, myPlayerNum);
 
+  if (basesIsActive(&sim->bs, (BYTE)(i + 1)) == FALSE) {
+    return FALSE;
+  }
   return overviewItemLive(in, viewCategoryBase, canView, VIEW_KIND_BASE, i,
                           in == NULL ? NULL : in->baseNearTick, outAlpha);
 }
@@ -604,7 +610,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * written only if it is one the player can see. */
   numPills = pillsGetNumPills(&sim->pb);
   for (i = 0; i < MAX_PILLS; i++) {
-    nowInTank = (i < (int)numPills) ? sim->pb->item[i].inTank : FALSE;
+    nowInTank = (i < (int)numPills && pillsIsActive(&sim->pb, (BYTE)(i + 1)))
+                    ? sim->pb->item[i].inTank
+                    : FALSE;
     if (nowInTank == TRUE && om->pillWasInTank[i] == FALSE) {
       square.left = square.right = (int)sim->pb->item[i].x;
       square.top = square.bottom = (int)sim->pb->item[i].y;
@@ -629,6 +637,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * is about to write the square anyway. */
   numBases = basesGetNumBases(&sim->bs);
   for (i = 0; i < (int)numBases; i++) {
+    if (basesIsActive(&sim->bs, (BYTE)(i + 1)) == FALSE) {
+      continue;
+    }
     square.left = square.right = (int)sim->bs->item[i].x;
     square.top = square.bottom = (int)sim->bs->item[i].y;
     if (overviewPointInRects(om->live, om->liveCount, square.left,
