@@ -1101,6 +1101,11 @@ void serverSimTick(ServerSim *sim) {
         serverSimFlushPendingPings(sim);
         simRunHalfStep(sim);
         simRunHalfStep(sim);
+        /* Ahead of the shadow tick so terrain a scenario edits from here
+         * lands in the same frame's map events instead of the next one's. */
+        if (sim->scenarioTick != NULL) {
+            sim->scenarioTick(sim->scenarioTickCtx);
+        }
         /* Both half-steps have finished filling mapEvents and no transport has
          * drained them yet, so this is where each client's copy of the terrain
          * takes the frame's changes. Here rather than in the UDP drain so
@@ -1111,6 +1116,9 @@ void serverSimTick(ServerSim *sim) {
         serverSimShadowTick(sim);
     } else {
         simRunHalfStep(sim);
+        if (sim->scenarioTick != NULL) {
+            sim->scenarioTick(sim->scenarioTickCtx);
+        }
     }
 }
 

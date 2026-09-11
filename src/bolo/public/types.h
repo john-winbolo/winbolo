@@ -151,6 +151,13 @@ typedef struct {
 } vectorBodyObj;
 */
 
+/* Per-tank movement and combat percentages. 0 means classic, so a
+ * zeroed struct is the unmodified tank; every other value is a percent
+ * of the classic figure. */
+typedef struct {
+    uint8_t speed, accel, turn, reload, dealt, taken; /* percent; 0 = classic */
+} TankModifiers;
+
 typedef struct tankObj *tank;
 
 

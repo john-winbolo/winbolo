@@ -94,6 +94,7 @@ add_library(server_sim_static STATIC
     sim/server_sim_lobby.c
     sim/server_sim_control.c
     sim/server_sim_tick.c
+    sim/server_sim_scenario.c
 )
 
 bolo_apply_include_rules(server_sim_static sim_owner)

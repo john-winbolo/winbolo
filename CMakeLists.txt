@@ -3307,6 +3307,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_vote_nolobby_disabled.c
     tests/unit/test_lobby_set_team_clamps.c
+    # The scenario write door: the op funnel's prelude, the policy and
+    # tick registrations beside it, and the flag that keeps the all-ready
+    # detector out of a start already under way.
+    tests/unit/test_scenario_funnel.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
@@ -4602,6 +4606,15 @@ set(_unit_test_names
     console_read_reports_eof
     console_read_timeout_then_eof
     wbv_fixture_summaries
+    scenario_op_unknown_type_unsupported
+    scenario_op_every_type_unsupported
+    scenario_policy_register_replace_clear
+    scenario_op_refused_in_policy
+    scenario_op_refused_during_start
+    scenario_tick_called_both_branches
+    scenario_start_flag_set_during_start
+    scenario_start_guard_blocks_reentry
+    scenario_start_flag_cleared_after_start
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -4621,6 +4634,24 @@ foreach(_name IN LISTS _unit_test_names)
                          TIMEOUT 60
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
+
+# ---- Include-rule check: the scenario surface is invisible to a frontend --
+# src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner
+# and unittests alone, so a gui translation unit that includes the funnel
+# header must not compile. The target below is exactly that translation
+# unit, built under the gui profile and kept out of the ordinary build; the
+# test builds it and expects the build to fail. If the include rule is ever
+# loosened, the build succeeds and the test goes red.
+add_library(scenario_api_hidden_from_gui STATIC EXCLUDE_FROM_ALL
+    tests/include_rules/scenario_api_under_gui.c)
+bolo_apply_include_rules(scenario_api_hidden_from_gui gui)
+
+add_test(NAME include_rules.scenario_api_hidden_from_gui
+         COMMAND ${CMAKE_COMMAND} --build . --target scenario_api_hidden_from_gui
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(include_rules.scenario_api_hidden_from_gui PROPERTIES
+                     TIMEOUT 120
+                     WILL_FAIL TRUE)
 
 if(WB_NETDEBUG)
     foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss netdebug_error_offset_clamped)

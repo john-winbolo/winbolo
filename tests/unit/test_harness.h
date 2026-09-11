@@ -1836,6 +1836,20 @@ int run_console_savemap_path(void);
 int run_console_unknown_command_is_inert(void);
 int run_console_say_keeps_case(void);
 
+/* The scenario write door (test_scenario_funnel.c): the op funnel's
+ * prelude and its refusals, the policy and per-tick registrations
+ * beside it, and the start-in-progress flag that keeps the all-ready
+ * detector out of a start already under way. */
+int run_scenario_op_unknown_type_unsupported(void);
+int run_scenario_op_every_type_unsupported(void);
+int run_scenario_policy_register_replace_clear(void);
+int run_scenario_op_refused_in_policy(void);
+int run_scenario_op_refused_during_start(void);
+int run_scenario_tick_called_both_branches(void);
+int run_scenario_start_flag_set_during_start(void);
+int run_scenario_start_guard_blocks_reentry(void);
+int run_scenario_start_flag_cleared_after_start(void);
+
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
 int run_console_read_reports_eof(void);

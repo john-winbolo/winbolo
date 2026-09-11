@@ -753,6 +753,12 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     BYTE numHumans = 0;
     BYTE i;
 
+    /* A start publishes while the state is still lobby and every player
+     * is still marked ready, so anything that edits the roster from one
+     * of those publishes lands back here and would start a second game
+     * on top of the one being set up. */
+    if (sim->startInProgress) return;
+
     if (sim->state != serverStateLobby) return;
 
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1049,6 +1055,10 @@ static void serverSimApplyAutoLockOnGameStart(ServerSim *sim) {
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
+    /* Held for the whole start so the all-ready detector refuses to run
+     * while the roster and the state are being rebuilt. */
+    sim->startInProgress = true;
+
     /* Fresh round — the last-human-left return-to-lobby check arms only
      * once a human is seen this round. */
     sim->roundHadHuman = false;
@@ -1154,6 +1164,8 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         phaseEvt.type = CTRL_GAME_PHASE_RUNNING;
         serverSimPublishControl(sim, &phaseEvt);
     }
+
+    sim->startInProgress = false;
 }
 
 void serverSimStartGame(ServerSim *sim) {
@@ -1163,6 +1175,10 @@ void serverSimStartGame(ServerSim *sim) {
        identity (name, country, clientType, clientFlags) is preserved across
        the reset by serverSimResetGameWorld, so it no longer needs saving. */
     bool savedConnected[MAX_TANKS];
+
+    /* Held for the whole start, as in serverSimStartGameInPlace. */
+    sim->startInProgress = true;
+
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
     }
@@ -1274,6 +1290,8 @@ void serverSimStartGame(ServerSim *sim) {
     sim->state = serverStateRunning;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
+
+    sim->startInProgress = false;
 
     /* A snapshot will be written on the first running tick
      * (tick 0 % FULL_SYNC_INTERVAL == 0). */

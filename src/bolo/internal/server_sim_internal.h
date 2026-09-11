@@ -34,6 +34,7 @@
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
+#include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -554,6 +555,27 @@ struct ServerSim {
     int               numSubscribers;
     bool              publishing;
 
+    /* Scenario attachment. scenario is the host's own state and the only
+     * scenario data on any engine struct; everything else here is what
+     * the sim needs to call back into it.
+     *
+     * inScenarioPolicy is set around every policy call. A policy callback
+     * is a question asked mid-operation and must answer without changing
+     * anything, so the op funnel's prelude refuses an op while it is set.
+     *
+     * startInProgress is set for the duration of both start functions.
+     * A start publishes while the state is still lobby, and a subscriber
+     * that edits the roster from that publish re-enters
+     * serverSimLobbyCheckAllReady with every player still ready — which
+     * would start a second game on top of the one being set up. The
+     * detector returns at its first line while this is set. */
+    void                  *scenario;
+    const ScenarioPolicy  *scenarioPolicy;
+    bool                   inScenarioPolicy;
+    bool                   startInProgress;
+    void                 (*scenarioTick)(void *ctx);
+    void                  *scenarioTickCtx;
+
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
      * spectator; NULL when no enumerator is registered. */
@@ -572,6 +594,15 @@ struct ServerSim {
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
+
+/* Bracket every call through sim->scenarioPolicy with these. They set and
+ * clear inScenarioPolicy, which the op funnel's prelude reads: a policy
+ * callback answers a question and must not write back through the funnel
+ * while the engine is mid-operation. Declared here rather than on the
+ * scenario surface because the call sites are the sim's own, not the
+ * scenario's. */
+void serverSimScenarioPolicyEnter(ServerSim *sim);
+void serverSimScenarioPolicyLeave(ServerSim *sim);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

@@ -21,6 +21,7 @@ document is the stable reference for the rules themselves.
 | Directory | Allowed tiers | Notes |
 |---|---|---|
 | `src/bolo/` | T1 + T2 + T3 + T4 | Owns T2; contributes to all tiers. |
+| `src/bolo/scenario_api/` | T1 + T4 | A third header directory beside `public/` and `internal/`. Holds the scenario write funnel (`serverSimApplyScenarioOp`), the policy vtable and tick registrations, and the POD types those calls take. Read by the `scenario_host` profile (the scenario runtime), by `sim_owner` to implement the funnel, and by `unittests` to drive it; nothing else sees it. Not in `public/` because these are server-authoritative entry points on the same footing as the lifecycle start functions — a frontend that wants to change the world sends a command, and a scenario is the one caller whose intent is applied to the sim directly. See "Privileged exceptions". |
 | `src/gui/` | T1 + T3 + T4 | The desktop renderer. Cannot reach into sim internals. |
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
@@ -44,7 +45,12 @@ everything in `public/` (T1 + T3 + T4) and nothing in `internal/` (T2).
 The T3-vs-T4 distinction and the "don't use T3 in non-renderers" guidance
 are policy enforced by review, not by the build. The four privileged
 exceptions (`mapeditor`, `braintest`, `gym`, `tests/unit/`) get full
-T2 access via dedicated CMake profiles.
+T2 access via dedicated CMake profiles. One further profile,
+`scenario_host`, is not among them and grants no T2 at all: it sees
+`public/` plus `src/bolo/scenario_api/`, a directory of entry points
+and POD types rather than sim internals. It narrows what its consumer
+may reach rather than widening it, which is why it is not an
+exception to the rule above.
 
 ## What clients must do
 
@@ -130,7 +136,9 @@ because the broken client did not run the same code path.
 
 1. **Do not include T2 headers from outside `src/bolo/`** (the
    privileged exceptions — `mapeditor`, `braintest`, `gym`,
-   `tests/unit/` — are bounded by the scopes listed below). If you find yourself
+   `tests/unit/` — are bounded by the scopes listed below;
+   `scenario_host` is not one of them, because
+   `src/bolo/scenario_api/` is not T2). If you find yourself
    reaching for `tank.h`, `players.h`, `game_sim.h`, or anything
    in the T2 list, the answer is to add a T1 accessor on the sim,
    not to add another include exception.
@@ -153,7 +161,10 @@ because the broken client did not run the same code path.
    exceptions that exist today (`mapeditor`, `braintest`, `gym`,
    `tests/unit/`) each carry a documented scope and a written note
    of what they rest on — see the "Privileged exceptions" section
-   below. `src/server/`,
+   below. `scenario_host` is not a fifth: the scenario surface got
+   its own header directory and a profile that sees `public/` plus
+   that directory and nothing else, which is the shape a new door
+   should take when the default answer will not do. `src/server/`,
    `src/headless/`, `src/wasm/`, `src/android/`, and `src/ios/`
    all run the sim and all participate in this bug class. A new
    exception requires the same justification structure: bounded
@@ -2052,6 +2063,39 @@ link break is the signal, not a build problem to route around by
 widening the test binary. A tenth file joins only on the same test:
 callable with no display attached, or it does not go in.
 
+### `src/bolo/scenario_api/`
+
+Not a T2 grant, and it widens nothing — it is recorded here because
+it is the other place `cmake/bolo_lib.cmake` decides who sees what,
+and because it carries the same kind of condition its neighbours do.
+The directory is a third peer beside `public/` and `internal/`, and
+the `scenario_host` profile that reads it sees `public/` plus that
+directory and no sim internals at all.
+
+It holds the entry points a scenario changes the world through — the
+op funnel, the policy vtable, the tick and state registrations — and
+the POD types they take. Reads are ordinary T1 accessors on
+`server_sim.h` and events are the control bus, so this is the whole
+of the non-public scenario surface.
+
+Scope: `scenario_defs.h` and `server_sim_scenario.h`. `sim_owner`
+sees them to implement the funnel and `unittests` to drive it;
+`gui`, `runtime_only`, `mapeditor`, `braintest` and `gym` do not, so
+a frontend translation unit that includes the funnel header fails to
+compile. That is checked rather than assumed: the CTest entry
+`include_rules.scenario_api_hidden_from_gui` builds exactly such a
+translation unit under the `gui` profile and expects the build to
+fail.
+
+**Rests on** these being server-authoritative entry points, the same
+footing the lifecycle start functions already have: a frontend that
+wants to change the world sends a command, and a scenario is the one
+caller whose intent is applied directly. Revisit it the moment a
+second kind of caller needs the funnel, or a call in here becomes
+something a frontend legitimately makes — at that point the calls
+that qualify move to `public/` under the ordinary T1 rule and the
+directory keeps only what is left.
+
 ### Adding a new exception
 
 A new exception requires the same structure: a directory with its
@@ -2064,10 +2108,14 @@ Without that, the default answer is "add a T1 accessor".
 ## Per-file T2 grants
 
 The five privileged profiles above (`sim_owner`, `mapeditor`,
-`braintest`, `gym`, `unittests`) grant T2 access at the directory/target level.
+`braintest`, `gym`, `unittests`) grant T2 access at the directory/target level;
+`scenario_host` grants none and so plays no part in this mechanism.
 A finer-grained mechanism — `bolo_grant_internal_source_access` in
 `cmake/bolo_lib.cmake` — grants T2 access at the individual source-
-file level inside a target that is otherwise locked to `public/`.
+file level inside a target that is otherwise locked to `public/`. It
+hands the file the same include path `sim_owner` has, scenario
+surface included, so a granted file and a `server_sim_static` file
+resolve the same headers.
 
 It exists because some sim source files have to compile per-target
 rather than join `bolo_static` or `server_static`. The reasons fall
@@ -2140,9 +2188,10 @@ exceptions). The T3/T4 distinction inside `public/` is
 documentation, not a separate directory.
 
 ```
-src/bolo/public/    — T1 + T3 + T4 headers
-src/bolo/internal/  — T2 headers
-src/bolo/           — sim .c files only (no headers)
+src/bolo/public/       — T1 + T3 + T4 headers
+src/bolo/internal/     — T2 headers
+src/bolo/scenario_api/ — the scenario write and policy surface
+src/bolo/              — sim .c files only (no headers)
 ```
 
 External targets get `src/bolo/public/` on their include path —
@@ -2150,6 +2199,9 @@ that single directory contains T1, T3, and T4 headers, so any
 target with `public/` on its path can see all three. The four
 privileged profiles (`mapeditor`, `braintest`, `gym`, `unittests`)
 additionally get `internal/` and the flat `src/bolo/` directory.
+`scenario_api/` is not part of either group: `scenario_host` gets
+`public/` plus that directory, and the privileged profiles get it as
+well so the funnel can be implemented and tested.
 `src/bolo/`'s own target (`sim_owner` profile) has all three on
 its include path
 so internal-to-bolo includes can stay short (`#include "tank.h"`,
