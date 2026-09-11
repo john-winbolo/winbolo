@@ -183,13 +183,7 @@ EM_JS(int, wb_audio_load, (int id, const char *path), {
   }
 });
 
-/* `gain` is this one play's loudness, 1 for as authored. It goes through a
-   GainNode of its own between the source and the master gain node, so it
-   multiplies the master/effects gain rather than replacing it — the same
-   composition the desktop mixer's per-slot gain has. Only the pings pass
-   anything but 1 (PING_SOUND_GAIN), and a gain of 1 connects straight to the
-   master node as before, so no other effect gets an extra node in its path. */
-EM_JS(void, wb_audio_play, (int id, double gain), {
+EM_JS(void, wb_audio_play, (int id), {
   if (!Module.WB_audio || !Module.WB_audio.ctx) return;
   var buf = Module.WB_audio.buffers[id];
   if (!buf) return;  /* Either out of range or still decoding. */
@@ -198,17 +192,7 @@ EM_JS(void, wb_audio_play, (int id, double gain), {
      when playback ends and is GC'd shortly after.  Cheap to create. */
   var src = Module.WB_audio.ctx.createBufferSource();
   src.buffer = buf;
-  var dest = Module.WB_audio.gainNode;
-  if (gain !== 1.0) {
-    var g = Module.WB_audio.ctx.createGain();
-    g.gain.value = gain;
-    g.connect(dest);
-    dest = g;
-    /* The source unhooks itself at the end; this one has to be told, or it
-       stays connected to the master node with nothing feeding it. */
-    src.onended = function() { try { g.disconnect(); } catch (e) { /* gone */ } };
-  }
-  src.connect(dest);
+  src.connect(Module.WB_audio.gainNode);
   src.start(0);
 });
 
@@ -277,7 +261,6 @@ static unsigned int soundPingFoundMask(void) {
 
 void soundPlayEffect(sndEffects value) {
   int index;
-  double gain;
   unsigned char pingKind = pingSoundKindOf(value);
 
   /* A ping kind with no sound file of its own plays the default ping. Same
@@ -285,12 +268,6 @@ void soundPlayEffect(sndEffects value) {
   if (pingKind < PING_KIND_COUNT) {
     value = pingSoundResolve(pingKind, soundPingFoundMask());
   }
-
-  /* And the pings play PING_SOUND_GAIN down, as they do on the desktop. Asked
-     after the fallback so a kind that fell back to ping_default is quieter
-     too; pingSoundKindOf does not answer for the default itself. */
-  gain = (value == pingDefault || pingSoundKindOf(value) < PING_KIND_COUNT)
-       ? (double)PING_SOUND_GAIN : 1.0;
 
   switch (value) {
   case shootSelf:         index = 6;  break;
@@ -333,7 +310,7 @@ void soundPlayEffect(sndEffects value) {
   default:                index = 8;  break;  /* shootFar */
   }
 
-  wb_audio_play(index, gain);
+  wb_audio_play(index);
 }
 
 void soundKeepalive(bool value) {

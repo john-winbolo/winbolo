@@ -61,12 +61,6 @@ typedef struct {
     Uint32 pos;         /* Current playback position */
     int sound;          /* Index into sounds[] being played, -1 for none */
     bool active;        /* Is this slot playing? */
-    /* How loud this one sound is against the others, 1 for as authored. Set
-     * when the slot is started and read by the mixer, so it is a property of
-     * the play rather than of the sample: the same converted data is shared by
-     * every slot that plays it. The pings are the only effect that uses it
-     * (PING_SOUND_GAIN); everything else runs at 1 and is mixed untouched. */
-    float gain;
 } SoundSlot;
 
 /* Global sound state */
@@ -507,23 +501,10 @@ static void SDLCALL mixAudioCallback(void *userdata, SDL_AudioStream *stream, in
             continue;
         }
 
-        /* Mix 16-bit samples into 32-bit buffer to avoid clipping.
-         *
-         * The slot's own gain rides on top of the stream gain the master and
-         * effects settings make (applyStreamGain), so the two multiply: a ping
-         * is PING_SOUND_GAIN of whatever the player has the effects turned up
-         * to. Every other effect has a gain of 1 and takes the plain loop, so
-         * nothing but the pings is touched — by the arithmetic as well as by
-         * the loudness. */
+        /* Mix 16-bit samples into 32-bit buffer to avoid clipping */
         src_sample = (Sint16 *)(slots[i].data + slots[i].pos);
-        if (slots[i].gain >= 1.0f) {
-            for (j = 0; j < bytes_to_mix / 2; j++) {
-                mix_buffer[j] += src_sample[j];
-            }
-        } else {
-            for (j = 0; j < bytes_to_mix / 2; j++) {
-                mix_buffer[j] += (Sint32)((float)src_sample[j] * slots[i].gain);
-            }
+        for (j = 0; j < bytes_to_mix / 2; j++) {
+            mix_buffer[j] += src_sample[j];
         }
 
         slots[i].pos += bytes_to_mix;
@@ -608,7 +589,6 @@ bool soundSetup(void) {
         slots[i].size = 0;
         slots[i].pos = 0;
         slots[i].sound = -1;
-        slots[i].gain = 1.0f;
     }
     SDL_UnlockMutex(slotsMutex);
 
@@ -819,7 +799,6 @@ void soundCleanup(void) {
         slots[i].size = 0;
         slots[i].pos = 0;
         slots[i].sound = -1;
-        slots[i].gain = 1.0f;
     }
     if (slotsMutex) SDL_UnlockMutex(slotsMutex);
 
@@ -837,10 +816,8 @@ void soundCleanup(void) {
 *
 *ARGUMENTS:
 *  index - Index into the sounds array
-*  gain  - how loud this play is against the other effects,
-*          1 for as authored (see SoundSlot::gain)
 *********************************************************/
-static void playSound(int index, float gain) {
+static void playSound(int index) {
     int i;
     int slot_found = -1;
     int search_start;
@@ -921,7 +898,6 @@ static void playSound(int index, float gain) {
     slots[slot_found].size = sounds[index][pick].size;
     slots[slot_found].pos = 0;
     slots[slot_found].sound = index;
-    slots[slot_found].gain = gain;
     slots[slot_found].active = true;
 
     if (slotsMutex) {
@@ -976,7 +952,6 @@ static unsigned int soundPingFoundMask(void) {
 *********************************************************/
 void soundPlayEffect(sndEffects value) {
     int index;
-    float gain;
     unsigned char pingKind = pingSoundKindOf(value);
 
     /* A ping kind with no sound file of its own plays the default ping
@@ -985,13 +960,6 @@ void soundPlayEffect(sndEffects value) {
     if (pingKind < PING_KIND_COUNT) {
         value = pingSoundResolve(pingKind, soundPingFoundMask());
     }
-
-    /* The pings are mixed PING_SOUND_GAIN down and nothing else is. Asked
-     * after the fallback, so a kind that fell back to ping_default is quieter
-     * too — pingSoundKindOf does not answer for the default, which is why it
-     * is named here as well. */
-    gain = (value == pingDefault || pingSoundKindOf(value) < PING_KIND_COUNT)
-         ? PING_SOUND_GAIN : 1.0f;
 
     switch (value) {
     case shootSelf:
@@ -1113,7 +1081,7 @@ void soundPlayEffect(sndEffects value) {
         break;
     }
 
-    playSound(index, gain);
+    playSound(index);
 }
 
 /*********************************************************
