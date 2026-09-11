@@ -45,6 +45,8 @@
 *    --log-changes FILE  One JSON line per game tick whose state differs
 *                      from the last line written (tick 0 and the final
 *                      tick always)
+*    --log-terrain     Add a "terrain" field to --log-changes naming every
+*                      map square whose terrain moved since the last line
 *    --record FILE     Record the run to a .wbv replay
 *********************************************************/
 
@@ -127,6 +129,7 @@ static char optPassword[256] = "";
 static char optLogState[512] = "";
 static char optLogEvents[512] = "";
 static char optLogChanges[512] = "";
+static bool optLogTerrain = FALSE;
 static char optRecord[512] = "";
 static char optCmdStdin[512] = "";
 static bool optQuiet = FALSE;
@@ -1195,6 +1198,11 @@ static void logStateVerbose(int tickNum) {
  *   pillboxes [tx ty owner armor in_tank speed cooldown] in map order
  *   bases     [tx ty owner armor shells mines] in map order
  *   counts    forest (FOREST squares, mined ones included) mines (live)
+ *   terrain   [tx ty from to] per map square whose terrain moved since the
+ *             last record was built, in map order. Only with --log-terrain,
+ *             and only on a record that has one: a record written without
+ *             the flag, or with it on a tick where no square moved, carries
+ *             no terrain field at all
  *   events    the same records logStateVerbose derives, rendered from the
  *             server's own per-frame event buffer rather than the client's
  *             copy: brainDataMakeInfo drains that copy, so on a tick where
@@ -1320,6 +1328,55 @@ static const char *manStatusStr(BYTE status) {
   return "out";
 }
 
+/* Map squares whose terrain moved since the last record was built, for
+ * --log-terrain. The builder's whole output is terrain — road laid, a
+ * building raised, a tree cut — and no other field in the record moves when
+ * one of those lands, so a scenario that drives the builder over grass
+ * would otherwise show the stock cost and the man walking and nothing of
+ * the result.
+ *
+ * The list is carried in the record only when the flag is set and only when
+ * it has something in it, so the goldens captured before the flag existed
+ * are byte for byte what they were. Squares are reported in map order, and
+ * the comparison is against the map as the last build read it, which is
+ * every game tick: the field appears on the tick the square moved and is
+ * gone the next, as events already are. */
+#define LOG_CHANGES_MAX_TERRAIN 64
+typedef struct {
+  BYTE x;
+  BYTE y;
+  BYTE from;
+  BYTE to;
+} LogTerrainChange;
+static BYTE             logTerrainPrev[256 * 256];
+static bool             logTerrainHavePrev = FALSE;
+static LogTerrainChange logTerrainChanges[LOG_CHANGES_MAX_TERRAIN];
+static int              logTerrainCount = 0;
+static int              logTerrainUnlisted = 0;
+
+static const char *terrainName(BYTE terrain) {
+  switch (terrain) {
+    case BUILDING:     return "BUILDING";
+    case RIVER:        return "RIVER";
+    case SWAMP:        return "SWAMP";
+    case CRATER:       return "CRATER";
+    case ROAD:         return "ROAD";
+    case FOREST:       return "FOREST";
+    case RUBBLE:       return "RUBBLE";
+    case GRASS:        return "GRASS";
+    case HALFBUILDING: return "HALFBUILDING";
+    case BOAT:         return "BOAT";
+    case MINE_SWAMP:   return "MINE_SWAMP";
+    case MINE_CRATER:  return "MINE_CRATER";
+    case MINE_ROAD:    return "MINE_ROAD";
+    case MINE_FOREST:  return "MINE_FOREST";
+    case MINE_RUBBLE:  return "MINE_RUBBLE";
+    case MINE_GRASS:   return "MINE_GRASS";
+    case DEEP_SEA:     return "DEEP_SEA";
+    default:           return "UNKNOWN";
+  }
+}
+
 /* Build the record body (everything after the tick field) into b. */
 static void logChangesBuild(TextBuf *b) {
   static bool needMapInit = TRUE;
@@ -1390,10 +1447,14 @@ static void logChangesBuild(TextBuf *b) {
   textBufPrintf(b, "]");
 
   /* Whole-map counts. mapGetPos reports the border as deep sea, so the
-   * mined-edge convention of mapIsMine does not reach this count. */
+   * mined-edge convention of mapIsMine does not reach this count. The same
+   * pass collects the squares --log-terrain reports, so the map is read
+   * once either way. */
   {
     int forest = 0;
     int liveMines = 0;
+    logTerrainCount = 0;
+    logTerrainUnlisted = 0;
     if (fastServerSim != NULL) {
       int x, y;
       for (y = 0; y < 256; y++) {
@@ -1401,10 +1462,46 @@ static void logChangesBuild(TextBuf *b) {
           BYTE t = serverSimGetMapTerrain(fastServerSim, (BYTE)x, (BYTE)y);
           if (t == FOREST || t == MINE_FOREST) forest++;
           if (t >= MINE_START && t <= MINE_END) liveMines++;
+          if (optLogTerrain) {
+            size_t idx = (size_t)y * 256 + (size_t)x;
+            if (logTerrainHavePrev && logTerrainPrev[idx] != t) {
+              if (logTerrainCount < LOG_CHANGES_MAX_TERRAIN) {
+                logTerrainChanges[logTerrainCount].x = (BYTE)x;
+                logTerrainChanges[logTerrainCount].y = (BYTE)y;
+                logTerrainChanges[logTerrainCount].from = logTerrainPrev[idx];
+                logTerrainChanges[logTerrainCount].to = t;
+                logTerrainCount++;
+              } else {
+                logTerrainUnlisted++;
+              }
+            }
+            logTerrainPrev[idx] = t;
+          }
         }
+      }
+      if (optLogTerrain) {
+        logTerrainHavePrev = TRUE;
       }
     }
     textBufPrintf(b, ",\"counts\":{\"forest\":%d,\"mines\":%d}", forest, liveMines);
+  }
+
+  if (logTerrainCount > 0 || logTerrainUnlisted > 0) {
+    int k;
+    textBufPrintf(b, ",\"terrain\":[");
+    for (k = 0; k < logTerrainCount; k++) {
+      textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"from\":\"%s\",\"to\":\"%s\"}",
+                    k > 0 ? "," : "",
+                    (unsigned)logTerrainChanges[k].x,
+                    (unsigned)logTerrainChanges[k].y,
+                    terrainName(logTerrainChanges[k].from),
+                    terrainName(logTerrainChanges[k].to));
+    }
+    if (logTerrainUnlisted > 0) {
+      textBufPrintf(b, "%s{\"unlisted\":%d}", logTerrainCount > 0 ? "," : "",
+                    logTerrainUnlisted);
+    }
+    textBufPrintf(b, "]");
   }
 
   textBufPrintf(b, ",\"events\":[");
@@ -1887,6 +1984,8 @@ static bool parseArgs(int argc, char **argv) {
       strncpy(optLogEvents, argv[++i], sizeof(optLogEvents) - 1);
     } else if (strcmp(argv[i], "--log-changes") == 0 && i + 1 < argc) {
       strncpy(optLogChanges, argv[++i], sizeof(optLogChanges) - 1);
+    } else if (strcmp(argv[i], "--log-terrain") == 0) {
+      optLogTerrain = TRUE;
     } else if (strcmp(argv[i], "--record") == 0 && i + 1 < argc) {
       strncpy(optRecord, argv[++i], sizeof(optRecord) - 1);
     } else if (strcmp(argv[i], "--cmd-stdin") == 0 && i + 1 < argc) {

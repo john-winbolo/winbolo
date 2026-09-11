@@ -3191,6 +3191,12 @@ set(_baseline_fast
     boat_bank_road_fast
     boat_bank_grass_slow
     boat_bank_grass_fast
+    builder_yard_farm
+    builder_yard_road
+    builder_yard_building
+    builder_yard_mine
+    builder_yard_pill_place
+    builder_yard_pill_repair
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)

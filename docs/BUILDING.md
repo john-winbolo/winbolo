@@ -127,7 +127,10 @@ After adding a scenario, run it once standalone to capture the golden output und
 # writes one JSON line per game tick whose state differs from the last line
 # written, plus tick 0 and the final tick, so a run in which the tank parks
 # stays small however long it is. --record FILE also writes the run to a
-# .wbv replay; both flags are --fast only.
+# .wbv replay, and --log-terrain adds a field naming every map square whose
+# terrain moved since the last line, which is the only way a run that drives
+# the builder shows what the man actually did; all three flags are --fast
+# only, and a run without --log-terrain carries no terrain field at all.
 ~/linux-build/WinBoloHeadless --fast --map "tests/baseline/maps/<map>" \
     --brain tests/brains/<brain>.lua --gametype open --ticks 720 --seed 42 \
     --log-changes tests/baseline/expected/<name>.jsonl --quiet

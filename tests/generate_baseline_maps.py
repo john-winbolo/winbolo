@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 from generate_test_map import (MAP_SIZE, DEEP_SEA, RIVER, SWAMP, ROAD, FOREST,
-                               GRASS, BOAT)
+                               GRASS, BOAT, HALFBUILDING)
 # The writer that copes with deep sea between land segments on one row.
 from generate_boat_diagonal_map import write_bmap
 
@@ -177,9 +177,65 @@ def boat_bank():
     return t, [], [], starts
 
 
+def builder_yard():
+    """One road with a square of every kind the builder can work on beside it.
+
+    The start at (116, 126) is deep sea, so the tank spawns afloat facing
+    east; three squares of open water lead to road square 120, and the road
+    runs east from there to 136. A boat is only left behind when the square
+    the tank came from is river, so a tank that crosses deep sea straight
+    onto the road leaves nothing on the water and the map it works on is
+    the map it was given.
+
+    A one-square grass apron runs the length of the road on both sides, and
+    the work squares sit in it within a square or two of where a tank that
+    brakes on reaching the road comes to rest:
+
+        (121, 125) grass         road laid on soft ground
+        (122, 125) grass         a mine laid by the man
+        (123, 125) forest        harvested for trees
+        (124, 125) forest        harvested again
+        (121, 127) grass         a building raised
+        (122, 127) swamp         road laid over swamp
+        (124, 127) half building repaired to a whole one
+
+    Two pillboxes stand on the map. The one at (126, 125) belongs to player
+    0 with 8 of its 15 armour, so it never fires on the tank that owns it
+    and the man can walk to it and patch it up; the repair takes a full
+    load of trees whatever the damage, so the two it does not need ride
+    home again. The other sits on road square 128 with no armour at all,
+    which is what makes it capturable: a tank that drives over it carries
+    it away, and the builder can then put it down on a square of its own.
+    Its zero armour is also why it never shoots.
+
+    The bounding box of it all (116..136 by 125..127) is centred on
+    (126, 126).
+    """
+    t = blank()
+
+    for x in range(120, 137):
+        t[125][x] = GRASS
+        t[126][x] = ROAD
+        t[127][x] = GRASS
+
+    t[125][123] = FOREST
+    t[125][124] = FOREST
+    t[127][122] = SWAMP
+    t[127][124] = HALFBUILDING
+
+    pills = [
+        (126, 125, 0,       8,  100),
+        (124, 126, NEUTRAL, 0,  100),
+    ]
+
+    starts = [(116, 126, FILE_DIR_EAST)]
+    return t, pills, [], starts
+
+
 MAPS = {
     "Road Spit Minefield": road_spit_minefield,
     "Boat Bank": boat_bank,
+    "Builder Yard": builder_yard,
 }
 
 

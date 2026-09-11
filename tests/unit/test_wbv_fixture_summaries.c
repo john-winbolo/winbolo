@@ -34,6 +34,11 @@ static const char *const s_fixtures[] = {
      * boat up on one square and puts it down on another, which moves a
      * map square that the scenario's change log has no field for. */
     "boat_bank_road_fast",
+    /* The builder run is here for its pillbox: the tank carries one off
+     * road square 124 and the man sets it down on (125,125) as the tank's
+     * own, so the summary has to come back from the reader with a pill
+     * that moved, changed hands and was rebuilt to full armour. */
+    "builder_yard_pill_place",
 };
 #define NUM_FIXTURES (sizeof(s_fixtures) / sizeof(s_fixtures[0]))
 

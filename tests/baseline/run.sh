@@ -181,8 +181,12 @@ run() {
 }
 
 # Run WinBoloHeadless --fast with --log-changes and diff the JSONL byte for
-# byte. Arguments: name, map, brain, game type, game ticks, and a record
-# flag: when non-empty the run is also recorded to $ACTUAL/$name.wbv.
+# byte. Arguments: name, map, brain, game type, game ticks, a record flag
+# (when non-empty the run is also recorded to $ACTUAL/$name.wbv) and a
+# terrain flag (when non-empty each record also names the map squares whose
+# terrain moved since the last one). The terrain flag is off by default: it
+# adds a field, and the goldens captured before it existed are byte for byte
+# what they were without it.
 run_changes() {
   local name="$1"
   local map="$2"
@@ -190,12 +194,16 @@ run_changes() {
   local gametype="$4"
   local ticks="$5"
   local record="$6"
+  local terrain="$7"
   echo -n "  $name ... "
   local args=( --fast --map "$map" --brain "$brain" --gametype "$gametype"
                --ticks "$ticks" --seed 42
                --log-changes "$ACTUAL/$name.jsonl" --quiet )
   if [ -n "$record" ]; then
     args+=( --record "$ACTUAL/$name.wbv" )
+  fi
+  if [ -n "$terrain" ]; then
+    args+=( --log-terrain )
   fi
   "$BIN" "${args[@]}" \
       > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
@@ -770,6 +778,7 @@ FOREST_MAP="$MAPS/Forest Rig.map"
 SLUGFEST_MAP="$MAPS/Slugfest IV.map"
 ROAD_SPIT_MAP="$MAPS/Road Spit Minefield.map"
 BOAT_BANK_MAP="$MAPS/Boat Bank.map"
+BUILDER_YARD_MAP="$MAPS/Builder Yard.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -832,6 +841,38 @@ dispatch_scenario() {
       run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_slow.lua" open 120 "" ;;
     boat_bank_grass_fast)
       run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_fast.lua" open 130 "" ;;
+
+    # The builder at work on the purpose-built Builder Yard. Each run comes
+    # ashore, stops on road square 122 and sends the man out to the work
+    # squares in the apron beside it; the pillbox runs drive further east
+    # first. What each job costs is charged when the order is accepted, not
+    # when the man arrives, so the tank's stock moves a step ahead of the
+    # square. These runs pass the terrain flag, because almost everything
+    # the builder does is a change to the map and the other fields say
+    # nothing about it: a road laid or a wall raised moves no stock beyond
+    # the charge, and neither shows in the counts.
+    #
+    # The farm run is under strict rules, where a tank starts with no trees
+    # at all, so each load the man carries home lands in the stock whole
+    # instead of vanishing into the 40-tree cap.
+    #
+    # The tick budgets cover the last job of each run and the man's climb
+    # back into the tank. The pill-placing run is also recorded, and its
+    # .wbv is the source of the committed
+    # tests/fixtures/wbv/builder_yard_pill_place.wbv: its summary carries
+    # the moved pillbox and the terrain the run left behind.
+    builder_yard_farm)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/farm_two_forest_squares.lua" strict 175 "" terrain ;;
+    builder_yard_road)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_road_on_grass_and_swamp.lua" open 145 "" terrain ;;
+    builder_yard_building)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_wall_then_repair_wall.lua" open 160 "" terrain ;;
+    builder_yard_mine)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/lay_mine_beside_road.lua" open 110 "" terrain ;;
+    builder_yard_pill_place)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/place_carried_pillbox.lua" open 145 record terrain ;;
+    builder_yard_pill_repair)
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/repair_own_pillbox.lua" open 175 "" terrain ;;
 
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
@@ -934,6 +975,13 @@ done
 echo "Boat Bank:"
 for n in boat_bank_road_slow boat_bank_road_fast \
          boat_bank_grass_slow boat_bank_grass_fast; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Builder Yard:"
+for n in builder_yard_farm builder_yard_road builder_yard_building \
+         builder_yard_mine builder_yard_pill_place \
+         builder_yard_pill_repair; do
   dispatch_scenario "$n" || fail=1
 done
 
