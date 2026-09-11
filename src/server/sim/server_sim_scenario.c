@@ -34,6 +34,7 @@
 #include "server_sim_scenario.h"
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
 #include "tank.h"          /* the tank arms mutate through these */
+#include "lgm.h"           /* the builder arms mutate through these */
 #include "bolo_map.h"      /* mapGetPos — the terrain the tank arms test */
 #include "pillbox.h"       /* the pill reads the give and drop arms make */
 #include "starts.h"        /* startsGetStart — the teleport arm's start mode */
@@ -63,6 +64,22 @@ static ScnOpResult scenarioTankFor(ServerSim *sim, BYTE slot, tank **out) {
         return SCN_OP_NO_SUCH_PLAYER;
     }
     *out = &sim->sim.tanks[slot];
+    return SCN_OP_OK;
+}
+
+/* What every builder arm needs: the checks above, plus the builder object
+ * itself. A connected player between rounds has a seat and no man in it, so
+ * the two are asked for separately and the arm gets both or neither. */
+static ScnOpResult scenarioBuilderFor(ServerSim *sim, BYTE slot, lgm **outMan,
+                                      tank **outTank) {
+    ScnOpResult r = scenarioTankFor(sim, slot, outTank);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (sim->sim.lgmen[slot] == NULL) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    *outMan = &sim->sim.lgmen[slot];
     return SCN_OP_OK;
 }
 
@@ -414,6 +431,208 @@ static ScnOpResult scenarioOpTankSetModifiers(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* Send the builder out on a job, which is what a player does with one click.
+ * The order goes through lgmAddRequest, the call that click reaches from the
+ * tick, so the wood and mines it costs and the substitutions the game makes —
+ * a road ordered on forest is a tree harvest, a wall ordered on a river is a
+ * boat — are the ones lgmCheckNewRequest applies and are not repeated here.
+ *
+ * The refusal code comes from asking the same question first, without acting
+ * on it. Asking is quiet: lgmRequestRefusal passes perform FALSE so nothing is
+ * spent and announce FALSE so lgmAssist sends the player none of the lines a
+ * refused click would earn them. */
+static ScnOpResult scenarioOpLgmDispatch(ServerSim *sim,
+                                         const ScnOpLgmDispatch *p) {
+    lgm *l = NULL;
+    tank *t = NULL;
+    ScnOpResult r = scenarioBuilderFor(sim, p->slot, &l, &t);
+    BYTE action;
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (tankIsDestroyed(t)) {
+        return SCN_OP_TANK_DEAD;
+    }
+    /* The op names the job as a BuilderJob, whose members carry the request
+       codes the engine's own path takes. builderJobNone is the absence of a
+       job, so it is the one member that is not an order. */
+    if (p->action >= (BYTE)builderJobNone) {
+        return SCN_OP_RANGE;
+    }
+    action = (BYTE)(BuilderJob)p->action;
+    if (p->x <= MAP_MINE_EDGE_LEFT || p->x >= MAP_MINE_EDGE_RIGHT ||
+        p->y <= MAP_MINE_EDGE_TOP || p->y >= MAP_MINE_EDGE_BOTTOM) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    /* A click arriving while the man is out is held and re-asked when he is
+       back in the tank. The op says no instead: a script told SCN_OP_OK for an
+       order that will not start until the man has walked home, and may be
+       thrown away when he does, has been told something untrue. */
+    if ((*l)->isDead || !lgmIsIdle(l)) {
+        return SCN_OP_ALREADY;
+    }
+
+    switch (lgmRequestRefusal(&sim->sim, l, t, p->x, p->y, action)) {
+        case LGM_REFUSE_NONE:
+            break;
+        case LGM_REFUSE_STOCK:
+            return SCN_OP_NO_STOCK;
+        default:
+            return SCN_OP_BAD_TERRAIN;
+    }
+
+    lgmAddRequest(&sim->sim, l, t, p->x, p->y, action);
+    return SCN_OP_OK;
+}
+
+/* Call the builder back. He turns round where he stands and walks home with
+ * whatever he is carrying, which unloads into the tank when he arrives. */
+static ScnOpResult scenarioOpLgmRecall(ServerSim *sim,
+                                       const ScnOpLgmRecall *p) {
+    lgm *l = NULL;
+    tank *t = NULL;
+    ScnOpResult r = scenarioBuilderFor(sim, p->slot, &l, &t);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* Nobody out there to call: he is in the tank, or in the air. */
+    if ((*l)->inTank || (*l)->isDead) {
+        return SCN_OP_ALREADY;
+    }
+
+    lgmRecall(&sim->sim, l);
+    return SCN_OP_OK;
+}
+
+/* SCN_NONE and NEUTRAL are the same byte and the kill arm leans on it: a
+ * builder death nobody caused is the one a mine produces, which names NEUTRAL
+ * as the owner and so credits no kill. */
+BOLO_STATIC_ASSERT(SCN_NONE == NEUTRAL, scn_none_is_neutral_for_an_unowned_kill);
+
+/* Kill the builder where he stands. The death goes through lgmKill, so the
+ * pill he was carrying, the record, the newswire event and the reports to
+ * WinBolo.net are the ones an explosion beside him produces.
+ *
+ * Those reports fire on every builder death with no test of who the killer
+ * is, so the arm makes sure a named killer is a player rather than putting a
+ * condition inside a path the ordinary death shares. */
+static ScnOpResult scenarioOpLgmKill(ServerSim *sim, const ScnOpLgmKill *p) {
+    lgm *l = NULL;
+    tank *t = NULL;
+    ScnOpResult r = scenarioBuilderFor(sim, p->slot, &l, &t);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* The two states an explosion cannot kill him in either. */
+    if ((*l)->isDead || (*l)->inTank) {
+        return SCN_OP_ALREADY;
+    }
+    if (p->killer != SCN_NONE &&
+        (p->killer >= MAX_TANKS || !sim->playerConnected[p->killer])) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+
+    lgmKill(&sim->sim, l, t, p->killer);
+    return SCN_OP_OK;
+}
+
+/* Aim a builder who is already in the air. A death drops him on a random
+ * start and the helicopter flies the whole way, which is most of a minute
+ * across a map. Putting him on the edge nearest where he is going leaves him
+ * a few ticks out, and it is still the flight the engine already knows how to
+ * land — lgmParchutingIn walks him down from wherever he is. */
+static ScnOpResult scenarioOpLgmParachute(ServerSim *sim,
+                                          const ScnOpLgmParachute *p) {
+    lgm *l = NULL;
+    tank *t = NULL;
+    ScnOpResult r = scenarioBuilderFor(sim, p->slot, &l, &t);
+    WORLD dx, dy;
+    BYTE mx, my, ex, ey;
+    int toLeft, toRight, toTop, toBottom, nearest;
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* This arm moves a flight; it does not start one. A man on the ground is
+       already where he is going. */
+    if (!(*l)->isDead) {
+        return SCN_OP_ALREADY;
+    }
+
+    if (p->x == SCN_NONE && p->y == SCN_NONE) {
+        tankGetWorld(t, &dx, &dy);
+    } else {
+        if (p->x <= MAP_MINE_EDGE_LEFT || p->x >= MAP_MINE_EDGE_RIGHT ||
+            p->y <= MAP_MINE_EDGE_TOP || p->y >= MAP_MINE_EDGE_BOTTOM) {
+            return SCN_OP_BAD_SQUARE;
+        }
+        dx = (WORLD)(((WORLD)p->x << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+        dy = (WORLD)(((WORLD)p->y << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    }
+
+    mx = (BYTE)(dx >> TANK_SHIFT_MAPSIZE);
+    my = (BYTE)(dy >> TANK_SHIFT_MAPSIZE);
+    toLeft   = (int)mx - MAP_MINE_EDGE_LEFT;
+    toRight  = MAP_MINE_EDGE_RIGHT - (int)mx;
+    toTop    = (int)my - MAP_MINE_EDGE_TOP;
+    toBottom = MAP_MINE_EDGE_BOTTOM - (int)my;
+
+    ex = (BYTE)MAP_MINE_EDGE_LEFT;
+    ey = my;
+    nearest = toLeft;
+    if (toRight < nearest) {
+        nearest = toRight;
+        ex = (BYTE)MAP_MINE_EDGE_RIGHT;
+        ey = my;
+    }
+    if (toTop < nearest) {
+        nearest = toTop;
+        ex = mx;
+        ey = (BYTE)MAP_MINE_EDGE_TOP;
+    }
+    if (toBottom < nearest) {
+        ex = mx;
+        ey = (BYTE)MAP_MINE_EDGE_BOTTOM;
+    }
+
+    (*l)->x = (WORLD)(((WORLD)ex << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    (*l)->y = (WORLD)(((WORLD)ey << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    (*l)->destX = dx;
+    (*l)->destY = dy;
+    return SCN_OP_OK;
+}
+
+/* Write what the builder is carrying. Nothing is published: the counts ride
+ * the snapshot's builder group and unload into the tank when he gets back. */
+static ScnOpResult scenarioOpLgmSetCarried(ServerSim *sim,
+                                           const ScnOpLgmSetCarried *p) {
+    lgm *l = NULL;
+    tank *t = NULL;
+    ScnOpResult r = scenarioBuilderFor(sim, p->slot, &l, &t);
+
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    /* Everything he carries unloads into a tank, so a tank's caps are his.
+       Asking for more is a mistake worth reporting rather than clamping, the
+       same answer the tank's own stock op gives. Both are asked before either
+       is written, so a bad pair leaves him as he was. */
+    if (p->trees != SCN_NONE && p->trees > TANK_FULL_TREES) {
+        return SCN_OP_RANGE;
+    }
+    if (p->mines != SCN_NONE && p->mines > TANK_FULL_MINES) {
+        return SCN_OP_RANGE;
+    }
+
+    lgmSetCarried(l,
+                  (p->trees == SCN_NONE) ? (*l)->numTrees : p->trees,
+                  (p->mines == SCN_NONE) ? (*l)->numMines : p->mines);
+    return SCN_OP_OK;
+}
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     assert(sim != NULL);
@@ -451,11 +670,16 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpTankDropPill(sim, &op->u.tankDropPill);
         case SCN_OP_TANK_SET_MODIFIERS:
             return scenarioOpTankSetModifiers(sim, &op->u.tankSetModifiers);
-        case SCN_OP_LGM_DISPATCH:        return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LGM_RECALL:          return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LGM_KILL:            return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LGM_PARACHUTE:       return SCN_OP_UNSUPPORTED;
-        case SCN_OP_LGM_SET_CARRIED:     return SCN_OP_UNSUPPORTED;
+        case SCN_OP_LGM_DISPATCH:
+            return scenarioOpLgmDispatch(sim, &op->u.lgmDispatch);
+        case SCN_OP_LGM_RECALL:
+            return scenarioOpLgmRecall(sim, &op->u.lgmRecall);
+        case SCN_OP_LGM_KILL:
+            return scenarioOpLgmKill(sim, &op->u.lgmKill);
+        case SCN_OP_LGM_PARACHUTE:
+            return scenarioOpLgmParachute(sim, &op->u.lgmParachute);
+        case SCN_OP_LGM_SET_CARRIED:
+            return scenarioOpLgmSetCarried(sim, &op->u.lgmSetCarried);
         case SCN_OP_PILL_SET_OWNER:      return SCN_OP_UNSUPPORTED;
         case SCN_OP_PILL_SET_ARMOUR:     return SCN_OP_UNSUPPORTED;
         case SCN_OP_PILL_SET_SPEED:      return SCN_OP_UNSUPPORTED;

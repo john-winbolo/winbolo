@@ -313,6 +313,15 @@ int  wbnStubKillEventCalls = 0;
 BYTE wbnStubLastKiller = 0xFF;
 BYTE wbnStubLastKilled = 0xFF;
 
+/* winbolonetAddEvent LGM_LOST / LGM_KILL spies: the builder-arm tests watch
+ * these to prove a scripted builder death is reported the way an explosion's
+ * is, and that a death nobody caused credits nobody with the kill. */
+int  wbnStubLgmLostCalls = 0;
+BYTE wbnStubLastLgmLost = 0xFF;
+int  wbnStubLgmKillCalls = 0;
+BYTE wbnStubLastLgmKiller = 0xFF;
+BYTE wbnStubLastLgmKilled = 0xFF;
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
@@ -326,6 +335,13 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
     wbnStubKillEventCalls++;
     wbnStubLastKiller = playerA;
     wbnStubLastKilled = playerB;
+  } else if (eventType == WINBOLO_NET_EVENT_LGM_LOST) {
+    wbnStubLgmLostCalls++;
+    wbnStubLastLgmLost = playerA;
+  } else if (eventType == WINBOLO_NET_EVENT_LGM_KILL) {
+    wbnStubLgmKillCalls++;
+    wbnStubLastLgmKiller = playerA;
+    wbnStubLastLgmKilled = playerB;
   }
 }
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }

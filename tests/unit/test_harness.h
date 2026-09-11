@@ -1894,6 +1894,13 @@ int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
 
+int run_scenario_lgm_dispatch(void);
+int run_scenario_lgm_recall(void);
+int run_scenario_lgm_kill(void);
+int run_scenario_lgm_parachute(void);
+int run_scenario_lgm_set_carried(void);
+int run_scenario_lgm_kill_record(void);
+
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
 int run_console_read_reports_eof(void);

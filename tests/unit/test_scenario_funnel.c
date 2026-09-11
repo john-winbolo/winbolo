@@ -119,7 +119,12 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_TANK_TELEPORT ||
            t == SCN_OP_TANK_SET_BOAT ||
            t == SCN_OP_TANK_GIVE_PILL ||
-           t == SCN_OP_TANK_DROP_PILL;
+           t == SCN_OP_TANK_DROP_PILL ||
+           t == SCN_OP_LGM_DISPATCH ||        /* test_scenario_builder_arms.c */
+           t == SCN_OP_LGM_RECALL ||
+           t == SCN_OP_LGM_KILL ||
+           t == SCN_OP_LGM_PARACHUTE ||
+           t == SCN_OP_LGM_SET_CARRIED;
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The

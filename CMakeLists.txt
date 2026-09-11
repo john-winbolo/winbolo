@@ -3317,6 +3317,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The tank ops: the six arms, the refusals each one answers with, and the
     # records they leave through the functions a player's own action reaches.
     tests/unit/test_scenario_tank_arms.c
+    # The builder ops: the five arms, the refusals each one answers with, the
+    # wood a dispatched order costs, and the loss a scripted death records.
+    tests/unit/test_scenario_builder_arms.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -4662,6 +4665,12 @@ set(_unit_test_names
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records
+    scenario_lgm_dispatch
+    scenario_lgm_recall
+    scenario_lgm_kill
+    scenario_lgm_parachute
+    scenario_lgm_set_carried
+    scenario_lgm_kill_record
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

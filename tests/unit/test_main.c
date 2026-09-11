@@ -839,6 +839,12 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_tank_give_pill",                 run_scenario_tank_give_pill                 },
     { "scenario_tank_drop_pill",                 run_scenario_tank_drop_pill                 },
     { "scenario_tank_arm_records",               run_scenario_tank_arm_records               },
+    { "scenario_lgm_dispatch",                   run_scenario_lgm_dispatch                   },
+    { "scenario_lgm_recall",                     run_scenario_lgm_recall                     },
+    { "scenario_lgm_kill",                       run_scenario_lgm_kill                       },
+    { "scenario_lgm_parachute",                  run_scenario_lgm_parachute                  },
+    { "scenario_lgm_set_carried",                run_scenario_lgm_set_carried                },
+    { "scenario_lgm_kill_record",                run_scenario_lgm_kill_record                },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },
