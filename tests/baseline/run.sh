@@ -779,6 +779,8 @@ SLUGFEST_MAP="$MAPS/Slugfest IV.map"
 ROAD_SPIT_MAP="$MAPS/Road Spit Minefield.map"
 BOAT_BANK_MAP="$MAPS/Boat Bank.map"
 BUILDER_YARD_MAP="$MAPS/Builder Yard.map"
+BASE_YARD_MAP="$MAPS/Base Yard.map"
+PILL_YARD_MAP="$MAPS/Pill Yard.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -873,6 +875,56 @@ dispatch_scenario() {
       run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/place_carried_pillbox.lua" open 145 record terrain ;;
     builder_yard_pill_repair)
       run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/repair_own_pillbox.lua" open 175 "" terrain ;;
+
+    # Bases on the purpose-built Base Yard, where three of them stand on one
+    # road. What a base is worth to the tank that takes it turns on who held
+    # it before: a neutral base hands its stocks over whole, and a base taken
+    # from a live owner is emptied of all three the moment it changes hands.
+    #
+    # The capture run stops on the first base under open rules, where the
+    # tank is already full, so the base has nothing to give and its stocks
+    # stand still for a whole refuel interval after it changes hands.
+    #
+    # The refuel run is under strict rules, where a tank starts with no
+    # shells and no mines at all. A base gives armour first, then shells,
+    # then mines, and only moves on when the tank is full or the base is
+    # out; the base it parks on holds three shells, so the run reaches the
+    # mines without waiting out forty gives of shells.
+    #
+    # The steal run drives into the base at the end of the road, which is
+    # solid until it is shelled under MIN_ARMOUR_CAPTURE, leans on it with
+    # the trigger held and rolls in under the third shell.
+    #
+    # Both of those runs cross the mined road square, which is the only
+    # reason either tank is short of armour, and both pass the terrain flag:
+    # nothing else in the record says what became of that square, which
+    # craters under the mine and then floods.
+    #
+    # The tick budgets cover the last thing each run does and the stop after
+    # it; the capture run's covers a refuel interval on the base with nothing
+    # to hand over.
+    base_yard_capture)
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/drive_onto_neutral_base.lua" open 125 "" ;;
+    base_yard_refuel)
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 222 "" terrain ;;
+    base_yard_steal)
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/shell_and_take_enemy_base.lua" open 215 "" terrain ;;
+
+    # Pillboxes on the purpose-built Pill Yard. The capture run flattens the
+    # neutral pill standing in the road and drives over it, which is how a
+    # pill changes hands; it is shot at on the way in, because a pill with
+    # armour left shoots at anything that is not its own.
+    #
+    # The anger run works on the pill the tank owns, which never shoots back.
+    # Four shells halve its firing interval each time, from
+    # PILLBOX_ATTACK_NORMAL down to the PILLBOX_MAX_FIRERATE floor, and the
+    # run then sits still long enough to watch the interval climb back one
+    # step at a time, PILLBOX_COOLDOWN_TIME apart. Its budget covers three of
+    # those steps, which is where the cadence is established.
+    pill_yard_capture)
+      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_and_take_neutral_pillbox.lua" open 200 "" ;;
+    pill_yard_anger)
+      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_own_pillbox_four_times.lua" open 210 "" ;;
 
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
@@ -982,6 +1034,16 @@ echo "Builder Yard:"
 for n in builder_yard_farm builder_yard_road builder_yard_building \
          builder_yard_mine builder_yard_pill_place \
          builder_yard_pill_repair; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Base Yard:"
+for n in base_yard_capture base_yard_refuel base_yard_steal; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Pill Yard:"
+for n in pill_yard_capture pill_yard_anger; do
   dispatch_scenario "$n" || fail=1
 done
 

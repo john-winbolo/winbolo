@@ -3197,6 +3197,11 @@ set(_baseline_fast
     builder_yard_mine
     builder_yard_pill_place
     builder_yard_pill_repair
+    base_yard_capture
+    base_yard_refuel
+    base_yard_steal
+    pill_yard_capture
+    pill_yard_anger
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)

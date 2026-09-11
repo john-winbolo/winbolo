@@ -40,6 +40,7 @@ NEUTRAL = 0xFF
 MINE_OFFSET = 8              # a mined square is the terrain nibble + 8
 MINE_SWAMP = SWAMP + MINE_OFFSET
 MINE_FOREST = FOREST + MINE_OFFSET
+MINE_ROAD = ROAD + MINE_OFFSET
 
 FILE_DIR_EAST = 0            # start dir as written in the file; see the docstring
 
@@ -232,10 +233,102 @@ def builder_yard():
     return t, pills, [], starts
 
 
+def base_yard():
+    """One road with three bases on it, each set up for a different job.
+
+    The start at (116, 126) is deep sea, so the tank spawns afloat facing
+    east; three squares of open water lead to road square 120 and the road
+    runs east from there to 137. Everything stands on that one row:
+
+        (124, 126) base    neutral, full, driven onto and taken
+        (127, 126) mined road          ten armour off whatever passes
+        (130, 126) base    neutral, full armour, three shells, full mines
+        (134, 126) base    player 1's, twenty armour, full shells and mines
+
+    The neutral bases are the ones a tank can drive onto as it finds them:
+    a neutral base is never solid and taking one costs it nothing, so its
+    stocks carry over to the new owner whole. Player 1's base is the
+    opposite on both counts. Nobody is ever in that slot, so the base
+    answers to no one in the game, which is what makes it an enemy base:
+    it is solid until a tank shells it down to MIN_ARMOUR_CAPTURE, and
+    taking it from a live owner empties it.
+
+    The mined square is what makes the armour refuel visible. A tank starts
+    on full armour under every game type, so a base with armour to give has
+    nothing to give it until something has taken some off, and ten off one
+    mine is two gives worth. It sits east of the first base, so a run that
+    stops on that base never reaches it.
+
+    The middle base's three shells are what brings its mines into reach. A
+    base hands over armour first, then shells, then mines, and only moves on
+    when the tank is full or the base is out; a base that runs dry of shells
+    after three of them is handing over mines a dozen ticks later, rather
+    than after the forty gives a full base would owe.
+
+    The bounding box of it all (116..137 by 126..126) is centred on
+    (126, 126).
+    """
+    t = blank()
+    for x in range(120, 138):
+        t[126][x] = ROAD
+    t[126][127] = MINE_ROAD
+
+    bases = [
+        (124, 126, NEUTRAL, 90, 90, 90),
+        (130, 126, NEUTRAL, 90,  3, 90),
+        (134, 126, 1,       20, 90, 90),
+    ]
+
+    starts = [(116, 126, FILE_DIR_EAST)]
+    return t, [], bases, starts
+
+
+def pill_yard():
+    """One road with a pillbox beside it and another standing in it.
+
+    The start at (116, 126) is deep sea, so the tank spawns afloat facing
+    east; three squares of open water lead to road square 120 and the road
+    runs east from there to 137, with a grass apron either side of it and a
+    three-square grass pad north and south of the apron around column 125.
+
+    The pillbox at (125, 124) belongs to player 0, two squares north of
+    road square 125. A pill never fires on the tank that owns it, so a tank
+    parked on 125 can shell it for as long as it likes and read the whole
+    of what being shot at does to a pill without anything shooting back.
+
+    The pillbox at (134, 126) is neutral and on the road, on one armour, so
+    one shell flattens it and the tank that drives over it carries it off.
+    Nine squares lie between it and a tank parked on 125, which is past
+    PILLBOX_RANGE, so it never fires on a run that stays at the other end;
+    three road squares beyond it leave room to stop from full speed.
+
+    The bounding box of it all (116..137 by 124..128) is centred on
+    (126, 126).
+    """
+    t = blank()
+    for x in range(120, 138):
+        t[125][x] = GRASS
+        t[126][x] = ROAD
+        t[127][x] = GRASS
+    for x in range(124, 127):
+        t[124][x] = GRASS
+        t[128][x] = GRASS
+
+    pills = [
+        (125, 124, 0,       6, 100),
+        (134, 126, NEUTRAL, 1, 100),
+    ]
+
+    starts = [(116, 126, FILE_DIR_EAST)]
+    return t, pills, [], starts
+
+
 MAPS = {
     "Road Spit Minefield": road_spit_minefield,
     "Boat Bank": boat_bank,
     "Builder Yard": builder_yard,
+    "Base Yard": base_yard,
+    "Pill Yard": pill_yard,
 }
 
 
