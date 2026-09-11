@@ -201,14 +201,12 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
 *  pillNum - The pillbox number
 *********************************************************/
 void pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
+  /* Whole-struct copy. This used to assign six fields by hand and leave
+     reload, coolDown and justSeen as whatever the caller's local held,
+     which a reader of those three read back as undefined. */
   if (pillNum > 0 && pillNum  <= (*value)->numPills) {
     pillNum--;
-    item->x = ((*value)->item[pillNum]).x;
-    item->y = ((*value)->item[pillNum]).y;
-    item->owner = ((*value)->item[pillNum]).owner;
-    item->armour = ((*value)->item[pillNum]).armour;
-    item->speed = ((*value)->item[pillNum]).speed;
-    item->inTank = ((*value)->item[pillNum]).inTank;
+    *item = (*value)->item[pillNum];
   }
 }
 
