@@ -1,0 +1,13 @@
+map: Road Spit Minefield
+ticks: 1505
+terrain fnv1a: 7d9e2ff8
+pills: 1
+pill 1: x=131 y=121 owner=255 armour=15
+bases: 4
+base 1: x=136 y=129 owner=0 armour=90 shells=90 mines=90
+base 2: x=137 y=129 owner=255 armour=90 shells=90 mines=90
+base 3: x=136 y=131 owner=255 armour=90 shells=90 mines=90
+base 4: x=137 y=131 owner=255 armour=90 shells=90 mines=90
+starts: 1
+start 1: x=116 y=124 dir=0
+tank 0: shells=40 mines=40 armour=40 trees=40

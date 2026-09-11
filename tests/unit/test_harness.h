@@ -803,6 +803,14 @@ int run_attribution_reader_clamps_slotcount(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
 
+/* Recorded headless runs (test_wbv_fixture_summaries.c): each committed
+ * tests/fixtures/wbv/<name>.wbv from a --record scenario is decoded through
+ * the production viewer and its plain-text summary compared byte for byte
+ * with <name>.summary. wbv_summary_capture rewrites those summaries and is
+ * dispatch-only, never run under CTest. */
+int run_wbv_fixture_summaries(void);
+int run_wbv_summary_capture(void);
+
 /* Highlight clip-time calibration anchors (test_lv_calibration.c): builds
  * synthetic v2 .wbv logs and asserts lv_walkFindBaseOwnerTimes resolves
  * base cells from the log's own snapshots — a lobby-started log's opening

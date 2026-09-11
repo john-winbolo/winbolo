@@ -33,6 +33,7 @@ typedef struct {
 static const char *const s_fixtureWriters[] = {
     "wire_corpus_capture",
     "wbv_v2_capture",
+    "wbv_summary_capture",
     "spectator_seed_capture",
 };
 
@@ -443,6 +444,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_game_settings_from_walk",              run_lv_game_settings_from_walk              },
     { "lv_game_settings_absent",                 run_lv_game_settings_absent                 },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
+    { "wbv_fixture_summaries",                   run_wbv_fixture_summaries                   },
+    { "wbv_summary_capture",                     run_wbv_summary_capture                     },
     { "spectator_seed_capture",                  run_spectator_seed_capture                  },
     { "blocks_stream",                           run_blocks_stream                           },
     { "stream_load",                             run_stream_load                             },

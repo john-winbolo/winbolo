@@ -3182,6 +3182,11 @@ set(_baseline_fast
     centralize_events_alliance_fast
     centralize_events_name_change_fast
     centralize_events_map_skip_fast
+    road_spit_shell_open
+    road_spit_shell_strict
+    road_spit_shell_tournament
+    road_spit_mine_open
+    road_spit_drown_open
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)
@@ -3684,6 +3689,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
+    # Recorded headless runs: each committed <name>.wbv is decoded through
+    # the viewer and its summary compared with <name>.summary; the same
+    # file holds the on-demand capture that rewrites those summaries.
+    tests/unit/test_wbv_fixture_summaries.c
     tests/unit/test_attribution_reader.c
     # Calibration anchor walk: synthetic v2 logs prove the highlight
     # clip-time fit resolves base cells from the log's own snapshots
@@ -4568,6 +4577,7 @@ set(_unit_test_names
     console_kick_host_without_newline
     console_read_reports_eof
     console_read_timeout_then_eof
+    wbv_fixture_summaries
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -4577,6 +4587,9 @@ set(_unit_test_names
 # wbv_v2_capture is omitted for the same reason: it (re)writes the committed
 # spectator_v2.wbv fixture and is invoked on demand via
 # `WinBoloUnitTests --test wbv_v2_capture`; CTest only runs wbv_reader_v1/v2.
+# wbv_summary_capture is omitted for the same reason: it (re)writes the
+# committed tests/fixtures/wbv/*.summary files that wbv_fixture_summaries
+# compares against, via `WinBoloUnitTests --test wbv_summary_capture`.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})

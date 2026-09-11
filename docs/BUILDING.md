@@ -108,7 +108,7 @@ The `if` form gates on the build's exit status, so a build failure prints `build
 
 Each scenario is registered in **two places**, which must stay in sync:
 
-1. **`tests/baseline/run.sh`** — add a branch to the `dispatch_scenario` case statement mapping the scenario name to the helper invocation (`run`, `run_ds`, `run_events_fast`, `run_events_udp`, `run_events_cmd_fast`, `run_events_cmd_udp`, `run_events_cmd_udp_server_only`, or `run_events_cmd_udp_two_clients`) with its arguments (map, brain, command file, etc.). Also add the name to the appropriate `for` loop in the manual-mode block at the bottom so `run.sh` with no `--scenario` flag still exercises it.
+1. **`tests/baseline/run.sh`** — add a branch to the `dispatch_scenario` case statement mapping the scenario name to the helper invocation (`run`, `run_changes`, `run_ds`, `run_events_fast`, `run_events_udp`, `run_events_cmd_fast`, `run_events_cmd_udp`, `run_events_cmd_udp_server_only`, or `run_events_cmd_udp_two_clients`) with its arguments (map, brain, command file, etc.). Also add the name to the appropriate `for` loop in the manual-mode block at the bottom so `run.sh` with no `--scenario` flag still exercises it.
 2. **`CMakeLists.txt`** — add the scenario name to one of the lists near the `enable_testing()` block:
    - `_baseline_fast` for `--fast` scenarios (no UDP, parallelize freely).
    - `_baseline_udp_<port>` matching the hardcoded port in the helper the scenario uses (`run_ds` → 50001, `run_events_udp` → 50002, `run_events_cmd_udp` → 50003, `run_events_cmd_udp_server_only` → 50004, `run_events_cmd_udp_two_clients` → 50005). Same-port scenarios share a `RESOURCE_LOCK` and serialize; different-port scenarios stay concurrent.
@@ -122,9 +122,30 @@ After adding a scenario, run it once standalone to capture the golden output und
 ~/linux-build/WinBoloHeadless --fast --map "tests/baseline/maps/<map>" \
     --brain tests/brains/<brain>.lua --ticks 500 --seed 42 \
     --log-state tests/baseline/expected/<name>.json --quiet
+
+# run_changes scenarios capture the change-only log instead. --log-changes
+# writes one JSON line per game tick whose state differs from the last line
+# written, plus tick 0 and the final tick, so a run in which the tank parks
+# stays small however long it is. --record FILE also writes the run to a
+# .wbv replay; both flags are --fast only.
+~/linux-build/WinBoloHeadless --fast --map "tests/baseline/maps/<map>" \
+    --brain tests/brains/<brain>.lua --gametype open --ticks 720 --seed 42 \
+    --log-changes tests/baseline/expected/<name>.jsonl --quiet
 ```
 
-Re-run `cmake -B ~/linux-build` to pick up the new CTest entry, then `ctest -R baseline.<name>` to verify.
+Run the capture twice and diff the two outputs before keeping one; every golden is compared byte for byte. Re-run `cmake -B ~/linux-build` to pick up the new CTest entry, then `ctest -R baseline.<name>` to verify.
+
+The purpose-built maps under `tests/baseline/maps/` come from `tests/generate_baseline_maps.py` (one function per map); run it after changing a map and re-capture the goldens that use it.
+
+#### Recorded-run replay fixtures
+
+A `run_changes` scenario whose record flag is set also leaves `tests/baseline/actual/<name>.wbv`. The committed copies under `tests/fixtures/wbv/` are decoded by the `wbv_fixture_summaries` unit test through the production log-viewer reader and summarised (map name, tick count, every pill, base, start and in-use tank slot, and a hash of the terrain); the summary must match the committed `<name>.summary` beside the fixture. To refresh one, copy the new `.wbv` over the fixture and regenerate the summaries:
+
+```bash
+WB_WBV_FIXTURE_DIR=tests/fixtures/wbv ~/linux-build/WinBoloUnitTests --test wbv_summary_capture
+```
+
+`wbv_summary_capture` rewrites committed files, so it is dispatchable by name only and is not registered with CTest.
 
 ## macOS
 

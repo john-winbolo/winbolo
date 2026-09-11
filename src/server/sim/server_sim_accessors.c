@@ -378,6 +378,19 @@ bool serverSimGetPill(ServerSim *sim, BYTE i,
     return true;
 }
 
+/* Reader for binaries that own a ServerSim directly. */
+bool serverSimGetPillStats(ServerSim *sim, BYTE i,
+                           BYTE *speed, BYTE *reload, BYTE *coolDown) {
+    pillbox p;
+    BYTE n = pillsGetNumPills(&sim->sim.pb);
+    if (i == 0 || i > n) return false;
+    pillsGetPill(&sim->sim.pb, &p, i);
+    if (speed)    *speed    = p.speed;
+    if (reload)   *reload   = p.reload;
+    if (coolDown) *coolDown = p.coolDown;
+    return true;
+}
+
 bool serverSimGetBase(ServerSim *sim, BYTE i,
                       BYTE *x, BYTE *y, BYTE *owner) {
     base b;

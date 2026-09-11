@@ -110,6 +110,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 struct ServerSim;
 
@@ -192,6 +193,27 @@ bool replayHarnessStopRecording(ReplayHarness *h);
  * could not be read, the reader rejected it, or playback did not reach
  * end-of-log. Defined in replay_harness_decode.c. */
 bool replayHarnessDecode(ReplayHarness *h);
+
+/* What the decoder reports about a .wbv besides its world. */
+#define REPLAY_MAP_NAME_LEN 128
+typedef struct {
+    char mapName[REPLAY_MAP_NAME_LEN];  /* from the log header */
+    int  ticks;                          /* playback ticks to end-of-log */
+} ReplayFileInfo;
+
+/* The same decode for a .wbv at any path: play it to end-of-log and
+ * capture the world into w; info, when not NULL, receives the header's map
+ * name and the tick count. Returns false on the same conditions as
+ * replayHarnessDecode. Defined in replay_harness_decode.c. */
+bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
+                             ReplayFileInfo *info);
+
+/* Write w as a plain-text summary: map name and tick count from info, one
+ * line per pill, base, start and in-use tank slot carrying the fields
+ * Compare looks at, and an FNV-1a hash of the terrain in place of the
+ * cells. Defined in replay_harness_decode.c. */
+void replayHarnessWriteSummary(const ReplayWorld *w, const ReplayFileInfo *info,
+                               FILE *out);
 
 /* Compare the two captures. Returns true when they agree; otherwise fills
  * h->diff with the first difference and returns false. */

@@ -180,6 +180,34 @@ run() {
   fi
 }
 
+# Run WinBoloHeadless --fast with --log-changes and diff the JSONL byte for
+# byte. Arguments: name, map, brain, game type, game ticks, and a record
+# flag: when non-empty the run is also recorded to $ACTUAL/$name.wbv.
+run_changes() {
+  local name="$1"
+  local map="$2"
+  local brain="$3"
+  local gametype="$4"
+  local ticks="$5"
+  local record="$6"
+  echo -n "  $name ... "
+  local args=( --fast --map "$map" --brain "$brain" --gametype "$gametype"
+               --ticks "$ticks" --seed 42
+               --log-changes "$ACTUAL/$name.jsonl" --quiet )
+  if [ -n "$record" ]; then
+    args+=( --record "$ACTUAL/$name.wbv" )
+  fi
+  "$BIN" "${args[@]}" \
+      > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
+  if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
+    echo "OK"
+  else
+    echo "DIFF"
+    diff -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
+    return 1
+  fi
+}
+
 run_ds() {
   local name="$1"
   local bots="$2"
@@ -740,6 +768,7 @@ run_events_udp_two_clients_ticklimit() {
 EVERARD_MAP="$MAPS/Everard Island.map"
 FOREST_MAP="$MAPS/Forest Rig.map"
 SLUGFEST_MAP="$MAPS/Slugfest IV.map"
+ROAD_SPIT_MAP="$MAPS/Road Spit Minefield.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -759,6 +788,24 @@ dispatch_scenario() {
     slugfest_iv_1bot_drive)    run "$name" "$SLUGFEST_MAP" "$BRAINS/drive_forward.lua" ;;
     slugfest_iv_1bot_shoot)    run "$name" "$SLUGFEST_MAP" "$BRAINS/shoot_and_log.lua" ;;
     slugfest_iv_1bot_watch)    run "$name" "$SLUGFEST_MAP" "$BRAINS/watch_objects.lua" ;;
+
+    # Tank deaths and respawns on the purpose-built spit: a parked tank
+    # shelled to death by the neutral pill under each game type, a tank
+    # that lays a mine and drives into the minefield, and a tank that
+    # drives off the road into deep sea. Each tick budget covers the
+    # death, the whole respawn wait and the respawn loadout with a margin
+    # after it. The open shell run is also recorded; its .wbv is the
+    # source of the committed tests/fixtures/wbv/road_spit_shell_open.wbv.
+    road_spit_shell_open)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" open 720 record ;;
+    road_spit_shell_strict)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" strict 720 "" ;;
+    road_spit_shell_tournament)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" tournament 720 "" ;;
+    road_spit_mine_open)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 340 "" ;;
+    road_spit_drown_open)
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 280 "" ;;
 
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
@@ -848,6 +895,13 @@ echo "Slugfest IV:"
 for n in slugfest_iv_1bot_idle slugfest_iv_1bot_sit \
          slugfest_iv_1bot_drive slugfest_iv_1bot_shoot \
          slugfest_iv_1bot_watch; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Road Spit Minefield:"
+for n in road_spit_shell_open road_spit_shell_strict \
+         road_spit_shell_tournament road_spit_mine_open \
+         road_spit_drown_open; do
   dispatch_scenario "$n" || fail=1
 done
 

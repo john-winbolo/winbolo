@@ -119,7 +119,8 @@ static void replayCaptureViewer(ReplayWorld *w) {
     }
 }
 
-bool replayHarnessDecode(ReplayHarness *h) {
+bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
+                             ReplayFileInfo *info) {
     FILE *f;
     long sz;
     uint8_t *zipData;
@@ -127,11 +128,11 @@ bool replayHarnessDecode(ReplayHarness *h) {
     int steps;
     bool reachedEnd;
 
-    if (h == NULL || h->path[0] == '\0') {
+    if (path == NULL || path[0] == '\0' || w == NULL) {
         return false;
     }
 
-    f = fopen(h->path, "rb");
+    f = fopen(path, "rb");
     if (f == NULL) {
         return false;
     }
@@ -154,14 +155,6 @@ bool replayHarnessDecode(ReplayHarness *h) {
     }
     fclose(f);
 
-    if (h->replayed == NULL) {
-        h->replayed = (ReplayWorld *) malloc(sizeof(ReplayWorld));
-        if (h->replayed == NULL) {
-            free(zipData);
-            return false;
-        }
-    }
-
     lv = lv_decoderCreate(false);
     if (lv == NULL) {
         free(zipData);
@@ -176,6 +169,13 @@ bool replayHarnessDecode(ReplayHarness *h) {
         return false;
     }
 
+    if (info != NULL) {
+        memset(info, 0, sizeof(*info));
+        /* The viewer's map name is at most MAP_STR_SIZE; the buffer is
+         * larger than that. */
+        lv_screenGetMapName(info->mapName);
+    }
+
     /* The load decodes the header and the opening snapshot only; the event
      * records are applied by playback. LOG_QUIT ends it, which is what
      * clears isPlaying. */
@@ -186,9 +186,76 @@ bool replayHarnessDecode(ReplayHarness *h) {
     }
     reachedEnd = lv_screenIsPlaying() != TRUE;
     if (reachedEnd) {
-        replayCaptureViewer(h->replayed);
+        replayCaptureViewer(w);
+        if (info != NULL) {
+            info->ticks = steps;
+        }
     }
 
     lv_decoderDestroy(lv);   /* closes the log, freeing the zip buffer */
     return reachedEnd;
+}
+
+bool replayHarnessDecode(ReplayHarness *h) {
+    if (h == NULL || h->path[0] == '\0') {
+        return false;
+    }
+    if (h->replayed == NULL) {
+        h->replayed = (ReplayWorld *) malloc(sizeof(ReplayWorld));
+        if (h->replayed == NULL) {
+            return false;
+        }
+    }
+    return replayHarnessDecodeFile(h->path, h->replayed, NULL);
+}
+
+/* FNV-1a over the terrain array in memory order ([x][y]). */
+static uint32_t replayTerrainHash(const ReplayWorld *w) {
+    const uint8_t *p = &w->terrain[0][0];
+    size_t n = sizeof(w->terrain);
+    size_t i;
+    uint32_t h = 2166136261u;
+    for (i = 0; i < n; i++) {
+        h ^= (uint32_t) p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+void replayHarnessWriteSummary(const ReplayWorld *w, const ReplayFileInfo *info,
+                               FILE *out) {
+    int i;
+
+    fprintf(out, "map: %s\n", info != NULL ? info->mapName : "");
+    fprintf(out, "ticks: %d\n", info != NULL ? info->ticks : 0);
+    fprintf(out, "terrain fnv1a: %08x\n", (unsigned) replayTerrainHash(w));
+
+    fprintf(out, "pills: %u\n", (unsigned) w->numPills);
+    for (i = 0; i < w->numPills && i < REPLAY_MAX_PILLS; i++) {
+        const ReplayPill *p = &w->pills[i];
+        fprintf(out, "pill %d: x=%u y=%u owner=%u armour=%u\n",
+                i + 1, p->x, p->y, p->owner, p->armour);
+    }
+
+    fprintf(out, "bases: %u\n", (unsigned) w->numBases);
+    for (i = 0; i < w->numBases && i < REPLAY_MAX_BASES; i++) {
+        const ReplayBase *b = &w->bases[i];
+        fprintf(out, "base %d: x=%u y=%u owner=%u armour=%u shells=%u mines=%u\n",
+                i + 1, b->x, b->y, b->owner, b->armour, b->shells, b->mines);
+    }
+
+    fprintf(out, "starts: %u\n", (unsigned) w->numStarts);
+    for (i = 0; i < w->numStarts && i < REPLAY_MAX_STARTS; i++) {
+        const ReplayStart *s = &w->starts[i];
+        fprintf(out, "start %d: x=%u y=%u dir=%u\n", i + 1, s->x, s->y, s->dir);
+    }
+
+    for (i = 0; i < REPLAY_MAX_TANKS; i++) {
+        const ReplayTank *t = &w->tanks[i];
+        if (!t->inUse) {
+            continue;
+        }
+        fprintf(out, "tank %d: shells=%u mines=%u armour=%u trees=%u\n",
+                i, t->shells, t->mines, t->armour, t->trees);
+    }
 }
