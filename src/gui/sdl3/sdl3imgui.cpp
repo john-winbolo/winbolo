@@ -2000,7 +2000,7 @@ static void fogReadoutShow(const char *line, const char *blurb) {
 }
 
 /* What the zoom readouts append so a screenshot says what it was taken under.
-   Empty on the settings the map has always drawn — experiment 0 (Envelope)
+   Empty on the settings the map has always drawn — experiment 0 (Expanded)
    with sight off — so the usual readout reads as it always has. The sight mode
    is named rather than flagged, so a shot taken under one rule is not read as
    having been taken under the other. */

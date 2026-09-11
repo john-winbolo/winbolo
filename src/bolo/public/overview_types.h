@@ -46,10 +46,9 @@
  * obvious next thing to want. */
 #define OVERVIEW_F_SIGHT     0x04
 /* Inside a live region and not seen from the tank all the same - behind a
- * building, or outside the Headlights beam. The square keeps the tile it last
- * showed rather than being rewritten, nothing moving on it is drawn, and it is
- * left in full fog. Only set while something is masking the blocks round the
- * tank. */
+ * building. The square keeps the tile it last showed rather than being
+ * rewritten, nothing moving on it is drawn, and it is left in full fog. Only
+ * set while line of sight is masking the blocks round the tank. */
 #define OVERVIEW_F_HIDDEN    0x08
 
 /* The tank region is the full scroll envelope of the main view. An item view
@@ -57,23 +56,10 @@
  * pillbox, a base and an allied tank all take the pill block. */
 #define OVERVIEW_TANK_HALF   (MAIN_SCREEN_SIZE_X - 1)   /* 14 -> 29x29 */
 #define OVERVIEW_PILL_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
-/* The classic view's own visible block, which is what the fog experiments
- * narrow the tank's region down to. Same number as the item block and a
+/* The classic view's own visible block, which is what the Classic fog mode
+ * narrows the tank's region down to. Same number as the item block and a
  * different thing, so tuning one never moves the other. */
 #define OVERVIEW_LENS_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
-/* How far round the tank the Headlights blocks stay live whichever way it is
- * pointing, as a half-width: 2 is the 5x5 the tank sits in the middle of. */
-#define OVERVIEW_HEADLIGHT_NEAR 2
-
-/* Half the angle of the Headlights beam, so the beam itself is twice this
- * across. It is held as the square of the cosine rather than as the angle:
- * the test compares a dot product against the lengths it came from, and
- * squaring both sides is what removes the square root. 9330 out of 10000
- * is cos(15 degrees) squared, which makes the beam 30 degrees wide, and it is
- * the one number to change to widen or narrow it - cos(half-angle) squared,
- * scaled by OVERVIEW_HEADLIGHT_COS2_ONE and rounded. */
-#define OVERVIEW_HEADLIGHT_COS2_ONE 10000
-#define OVERVIEW_HEADLIGHT_COS2     9330
 
 /* One round the player's own tank, and one for each item a view policy grants
  * a block to. */
@@ -91,106 +77,15 @@ typedef struct OverviewRect {
     BYTE alpha;
 } OverviewRect;
 
-/* The Headlights beam the latest update built, or active false when it built
- * none. It is the record of what the map did rather than of which toggle is
- * on, the same way fadeSpan and hiddenActive are, so a frontend reads the beam
- * the squares it was handed came from and cannot be caught out by an
- * experiment changed between the update and the drawing of it.
- *
- * The facing vector is in 256ths of a square, which is how the facing table
- * holds it, and block is the extent the beam was applied over. Zeroed whole
- * when it is built, so it can be compared byte for byte the way the rects
- * are. */
-typedef struct OverviewBeam {
-    bool         active;              /* a Headlights experiment built this */
-    BYTE         originX, originY;    /* the tank square the beam comes from */
-    int          dirX, dirY;          /* the facing vector, 256ths of a square */
-    OverviewRect block;               /* how far it reaches */
-} OverviewBeam;
-
-/* Whether the beam lights a point (dx, dy) squares from the square it comes
- * from, measured centre to centre. Whole numbers ask about a square's own
- * centre, which is what the map memory does; fractions ask about a point
- * inside a square, which is what the fog mask does when it samples the beam's
- * edge several times across each square and gets a straight line instead of a
- * staircase.
- *
- * Floats because the answer decides only what the local client draws: it never
- * crosses the wire and the simulation never reads it, so nothing depends on
- * two machines agreeing about a boundary point. The arithmetic runs in double,
- * which holds every product below exactly at whole-square offsets, so a square
- * asked about here answers exactly as the whole-number test always did.
- *
- * active and block are the caller's to read; this answers about the shape
- * alone. */
-static inline bool overviewBeamLights(const OverviewBeam *beam,
-                                      float dx, float dy) {
-    double nearHalf; /* The near block's reach, half a square past its squares */
-    double x;        /* The point asked about, in squares */
-    double y;
-    double fx;       /* Where the tank points, in 256ths of a square */
-    double fy;
-    double dot;      /* How much of the way to the point runs along the facing */
-    double lhs;      /* That, squared and scaled to compare against the cosine */
-    double rhs;      /* The cosine's share of the two lengths it came from */
-
-    if (beam == NULL) return false;
-
-    /* The near squares, read as a square block rather than a circle, so there
-     * is no rounding to argue about at the diagonals. The tank's own square is
-     * inside it, so the reticle is never dropped. The half square either side
-     * is what puts every point of a near square in the block; at whole-square
-     * offsets it picks out the same 5x5 it always has. */
-    nearHalf = (double)OVERVIEW_HEADLIGHT_NEAR + 0.5;
-    x = (double)dx;
-    y = (double)dy;
-    if (x >= -nearHalf && x <= nearHalf && y >= -nearHalf && y <= nearHalf) {
-        return true;
-    }
-
-    fx = (double)beam->dirX;
-    fy = (double)beam->dirY;
-    dot = x * fx + y * fy;
-    if (dot <= 0.0) {
-        return false; /* the rear half, whatever the angle works out to */
-    }
-
-    /* The angle between the point and the facing, as a dot product against the
-     * lengths it came from and squared so there is no square root:
-     *
-     *   dot^2 * ONE >= COS2 * |d|^2 * |f|^2
-     */
-    lhs = dot * dot * (double)OVERVIEW_HEADLIGHT_COS2_ONE;
-    rhs = (double)OVERVIEW_HEADLIGHT_COS2 * (x * x + y * y) *
-          (fx * fx + fy * fy);
-    return lhs >= rhs;
-}
-
 typedef struct OverviewMap {
     BYTE         tile[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   /* [x][y] tilenum index as last seen */
     BYTE         flags[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];  /* [x][y] OVERVIEW_F_* */
-    /* Afterimage's countdown: how long a square that has dropped out of the
-     * live set has left before it is back in full fog. Only Afterimage writes
-     * these, and fadeSpan is what says so - it is the value fade counts down
-     * from, and 0 under every other experiment, so nothing else has to know
-     * which experiment is running to read them. Brightness is worked out where
-     * it is drawn, as fade * 255 / fadeSpan. Another 64 KB on a struct that
-     * already carries two arrays this size, and ClientSim holds one of these by
-     * value. */
-    BYTE         fade[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   /* [x][y] ticks left before full fog */
-    BYTE         fadeSpan;                               /* 0 when nothing is fading */
-    /* Whether the latest update masked the blocks round the tank, so some of
-     * their squares are hidden rather than live - by line of sight, by the
-     * Headlights beam, or by both. It is the record of what the map did rather
-     * than of which toggle is on, the same way fadeSpan is, so a frontend reads
-     * the squares it was handed and cannot be caught out by a toggle flipped
-     * between the update and the drawing of it. */
+    /* Whether the latest update masked the blocks round the tank by line of
+     * sight, so some of their squares are hidden rather than live. It is the
+     * record of what the map did rather than of which mode is on, so a frontend
+     * reads the squares it was handed and cannot be caught out by a mode
+     * changed between the update and the drawing of it. */
     bool         hiddenActive;
-    /* The Headlights beam the latest update masked those blocks with, and
-     * active false when no experiment built one. The fog mask samples it
-     * several times across each square, so it needs the beam itself rather
-     * than the per-square answer the flags carry. */
-    OverviewBeam beam;
     OverviewRect live[OVERVIEW_MAX_REGIONS];             /* regions used by the latest update */
     int          liveCount;
     OverviewRect prevLive[OVERVIEW_MAX_REGIONS];         /* regions used by the update before it */

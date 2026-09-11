@@ -19,38 +19,22 @@
 
 static BYTE fogBuf[OVERVIEW_FOG_MASK_BYTES + FOG_GUARD_BYTES];
 
-/* One named texel of one map square. Only the beam is worked out texel by
- * texel, so this is what the beam's cases read. */
-static BYTE fogTexelAt(int mx, int my, int tx, int ty) {
-    return fogBuf[((size_t)my * OVERVIEW_FOG_SUB + (size_t)ty) *
-                      (size_t)OVERVIEW_FOG_MASK_SIDE +
-                  (size_t)mx * OVERVIEW_FOG_SUB + (size_t)tx];
-}
-
-/* What a square carries. The regions, the lift and the dark pass all fill a
- * square's texels alike, so one texel of it stands for the square. */
+/* What a square carries. One texel to a square, so this is the square's own
+ * byte. */
 static BYTE fogAt(int x, int y) {
-    return fogTexelAt(x, y, OVERVIEW_FOG_SUB / 2, OVERVIEW_FOG_SUB / 2);
-}
-
-static void fogBuildBeam(const OverviewRect *live, int liveCount,
-                         const BYTE *lift, const BYTE *dark,
-                         const OverviewBeam *beam) {
-    memset(fogBuf, FOG_GUARD_FILL, sizeof(fogBuf));
-    overviewFogBuildMask(live, liveCount, lift, dark, beam, fogBuf);
+    return fogBuf[(size_t)y * (size_t)OVERVIEW_FOG_MASK_SIDE + (size_t)x];
 }
 
 static void fogBuildDark(const OverviewRect *live, int liveCount,
-                         const BYTE *lift, const BYTE *dark) {
-    fogBuildBeam(live, liveCount, lift, dark, NULL);
+                         const BYTE *dark) {
+    memset(fogBuf, FOG_GUARD_FILL, sizeof(fogBuf));
+    overviewFogBuildMask(live, liveCount, dark, fogBuf);
 }
 
-/* The regions and a lift, with no ground the player cannot see into — which is
- * every case written before line of sight existed and every experiment with
- * the toggle off. */
-static void fogBuild(const OverviewRect *live, int liveCount,
-                     const BYTE *lift) {
-    fogBuildDark(live, liveCount, lift, NULL);
+/* The regions alone, with no ground the player cannot see into — which is every
+ * case written before line of sight existed, and every one with sight off. */
+static void fogBuild(const OverviewRect *live, int liveCount) {
+    fogBuildDark(live, liveCount, NULL);
 }
 
 /* The edge overview_fog.cpp draws, repeated here so the cases below can name
@@ -79,7 +63,7 @@ static int fogGuardIntact(void) {
 static int fog_live_is_clear_and_far_is_fogged(void) {
     OverviewRect live = { 100, 100, 120, 120, 255 };
 
-    fogBuild(&live, 1, NULL);
+    fogBuild(&live, 1);
 
     UT_ASSERT_MSG(fogAt(110, 110) == 0,
                   "square in the middle of the region carries %u fog",
@@ -100,7 +84,7 @@ static int fog_live_is_clear_and_far_is_fogged(void) {
 static int fog_steps_to_full_outside_the_region(void) {
     OverviewRect live = { 100, 100, 120, 120, 255 };
 
-    fogBuild(&live, 1, NULL);
+    fogBuild(&live, 1);
 
     UT_ASSERT_MSG(fogAt(120, 110) == 0,
                   "the last square the region covers carries %u fog, expected "
@@ -135,7 +119,7 @@ static int fog_steps_to_full_outside_the_region(void) {
 static int fog_corners_are_as_sharp_as_the_sides(void) {
     OverviewRect live = { 100, 100, 120, 120, 255 };
 
-    fogBuild(&live, 1, NULL);
+    fogBuild(&live, 1);
 
     UT_ASSERT_MSG(fogAt(120, 120) == 0,
                   "the region's corner square carries %u fog, expected clear",
@@ -175,7 +159,7 @@ static int fog_overlapping_regions_take_the_brightest(void) {
     OverviewRect live[2] = { { 100, 100, 120, 120, 255 },
                              { 118, 118, 130, 130, 255 } };
 
-    fogBuild(live, ARRAY_LEN(live), NULL);
+    fogBuild(live, ARRAY_LEN(live));
 
     UT_ASSERT_MSG(fogAt(121, 121) == 0,
                   "a square the second region has live carries %u fog from "
@@ -188,7 +172,7 @@ static int fog_overlapping_regions_take_the_brightest(void) {
      * the gap is in full fog, rather than the two running into one lit patch. */
     OverviewRect pair[2] = { { 100, 100, 120, 120, 255 },
                              { 124, 100, 140, 120, 255 } };
-    fogBuild(pair, ARRAY_LEN(pair), NULL);
+    fogBuild(pair, ARRAY_LEN(pair));
 
     UT_ASSERT_MSG(fogAt(120, 110) == 0 && fogAt(124, 110) == 0,
                   "the two regions' facing edges carry %u and %u fog, expected "
@@ -215,7 +199,7 @@ static int fog_regions_clamp_to_the_map(void) {
     };
 
     for (int i = 0; i < ARRAY_LEN(kCorners); i++) {
-        fogBuild(&kCorners[i], 1, NULL);
+        fogBuild(&kCorners[i], 1);
 
         UT_ASSERT_MSG(fogAt(kCorners[i].left, kCorners[i].top) == 0,
                       "corner region %d leaves its own top-left at %u fog",
@@ -236,18 +220,18 @@ static int fog_regions_clamp_to_the_map(void) {
 static int fog_no_regions_fogs_the_map(void) {
     OverviewRect live = { 100, 100, 120, 120, 255 };
 
-    fogBuild(&live, 0, NULL);
+    fogBuild(&live, 0);
     UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
                   "with no regions the map carries %u fog, expected %u",
                   (unsigned)fogAt(110, 110), (unsigned)OVERVIEW_FOG_ALPHA);
 
-    fogBuild(NULL, 1, NULL);
+    fogBuild(NULL, 1);
     UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
                   "with a NULL region list the map carries %u fog, expected %u",
                   (unsigned)fogAt(110, 110), (unsigned)OVERVIEW_FOG_ALPHA);
 
     /* And a NULL mask is a no-op, like the rest of the overview's maths. */
-    overviewFogBuildMask(&live, 1, NULL, NULL, NULL, NULL);
+    overviewFogBuildMask(&live, 1, NULL, NULL);
     return fogGuardIntact();
 }
 
@@ -257,7 +241,7 @@ static int fog_no_regions_fogs_the_map(void) {
 static int fog_full_alpha_is_clear_inside_and_fogged_outside(void) {
     OverviewRect live = { 100, 100, 120, 120, 255 };
 
-    fogBuild(&live, 1, NULL);
+    fogBuild(&live, 1);
 
     for (int y = live.top; y <= live.bottom; y++) {
         for (int x = live.left; x <= live.right; x++) {
@@ -288,7 +272,7 @@ static int fog_full_alpha_is_clear_inside_and_fogged_outside(void) {
 static int fog_faded_out_region_is_not_there(void) {
     OverviewRect live = { 100, 100, 120, 120, 0 };
 
-    fogBuild(&live, 1, NULL);
+    fogBuild(&live, 1);
 
     for (int i = 0; i < OVERVIEW_FOG_MASK_BYTES; i++) {
         UT_ASSERT_MSG(fogBuf[i] == OVERVIEW_FOG_ALPHA,
@@ -305,7 +289,7 @@ static int fog_faded_out_region_is_not_there(void) {
 static int fog_mid_fade_dims_the_whole_block(void) {
     OverviewRect live = { 100, 100, 120, 120, 128 };
 
-    fogBuild(&live, 1, NULL);
+    fogBuild(&live, 1);
 
     BYTE inside = fogAt(110, 110);
     UT_ASSERT_MSG(inside > 0 && inside < OVERVIEW_FOG_ALPHA,
@@ -332,7 +316,7 @@ static int fog_mid_fade_dims_the_whole_block(void) {
     /* A pill going dark under the tank's block must not dim it. */
     OverviewRect pair[2] = { { 100, 100, 120, 120, 128 },
                              { 110, 110, 114, 114, 255 } };
-    fogBuild(pair, ARRAY_LEN(pair), NULL);
+    fogBuild(pair, ARRAY_LEN(pair));
 
     UT_ASSERT_MSG(fogAt(112, 112) == 0,
                   "a square a full-alpha region has live carries %u fog from "
@@ -354,13 +338,13 @@ static int fog_half_alpha_lifts_half_way(void) {
     OverviewRect full = { 100, 100, 120, 120, 255 };
     OverviewRect half = { 100, 100, 120, 120, 128 };
 
-    fogBuild(&full, 1, NULL);
+    fogBuild(&full, 1);
     BYTE fullFog = fogAt(110, 110);
     UT_ASSERT_MSG(fullFog == 0,
                   "a full-alpha region's interior carries %u fog, expected "
                   "clear", (unsigned)fullFog);
 
-    fogBuild(&half, 1, NULL);
+    fogBuild(&half, 1);
     BYTE halfFog = fogAt(110, 110);
 
     int fullLift = OVERVIEW_FOG_ALPHA - (int)fullFog;
@@ -380,7 +364,7 @@ static int fog_lower_alpha_never_brightens(void) {
     for (int a = 255; a >= 0; a--) {
         OverviewRect live = { 100, 100, 120, 120, (BYTE)a };
 
-        fogBuild(&live, 1, NULL);
+        fogBuild(&live, 1);
 
         BYTE got = fogAt(110, 110);
         UT_ASSERT_MSG(got >= prev,
@@ -395,126 +379,21 @@ static int fog_lower_alpha_never_brightens(void) {
     return fogGuardIntact();
 }
 
-/* A per-square lift, the shape the map's own fade hands the builder: nothing
- * anywhere except the one square a case is about, so what comes back says what
- * that square's lift did and nothing else. */
-static BYTE fogLiftBuf[OVERVIEW_FOG_SQUARE_BYTES];
-
-static const BYTE *fogLiftOne(int x, int y, BYTE value) {
-    memset(fogLiftBuf, 0, sizeof(fogLiftBuf));
-    fogLiftBuf[(size_t)y * MAP_ARRAY_SIZE + (size_t)x] = value;
-    return fogLiftBuf;
-}
-
 /* Every byte of the mask one full-alpha region draws, worked out square by
  * square rather than read back off the builder. A region at full alpha lifts
  * each square it covers the whole way out of the fog, and there is no square
- * outside it the region touches at all.
- *
- * Every texel, not one a square: a region's edges land on square boundaries, so
- * each of a square's texels has to carry the square's own byte. That is what
- * says the sub-square mask draws the regions exactly as the one-texel-a-square
- * mask did. */
+ * outside it the region touches at all. */
 static int fogAssertPlainMask(const OverviewRect *r) {
     for (int y = 0; y < OVERVIEW_FOG_MASK_SIDE; y++) {
         for (int x = 0; x < OVERVIEW_FOG_MASK_SIDE; x++) {
-            BYTE want = fogFullAlphaAt(r, x / OVERVIEW_FOG_SUB,
-                                       y / OVERVIEW_FOG_SUB);
+            BYTE want = fogFullAlphaAt(r, x, y);
             BYTE got  = fogBuf[(size_t)y * OVERVIEW_FOG_MASK_SIDE + (size_t)x];
             UT_ASSERT_MSG(got == want,
-                          "texel %d,%d carries %u fog, expected %u",
+                          "square %d,%d carries %u fog, expected %u",
                           x, y, (unsigned)got, (unsigned)want);
         }
     }
     return 0;
-}
-
-/* With no per-square lift the mask is the one the regions alone draw, every
- * byte of it — which is what says the experiments that hand over no lift are
- * drawing the map they have always drawn. */
-static int fog_no_lift_is_the_mask_the_regions_draw(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
-    int rc; /* Result of the whole-mask check */
-
-    fogBuild(&live, 1, NULL);
-    rc = fogAssertPlainMask(&live);
-    if (rc) return rc;
-
-    /* A lift that lifts nothing says nothing either, byte for byte. */
-    memset(fogLiftBuf, 0, sizeof(fogLiftBuf));
-    fogBuild(&live, 1, fogLiftBuf);
-    rc = fogAssertPlainMask(&live);
-    if (rc) return rc;
-
-    return fogGuardIntact();
-}
-
-/* A square no region covers is in full fog until its lift says otherwise: at
- * 255 it comes out as clear as a live one. It is the square's own lift and
- * nothing else's, so the square beside it is untouched — ground that is fading
- * is lit one square at a time. */
-static int fog_full_lift_clears_ground_no_region_covers(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
-
-    fogBuild(&live, 1, NULL);
-    UT_ASSERT_MSG(fogAt(200, 200) == OVERVIEW_FOG_ALPHA,
-                  "ground away from the region carries %u fog before any lift, "
-                  "expected %u", (unsigned)fogAt(200, 200),
-                  (unsigned)OVERVIEW_FOG_ALPHA);
-
-    fogBuild(&live, 1, fogLiftOne(200, 200, 255));
-    UT_ASSERT_MSG(fogAt(200, 200) == 0,
-                  "a square lifted the whole way carries %u fog, expected it "
-                  "clear", (unsigned)fogAt(200, 200));
-    UT_ASSERT_MSG(fogAt(201, 200) == OVERVIEW_FOG_ALPHA,
-                  "the square beside a lifted one carries %u fog, expected the "
-                  "full %u", (unsigned)fogAt(201, 200),
-                  (unsigned)OVERVIEW_FOG_ALPHA);
-    return fogGuardIntact();
-}
-
-/* Half way through its fade a square is half way out of the fog, which is what
- * makes the ground dissolve rather than switch off. */
-static int fog_half_lift_leaves_the_square_half_way(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
-
-    fogBuild(&live, 1, fogLiftOne(200, 200, 128));
-
-    int halfLift = OVERVIEW_FOG_ALPHA - (int)fogAt(200, 200);
-    UT_ASSERT_MSG(halfLift * 2 >= OVERVIEW_FOG_ALPHA - 2 &&
-                      halfLift * 2 <= OVERVIEW_FOG_ALPHA + 2,
-                  "a lift of 128 takes a square %d out of the fog, expected "
-                  "half of %u to within rounding",
-                  halfLift, (unsigned)OVERVIEW_FOG_ALPHA);
-    return fogGuardIntact();
-}
-
-/* The brightest answer wins here as it does between regions: a square a region
- * already holds cannot be darkened by whatever its lift happens to say. */
-static int fog_lift_never_darkens_a_square(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
-    static const BYTE kLifts[] = { 0, 1, 10, 128, 254, 255 };
-
-    for (int i = 0; i < ARRAY_LEN(kLifts); i++) {
-        fogBuild(&live, 1, fogLiftOne(110, 110, kLifts[i]));
-        UT_ASSERT_MSG(fogAt(110, 110) == 0,
-                      "a square the region has live carries %u fog under a "
-                      "lift of %u, expected clear",
-                      (unsigned)fogAt(110, 110), (unsigned)kLifts[i]);
-    }
-
-    /* And under a region part way through its fade, where the block leaves the
-     * square dimmer than clear but brighter than a small lift would. */
-    OverviewRect fading = { 100, 100, 120, 120, 128 };
-
-    fogBuild(&fading, 1, NULL);
-    BYTE plain = fogAt(110, 110);
-    fogBuild(&fading, 1, fogLiftOne(110, 110, 1));
-    UT_ASSERT_MSG(fogAt(110, 110) == plain,
-                  "a square a half-faded region leaves at %u fog is at %u "
-                  "under a lift of 1, which is darker than the block had it",
-                  (unsigned)plain, (unsigned)fogAt(110, 110));
-    return fogGuardIntact();
 }
 
 /* Ground the player cannot see into, the shape line of sight hands the builder:
@@ -529,16 +408,16 @@ static const BYTE *fogDarkOne(int x, int y, BYTE value) {
 
 /* A square behind a building sits inside the block, so the regions leave it
  * clear and something has to put the fog back over it. This is that: the
- * darkest answer wins, over a region and over a fade alike. */
-static int fog_dark_wins_over_a_region_and_a_lift(void) {
+ * darkest answer wins, over a region at full alpha included. */
+static int fog_dark_wins_over_a_region(void) {
     OverviewRect live = { 100, 100, 120, 120, 255 };
 
-    fogBuild(&live, 1, NULL);
+    fogBuild(&live, 1);
     UT_ASSERT_MSG(fogAt(110, 110) == 0,
                   "a square the region holds carries %u fog before any of it",
                   (unsigned)fogAt(110, 110));
 
-    fogBuildDark(&live, 1, NULL, fogDarkOne(110, 110, OVERVIEW_FOG_ALPHA));
+    fogBuildDark(&live, 1, fogDarkOne(110, 110, OVERVIEW_FOG_ALPHA));
     UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
                   "a hidden square the region holds carries %u fog, expected "
                   "the full %u", (unsigned)fogAt(110, 110),
@@ -547,137 +426,28 @@ static int fog_dark_wins_over_a_region_and_a_lift(void) {
                   "the square beside a hidden one carries %u fog, expected it "
                   "clear", (unsigned)fogAt(111, 110));
 
-    /* And over a fade, which is the same square lit from the other side. */
-    fogBuildDark(&live, 1, fogLiftOne(110, 110, 255),
-                 fogDarkOne(110, 110, OVERVIEW_FOG_ALPHA));
-    UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
-                  "a hidden square carries %u fog under a lift of 255, "
-                  "expected the full %u", (unsigned)fogAt(110, 110),
-                  (unsigned)OVERVIEW_FOG_ALPHA);
-
     /* Half way is half way here too, so a partly dark square is not simply
      * on or off. */
-    fogBuildDark(&live, 1, NULL, fogDarkOne(110, 110, 64));
+    fogBuildDark(&live, 1, fogDarkOne(110, 110, 64));
     UT_ASSERT_MSG(fogAt(110, 110) == 64,
                   "a square handed 64 of fog carries %u",
                   (unsigned)fogAt(110, 110));
     return fogGuardIntact();
 }
 
-/* Nothing hidden is the map the regions and the fade alone draw, byte for
- * byte — which is what says the toggle being off costs the picture nothing. */
+/* Nothing hidden is the map the regions alone draw, byte for byte — which is
+ * what says sight being off costs the picture nothing. */
 static int fog_no_dark_is_the_mask_without_it(void) {
     OverviewRect live = { 100, 100, 120, 120, 255 };
     int rc; /* Result of the whole-mask check */
 
-    fogBuildDark(&live, 1, NULL, NULL);
+    fogBuildDark(&live, 1, NULL);
     rc = fogAssertPlainMask(&live);
     if (rc) return rc;
 
     /* Ground that is hidden nowhere says nothing either. */
     memset(fogDarkBuf, 0, sizeof(fogDarkBuf));
-    fogBuildDark(&live, 1, NULL, fogDarkBuf);
-    rc = fogAssertPlainMask(&live);
-    if (rc) return rc;
-
-    return fogGuardIntact();
-}
-
-/* A Headlights beam pointing due east from square 100,100 over the block the
- * wider of the two experiments builds. The facing vector is in 256ths of a
- * square, the way the facing table holds it. */
-static OverviewBeam fogBeamEast(void) {
-    OverviewBeam b; /* Beam to return */
-
-    memset(&b, 0, sizeof(b));
-    b.active = true;
-    b.originX = 100;
-    b.originY = 100;
-    b.dirX = 256;
-    b.dirY = 0;
-    b.block.left = 86;
-    b.block.top = 86;
-    b.block.right = 114;
-    b.block.bottom = 114;
-    b.block.alpha = 255;
-    return b;
-}
-
-/* The whole point of a mask finer than a square: the beam's edge crosses square
- * 110,103 at an angle, so one corner of that square is inside the wedge and the
- * far corner is outside it. The near corner comes out clear and the far one at
- * full fog — which cannot be said at all when a square carries one byte.
- *
- * The region covers the whole block, so the two texels are clear before the
- * beam has its say and any fog on them is the beam's doing. */
-static int fog_beam_edge_cuts_across_a_square(void) {
-    OverviewBeam beam = fogBeamEast();
-    OverviewRect live = { 86, 86, 114, 114, 255 };
-
-    fogBuildBeam(&live, 1, NULL, NULL, &beam);
-
-    /* Furthest along the beam and closest to its axis: inside the wedge. */
-    BYTE lit = fogTexelAt(110, 103, OVERVIEW_FOG_SUB - 1, 0);
-    UT_ASSERT_MSG(lit == 0,
-                  "the texel of square 110,103 inside the wedge carries %u "
-                  "fog, expected it clear", (unsigned)lit);
-
-    /* The opposite corner of the same square: least far along and furthest off
-     * the axis, so outside it. */
-    BYTE dark = fogTexelAt(110, 103, 0, OVERVIEW_FOG_SUB - 1);
-    UT_ASSERT_MSG(dark == OVERVIEW_FOG_ALPHA,
-                  "the texel of square 110,103 outside the wedge carries %u "
-                  "fog, expected the full %u", (unsigned)dark,
-                  (unsigned)OVERVIEW_FOG_ALPHA);
-
-    /* Straight down the beam is lit and the rear half is not, so the wedge is
-     * pointing where the vector says. */
-    UT_ASSERT_MSG(fogAt(112, 100) == 0,
-                  "a square straight down the beam carries %u fog, expected it "
-                  "clear", (unsigned)fogAt(112, 100));
-    UT_ASSERT_MSG(fogAt(88, 100) == OVERVIEW_FOG_ALPHA,
-                  "a square behind the tank carries %u fog, expected the full "
-                  "%u", (unsigned)fogAt(88, 100),
-                  (unsigned)OVERVIEW_FOG_ALPHA);
-
-    /* The near block is lit whichever way the beam points, and its edge is
-     * still a square boundary: square 102,102 is in it and 103,103 is not. */
-    UT_ASSERT_MSG(fogAt(102, 102) == 0 && fogAt(98, 98) == 0,
-                  "the near block carries %u and %u fog, expected both clear",
-                  (unsigned)fogAt(102, 102), (unsigned)fogAt(98, 98));
-    UT_ASSERT_MSG(fogAt(103, 103) == OVERVIEW_FOG_ALPHA,
-                  "the square just outside the near block carries %u fog, "
-                  "expected the full %u", (unsigned)fogAt(103, 103),
-                  (unsigned)OVERVIEW_FOG_ALPHA);
-
-    /* And nothing outside the beam's own block is touched by it. */
-    UT_ASSERT_MSG(fogAt(200, 200) == OVERVIEW_FOG_ALPHA,
-                  "ground away from the block carries %u fog, expected %u",
-                  (unsigned)fogAt(200, 200), (unsigned)OVERVIEW_FOG_ALPHA);
-    return fogGuardIntact();
-}
-
-/* No beam is the mask the regions alone draw, every texel of it — which is what
- * says the four experiments that build no beam draw exactly the map they always
- * did. A beam with active false says nothing either, so a stale one left on the
- * map cannot darken anything. */
-static int fog_no_beam_is_the_mask_without_it(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
-    OverviewBeam off; /* A beam that was never built */
-    int rc;           /* Result of the whole-mask check */
-
-    fogBuildBeam(&live, 1, NULL, NULL, NULL);
-    rc = fogAssertPlainMask(&live);
-    if (rc) return rc;
-
-    memset(&off, 0, sizeof(off));
-    off.active = false;
-    off.dirX = 256;
-    off.block.left = 86;
-    off.block.top = 86;
-    off.block.right = 114;
-    off.block.bottom = 114;
-    fogBuildBeam(&live, 1, NULL, NULL, &off);
+    fogBuildDark(&live, 1, fogDarkBuf);
     rc = fogAssertPlainMask(&live);
     if (rc) return rc;
 
@@ -697,13 +467,7 @@ extern "C" int run_overview_fog(void) {
     rc = fog_mid_fade_dims_the_whole_block();        if (rc) return rc;
     rc = fog_half_alpha_lifts_half_way();            if (rc) return rc;
     rc = fog_lower_alpha_never_brightens();          if (rc) return rc;
-    rc = fog_no_lift_is_the_mask_the_regions_draw(); if (rc) return rc;
-    rc = fog_full_lift_clears_ground_no_region_covers(); if (rc) return rc;
-    rc = fog_half_lift_leaves_the_square_half_way(); if (rc) return rc;
-    rc = fog_lift_never_darkens_a_square();          if (rc) return rc;
-    rc = fog_dark_wins_over_a_region_and_a_lift();   if (rc) return rc;
+    rc = fog_dark_wins_over_a_region();              if (rc) return rc;
     rc = fog_no_dark_is_the_mask_without_it();       if (rc) return rc;
-    rc = fog_beam_edge_cuts_across_a_square();       if (rc) return rc;
-    rc = fog_no_beam_is_the_mask_without_it();       if (rc) return rc;
     return 0;
 }

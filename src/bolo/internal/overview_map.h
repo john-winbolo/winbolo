@@ -36,16 +36,14 @@
 struct GameSim;
 
 /* Which rule decides the block of squares round the player's own tank.
- * Envelope is what the map has always drawn - everything the classic 15x15
- * view could scroll to - and the four after it narrow it in different ways.
- * All of it is client presentation: the server sends what it always sent, and
- * the point of having them all is to find which one plays best. */
+ * Expanded is what the map has always drawn - everything the classic 15x15
+ * view could scroll to - and Classic narrows it to the window that view is
+ * actually showing. Both are client presentation: the server sends what it
+ * always sent, and the point of having the pair is to find which one plays
+ * best. */
 typedef enum {
-  fogExperimentEnvelope = 0,
-  fogExperimentLens,
-  fogExperimentHeadlightsEnvelope,
-  fogExperimentHeadlightsLens,
-  fogExperimentAfterimage,
+  fogExperimentExpanded = 0,
+  fogExperimentClassic,
   FOG_EXPERIMENT_COUNT
 } FogExperiment;
 
@@ -63,7 +61,7 @@ typedef enum {
 /* The experiment in force and what blocks sight inside the block, with the name
  * and the one-line description each of them shows when it is picked. Process-
  * global and not saved, the way the scroll mechanism selector is: every launch
- * starts on Envelope with sight off. The name and the blurb live here so the
+ * starts on Expanded with sight off. The name and the blurb live here so the
  * on-screen readout and anything else that lists them read one source; an index
  * outside either enum gives a placeholder string rather than a read off the end
  * of the table.
@@ -88,9 +86,6 @@ const char   *overviewFogSightBlurb(FogSightMode m);
 bool          overviewFogShowRegionsGet(void);
 void          overviewFogShowRegionsSet(bool on);
 
-#define OVERVIEW_AFTERIMAGE_SECS 3  /* seconds a square takes to fade back to
-                                       fog after the block leaves it */
-
 /* Whether this experiment places the block round the tank from the classic
  * view rather than round the tank itself. The block builder and the camera the
  * frontend follows both ask here, so the two cannot disagree about what the
@@ -114,13 +109,12 @@ bool overviewFogBlockFollowsView(FogExperiment e);
  * (clientSimAllyViewMask); with no bits set no allied tank ever earns a
  * region, whatever the policy says.
  *
- * The rest is the fog experiment and the state the narrower blocks are placed
+ * The rest is the fog experiment and the state the narrower block is placed
  * from: the classic view is still scrolling under the full screen map, so its
  * first visible square and the sub-square part of its position say where the
- * window the player is driving actually is, and the tank's heading is what
- * points the Headlights beam. viewValid is false when there is no live tank or
- * the player is watching an item, which is when the view readings mean
- * nothing. */
+ * window the player is driving actually is. viewValid is false when there is
+ * no live tank or the player is watching an item, which is when the view
+ * readings mean nothing. */
 typedef struct OverviewViewInputs {
     ViewPolicy      policy[VIEW_CATEGORY_COUNT];
     uint16_t        decaySecs[VIEW_CATEGORY_COUNT];
@@ -138,19 +132,13 @@ typedef struct OverviewViewInputs {
     BYTE            viewLeft, viewTop;  /* first visible square of that view */
     bool            manualHold;    /* the player is holding the view off autoscroll */
     int16_t         viewSubX, viewSubY; /* sub-square part of the view position */
-    TURNTYPE        heading;       /* where the tank points, in BRADIANS over
-                                      BRADIANS_MAX - the angle itself, not a
-                                      frame number. The sprite is drawn from
-                                      sixteen frames and that is a separate
-                                      thing: the beam follows the angle shots
-                                      go down, whichever frame is on screen */
 } OverviewViewInputs;
 
 /* The rules a server ships with: pillboxes always, bases off, allied tanks
  * always. No clocks, no item view, no viewable allies — so what comes out is
  * the tank block and the pillboxes the player can view through, which is the
  * region set the overview has always had. The fog fields zero with it, which
- * reads as Envelope with sight off and no classic view to place a block
+ * reads as Expanded with sight off and no classic view to place a block
  * from. */
 void overviewViewInputsDefaults(OverviewViewInputs *in);
 
@@ -237,28 +225,17 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  * keeps stamping underneath it. A tank that has really gone drops its block
  * outright.
  *
- * Under Afterimage this also runs the per-square countdown in OverviewMap::fade
- * on: OVERVIEW_AFTERIMAGE_SECS worth of the caller's ticks inside a live
- * region, one tick less on every square outside one, so ground the block has
- * left dissolves rather than going dark at once. A square that moves counts as
- * a change like any other, so generation keeps advancing while anything is
- * still fading. Leaving the experiment - or arriving with no tick rate to
- * measure the seconds against - clears the lot and puts fadeSpan back to 0.
- *
  * With sightMode past fogSightOff, the blocks round the player's own tank are
  * masked by what the tank can actually see from where it stands: a square with
  * a building - or, under fogSightBuildingsAndTrees, a deep enough stand of
  * trees - between it and the tank keeps the tile it last showed, carries
  * OVERVIEW_F_HIDDEN instead of the live and sight bits, and is left in full
- * fog. Under either Headlights the same mask takes away everything outside the
- * near squares and the beam, so with both running a square has to be in the
- * beam and have a clear line to it to stay live. The last stamp those blocks
- * get as they stop being live is masked the same way, from the square the tank
- * last had a block on, so letting the block go does not show the player what it
- * had been keeping from them. Watched items are never masked - the player is
- * seeing through the item, not from the tank - and with sight off under an
- * experiment that hides nothing no mask is built and no square ever carries the
- * flag. OverviewMap::hiddenActive records which of the two the update did. */
+ * fog. The last stamp those blocks get as they stop being live is masked the
+ * same way, from the square the tank last had a block on, so letting the block
+ * go does not show the player what it had been keeping from them. Watched items
+ * are never masked - the player is seeing through the item, not from the tank -
+ * and with sight off no mask is built and no square ever carries the flag.
+ * OverviewMap::hiddenActive records which of the two the update did. */
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY);

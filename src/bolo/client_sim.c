@@ -1032,9 +1032,8 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->experiment = (uint8_t)overviewFogExperimentGet();
   in->sightMode = (uint8_t)overviewFogSightGet();
 
-  /* A player with no tank in their slot has no window and no heading to report:
-   * those fields keep the zeroes the defaults gave them, and viewValid says so.
-   */
+  /* A player with no tank in their slot has no window to report: those fields
+   * keep the zeroes the defaults gave them, and viewValid says so. */
   if (MY_TANK((ClientSim *)cs) == NULL) {
     return;
   }
@@ -1049,11 +1048,6 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->manualHold = sc->autoScrollOverRide;
   in->viewSubX = sc->subPosX;
   in->viewSubY = sc->subPosY;
-  /* The angle the tank is actually on, in BRADIANS, straight across. The
-   * sixteen-step direction the sprite is drawn from would snap this to the
-   * nearest sixteenth and make the beam jump as the tank turns; the angle is
-   * also where the shots go, so it is the one the beam should follow. */
-  in->heading = tankGetAngle(&MY_TANK((ClientSim *)cs));
   /* Those readings only say where the player is looking while a live tank is
    * being followed: an item view has taken the camera off the tank, and a dead
    * one leaves the offsets wherever the view stopped. */
@@ -3315,10 +3309,9 @@ struct OverviewSnapshot {
   int           pillViewX;
   int           pillViewY;
 
-  /* The centre of the live block, for the fog experiments that place it from
-   * the classic view. Invalid under the experiments that centre their block on
-   * the tank, where the tank position the camera already follows is the same
-   * thing. */
+  /* The centre of the live block, for a fog mode that places it from the
+   * classic view. Invalid under a mode that centres its block on the tank,
+   * where the tank position the camera already follows is the same thing. */
   bool          fogCentreValid;
   float         fogCentreX;
   float         fogCentreY;

@@ -1151,8 +1151,9 @@ int          clientSimGetScrollMechanism(void);
 void         clientSimSetScrollMechanism(int mech);
 
 /* Fog-experiment selector for the map overview: which rule builds the block of
-   live squares round the player's own tank (0 = Envelope, the block the map has
-   always drawn). Values match FogExperiment, exposed as int so GUI callers
+   live squares round the player's own tank (0 = Expanded, the block the map has
+   always drawn; 1 = Classic, the window the classic view is showing). Values
+   match FogExperiment, exposed as int so GUI callers
    needn't include the internal overview header, with the count so a caller
    cycling through them doesn't hardcode it. Name and blurb are the plain
    English a readout shows, and are safe for any int. Process-global, not
@@ -1193,8 +1194,8 @@ void         clientSimSetFogShowRegions(bool on);
 /* The centre of the block of live squares round the player's own tank, in map
    squares and including the sub-square part, for a camera that has to follow
    the block rather than the tank. That is the classic view's own centre, under
-   the experiments placed from that view. False — leaving the outputs alone —
-   under the experiments whose block is centred on the tank, where the tank
+   the experiment placed from that view. False — leaving the outputs alone —
+   under the experiment whose block is centred on the tank, where the tank
    position is what to follow, and whenever there is no live tank view to read
    that centre from. */
 bool         clientSimGetFogViewCentreF(const ClientSim *cs, float *outX,

@@ -31,44 +31,22 @@ static int overviewFogClampSquare(int v) {
     return v;
 }
 
-/* The first texel of a square's row band, so a per-square value can be written
- * across the OVERVIEW_FOG_SUB texels the square covers. */
-static BYTE *overviewFogTexelRow(BYTE *mask, int mx, int my, int ty) {
-    return mask +
-           ((size_t)my * OVERVIEW_FOG_SUB + (size_t)ty) *
-               (size_t)OVERVIEW_FOG_MASK_SIDE +
-           (size_t)mx * OVERVIEW_FOG_SUB;
+/* One map square's texel, which is where every rule here writes. */
+static BYTE *overviewFogTexel(BYTE *mask, int mx, int my) {
+    return mask + (size_t)my * (size_t)OVERVIEW_FOG_MASK_SIDE + (size_t)mx;
 }
 
-/* Every texel of one map square lit to `v` where the mask has it darker. The
- * regions and the lift both answer per square, so a square's texels all take
- * the same byte and the edges land on square boundaries as they always did. */
+/* One map square lit to `v` where the mask has it darker. */
 static void overviewFogSquareLift(BYTE *mask, int mx, int my, BYTE v) {
-    for (int ty = 0; ty < OVERVIEW_FOG_SUB; ty++) {
-        BYTE *row = overviewFogTexelRow(mask, mx, my, ty);
-        for (int tx = 0; tx < OVERVIEW_FOG_SUB; tx++) {
-            if (v < row[tx]) row[tx] = v;
-        }
-    }
+    BYTE *t = overviewFogTexel(mask, mx, my);
+    if (v < *t) *t = v;
 }
 
 /* The same square, taken down to `v` where the mask has it brighter — which is
- * what the per-square dark pass does. */
+ * what the dark pass does. */
 static void overviewFogSquareDarken(BYTE *mask, int mx, int my, BYTE v) {
-    for (int ty = 0; ty < OVERVIEW_FOG_SUB; ty++) {
-        BYTE *row = overviewFogTexelRow(mask, mx, my, ty);
-        for (int tx = 0; tx < OVERVIEW_FOG_SUB; tx++) {
-            if (v > row[tx]) row[tx] = v;
-        }
-    }
-}
-
-/* Where a texel's centre sits inside its own square, in squares and measured
- * from the square's centre: -0.375 through +0.375 at a sub of 4. Adding it to
- * the whole-square offset is what asks the beam about a point inside a square
- * rather than about the square. */
-static float overviewFogTexelOffset(int t) {
-    return ((float)t + 0.5f) / (float)OVERVIEW_FOG_SUB - 0.5f;
+    BYTE *t = overviewFogTexel(mask, mx, my);
+    if (v > *t) *t = v;
 }
 
 /* Fog carried at `d` squares from a region, 0 at the region's edge and full
@@ -86,8 +64,7 @@ static BYTE overviewFogRampValue(float d) {
 }
 
 void overviewFogBuildMask(const OverviewRect *live, int liveCount,
-                          const BYTE *lift, const BYTE *dark,
-                          const OverviewBeam *beam, BYTE *mask) {
+                          const BYTE *dark, BYTE *mask) {
     int i; /* Looping variable */
 
     if (mask == NULL) return;
@@ -96,8 +73,8 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount,
      * beyond every region's ramp where there is one, so it carries full fog. */
     memset(mask, OVERVIEW_FOG_ALPHA, (size_t)OVERVIEW_FOG_MASK_BYTES);
 
-    /* No list is no regions rather than nothing to do: a per-square lift with
-     * no region to go with it is a map that is all afterimage. */
+    /* No list is no regions rather than nothing to do: the dark pass still has
+     * its say over a map that is all fog. */
     if (live == NULL) liveCount = 0;
 
     for (i = 0; i < liveCount; i++) {
@@ -157,68 +134,17 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount,
         }
     }
 
-    /* The per-square pass, which is ground no region covers any more but that
-     * has not gone yet: 255 leaves the square as clear as a live one, 0 leaves
-     * it as the regions left it. Brightest wins here too, so a square a region
-     * already holds is never darkened by one of these. A lift of 0 works out to
-     * full fog, which can never be brighter than what the mask already carries,
-     * so those squares are stepped over rather than written back unchanged. */
-    if (lift != NULL) {
-        for (i = 0; i < OVERVIEW_FOG_SQUARE_BYTES; i++) {
-            if (lift[i] == 0) continue;
-            BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA -
-                            (OVERVIEW_FOG_ALPHA * (int)lift[i]) / 255);
-            overviewFogSquareLift(mask, i % MAP_ARRAY_SIZE, i / MAP_ARRAY_SIZE,
-                                  v);
-        }
-    }
-
     /* Ground the player cannot see into, which is the one pass that darkens
      * rather than lights: a square behind a building sits inside the region the
      * block covers, so the walk above has already cleared it, and nothing a
-     * region or a fading square says about it may put it back. After both, so
-     * it has the final word over them. A 0 darkens nothing, so those squares
-     * are stepped over the way a lift of 0 is. */
+     * region says about it may put it back. After the regions, so it has the
+     * final word over them. A 0 darkens nothing, so those squares are stepped
+     * over rather than written back unchanged. */
     if (dark != NULL) {
         for (i = 0; i < OVERVIEW_FOG_SQUARE_BYTES; i++) {
             if (dark[i] == 0) continue;
             overviewFogSquareDarken(mask, i % MAP_ARRAY_SIZE,
                                     i / MAP_ARRAY_SIZE, dark[i]);
-        }
-    }
-
-    /* The Headlights beam, and the one thing here worked out texel by texel:
-     * the wedge's edge crosses a square at an angle, so asking about it once a
-     * square is what drew it as a staircase. Every texel of the block the beam
-     * does not reach goes to full fog, which is what the dark pass above does
-     * for a square, so the beam only ever darkens and composes with the rest
-     * the same way.
-     *
-     * The block alone: outside it every square is already uniform and the beam
-     * has nothing to say about it, so this is at most 29x29 squares of work
-     * rather than the map's 256x256. */
-    if (beam == NULL || !beam->active) return;
-
-    int bLeft   = overviewFogClampSquare(beam->block.left);
-    int bTop    = overviewFogClampSquare(beam->block.top);
-    int bRight  = overviewFogClampSquare(beam->block.right);
-    int bBottom = overviewFogClampSquare(beam->block.bottom);
-
-    for (int y = bTop; y <= bBottom; y++) {
-        for (int ty = 0; ty < OVERVIEW_FOG_SUB; ty++) {
-            float dy = (float)(y - (int)beam->originY) +
-                       overviewFogTexelOffset(ty);
-            for (int x = bLeft; x <= bRight; x++) {
-                BYTE *row = overviewFogTexelRow(mask, x, y, ty);
-                for (int tx = 0; tx < OVERVIEW_FOG_SUB; tx++) {
-                    float dx = (float)(x - (int)beam->originX) +
-                               overviewFogTexelOffset(tx);
-                    if (overviewBeamLights(beam, dx, dy)) continue;
-                    if (row[tx] < (BYTE)OVERVIEW_FOG_ALPHA) {
-                        row[tx] = (BYTE)OVERVIEW_FOG_ALPHA;
-                    }
-                }
-            }
         }
     }
 }

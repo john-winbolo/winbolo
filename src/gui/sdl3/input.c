@@ -131,12 +131,12 @@ static bool keyDown(int sc) {
    still what they do there. The gamepad stick is unaffected too — it drives
    the build cursor as well, and neither of those has moved.
 
-   Only under the fog experiments whose live block is centred on the tank,
-   where the classic view can sit anywhere without changing the picture. The
-   experiments that place the block from that view are the other way about:
-   dragging the hidden view off the tank is exactly what the player wants the
-   keys to do, so they go back to the classic scroll, latching the manual
-   override until autoscroll takes the block back. */
+   Only under a fog mode whose live block is centred on the tank, where the
+   classic view can sit anywhere without changing the picture. A mode that
+   places the block from that view is the other way about: dragging the hidden
+   view off the tank is exactly what the player wants the keys to do, so they
+   go back to the classic scroll, latching the manual override until autoscroll
+   takes the block back. */
 static bool overviewOwnsScrollKeys(void) {
   return sdl3DrawIsOverviewInWindow() && !clientSimFogViewDrivesBlock();
 }

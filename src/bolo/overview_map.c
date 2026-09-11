@@ -69,8 +69,6 @@
  *  changes on ground the player cannot see stay invisible.
  *********************************************************/
 
-#include <math.h>
-
 #include "global.h"
 #include "overview_map.h"
 #include "bases.h"
@@ -84,8 +82,8 @@
  * Fog experiment selector: which rule builds the block round the player's
  * own tank, and what stops the player seeing inside it. Process-global
  * and runtime-switchable, like the scroll mechanism selector, and not
- * saved - every launch starts on Envelope with sight off. */
-static FogExperiment g_fogExperiment = fogExperimentEnvelope;
+ * saved - every launch starts on Expanded with sight off. */
+static FogExperiment g_fogExperiment = fogExperimentExpanded;
 static FogSightMode  g_fogSightMode  = fogSightOff;
 /* Whether the live regions are drawn as outlines over the map, so the block an
  * experiment builds can be seen through the fog ramp that softens its edge. */
@@ -103,19 +101,13 @@ void overviewFogShowRegionsSet(bool on) { g_fogShowRegions = on; }
  * them are hardcoded scancodes: this is a playtest readout, not shipped UI.
  * If one of them is kept the strings move to lang.h and the generator runs. */
 static const char *kFogExperimentNames[FOG_EXPERIMENT_COUNT] = {
-  "Envelope",
-  "Lens",
-  "Headlights, envelope",
-  "Headlights, lens",
-  "Afterimage"
+  "Expanded",
+  "Classic"
 };
 
 static const char *kFogExperimentBlurbs[FOG_EXPERIMENT_COUNT] = {
   "Everything the classic view could scroll to",
-  "The classic window, moved by autoscroll and the scroll keys",
-  "Two squares round you and a wedge to the envelope edge",
-  "Two squares round you and a wedge to the lens edge",
-  "What you scrolled over lingers, then fades"
+  "The classic window, moved by autoscroll and the scroll keys"
 };
 
 const char *overviewFogExperimentName(FogExperiment e) {
@@ -169,77 +161,8 @@ static SightMode overviewSightMode(uint8_t mode) {
                                                       : sightModeBuildings;
 }
 
-/* Which of the experiments are the two Headlights, asked in one place so the
- * block, the mask and the farewell stamp cannot come apart over it. */
-static bool overviewIsHeadlights(uint8_t experiment) {
-  return experiment == (uint8_t)fogExperimentHeadlightsEnvelope ||
-         experiment == (uint8_t)fogExperimentHeadlightsLens;
-}
-
 bool overviewFogBlockFollowsView(FogExperiment e) {
-  return e == fogExperimentLens || e == fogExperimentAfterimage;
-}
-
-/* How long the beam vector is: 256ths of a square, which is the scale the
- * facing table holds its directions at and the one overviewBeamLights and the
- * fog builder are written against. */
-#define OVERVIEW_BEAM_SCALE 256.0
-
-/* The beam a heading points, with no block and no origin - which is everything
- * overviewBeamLights reads. Shared by the mask below and by the record
- * overviewMapUpdate leaves on the map for the frontend, so the squares the map
- * holds live and the beam the fog is drawn from cannot point different ways.
- *
- * The heading is the tank's own angle rather than one of the sixteen frames its
- * sprite is drawn from, so the beam sweeps with the tank instead of stepping a
- * sixteenth of a turn at a time. x is the sine of the angle and y its negative
- * cosine, because the angle runs clockwise from north: at 0 that is (0, -256)
- * and at BRADIANS_EAST (256, 0), the same two the facing table gives.
- *
- * The vector is rounded to whole 256ths, which leaves the direction good to
- * about a quarter of a degree against a beam thirty degrees wide. That is what
- * lets the frontend compare the beam byte for byte and skip rebuilding a fog
- * mask for a turn too small to see. */
-static OverviewBeam overviewBeamFromHeading(TURNTYPE heading) {
-  OverviewBeam b; /* Beam to return */
-  double rad;     /* The heading in radians, clockwise from north */
-
-  memset(&b, 0, sizeof(b));
-  rad = (double)heading * (RADIANS_MAX / BRADIANS_MAX);
-  b.active = TRUE;
-  b.dirX = (int)lround(sin(rad) * OVERVIEW_BEAM_SCALE);
-  b.dirY = (int)lround(-cos(rad) * OVERVIEW_BEAM_SCALE);
-  return b;
-}
-
-/* Zeroes every square of the rect the Headlights blocks do not hold live,
- * leaving the ones they do exactly as they were - so a mask the sight walk has
- * already written keeps its own zeroes and the two rules stack: a square has to
- * be in the beam and have a clear line to it to come through both.
- *
- * The origin is the square the block was placed from, which is its centre; the
- * mask is indexed over the rect the way sight.h describes.
- *
- * The heading is turned into its vector once rather than per square: the walk
- * covers the whole block every tick a Headlights experiment is on, and the
- * vector is the same for all of it. */
-static void overviewHeadlightMask(TURNTYPE heading, BYTE tankMX, BYTE tankMY,
-                                  const OverviewRect *r, BYTE *vis) {
-  OverviewBeam beam; /* The shape the heading gives */
-  int stride; /* Squares across the rect, which is the mask's row length */
-  int x;      /* Looping variable */
-  int y;      /* Looping variable */
-
-  beam = overviewBeamFromHeading(heading);
-  stride = r->right - r->left + 1;
-  for (x = r->left; x <= r->right; x++) {
-    for (y = r->top; y <= r->bottom; y++) {
-      if (overviewBeamLights(&beam, (float)(x - (int)tankMX),
-                             (float)(y - (int)tankMY)) == FALSE) {
-        vis[(y - r->top) * stride + (x - r->left)] = 0;
-      }
-    }
-  }
+  return e == fogExperimentClassic;
 }
 
 /* Brings an inclusive rect back inside the map. Shared so a block placed by
@@ -279,29 +202,20 @@ static OverviewRect overviewRectAround(int cx, int cy, int half) {
 }
 
 /* The block of squares round the player's own tank, which is the one thing the
- * fog experiment picks between. Envelope is the whole scroll envelope centred
- * on the tank, the block the map has always drawn, and the two Headlights are
- * centred on the tank as well - the wider one over the same scroll envelope,
- * the narrower one over the classic window's own 15x15. What the classic view
- * is doing does not come into any of the three, because the beam the mask cuts
- * out of the block is pointed by the tank rather than by the window.
+ * fog experiment picks between. Expanded is the whole scroll envelope centred
+ * on the tank, the block the map has always drawn.
  *
- * The rest are that 15x15 placed where the classic view is sitting: it keeps
- * scrolling whether or not it is on screen, so its first visible square says
- * where the player is looking, and autoscroll and the scroll keys move the
- * block by moving it. With no reading to place it from - a dead tank, or an
- * item view just left - the same 15x15 goes round the tank instead. The rect
- * comes out live outright either way, so it is the same kind of rect the tank
- * has always had. */
+ * Classic is the classic window's own 15x15 placed where that view is sitting:
+ * it keeps scrolling whether or not it is on screen, so its first visible
+ * square says where the player is looking, and autoscroll and the scroll keys
+ * move the block by moving it. With no reading to place it from - a dead tank,
+ * or an item view just left - the same 15x15 goes round the tank instead. The
+ * rect comes out live outright either way, so it is the same kind of rect the
+ * tank has always had. */
 static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
                               BYTE tankMY, OverviewRect *out) {
-  int half; /* How wide the block round the tank is */
-
   if (overviewFogBlockFollowsView((FogExperiment)in->experiment) == FALSE) {
-    half = (in->experiment == (uint8_t)fogExperimentHeadlightsLens)
-               ? OVERVIEW_LENS_HALF
-               : OVERVIEW_TANK_HALF;
-    *out = overviewRectAround((int)tankMX, (int)tankMY, half);
+    *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_TANK_HALF);
     return;
   }
   if (in->viewValid == FALSE) {
@@ -396,26 +310,19 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
  * origin, and the honest answer is where it was standing when it last had a
  * block. With no such square recorded there is nothing to work from.
  *
- * The rules are the ones the live stamp below is about to use, so a block on
- * its way out is masked the same way it was drawn rather than another - the
- * sight walk and, under either Headlights, the beam over the top of it, exactly
- * as the live stamp stacks them.
+ * The rule is the one the live stamp below is about to use, so a block on its
+ * way out is masked the same way it was drawn rather than another.
  *
  * Every square is marked seen first, so a block too wide for the buffer reads
  * as nothing being hidden rather than as whatever was in it. */
 static const BYTE *overviewFarewellMask(const OverviewMap *om,
-                                        struct GameSim *sim,
-                                        const OverviewViewInputs *in,
-                                        SightMode mode, const OverviewRect *r,
-                                        BYTE *vis) {
+                                        struct GameSim *sim, SightMode mode,
+                                        const OverviewRect *r, BYTE *vis) {
   if (om->hiddenActive == FALSE || om->haveLastTank == FALSE) {
     return NULL;
   }
   memset(vis, 1, SIGHT_MASK_BYTES);
   sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, mode, r, vis);
-  if (overviewIsHeadlights(in->experiment) == TRUE) {
-    overviewHeadlightMask(in->heading, om->lastTankMX, om->lastTankMY, r, vis);
-  }
   return vis;
 }
 
@@ -495,10 +402,7 @@ void overviewMapReset(OverviewMap *om) {
 
   memset(om->tile, OVERVIEW_UNSEEN, sizeof(om->tile));
   memset(om->flags, 0, sizeof(om->flags));
-  memset(om->fade, 0, sizeof(om->fade));
-  om->fadeSpan = 0;
   om->hiddenActive = FALSE;
-  memset(&om->beam, 0, sizeof(om->beam));
   memset(om->live, 0, sizeof(om->live));
   om->liveCount = 0;
   memset(om->prevLive, 0, sizeof(om->prevLive));
@@ -764,68 +668,6 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
   return count;
 }
 
-/* Afterimage's per-square countdown, one tick of it. A square inside a live
- * region is held at the full span; one the block has left steps down by one
- * until it is back in full fog, which is what makes the ground behind the
- * player dissolve instead of going dark the moment the block leaves it. The
- * ticks left are what is stored rather than the brightness, so the step is
- * exactly one tick and the fade takes the seconds it says it does whatever the
- * tick rate is; how bright that leaves the square is worked out where it is
- * drawn.
- *
- * Every square is stepped first and the live regions are written second, so
- * neither pass has to ask whether a square is inside a region - which would be
- * the whole map tested against every rect, every tick. The cost is one walk of
- * the map plus the area of the regions.
- *
- * Returns TRUE if any square ends the tick on a different value than it
- * started it on. A square the block still covers is stepped and then put
- * straight back, which is no movement at all, so those are counted and
- * discounted rather than reported: without that the map would report a change
- * every tick for as long as the player was on this experiment. */
-static bool overviewFadeStep(OverviewMap *om, BYTE span) {
-  bool changed;  /* Did any square end up somewhere else */
-  int  stepped;  /* Squares the countdown moved on */
-  int  restored; /* Of those, the ones a live region put straight back */
-  BYTE was;      /* What a square in a region held before it was refreshed */
-  int  i;        /* Looping variable */
-  int  x;        /* Looping variable */
-  int  y;        /* Looping variable */
-
-  changed = FALSE;
-  stepped = 0;
-  restored = 0;
-  om->fadeSpan = span;
-
-  for (x = 0; x < MAP_ARRAY_SIZE; x++) {
-    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
-      if (om->fade[x][y] > 0) {
-        om->fade[x][y]--;
-        stepped++;
-      }
-    }
-  }
-
-  for (i = 0; i < om->liveCount; i++) {
-    for (x = om->live[i].left; x <= om->live[i].right; x++) {
-      for (y = om->live[i].top; y <= om->live[i].bottom; y++) {
-        was = om->fade[x][y];
-        om->fade[x][y] = span;
-        if ((int)was + 1 == (int)span) {
-          restored++;
-        } else if (was != span) {
-          changed = TRUE;
-        }
-      }
-    }
-  }
-
-  if (stepped > restored) {
-    changed = TRUE;
-  }
-  return changed;
-}
-
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY) {
@@ -840,7 +682,6 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                     there is a region at all is wanted here */
   BYTE numPills; /* Pills on the map */
   BYTE numBases; /* Bases on the map */
-  unsigned span;       /* Ticks Afterimage's fade runs for */
   bool nowInTank;      /* Is this pill being carried this update */
   OverviewRect square; /* A single square being held current on its own */
   bool hideOn;         /* Is anything hiding squares inside the tank's blocks */
@@ -940,7 +781,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   idx = 0;
   if (om->tankWasLive == TRUE) {
     if (tankLive == FALSE && idx < om->prevLiveCount) {
-      visPtr = overviewFarewellMask(om, sim, in, sightRule, &om->prevLive[idx],
+      visPtr = overviewFarewellMask(om, sim, sightRule, &om->prevLive[idx],
                                     vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
                             visPtr) == TRUE) {
@@ -1047,19 +888,15 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
 
   /* The mask covers the blocks round the player's own tank and nothing else.
    * The player is looking out of their tank, so a building - and under the mode
-   * that counts them a deep enough stand of trees - stops them seeing past it,
-   * and under either Headlights everything outside the near squares and the
-   * beam is dark as well; an item view looks out of the pillbox, base or allied
-   * tank it is watching, and neither what is in the way of the tank nor which
-   * way it points is anything to it. The build writes the tank block first, so
-   * that is the rect at the head of the list.
+   * that counts them a deep enough stand of trees - stops them seeing past it;
+   * an item view looks out of the pillbox, base or allied tank it is watching,
+   * and what is in the way of the tank is nothing to it. The build writes the
+   * tank block first, so that is the rect at the head of the list.
    *
    * The block is masked over its own extent. The origin is the square it was
    * placed from, which for a tank that has died and is holding its block is
    * where it died. */
-  hideOn = (tankLive == TRUE &&
-            (in->sightMode != (uint8_t)fogSightOff ||
-             overviewIsHeadlights(in->experiment) == TRUE));
+  hideOn = (tankLive == TRUE && in->sightMode != (uint8_t)fogSightOff);
   ownBlocks = 0;
   if (hideOn == TRUE) {
     ownBlocks = 1;
@@ -1069,49 +906,14 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   }
   om->hiddenActive = (ownBlocks > 0);
 
-  /* The beam the stamp below is about to mask that block with, left on the
-   * map for the frontend: the fog samples it several times across each square
-   * to draw a straight edge, where the per-square flags can only say yes or no.
-   * The tank's block is the extent the mask covers. Zeroed whole, so a frontend
-   * can compare it byte for byte to decide the beam has not moved.
-   *
-   * A moved beam is a change in its own right. The mask samples it across each
-   * square, so a tank turning on the spot moves the edge it draws without
-   * moving a rect or flipping a single flag byte. A frontend reading the map
-   * through a copy taken only when the generation moves would go on drawing the
-   * edge it last built, so the beam has to count towards that generation. */
-  {
-    OverviewBeam nextBeam; /* The beam this update wants */
-
-    memset(&nextBeam, 0, sizeof(nextBeam));
-    if (ownBlocks > 0 && overviewIsHeadlights(in->experiment) == TRUE) {
-      nextBeam = overviewBeamFromHeading(in->heading);
-      nextBeam.originX = useMX;
-      nextBeam.originY = useMY;
-      nextBeam.block = om->live[ownBlocks - 1];
-    }
-    if (memcmp(&om->beam, &nextBeam, sizeof(om->beam)) != 0) {
-      changed = TRUE;
-    }
-    om->beam = nextBeam;
-  }
-
   for (i = 0; i < om->liveCount; i++) {
     visPtr = NULL;
     if (i < ownBlocks) {
       /* Every square seen until something says otherwise, so a block too big
        * for the buffer - which no experiment builds today - reads as nothing
-       * being hidden rather than as whatever the last one left behind. The beam
-       * goes over the sight walk's answer and only ever takes squares away, so
-       * with both running a square has to be in the beam and have a clear line
-       * to it to come through. */
+       * being hidden rather than as whatever the last one left behind. */
       memset(vis, 1, sizeof(vis));
-      if (in->sightMode != (uint8_t)fogSightOff) {
-        sightBuildMask(&sim->mp, useMX, useMY, sightRule, &om->live[i], vis);
-      }
-      if (overviewIsHeadlights(in->experiment) == TRUE) {
-        overviewHeadlightMask(in->heading, useMX, useMY, &om->live[i], vis);
-      }
+      sightBuildMask(&sim->mp, useMX, useMY, sightRule, &om->live[i], vis);
       visPtr = vis;
     }
     if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE, visPtr) ==
@@ -1147,36 +949,6 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   for (i = 0; i < MAX_TANKS; i++) {
     om->allyWasLive[i] = overviewAllyLive(sim, myPlayerNum, in, (BYTE)i,
                                           &alpha);
-  }
-
-  /* Afterimage's fade, which is the only thing that writes om->fade. The span
-   * is the seconds the fade takes in the caller's own ticks, kept inside a
-   * byte, and never 0 - a span of 0 is what says nothing is fading, so a fade
-   * that is running cannot have one. With no tick rate to measure the seconds
-   * against there is nothing to fade with, so that reads as the experiment
-   * being off.
-   *
-   * Leaving the experiment drops the whole trail on the tick it is left, so
-   * coming back to it later starts from fog rather than from what was on the
-   * map when the player last used it. Under every other experiment the span is
-   * already 0 and none of this runs at all: nothing but Afterimage pays for a
-   * walk of the map. */
-  if (in->experiment == (uint8_t)fogExperimentAfterimage &&
-      in->ticksPerSec > 0) {
-    span = (unsigned)OVERVIEW_AFTERIMAGE_SECS * in->ticksPerSec;
-    if (span > 255) {
-      span = 255;
-    }
-    if (span < 1) {
-      span = 1;
-    }
-    if (overviewFadeStep(om, (BYTE)span) == TRUE) {
-      changed = TRUE;
-    }
-  } else if (om->fadeSpan != 0) {
-    memset(om->fade, 0, sizeof(om->fade));
-    om->fadeSpan = 0;
-    changed = TRUE;
   }
 
   if (changed == TRUE) {

@@ -175,10 +175,9 @@ struct OverviewView {
     int            targetW;
     int            targetH;
 
-    /* The fog overlay: OVERVIEW_FOG_SUB texels to a map square along each axis,
-     * stretched over the whole map, so the Headlights beam's edge is sampled
-     * several times across each square and comes out as a line rather than a
-     * staircase. Bound to a renderer the same way the offscreen above is. The
+    /* The fog overlay: one texel to a map square, stretched over the whole map
+     * and sampled nearest, so a boundary lands on the square it belongs to at
+     * every zoom. Bound to a renderer the same way the offscreen above is. The
      * mask is rebuilt only when the live regions move — the tank crossing a
      * square, or a pill's view coming and going — so fogLive/fogLiveCount hold
      * the set it was last built from and fogValid says whether they mean
@@ -190,34 +189,16 @@ struct OverviewView {
     bool           fogValid;
     BYTE           fogMask[OVERVIEW_FOG_MASK_BYTES];
 
-    /* Ground that has left the regions and is still fading, under the one
-     * experiment that has any: how bright each square is left, the map
-     * generation the mask was last built at, since a fade moves squares without
-     * moving a single rect, and the span that build was made under. The
-     * generation is only read while the map says a fade is running, so every
-     * other experiment rebuilds the mask exactly when the regions move, as it
-     * always has; the span is what catches the tick a fade stops, where the
-     * regions can sit still while what the mask was built from has gone. */
-    BYTE           fogLift[OVERVIEW_FOG_SQUARE_BYTES];
-    unsigned       fogGeneration;
-    BYTE           fogFadeSpan;
-
     /* Ground inside a region the player cannot see into — behind a building
-     * with line of sight on, or outside the Headlights beam: full fog for each
-     * square the map has marked hidden, and nothing for the rest. Held against
-     * the same generation the fade is, and for the same reason — the set of
-     * hidden squares moves as the tank moves and turns without a single rect
-     * moving — plus whether the map hid anything at all, which catches the tick
-     * the toggle is dropped and the rects sit still. */
+     * with line of sight on: full fog for each square the map has marked
+     * hidden, and nothing for the rest. The set of hidden squares moves as the
+     * tank moves without a single rect moving, so the map generation the mask
+     * was last built at is held with it, plus whether the map hid anything at
+     * all, which catches the tick the mode is dropped and the rects sit
+     * still. */
     BYTE           fogDark[OVERVIEW_FOG_SQUARE_BYTES];
+    unsigned       fogGeneration;
     bool           fogHiddenActive;
-
-    /* The Headlights beam the mask was last built from. It moves as the tank
-     * drives and turns without a single rect moving, so without it the beam
-     * would freeze whenever the rects happened to sit still — the same reason
-     * fogFadeSpan and fogHiddenActive are kept. Compared byte for byte, which
-     * the map's own zeroing of the beam makes sound. */
-    OverviewBeam   fogBeam;
 
     /* The OS pointer is switched to the game's crosshair while it is over the
      * map, so the view has to remember that it did the switching — nothing
@@ -382,11 +363,11 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
     if (!v->fog) return false;
 
     SDL_SetTextureBlendMode(v->fog, SDL_BLENDMODE_BLEND);
-    /* OVERVIEW_FOG_SUB texels per square along each axis, blown up to whole
-     * tiles. Linear filtering would shade between neighbouring texels and blur
-     * every boundary the mask draws by half a texel, so a texel would come out
-     * part lit whatever byte it was given; nearest keeps the edge where the
-     * mask puts it. The view target above is set the same way. */
+    /* One texel per square, blown up to a whole tile. Linear filtering would
+     * shade between neighbouring texels and blur every boundary the mask draws,
+     * so a square would come out part lit whatever byte it was given; nearest
+     * keeps the edge where the mask puts it. The view target above is set the
+     * same way. */
     SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
     /* Black fog — src is white, so this alone picks the colour a future tint
      * would change. */
@@ -399,64 +380,28 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
  * one Uint32 per texel with red in the top byte, so a white texel carrying the
  * mask as its alpha is 0xFFFFFF00 | mask.
  *
- * A fading square is handed to the builder as a per-square brightness: the map
- * counts the ticks it has left, so the share of the span still to run is how
- * far out of the fog it is drawn. The map's arrays are [x][y] and the mask is a
- * texture row at a time, so the scratch is filled transposed. With nothing
- * fading the builder is given none of it and the scratch is left alone.
- *
- * A square the map has marked hidden goes the other way and is handed over at
- * full fog: it sits inside the block, so the regions would otherwise leave it
- * clear. That scratch is filled the same transposed way, and only when the map
- * says it hid something this update.
- *
- * Under a Headlights beam the flag has two causes — something in the way, and
- * the square lying outside the beam — and only the first belongs in the
- * per-square pass. The beam is handed to the builder instead, which samples it
- * across each square and draws a straight edge where a square-at-a-time answer
- * drew a staircase, so a square the beam alone put the flag on is left out of
- * dark and the builder covers it. That is the accepted mismatch: the fog can
- * light part of a square the map memory calls hidden whole. */
+ * A square the map has marked hidden is handed over at full fog: it sits inside
+ * the block, so the regions would otherwise leave it clear. The map's arrays
+ * are [x][y] and the mask is a texture row at a time, so the scratch is filled
+ * transposed, and only when the map says it hid something this update. */
 static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
     void       *pixels = NULL;
     int         pitch  = 0;
-    const BYTE *lift   = NULL;
     const BYTE *dark   = NULL;
 
-    if (om->fadeSpan != 0) {
-        for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
-            BYTE *row = v->fogLift + (size_t)y * MAP_ARRAY_SIZE;
-            for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-                row[x] = (BYTE)((int)om->fade[x][y] * 255 / (int)om->fadeSpan);
-            }
-        }
-        lift = v->fogLift;
-    }
-
     if (om->hiddenActive) {
-        const OverviewBeam *beam = om->beam.active ? &om->beam : NULL;
-
         for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
             BYTE *row = v->fogDark + (size_t)y * MAP_ARRAY_SIZE;
             for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-                bool hidden = (om->flags[x][y] & OVERVIEW_F_HIDDEN) != 0;
-
-                if (hidden && beam != NULL &&
-                    x >= beam->block.left && x <= beam->block.right &&
-                    y >= beam->block.top  && y <= beam->block.bottom &&
-                    !overviewBeamLights(beam,
-                                        (float)(x - (int)beam->originX),
-                                        (float)(y - (int)beam->originY))) {
-                    hidden = false;
-                }
-                row[x] = hidden ? (BYTE)OVERVIEW_FOG_ALPHA : (BYTE)0;
+                row[x] = (om->flags[x][y] & OVERVIEW_F_HIDDEN) != 0
+                             ? (BYTE)OVERVIEW_FOG_ALPHA
+                             : (BYTE)0;
             }
         }
         dark = v->fogDark;
     }
 
-    overviewFogBuildMask(om->live, om->liveCount, lift, dark,
-                         om->beam.active ? &om->beam : NULL, v->fogMask);
+    overviewFogBuildMask(om->live, om->liveCount, dark, v->fogMask);
     if (!SDL_LockTexture(v->fog, NULL, &pixels, &pitch)) return;
 
     for (int y = 0; y < OVERVIEW_FOG_MASK_SIDE; y++) {
@@ -471,12 +416,11 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
 
 /* The fog over the terrain the pass above just drew.
  *
- * The texture covers the whole map, OVERVIEW_FOG_SUB texels to a square along
- * each axis, so it goes down as a single blit of the map's own rect: a square's
- * texels then span exactly that square, and sampled nearest each of them
- * carries its own byte and none of its neighbours'. The rect's origin is
- * rounded the way the terrain's is, and its size is a whole number of tiles, so
- * the two stay registered at every zoom.
+ * The texture covers the whole map, one texel to a square, so it goes down as a
+ * single blit of the map's own rect: a texel then spans exactly its square, and
+ * sampled nearest it carries its own byte and none of its neighbours'. The
+ * rect's origin is rounded the way the terrain's is, and its size is a whole
+ * number of tiles, so the two stay registered at every zoom.
  *
  * The mask comes from the live regions rather than the per-square LIVE flag —
  * the sim writes the flag from those same rects, so they say the same thing,
@@ -487,42 +431,25 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                                 const OverviewMap *om) {
     if (!overviewViewEnsureFog(v, r)) return;
 
-    /* A fade moves squares the rects say nothing about, so while one is running
-     * the map's generation is what the mask is held against — it counts up on
-     * any update that moved anything, the fade included. Only then: generation
+    /* With line of sight on, the hidden squares move as the tank drives without
+     * any rect moving, so the map's generation is what the mask is held against
+     * — it counts up on any update that moved anything. Only then: generation
      * moves for a terrain change anywhere on the map, so reading it whatever
-     * the experiment would rebuild the mask far more often than the rects do.
-     * The span changing is the experiment being taken up or left, which has to
-     * rebuild on its own account: the tick a fade is dropped the rects can sit
-     * exactly where they were, and the mask would otherwise keep drawing a
-     * trail the map no longer has.
-     *
-     * The hidden squares take the same pair for the same two reasons: what is
-     * behind a building, or outside the Headlights beam, changes as the tank
-     * drives and turns without any rect moving, and the tick either is switched
-     * off the rects can sit exactly still while what the mask was built from
-     * has gone.
-     *
-     * The beam itself is compared as well, because the mask now samples it
-     * across each square rather than reading the map's per-square answer: a
-     * tank turning on the spot moves the beam's edge without moving a rect, and
-     * without this the beam would freeze until something else forced a
-     * rebuild. */
+     * the mode would rebuild the mask far more often than the rects do.
+     * hiddenActive changing is the mode being taken up or left, which has to
+     * rebuild on its own account: the tick it is dropped the rects can sit
+     * exactly where they were, and the mask would otherwise keep drawing fog
+     * over squares the map no longer hides. */
     if (!v->fogValid || v->fogLiveCount != om->liveCount ||
-        om->fadeSpan != v->fogFadeSpan ||
-        (om->fadeSpan != 0 && om->generation != v->fogGeneration) ||
         om->hiddenActive != v->fogHiddenActive ||
         (om->hiddenActive && om->generation != v->fogGeneration) ||
-        SDL_memcmp(&v->fogBeam, &om->beam, sizeof(v->fogBeam)) != 0 ||
         SDL_memcmp(v->fogLive, om->live,
                    sizeof(OverviewRect) * (size_t)om->liveCount) != 0) {
         overviewViewUploadFog(v, om);
         SDL_memcpy(v->fogLive, om->live, sizeof(v->fogLive));
         v->fogLiveCount = om->liveCount;
         v->fogGeneration = om->generation;
-        v->fogFadeSpan = om->fadeSpan;
         v->fogHiddenActive = om->hiddenActive;
-        v->fogBeam = om->beam;
         v->fogValid = true;
     }
 
@@ -1223,13 +1150,13 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * watching, the same way the tank view centres on the tank, so an ally
          * stays in the middle of the picture instead of riding the edge they
          * were scrolled in over. With follow off — the player has panned away
-         * — nothing moves. Under that, a fog experiment that places the live
-         * block from the classic view is followed on the block: it is what the
+         * — nothing moves. Under that, a fog mode that places the live block
+         * from the classic view is followed on the block: it is what the
          * player is driving, and following the tank instead would leave the
          * block riding the edge of the picture. Under that again, the tank
-         * view follows the tank, which is what the experiments that centre
-         * their block on the tank always do and what the rest fall back to with
-         * no block to follow.
+         * view follows the tank, which is what a mode that centres its block
+         * on the tank always does and what the rest fall back to with no block
+         * to follow.
          *
          * A tank waiting to respawn has a position but is not anywhere the
          * player is, so follow mode holds the centre it already had. The
@@ -1610,8 +1537,8 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * Not while an item view has them: there the scroll keys step between
      * pills, bases or allied tanks, which is still their job with the classic
      * view hidden. Not while a text box has the keyboard either, or typing a
-     * message would pan the map behind it. Not under a fog experiment that
-     * places the live block from the classic view either: there the scroll keys
+     * message would pan the map behind it. Not under a fog mode that places
+     * the live block from the classic view either: there the scroll keys
      * are what drags the block, and the classic scroll wants them back.
      *
      * Panning clears follow, the way a drag does, so a held key wins over the

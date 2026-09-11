@@ -7,15 +7,11 @@
  * pins the shape of that set — a 29x29 block on the tank and a 15x15 block on
  * each viewable pill, trimmed at the map edges, the tank rect always first and
  * pills after it in index order, and never more rects than the caller asked
- * for. Where the tank's own block goes is the fog experiment's to decide and
+ * for. Where the tank's own block goes is the fog mode's to decide and
  * overviewMapUpdate's to place, so the last cases there run through the update:
- * Envelope puts the 29x29 on the tank as it always has, and the lens puts a
+ * Expanded puts the 29x29 on the tank as it always has, and Classic puts a
  * 15x15 at the classic view instead, falling back to the tank when there is no
- * view to read and holding the view a dying tank last had. The two Headlights
- * centre their block on the tank whatever the classic view is doing - the
- * 29x29 for one and the 15x15 for the other - and light the squares within two
- * of the tank plus a wedge along the heading the tank is really on, leaving the
- * rest of the block hidden.
+ * view to read and holding the view a dying tank last had.
  * overviewMapDeathBlackout is where the overview goes black inside a
  * death wait: from the tick the classic view cuts to static through to the
  * respawn, never dropping once it is up, and a drowning given longer to watch
@@ -282,58 +278,58 @@ int run_overview_regions(void) {
         UT_ASSERT_MSG(om != NULL, "no memory for an OverviewMap");
         gs->pb->numPills = 0;
 
-        /* Envelope with the view fields zeroed, which is what a caller that
+        /* Expanded with the view fields zeroed, which is what a caller that
          * keeps no view state passes: the 29x29 on the tank, where it has
          * always been. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
         UT_ASSERT_MSG(om->liveCount == 1,
-                      "Envelope gave %d regions, expected 1", om->liveCount);
+                      "Expanded gave %d regions, expected 1", om->liveCount);
         ASSERT_RECT(om->live[0], 86, 86, 114, 114);
 
-        /* Lens with a classic view to place from: the 15x15 sits at the view,
+        /* Classic with a view to place from: the 15x15 sits at the view,
          * not at the tank, which is a hundred squares off it. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.experiment = (uint8_t)fogExperimentClassic;
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-        UT_ASSERT_MSG(om->liveCount == 1, "Lens gave %d regions, expected 1",
+        UT_ASSERT_MSG(om->liveCount == 1, "Classic gave %d regions, expected 1",
                       om->liveCount);
         ASSERT_RECT(om->live[0], 40, 60, 54, 74);
 
-        /* Lens with no view to read - a dead tank, or an item view just left -
+        /* Classic with no view to read - a dead tank, or an item view just left -
          * puts the same 15x15 round the tank instead. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.experiment = (uint8_t)fogExperimentClassic;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
         UT_ASSERT_MSG(om->liveCount == 1,
-                      "Lens without a view gave %d regions, expected 1",
+                      "Classic without a view gave %d regions, expected 1",
                       om->liveCount);
         ASSERT_RECT(om->live[0], 93, 93, 107, 107);
 
-        /* A lens over an edge is trimmed to the map, the way the Envelope
+        /* A Classic block over an edge is trimmed to the map, the way the Expanded
          * block over the corner above is, and so is the fallback round a tank
          * standing near one. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.experiment = (uint8_t)fogExperimentClassic;
         fog.viewValid = TRUE;
         fog.viewLeft = 250;
         fog.viewTop = 0;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
         UT_ASSERT_MSG(om->liveCount == 1,
-                      "a lens at the edge gave %d regions, expected 1",
+                      "a Classic block at the edge gave %d regions, expected 1",
                       om->liveCount);
         ASSERT_RECT(om->live[0], 250, 0, 255, 14);
 
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.experiment = (uint8_t)fogExperimentClassic;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 250);
         ASSERT_RECT(om->live[0], 0, 243, 10, 255);
 
@@ -343,7 +339,7 @@ int run_overview_regions(void) {
          * wreck it would be the 15x15 round 100,100. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.experiment = (uint8_t)fogExperimentClassic;
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
@@ -357,59 +353,15 @@ int run_overview_regions(void) {
                       om->liveCount);
         ASSERT_RECT(om->live[0], 40, 60, 54, 74);
 
-        /* Both Headlights blocks are centred on the tank and nowhere else: the
-         * envelope-sized one is the 29x29 Envelope draws, the lens-sized one
-         * the classic window's 15x15, and a classic view sitting a long way off
-         * moves neither. What the beam does inside the block is the case after
-         * this one; this is the rect it works over. */
-        overviewMapReset(om);
-        overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-        fog.heading = BRADIANS_EAST;
-        fog.viewValid = TRUE;
-        fog.viewLeft = 40;
-        fog.viewTop = 60;
-        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-        UT_ASSERT_MSG(om->liveCount == 1,
-                      "Headlights over the envelope gave %d regions, "
-                      "expected 1", om->liveCount);
-        ASSERT_RECT(om->live[0], 86, 86, 114, 114);
-
-        overviewMapReset(om);
-        overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
-        fog.heading = BRADIANS_EAST;
-        fog.viewValid = TRUE;
-        fog.viewLeft = 40;
-        fog.viewTop = 60;
-        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-        UT_ASSERT_MSG(om->liveCount == 1,
-                      "Headlights over the lens gave %d regions, expected 1",
-                      om->liveCount);
-        ASSERT_RECT(om->live[0], 93, 93, 107, 107);
-
-        /* The generation is what a frontend copying the map keys off, so a
-         * turn has to move it and an update that changed nothing must not.
-         *
-         * The turn arm passes on the flags alone today: every heading step
-         * tried, down to one bradian, moves at least one square across the
-         * beam's edge, so the per-square pass reports the change whatever the
-         * beam does. It is here for the contract rather than as a regression
-         * test — the beam is compared into the generation as well, because the
-         * mask samples it across each square and an edge that moves inside a
-         * square is a redraw the flags cannot ask for.
-         *
-         * The no-op arm does discriminate: the beam is compared byte for byte,
-         * so a struct whose padding did not settle would move the generation
-         * every frame and the copy would be taken every frame. */
+        /* The generation is what a frontend copying the map keys off, so an
+         * update that changed nothing must not move it: a struct whose padding
+         * did not settle would move it every frame and the copy would be taken
+         * every frame. */
         {
             uint32_t genStill; /* Generation after an update that changed nothing */
-            uint32_t genTurned; /* Generation after the tank turned */
 
             overviewMapReset(om);
             overviewViewInputsDefaults(&fog);
-            fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-            fog.heading = BRADIANS_EAST;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
 
             genStill = om->generation;
@@ -418,235 +370,6 @@ int run_overview_regions(void) {
                           "an update with nothing changed moved the generation "
                           "from %u to %u", (unsigned)genStill,
                           (unsigned)om->generation);
-
-            fog.heading = (TURNTYPE)(BRADIANS_EAST + 1);
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            genTurned = om->generation;
-            UT_ASSERT_MSG(genTurned != genStill,
-                          "the tank turned one bradian off east and the "
-                          "generation stayed at %u, so the beam moved without "
-                          "saying so", (unsigned)genTurned);
-        }
-
-        /* A block over an edge is trimmed to the map, not wrapped through it,
-         * the way every other block is. */
-        overviewMapReset(om);
-        overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
-        fog.heading = BRADIANS_EAST; /* into the right-hand edge */
-        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 250, 100);
-        ASSERT_RECT(om->live[0], 243, 93, 255, 107);
-
-        overviewMapReset(om);
-        overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-        fog.heading = BRADIANS_NORTH; /* into the top-left corner */
-        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 250);
-        ASSERT_RECT(om->live[0], 0, 236, 17, 255);
-
-        /* And the shape inside the block, read off the flags: the squares
-         * within two of the tank are live whichever way it points, and past
-         * that only the beam along the heading is - everything else in the rect
-         * is hidden, so it keeps the tile it last showed and nothing moving on
-         * it is drawn.
-         *
-         * The squares are written out rather than worked back out of the
-         * heading, so the case says which ones should be lit instead of
-         * restating how the code works them out. Four headings: two axes, a
-         * diagonal, and one of the sixteenths between them, which is where a
-         * beam that was not the same width on every heading would show. */
-        {
-            static const struct {
-                TURNTYPE heading;      /* Which way the tank points */
-                int  aheadX, aheadY;   /* Well along the heading */
-                int  behindX, behindY; /* The same distance the other way */
-                int  sideX, sideY;     /* And the same square to it */
-            } kBeams[] = {
-                {BRADIANS_NORTH,   0, -8,   0,  8,   8,  0},
-                {BRADIANS_EAST,    8,  0,  -8,  0,   0,  8},
-                {BRADIANS_NEAST,   6, -6,  -6,  6,   6,  6},
-                {BRADIANS_NNEAST,  3, -7,  -3,  7,   7,  3}
-            };
-            const int kBeamCount = (int)(sizeof(kBeams) / sizeof(kBeams[0]));
-            int b;  /* Looping variable */
-            int f;  /* Looping variable */
-            int dx; /* Looping variable */
-            int dy; /* Looping variable */
-            int mx; /* Looping variable */
-            int my; /* Looping variable */
-
-            /* The near squares first, on each of the sixteen headings the
-             * sprite has a frame for: the tank's own square is in there, so the
-             * reticle is never dropped, and so is every square of the 5x5 round
-             * it. */
-            for (f = 0; f < 16; f++) {
-                overviewMapReset(om);
-                overviewViewInputsDefaults(&fog);
-                fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-                fog.heading = (TURNTYPE)(f * BRADIANS_GAP);
-                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-                for (dx = -OVERVIEW_HEADLIGHT_NEAR;
-                     dx <= OVERVIEW_HEADLIGHT_NEAR; dx++) {
-                    for (dy = -OVERVIEW_HEADLIGHT_NEAR;
-                         dy <= OVERVIEW_HEADLIGHT_NEAR; dy++) {
-                        BYTE flags = om->flags[100 + dx][100 + dy];
-
-                        UT_ASSERT_MSG((flags & OVERVIEW_F_LIVE) != 0 &&
-                                          (flags & OVERVIEW_F_HIDDEN) == 0,
-                                      "heading %d, square %d,%d from the tank "
-                                      "carries flags 0x%02X, expected it live "
-                                      "whichever way the tank points",
-                                      f * BRADIANS_GAP, dx, dy,
-                                      (unsigned)flags);
-                    }
-                }
-            }
-
-            /* Then the beam itself. Ahead is lit out to eight squares, behind
-             * is not, and neither is the square-on direction: the beam is a
-             * wedge along the heading rather than a ring or a half. */
-            for (b = 0; b < kBeamCount; b++) {
-                BYTE ahead;  /* Flags well along the heading */
-                BYTE behind; /* and behind */
-                BYTE side;   /* and square to it */
-
-                overviewMapReset(om);
-                overviewViewInputsDefaults(&fog);
-                fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-                fog.heading = kBeams[b].heading;
-                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-
-                ahead = om->flags[100 + kBeams[b].aheadX]
-                                 [100 + kBeams[b].aheadY];
-                behind = om->flags[100 + kBeams[b].behindX]
-                                  [100 + kBeams[b].behindY];
-                side = om->flags[100 + kBeams[b].sideX]
-                                [100 + kBeams[b].sideY];
-
-                UT_ASSERT_MSG((ahead & (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
-                                      (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT) &&
-                                  (ahead & OVERVIEW_F_HIDDEN) == 0,
-                              "heading %d, the square %d,%d along it carries "
-                              "flags 0x%02X, expected it lit by the beam",
-                              (int)kBeams[b].heading, kBeams[b].aheadX,
-                              kBeams[b].aheadY, (unsigned)ahead);
-                UT_ASSERT_MSG((behind & OVERVIEW_F_HIDDEN) != 0 &&
-                                  (behind &
-                                   (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
-                              "heading %d, the square %d,%d behind it carries "
-                              "flags 0x%02X, expected it hidden",
-                              (int)kBeams[b].heading, kBeams[b].behindX,
-                              kBeams[b].behindY, (unsigned)behind);
-                UT_ASSERT_MSG((side & OVERVIEW_F_HIDDEN) != 0 &&
-                                  (side &
-                                   (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
-                              "heading %d, the square %d,%d square to it carries "
-                              "flags 0x%02X, expected it hidden",
-                              (int)kBeams[b].heading, kBeams[b].sideX,
-                              kBeams[b].sideY, (unsigned)side);
-            }
-
-            /* And a heading between two of those sixteenths, which is the whole
-             * of what the beam following the tank's own angle is for.
-             *
-             * It takes two squares to tell such a heading from both of the
-             * sixteenths either side of it. The beam is thirty degrees wide and
-             * the sixteenths are twenty-two and a half degrees apart, so an
-             * in-between wedge always lies inside the two neighbouring wedges
-             * put together and always covers the part they share: no one square
-             * is lit by the in-between heading alone, and none is dark under it
-             * alone. A pair does it. Both are eleven squares up from the tank -
-             * one of them four across, which is about twenty degrees round from
-             * north, and the other straight up. North lights the straight one
-             * and not the one across; north-north-east lights the one across
-             * and not the straight one; half a step between them lights both,
-             * which neither sixteenth does. A beam snapped back to either
-             * neighbour fails one of the two. */
-            {
-                static const struct {
-                    TURNTYPE heading;  /* Which way the tank points */
-                    bool     across;   /* Is the square four across lit */
-                    bool     straight; /* Is the one straight up lit */
-                } kBetween[] = {
-                    {BRADIANS_NORTH,               FALSE, TRUE },
-                    {(TURNTYPE)(BRADIANS_GAP / 2), TRUE,  TRUE },
-                    {BRADIANS_NNEAST,              TRUE,  FALSE}
-                };
-                const int kBetweenCount =
-                    (int)(sizeof(kBetween) / sizeof(kBetween[0]));
-                BYTE across;   /* Flags on the square four across */
-                BYTE straight; /* and on the one straight up */
-                int  h;        /* Looping variable */
-
-                for (h = 0; h < kBetweenCount; h++) {
-                    overviewMapReset(om);
-                    overviewViewInputsDefaults(&fog);
-                    fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-                    fog.heading = kBetween[h].heading;
-                    overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-
-                    across = om->flags[100 + 4][100 - 11];
-                    straight = om->flags[100][100 - 11];
-
-                    UT_ASSERT_MSG(((across & OVERVIEW_F_LIVE) != 0) ==
-                                      kBetween[h].across,
-                                  "heading %d, the square 4,-11 from the tank "
-                                  "carries flags 0x%02X, expected it %s",
-                                  (int)kBetween[h].heading, (unsigned)across,
-                                  kBetween[h].across == TRUE ? "lit"
-                                                             : "hidden");
-                    UT_ASSERT_MSG(((straight & OVERVIEW_F_LIVE) != 0) ==
-                                      kBetween[h].straight,
-                                  "heading %d, the square 0,-11 from the tank "
-                                  "carries flags 0x%02X, expected it %s",
-                                  (int)kBetween[h].heading, (unsigned)straight,
-                                  kBetween[h].straight == TRUE ? "lit"
-                                                               : "hidden");
-                }
-            }
-
-            /* The near squares end where they say they do: one square further
-             * out than the ring, off the beam, is hidden like the rest of the
-             * block. */
-            overviewMapReset(om);
-            overviewViewInputsDefaults(&fog);
-            fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-            fog.heading = BRADIANS_NORTH;
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(
-                (om->flags[100 + OVERVIEW_HEADLIGHT_NEAR + 1][100] &
-                 OVERVIEW_F_HIDDEN) != 0,
-                "the square just outside the near ring and off the beam "
-                "carries flags 0x%02X, expected it hidden",
-                (unsigned)om->flags[100 + OVERVIEW_HEADLIGHT_NEAR + 1][100]);
-            UT_ASSERT_MSG(om->hiddenActive == TRUE,
-                          "the map did not record the beam hiding squares");
-
-            /* Nothing outside the block is touched by the beam, and the beam
-             * reaches the block's own edge: on the lens-sized one that is seven
-             * squares out rather than fourteen. */
-            overviewMapReset(om);
-            overviewViewInputsDefaults(&fog);
-            fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
-            fog.heading = BRADIANS_EAST;
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG((om->flags[107][100] &
-                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
-                              (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT),
-                          "the square at the lens edge along the beam carries "
-                          "flags 0x%02X, expected it lit",
-                          (unsigned)om->flags[107][100]);
-            for (mx = 0; mx < MAP_ARRAY_SIZE; mx++) {
-                for (my = 0; my < MAP_ARRAY_SIZE; my++) {
-                    if ((om->flags[mx][my] & OVERVIEW_F_HIDDEN) == 0) {
-                        continue;
-                    }
-                    UT_ASSERT_MSG(mx >= 93 && mx <= 107 && my >= 93 &&
-                                      my <= 107,
-                                  "square %d,%d is hidden and is outside the "
-                                  "block round the tank", mx, my);
-                }
-            }
         }
 
         /* Live and sight go together over the whole map, which is what keeps
@@ -666,156 +389,10 @@ int run_overview_regions(void) {
                     UT_ASSERT_MSG(((flags & OVERVIEW_F_LIVE) != 0) ==
                                       ((flags & OVERVIEW_F_SIGHT) != 0),
                                   "square %d,%d carries flags 0x%02X under "
-                                  "Envelope, where live and sight go together",
+                                  "Expanded, where live and sight go together",
                                   x, y, (unsigned)flags);
                 }
             }
-        }
-
-        /* Afterimage is the lens with a memory: a square the block has left
-         * fades back to fog a tick at a time instead of going dark the moment
-         * it leaves. What is stored is the ticks the square has left, so the
-         * span is the seconds times the caller's tick rate - a short rate
-         * keeps the case to a handful of updates and says the same thing the
-         * game's fifty a second does. */
-        {
-            unsigned span;      /* Ticks a square takes to fade right out */
-            unsigned genBefore; /* generation before an update */
-            int t;              /* Updates since the block left the square */
-
-            span = (unsigned)OVERVIEW_AFTERIMAGE_SECS * 2;
-
-            overviewMapReset(om);
-            overviewViewInputsDefaults(&fog);
-            fog.experiment = (uint8_t)fogExperimentAfterimage;
-            fog.ticksPerSec = 2;
-            fog.viewValid = TRUE;
-            fog.viewLeft = 40;
-            fog.viewTop = 60;
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->fadeSpan == (BYTE)span,
-                          "Afterimage counts down from %u, expected %u",
-                          (unsigned)om->fadeSpan, span);
-            UT_ASSERT_MSG(om->fade[41][61] == (BYTE)span,
-                          "a square inside the block is %u ticks from fog, "
-                          "expected the whole span of %u",
-                          (unsigned)om->fade[41][61], span);
-            UT_ASSERT_MSG(om->fade[200][200] == 0,
-                          "a square the block has never covered is %u ticks "
-                          "from fog, expected 0",
-                          (unsigned)om->fade[200][200]);
-
-            /* The block moves right off it, and from there it steps down one a
-             * tick until it is out. From the second update on nothing but the
-             * fade is moving, so generation advancing is the fade reporting
-             * itself - which is what keeps the fog being redrawn while the
-             * ground dissolves. */
-            fog.viewLeft = 100;
-            for (t = 1; t <= (int)span; t++) {
-                genBefore = om->generation;
-                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-                UT_ASSERT_MSG(om->fade[41][61] == (BYTE)(span - (unsigned)t),
-                              "%d updates after the block left, the square is "
-                              "%u ticks from fog, expected %u",
-                              t, (unsigned)om->fade[41][61],
-                              span - (unsigned)t);
-                if (t >= 3) {
-                    UT_ASSERT_MSG(om->generation > genBefore,
-                                  "generation stuck at %u over an update where "
-                                  "the fade moved", genBefore);
-                }
-            }
-
-            /* And there it stays, with nothing left to redraw for. */
-            genBefore = om->generation;
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->fade[41][61] == 0,
-                          "a square past the end of its fade is %u ticks from "
-                          "fog, expected 0", (unsigned)om->fade[41][61]);
-            UT_ASSERT_MSG(om->generation == genBefore,
-                          "generation went from %u to %u over an update where "
-                          "nothing was fading", genBefore, om->generation);
-
-            /* Leaving the experiment drops the trail on the tick it is left,
-             * so coming back to it later does not show ground the player was
-             * looking at minutes ago. */
-            fog.experiment = (uint8_t)fogExperimentLens;
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->fadeSpan == 0,
-                          "the span survived the experiment being left at %u",
-                          (unsigned)om->fadeSpan);
-            {
-                int x; /* Looping variable */
-                int y; /* Looping variable */
-
-                for (x = 0; x < MAP_ARRAY_SIZE; x++) {
-                    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
-                        UT_ASSERT_MSG(om->fade[x][y] == 0,
-                                      "square %d,%d is %u ticks from fog after "
-                                      "the experiment was left, expected 0",
-                                      x, y, (unsigned)om->fade[x][y]);
-                    }
-                }
-            }
-
-            /* Every other experiment leaves both alone: a span of 0 is what
-             * says nothing is fading, and nothing but Afterimage writes a
-             * square. */
-            {
-                static const uint8_t kOthers[] = {
-                    (uint8_t)fogExperimentEnvelope,
-                    (uint8_t)fogExperimentLens,
-                    (uint8_t)fogExperimentHeadlightsEnvelope,
-                    (uint8_t)fogExperimentHeadlightsLens
-                };
-                int i; /* Looping variable */
-                int x; /* Looping variable */
-                int y; /* Looping variable */
-
-                for (i = 0; i < (int)(sizeof(kOthers) / sizeof(kOthers[0]));
-                     i++) {
-                    overviewMapReset(om);
-                    overviewViewInputsDefaults(&fog);
-                    fog.experiment = kOthers[i];
-                    fog.ticksPerSec = 2;
-                    fog.viewValid = TRUE;
-                    fog.viewLeft = 40;
-                    fog.viewTop = 60;
-                    overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-                    UT_ASSERT_MSG(om->fadeSpan == 0,
-                                  "experiment %u came out with a span of %u, "
-                                  "expected nothing fading",
-                                  (unsigned)kOthers[i],
-                                  (unsigned)om->fadeSpan);
-                    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
-                        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
-                            UT_ASSERT_MSG(om->fade[x][y] == 0,
-                                          "experiment %u left square %d,%d %u "
-                                          "ticks from fog, expected 0",
-                                          (unsigned)kOthers[i], x, y,
-                                          (unsigned)om->fade[x][y]);
-                        }
-                    }
-                }
-            }
-
-            /* No tick rate is no way to measure the seconds, so it reads as
-             * the experiment being off rather than as a fade of no length. */
-            overviewMapReset(om);
-            overviewViewInputsDefaults(&fog);
-            fog.experiment = (uint8_t)fogExperimentAfterimage;
-            fog.viewValid = TRUE;
-            fog.viewLeft = 40;
-            fog.viewTop = 60;
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->fadeSpan == 0,
-                          "Afterimage with no tick rate came out with a span "
-                          "of %u, expected nothing fading",
-                          (unsigned)om->fadeSpan);
-            UT_ASSERT_MSG(om->fade[41][61] == 0,
-                          "Afterimage with no tick rate left a square %u ticks "
-                          "from fog, expected 0",
-                          (unsigned)om->fade[41][61]);
         }
 
         /* Line of sight, which rides on top of whichever experiment is
@@ -1015,36 +592,6 @@ int run_overview_regions(void) {
                               "round the tank");
             }
 
-            /* The beam and line of sight stack: with both running a square has
-             * to be inside the beam and have a clear line to it to stay live.
-             * The building at 103,100 is straight ahead of a tank at 100,100
-             * facing east, so the ground behind it is in the beam and hidden
-             * all the same, while the square in front of it is live and one
-             * six squares off to the side is dark for want of the beam. */
-            overviewMapReset(om);
-            overviewViewInputsDefaults(&fog);
-            fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
-            fog.sightMode = (uint8_t)fogSightBuildings;
-            fog.heading = BRADIANS_EAST; /* down the line the building sits on */
-            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->hiddenActive == TRUE,
-                          "the map hid nothing with the beam and sight both "
-                          "on");
-            UT_ASSERT_MSG((om->flags[102][100] &
-                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
-                              (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT),
-                          "the square in front of the building carries flags "
-                          "0x%02X, expected it still live with the beam and "
-                          "sight both on", (unsigned)om->flags[102][100]);
-            UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0,
-                          "the square behind the building carries flags "
-                          "0x%02X, expected the beam cut short by it",
-                          (unsigned)om->flags[106][100]);
-            UT_ASSERT_MSG((om->flags[100][94] & OVERVIEW_F_HIDDEN) != 0,
-                          "the square square-on to the heading carries flags "
-                          "0x%02X, expected it outside the beam whatever the "
-                          "line to it is like",
-                          (unsigned)om->flags[100][94]);
         }
 
         free(om);
@@ -1319,25 +866,9 @@ int run_overview_reveal(void) {
     const OverviewMap *om = clientSimGetOverviewMap(f.cs);
     UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
 
-    /* Point the tank east before the inputs are read. The heading field is the
-     * tank's angle in BRADIANS and the beam reads it as one, so this is where
-     * the units are checked: east is 64 there, where a sixteen-step index or a
-     * frame number would make it 4, and north is the one heading all three
-     * agree on. The angle is set on the tank the fill reads, position
-     * untouched, so nothing else in the case moves. */
-    WORLD tankWX = 0;
-    WORLD tankWY = 0;
-    tankGetWorld(&f.gs->tanks[f.me], &tankWX, &tankWY);
-    tankSetWorld(f.gs, &f.gs->tanks[f.me], tankWX, tankWY, BRADIANS_EAST,
-                 false);
-
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
     OverviewViewInputs in;
     clientSimFillOverviewViewInputs(f.cs, &in);
-    UT_ASSERT_MSG(in.heading == (TURNTYPE)BRADIANS_EAST,
-                  "a tank pointing east filled heading %d, expected "
-                  "BRADIANS_EAST - a snapped or scaled reading would be "
-                  "somewhere else", (int)in.heading);
     OverviewRect tankBlock = overviewTestBlock(f.tankMX, f.tankMY,
                                                OVERVIEW_TANK_HALF);
     int n = overviewMapBuildRegions(f.gs, f.me, &in, &tankBlock, expect,
