@@ -2695,6 +2695,12 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
         tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_SMALL, dyingPlayer);
       }
       (*value)->deathWait = TANK_DEATH_WAIT;
+      /* owner is the slot that laid the mine, or NEUTRAL for a mine that came
+       * with the map or whose layer has left (minesClearOwner releases their
+       * cells). A tank that drives onto its own mine names itself, the shape
+       * the drown arm uses for a death with no other player in it. Fired
+       * before the pills go, so the count is what the tank still held. */
+      sim->callbacks.tankKill(sim->callbacks.ctx, owner, dyingPlayer, LAST_DEATH_BY_MINES, tankGetNumCarriedPills(value));
       tankDropPills(sim, value);
     }
     if ((*value)->onBoat == TRUE) {

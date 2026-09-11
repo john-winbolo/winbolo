@@ -3301,6 +3301,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # stays public through both.
     tests/unit/test_vote_surrender_privacy.c
     tests/unit/test_round_stats.c
+    tests/unit/test_mine_kill_event.c
     tests/unit/test_lv_stats_time.c
     tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
@@ -3991,6 +3992,9 @@ set(_unit_test_names
     round_stats_mine_owner_api
     round_stats_mine_damage
     round_stats_leaver_clears_mines
+    mine_kill_publishes_event
+    mine_kill_on_boat_publishes_event
+    mine_kill_own_mine_names_self
     awards_basic_winners
     awards_tiebreak
     awards_omission

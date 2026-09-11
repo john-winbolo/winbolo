@@ -172,6 +172,17 @@ int run_round_stats_direct_damage(void);
 int run_round_stats_mine_owner_api(void);
 int run_round_stats_mine_damage(void);
 int run_round_stats_leaver_clears_mines(void);
+
+/* A mine kill reaches the event buffer (test_mine_kill_event.c): a tank
+ * destroyed by a mine publishes EVENT_TANK_KILLED naming the mine's layer as
+ * the killer and LAST_DEATH_BY_MINES as the cause, on land and in a boat, and
+ * a tank on its own mine names itself without being credited a kill. Each
+ * detonation goes through minesExpCheckFill, which is what reads the layer
+ * out of the mine grid. */
+int run_mine_kill_publishes_event(void);
+int run_mine_kill_on_boat_publishes_event(void);
+int run_mine_kill_own_mine_names_self(void);
+
 int run_awards_basic_winners(void);
 int run_awards_tiebreak(void);
 int run_awards_omission(void);
