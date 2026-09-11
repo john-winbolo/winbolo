@@ -217,6 +217,7 @@ struct tankObj {
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
   BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */
+  TankModifiers mods;       /* Per-tank percentages; zeroed at create and kept across a respawn */
 };
 
 #pragma pack(pop)

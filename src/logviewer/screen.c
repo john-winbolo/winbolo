@@ -196,6 +196,18 @@ static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armou
   g_lv->tankInv[slot].trees  = trees;
 }
 
+/* Store a slot's modifier set. A log_TankSetModifiers record replaces the whole
+ * set, as the op that wrote it did. Nothing draws these yet. */
+static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods) {
+  if (slot >= MAX_TANKS) return;
+  g_lv->tankMods[slot].speed  = mods[0];
+  g_lv->tankMods[slot].accel  = mods[1];
+  g_lv->tankMods[slot].turn   = mods[2];
+  g_lv->tankMods[slot].reload = mods[3];
+  g_lv->tankMods[slot].dealt  = mods[4];
+  g_lv->tankMods[slot].taken  = mods[5];
+}
+
 // Some prototypes to cleanup and document
 
 bool logIsEOF();
@@ -846,6 +858,17 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt5, 1);  /* trees */
       lv_screenSetTankStock(opt1, opt2, opt3, opt4, opt5);
       break;
+    case log_TankSetModifiers: {
+      /* player, then a length-prefixed blob of the six modifier bytes. */
+      BYTE modLen;
+      BYTE mods[6];
+      logReadBytes(&opt1, 1);
+      logReadBytes(&modLen, 1);
+      if (modLen == sizeof(mods) && logReadBytes(mods, sizeof(mods)) == (int)sizeof(mods)) {
+        lv_screenSetTankModifiers(opt1, mods);
+      }
+      break;
+    }
     case log_Shell:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -1709,7 +1732,9 @@ static int walkSkipEventBody(BYTE code) {
         if (rc != lenByte) return -1; }
       return 6 + lenByte;
     case log_ChangeName:
-      /* 1 opt byte + pascal string */
+    case log_TankSetModifiers:
+      /* 1 opt byte + pascal string (the modifier record's blob is always six
+         bytes, but it is walked as a pascal string like any other) */
       { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;

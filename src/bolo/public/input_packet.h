@@ -100,14 +100,14 @@ typedef struct {
 #define TANK_SNAPSHOT_HIDDEN_FLAG 0x80
 #define TANK_SNAPSHOT_PLAYER_MASK 0x7F
 
-/* Field-presence bitmask for a non-stub TankSnapshot entry (the byte that
- * follows playerNum).  An always-present 11-byte core — playerNum, this mask,
- * worldX, worldY, angle, speed, tankStatus — is followed by only the groups
- * whose bit is set.  A group's bit is set iff any field in it is non-zero, so
- * the encoder omits the bytes that are zero anyway (for a non-owner tank the
- * owner-only resources, reload, etc. are always zero) and the decoder restores
- * absent fields to 0 — byte-for-byte equivalent to sending them all.  The
- * packer and unpacker must reference these same symbols. */
+/* Field-presence bitmask for a non-stub TankSnapshot entry (the two bytes that
+ * follow playerNum, big-endian).  An always-present 12-byte core — playerNum,
+ * this mask, worldX, worldY, angle, speed, tankStatus — is followed by only the
+ * groups whose bit is set.  A group's bit is set iff any field in it is
+ * non-zero, so the encoder omits the bytes that are zero anyway (for a
+ * non-owner tank the owner-only resources, reload, etc. are always zero) and
+ * the decoder restores absent fields to 0 — byte-for-byte equivalent to sending
+ * them all.  The packer and unpacker must reference these same symbols. */
 #define TANK_PRESENT_OWNER_RES 0x01  /* armour, shells, mines, trees, gunsightLen (5B) */
 #define TANK_PRESENT_RELOAD    0x02  /* reload (1B) */
 #define TANK_PRESENT_DEATHWAIT 0x04  /* deathWait (1B) */
@@ -116,6 +116,7 @@ typedef struct {
 #define TANK_PRESENT_PING      0x20  /* pingMs (2B) */
 #define TANK_PRESENT_FLAGS     0x40  /* clientFlags (1B) */
 #define TANK_PRESENT_HIDDEN    0x80  /* hiddenFlags (1B) */
+#define TANK_PRESENT_MODS    0x0100  /* modSpeed, modAccel, modTurn, modReload, modDealt, modTaken (6B) */
 
 /* TankSnapshot.tankStatus bits. The low nibble carries the boat, the high
  * nibble the two death signals, which are not the same question:
@@ -141,8 +142,8 @@ typedef struct {
 
 /* Per-tank data within a snapshot (wire format).  Variable-length: a stub
  * (playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) is 1 byte on the wire; a full entry
- * is an 11-byte core plus a presence mask selecting which field groups follow,
- * at most TANK_SNAPSHOT_WIRE_SIZE bytes. */
+ * is a 12-byte core including the presence mask that selects which field
+ * groups follow, at most TANK_SNAPSHOT_WIRE_SIZE bytes. */
 typedef struct {
     uint8_t  playerNum;
     uint16_t worldX;
@@ -167,6 +168,12 @@ typedef struct {
     uint16_t pingMs;       /* This player's ping in ms */
     uint8_t  clientFlags;  /* PLAYER_FLAG_* bits — see players.h */
     uint8_t  hiddenFlags;  /* TANK_HIDDEN_* bits — which fields are withheld */
+    uint8_t  modSpeed;     /* Per-tank percentages, 0 = classic; owning player only. */
+    uint8_t  modAccel;
+    uint8_t  modTurn;
+    uint8_t  modReload;
+    uint8_t  modDealt;
+    uint8_t  modTaken;
 } TankSnapshot;
 
 /* Per-shell data within a snapshot (wire format) */

@@ -1274,6 +1274,19 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->gunsightLen = tankGetGunsightLength(&sim->sim.tanks[i]);
             ts->deathWait = (uint8_t)tankGetDeathWait(&sim->sim.tanks[i]);
             ts->reload = tankGetReloadTime(&sim->sim.tanks[i]);
+            {
+                /* The owning client predicts with these, so they ride the
+                 * same owner-only path the resources do. All zero on an
+                 * unmodified tank, which keeps the group off the wire. */
+                TankModifiers mods;
+                tankGetModifiers(sim->sim.tanks[i], &mods);
+                ts->modSpeed = mods.speed;
+                ts->modAccel = mods.accel;
+                ts->modTurn = mods.turn;
+                ts->modReload = mods.reload;
+                ts->modDealt = mods.dealt;
+                ts->modTaken = mods.taken;
+            }
         } else {
             ts->armour = 0;
             ts->shells = 0;
@@ -1282,6 +1295,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->gunsightLen = 0;
             ts->deathWait = 0;
             ts->reload = 0;
+            ts->modSpeed = 0;
+            ts->modAccel = 0;
+            ts->modTurn = 0;
+            ts->modReload = 0;
+            ts->modDealt = 0;
+            ts->modTaken = 0;
         }
 
         /* Tree-hidden tank, man still on screen: the entry is here for the man

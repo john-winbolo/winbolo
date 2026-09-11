@@ -1429,6 +1429,33 @@ void tankSetMines(tank *value, BYTE amount);
 *********************************************************/
 void tankSetTrees(tank *value, BYTE amount);
 
+/*********************************************************
+*NAME:          tankSetModifiers
+*PURPOSE:
+*  Replaces the tank's whole modifier set. Each value is a
+*  percentage of the classic figure, with 0 meaning classic,
+*  so a zeroed struct returns the tank to stock behaviour.
+*
+*ARGUMENTS:
+*  value - The tank structure
+*  mods  - The set to store
+*********************************************************/
+void tankSetModifiers(tank value, const TankModifiers *mods);
+
+/*********************************************************
+*NAME:          tankGetModifiers
+*PURPOSE:
+*  Copies out the tank's modifier set.
+*
+*ARGUMENTS:
+*  value - The tank structure
+*  out   - Filled with the stored set
+*********************************************************/
+void tankGetModifiers(tank value, TankModifiers *out);
+
+/* 0 means classic, so an unmodified tank costs one branch and no maths. */
+static inline int tankModPct(uint8_t m) { return m == 0 ? 100 : (int)m; }
+
 void tankGetCarriedPillNum(tank *value, BYTE pillNum);
 void tankPutPill(struct GameSim *sim, tank *value, BYTE pillNum);
 

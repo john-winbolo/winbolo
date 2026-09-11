@@ -3311,6 +3311,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick registrations beside it, and the flag that keeps the all-ready
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
+    # The per-tank modifier set: the op that writes it, the snapshot group
+    # under the ninth presence bit, and when the values are cleared.
+    tests/unit/test_tank_modifiers.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
@@ -4606,6 +4609,11 @@ set(_unit_test_names
     console_read_reports_eof
     console_read_timeout_then_eof
     wbv_fixture_summaries
+    tank_modifiers_op_writes_set
+    tank_modifiers_op_refusals
+    tank_modifiers_wire_roundtrip
+    tank_modifiers_survive_death
+    tank_modifiers_cleared_at_create
     scenario_op_unknown_type_unsupported
     scenario_op_every_type_unsupported
     scenario_policy_register_replace_clear

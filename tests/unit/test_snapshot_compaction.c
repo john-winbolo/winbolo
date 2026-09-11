@@ -61,7 +61,7 @@ int run_snapshot_compaction(void) {
 
     /* (a) Non-owner moving tank: core fields only, no owner resources, no
      * LGM, no death/reload. Just position/heading + a ping. Should collapse
-     * to the 11-byte core plus the 2-byte ping group. */
+     * to the 12-byte core plus the 2-byte ping group. */
     {
         TankSnapshot ts;
         memset(&ts, 0, sizeof(ts));
@@ -73,12 +73,12 @@ int run_snapshot_compaction(void) {
         ts.tankStatus = 0x01;   /* onBoat */
         ts.pingMs = 84;
         if (roundtrip(&ts, &size) != 0) return 1;
-        UT_ASSERT_MSG(size <= 13, "non-owner moving entry was %d bytes", size);
+        UT_ASSERT_MSG(size <= 14, "non-owner moving entry was %d bytes", size);
 
         /* Same tank with a zero ping packs even smaller (bare core). */
         ts.pingMs = 0;
         if (roundtrip(&ts, &size) != 0) return 1;
-        UT_ASSERT_MSG(size == 11, "bare-core entry was %d bytes", size);
+        UT_ASSERT_MSG(size == 12, "bare-core entry was %d bytes", size);
     }
 
     /* (b) Owner full tank: resources + reload + gunsight + ping all live. */

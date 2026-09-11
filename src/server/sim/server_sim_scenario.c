@@ -33,6 +33,8 @@
 #include "server_sim_internal.h"
 #include "server_sim_scenario.h"
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
+#include "tank.h"          /* tankSetModifiers — the set-modifiers arm */
+#include "log.h"           /* logAddEvent — the arm's record */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
  * cannot see the channel sizes. This is where the two meet: one panel
@@ -42,6 +44,41 @@
 BOLO_STATIC_ASSERT(
     1 + 2 + 1 + 1 + 2 + SCN_PANEL_MAX <= CHANNEL_CONTROL_SEG,
     scn_panel_max_fits_one_control_segment);
+
+/* Replace a tank's whole modifier set. The op carries every value, so a
+ * script that wants to change one reads the tank first. Nothing is published:
+ * the next snapshot carries the group to the owning client, which is within a
+ * tick. The record goes out beside the write so a replay shows the change at
+ * the tick it happened. */
+static ScnOpResult scenarioOpTankSetModifiers(ServerSim *sim,
+                                              const ScnOpTankSetModifiers *p) {
+    /* Checked before the slot so the two refusals do not depend on whether a
+     * tank happens to exist in a state that has none. */
+    if (sim->state != serverStateRunning) {
+        return SCN_OP_WRONG_STATE;
+    }
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot] ||
+        sim->sim.tanks[p->slot] == NULL) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+
+    tankSetModifiers(sim->sim.tanks[p->slot], &p->mods);
+
+    {
+        /* [len][speed][accel][turn][reload][dealt][taken] — the six do not fit
+           logAddEvent's four opt bytes and its short. */
+        char blob[7];
+        blob[0] = 6;
+        blob[1] = (char)p->mods.speed;
+        blob[2] = (char)p->mods.accel;
+        blob[3] = (char)p->mods.turn;
+        blob[4] = (char)p->mods.reload;
+        blob[5] = (char)p->mods.dealt;
+        blob[6] = (char)p->mods.taken;
+        logAddEvent(log_TankSetModifiers, p->slot, 0, 0, 0, 0, blob);
+    }
+    return SCN_OP_OK;
+}
 
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
@@ -72,7 +109,8 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
         case SCN_OP_TANK_SET_BOAT:       return SCN_OP_UNSUPPORTED;
         case SCN_OP_TANK_GIVE_PILL:      return SCN_OP_UNSUPPORTED;
         case SCN_OP_TANK_DROP_PILL:      return SCN_OP_UNSUPPORTED;
-        case SCN_OP_TANK_SET_MODIFIERS:  return SCN_OP_UNSUPPORTED;
+        case SCN_OP_TANK_SET_MODIFIERS:
+            return scenarioOpTankSetModifiers(sim, &op->u.tankSetModifiers);
         case SCN_OP_LGM_DISPATCH:        return SCN_OP_UNSUPPORTED;
         case SCN_OP_LGM_RECALL:          return SCN_OP_UNSUPPORTED;
         case SCN_OP_LGM_KILL:            return SCN_OP_UNSUPPORTED;

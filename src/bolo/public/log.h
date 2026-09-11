@@ -109,7 +109,8 @@ log_SpectatorLeft,   // opt1=spectator slot, then name pstr (names the leaver ac
 log_SpectatorChat,   // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
 log_GameSettings,    // pascal-string blob of every lobby setting (layout in docs/replay-format.md)
 log_Ping,            // opt1=sender, opt2=kind, then worldX/worldY as two big-endian u16 (layout in docs/replay-format.md)
-log_TankSetStock     // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
+log_TankSetStock,    // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
+log_TankSetModifiers // opt1=player, then a 6-byte pascal blob: speed, accel, turn, reload, dealt, taken
 } logitem;
 
 typedef struct {

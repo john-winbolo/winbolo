@@ -110,7 +110,13 @@ int run_scenario_op_unknown_type_unsupported(void) {
     return 0;
 }
 
-/* No arm has landed yet, so every defined op answers UNSUPPORTED. The
+/* The ops whose arms are written. Each one is covered by its own tests; this
+ * list is what keeps the sweep below honest as they land one at a time. */
+static bool opArmHasLanded(ScenarioOpType t) {
+    return t == SCN_OP_TANK_SET_MODIFIERS;   /* test_tank_modifiers.c */
+}
+
+/* An op with no arm answers UNSUPPORTED, and an op with one does not. The
  * count check catches a member added to the enum without a line in
  * kAllOpTypes, which would otherwise leave it untested. */
 int run_scenario_op_every_type_unsupported(void) {
@@ -130,9 +136,17 @@ int run_scenario_op_every_type_unsupported(void) {
         memset(&out, 0, sizeof(out));
         op.type = kAllOpTypes[i];
         r = serverSimApplyScenarioOp(sim, &op, &out);
+        if (opArmHasLanded(op.type)) {
+            /* The sim is in the lobby, so a landed arm refuses on the state
+               or the slot — what it must not do is claim it has no arm. */
+            UT_ASSERT_MSG(r != SCN_OP_UNSUPPORTED,
+                          "op type %d has an arm but still answers "
+                          "SCN_OP_UNSUPPORTED", (int)op.type);
+            continue;
+        }
         UT_ASSERT_MSG(r == SCN_OP_UNSUPPORTED,
                       "op type %d returned %d, expected SCN_OP_UNSUPPORTED — "
-                      "an arm has landed without its tests",
+                      "an arm has landed without a line in opArmHasLanded",
                       (int)op.type, (int)r);
     }
 

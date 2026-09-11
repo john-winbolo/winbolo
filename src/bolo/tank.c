@@ -439,6 +439,10 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
   (*value)->residualSpeed = 0;
+  /* The only place the modifiers are cleared. A respawn reuses the tank
+     object and leaves them alone; the lobby return destroys every tank, so
+     the next round's create is what puts a slot back to classic. */
+  memset(&(*value)->mods, 0, sizeof((*value)->mods));
 
   /* Get the start position */
   sim->inStartFind = TRUE;
@@ -3260,6 +3264,42 @@ void tankSetTrees(tank *value, BYTE amount) {
   }
 }
 
+/*********************************************************
+*NAME:          tankSetModifiers
+*PURPOSE:
+*  Replaces the tank's whole modifier set
+*
+*ARGUMENTS:
+*  value - The tank structure
+*  mods  - The set to store
+*********************************************************/
+void tankSetModifiers(tank value, const TankModifiers *mods) {
+  if (value == NULL || mods == NULL) {
+    return;
+  }
+  value->mods = *mods;
+}
+
+/*********************************************************
+*NAME:          tankGetModifiers
+*PURPOSE:
+*  Copies out the tank's modifier set
+*
+*ARGUMENTS:
+*  value - The tank structure
+*  out   - Filled with the stored set
+*********************************************************/
+void tankGetModifiers(tank value, TankModifiers *out) {
+  if (out == NULL) {
+    return;
+  }
+  if (value == NULL) {
+    memset(out, 0, sizeof(*out));
+    return;
+  }
+  *out = value->mods;
+}
+
 
 void tankPutPill(GameSim *sim, tank *value, BYTE pillNum) {
   pillboxes *pb = &sim->pb;
@@ -3579,6 +3619,7 @@ void tankSyncResources(tank dst, tank src) {
     dst->lastBoatRiverX = src->lastBoatRiverX;
     dst->lastBoatRiverY = src->lastBoatRiverY;
     dst->sightLen = src->sightLen;
+    dst->mods = src->mods;
 
     /* Deep-copy carried pills list from server to client */
     while (NonEmpty(dst->carryPills)) {

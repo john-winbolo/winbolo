@@ -122,6 +122,7 @@ static bool logitemMutatesWorld(logitem itemNum) {
     case log_PlayerDied:
     case log_PlayerRejoin:
     case log_TankSetStock:
+    case log_TankSetModifiers:
       return TRUE;
     default:
       return FALSE;
@@ -765,6 +766,16 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     /* Format-reserved (no emitter yet): sender spectator slot + pascal-string
        message. Mirrors log_MessageAll so the on-disk shape is locked now. */
     out[off++] = log_SpectatorChat;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_TankSetModifiers:
+    /* player + a length-prefixed blob of the six modifier bytes. The six do
+       not fit the four opt bytes and the short, so they travel as a binary
+       pascal blob the way log_GameSettings carries its settings. */
+    out[off++] = log_TankSetModifiers;
     out[off++] = opt1;
     wordsLen = (unsigned short)((BYTE)words[0]) + 1;
     memcpy(out + off, words, wordsLen);

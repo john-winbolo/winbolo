@@ -1840,6 +1840,15 @@ int run_console_say_keeps_case(void);
  * prelude and its refusals, the policy and per-tick registrations
  * beside it, and the start-in-progress flag that keeps the all-ready
  * detector out of a start already under way. */
+/* The per-tank modifier set (test_tank_modifiers.c): the op that writes it,
+ * the states it refuses, the snapshot group under the ninth presence bit, and
+ * the create-clears / respawn-keeps rule for the values on the tank. */
+int run_tank_modifiers_op_writes_set(void);
+int run_tank_modifiers_op_refusals(void);
+int run_tank_modifiers_wire_roundtrip(void);
+int run_tank_modifiers_survive_death(void);
+int run_tank_modifiers_cleared_at_create(void);
+
 int run_scenario_op_unknown_type_unsupported(void);
 int run_scenario_op_every_type_unsupported(void);
 int run_scenario_policy_register_replace_clear(void);

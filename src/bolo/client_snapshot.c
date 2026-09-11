@@ -995,6 +995,16 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+        {
+          TankModifiers mods;
+          mods.speed = tanks[i].modSpeed;
+          mods.accel = tanks[i].modAccel;
+          mods.turn = tanks[i].modTurn;
+          mods.reload = tanks[i].modReload;
+          mods.dealt = tanks[i].modDealt;
+          mods.taken = tanks[i].modTaken;
+          tankSetModifiers(MY_TANK(csPtr), &mods);
+        }
         csPtr->clientState.hasPredictedTank = TRUE;
         /* The tank just teleported onto the map from the server's chosen
          * start — a teleport snaps, so clear any stale render offset. */
@@ -1197,6 +1207,19 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetDeathWait(&MY_TANK(csPtr), tanks[i].deathWait);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+        {
+          /* Every own-tank snapshot past the first lands here, whether or not
+             the position check above snapped and replayed, so this and the
+             first-snapshot write cover the whole stream. */
+          TankModifiers mods;
+          mods.speed = tanks[i].modSpeed;
+          mods.accel = tanks[i].modAccel;
+          mods.turn = tanks[i].modTurn;
+          mods.reload = tanks[i].modReload;
+          mods.dealt = tanks[i].modDealt;
+          mods.taken = tanks[i].modTaken;
+          tankSetModifiers(MY_TANK(csPtr), &mods);
+        }
         /* Sync boat state from server — prediction skips the boat state
          * machine (isPredicting guard in tankUpdate), so the client's
          * onBoat flag can go stale if no position mismatch triggers
