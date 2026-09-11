@@ -53,9 +53,9 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
-                            int player_num) {
+                            int player_num, const ScnTable *init) {
   (void)inst; (void)path; (void)name; (void)cs;
-  (void)aiMode; (void)debug_mode; (void)player_num;
+  (void)aiMode; (void)debug_mode; (void)player_num; (void)init;
   return false;
 }
 

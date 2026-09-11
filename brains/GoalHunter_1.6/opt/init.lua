@@ -816,30 +816,24 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
-  -- TEST AID: per-bot config from -bot-init [arg] (the BRAIN_INIT_ARG Lua
-  -- global), parsed once. Comma-separated tokens:
+  -- TEST AID: per-bot config, read once from BRAIN_INIT — the table this
+  -- bot was created with. -bot-init's [arg] suffix fills it: ';' separated
+  -- pairs (the spec itself splits on ','), a bare word arriving as the
+  -- value "1", e.g. [ammoless;deprive=100]. Keys:
   --   "ammoless"/"noammo" -> force never-refuel ON (deterministic; overrides
   --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
-  --   "normal"            -> force never-refuel OFF (a plain captain)
+  --   "normal"            -> force never-refuel OFF (a plain captain); read
+  --                          last, so it wins if both are passed
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
   if state._test_arg_parsed == nil then
     state._test_arg_parsed = true
-    local a = rawget(_G, "BRAIN_INIT_ARG")
-    if type(a) == "string" and a ~= "" then
-      -- ';' or ',' separated. -bot-init splits its spec on ',' so the [arg]
-      -- passed on the command line must use ';' (e.g. [ammoless;deprive=100]).
-      for tok in a:gmatch("[^,;]+") do
-        tok = tok:gsub("%s", "")
-        if tok == "ammoless" or tok == "noammo" then
-          state.test_never_refuel = true
-        elseif tok == "normal" then
-          state.test_never_refuel = false
-        else
-          local n = tok:match("^deprive=(%d+)$")
-          if n then state.test_deprive_ticks = tonumber(n) end
-        end
-      end
+    local a = rawget(_G, "BRAIN_INIT")
+    if type(a) == "table" then
+      if a.ammoless or a.noammo then state.test_never_refuel = true end
+      if a.normal then state.test_never_refuel = false end
+      local n = tonumber(a.deprive)
+      if n then state.test_deprive_ticks = n end
     end
   end
 

@@ -230,7 +230,8 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         for (BYTE i = 0; i < numBots; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i + 1);
-            if (serverSimCreateBot(bg->sim, i, brainPath, name, aiFull, gameTournament, false)) {
+            if (serverSimCreateBot(bg->sim, i, brainPath, name, aiFull, gameTournament,
+                                   false, NULL)) {
                 bg->numBots++;
             }
         }

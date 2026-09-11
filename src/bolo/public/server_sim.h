@@ -31,6 +31,7 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 #include "types.h"             /* TankModifiers — carried in TankInfo */
+#include "scenario_table.h"    /* ScnTable — a bot's init table */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
 #include "client_command.h"    /* ClientCommand / CmdResult — serverSimApplyCommand */
 #include "attribution_track.h" /* AttrSlotIdentity — track accessors below */
@@ -489,10 +490,16 @@ void serverSimSetBotPreThinkHook(ServerSim *sim, void (*hook)(int playerNum));
 /* Create a fully-initialised bot: lobby slot, brain, ClientSim,
  * transport, map data. Forwards to bot_manager.c. Distinct from
  * serverSimAddBot, which only registers the lobby slot — the
- * full constructor calls serverSimAddBot internally. */
+ * full constructor calls serverSimAddBot internally.
+ *
+ * init is this bot's configuration, reaching its brain as the
+ * BRAIN_INIT Lua table; it is copied, and NULL means no pairs. Each
+ * bot carries its own, so a caller creating several in a row hands
+ * each one a different table without ordering mattering. */
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
-                        aiType ai, gameType game, bool hiddenMines);
+                        aiType ai, gameType game, bool hiddenMines,
+                        const ScnTable *init);
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum);
 void serverSimDestroyBots(ServerSim *sim);

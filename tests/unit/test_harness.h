@@ -1988,6 +1988,13 @@ int run_scenario_map_place_mine(void);
 int run_scenario_map_remove_mine(void);
 int run_scenario_map_arm_records(void);
 
+/* The init table a bot is created with (test_bot_init_table.c): each
+ * brain VM sees its own, none means an empty table, and the -bot-init
+ * [arg] text maps to the pairs the flag's syntax describes. */
+int run_bot_init_table_two_bots_keep_own(void);
+int run_bot_init_table_empty_when_none(void);
+int run_bot_init_arg_text_to_table(void);
+
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
 int run_console_read_reports_eof(void);

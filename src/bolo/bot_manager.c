@@ -570,7 +570,7 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, bot->ai,
                                 sim->botMgr.defaultDebugMode,
-                                (int)bot->playerNum)) {
+                                (int)bot->playerNum, &bot->initTable)) {
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                 "botManager: failed to reload brain '%s' for bot %d",
                 brainPath, (int)bot->playerNum);
@@ -615,7 +615,8 @@ bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
 
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
-                      aiType ai, gameType game, bool hiddenMines) {
+                      aiType ai, gameType game, bool hiddenMines,
+                      const ScnTable *init) {
     BotContext *bot;
 
     if (sim == NULL || playerNum >= MAX_TANKS) {
@@ -633,6 +634,12 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
     if (brainPath != NULL) {
         SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    }
+    /* Take our own copy of the caller's init table (the memset above
+     * already left an empty one), so the brain below and any later
+     * reload read this bot's configuration and no one else's. */
+    if (init != NULL) {
+        bot->initTable = *init;
     }
 
     {
@@ -730,7 +737,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * game leaves it false so brains load from stripped opt/ source. */
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, ai, sim->botMgr.defaultDebugMode,
-                                playerNum)) {
+                                playerNum, &bot->initTable)) {
         WB_LOG_WARN(WB_LOG_CAT_SIM, "botManager: failed to create brain for bot %d", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;

@@ -57,6 +57,11 @@ typedef struct {
      * brain identity without confusing it with the player display
      * name (multiple bots commonly share one brain script). */
     char            brainPath[256];
+    /* The init table this bot was created with, handed to its brain VM
+     * as BRAIN_INIT. Kept for the life of the bot so a brain swap
+     * (botManagerSetBrainIdx) hands the new VM the same configuration
+     * the first one got. Empty when the creator passed none. */
+    ScnTable        initTable;
     BYTE            playerNum;
     bool            active;
     aiType          ai;
@@ -307,10 +312,15 @@ int  botManagerGetPendingThreads(const struct ServerSim *sim);
  *  ai          - AI advantage level
  *  game        - Game type
  *  hiddenMines - Whether hidden mines are enabled
+ *  init        - This bot's configuration, reaching its brain
+ *                as the BRAIN_INIT table. Copied into the
+ *                BotContext, so the caller keeps ownership.
+ *                NULL for a bot with no configuration.
  *********************************************************/
 bool botManagerAddBot(struct ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
-                      aiType ai, gameType game, bool hiddenMines);
+                      aiType ai, gameType game, bool hiddenMines,
+                      const ScnTable *init);
 
 /* Swap the brain script on an already-added bot, identified by its
  * catalogue index. brainIdx == 0xFF resolves to the CLI-configured

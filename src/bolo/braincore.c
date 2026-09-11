@@ -96,6 +96,24 @@ static int l_get_terrain_upvalue(lua_State *L) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Per-brain init table                                                */
+/* ------------------------------------------------------------------ */
+
+void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
+  int n = (init != NULL) ? (int)init->count : 0;
+  int i;
+
+  if (n > SCN_TABLE_MAX) n = SCN_TABLE_MAX;
+  lua_createtable(L, 0, n);
+  for (i = 0; i < n; i++) {
+    if (init->kv[i].key[0] == '\0') continue;
+    lua_pushstring(L, init->kv[i].value);
+    lua_setfield(L, -2, init->kv[i].key);
+  }
+  lua_setglobal(L, "BRAIN_INIT");
+}
+
+/* ------------------------------------------------------------------ */
 /* Constant registration                                               */
 /* ------------------------------------------------------------------ */
 

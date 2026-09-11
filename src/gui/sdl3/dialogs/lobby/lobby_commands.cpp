@@ -309,7 +309,7 @@ static void lobbySendAddBot(ClientSim *cs,
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                            (aiType)serverSimGetBotAiType(sim),
                            (gameType)clientSimGetLobbyGameType(cs),
-                           clientSimIsLobbyHiddenMines(cs));
+                           clientSimIsLobbyHiddenMines(cs), NULL);
         /* Mirror the per-bot brain selection so the AiConfig combo
          * reflects "this bot's brain" rather than a global default.
          * stickyBrainIdx == 0xFF picks up the server's CLI-configured

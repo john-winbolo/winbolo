@@ -170,17 +170,6 @@ void luaBrainsSetRunScript(const char *path) {
         s_run_script_path[0] = '\0';
 }
 
-/* Staged per-bot init arg from -bot-init's [..] suffix. Consumed (cleared)
- * by the next luaBrainInstanceCreate, which injects BRAIN_INIT_ARG. */
-static char s_next_init_arg[128] = "";
-
-void luaBrainsSetNextInitArg(const char *arg) {
-    if (arg && arg[0])
-        SDL_strlcpy(s_next_init_arg, arg, sizeof(s_next_init_arg));
-    else
-        s_next_init_arg[0] = '\0';
-}
-
 bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
     const char *p = spec;
     while (*p) {
@@ -220,13 +209,23 @@ bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
         memcpy(vbuf, val, vlen);
         vbuf[vlen] = '\0';
 
+        ScnTable initTable;
         char argbuf[128] = "";
         char *lb = strchr(vbuf, '[');
+        scnTableClear(&initTable);
         if (lb) {
             *lb = '\0';                       /* path ends at '[' */
             char *rb = strchr(lb + 1, ']');
             if (rb) *rb = '\0';
             SDL_strlcpy(argbuf, lb + 1, sizeof(argbuf));
+            /* The suffix is the bot's init table: ';'-separated pairs, a
+             * bare token being the value "1". A pair that does not fit is
+             * dropped with a warning rather than failing the whole spec. */
+            if (!scnTableFromArgText(argbuf, &initTable)) {
+                fprintf(stderr,
+                        "-bot-init: dropped an init pair that does not fit in '%s'\n",
+                        argbuf);
+            }
         }
         if (vbuf[0] == '\0') {
             fprintf(stderr, "-bot-init: empty path for id range %ld-%ld\n", lo, hi);
@@ -241,7 +240,7 @@ bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
                 continue;
             }
             SDL_strlcpy(slots[id].path, vbuf, sizeof(slots[id].path));
-            SDL_strlcpy(slots[id].arg, argbuf, sizeof(slots[id].arg));
+            slots[id].init = initTable;
             slots[id].covered = 1;
         }
 
@@ -707,7 +706,7 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
                             aiType aiMode, bool debug_mode,
-                            int player_num) {
+                            int player_num, const ScnTable *init) {
   lua_State *L;
 
   memset(inst, 0, sizeof(*inst));
@@ -814,16 +813,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   }
   lua_setglobal(L, "RUN_SCRIPT_PATH");
 
-  /* BRAIN_INIT_ARG: optional per-bot text from -bot-init's [..] suffix; string
-   * when staged, nil otherwise. Consume-once so it applies only to this brain —
-   * the next create defaults back to nil unless luaBrainsSetNextInitArg re-stages. */
-  if (s_next_init_arg[0]) {
-    lua_pushstring(L, s_next_init_arg);
-  } else {
-    lua_pushnil(L);
-  }
-  lua_setglobal(L, "BRAIN_INIT_ARG");
-  s_next_init_arg[0] = '\0';
+  /* BRAIN_INIT: this bot's configuration, as a table of string values —
+   * from -bot-init's [..] suffix, or from whoever asked for the bot. The
+   * table came down the create call, so it is this brain's alone and the
+   * order bots are created in does not matter. Empty when none was
+   * passed, so a brain can read BRAIN_INIT.key without a type check. */
+  brainCoreSetInitTable(L, init);
 
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 
@@ -1602,7 +1597,7 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
                               *clientSimGetAllowComputerTanks(cs), false,
-                              0)) {
+                              0, NULL)) {
     clientMutexRelease();
     return false;
   }

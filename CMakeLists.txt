@@ -3331,6 +3331,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # fill with no budget left gets, and the round start and lobby map swap
     # that drop a remainder rather than painting the map that replaced it.
     tests/unit/test_scenario_map_arms.c
+    # The init table a bot is created with: one table per brain VM, an
+    # empty one when the creator passed none, and the -bot-init [arg]
+    # text that fills one.
+    tests/unit/test_bot_init_table.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -4741,6 +4745,9 @@ set(_unit_test_names
     scenario_map_place_mine
     scenario_map_remove_mine
     scenario_map_arm_records
+    bot_init_table_two_bots_keep_own
+    bot_init_table_empty_when_none
+    bot_init_arg_text_to_table
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

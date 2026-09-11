@@ -639,10 +639,12 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
+        /* A lobby Add Bot carries no configuration: NULL init, so the
+         * brain sees an empty BRAIN_INIT. */
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
-                              serverSimGetGameSim(sim)->hiddenMines)) {
+                              serverSimGetGameSim(sim)->hiddenMines, NULL)) {
             fprintf(stderr, "ADD_BOT reject INVALID: botManagerAddBot failed (slot=%d name='%s' brain='%s')\n",
                     (int)slot, botName, serverSimGetBotBrainPath(sim));
             return CMD_REJECT_INVALID;

@@ -23,9 +23,10 @@
 #ifndef SCENARIO_DEFS_H
 #define SCENARIO_DEFS_H
 
-#include "global.h"      /* BYTE, PLAYER_NAME_LEN */
-#include "types.h"       /* TankModifiers — the modifier op's payload */
-#include "wire_limits.h" /* PACKET_MAX_CHAT_MESSAGE — the text cap below */
+#include "global.h"         /* BYTE, PLAYER_NAME_LEN */
+#include "types.h"          /* TankModifiers — the modifier op's payload */
+#include "wire_limits.h"    /* PACKET_MAX_CHAT_MESSAGE — the text cap below */
+#include "scenario_table.h" /* ScnTable — the init and hint payloads below */
 
 /* Text capacity for every op that carries a line. The server-text
  * control event holds char text[PACKET_MAX_CHAT_MESSAGE + 1]
@@ -61,21 +62,10 @@
  * is what would leave them room. */
 #define SCN_TILES_PER_TICK 256
 
-/* The init and hint tables: how many pairs, and how long a key and a
- * value may be. */
-#define SCN_TABLE_MAX         16
-#define SCN_TABLE_KEY_LEN     24
-#define SCN_TABLE_VALUE_LEN   64
-
-typedef struct {
-    char key[SCN_TABLE_KEY_LEN];
-    char value[SCN_TABLE_VALUE_LEN];
-} ScnKV;
-
-typedef struct {
-    uint8_t count;
-    ScnKV   kv[SCN_TABLE_MAX];
-} ScnTable;
+/* ScnKV, ScnTable and the SCN_TABLE_* caps are in
+ * public/scenario_table.h: the init table is also a parameter of
+ * server_sim.h's bot constructor, which a frontend calls, so the type
+ * cannot live behind the scenario surface. */
 
 /* What a spawning tank is handed. Either a game type names the loadout
  * or the four amounts do; useGameType picks between them. */
