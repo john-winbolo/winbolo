@@ -138,24 +138,33 @@ static void manScrollLog(const char *dir, ClientSim *cs) {
   gManScrollEntries++;
 }
 
-/* Where the tank can see from the square it is standing on, over the whole
+/* What the view can see from the square it is looking out of, over the whole
  * back buffer, in the form the view substitutes from. Returns NULL - and
- * builds nothing - while nothing blocks sight, while there is no live tank to
- * look from, or with no memory of what was seen to fall back on; the view then
+ * builds nothing - while nothing blocks sight, while there is nowhere to look
+ * from, or with no memory of what was seen to fall back on; the view then
  * draws every square exactly as it has always drawn it.
+ *
+ * An item view looks out of the pillbox, base or allied tank it is watching
+ * rather than out of the tank: the window it draws is that item's, and a wall
+ * in front of the tank says nothing about what the item can see. The map
+ * overview masks each of its blocks the same way, so the two pictures of the
+ * same watched item agree.
  *
  * out and vis belong to the caller and have to outlive the returned pointer.
  * vis is filled as all seen first, so a block sightBuildMask refuses reads as
  * nothing hidden rather than as everything hidden. */
 static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
                                                BYTE *vis) {
-  BYTE mx; /* The square the tank is standing on */
+  BYTE mx; /* The square the view is looked out of */
   BYTE my;
 
   if (overviewFogSightGet() == fogSightOff) {
     return NULL;
   }
-  if (clientSimGetMyTankMapPos(csPtr, &mx, &my) == FALSE) {
+  if (clientSimIsInItemView(csPtr) == TRUE) {
+    mx = clientSimGetPillViewX(csPtr);
+    my = clientSimGetPillViewY(csPtr);
+  } else if (clientSimGetMyTankMapPos(csPtr, &mx, &my) == FALSE) {
     return NULL;
   }
   memset(out, 0, sizeof(*out));

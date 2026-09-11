@@ -45,10 +45,11 @@
  * frontend, and a region that stamps ground without granting sight is the
  * obvious next thing to want. */
 #define OVERVIEW_F_SIGHT     0x04
-/* Inside a live region and not seen from the tank all the same - behind a
- * building. The square keeps the tile it last showed rather than being
- * rewritten, nothing moving on it is drawn, and it is left in full fog. Only
- * set while line of sight is masking the blocks round the tank. */
+/* Inside a live region and not seen out of that region's own origin all the
+ * same - behind a building, or deep in a wood. The square keeps the tile it
+ * last showed rather than being rewritten, nothing moving on it is drawn, and
+ * it is left in full fog. Only set while line of sight is masking the live
+ * blocks. */
 #define OVERVIEW_F_HIDDEN    0x08
 
 /* The tank region is the full scroll envelope of the main view. An item view
@@ -69,12 +70,24 @@
  * the player holds outright and ramps down over the last VIEW_DECAY_FADE_SECS
  * of a decay window, reaching 0 as the window runs out.
  *
+ * originX/originY is the square the block is looked out of, which is what line
+ * of sight is worked out from: the tank for the player's own block, and the
+ * pillbox, base or allied tank for a block one of them earned. It is not the
+ * centre of the rect - a block trimmed at the map edge is off centre, and the
+ * Classic block is placed by the classic view rather than round the tank - so
+ * it is carried rather than worked back out. A block that nothing looks out of
+ * does not exist: every rect has one.
+ *
  * The frontend compares stored rects byte for byte to decide it can reuse a
  * fog mask, so every rect has to be zeroed whole when it is built rather than
- * filled field by field - which is what overviewRectAround does. */
+ * filled field by field - which is what overviewRectAround does. The origin is
+ * in that comparison on purpose: under Classic the tank moves inside a window
+ * that is standing still, which moves what it can see without moving an
+ * edge. */
 typedef struct OverviewRect {
     int  left, top, right, bottom;
     BYTE alpha;
+    BYTE originX, originY;
 } OverviewRect;
 
 typedef struct OverviewMap {

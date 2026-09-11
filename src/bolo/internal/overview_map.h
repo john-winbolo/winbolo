@@ -224,16 +224,17 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  * keeps stamping underneath it. A tank that has really gone drops its block
  * outright.
  *
- * With sightMode past fogSightOff, the blocks round the player's own tank are
- * masked by what the tank can actually see from where it stands: a square with
- * a building, or a deep enough stand of trees, between it and the tank keeps
+ * With sightMode past fogSightOff, every live block is masked by what the
+ * thing it belongs to can actually see from where it stands: a square with a
+ * building, or a deep enough stand of trees, between it and that square keeps
  * the tile it last showed, carries OVERVIEW_F_HIDDEN instead of the live and
- * sight bits, and is left in full fog. The last stamp those blocks get as they
- * stop being live is masked the
- * same way, from the square the tank last had a block on, so letting the block
- * go does not show the player what it had been keeping from them. Watched items
- * are never masked - the player is seeing through the item, not from the tank -
- * and with sight off no mask is built and no square ever carries the flag.
+ * sight bits, and is left in full fog. Each block is looked out of its own
+ * OverviewRect::origin - the player's own from the tank, a pillbox's from the
+ * pillbox, a base's from the base, an ally's from the ally - so a watched item
+ * sees what it can see rather than what the tank can. The last stamp a block
+ * gets as it stops being live is masked the same way, so letting the block go
+ * does not show the player what it had been keeping from them. With sight off
+ * no mask is built and no square ever carries the flag.
  * OverviewMap::hiddenActive records which of the two the update did. */
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,

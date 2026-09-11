@@ -181,6 +181,8 @@ static OverviewRect overviewRectAround(int cx, int cy, int half) {
 
   memset(&r, 0, sizeof(r));
   r.alpha = 255;
+  r.originX = (BYTE)cx;
+  r.originY = (BYTE)cy;
   r.left = cx - half;
   r.top = cy - half;
   r.right = cx + half;
@@ -213,6 +215,10 @@ static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
 
   memset(out, 0, sizeof(*out));
   out->alpha = 255;
+  /* The window is placed by the classic view and looked out of by the tank, so
+   * unlike every other block its origin is nowhere near its centre. */
+  out->originX = tankMX;
+  out->originY = tankMY;
   out->left = (int)in->viewLeft;
   out->top = (int)in->viewTop;
   out->right = out->left + 2 * OVERVIEW_LENS_HALF;
@@ -287,27 +293,27 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
   return changed;
 }
 
-/* The mask for the last stamp one of the tank's own blocks gets as it stops
- * being live, or NULL when there is none to build. That stamp writes the ground
- * as it is now, so without a mask a block that is going away would show the
- * player everything it had been keeping from them on the way out - which is
- * repeatable on purpose by watching a pillbox for a tick.
+/* The mask for the last stamp a block gets as it stops being live, or NULL
+ * when there is none to build. That stamp writes the ground as it is now, so
+ * without a mask a block that is going away would show the player everything it
+ * had been keeping from them on the way out - which is repeatable on purpose by
+ * watching a pillbox for a tick.
  *
- * The origin is the square the block was last actually placed from rather than
- * anything this update was handed: a tank that has really gone reports the map
- * origin, and the honest answer is where it was standing when it last had a
- * block. With no such square recorded there is nothing to work from.
+ * The rect is last update's, so the origin on it is where the block was
+ * actually looked out of then rather than anywhere this update is reporting: a
+ * tank that has really gone reads as the map origin, and a pillbox that has
+ * been picked up is not on the map at all.
  *
  * Every square is marked seen first, so a block too wide for the buffer reads
  * as nothing being hidden rather than as whatever was in it. */
 static const BYTE *overviewFarewellMask(const OverviewMap *om,
                                         struct GameSim *sim,
                                         const OverviewRect *r, BYTE *vis) {
-  if (om->hiddenActive == FALSE || om->haveLastTank == FALSE) {
+  if (om->hiddenActive == FALSE) {
     return NULL;
   }
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, r, vis);
+  sightBuildMask(&sim->mp, r->originX, r->originY, r, vis);
   return vis;
 }
 
@@ -373,7 +379,8 @@ static bool overviewRegionsDiffer(const OverviewRect *a, int aCount,
   for (i = 0; i < aCount; i++) {
     if (a[i].left != b[i].left || a[i].top != b[i].top ||
         a[i].right != b[i].right || a[i].bottom != b[i].bottom ||
-        a[i].alpha != b[i].alpha) {
+        a[i].alpha != b[i].alpha || a[i].originX != b[i].originX ||
+        a[i].originY != b[i].originY) {
       return TRUE;
     }
   }
@@ -669,8 +676,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   BYTE numBases; /* Bases on the map */
   bool nowInTank;      /* Is this pill being carried this update */
   OverviewRect square; /* A single square being held current on its own */
-  bool hideOn;         /* Is anything hiding squares inside the tank's blocks */
-  int  ownBlocks;      /* Rects at the head of the list that are those blocks */
+  bool hideOn;         /* Is sight hiding squares inside the live blocks */
   const BYTE *visPtr;  /* The mask the rect being stamped is masked with */
   BYTE vis[SIGHT_MASK_BYTES]; /* One block's mask, rebuilt for each of them */
   int idx;       /* Which prevLive rect the replay is up to */
@@ -751,11 +757,11 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * produced it. The order is contractual: position on the list is the only
    * thing tying a stale rect to its region.
    *
-   * The block round the tank takes the mask it was stamped under, so
-   * ground the player could not see into stays as they last saw it on the way
-   * out as well as on the way in. Watched items never carry one, here as in the
-   * live stamp. om->hiddenActive is still last update's value at this point -
-   * it is rewritten below, after this replay - and last update is what these
+   * Each block takes the mask it was stamped under, so ground the player could
+   * not see into stays as they last saw it on the way out as well as on the way
+   * in - a pillbox's block as much as the tank's, each from the square it was
+   * looked out of. om->hiddenActive is still last update's value at this point
+   * - it is rewritten below, after this replay - and last update is what these
    * rects came from, so this is the flag to read. Moving that assignment above
    * here would quietly take the mask away. */
   idx = 0;
@@ -775,8 +781,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
     if (idx < om->prevLiveCount &&
         overviewPillLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
+      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
-                            NULL) == TRUE) {
+                            visPtr) == TRUE) {
         changed = TRUE;
       }
     }
@@ -788,8 +795,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
     if (idx < om->prevLiveCount &&
         overviewBaseLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
+      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
-                            NULL) == TRUE) {
+                            visPtr) == TRUE) {
         changed = TRUE;
       }
     }
@@ -801,8 +809,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
     if (idx < om->prevLiveCount &&
         overviewAllyLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
+      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
-                            NULL) == TRUE) {
+                            visPtr) == TRUE) {
         changed = TRUE;
       }
     }
@@ -865,34 +874,29 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
   }
 
-  /* The mask covers the blocks round the player's own tank and nothing else.
-   * The player is looking out of their tank, so a building - and under the mode
-   * that counts them a deep enough stand of trees - stops them seeing past it;
-   * an item view looks out of the pillbox, base or allied tank it is watching,
-   * and what is in the way of the tank is nothing to it. The build writes the
-   * tank block first, so that is the rect at the head of the list.
+  /* Every block is masked by what the thing it belongs to can actually see
+   * from where it stands, not the tank's alone: a pillbox cannot see through
+   * the building beside it any more than the player can, and a block that
+   * showed the ground behind one would be a hole in the rule wherever a pill,
+   * a base or an ally happened to be watching. Each block carries the square it
+   * is looked out of, so this needs no idea of which region produced which
+   * rect - the tank's block from the tank, and for a tank that has died and is
+   * holding its block, from where it died.
    *
-   * The block is masked over its own extent. The origin is the square it was
-   * placed from, which for a tank that has died and is holding its block is
-   * where it died. */
-  hideOn = (tankLive == TRUE && in->sightMode != (uint8_t)fogSightOff);
-  ownBlocks = 0;
-  if (hideOn == TRUE) {
-    ownBlocks = 1;
-    if (ownBlocks > om->liveCount) {
-      ownBlocks = om->liveCount;
-    }
-  }
-  om->hiddenActive = (ownBlocks > 0);
+   * With sight off nothing is masked at all and no square ever carries the
+   * flag, which is the picture the map has always drawn. */
+  hideOn = (in->sightMode != (uint8_t)fogSightOff && om->liveCount > 0);
+  om->hiddenActive = hideOn;
 
   for (i = 0; i < om->liveCount; i++) {
     visPtr = NULL;
-    if (i < ownBlocks) {
+    if (hideOn == TRUE) {
       /* Every square seen until something says otherwise, so a block too big
        * for the buffer - which no experiment builds today - reads as nothing
        * being hidden rather than as whatever the last one left behind. */
       memset(vis, 1, sizeof(vis));
-      sightBuildMask(&sim->mp, useMX, useMY, &om->live[i], vis);
+      sightBuildMask(&sim->mp, om->live[i].originX, om->live[i].originY,
+                     &om->live[i], vis);
       visPtr = vis;
     }
     if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE, visPtr) ==

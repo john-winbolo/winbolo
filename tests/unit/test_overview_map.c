@@ -464,20 +464,42 @@ int run_overview_regions(void) {
                           "reticle would not be drawn",
                           (unsigned)om->flags[100][100]);
 
-            /* Nothing outside the block round the tank is ever hidden, which
-             * is the watched pill's block as much as ground no region covers:
-             * the wall in front of the tank says nothing about what the pill
-             * can see. */
+            /* Nothing is hidden outside a live block: the wall in front of the
+             * tank reaches the tank's own 29x29 and the pill's 15x15 round
+             * 200,100, and nowhere else. */
             for (x = 0; x < MAP_ARRAY_SIZE; x++) {
                 for (y = 0; y < MAP_ARRAY_SIZE; y++) {
                     if ((om->flags[x][y] & OVERVIEW_F_HIDDEN) == 0) {
                         continue;
                     }
-                    UT_ASSERT_MSG(x >= 86 && x <= 114 && y >= 86 && y <= 114,
-                                  "square %d,%d is hidden and is outside the "
-                                  "block round the tank", x, y);
+                    UT_ASSERT_MSG((x >= 86 && x <= 114 && y >= 86 &&
+                                   y <= 114) ||
+                                      (x >= 193 && x <= 207 && y >= 93 &&
+                                       y <= 107),
+                                  "square %d,%d is hidden and is inside no live "
+                                  "block", x, y);
                 }
             }
+
+            /* And the pill's block is masked from the pill, not from the tank:
+             * a wall beside the pill hides the ground behind it, where the wall
+             * in front of the tank a hundred squares away says nothing about
+             * what the pill can see. */
+            mapSetPos(gs, &gs->mp, 203, 100, BUILDING, TRUE, TRUE);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG((om->flags[206][100] & OVERVIEW_F_HIDDEN) != 0,
+                          "the square behind the wall beside the pill carries "
+                          "flags 0x%02X, expected the pill's own block masked "
+                          "by what the pill can see",
+                          (unsigned)om->flags[206][100]);
+            UT_ASSERT_MSG((om->flags[203][100] &
+                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                              (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT),
+                          "the wall beside the pill carries flags 0x%02X, "
+                          "expected the pill to see the wall itself",
+                          (unsigned)om->flags[203][100]);
+            mapSetPos(gs, &gs->mp, 203, 100, GRASS, TRUE, TRUE);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
 
             /* The terrain behind the building changes and the memory does not:
              * holding the tile it last showed is the whole of the effect. The
@@ -587,9 +609,19 @@ int run_overview_regions(void) {
                               "the square carries flags 0x%02X after leaving "
                               "the live set, expected the hidden bit dropped "
                               "with the rest", (unsigned)om->flags[106][100]);
+
+                /* The tank's block has gone and the pill's has not, and the
+                 * pill's is masked from the pill, so the map is still hiding
+                 * squares. It stops only when there is no block left. */
+                UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                              "the map stopped hiding squares while the pill's "
+                              "block was still live");
+                gs->pb->numPills = 0;
+                overviewMapUpdate(om, gs, 0, &fog, FALSE, 0, 0, 0);
                 UT_ASSERT_MSG(om->hiddenActive == FALSE,
-                              "the map hid squares on an update with no block "
-                              "round the tank");
+                              "the map hid squares on an update with no live "
+                              "block at all");
+                gs->pb->numPills = 1;
             }
 
         }
