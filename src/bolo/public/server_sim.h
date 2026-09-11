@@ -1885,6 +1885,17 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  * bot manager's live state in a single call — these are always
  * paired at call sites. brainIdx == 0xFF resolves to the
  * CLI-configured default brain. */
+/* Apply the active scenario's `bot_mode(game, team)` answer to a slot's
+ * lobby bot config. Call it IMMEDIATELY BEFORE botManagerAddBot for a bot
+ * joining `team`: botManagerStageInitArg reads the config at brain-create
+ * time, so the mode and difficulty reach the brain as its init-arg tokens
+ * without publishing anything. Deliberately silent — see the implementation
+ * comment; publishing per bot here once overflowed the control channel
+ * during the ten-bot scenario seed and disconnected the host. A no-op off a
+ * scenario map, or when the script names no mode for that team. */
+void serverSimApplyScenarioBotDefaults(ServerSim *sim, BYTE slot, int team,
+                                       const char *brainPath);
+
 void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx);
 
 /* Rename a bot's display name in the players table without

@@ -690,6 +690,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
+        /* The scenario's own default mode for the side this bot is joining
+         * (survival for the horde, on a Survival map), written BEFORE the
+         * brain is created so it reaches the brain through the init arg and
+         * publishes nothing — see serverSimApplyScenarioBotDefaults. The
+         * team is already known: it picked the slot above. */
+        serverSimApplyScenarioBotDefaults(sim, slot, (int)p->teamNumber,
+                                          serverSimGetBotBrainPath(sim));
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),

@@ -34,6 +34,8 @@
 #include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
 #include "wire_limits.h"            /* the LST_* selectors carried in PACKET_LOBBY_SET_SETTING */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolCount — the per-team naming-pool uniqueness pass */
+#include "brain_list.h"             /* BrainModes — resolving the scenario's bot_mode keys */
+#include "../../common/wb_log.h"    /* WB_LOG_WARN — an unknown bot_mode key */
 #include "start_sides.h"            /* START_SIDE_ANY / START_SIDE_COUNT — the team start-side range */
 
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
@@ -144,6 +146,73 @@ void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
     serverSimPublishLobbyBotConfig(sim, slot);
     serverSimPublishLobbySlot(sim, slot);
     lobbyAutoUnreadyOnChange(sim);
+}
+
+/* Give a slot the brain mode/difficulty the active scenario wants for a bot
+ * joining `team`, BEFORE that bot's brain is created.
+ *
+ * This is the quiet half of serverSimSetBotConfig: it writes the config and
+ * stops — no PublishLobbyBotConfig, no PublishLobbySlot, no auto-unready.
+ * That is the whole point. botManagerStageInitArg reads botConfigs[slot] at
+ * brain-create time, inside botManagerAddBot, so a write that lands first
+ * reaches the brain as its mode=/difficulty= tokens for free. Publishing
+ * here instead would cost three control events per bot, and the Survival
+ * seed adds ten bots in one call stack while no ack can be read: the
+ * reliable control channel holds CHANNEL_CONTROL_WINDOW (64) unacked events
+ * and that seed already spends about forty. Overflowing it disconnects the
+ * host. Nothing is lost by the silence — CTRL_LOBBY_SLOT never carried
+ * mode/difficulty anyway (serverSimFillLobbySlotEvent), and before this
+ * function existed no bot-config event was published on the add path at
+ * all, so connected clients see exactly what they saw before.
+ *
+ * Silently does nothing when there is no scenario, the script names no mode
+ * for this team, the brain ships no modes.txt (it reads no such token), or
+ * the key is one this brain has never heard of — an unknown key is reported
+ * and the slot keeps the lobby default rather than failing the add. */
+void serverSimApplyScenarioBotDefaults(ServerSim *sim, BYTE slot, int team,
+                                       const char *brainPath) {
+    char modeKey[BRAIN_MODE_KEY_LEN];
+    char lvlKey[BRAIN_MODE_KEY_LEN];
+    BrainModes modes;
+    LobbyBotConfig *bc;
+    int modeIdx;
+    int lvlIdx;
+
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (brainPath == NULL || brainPath[0] == '\0') return;
+    if (!scenarioGetBotModeForTeam(sim, team, modeKey, sizeof modeKey,
+                                   lvlKey, sizeof lvlKey)) {
+        return;
+    }
+    if (!brainListLoadModesForPath(brainPath, &modes)) return;
+
+    modeIdx = brainModesFindMode(&modes, modeKey);
+    if (modeIdx < 0) {
+        WB_LOG_WARN(WB_LOG_CAT_SERVER,
+            "scenario: bot_mode named mode '%s' for team %d, which brain "
+            "'%s' does not declare — slot %d keeps the lobby default",
+            modeKey, team, brainPath, (int)slot);
+        return;
+    }
+    lvlIdx = modes.modes[modeIdx].defaultLevel;
+    if (lvlKey[0] != '\0') {
+        int found = brainModeFindLevel(&modes.modes[modeIdx], lvlKey);
+        if (found < 0) {
+            WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                "scenario: bot_mode named difficulty '%s' in mode '%s', which "
+                "brain '%s' does not declare — slot %d takes that mode's "
+                "own default instead",
+                lvlKey, modeKey, brainPath, (int)slot);
+        } else {
+            lvlIdx = found;
+        }
+    }
+
+    bc = serverSimGetBotConfigMut(sim, slot);
+    if (bc != NULL) {
+        bc->mode       = (uint8_t)modeIdx;
+        bc->difficulty = (uint8_t)lvlIdx;
+    }
 }
 
 void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx) {

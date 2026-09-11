@@ -118,6 +118,26 @@ bool scenarioGetAllowExtraTeams(const struct ServerSim *sim);
  * whole ring mid-wave doesn't cut the game short. */
 bool scenarioGetAllowBaseWin(const struct ServerSim *sim);
 
+/* Query the script's `bot_mode(game, team)` hook: which brain MODE — and
+ * optionally which difficulty LEVEL inside it — a bot joining `team`
+ * should start in, as the KEY strings that team's brain declares in its
+ * own modes.txt. Lets a scenario say "every bot on the horde team runs in
+ * survival mode" without the host setting it by hand.
+ *
+ * Returns false and leaves both buffers alone when there is no scenario,
+ * no hook, the hook errors, or it names no mode; `lvlKey` comes back empty
+ * when the script gave a mode but no level. Callers resolve the keys
+ * themselves and ignore an answer their brain has no mode for.
+ *
+ * Call it BEFORE creating the bot's brain and write the result into the
+ * slot's lobby config: the pair then rides the init arg the brain create
+ * already stages, which costs no control event. See the comment on the
+ * implementation for why that matters (a publish per bot once overflowed
+ * the control channel and dropped the host). */
+bool scenarioGetBotModeForTeam(const struct ServerSim *sim, int team,
+                               char *modeKey, size_t modeKeySz,
+                               char *lvlKey, size_t lvlKeySz);
+
 /* The message passed to game.end_round(), for the returning lobby's
  * win line. Empty string when none was set. */
 const char *scenarioGetWinMessage(const struct ServerSim *sim);

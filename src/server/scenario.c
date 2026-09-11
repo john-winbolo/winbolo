@@ -1684,6 +1684,69 @@ int scenarioGetEnemyBots(const ServerSim *sim) {
     return 0;
 }
 
+/* Ask the script which brain MODE (and difficulty LEVEL inside it) a bot
+ * joining `team` should start in:
+ *
+ *     function bot_mode(game, team) -> modeKey [, difficultyKey]
+ *
+ * so a scenario can say "every bot on the horde team runs in survival
+ * mode". The keys are the ones the brain's own modes.txt declares; the
+ * caller resolves them and is free to ignore an answer its brain has no
+ * mode for.
+ *
+ * A QUERY hook on purpose. The engine calls this immediately BEFORE the
+ * bot's brain is created and writes the answer straight into the slot's
+ * lobby config, so the mode rides the init arg botManagerStageInitArg
+ * already builds and costs NOT ONE extra control event. An earlier version
+ * of this feature stamped modes from on_lobby through serverSimSetBotConfig,
+ * which publishes three events per bot. The Survival seed adds ten bots
+ * inside a SINGLE call stack, on the same thread that reads the socket, so
+ * no ack can be processed while it runs; the reliable control channel holds
+ * CHANNEL_CONTROL_WINDOW (64) UNACKED events and the seed already spends
+ * ~40 of them. The extra 30 filled the window and the server dropped the
+ * only human, whose removal then emptied the lobby and wiped the horde.
+ * Hence the rule: the engine QUERIES the script here, and the script must
+ * never reach a mutator that publishes.
+ *
+ * Returns false — leaving both buffers untouched — when there is no
+ * scenario, no hook, the hook errors, or it names no mode. */
+bool scenarioGetBotModeForTeam(const ServerSim *sim, int team,
+                               char *modeKey, size_t modeKeySz,
+                               char *lvlKey, size_t lvlKeySz) {
+    ScenarioState *st = scState(sim);
+    const char *m;
+    const char *l;
+    bool ok = FALSE;
+
+    if (st == NULL || modeKey == NULL || modeKeySz == 0) return FALSE;
+    if (lvlKey != NULL && lvlKeySz > 0) lvlKey[0] = '\0';
+
+    scLuaLock(st);
+    if (st->disabled || st->L == NULL || !scPushHook(st->L, "bot_mode")) {
+        scLuaUnlock(st);
+        return FALSE;
+    }
+    lua_rawgeti(st->L, LUA_REGISTRYINDEX, st->gameRef);
+    lua_pushinteger(st->L, team);
+    if (lua_pcall(st->L, 2, 2, 0) != 0) {
+        scReportError(st, "bot_mode");
+        scLuaUnlock(st);
+        return FALSE;
+    }
+    m = lua_isstring(st->L, -2) ? lua_tostring(st->L, -2) : NULL;
+    l = lua_isstring(st->L, -1) ? lua_tostring(st->L, -1) : NULL;
+    if (m != NULL && m[0] != '\0') {
+        SDL_strlcpy(modeKey, m, modeKeySz);
+        if (lvlKey != NULL && lvlKeySz > 0 && l != NULL) {
+            SDL_strlcpy(lvlKey, l, lvlKeySz);
+        }
+        ok = TRUE;
+    }
+    lua_pop(st->L, 2);
+    scLuaUnlock(st);
+    return ok;
+}
+
 bool scenarioGetAllowExtraTeams(const ServerSim *sim) {
     ScenarioState *st = scState(sim);
     bool b = FALSE;

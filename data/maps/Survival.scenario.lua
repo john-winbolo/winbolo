@@ -144,6 +144,30 @@ end
 
 local WAVES        = 5
 local WAVE_TEAM    = 2      -- the enemy side IS lobby Team 2
+
+-- Which brain MODE every bot on a side runs in. The engine asks this once
+-- per bot, just before that bot's brain is created, and writes the answer
+-- into the slot's lobby config -- so the horde comes up in GoalHunter's
+-- "Survival Scenario" mode without the host setting it by hand, on the
+-- lobby's Add Bot button and on the server's own enemy seed alike.
+--
+-- Andrew: "ONLY change so that new HORDE bots get added as SurvivalScenario
+-- mode and Difficulty Hard by default." So the horde is named here and the
+-- DEFENDERS ARE NOT: returning nil for them leaves their mode and their
+-- difficulty exactly as the lobby chose, which is what "only the horde"
+-- means. It is a default, not a lock -- the host can still change any bot
+-- afterwards in the gear popup and nothing here overwrites it.
+--
+-- The keys are GoalHunter's own (brains/GoalHunter_1.7/modes.txt: mode
+-- "survival", level "hard"). A brain that does not declare them keeps its
+-- default and the server logs the mismatch; nothing fails.
+--
+-- Declared here rather than up with enemy_bots because it needs WAVE_TEAM,
+-- and a Lua local is only visible below its own declaration.
+function bot_mode(game, team)
+  if team == WAVE_TEAM then return "survival", "hard" end
+  return nil
+end
 -- Wave size AND names come from Team 2's roster as the round begins:
 -- the server seeded enemy_bots() lobby bots onto it, the host may have
 -- added/removed/renamed some, and on_setup reads the final list ONCE.

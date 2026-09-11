@@ -207,6 +207,13 @@ static void file_sink(void *userdata,
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
+/* Separator appended to WINBOLO_LOG_DIR when the caller leaves it off. */
+#ifdef _WIN32
+#  define WB_LOG_PATH_SEP '\\'
+#else
+#  define WB_LOG_PATH_SEP '/'
+#endif
+
 bool wb_log_init(const char *prefOrgName,
                  const char *prefAppName,
                  const char *logFileBaseName) {
@@ -221,10 +228,29 @@ bool wb_log_init(const char *prefOrgName,
 
     g_log_path[0] = '\0';
     if (enabled && logFileBaseName && *logFileBaseName) {
-        /* Resolve directory: prefer SDL_GetPrefPath when both org+app given;
-           otherwise fall back to base path; otherwise current working dir. */
+        /* Resolve directory: WINBOLO_LOG_DIR when set, else SDL_GetPrefPath
+           when both org+app given, else the base path, else the current
+           working dir.
+
+           WINBOLO_LOG_DIR exists because the pref path is awkward while
+           testing: a server started from a build tree writes its log under
+           %APPDATA%, two directories away from the .wbv replay and the debug
+           session the same run produced. Pointing it at the build directory
+           keeps one run's output together. A trailing separator is appended
+           when missing, so both "D:\x" and "D:\x\" work. */
         char *dir = NULL;  /* must be SDL_free()d if non-null */
-        if (prefOrgName && prefAppName) {
+        const char *dirEnv = SDL_getenv("WINBOLO_LOG_DIR");
+        if (dirEnv && *dirEnv) {
+            size_t n = strlen(dirEnv);
+            const bool needsSep = (dirEnv[n - 1] != '/' && dirEnv[n - 1] != '\\');
+            dir = (char *)SDL_malloc(n + (needsSep ? 1 : 0) + 1);
+            if (dir) {
+                memcpy(dir, dirEnv, n);
+                if (needsSep) dir[n++] = WB_LOG_PATH_SEP;
+                dir[n] = '\0';
+            }
+        }
+        if (!dir && prefOrgName && prefAppName) {
             dir = SDL_GetPrefPath(prefOrgName, prefAppName);
         }
         if (!dir) {
