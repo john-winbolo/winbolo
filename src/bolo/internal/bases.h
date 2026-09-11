@@ -48,6 +48,15 @@ struct ClientSim;
 #define BASE_NOT_FOUND 254
 
 #define BASE_TICKS_BETWEEN_REFUEL 1000
+
+/* baseTimer[i] when slot i has no live restock cycle. basesUpdate counts
+ * every OTHER value as a live one, and each live cycle restocks every base
+ * on the map — so the bases' refuel rate is simply how many slots are armed,
+ * and a slot left armed for a player who is gone keeps speeding them up.
+ * Any value basesUpdate will not reach by counting down works; this is the
+ * arbitrary large number the original code used, now named so the "is this
+ * slot armed?" test reads as one. */
+#define BASE_TIMER_OFF 30000
 /* A base is dead if it has 9 armour */
 #define BASE_DEAD 9
 

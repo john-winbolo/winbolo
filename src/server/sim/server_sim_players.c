@@ -335,6 +335,12 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 
     sim->playerConnected[playerNum] = FALSE;
+    /* Stop this slot's base restock cycle. serverSimAddPlayer arms it with
+     * basesUpdateTimer on a mid-game join and basesUpdate treats every timer
+     * that is not the off sentinel as a live cycle, each one restocking every
+     * base on the map. Left armed, a player who leaves goes on speeding the
+     * bases up for everyone still playing. */
+    basesRemoveTimer(&sim->sim, (int)playerNum);
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
         sim->sim.tanks[playerNum] = NULL;

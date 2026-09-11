@@ -49,7 +49,7 @@ void basesUpdateTimer(GameSim *sim, int playerNumber){
 
 
 void basesRemoveTimer(GameSim *sim, int playerNumber){
-	sim->baseTimer[playerNumber]=30000; // the 30000 is a arbitrary large number
+	sim->baseTimer[playerNumber]=BASE_TIMER_OFF;
 }
 /*********************************************************
 *NAME:         basesCreate 
@@ -355,7 +355,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 
   while (secondCounter < MAX_TANKS)
   {
-	  if(sim->baseTimer[secondCounter] != 30000)
+	  if(sim->baseTimer[secondCounter] != BASE_TIMER_OFF)
 	  {
 		  sim->baseTimer[secondCounter]--;
 		  if(sim->baseTimer[secondCounter]<=0)

@@ -306,7 +306,7 @@ bool clientSimCreate(ClientSim *cs) {
   {
     int i;
     for (i = 0; i < MAX_TANKS; i++) {
-      cs->sim.baseTimer[i] = 30000;
+      cs->sim.baseTimer[i] = BASE_TIMER_OFF;
     }
     cs->sim.baseTimer[cs->myPlayerNum] = BASE_TICKS_BETWEEN_REFUEL;
   }
