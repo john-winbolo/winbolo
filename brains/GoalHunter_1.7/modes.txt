@@ -1,0 +1,29 @@
+# GoalHunter modes.
+#
+# This file is the brain's own answer to "which modes can I be run in, and
+# which difficulty levels does each of them have?". The lobby reads it
+# locally on every machine (brains ship with the client), fills the gear
+# popup's Mode and Difficulty dropdowns from it, and hands the chosen KEYS
+# to the brain as the "mode=" and "difficulty=" BRAIN_INIT_ARG tokens.
+#
+# Section header = the mode key. First section is mode 0, the one every
+# ordinary game uses. "levels" is a comma-separated list of key:Label, and
+# "default" names the level key a freshly added bot starts at.
+#
+# The brain applies the level in constants.lua (M.MODE_LEVELS[mode][level],
+# a bundle of knob overrides applied before any preset= or cfg= token):
+# hard is an empty bundle, so Hard is today's brain unchanged; medium and
+# easy hand the bot handicaps. The survival mode's bundles are still empty.
+
+[default]
+label = Default
+levels = easy:Easy, medium:Medium, hard:Hard
+default = hard
+
+# Survival Scenario. Its real levels have not been decided — these three
+# are placeholders so the dropdown is wired end to end; edit them here and
+# nothing else has to change.
+[survival]
+label = Survival Scenario
+levels = easy:Easy, medium:Medium, hard:Hard
+default = hard

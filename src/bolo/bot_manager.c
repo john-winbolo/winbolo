@@ -599,13 +599,13 @@ bool botInitArgAppendToken(char *arg, size_t argSz, const char *token) {
  * "mode=<modekey>;difficulty=<levelkey>".
  *
  * The keys are the brain's OWN, read from its modes.txt manifest
- * (brain_list.h) for the brain this bot is about to load — a brain with no
- * manifest gets the synthesized default mode, so the token pair reads
- * "mode=default;difficulty=hard" exactly as it did before manifests
- * existed. The slot's stored bytes are indices into that list and are
- * clamped against it here, so a stale index (the host switched the bot to
- * a brain with fewer modes) falls back to the default rather than naming a
- * mode the brain never declared.
+ * (brain_list.h) for the brain this bot is about to load. Only a brain that
+ * ships that manifest gets the tokens at all — botManagerStageInitArg makes
+ * that call — so a brain that never asked to be told its mode keeps its
+ * init arg exactly as staged. The slot's stored bytes are indices into the
+ * manifest's list and are clamped against it here, so a stale index (the
+ * host switched the bot to a brain with fewer modes) falls back to the
+ * default rather than naming a mode the brain never declared.
  *
  * Whatever the caller already staged (a CLI -bot-init "[preset=keel;...]"
  * suffix) is kept and the tokens are added after it, so a bench keeps its
@@ -695,10 +695,18 @@ static void botManagerStageInitArg(struct ServerSim *sim, BYTE playerNum,
         modeIdx  = sim->botConfigs[playerNum].mode;
         levelIdx = sim->botConfigs[playerNum].difficulty;
     }
-    brainListLoadModesForPath(brainPath, &modes);
     SDL_strlcpy(arg, (staged != NULL) ? staged : "", sizeof(arg));
-    botInitArgAppendModeTokens(arg, sizeof(arg), &modes, modeIdx, levelIdx,
-                               (int)playerNum);
+    /* Only a brain that SHIPS a modes.txt gets the tokens. The manifest is
+     * the brain saying "I read mode= and difficulty=". A brain without one
+     * (the scripted tests/brains/*.lua, a third-party brain) may treat its
+     * whole init arg as one opaque value — park_at.lua parses "mx,my" and
+     * nothing else — and appending to it would break that parse. Such a
+     * brain still shows the synthesized Default mode in the lobby; picking
+     * a level there changes nothing, which is the honest outcome. */
+    if (brainListLoadModesForPath(brainPath, &modes)) {
+        botInitArgAppendModeTokens(arg, sizeof(arg), &modes, modeIdx,
+                                   levelIdx, (int)playerNum);
+    }
     luaBrainsSetNextInitArg(arg);
     /* One stderr line per brain creation naming the arg the brain is about
      * to read. A brain's own print() goes nowhere in a headless game, so

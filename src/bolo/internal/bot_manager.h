@@ -379,6 +379,13 @@ int  botManagerGetPendingThreads(const struct ServerSim *sim);
  *********************************************************/
 bool botInitArgAppendToken(char *arg, size_t argSz, const char *token);
 
+/* True when the ';'/','-separated init arg already carries a token that
+ * starts with `key` ("mode=", "difficulty="). Matched at token starts only,
+ * so a "cfg=DIFFICULTY=..." write is not mistaken for a difficulty token.
+ * botInitArgAppendModeTokens uses it to let an explicit token win over the
+ * lobby config. */
+bool botInitArgHasKey(const char *arg, const char *key);
+
 /*********************************************************
  *NAME:          botInitArgAppendModeTokens
  *PURPOSE:
@@ -393,7 +400,13 @@ bool botInitArgAppendToken(char *arg, size_t argSz, const char *token);
  *  Each token is appended independently under the whole-token-
  *  or-nothing rule of botInitArgAppendToken, mode first, so an
  *  arg with room for only one keeps the mode and logs the
- *  dropped difficulty.
+ *  dropped difficulty. A token whose key the arg already
+ *  carries ("difficulty=medium" from a bench or a scenario) is
+ *  not appended: the explicit one wins.
+ *
+ *  botManagerStageInitArg calls this only for a brain that
+ *  SHIPS a modes.txt; a brain without one keeps its init arg
+ *  untouched (it may parse the whole string as one value).
  *
  *ARGUMENTS:
  *  arg              - NUL-terminated buffer holding the arg so far
@@ -403,13 +416,6 @@ bool botInitArgAppendToken(char *arg, size_t argSz, const char *token);
  *  levelIdx         - LobbyBotConfig.difficulty for this slot
  *  playerNumForLog  - slot number, used only in the drop warning
  *********************************************************/
-/* True when the ';'/','-separated init arg already carries a token that
- * starts with `key` ("mode=", "difficulty="). Matched at token starts only,
- * so a "cfg=DIFFICULTY=..." write is not mistaken for a difficulty token.
- * botInitArgAppendModeTokens uses it to let an explicit token win over the
- * lobby config. */
-bool botInitArgHasKey(const char *arg, const char *key);
-
 void botInitArgAppendModeTokens(char *arg, size_t argSz,
                                 const BrainModes *modes,
                                 uint8_t modeIdx, uint8_t levelIdx,
