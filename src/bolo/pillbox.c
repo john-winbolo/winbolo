@@ -439,7 +439,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       if (foundTarget) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
-          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)));
+          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(*bestTank));
           shellsAddItem(sim, shs, x, y, dir, (float) (PILLBOX_FIRE_DISTANCE), NEUTRAL, FALSE);
           (*value)->item[count].reload = 0;
           sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, (*value)->item[count].x, (*value)->item[count].y);
@@ -711,8 +711,9 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
 *  angle  - Angle of the tank
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
+*  boatExitSpeed - Speed at which that tank leaves a boat
 *********************************************************/
-TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat) {
+TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed) {
   TURNTYPE returnValue; /* Value to return */
 
   if (speed == 0) {
@@ -745,7 +746,7 @@ TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD 
         /* Threshold: if |cos| > 0.5 (~60 degrees) the tank is heading
            roughly toward/away from the pill — use accurate aiming. */
         if (fabs(cosAngle) > 0.5) {
-          returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat);
+          returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
         } else {
           long tank_steps = ((long)speed * ((long)(dist + 0.5) - 16)) >> 2;
           long predictedX = (long)tankX + tank_steps * (long)tankDirX;
@@ -753,11 +754,11 @@ TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD 
           returnValue = utilCalcAngle(xValue, yValue, (WORLD)predictedX, (WORLD)predictedY);
         }
       } else {
-        returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat);
+        returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
       }
     }
 #else
-    returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat);
+    returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
 #endif
   }
 
@@ -782,8 +783,9 @@ TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD 
 *  angle  - Angle of the tank
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
+*  boatExitSpeed - Speed at which that tank leaves a boat
 *********************************************************/
-TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat) {
+TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed) {
   TURNTYPE returnValue; /* Value to return */
   TURNTYPE estimate;    /* Current Estimate */
   BYTE count;           /* Looping Variable */
@@ -853,12 +855,12 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     bmy = (BYTE) tankTestAddY;
 
     isLand = mapIsLand(mp, pb,bs, bmx, newbmy);
-    if (mapGetSpeed(sim,mp,pb,bs,bmx,newbmy, onBoat, sim->viewPlayer) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= BOAT_EXIT_SPEED))) {
+    if (mapGetSpeed(sim,mp,pb,bs,bmx,newbmy, onBoat, sim->viewPlayer) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= boatExitSpeed))) {
       tankY = (WORLD) (tankY + tankAddY);
     }
 
     isLand = mapIsLand(mp, pb,bs, newbmx, bmy);
-    if (mapGetSpeed(sim,mp,pb,bs,newbmx,bmy, onBoat, sim->viewPlayer) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= BOAT_EXIT_SPEED))) {
+    if (mapGetSpeed(sim,mp,pb,bs,newbmx,bmy, onBoat, sim->viewPlayer) > 0 && (onBoat == FALSE || (onBoat == TRUE && isLand == FALSE) || (onBoat == TRUE && isLand == TRUE && speed >= boatExitSpeed))) {
       tankX = (WORLD) (tankX + tankAddX);
     }
     

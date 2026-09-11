@@ -1126,7 +1126,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                       tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                       tankGetShells(&MY_TANK(csPtr)) > 0 &&
                       !tankIsDestroyed(&MY_TANK(csPtr))) {
-                    tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
+                    tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
                     tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
@@ -1245,7 +1245,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                 tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                 tankGetShells(&MY_TANK(csPtr)) > 0 &&
                 !tankIsDestroyed(&MY_TANK(csPtr))) {
-              tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
+              tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
               tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }

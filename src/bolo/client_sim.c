@@ -599,7 +599,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
     }
     clientSimAddPredictedShellAt(cs, preX, preY, preAngle, &MY_TANK(cs), pkt->tick);
     /* Update predicted tank state to match what the server will do */
-    tankSetReload(&MY_TANK(cs), TANK_RELOAD_TIME);
+    tankSetReload(&MY_TANK(cs), tankReloadTicks(&cs->sim, MY_TANK(cs)));
     tankSetShells(&MY_TANK(cs), tankGetShells(&MY_TANK(cs)) - 1);
   }
 

@@ -202,18 +202,6 @@ based on my testing.
 #define TANK_MOVE_BOAT_SUB 64
 #define TANK_MOVE_LAND_SUB 128 /* 96 */
 
-/* Speed we exit the boat at */
-#define BOAT_EXIT_SPEED 16
-
-/* Grace zone in world units past river tile edge when leaving boat */
-#define BOAT_GRACE_WORLD 32
-/* Speed penalty when hitting shore */
-#define BOAT_EXIT_SPEED_PENALTY 8
-/* Ticks before LeavingBoat gives up and returns to InBoat */
-#define BOAT_LEAVING_TIMEOUT 8
-/* Entry speed above which we exit the boat immediately (skip grace zone) */
-#define BOAT_FAST_EXIT_SPEED 16
-
 /* Minimum distance for seeing tank in trees = 3 map squares or 768 world co-ords */
 #define MIN_TREEHIDE_DIST 768
 
@@ -1455,6 +1443,49 @@ void tankGetModifiers(tank value, TankModifiers *out);
 
 /* 0 means classic, so an unmodified tank costs one branch and no maths. */
 static inline int tankModPct(uint8_t m) { return m == 0 ? 100 : (int)m; }
+
+/*********************************************************
+*NAME:          tankReloadTicks
+*PURPOSE:
+*  How long this tank waits between shots, in ticks. The
+*  reload modifier scales the classic time; a percentage
+*  low enough to round to zero fires every tick, which is
+*  what a script asking for it meant.
+*
+*ARGUMENTS:
+*  sim   - The game the tank belongs to
+*  value - The tank structure
+*********************************************************/
+BYTE tankReloadTicks(struct GameSim *sim, tank value);
+
+/*********************************************************
+*NAME:          tankDamageAmount
+*PURPOSE:
+*  The damage one blow actually does, from its base amount
+*  scaled by what the owner deals and what the victim takes.
+*  owner == NEUTRAL deals the classic amount. The result is
+*  rounded once and capped at a byte, so no caller rounds a
+*  second time.
+*
+*ARGUMENTS:
+*  sim    - The game both tanks belong to
+*  base   - The blow's unmodified damage
+*  owner  - Slot that dealt it, or NEUTRAL
+*  victim - Slot taking it
+*********************************************************/
+BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim);
+
+/*********************************************************
+*NAME:          tankBoatExitSpeed
+*PURPOSE:
+*  The speed at which this tank leaves a boat onto soft
+*  ground, scaled by its speed modifier. A tank capped below
+*  the classic figure could never reach it otherwise.
+*
+*ARGUMENTS:
+*  value - The tank structure
+*********************************************************/
+BYTE tankBoatExitSpeed(tank value);
 
 void tankGetCarriedPillNum(tank *value, BYTE pillNum);
 void tankPutPill(struct GameSim *sim, tank *value, BYTE pillNum);

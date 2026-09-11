@@ -3314,6 +3314,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
+    # The sites that read a modifier: the movement rates, the turn rate, the
+    # reload helper, the damage helper, the boat-exit speed and the brain's
+    # stop predictor.
+    tests/unit/test_tank_modifier_sites.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
@@ -4609,6 +4613,20 @@ set(_unit_test_names
     console_read_reports_eof
     console_read_timeout_then_eof
     wbv_fixture_summaries
+    tank_mod_speed_caps_on_road
+    tank_mod_speed_river_still_moves
+    tank_mod_accel_doubles_ticks_to_cap
+    tank_mod_accel_doubles_ticks_to_brake
+    tank_mod_accel_halves_autoslow
+    tank_mod_turn_halves_circle_ticks
+    tank_mod_reload_fires_twice_as_often
+    tank_mod_dealt_kills_in_half_the_hits
+    tank_mod_taken_takes_more_hits
+    tank_mod_mine_damage_scales_with_layer
+    tank_mod_neutral_owner_deals_classic
+    tank_mod_boat_exit_at_half_speed
+    tank_mod_pill_leads_half_speed_boat
+    tank_mod_predicted_stop_matches_engine
     tank_modifiers_op_writes_set
     tank_modifiers_op_refusals
     tank_modifiers_wire_roundtrip

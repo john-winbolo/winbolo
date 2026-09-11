@@ -576,6 +576,10 @@ void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag) {
   if (pf) pf->abort_flag = flag;
 }
 
+void brainPathfinderSetAccelPct(BrainPathfinder *pf, uint8_t pct) {
+  if (pf) pf->accel_pct = pct;
+}
+
 /* One-line check used by the inner search loops. NULL flag → never
  * abort. The cast lets the header stay SDL3-free. Polled per outer
  * iteration only — never inside per-neighbour loops, where the cost

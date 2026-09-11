@@ -1843,6 +1843,24 @@ int run_console_say_keeps_case(void);
 /* The per-tank modifier set (test_tank_modifiers.c): the op that writes it,
  * the states it refuses, the snapshot group under the ninth presence bit, and
  * the create-clears / respawn-keeps rule for the values on the tank. */
+/* The sites that read a modifier (test_tank_modifier_sites.c): one case per
+ * site, each pairing the modified run with a classic one on the same
+ * square so only the modifier is under test. */
+int run_tank_mod_speed_caps_on_road(void);
+int run_tank_mod_speed_river_still_moves(void);
+int run_tank_mod_accel_doubles_ticks_to_cap(void);
+int run_tank_mod_accel_doubles_ticks_to_brake(void);
+int run_tank_mod_accel_halves_autoslow(void);
+int run_tank_mod_turn_halves_circle_ticks(void);
+int run_tank_mod_reload_fires_twice_as_often(void);
+int run_tank_mod_dealt_kills_in_half_the_hits(void);
+int run_tank_mod_taken_takes_more_hits(void);
+int run_tank_mod_mine_damage_scales_with_layer(void);
+int run_tank_mod_neutral_owner_deals_classic(void);
+int run_tank_mod_boat_exit_at_half_speed(void);
+int run_tank_mod_pill_leads_half_speed_boat(void);
+int run_tank_mod_predicted_stop_matches_engine(void);
+
 int run_tank_modifiers_op_writes_set(void);
 int run_tank_modifiers_op_refusals(void);
 int run_tank_modifiers_wire_roundtrip(void);

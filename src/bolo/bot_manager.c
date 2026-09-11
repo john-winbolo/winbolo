@@ -794,6 +794,19 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
     }
     botUpdateBrainMap(bot, sim);
 
+    /* Hand the pathfinder this tank's acceleration modifier before the think,
+     * so cpf_predict_stop brakes at the rate the engine will rather than at
+     * the classic one. Read from the ServerSim, which is immutable during the
+     * brain phase. */
+    if (bot->brain.pathfinder != NULL) {
+        TankModifiers mods;
+        memset(&mods, 0, sizeof(mods));
+        if (bot->playerNum < MAX_TANKS && gs->tanks[bot->playerNum] != NULL) {
+            tankGetModifiers(gs->tanks[bot->playerNum], &mods);
+        }
+        brainPathfinderSetAccelPct(bot->brain.pathfinder, mods.accel);
+    }
+
     /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.
      * We now still run the think so the brain can reset its own state for a
      * clean respawn. brainDataMakeInfo sets info.dead, the brain early-returns

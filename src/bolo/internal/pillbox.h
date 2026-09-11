@@ -323,7 +323,7 @@ BYTE pillsGetScreenHealth(struct GameSim *sim, pillboxes *value, BYTE xValue, BY
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
 *********************************************************/
-TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat);
+TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed);
 
 /*********************************************************
 *NAME:          pillsTargetTankMove
@@ -344,7 +344,7 @@ TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs,
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
 *********************************************************/
-TURNTYPE pillsTargetTankMove(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat);
+TURNTYPE pillsTargetTankMove(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed);
 
 /*********************************************************
 *NAME:          pillsDeadPos

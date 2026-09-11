@@ -556,7 +556,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     a = (*value)->sightLen;
     c = a / b;
     shellsAddItem(sim, shs, (*value)->x, (*value)->y, (*value)->angle, c, gameSimGetTankPlayer(sim, value), (*value)->onBoat);
-    (*value)->reload = TANK_RELOAD_TIME;
+    (*value)->reload = tankReloadTicks(sim, *value);
     (*value)->shells--;
 
     if (!isServer) {
@@ -1315,9 +1315,10 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		bool wasDestroyed = tankApplyDamage(value, DAMAGE);
+		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value));
+		bool wasDestroyed = tankApplyDamage(value, amount);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
-			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
 			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
 			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
@@ -1658,7 +1659,9 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   /* Auto-slowdown */
   if ((*value)->speed > 0 && (*value)->autoSlowdown == TRUE && inBrain == FALSE) {
     if (tb != TDECEL && tb != TLEFTDECEL && tb != TRIGHTDECEL && tb != TACCEL && tb != TLEFTACCEL && tb != TRIGHTACCEL) {
-      (*value)->speed -= TANK_AUTOSLOW_SPEED;
+      /* The same rate family as the decel keys, so the accel modifier
+         governs it too. */
+      (*value)->speed -= TANK_AUTOSLOW_SPEED * tankModPct((*value)->mods.accel) / 100;
       if ((*value)->speed < 0) {
         (*value)->speed = 0;
       }
@@ -1837,8 +1840,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
        * crosses and triggers the per-axis revert below. Skipped for
        * road/halfbuilding (slow exit onto road still works) and for
        * BOAT (allows pickup of an adjacent parked boat). Skipped at
-       * speed >= BOAT_FAST_EXIT_SPEED so deliberate fast exits work. */
-      if ((*value)->speed < BOAT_FAST_EXIT_SPEED &&
+       * the tank's own boat-exit speed so deliberate fast exits work. */
+      if ((*value)->speed < tankBoatExitSpeed(*value) &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == FALSE) {
         WORLD rMinX = ((WORLD)newbmx) << TANK_SHIFT_MAPSIZE;
         WORLD rMaxX = (((WORLD)newbmx + 1) << TANK_SHIFT_MAPSIZE) - 1;
@@ -1886,7 +1889,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
           (*value)->boatState = BoatState_NotOnBoat;
           (*value)->onBoat = FALSE;
           if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
-        } else if ((*value)->speed >= BOAT_FAST_EXIT_SPEED) {
+        } else if ((*value)->speed >= tankBoatExitSpeed(*value)) {
           /* Fast approach on soft terrain — instant exit.
            * Only drop boat if last river tile is adjacent (deep sea→land skip) */
           if (abs(newbmx - (*value)->lastBoatRiverX) + abs(newbmy - (*value)->lastBoatRiverY) <= 2) {
@@ -1903,7 +1906,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         } else {
           /* Soft terrain, slow approach — per-axis position revert.
            * Tank stays on the starting river tile until speed reaches
-           * BOAT_FAST_EXIT_SPEED. Sliding along the bank works because
+           * its boat-exit speed. Sliding along the bank works because
            * the parallel axis isn't blocked. Mirrors original WinBolo
            * boat-exit behavior. */
           WORLD rMinX = ((WORLD)bmx) << TANK_SHIFT_MAPSIZE;
@@ -2036,10 +2039,13 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
   TURNTYPE turnAmount; /* Amount to turn */
+  /* Scales the terrain's turn rate before the ramp below, so a modified tank
+     ramps up over the same six ticks. */
+  int turnPct = tankModPct((*value)->mods.turn);
 
   /* Left turn */
   if (tb == TLEFT || tb == TLEFTACCEL || tb == TLEFTDECEL) {
-    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value)) * turnPct / 100;
     if ((*value)->firstLeft < 6) {
       (*value)->firstLeft++;
       turnAmount /= 8;
@@ -2053,7 +2059,7 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   }
   /* Right Turn */
   if (tb == TRIGHT || tb == TRIGHTACCEL || tb == TRIGHTDECEL) {
-    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value)) * turnPct / 100;
     if ((*value)->firstRight < 6) {
       (*value)->firstRight++;
       turnAmount /= 8;
@@ -2088,17 +2094,29 @@ void tankAccel(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
-  BYTE displace; /* Amount to move */
+  BYTE rawCap;             /* Terrain's own cap for this square */
+  SPEEDTYPE displace;      /* That cap once the tank's speed modifier applies */
   SPEEDTYPE subAmount;     /* Amount to subtract */
+  int accelPct = tankModPct((*value)->mods.accel);
+  /* Both rates scale together: the accel modifier is how fast speed changes
+     in either direction, not how fast it rises. */
+  SPEEDTYPE terrainDecel = (SPEEDTYPE) (TANK_TERRAIN_DECEL_RATE * accelPct / 100);
+  SPEEDTYPE slowKeyRate = (SPEEDTYPE) (TANK_SLOWKEY_RATE * accelPct / 100);
 
-  displace = mapGetSpeed(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+  rawCap = mapGetSpeed(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+  displace = (SPEEDTYPE) ((rawCap * tankModPct((*value)->mods.speed)) / 100);
+  /* Ground the tank can cross stays crossable however slow it has been made:
+     a cap that scales away to nothing becomes the smallest cap that moves. */
+  if (rawCap > 0 && displace < 1) {
+    displace = 1;
+  }
   if ((tb == TDECEL || tb == TLEFTDECEL || tb == TRIGHTDECEL) || (*value)->speed > displace)  {
     subAmount = (*value)->speed;
     if ((*value)->speed > displace) {
-      subAmount = (SPEEDTYPE) ((*value)->speed - TANK_TERRAIN_DECEL_RATE);
+      subAmount = (SPEEDTYPE) ((*value)->speed - terrainDecel);
     }
     if (tb == TDECEL || tb == TLEFTDECEL || tb == TRIGHTDECEL) {
-      subAmount -= (float) TANK_SLOWKEY_RATE;
+      subAmount -= slowKeyRate;
     }
     if (subAmount > (*value)->speed) {
       ((*value)->speed) = 0;
@@ -2109,7 +2127,7 @@ void tankAccel(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
       }
     }
   } else if ((*value)->speed < displace && (tb == TACCEL || tb == TLEFTACCEL || tb == TRIGHTACCEL))  {
-    ((*value)->speed) += TANK_ACCELERATE_RATE;
+    ((*value)->speed) += TANK_ACCELERATE_RATE * accelPct / 100;
     if ((*value)->speed > displace) {
       (*value)->speed = displace;
     }
@@ -2683,9 +2701,10 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
 
   if (diffX < 384 && diffY < 384 && !(*value)->destroyed) {
     BYTE armourBefore = (*value)->armour;
-    bool wasDestroyed = tankApplyDamage(value, MINE_DAMAGE);
+    BYTE amount = tankDamageAmount(sim, MINE_DAMAGE, owner, gameSimGetTankPlayer(sim, value));
+    bool wasDestroyed = tankApplyDamage(value, amount);
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
-      uint16_t eff = (armourBefore >= MINE_DAMAGE) ? MINE_DAMAGE : armourBefore;
+      uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
       sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
                                   gameSimGetTankPlayer(sim, value), DMG_SRC_MINE, eff, false,
                                   (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
@@ -3300,6 +3319,74 @@ void tankGetModifiers(tank value, TankModifiers *out) {
   *out = value->mods;
 }
 
+/*********************************************************
+*NAME:          tankReloadTicks
+*PURPOSE:
+*  How long this tank waits between shots, in ticks
+*
+*ARGUMENTS:
+*  sim   - The game the tank belongs to
+*  value - The tank structure
+*********************************************************/
+BYTE tankReloadTicks(GameSim *sim, tank value) {
+  int pct;
+  (void)sim;
+  pct = (value == NULL) ? 100 : tankModPct(value->mods.reload);
+  /* Multiply before dividing, and round half up, so 100 percent is exactly
+     the classic time. */
+  return (BYTE) ((TANK_RELOAD_TIME * pct + 50) / 100);
+}
+
+/*********************************************************
+*NAME:          tankDamageAmount
+*PURPOSE:
+*  The damage one blow actually does after the owner's and
+*  the victim's modifiers
+*
+*ARGUMENTS:
+*  sim    - The game both tanks belong to
+*  base   - The blow's unmodified damage
+*  owner  - Slot that dealt it, or NEUTRAL
+*  victim - Slot taking it
+*********************************************************/
+BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim) {
+  int dealt = 100;  /* An environmental blow deals the classic amount */
+  int taken = 100;
+  int amount;
+
+  if (sim != NULL) {
+    if (owner < MAX_TANKS && sim->tanks[owner] != NULL) {
+      dealt = tankModPct(sim->tanks[owner]->mods.dealt);
+    }
+    if (victim < MAX_TANKS && sim->tanks[victim] != NULL) {
+      taken = tankModPct(sim->tanks[victim]->mods.taken);
+    }
+  }
+
+  /* One rounding at the end, so the two factors compose without each
+     losing a fraction. A third factor belongs here when the damage-scale
+     decision arrives; it divides by the same power of a hundred. */
+  amount = (base * dealt * taken + 5000) / 10000;
+  if (amount > 255) {
+    amount = 255;
+  }
+  return (BYTE) amount;
+}
+
+/*********************************************************
+*NAME:          tankBoatExitSpeed
+*PURPOSE:
+*  The speed at which this tank leaves a boat onto soft
+*  ground
+*
+*ARGUMENTS:
+*  value - The tank structure
+*********************************************************/
+BYTE tankBoatExitSpeed(tank value) {
+  int pct = (value == NULL) ? 100 : tankModPct(value->mods.speed);
+  return (BYTE) ((MAP_SPEED_TBOAT * pct) / 100);
+}
+
 
 void tankPutPill(GameSim *sim, tank *value, BYTE pillNum) {
   pillboxes *pb = &sim->pb;
@@ -3552,9 +3639,10 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		bool wasDestroyed = tankApplyDamage(value, DAMAGE);
+		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value));
+		bool wasDestroyed = tankApplyDamage(value, amount);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
-			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
 			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
 			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
