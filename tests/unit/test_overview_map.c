@@ -442,7 +442,7 @@ int run_overview_regions(void) {
 
             /* And with it on the ground behind the building drops out of the
              * block while the building itself stays in it. */
-            fog.sightMode = (uint8_t)fogSightBuildings;
+            fog.sightMode = (uint8_t)fogSightBuildingsAndTrees;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
             UT_ASSERT_MSG(om->hiddenActive == TRUE,
                           "the map hid nothing with the toggle on");
@@ -541,7 +541,7 @@ int run_overview_regions(void) {
                 hiddenTile = om->tile[106][100];
                 seenTile = om->tile[102][100];
 
-                fog.sightMode = (uint8_t)fogSightBuildings;
+                fog.sightMode = (uint8_t)fogSightBuildingsAndTrees;
                 overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
                 UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0,
                               "the square behind the building carries flags "

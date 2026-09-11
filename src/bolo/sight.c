@@ -74,12 +74,11 @@ static bool sightIsTree(map *mp, int x, int y) {
 
 /* Walks the line from one square to another and says whether it arrives.
  * Neither end is tested for what is on it; every square the walk passes
- * through in between is. Under sightModeBuildingsAndTrees the walk also carries
- * the run of forest squares it has come through back to back, which is what
- * makes the depth a thickness of wood rather than a tally of every tree on the
- * line: one square that is not forest puts it back to zero. */
-static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1,
-                             SightMode mode) {
+ * through in between is. The walk also carries the run of forest squares it
+ * has come through back to back, which is what makes the depth a thickness of
+ * wood rather than a tally of every tree on the line: one square that is not
+ * forest puts it back to zero. */
+static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1) {
   int trees; /* Forest squares passed through in a row */
   int dx;    /* Squares across, counted up */
   int dy;    /* Squares down, counted down, so one error term serves both */
@@ -116,9 +115,9 @@ static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1,
 
     /* A step that moves on both axes cuts the corner where the two squares
      * beside it meet. Two buildings touching along that edge close it, so
-     * sight does not slip between them. Trees are left out of this whatever
-     * the mode: the depth rule is about how far into a wood a player sees, and
-     * a pair of trees is not a wall. */
+     * sight does not slip between them. Trees are left out of this: the depth
+     * rule is about how far into a wood a player sees, and a pair of trees is
+     * not a wall. */
     if (stepX != 0 && stepY != 0 &&
         sightBlocks(mp, x + stepX, y) == TRUE &&
         sightBlocks(mp, x, y + stepY) == TRUE) {
@@ -133,21 +132,19 @@ static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1,
     if (sightBlocks(mp, x, y) == TRUE) {
       return FALSE;
     }
-    if (mode == sightModeBuildingsAndTrees) {
-      if (sightIsTree(mp, x, y) == TRUE) {
-        trees++;
-        if (trees > SIGHT_TREE_MAX_DEPTH) {
-          return FALSE;
-        }
-      } else {
-        trees = 0;
+    if (sightIsTree(mp, x, y) == TRUE) {
+      trees++;
+      if (trees > SIGHT_TREE_MAX_DEPTH) {
+        return FALSE;
       }
+    } else {
+      trees = 0;
     }
   }
   return TRUE;
 }
 
-void sightBuildMask(map *mp, BYTE originX, BYTE originY, SightMode mode,
+void sightBuildMask(map *mp, BYTE originX, BYTE originY,
                     const OverviewRect *block, BYTE *vis) {
   int width;  /* Squares across the block, which is the mask's stride */
   int height; /* Squares down it */
@@ -179,7 +176,7 @@ void sightBuildMask(map *mp, BYTE originX, BYTE originY, SightMode mode,
       } else if (x == ox && y == oy) {
         seen = TRUE;
       } else {
-        seen = sightLineReaches(mp, ox, oy, x, y, mode);
+        seen = sightLineReaches(mp, ox, oy, x, y);
       }
       row[x - block->left] = (BYTE)((seen == TRUE) ? 1 : 0);
     }

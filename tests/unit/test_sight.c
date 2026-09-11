@@ -46,16 +46,9 @@ static OverviewRect sightBlock(int left, int top, int right, int bottom) {
 
 /* Fills the buffer with the guard byte and builds over it, so anything the
  * builder did not write reads as neither seen nor hidden. */
-static void sightRunMode(BYTE originX, BYTE originY, SightMode mode,
-                         const OverviewRect *block) {
-    memset(visBuf, SIGHT_GUARD_FILL, sizeof(visBuf));
-    sightBuildMask(&sightMap, originX, originY, mode, block, visBuf);
-}
-
-/* The buildings mode, which is the rule every case written before trees were
- * counted works to. */
 static void sightRun(BYTE originX, BYTE originY, const OverviewRect *block) {
-    sightRunMode(originX, originY, sightModeBuildings, block);
+    memset(visBuf, SIGHT_GUARD_FILL, sizeof(visBuf));
+    sightBuildMask(&sightMap, originX, originY, block, visBuf);
 }
 
 static bool sightSeen(const OverviewRect *block, int x, int y) {
@@ -204,10 +197,11 @@ static int sight_off_map_squares_are_unseen(void) {
     return sightBlockFullyWritten(&block);
 }
 
-/* Only a building and a half building stop a line. Forest above all: the tree
- * hide already covers a tank standing in one, and forest that blocked sight
- * would blind whole maps. */
-static int sight_only_buildings_block(void) {
+/* One square of terrain on the line stops it only if it is a building or a
+ * half building. Forest above all: a single tree is seen past - it takes a
+ * stand of them to stop a line, which is the depth cases below - and the tree
+ * hide already covers a tank standing in one. */
+static int sight_one_square_blocks_only_if_it_is_a_building(void) {
     static const BYTE kTerrains[] = {
         BUILDING,   RIVER,       SWAMP,      CRATER,     ROAD,
         FOREST,     RUBBLE,      GRASS,      HALFBUILDING, BOAT,
@@ -306,12 +300,12 @@ static int sight_shallow_trees_are_seen_through(void) {
 
     sightMapFill(GRASS);
     sightMapSet(103, 100, FOREST);
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
+    sightRun(100, 100, &block);
     UT_ASSERT_MSG(sightSeen(&block, 106, 100),
                   "one tree on the line hid the ground behind it");
 
     sightMapSet(104, 100, FOREST);
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
+    sightRun(100, 100, &block);
     UT_ASSERT_MSG(sightSeen(&block, 106, 100),
                   "two trees in a row hid the ground behind them");
     return sightGuardIntact();
@@ -328,7 +322,7 @@ static int sight_three_trees_in_a_row_block(void) {
     sightMapSet(103, 100, FOREST);
     sightMapSet(104, 100, FOREST);
     sightMapSet(105, 100, FOREST);
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
+    sightRun(100, 100, &block);
 
     for (x = 101; x <= 105; x++) {
         UT_ASSERT_MSG(sightSeen(&block, x, 100),
@@ -353,7 +347,7 @@ static int sight_a_mined_tree_still_counts_as_a_tree(void) {
     sightMapSet(103, 100, FOREST);
     sightMapSet(104, 100, MINE_FOREST);
     sightMapSet(105, 100, FOREST);
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
+    sightRun(100, 100, &block);
     UT_ASSERT_MSG(sightSeen(&block, 105, 100),
                   "the third tree of the run is hidden");
     UT_ASSERT_MSG(!sightSeen(&block, 106, 100),
@@ -374,14 +368,14 @@ static int sight_a_gap_between_bands_of_trees_resets_the_run(void) {
     sightMapSet(102, 100, FOREST);
     sightMapSet(104, 100, FOREST);
     sightMapSet(105, 100, FOREST);
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
+    sightRun(100, 100, &block);
     UT_ASSERT_MSG(sightSeen(&block, 106, 100),
                   "two bands of two trees with a square of grass between them "
                   "hid the ground behind them, so the count is being carried "
                   "across the gap");
 
     sightMapSet(103, 100, FOREST);
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
+    sightRun(100, 100, &block);
     UT_ASSERT_MSG(!sightSeen(&block, 106, 100),
                   "filling the gap makes one run of five trees and the ground "
                   "behind it is still seen");
@@ -396,34 +390,11 @@ static int sight_corner_between_two_trees_stays_open(void) {
     sightMapFill(GRASS);
     sightMapSet(101, 100, FOREST);
     sightMapSet(100, 101, FOREST);
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
+    sightRun(100, 100, &block);
     UT_ASSERT_MSG(sightSeen(&block, 101, 101),
                   "sight was stopped at the corner where two trees meet");
     UT_ASSERT_MSG(sightSeen(&block, 102, 102),
                   "the ground past that corner is hidden");
-    return sightGuardIntact();
-}
-
-/* Under the buildings mode no depth of trees stops anything, which is what
- * keeps the two modes apart: the same wood that shuts the line under one is
- * seen straight through under the other. */
-static int sight_trees_never_block_under_the_buildings_mode(void) {
-    OverviewRect block = sightBlock(86, 86, 114, 114);
-    int x; /* Looping variable */
-
-    sightMapFill(GRASS);
-    for (x = 101; x <= 110; x++) {
-        sightMapSet(x, 100, FOREST);
-    }
-    sightRun(100, 100, &block);
-    UT_ASSERT_MSG(sightSeen(&block, 114, 100),
-                  "ten trees in a row hid the ground behind them under the "
-                  "buildings mode");
-
-    sightRunMode(100, 100, sightModeBuildingsAndTrees, &block);
-    UT_ASSERT_MSG(!sightSeen(&block, 114, 100),
-                  "the same ten trees are seen straight through under the mode "
-                  "that counts them");
     return sightGuardIntact();
 }
 
@@ -435,7 +406,7 @@ int run_sight(void) {
     rc = sight_wall_beside_the_line_hides_nothing();       if (rc) return rc;
     rc = sight_corner_between_two_buildings_is_closed();   if (rc) return rc;
     rc = sight_off_map_squares_are_unseen();               if (rc) return rc;
-    rc = sight_only_buildings_block();                     if (rc) return rc;
+    rc = sight_one_square_blocks_only_if_it_is_a_building(); if (rc) return rc;
     rc = sight_block_away_from_the_origin();               if (rc) return rc;
     rc = sight_oversize_block_is_refused();                if (rc) return rc;
     rc = sight_shallow_trees_are_seen_through();           if (rc) return rc;
@@ -443,6 +414,5 @@ int run_sight(void) {
     rc = sight_a_mined_tree_still_counts_as_a_tree();      if (rc) return rc;
     rc = sight_a_gap_between_bands_of_trees_resets_the_run(); if (rc) return rc;
     rc = sight_corner_between_two_trees_stays_open();      if (rc) return rc;
-    rc = sight_trees_never_block_under_the_buildings_mode(); if (rc) return rc;
     return 0;
 }

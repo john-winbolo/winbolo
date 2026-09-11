@@ -1173,10 +1173,10 @@ const char  *clientSimFogExperimentBlurb(int e);
 bool         clientSimFogViewDrivesBlock(void);
 
 /* And what stops the player seeing inside that block: 0 = off, nothing blocks;
-   1 = buildings; 2 = buildings, and no further than two trees deep into a
-   stand of forest. Values match FogSightMode, exposed the same way and with
-   the same count, name and blurb. Setting wraps, so a caller can step the
-   selector on without knowing where it ends. Process-global, not saved. */
+   1 = buildings, and no further than two trees deep into a stand of forest.
+   Values match FogSightMode, exposed the same way and with the same count,
+   name and blurb. Setting wraps, so a caller can step the selector on without
+   knowing where it ends. Process-global, not saved. */
 int          clientSimGetFogSight(void);
 void         clientSimSetFogSight(int m);
 int          clientSimFogSightCount(void);

@@ -47,13 +47,12 @@ typedef enum {
   FOG_EXPERIMENT_COUNT
 } FogExperiment;
 
-/* What stops the player seeing inside that block: nothing, buildings, or
- * buildings and any stand of trees more than SIGHT_TREE_MAX_DEPTH deep. One
- * selector rather than a toggle per rule, so the readout can name the rule a
- * screenshot was taken under. */
+/* Whether anything stops the player seeing inside that block: nothing, or
+ * buildings and any stand of trees more than SIGHT_TREE_MAX_DEPTH deep. Held
+ * as a selector rather than a bool so the readout names the rule a screenshot
+ * was taken under, and so another rule can join it without a second toggle. */
 typedef enum {
   fogSightOff = 0,
-  fogSightBuildings,
   fogSightBuildingsAndTrees,
   FOG_SIGHT_COUNT
 } FogSightMode;
@@ -227,10 +226,10 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  *
  * With sightMode past fogSightOff, the blocks round the player's own tank are
  * masked by what the tank can actually see from where it stands: a square with
- * a building - or, under fogSightBuildingsAndTrees, a deep enough stand of
- * trees - between it and the tank keeps the tile it last showed, carries
- * OVERVIEW_F_HIDDEN instead of the live and sight bits, and is left in full
- * fog. The last stamp those blocks get as they stop being live is masked the
+ * a building, or a deep enough stand of trees, between it and the tank keeps
+ * the tile it last showed, carries OVERVIEW_F_HIDDEN instead of the live and
+ * sight bits, and is left in full fog. The last stamp those blocks get as they
+ * stop being live is masked the
  * same way, from the square the tank last had a block on, so letting the block
  * go does not show the player what it had been keeping from them. Watched items
  * are never masked - the player is seeing through the item, not from the tank -

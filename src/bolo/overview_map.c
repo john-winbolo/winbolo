@@ -127,14 +127,12 @@ const char *overviewFogExperimentBlurb(FogExperiment e) {
 /* And what each sight mode is called, in enum order, for the same readout. */
 static const char *kFogSightNames[FOG_SIGHT_COUNT] = {
   "Off",
-  "Buildings",
   "Buildings and trees"
 };
 
 static const char *kFogSightBlurbs[FOG_SIGHT_COUNT] = {
-  "Buildings do not block sight",
-  "You cannot see through a building",
-  "Two trees deep is as far as you see"
+  "Nothing blocks sight",
+  "A building stops you, and two trees deep is as far as you see"
 };
 
 const char *overviewFogSightName(FogSightMode m) {
@@ -149,16 +147,6 @@ const char *overviewFogSightBlurb(FogSightMode m) {
     return "";
   }
   return kFogSightBlurbs[(int)m];
-}
-
-/* What the walk is handed for a mode that is having a mask built. fogSightOff
- * never reaches the walk through the live stamp - the caller builds no sight
- * mask at all - and the farewell stamp reads last update's hiddenActive rather
- * than the mode, so a mode dropped on the same tick a block goes still masks
- * that last stamp by buildings, exactly as it did before trees were counted. */
-static SightMode overviewSightMode(uint8_t mode) {
-  return (mode == (uint8_t)fogSightBuildingsAndTrees) ? sightModeBuildingsAndTrees
-                                                      : sightModeBuildings;
 }
 
 bool overviewFogBlockFollowsView(FogExperiment e) {
@@ -310,19 +298,16 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
  * origin, and the honest answer is where it was standing when it last had a
  * block. With no such square recorded there is nothing to work from.
  *
- * The rule is the one the live stamp below is about to use, so a block on its
- * way out is masked the same way it was drawn rather than another.
- *
  * Every square is marked seen first, so a block too wide for the buffer reads
  * as nothing being hidden rather than as whatever was in it. */
 static const BYTE *overviewFarewellMask(const OverviewMap *om,
-                                        struct GameSim *sim, SightMode mode,
+                                        struct GameSim *sim,
                                         const OverviewRect *r, BYTE *vis) {
   if (om->hiddenActive == FALSE || om->haveLastTank == FALSE) {
     return NULL;
   }
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, mode, r, vis);
+  sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, r, vis);
   return vis;
 }
 
@@ -685,7 +670,6 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   bool nowInTank;      /* Is this pill being carried this update */
   OverviewRect square; /* A single square being held current on its own */
   bool hideOn;         /* Is anything hiding squares inside the tank's blocks */
-  SightMode sightRule; /* Which blockers the sight walk is built from */
   int  ownBlocks;      /* Rects at the head of the list that are those blocks */
   const BYTE *visPtr;  /* The mask the rect being stamped is masked with */
   BYTE vis[SIGHT_MASK_BYTES]; /* One block's mask, rebuilt for each of them */
@@ -695,10 +679,6 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   if (om == NULL || sim == NULL || in == NULL) {
     return;
   }
-
-  /* Settled once, so the farewell stamp below and the live stamp under it
-   * cannot mask their blocks by different rules. */
-  sightRule = overviewSightMode(in->sightMode);
 
   /* Which square the tank block sits on, if there is one at all. A tank with a
    * position of its own records the square here on the way past; one that is
@@ -781,8 +761,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   idx = 0;
   if (om->tankWasLive == TRUE) {
     if (tankLive == FALSE && idx < om->prevLiveCount) {
-      visPtr = overviewFarewellMask(om, sim, sightRule, &om->prevLive[idx],
-                                    vis);
+      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
                             visPtr) == TRUE) {
         changed = TRUE;
@@ -913,7 +892,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
        * for the buffer - which no experiment builds today - reads as nothing
        * being hidden rather than as whatever the last one left behind. */
       memset(vis, 1, sizeof(vis));
-      sightBuildMask(&sim->mp, useMX, useMY, sightRule, &om->live[i], vis);
+      sightBuildMask(&sim->mp, useMX, useMY, &om->live[i], vis);
       visPtr = vis;
     }
     if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE, visPtr) ==

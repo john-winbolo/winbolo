@@ -151,15 +151,10 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
                                                BYTE *vis) {
   BYTE mx; /* The square the tank is standing on */
   BYTE my;
-  FogSightMode mode; /* What is blocking sight this tick */
-  SightMode rule;    /* Which blockers the walk is to count */
 
-  mode = overviewFogSightGet();
-  if (mode == fogSightOff) {
+  if (overviewFogSightGet() == fogSightOff) {
     return NULL;
   }
-  rule = (mode == fogSightBuildingsAndTrees) ? sightModeBuildingsAndTrees
-                                             : sightModeBuildings;
   if (clientSimGetMyTankMapPos(csPtr, &mx, &my) == FALSE) {
     return NULL;
   }
@@ -173,8 +168,7 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
   out->block.right = out->block.left + MAIN_BACK_BUFFER_SIZE_X - 1;
   out->block.bottom = out->block.top + MAIN_BACK_BUFFER_SIZE_Y - 1;
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, rule, &out->block,
-                 vis);
+  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, &out->block, vis);
   out->vis = vis;
   return out;
 }
