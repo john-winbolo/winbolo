@@ -1099,6 +1099,35 @@ static ScnOpResult scenarioOpMapRemoveMine(ServerSim *sim,
  * item.
  */
 
+/* Put the change in the recording as well as on the bus. A control event never
+ * reaches the .wbv — the stream carries logitem records only — so without this
+ * a replay would go on showing an item the round had taken off the map until
+ * the next snapshot, and would never show one that had been added. The record
+ * bytes are read back out of the event that has just been filled, so the two
+ * channels cannot drift: what a live client applies and what a replay applies
+ * are the same six or three bytes. */
+static void scenarioRecordEntityChange(const ControlEvent *evt,
+                                       const BYTE *rec, BYTE recLen) {
+    char blob[8];
+    blob[0] = (char) recLen;
+    memcpy(blob + 1, rec, recLen);
+    logAddEvent(log_EntityChange, evt->u.entityChange.kind,
+                evt->u.entityChange.index, evt->u.entityChange.added,
+                0, 0, blob);
+}
+
+/* A lobby shows the map's pill, base and start counts, and it learns them from
+ * the settings event. An add raises one of the three, so the event goes out
+ * again; a removal leaves the count where it is — the slot is a tombstone — and
+ * republishing an unchanged count is the cheaper answer than working out which
+ * ops move it. Only while there is a lobby to tell: a running round takes its
+ * counts from the per-tick sync and the entity event. */
+static void scenarioRepublishLobbyCounts(ServerSim *sim) {
+    if (sim->state == serverStateLobby || sim->state == serverStateCountdown) {
+        serverSimPublishLobbySettings(sim);
+    }
+}
+
 /* Tell every subscriber that one pillbox has joined the map or left it. The
  * index counts from zero, as the snapshots, the game events and the brain API
  * do, while the list counts from one, so the arm passes the op's own index.
@@ -1109,6 +1138,7 @@ static ScnOpResult scenarioOpMapRemoveMine(ServerSim *sim,
 static void scenarioPublishPill(ServerSim *sim, BYTE index0,
                                 const pillbox *item, bool added) {
     ControlEvent evt;
+    BYTE rec[6];
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ENTITY_CHANGE;
     evt.u.entityChange.kind   = ENTITY_KIND_PILL;
@@ -1121,6 +1151,14 @@ static void scenarioPublishPill(ServerSim *sim, BYTE index0,
     evt.u.entityChange.rec.pill.speed  = item->speed;
     evt.u.entityChange.rec.pill.inTank = item->inTank ? 1u : 0u;
     serverSimPublishControl(sim, &evt);
+    rec[0] = evt.u.entityChange.rec.pill.x;
+    rec[1] = evt.u.entityChange.rec.pill.y;
+    rec[2] = evt.u.entityChange.rec.pill.owner;
+    rec[3] = evt.u.entityChange.rec.pill.armour;
+    rec[4] = evt.u.entityChange.rec.pill.speed;
+    rec[5] = evt.u.entityChange.rec.pill.inTank;
+    scenarioRecordEntityChange(&evt, rec, (BYTE) sizeof(rec));
+    scenarioRepublishLobbyCounts(sim);
 }
 
 /* The same for a base. refuelTime, baseTime and justStopped stay behind for
@@ -1128,6 +1166,7 @@ static void scenarioPublishPill(ServerSim *sim, BYTE index0,
 static void scenarioPublishBase(ServerSim *sim, BYTE index0,
                                 const base *item, bool added) {
     ControlEvent evt;
+    BYTE rec[6];
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ENTITY_CHANGE;
     evt.u.entityChange.kind   = ENTITY_KIND_BASE;
@@ -1140,12 +1179,21 @@ static void scenarioPublishBase(ServerSim *sim, BYTE index0,
     evt.u.entityChange.rec.base.shells = item->shells;
     evt.u.entityChange.rec.base.mines  = item->mines;
     serverSimPublishControl(sim, &evt);
+    rec[0] = evt.u.entityChange.rec.base.x;
+    rec[1] = evt.u.entityChange.rec.base.y;
+    rec[2] = evt.u.entityChange.rec.base.owner;
+    rec[3] = evt.u.entityChange.rec.base.armour;
+    rec[4] = evt.u.entityChange.rec.base.shells;
+    rec[5] = evt.u.entityChange.rec.base.mines;
+    scenarioRecordEntityChange(&evt, rec, (BYTE) sizeof(rec));
+    scenarioRepublishLobbyCounts(sim);
 }
 
 /* And for a start, whose whole record is its square and the way it faces. */
 static void scenarioPublishStart(ServerSim *sim, BYTE index0,
                                  const start *item, bool added) {
     ControlEvent evt;
+    BYTE rec[3];
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ENTITY_CHANGE;
     evt.u.entityChange.kind   = ENTITY_KIND_START;
@@ -1155,6 +1203,11 @@ static void scenarioPublishStart(ServerSim *sim, BYTE index0,
     evt.u.entityChange.rec.start.y   = item->y;
     evt.u.entityChange.rec.start.dir = item->dir;
     serverSimPublishControl(sim, &evt);
+    rec[0] = evt.u.entityChange.rec.start.x;
+    rec[1] = evt.u.entityChange.rec.start.y;
+    rec[2] = evt.u.entityChange.rec.start.dir;
+    scenarioRecordEntityChange(&evt, rec, (BYTE) sizeof(rec));
+    scenarioRepublishLobbyCounts(sim);
 }
 
 /* Whether a square will take a start. This is startsIsValidSquare, the test

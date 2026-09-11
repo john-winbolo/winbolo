@@ -57,8 +57,9 @@
  *
  * ── What the diff compares, and what it leaves out ──────────────────────
  * Compared: every terrain cell, each pillbox's cell/owner/armour, each
- * base's cell/owner/armour/shells/mines, each start's cell/direction, and
- * every tank slot's in-use flag and shells/mines/armour/trees.
+ * base's cell/owner/armour/shells/mines, each start's cell/direction,
+ * whether each of the three is on the map, and every tank slot's in-use flag
+ * and shells/mines/armour/trees.
  *
  * Left out on purpose, because a recording cannot carry them rather than
  * because they happen to differ:
@@ -122,11 +123,16 @@ struct ServerSim;
 #define REPLAY_MAX_BASES  16
 #define REPLAY_MAX_STARTS 16
 
+/* `active` is whether the number names an item that is on the map. A removed
+ * item keeps its slot and its number on both sides, so the count alone does
+ * not say, and the record left in a removed slot is the stale one it was
+ * carrying when it went. */
 typedef struct {
     uint8_t x;
     uint8_t y;
     uint8_t owner;
     uint8_t armour;
+    bool    active;
 } ReplayPill;
 
 typedef struct {
@@ -136,12 +142,14 @@ typedef struct {
     uint8_t armour;
     uint8_t shells;
     uint8_t mines;
+    bool    active;
 } ReplayBase;
 
 typedef struct {
     uint8_t x;
     uint8_t y;
     uint8_t dir;
+    bool    active;
 } ReplayStart;
 
 typedef struct {
@@ -176,13 +184,40 @@ typedef struct ReplayHarness {
 
 /* Stand up the round and open the .wbv. tag names the file, playerName is
  * the one player added to the sim. Returns false (harness safe to Stop) on
- * any failure. */
+ * any failure. Prepare + BeginRecording, for a caller that wants neither
+ * half separately. */
 bool replayHarnessStartRecording(ReplayHarness *h, const char *tag,
                                  const char *playerName);
+
+/* Stand up the round and name the file, but open nothing. h->sim is drivable
+ * on return, and whatever the caller does to it happens before the recording
+ * has a first byte — the way a change made in the lobby happens before the
+ * round's own segment starts. Returns false (harness safe to Stop) on any
+ * failure. */
+bool replayHarnessPrepare(ReplayHarness *h, const char *tag,
+                          const char *playerName);
+
+/* Open the .wbv on a prepared harness and tick the round into motion. The
+ * opening snapshot is written here, so it holds the world as the caller left
+ * it. Returns false if the harness is not prepared, is already recording, or
+ * the file could not be opened. */
+bool replayHarnessBeginRecording(ReplayHarness *h);
 
 /* Advance the sim by simTicks ticks. Two sim ticks per recorded tick — see
  * the header comment. */
 void replayHarnessTick(ReplayHarness *h, int simTicks);
+
+/* Write a world snapshot into the recording at this point in the stream. The
+ * writer puts one at the head of every .wbv and none after it, so a round that
+ * wants to prove what survives a snapshot asks for one here. Any events queued
+ * since the last tick are flushed first, so a change made before this call
+ * lands in the stream ahead of the snapshot.
+ *
+ * The writer declines to write a second snapshot when nothing at all has been
+ * recorded since the last one, so call this after a tick that carried an
+ * event, and have the case check the file really holds the snapshot rather
+ * than assume it. */
+void replayHarnessSnapshot(ReplayHarness *h);
 
 /* Capture the sim's world, then close the .wbv. Returns false if the
  * harness is not recording or the capture could not be allocated. */
@@ -207,6 +242,16 @@ typedef struct {
  * replayHarnessDecode. Defined in replay_harness_decode.c. */
 bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
                              ReplayFileInfo *info);
+
+/* Decode a .wbv from its last mid-round snapshot rather than from the start:
+ * the file is opened, the read cursor jumps to that snapshot, and playback
+ * runs from there to end-of-log. Every record before the snapshot goes
+ * unread, which is the state a scrub back to that point leaves the viewer in,
+ * so what w ends up holding is what the snapshot and the records after it
+ * were able to say on their own. Returns false when the file cannot be read,
+ * when playback did not reach end-of-log, or when the recording carries no
+ * snapshot past its opening one. Defined in replay_harness_decode.c. */
+bool replayHarnessDecodeFromLastSnapshot(const char *path, ReplayWorld *w);
 
 /* Write w as a plain-text summary: map name and tick count from info, one
  * line per pill, base, start and in-use tank slot carrying the fields

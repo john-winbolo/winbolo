@@ -48,7 +48,130 @@
 *********************************************************/
 void lv_basesCreate(bases *value) {
   New(*value);
+  /* emalloc does not zero, and the live flags past the wire region are read
+     from the first snapshot on, so the whole structure is cleared here the
+     way basesCreate clears the sim's. Every slot starts off the map. */
+  memset(*value, 0, sizeof(**value));
   (*value)->numBases = 0;
+}
+
+/*********************************************************
+*NAME:          lv_basesIsActive
+*PURPOSE:
+*  Returns whether a base number names a base that is on the
+*  map. A recording can take one off mid-round
+*  (log_EntityChange) and the slot and the count stay, so a
+*  number in range is not on its own enough. A number out of
+*  range returns FALSE.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool lv_basesIsActive(bases *value, BYTE baseNum) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (baseNum == 0 || baseNum > (*value)->numBases) {
+    return FALSE;
+  }
+  return ((*value)->active[baseNum - 1] != FALSE);
+}
+
+/*********************************************************
+*NAME:          lv_basesInstallItem
+*PURPOSE:
+*  Writes a base at the number the recording names and puts
+*  that slot on the map, whatever the slot held before. A
+*  number past the count raises the count to cover it and
+*  leaves the slots the gap opens up off the map. Mirrors
+*  basesInstallItem, which is what a live client applies the
+*  same change through. Returns FALSE for number 0 or a
+*  number past MAX_BASES.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  item    - The base to store
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool lv_basesInstallItem(bases *value, base *item, BYTE baseNum) {
+  BYTE slot;  /* The array index the number names */
+  BYTE count; /* Looping variable */
+
+  if (value == NULL || *value == NULL || item == NULL) {
+    return FALSE;
+  }
+  if (baseNum == 0 || baseNum > MAX_BASES) {
+    return FALSE;
+  }
+  slot = (BYTE) (baseNum - 1);
+  for (count = (*value)->numBases; count < slot; count++) {
+    (*value)->active[count] = FALSE;
+  }
+  if (baseNum > (*value)->numBases) {
+    (*value)->numBases = baseNum;
+  }
+  (*value)->item[slot].x = item->x;
+  (*value)->item[slot].y = item->y;
+  (*value)->item[slot].owner = item->owner;
+  (*value)->item[slot].armour = item->armour;
+  (*value)->item[slot].shells = item->shells;
+  (*value)->item[slot].mines = item->mines;
+  (*value)->active[slot] = TRUE;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          lv_basesRemoveItem
+*PURPOSE:
+*  Takes a base off the map, leaving its slot, the count and
+*  every base number above it alone, so the numbers the rest
+*  of the recording uses keep meaning the same base. Returns
+*  FALSE for a number out of range or one already off the
+*  map.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool lv_basesRemoveItem(bases *value, BYTE baseNum) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (baseNum == 0 || baseNum > (*value)->numBases) {
+    return FALSE;
+  }
+  baseNum--;
+  if ((*value)->active[baseNum] == FALSE) {
+    return FALSE;
+  }
+  (*value)->active[baseNum] = FALSE;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          lv_basesSetActive
+*PURPOSE:
+*  Puts a base on the map or takes it off it, leaving its
+*  record and the count alone either way. This is what a
+*  log_EntityMasks record writes, so a slot put back holds
+*  the base it already held. Returns FALSE for a number out
+*  of range. Mirrors basesSetActive.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool lv_basesSetActive(bases *value, BYTE baseNum, bool onMap) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (baseNum == 0 || baseNum > (*value)->numBases) {
+    return FALSE;
+  }
+  (*value)->active[baseNum - 1] = onMap ? TRUE : FALSE;
+  return TRUE;
 }
 
 /*********************************************************
@@ -79,8 +202,15 @@ void lv_basesDestroy(bases *value) {
 *  numBases - The number of bases  
 *********************************************************/
 void lv_basesSetNumBases(bases *value, BYTE numBases) {
+  BYTE count; /* Looping variable */
+
   if (numBases <= MAX_BASES) {
     (*value)->numBases = numBases;
+    /* Nothing past the count names a base, so a shorter list must not leave
+       the slots it dropped reading as on the map. */
+    for (count = numBases; count < MAX_BASES; count++) {
+      (*value)->active[count] = FALSE;
+    }
   }
 }
 
@@ -122,6 +252,9 @@ void lv_basesSetBase(bases *value, base *item, BYTE baseNum) {
     (((*value)->item[baseNum]).armour) = item->armour;
     (((*value)->item[baseNum]).shells) = item->shells;
     (((*value)->item[baseNum]).mines) = item->mines;
+    /* Only ever called to put a real base in the slot, so the slot is on the
+       map whatever it held before. */
+    (*value)->active[baseNum] = TRUE;
   }
 }
 
@@ -145,7 +278,7 @@ bool lv_basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
   returnValue = FALSE;
   count = 0;
   while (returnValue == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       returnValue = TRUE;
     }
     count++;
@@ -160,7 +293,7 @@ BYTE lv_basesItemNumAt(bases *value, BYTE xValue, BYTE yValue) {
 
   count = 0;
   while (count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       return count;
     }
     count++;
@@ -244,7 +377,7 @@ bool lv_basesAmOwner(bases *value, BYTE owner, BYTE xValue, BYTE yValue) {
   //FIXME: This is redundent.
   self = owner;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       if ((*value)->item[count].owner == self || (lv_playersIsAllie((*value)->item[count].owner, self) == TRUE)) {
         returnValue = TRUE;
       }
@@ -280,7 +413,7 @@ baseAlliance lv_basesGetAlliancePos(bases *value, BYTE xValue, BYTE yValue) {
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
      if ((*value)->item[count].armour == 0) {
         returnValue = baseDead;
       } else if ((*value)->item[count].owner == NEUTRAL) {
@@ -360,7 +493,7 @@ void lv_basesSetStock(bases *value, BYTE baseNum, BYTE s, BYTE m, BYTE a) {
 bool lv_basesChooseView(bases *value, int x, int y) {
   BYTE count = 0;
   while (count < (*value)->numBases) {
-    if ((*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
       lv_playersSetSelf((*value)->item[count].owner);
       return TRUE;
     }
@@ -386,8 +519,31 @@ void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
   BYTE returnValue = 1;
   BYTE count = 0;
   unsigned short us;
+  BYTE known = (*value)->numBases; /* How many numbers this list already had */
+  BYTE live;                       /* Numbers the blob actually describes */
 
   (*value)->numBases = buff[0];
+  /* The blob is the map: a count and a record per base, with no room for
+     which of them are on it — the live flags sit past the wire region on both
+     sides. So a snapshot restates the records and leaves the flags to the
+     stream: a number this list already knew keeps the flag the records have
+     given it, a number the blob has grown past the old count arrives on the
+     map, and a number the blob no longer reaches is off it. Without that a
+     base a log_EntityChange had taken away would come back at the next
+     snapshot and stay. A count past MAX_BASES describes no record the loop
+     below will read, so it puts nothing on the map either. */
+  live = (*value)->numBases > MAX_BASES ? 0 : (*value)->numBases;
+  if (known > MAX_BASES) {
+    known = MAX_BASES;
+  }
+  for (count = known; count < live; count++) {
+    (*value)->active[count] = TRUE;
+  }
+  for (count = live; count < MAX_BASES; count++) {
+    (*value)->active[count] = FALSE;
+  }
+
+  count = 0;
   if ((*value)->numBases > 16) {
     count = (*value)->numBases;
   }

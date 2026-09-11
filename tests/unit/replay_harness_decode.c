@@ -18,6 +18,7 @@
 
 #include "lv_global.h"
 #include "backend.h"
+#include "blocks.h"   /* stream position and key — the seek entry point moves both */
 #include "logviewer.h"
 #include "lv_bolo_map.h"
 #include "lv_pillbox.h"
@@ -79,6 +80,7 @@ static void replayCaptureViewer(ReplayWorld *w) {
         w->pills[count - 1].y = item.y;
         w->pills[count - 1].owner = item.owner;
         w->pills[count - 1].armour = item.armour;
+        w->pills[count - 1].active = lv_pillsIsActive(&lv->pb, count) == TRUE;
     }
 
     total = lv_basesGetNumBases(&lv->bs);
@@ -94,6 +96,7 @@ static void replayCaptureViewer(ReplayWorld *w) {
         w->bases[count - 1].armour = item.armour;
         w->bases[count - 1].shells = item.shells;
         w->bases[count - 1].mines = item.mines;
+        w->bases[count - 1].active = lv_basesIsActive(&lv->bs, count) == TRUE;
     }
 
     total = lv_startsGetNumStarts(&lv->ss);
@@ -106,6 +109,7 @@ static void replayCaptureViewer(ReplayWorld *w) {
         w->starts[count - 1].x = item.x;
         w->starts[count - 1].y = item.y;
         w->starts[count - 1].dir = item.dir;
+        w->starts[count - 1].active = lv_startsIsActive(&lv->ss, count) == TRUE;
     }
 
     for (count = 0; count < REPLAY_MAX_TANKS; count++) {
@@ -119,11 +123,123 @@ static void replayCaptureViewer(ReplayWorld *w) {
     }
 }
 
-bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
-                             ReplayFileInfo *info) {
+/* Stand a decoder up on the file and hand it the bytes. On success the
+ * decoder is live and has consumed the header and the opening snapshot, and
+ * the caller owns it until lv_decoderDestroy. Returns NULL on any failure,
+ * with nothing left to tear down. */
+static LogViewerState *replayDecoderOpen(const char *path) {
     FILE *f;
     long sz;
     uint8_t *zipData;
+    LogViewerState *lv;
+
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END);
+    sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0) {
+        fclose(f);
+        return NULL;
+    }
+    zipData = (uint8_t *) malloc((size_t) sz);
+    if (zipData == NULL) {
+        fclose(f);
+        return NULL;
+    }
+    if (fread(zipData, 1, (size_t) sz, f) != (size_t) sz) {
+        fclose(f);
+        free(zipData);
+        return NULL;
+    }
+    fclose(f);
+
+    lv = lv_decoderCreate(false);
+    if (lv == NULL) {
+        free(zipData);
+        return NULL;
+    }
+    lv_screenSetSizeX(30);
+    lv_screenSetSizeY(30);
+
+    /* Takes ownership of zipData (freed when the log is closed). */
+    if (lv_screenLoadMapFromMemory(zipData, (size_t) sz) != TRUE) {
+        lv_decoderDestroy(lv);
+        return NULL;
+    }
+    return lv;
+}
+
+bool replayHarnessDecodeFromLastSnapshot(const char *path, ReplayWorld *w) {
+    LogViewerState *lv;
+    size_t snapPos = 0;
+    BYTE   snapKey = 0;
+    bool   haveSnap = false;
+    int    steps;
+
+    if (path == NULL || path[0] == '\0' || w == NULL) {
+        return false;
+    }
+
+    /* Pass one finds where the last snapshot sits. The load has already
+       consumed the opening one, so this is the last mid-round snapshot, and
+       a file without one is refused rather than quietly answered from the
+       opening snapshot. Nothing is captured here. */
+    lv = replayDecoderOpen(path);
+    if (lv == NULL) {
+        return false;
+    }
+    steps = 0;
+    while (lv_screenIsPlaying() == TRUE && steps < REPLAY_DECODE_TICK_CAP) {
+        size_t at  = lv_logGetCurrentPosition();
+        BYTE   key = lv_blocksGetKey();
+        bool   marker = (lv_screenLogTick() == TRUE);
+        steps++;
+        /* lv_screenLogTick reports TRUE for a snapshot and for the log's
+           end; only the first leaves playback running. */
+        if (marker && lv_screenIsPlaying() == TRUE) {
+            snapPos  = at;
+            snapKey  = key;
+            haveSnap = true;
+        }
+    }
+    if (lv_screenIsPlaying() == TRUE) {
+        lv_decoderDestroy(lv);
+        return false;
+    }
+    lv_decoderDestroy(lv);
+    if (!haveSnap) {
+        return false;
+    }
+
+    /* Pass two opens the file again and jumps straight to that snapshot, so
+       every record before it goes unread — the same state a scrub back to
+       this point leaves the viewer in. What the world says afterwards is what
+       the snapshot and the records following it said, and nothing else. */
+    lv = replayDecoderOpen(path);
+    if (lv == NULL) {
+        return false;
+    }
+    lv_logSetPosition(snapPos);
+    lv_blocksSetKey(snapKey);
+    steps = 0;
+    while (lv_screenIsPlaying() == TRUE && steps < REPLAY_DECODE_TICK_CAP) {
+        lv_screenLogTick();
+        steps++;
+    }
+    if (lv_screenIsPlaying() == TRUE) {
+        lv_decoderDestroy(lv);
+        return false;
+    }
+    replayCaptureViewer(w);
+    lv_decoderDestroy(lv);
+    return true;
+}
+
+bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
+                             ReplayFileInfo *info) {
     LogViewerState *lv;
     int steps;
     bool reachedEnd;
@@ -132,40 +248,8 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
         return false;
     }
 
-    f = fopen(path, "rb");
-    if (f == NULL) {
-        return false;
-    }
-    fseek(f, 0, SEEK_END);
-    sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz <= 0) {
-        fclose(f);
-        return false;
-    }
-    zipData = (uint8_t *) malloc((size_t) sz);
-    if (zipData == NULL) {
-        fclose(f);
-        return false;
-    }
-    if (fread(zipData, 1, (size_t) sz, f) != (size_t) sz) {
-        fclose(f);
-        free(zipData);
-        return false;
-    }
-    fclose(f);
-
-    lv = lv_decoderCreate(false);
+    lv = replayDecoderOpen(path);
     if (lv == NULL) {
-        free(zipData);
-        return false;
-    }
-    lv_screenSetSizeX(30);
-    lv_screenSetSizeY(30);
-
-    /* Takes ownership of zipData (freed when the log is closed). */
-    if (lv_screenLoadMapFromMemory(zipData, (size_t) sz) != TRUE) {
-        lv_decoderDestroy(lv);
         return false;
     }
 

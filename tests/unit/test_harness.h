@@ -686,6 +686,22 @@ int run_entity_event_client_add_lands_on_the_server_index(void);
 int run_entity_event_removed_index_sends_no_delta(void);
 int run_entity_event_wire_corpus_fixture(void);
 
+/* What an entity change reaches (test_entity_record.c). The six arms write a
+ * log_EntityChange beside the CTRL_ENTITY_CHANGE they publish, carrying the
+ * same kind, index and map record, because a control event never reaches the
+ * .wbv. The viewer reads it back, a brain's view rebuilds without the removed
+ * item, and the lobby's counts go out again. */
+int run_entity_record_round_trip_per_kind(void);
+int run_entity_record_viewer_across_a_snapshot(void);
+int run_entity_record_removed_and_restored_pill_replays(void);
+int run_entity_record_brain_rect_skips_a_removed_pill(void);
+int run_entity_record_lobby_add_republishes_counts(void);
+/* And what only log_EntityMasks can say: a removal that happened before the
+ * recording's first snapshot, and a decode that starts at a mid-round
+ * snapshot with every record before it unread. */
+int run_entity_record_lobby_removal_replays(void);
+int run_entity_record_seek_lands_on_the_right_liveness(void);
+
 /* The entity-sync control event (test_entity_sync.c). CTRL_ENTITY_SYNC
  * carries three 16-bit masks, one per item list, saying which indices hold
  * an item that is on the map — the part the compressed map blob leaves out,

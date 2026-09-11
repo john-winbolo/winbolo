@@ -963,6 +963,127 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilGetNibbles(opt1, &opt2, &opt3);
       lv_pillsSetInTank(&g_lv->pb, opt2, opt3);
       break;
+    case log_EntityChange:
+      /* One pillbox, base or start has joined the map or left it. opt1 is
+         which list, opt2 the item's number counting from zero — the three
+         modules count from one — and opt3 whether it is now on the map. The
+         pascal blob after them is the item's map record, six bytes for a
+         pillbox or a base and three for a start, the same bytes a live client
+         gets on the wire. A removal keeps the slot and the count, so every
+         number above it goes on meaning the same item. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      {
+        BYTE num = (BYTE)(opt2 + 1);
+        const BYTE *rec = (const BYTE *)(mem + 1);
+        BYTE recLen = (BYTE)mem[0];
+        switch (opt1) {
+        case LV_ENTITY_KIND_PILL:
+          if (opt3 != 0) {
+            if (recLen >= 6) {
+              pillbox item;
+              memset(&item, 0, sizeof(item));
+              item.x = rec[0];
+              item.y = rec[1];
+              item.owner = rec[2];
+              item.armour = rec[3];
+              item.speed = rec[4];
+              item.inTank = rec[5] ? TRUE : FALSE;
+              lv_pillsInstallItem(&g_lv->pb, &item, num);
+            }
+          } else {
+            lv_pillsRemoveItem(&g_lv->pb, num);
+          }
+          break;
+        case LV_ENTITY_KIND_BASE:
+          if (opt3 != 0) {
+            if (recLen >= 6) {
+              base item;
+              memset(&item, 0, sizeof(item));
+              item.x = rec[0];
+              item.y = rec[1];
+              item.owner = rec[2];
+              item.armour = rec[3];
+              item.shells = rec[4];
+              item.mines = rec[5];
+              lv_basesInstallItem(&g_lv->bs, &item, num);
+            }
+          } else {
+            lv_basesRemoveItem(&g_lv->bs, num);
+          }
+          break;
+        case LV_ENTITY_KIND_START:
+          if (opt3 != 0) {
+            if (recLen >= 3) {
+              start item;
+              memset(&item, 0, sizeof(item));
+              item.x = rec[0];
+              item.y = rec[1];
+              item.dir = rec[2];
+              lv_startsInstallItem(&g_lv->ss, &item, num);
+            }
+          } else {
+            lv_startsRemoveItem(&g_lv->ss, num);
+          }
+          break;
+        default:
+          /* A kind with no list behind it. The framed length has already
+             been consumed, so there is nothing to resynchronise. */
+          break;
+        }
+      }
+      g_lv->wantScreenUpdate = TRUE;
+      break;
+    case log_EntityMasks:
+      /* Which indices are on the map, as three big-endian 16-bit masks — the
+         part the snapshot before this one had nowhere to put. Bit i stands
+         for index i counting from zero; a bit at or above a list's own count
+         names no item and is skipped. Only the flags move: the counts and the
+         records are the ones the snapshot installed, and taking an item off
+         the map keeps its record, so an index put back holds the item it
+         always held. That makes a snapshot and this record together enough to
+         state the world, which is what a seek lands on. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes(&opt4, 1);
+      logReadBytes(&opt5, 1);
+      logReadBytes(&px, 1);
+      {
+        unsigned short pillMask  = (unsigned short)((opt1 << 8) | opt2);
+        unsigned short baseMask  = (unsigned short)((opt3 << 8) | opt4);
+        unsigned short startMask = (unsigned short)((opt5 << 8) | px);
+        BYTE num;
+        BYTE total;
+
+        /* Each count is clamped to its list's size before it is walked: a
+           16-bit mask cannot name anything past index 15 anyway, and a count
+           a malformed blob left above the array is not a number this loop
+           should reach for. */
+        total = lv_pillsGetNumPills(&g_lv->pb);
+        if (total > MAX_PILLS) total = MAX_PILLS;
+        for (num = 1; num <= total; num++) {
+          lv_pillsSetActive(&g_lv->pb, num,
+                            (pillMask & (1u << (num - 1))) != 0);
+        }
+        total = lv_basesGetNumBases(&g_lv->bs);
+        if (total > MAX_BASES) total = MAX_BASES;
+        for (num = 1; num <= total; num++) {
+          lv_basesSetActive(&g_lv->bs, num,
+                            (baseMask & (1u << (num - 1))) != 0);
+        }
+        total = lv_startsGetNumStarts(&g_lv->ss);
+        if (total > MAX_STARTS) total = MAX_STARTS;
+        for (num = 1; num <= total; num++) {
+          lv_startsSetActive(&g_lv->ss, num,
+                             (startMask & (1u << (num - 1))) != 0);
+        }
+      }
+      g_lv->wantScreenUpdate = TRUE;
+      break;
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -1711,8 +1832,10 @@ static int walkSkipEventBody(BYTE code) {
       { BYTE b[5]; if (logReadBytes(b, 5) != 5) return -1; }
       return 5;
     case log_Ping:
-      /* sender + kind + two big-endian u16 coordinates. Only v2 logs can
-         carry one, but the v1 walker keeps a full table so a future
+    case log_EntityMasks:
+      /* A ping is sender + kind + two big-endian u16 coordinates; the masks
+         record is three big-endian u16. Six bytes either way. Only v2 logs
+         can carry either, but the v1 walker keeps a full table so a future
          re-encoder cannot silently desynchronise the cursor. */
       { BYTE b[6]; if (logReadBytes(b, 6) != 6) return -1; }
       return 6;
@@ -1754,6 +1877,15 @@ static int walkSkipEventBody(BYTE code) {
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
         if (rc != lenByte) return -1; }
       return 3 + lenByte;
+    case log_EntityChange:
+      /* kind + index + on-the-map flag + the item's record as a pascal blob.
+         Only v2 logs can carry one, but the v1 walker keeps a full table for
+         the reason it keeps one for log_Ping. */
+      { BYTE b[3]; if (logReadBytes(b, 3) != 3) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 4 + lenByte;
     case log_MessageServer:
     case log_MapSkipApplied:
       /* pascal string only */

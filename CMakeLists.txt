@@ -3400,6 +3400,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_entity_lifecycle.c
     tests/unit/test_entity_event.c
     tests/unit/test_entity_sync.c
+    tests/unit/test_entity_record.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -4259,6 +4260,13 @@ set(_unit_test_names
     entity_sync_mask_above_the_count_ignored
     entity_sync_loopback_join
     entity_sync_wire_corpus_fixture
+    entity_record_round_trip_per_kind
+    entity_record_viewer_across_a_snapshot
+    entity_record_removed_and_restored_pill_replays
+    entity_record_brain_rect_skips_a_removed_pill
+    entity_record_lobby_add_republishes_counts
+    entity_record_lobby_removal_replays
+    entity_record_seek_lands_on_the_right_liveness
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken

@@ -92,6 +92,8 @@ Selected event types (see the `logitem` enum for the complete list):
 | 53 | `log_GameSettings` | Pascal-form blob of every lobby setting (below) |
 | 54 | `log_Ping` | Smart ping: sender, kind, world x/y (below) |
 | 55 | `log_TankSetStock` | Tank stocks: player, shells, mines, armour, trees (below) |
+| 57 | `log_EntityChange` | One pillbox, base or start joined the map or left it (below) |
+| 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
 
 ### `log_GameSettings` payload
 
@@ -157,6 +159,72 @@ last record written for that tank — so a tank whose stocks are unchanged costs
 nothing, and there is at most one record per tank per tick. A recording written
 before this event existed carries none; the reader then has only what the
 snapshot player blocks give it.
+
+### `log_EntityChange` payload
+
+The map's pillbox, base and start lists are mutable mid-round. Three header
+bytes and then the item's map record as a Pascal form — a 1-byte length
+followed by that many binary bytes, which may contain `0x00`:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Kind | 0 pillbox, 1 base, 2 start (`ENTITY_KIND_*`, `src/bolo/public/control_event.h`) |
+| 1 | Index | The item's number in its list, counting from 0 |
+| 2 | On the map | 1 the item has joined the map, 0 it has left it |
+| 3 | Record length | 6 for a pillbox or a base, 3 for a start |
+| 4.. | Record | The item's map data, below |
+
+The record for a pillbox is x, y, owner, armour, speed, in-tank; for a base
+x, y, owner, armour, shells, mines; for a start x, y, direction. A pillbox's
+reload, cool-down and just-seen and a base's refuel time, base time and
+just-stopped are the server's per-tick working state and are not in the
+record — nothing rebuilds them from a recording.
+
+A removal is a tombstone: the item's number and the list's count stay, so
+every number above the removed one goes on meaning the same item, and the
+record the removal carries is the one the item had as it went — enough for a
+script or a reader to put it back. An add names the number the server's list
+chose, which is the lowest removed slot or, failing that, one past the end;
+the count rises to cover a number past it and the slots the gap opens up are
+off the map.
+
+The snapshot's pill, base and start blocks carry a count and a record each
+and have nowhere to say which of them are on the map, so a reader keeps its
+own flags across a snapshot: a number it already had keeps the flag these
+records gave it, a number the blob has grown past the old count arrives on
+the map, and a number the blob no longer reaches is off it. The flags a
+snapshot cannot state come from the `log_EntityMasks` record after it. The
+same event travels live as `CTRL_ENTITY_CHANGE`, carrying the identical
+record.
+
+### `log_EntityMasks` payload
+
+Which indices are on the map. Six bytes, no Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0–1 | Pillbox mask | Big-endian; bit i set means pillbox index i, counting from 0, is on the map |
+| 2–3 | Base mask | Big-endian; same meaning for bases |
+| 4–5 | Start mask | Big-endian; same meaning for starts |
+
+Each list holds at most 16 items, so 16 bits covers every index a list can
+name. A bit at or above a list's own count names no item and is ignored.
+These are the same three masks `CTRL_ENTITY_SYNC` carries to a live client,
+and the writer builds both from one function.
+
+Written immediately after every snapshot, including the one a recording opens
+with, as a one-event `LOG_EVENT` block. A snapshot restates every record and
+every count but has nowhere to put the live flags, so without this a reader
+starting at a snapshot — a fresh open, or a scrub back to one — would put
+every item back on the map and keep it there. The record applies the flags and
+nothing else: the counts and the records are the ones the snapshot installed,
+and an index taken off the map keeps its record, so an index put back holds
+the item it always held.
+
+It is **not** written when every index within every count is on the map. That
+is what loading a map produces and what a reader's own load assumes, so a
+round that never takes an item off the map carries none of these records and
+its bytes are unchanged.
 
 ## Snapshot body
 

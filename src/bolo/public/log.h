@@ -110,7 +110,9 @@ log_SpectatorChat,   // format-reserved: opt1=sender spectator slot + message ps
 log_GameSettings,    // pascal-string blob of every lobby setting (layout in docs/replay-format.md)
 log_Ping,            // opt1=sender, opt2=kind, then worldX/worldY as two big-endian u16 (layout in docs/replay-format.md)
 log_TankSetStock,    // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
-log_TankSetModifiers // opt1=player, then a 6-byte pascal blob: speed, accel, turn, reload, dealt, taken
+log_TankSetModifiers,// opt1=player, then a 6-byte pascal blob: speed, accel, turn, reload, dealt, taken
+log_EntityChange,    // opt1=kind (ENTITY_KIND_*), opt2=index (0 based), opt3=on the map, then the item's record as a pascal blob (layout in docs/replay-format.md)
+log_EntityMasks      // which indices are on the map, as three big-endian u16: pills in opt1/opt2, bases in opt3/opt4, starts in short1. Written after every snapshot (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {
