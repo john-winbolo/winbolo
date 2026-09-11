@@ -259,6 +259,45 @@ bool pillsAddItem(pillboxes *value, const pillbox *item, BYTE *outPillNum) {
 }
 
 /*********************************************************
+*NAME:          pillsInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a pillbox at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  pillboxes this list has not been told about. Returns
+*  FALSE for number 0 or a number past MAX_PILLS.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  item    - The pillbox to store
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool pillsInstallItem(pillboxes *value, const pillbox *item, BYTE pillNum) {
+  BYTE slot;  /* The array index the number names */
+  BYTE count; /* Looping variable */
+
+  if (pillNum == 0 || pillNum > MAX_PILLS) {
+    return FALSE;
+  }
+  slot = (BYTE) (pillNum - 1);
+  for (count = (*value)->numPills; count < slot; count++) {
+    (*value)->active[count] = FALSE;
+  }
+  if (pillNum > (*value)->numPills) {
+    (*value)->numPills = pillNum;
+  }
+  (*value)->item[slot] = *item;
+  (*value)->active[slot] = TRUE;
+  (*value)->posStale[slot] = PILL_SQUARE_CONFIRMED;
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          pillsRemoveItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 11/9/26

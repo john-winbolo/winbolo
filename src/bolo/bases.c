@@ -245,6 +245,44 @@ bool basesAddItem(bases *value, const base *item, BYTE *outBaseNum) {
 }
 
 /*********************************************************
+*NAME:          basesInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a base at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  bases this list has not been told about. Returns FALSE
+*  for number 0 or a number past MAX_BASES.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  item    - The base to store
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesInstallItem(bases *value, const base *item, BYTE baseNum) {
+  BYTE slot;  /* The array index the number names */
+  BYTE count; /* Looping variable */
+
+  if (baseNum == 0 || baseNum > MAX_BASES) {
+    return FALSE;
+  }
+  slot = (BYTE) (baseNum - 1);
+  for (count = (*value)->numBases; count < slot; count++) {
+    (*value)->active[count] = FALSE;
+  }
+  if (baseNum > (*value)->numBases) {
+    (*value)->numBases = baseNum;
+  }
+  (*value)->item[slot] = *item;
+  (*value)->active[slot] = TRUE;
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          basesRemoveItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 11/9/26

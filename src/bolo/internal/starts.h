@@ -142,6 +142,27 @@ void startsSetStart(starts *value, start *item, BYTE startNum);
 bool startsAddItem(starts *value, const start *item, BYTE *outStartNum);
 
 /*********************************************************
+*NAME:          startsInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a start at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  starts this list has not been told about. Returns FALSE
+*  for number 0 or a number past MAX_STARTS.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  item     - The start to store
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsInstallItem(starts *value, const start *item, BYTE startNum);
+
+/*********************************************************
 *NAME:          startsRemoveItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 11/9/26

@@ -205,6 +205,27 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum);
 bool pillsAddItem(pillboxes *value, const pillbox *item, BYTE *outPillNum);
 
 /*********************************************************
+*NAME:          pillsInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a pillbox at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  pillboxes this list has not been told about. Returns
+*  FALSE for number 0 or a number past MAX_PILLS.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  item    - The pillbox to store
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool pillsInstallItem(pillboxes *value, const pillbox *item, BYTE pillNum);
+
+/*********************************************************
 *NAME:          pillsRemoveItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 11/9/26

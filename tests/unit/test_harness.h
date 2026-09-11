@@ -675,6 +675,17 @@ int run_entity_remove_refuses_already_removed(void);
 int run_entity_remove_keeps_indices_above(void);
 int run_entity_blob_load_marks_every_item_live(void);
 
+/* The entity-change control event (test_entity_event.c). CTRL_ENTITY_CHANGE
+ * carries the kind, the item's 0-based index, whether it is now on the map,
+ * and the item's map record — never the server's per-tick working state. */
+int run_entity_event_codec_roundtrip(void);
+int run_entity_event_client_adds_at_fresh_index(void);
+int run_entity_event_client_add_reuses_removed_slot(void);
+int run_entity_event_client_remove_keeps_the_slot(void);
+int run_entity_event_client_add_lands_on_the_server_index(void);
+int run_entity_event_removed_index_sends_no_delta(void);
+int run_entity_event_wire_corpus_fixture(void);
+
 /* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
  * cluster / farthest-first selection that auto-assigns a lobby start on
  * join, shared with startsAssignBatch's distance + validity logic. */

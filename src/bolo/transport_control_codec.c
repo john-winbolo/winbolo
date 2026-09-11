@@ -1177,6 +1177,102 @@ static bool decodeVoiceTalkingBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_ENTITY_CHANGE body wire format (fixed length):
+ *   [kind 1] [index 1] [added 1] [record 6]
+ * The record region is the same six bytes whatever the kind, so the body is
+ * one size and the decoder rejects anything else outright. A pillbox spends
+ * all six (x, y, owner, armour, speed, inTank), a base all six (x, y, owner,
+ * armour, shells, mines), a start the first three (x, y, dir) with the rest
+ * zero. Delivered body-only on CHANNEL_CONTROL; there is no full-packet
+ * wrapper or PACKET_* type for this event. */
+#define ENTITY_CHANGE_BODY_LEN 9
+#define ENTITY_CHANGE_REC_OFF  3
+
+/* recipient: safe — ignored. Which items are on the map is public. */
+static EncodeResult encodeEntityChangeBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    uint8_t *rec;
+    (void)recipient;
+    if (bufCap < ENTITY_CHANGE_BODY_LEN) return ENCODE_OVERFLOW;
+    rec = buf + ENTITY_CHANGE_REC_OFF;
+    buf[0] = evt->u.entityChange.kind;
+    buf[1] = evt->u.entityChange.index;
+    buf[2] = evt->u.entityChange.added ? 1u : 0u;
+    memset(rec, 0, ENTITY_CHANGE_BODY_LEN - ENTITY_CHANGE_REC_OFF);
+    switch (evt->u.entityChange.kind) {
+    case ENTITY_KIND_PILL:
+        rec[0] = evt->u.entityChange.rec.pill.x;
+        rec[1] = evt->u.entityChange.rec.pill.y;
+        rec[2] = evt->u.entityChange.rec.pill.owner;
+        rec[3] = evt->u.entityChange.rec.pill.armour;
+        rec[4] = evt->u.entityChange.rec.pill.speed;
+        rec[5] = evt->u.entityChange.rec.pill.inTank ? 1u : 0u;
+        break;
+    case ENTITY_KIND_BASE:
+        rec[0] = evt->u.entityChange.rec.base.x;
+        rec[1] = evt->u.entityChange.rec.base.y;
+        rec[2] = evt->u.entityChange.rec.base.owner;
+        rec[3] = evt->u.entityChange.rec.base.armour;
+        rec[4] = evt->u.entityChange.rec.base.shells;
+        rec[5] = evt->u.entityChange.rec.base.mines;
+        break;
+    case ENTITY_KIND_START:
+        rec[0] = evt->u.entityChange.rec.start.x;
+        rec[1] = evt->u.entityChange.rec.start.y;
+        rec[2] = evt->u.entityChange.rec.start.dir;
+        break;
+    default:
+        /* No record to place. Sending the header alone would decode as a
+         * kind this codec does know and name an item in the wrong list, so
+         * there is nothing here to deliver. */
+        return ENCODE_SKIP;
+    }
+    *outLen = ENTITY_CHANGE_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeEntityChangeBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    const uint8_t *rec;
+    if (len != ENTITY_CHANGE_BODY_LEN) return false;
+    rec = buf + ENTITY_CHANGE_REC_OFF;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ENTITY_CHANGE;
+    outEvt->u.entityChange.kind  = buf[0];
+    outEvt->u.entityChange.index = buf[1];
+    outEvt->u.entityChange.added = buf[2] ? 1u : 0u;
+    switch (buf[0]) {
+    case ENTITY_KIND_PILL:
+        outEvt->u.entityChange.rec.pill.x      = rec[0];
+        outEvt->u.entityChange.rec.pill.y      = rec[1];
+        outEvt->u.entityChange.rec.pill.owner  = rec[2];
+        outEvt->u.entityChange.rec.pill.armour = rec[3];
+        outEvt->u.entityChange.rec.pill.speed  = rec[4];
+        outEvt->u.entityChange.rec.pill.inTank = rec[5] ? 1u : 0u;
+        break;
+    case ENTITY_KIND_BASE:
+        outEvt->u.entityChange.rec.base.x      = rec[0];
+        outEvt->u.entityChange.rec.base.y      = rec[1];
+        outEvt->u.entityChange.rec.base.owner  = rec[2];
+        outEvt->u.entityChange.rec.base.armour = rec[3];
+        outEvt->u.entityChange.rec.base.shells = rec[4];
+        outEvt->u.entityChange.rec.base.mines  = rec[5];
+        break;
+    case ENTITY_KIND_START:
+        outEvt->u.entityChange.rec.start.x   = rec[0];
+        outEvt->u.entityChange.rec.start.y   = rec[1];
+        outEvt->u.entityChange.rec.start.dir = rec[2];
+        break;
+    default:
+        /* A kind with no list behind it: refuse rather than hand the
+         * dispatcher an item it would have to guess the home of. */
+        return false;
+    }
+    return true;
+}
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -2375,6 +2471,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_VIEW_TARGET]           = encodeViewTargetBody,
     [CTRL_STATS_SEED]            = encodeStatsSeedBody,
     [CTRL_VOICE_TALKING]         = encodeVoiceTalkingBody,
+    [CTRL_ENTITY_CHANGE]         = encodeEntityChangeBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2417,6 +2514,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_VIEW_TARGET]           = decodeViewTargetBody,
     [CTRL_STATS_SEED]            = decodeStatsSeedBody,
     [CTRL_VOICE_TALKING]         = decodeVoiceTalkingBody,
+    [CTRL_ENTITY_CHANGE]         = decodeEntityChangeBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

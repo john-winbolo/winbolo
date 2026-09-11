@@ -74,6 +74,7 @@ const char *mpDiagCtrlName(int type) {
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     case CTRL_VIEW_TARGET:      return "VIEW_TARGET";
     case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
+    case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
     default:                    return "<unknown>";
     }
 }

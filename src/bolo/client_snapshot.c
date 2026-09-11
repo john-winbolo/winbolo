@@ -75,6 +75,7 @@
 #include "players.h"
 #include "screenbrainmap.h"
 #include "client_snapshot.h"
+#include "control_event.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
@@ -1477,6 +1478,111 @@ void clientApplySnapshot(ClientSim *csPtr,
   if (!isHuman) {
     clientSnapshotRenderInterp(csPtr, arrivalMs, 0.0f, /*discrete=*/true);
   }
+}
+
+/*********************************************************
+*NAME:          clientApplyEntityChange
+*PURPOSE:
+*  Applies a CTRL_ENTITY_CHANGE to this client's own pill,
+*  base or start list. An add writes the record at the
+*  number the event names and marks that slot live; a remove
+*  clears the live flag and keeps the slot, so the count and
+*  every index above the removed one go on naming the same
+*  item.
+*
+*  The wire index is 0 based and the three list modules
+*  number from 1, so the number is one higher throughout.
+*
+*ARGUMENTS:
+*  cs  - Pointer to the ClientSim
+*  evt - The control event to apply
+*********************************************************/
+void clientApplyEntityChange(ClientSim *cs, const struct ControlEvent *evt) {
+  BYTE num;        /* the item's number in its list */
+  bool ok = FALSE;
+
+  if (cs == NULL || evt == NULL) {
+    return;
+  }
+  num = (BYTE)(evt->u.entityChange.index + 1);
+
+  /* The number comes from the server, which is the only place item numbers
+   * are decided, so an add writes the slot it names rather than choosing
+   * one: the install functions take a number where the add functions report
+   * one. A number past this list's count raises the count and leaves the
+   * gap removed — the server only sends a number it has filled, so a gap is
+   * the items this client has not been told about, not items it has. */
+  switch (evt->u.entityChange.kind) {
+  case ENTITY_KIND_PILL:
+    if (cs->sim.pb == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      pillbox item;
+      memset(&item, 0, sizeof(item));
+      item.x      = evt->u.entityChange.rec.pill.x;
+      item.y      = evt->u.entityChange.rec.pill.y;
+      item.owner  = evt->u.entityChange.rec.pill.owner;
+      item.armour = evt->u.entityChange.rec.pill.armour;
+      item.speed  = evt->u.entityChange.rec.pill.speed;
+      item.inTank = evt->u.entityChange.rec.pill.inTank ? TRUE : FALSE;
+      ok = pillsInstallItem(&cs->sim.pb, &item, num);
+    } else {
+      ok = pillsRemoveItem(&cs->sim.pb, num);
+    }
+    break;
+
+  case ENTITY_KIND_BASE:
+    if (cs->sim.bs == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      base item;
+      memset(&item, 0, sizeof(item));
+      item.x      = evt->u.entityChange.rec.base.x;
+      item.y      = evt->u.entityChange.rec.base.y;
+      item.owner  = evt->u.entityChange.rec.base.owner;
+      item.armour = evt->u.entityChange.rec.base.armour;
+      item.shells = evt->u.entityChange.rec.base.shells;
+      item.mines  = evt->u.entityChange.rec.base.mines;
+      ok = basesInstallItem(&cs->sim.bs, &item, num);
+    } else {
+      ok = basesRemoveItem(&cs->sim.bs, num);
+    }
+    break;
+
+  case ENTITY_KIND_START:
+    if (cs->sim.ss == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      start item;
+      memset(&item, 0, sizeof(item));
+      item.x   = evt->u.entityChange.rec.start.x;
+      item.y   = evt->u.entityChange.rec.start.y;
+      item.dir = evt->u.entityChange.rec.start.dir;
+      ok = startsInstallItem(&cs->sim.ss, &item, num);
+    } else {
+      ok = startsRemoveItem(&cs->sim.ss, num);
+    }
+    break;
+
+  default:
+    break;
+  }
+
+  if (!ok) {
+    WB_LOG_WARN(WB_LOG_CAT_CLIENT,
+                "entity change not applied: kind=%u index=%u added=%u",
+                (unsigned)evt->u.entityChange.kind,
+                (unsigned)evt->u.entityChange.index,
+                (unsigned)evt->u.entityChange.added);
+    return;
+  }
+
+  /* A pill or base appearing or leaving changes what the screen draws over
+   * its square, the same way a revealed mine does. */
+  clientSimRecalc(cs);
 }
 
 /*********************************************************

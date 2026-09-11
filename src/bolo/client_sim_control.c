@@ -32,6 +32,7 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 #include "client_sim_control.h"
+#include "client_snapshot.h"  /* clientApplyEntityChange */
 #include "client_sim_internal.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
@@ -1117,5 +1118,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * client with no owner filter), so drawing one here would double up. */
         break;
     }
+
+    case CTRL_ENTITY_CHANGE:
+        /* A pillbox, base or start has joined the map or left it. The lists
+         * live behind client_snapshot.c, beside the per-tick pill and base
+         * snapshots that write the same records, so the apply lives there
+         * too. Broadcast, with no per-recipient filter: which items are on
+         * the map is as public as the map. */
+        clientApplyEntityChange(cs, evt);
+        break;
     }
 }

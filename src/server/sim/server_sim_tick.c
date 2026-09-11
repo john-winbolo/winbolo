@@ -922,6 +922,12 @@ static void simRunHalfStep(ServerSim *sim) {
         int np = serverSimGetPills(sim, currentPills, MAX_SNAPSHOT_PILLS);
         int p;
         for (p = 0; p < np; p++) {
+            /* A removed pillbox is not on the map, so nothing names its
+               index: the slot and the count stay put and the periodic full
+               sync is what says how long the list is. */
+            if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) {
+                continue;
+            }
             if (memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
                 GameEvent ev;
                 ev.type = EVENT_PILL_UPDATE;
@@ -944,6 +950,11 @@ static void simRunHalfStep(ServerSim *sim) {
         int nb = serverSimGetBases(sim, currentBases, MAX_SNAPSHOT_BASES);
         int b;
         for (b = 0; b < nb; b++) {
+            /* Same rule as the pillboxes above: a removed base's index is
+               not named by an update or a stock line. */
+            if (basesIsActive(&sim->sim.bs, (BYTE)(b + 1)) == FALSE) {
+                continue;
+            }
             /* Owner change: reliable, broadcast — everyone sees base colour. */
             if (currentBases[b].owner != sim->prevBases[b].owner) {
                 GameEvent ev;

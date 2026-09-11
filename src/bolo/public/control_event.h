@@ -155,6 +155,14 @@ typedef enum {
      * with its own mute list — a muted player sends nothing that reaches
      * you, so this is the only way to show that they are talking. */
     CTRL_VOICE_TALKING,
+    /* CTRL_ENTITY_CHANGE — one pillbox, base or start has joined the map
+     * or left it. The map's item lists are fixed at map load for a normal
+     * round; a scenario can change them mid-round, and this is how a client
+     * hears about it on the tick it happens. Removal keeps the item's slot
+     * and its index, so every index above a removal goes on naming the same
+     * item, and the record the event carries is the item's map data only.
+     * Broadcast: which items are on the map is public, the way the map is. */
+    CTRL_ENTITY_CHANGE,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -169,6 +177,15 @@ typedef enum {
  * MAX_CONTROL_PACKET). A 64 KiB catalog therefore needs at most
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
+
+/* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
+ * ride the wire, so they are written out rather than left to the order
+ * of the members. */
+typedef enum {
+    ENTITY_KIND_PILL  = 0,
+    ENTITY_KIND_BASE  = 1,
+    ENTITY_KIND_START = 2
+} EntityKind;
 
 typedef struct ControlEvent {
     ControlEventType type;
@@ -501,6 +518,45 @@ typedef struct ControlEvent {
         struct {
             PlayerBitMap talking;
         } voiceTalking;
+
+        /* CTRL_ENTITY_CHANGE — the item, where it sits in its list, and
+         * whether it is now on the map or off it.
+         *
+         * index is 0-based, the way the snapshots, the game events and the
+         * brain API number an item; the pillbox, bases and starts modules
+         * take the number one higher, and the boundary converts.
+         *
+         * The record is the item's map data and nothing more. A pillbox's
+         * reload, coolDown and justSeen and a base's refuelTime, baseTime
+         * and justStopped are the server's per-tick working state: no
+         * client rebuilds them from an event, and they would be stale by
+         * the time the event arrived. On a removal the record is the item
+         * as it stood, so a script that puts it back has it to hand. */
+        struct {
+            uint8_t kind;    /* EntityKind */
+            uint8_t index;   /* 0-based */
+            uint8_t added;   /* 1 on the map, 0 removed */
+            union {
+                struct {
+                    uint8_t x, y;
+                    uint8_t owner;
+                    uint8_t armour;
+                    uint8_t speed;
+                    uint8_t inTank;
+                } pill;
+                struct {
+                    uint8_t x, y;
+                    uint8_t owner;
+                    uint8_t armour;
+                    uint8_t shells;
+                    uint8_t mines;
+                } base;
+                struct {
+                    uint8_t x, y;
+                    uint8_t dir;
+                } start;
+            } rec;
+        } entityChange;
     } u;
 } ControlEvent;
 
