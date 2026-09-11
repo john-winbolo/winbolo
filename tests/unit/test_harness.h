@@ -1877,6 +1877,15 @@ int run_scenario_start_flag_set_during_start(void);
 int run_scenario_start_guard_blocks_reentry(void);
 int run_scenario_start_flag_cleared_after_start(void);
 
+int run_scenario_read_roster_slot(void);
+int run_scenario_read_pill_info(void);
+int run_scenario_read_base_info(void);
+int run_scenario_read_start_info(void);
+int run_scenario_read_tank_info(void);
+int run_scenario_read_builder_info(void);
+int run_scenario_read_terrain_buffer(void);
+int run_scenario_read_num_fielded(void);
+
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
 int run_console_read_reports_eof(void);

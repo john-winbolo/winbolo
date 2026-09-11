@@ -3311,6 +3311,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick registrations beside it, and the flag that keeps the all-ready
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
+    # The scenario read surface: the roster, pill, base, start, tank and
+    # builder accessors, the whole-map terrain copy and the fielded count.
+    tests/unit/test_scenario_reads.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -4641,6 +4644,14 @@ set(_unit_test_names
     scenario_start_flag_set_during_start
     scenario_start_guard_blocks_reentry
     scenario_start_flag_cleared_after_start
+    scenario_read_roster_slot
+    scenario_read_pill_info
+    scenario_read_base_info
+    scenario_read_start_info
+    scenario_read_tank_info
+    scenario_read_builder_info
+    scenario_read_terrain_buffer
+    scenario_read_num_fielded
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
