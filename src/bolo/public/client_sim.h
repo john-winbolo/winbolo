@@ -950,6 +950,17 @@ bool        clientSimGetClassicMode(const ClientSim *cs);
  * too — which matches the classic behaviour the option turns off. */
 bool        clientSimGetAlliesInTrees(const ClientSim *cs);
 
+/* What the server last asked the map overview for in the lobby-settings
+ * event: which block of squares it keeps live around the player's own tank
+ * (OverviewWindow), and what stops the player seeing inside that block
+ * (LineOfSightMode). The client honours both rather than choosing for
+ * itself, but the server keeps sending the same map data either way, so a
+ * modified client can ignore them and see what an honest one cannot. Both
+ * read back Expanded and off until the first event arrives, and a payload
+ * that predates the fields leaves them there too. */
+uint8_t     clientSimGetOverviewWindow(const ClientSim *cs);
+uint8_t     clientSimGetLineOfSight(const ClientSim *cs);
+
 /* What the server does with the voice its clients send it, as last broadcast
  * in the lobby-settings event. serverVoiceOff means voice sent from here is
  * dropped, so a client on such a server captures and sends none. Reads back

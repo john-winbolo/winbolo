@@ -2530,6 +2530,14 @@ bool clientSimGetAlliesInTrees(const ClientSim *cs) {
   return cs ? cs->alliesInTrees : false;
 }
 
+uint8_t clientSimGetOverviewWindow(const ClientSim *cs) {
+  return cs ? cs->overviewWindow : (uint8_t)overviewWindowExpanded;
+}
+
+uint8_t clientSimGetLineOfSight(const ClientSim *cs) {
+  return cs ? cs->lineOfSight : (uint8_t)lineOfSightOff;
+}
+
 ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs) {
   return cs ? cs->serverVoiceMode : serverVoiceOn;
 }

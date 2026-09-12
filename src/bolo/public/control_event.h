@@ -284,6 +284,8 @@ typedef struct ControlEvent {
                                          * its clients send it. serverVoiceOff
                                          * means a client here has nowhere to
                                          * send voice, so it captures none. */
+            uint8_t  lobbyOverviewWindow;  /* OverviewWindow */
+            uint8_t  lobbyLineOfSight;     /* LineOfSightMode */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

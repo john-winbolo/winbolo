@@ -103,6 +103,10 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.lobbyClassicMode                = true;
     in.u.lobbySettings.lobbyAlliesInTrees              = true;
     in.u.lobbySettings.voiceMode                       = serverVoiceOff;
+    in.u.lobbySettings.lobbyOverviewWindow             =
+        (uint8_t)overviewWindowClassic;
+    in.u.lobbySettings.lobbyLineOfSight                =
+        (uint8_t)lineOfSightBuildingsAndTrees;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -152,13 +156,22 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT_MSG(out.u.lobbySettings.voiceMode == serverVoiceOff,
                   "voiceMode did not survive codec round-trip (got %d)",
                   (int)out.u.lobbySettings.voiceMode);
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyOverviewWindow ==
+                      (uint8_t)overviewWindowClassic,
+                  "overview window did not survive codec round-trip (got %u)",
+                  (unsigned)out.u.lobbySettings.lobbyOverviewWindow);
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyLineOfSight ==
+                      (uint8_t)lineOfSightBuildingsAndTrees,
+                  "line of sight did not survive codec round-trip (got %u)",
+                  (unsigned)out.u.lobbySettings.lobbyLineOfSight);
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is twelve bytes shorter (3 policies + 3 u16 decay values +
-     * classic mode + allies in trees + voice mode). */
+     * that is fourteen bytes shorter (3 policies + 3 u16 decay values +
+     * classic mode + allies in trees + voice mode + overview window +
+     * line of sight). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -169,7 +182,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 12;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 14;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -189,6 +202,12 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT_MSG(shortOut.u.lobbySettings.voiceMode == serverVoiceOn,
                       "short payload must leave voice on, got %d",
                       (int)shortOut.u.lobbySettings.voiceMode);
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyOverviewWindow ==
+                          (uint8_t)overviewWindowExpanded,
+                      "short payload must leave the overview window expanded");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyLineOfSight ==
+                          (uint8_t)lineOfSightOff,
+                      "short payload must leave line of sight off");
     }
 
     /* The voice mode over the body tables, which is what the reliable
@@ -216,8 +235,9 @@ int run_lobby_settings_codec_and_apply(void) {
                           "body round-trip lost voice mode %d (got %d)",
                           (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
 
-            /* The mode is the last byte the encoder writes. */
-            body[bodyLen - 1] = 0x7F;
+            /* The mode is the third byte from the end: the overview
+             * window and line of sight follow it. */
+            body[bodyLen - 3] = 0x7F;
             memset(&bout, 0, sizeof(bout));
             UT_ASSERT(bdec(body, bodyLen, &bout));
             UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,
@@ -260,7 +280,47 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT_MSG(clientSimGetServerVoiceMode(cs) == serverVoiceOff,
                   "voice mode did not reach the client mirror (got %d)",
                   (int)clientSimGetServerVoiceMode(cs));
+    UT_ASSERT_MSG(clientSimGetOverviewWindow(cs) ==
+                      (uint8_t)overviewWindowClassic,
+                  "overview window did not reach the client mirror (got %u)",
+                  (unsigned)clientSimGetOverviewWindow(cs));
+    UT_ASSERT_MSG(clientSimGetLineOfSight(cs) ==
+                      (uint8_t)lineOfSightBuildingsAndTrees,
+                  "line of sight did not reach the client mirror (got %u)",
+                  (unsigned)clientSimGetLineOfSight(cs));
+    /* And the client honours them: the selectors the overview and the
+     * classic view actually read hold what the server asked for. */
+    UT_ASSERT_MSG(clientSimGetFogExperiment() == (int)overviewWindowClassic,
+                  "the overview window the server asked for was not applied "
+                  "(got %d)", clientSimGetFogExperiment());
+    UT_ASSERT_MSG(clientSimGetFogSight() == (int)lineOfSightBuildingsAndTrees,
+                  "the line of sight the server asked for was not applied "
+                  "(got %d)", clientSimGetFogSight());
     clientSimDestroy(cs);
+
+    /* A byte outside either enum reads as the default rather than wrapping
+     * onto a value the server did not ask for. */
+    {
+        ControlEvent odd = in;
+        odd.u.lobbySettings.lobbyOverviewWindow = 0x7F;
+        odd.u.lobbySettings.lobbyLineOfSight    = 0x7F;
+        ClientSim *oddCs = fresh_client_sim();
+        UT_ASSERT(oddCs != NULL);
+        clientSimApplyControl(oddCs, &odd);
+        UT_ASSERT_MSG(clientSimGetOverviewWindow(oddCs) ==
+                          (uint8_t)overviewWindowExpanded,
+                      "an unknown overview-window byte must read as expanded, "
+                      "got %u", (unsigned)clientSimGetOverviewWindow(oddCs));
+        UT_ASSERT_MSG(clientSimGetLineOfSight(oddCs) == (uint8_t)lineOfSightOff,
+                      "an unknown line-of-sight byte must read as off, got %u",
+                      (unsigned)clientSimGetLineOfSight(oddCs));
+        clientSimDestroy(oddCs);
+    }
+
+    /* Both selectors are process globals, so put them back where the rest
+     * of the suite expects to find them. */
+    clientSimSetFogExperiment((int)overviewWindowExpanded);
+    clientSimSetFogSight((int)lineOfSightOff);
     return 0;
 }
 

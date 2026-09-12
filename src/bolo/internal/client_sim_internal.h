@@ -352,6 +352,8 @@ struct ClientSim {
                                      * to their allies; raw mirror of the
                                      * lobby-settings event, false until the
                                      * first one lands */
+    uint8_t          overviewWindow;  /* OverviewWindow the server asked for */
+    uint8_t          lineOfSight;     /* LineOfSightMode the server asked for */
     ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
                                        * its clients send it; raw mirror of
                                        * the lobby-settings event. Zero is

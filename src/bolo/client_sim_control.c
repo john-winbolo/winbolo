@@ -35,6 +35,7 @@
 #include "client_sim_internal.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
+#include "overview_map.h"    /* overviewFogExperimentSet / overviewFogSightSet */
 #include "frontend.h"    /* frontEndAudioReturningToLobby */
 #include "messages.h"
 #include "netpacks.h"
@@ -407,6 +408,26 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
+        /* The server chooses what the map overview keeps live and what
+         * blocks sight inside it; the keys no longer do. A byte this
+         * build has no name for reads as the default rather than
+         * wrapping onto a value the server did not ask for, which is
+         * what clientSimSetFogExperiment's modulo would do with it. */
+        cs->overviewWindow = (evt->u.lobbySettings.lobbyOverviewWindow <
+                              (uint8_t)OVERVIEW_WINDOW_COUNT)
+                                 ? evt->u.lobbySettings.lobbyOverviewWindow
+                                 : (uint8_t)overviewWindowExpanded;
+        cs->lineOfSight = (evt->u.lobbySettings.lobbyLineOfSight <
+                           (uint8_t)LINE_OF_SIGHT_COUNT)
+                              ? evt->u.lobbySettings.lobbyLineOfSight
+                              : (uint8_t)lineOfSightOff;
+        /* The two process globals in overview_map.c stay the mechanism the
+         * overview and the classic view both read; the client has only
+         * stopped being the one who picks. FogExperiment and FogSightMode
+         * carry the same values in the same order as the public pair, so
+         * the mirror maps onto them with a cast. */
+        overviewFogExperimentSet((FogExperiment)cs->overviewWindow);
+        overviewFogSightSet((FogSightMode)cs->lineOfSight);
         cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
