@@ -1571,7 +1571,7 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
         *out = asked;
         return SCN_OP_OK;
     }
-    freeSlot = serverSimFindFreeSlot(sim);
+    freeSlot = serverSimFindFreeSlot(sim, true);
     if (freeSlot < 0) {
         return SCN_OP_FULL;
     }
@@ -1762,7 +1762,7 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
     r = scenarioBrainPath(sim, p->brain, &brain);
     if (r != SCN_OP_OK) return r;
-    freeSlot = serverSimFindFreeSlot(sim);
+    freeSlot = serverSimFindFreeSlot(sim, true);
     if (freeSlot < 0) {
         return SCN_OP_FULL;
     }

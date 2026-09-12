@@ -224,11 +224,25 @@ void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
     fillAndPublishPlayerJoin(sim, playerNum);
 }
 
-int serverSimFindFreeSlot(const ServerSim *sim) {
+int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
     int  i;
     BYTE limit;
     if (sim == NULL) return -1;
     limit = (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
+    /* A scenario may hold the round to fewer people than the operator
+       configured; it never widens it, so both caps bind and the tighter one
+       wins. Bots seat above it: the cap counts the people a round is meant
+       for, and the bots a scenario fields are its own business. */
+    if (!forBot && sim->scenarioPolicy != NULL &&
+        sim->scenarioPolicy->maxPlayers != NULL) {
+        int cap;
+        serverSimScenarioPolicyEnter(sim);
+        cap = sim->scenarioPolicy->maxPlayers(sim->scenarioPolicy->ctx);
+        serverSimScenarioPolicyLeave(sim);
+        if (cap > 0 && cap < (int)limit) {
+            limit = (BYTE)cap;
+        }
+    }
     for (i = 0; i < limit; i++) {
         if (!sim->playerConnected[i] && !botManagerIsBot(sim, (BYTE)i)) {
             return i;
@@ -262,7 +276,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
         return LOCAL_JOIN_GAME_LOCKED;
     }
 
-    slot = serverSimFindFreeSlot(sim);
+    slot = serverSimFindFreeSlot(sim, false);
     if (slot < 0) {
         return LOCAL_JOIN_SLOT_FULL;
     }

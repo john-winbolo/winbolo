@@ -337,9 +337,24 @@ BYTE serverSimWinningOwner(ServerSim *sim) {
 
 bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
     BYTE count;
-    BYTE first = serverSimWinningOwner(sim);
+    BYTE first;
     char name[256];
 
+    /* A scenario may take the base sweep out of the round's endings, and
+       only the sweep: every other way a round ends is untouched. Asked
+       before the board is read, so a scenario that has turned the sweep off
+       pays nothing for it. */
+    if (sim->scenarioPolicy != NULL && sim->scenarioPolicy->allowBaseWin != NULL) {
+        bool allow;
+        serverSimScenarioPolicyEnter(sim);
+        allow = sim->scenarioPolicy->allowBaseWin(sim->scenarioPolicy->ctx);
+        serverSimScenarioPolicyLeave(sim);
+        if (allow == FALSE) {
+            return FALSE;
+        }
+    }
+
+    first = serverSimWinningOwner(sim);
     if (first == NEUTRAL) {
         return FALSE;
     }

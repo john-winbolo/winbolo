@@ -3347,6 +3347,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The six lifecycle and lobby policy pointers: the start a tank is given,
+    # the base sweep, the team write in both lobby arms that make one, the
+    # player cap, the loadout at all three places one is handed out, and the
+    # death wait — each at its own call site under a policy answering the
+    # opposite of classic, and once more with nothing registered.
+    tests/unit/test_scenario_policy_lifecycle.c
     # The init table a bot is created with: one table per brain VM, an
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
@@ -4784,6 +4790,15 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    scenario_policy_choose_start
+    scenario_policy_choose_start_out_of_range
+    scenario_policy_allow_base_win
+    scenario_policy_allow_extra_teams
+    scenario_policy_team_set_extra_teams
+    scenario_policy_max_players
+    scenario_policy_spawn_loadout
+    scenario_policy_can_respawn
+    scenario_policy_null_is_classic
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

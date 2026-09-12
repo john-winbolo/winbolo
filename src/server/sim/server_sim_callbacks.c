@@ -356,3 +356,76 @@ void serverSimCbConsoleMessage(void *ctx, char *msg) {
     ServerSim *sim = (ServerSim *)ctx;
     serverMessageConsoleMessage(sim, msg);
 }
+
+/* The three callbacks that answer rather than announce. Each is the one
+ * place a decision the sim core takes is put to the scenario, which is why
+ * the core can ask its question without a scenario existing: with no policy
+ * registered, or none that has an opinion, the answer here is the classic
+ * one and the caller carries on as it always did. Every call runs between
+ * the policy enter and leave, so a policy that tries to write back through
+ * the op funnel while it is answering is refused there. */
+
+/* Where a tank starts. The index is the policy's to name and the caller's
+ * to range-check. */
+bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool named;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->chooseStart == NULL) {
+        return FALSE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    named = sim->scenarioPolicy->chooseStart(sim->scenarioPolicy->ctx,
+                                             player, startIdx);
+    serverSimScenarioPolicyLeave(sim);
+    return named;
+}
+
+/* What a spawning tank is handed. A loadout that names a game type is
+ * turned into the four amounts here, so the sim core only ever deals in
+ * amounts and the two forms of the answer cost it nothing. */
+bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
+                             BYTE *mines, BYTE *armour, BYTE *trees) {
+    ServerSim *sim = (ServerSim *)ctx;
+    ScnLoadout wanted;
+    bool answered;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->spawnLoadout == NULL) {
+        return FALSE;
+    }
+    memset(&wanted, 0, sizeof(wanted));
+    serverSimScenarioPolicyEnter(sim);
+    answered = sim->scenarioPolicy->spawnLoadout(sim->scenarioPolicy->ctx,
+                                                 player, &wanted);
+    serverSimScenarioPolicyLeave(sim);
+    if (answered == FALSE) {
+        return FALSE;
+    }
+    if (wanted.useGameType != 0) {
+        gameType named = (gameType)wanted.gameType;
+        gameTypeGetItems(&sim->sim, &named, shells, mines, armour, trees);
+        return TRUE;
+    }
+    *shells = wanted.shells;
+    *mines  = wanted.mines;
+    *armour = wanted.armour;
+    *trees  = wanted.trees;
+    return TRUE;
+}
+
+/* Whether a dead tank may come back yet. */
+bool serverSimCbCanRespawn(void *ctx, BYTE player) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canRespawn == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canRespawn(sim->scenarioPolicy->ctx, player);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}

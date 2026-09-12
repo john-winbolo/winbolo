@@ -60,6 +60,14 @@ void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
 
+/* The policy queries, also in server_sim_callbacks.c. These are where the
+ * scenario policy is asked for the decisions shared code takes, so the sim
+ * core can put the question without knowing a scenario exists. */
+bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx);
+bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
+                             BYTE *mines, BYTE *armour, BYTE *trees);
+bool serverSimCbCanRespawn(void *ctx, BYTE player);
+
 /* Defined in server_sim_callbacks.c. Appends a packed attribution record to
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
  * server_sim_control.c both feed it. */

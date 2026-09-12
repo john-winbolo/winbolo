@@ -45,6 +45,72 @@
  * is defined. */
 extern bool lobbyClientMayEdit(ServerSim *sim, int clientIdx);
 
+/* How many connected slots other than exceptSlot are on this team. There is
+ * no accessor for this — the nearest walk is the reservation pick in
+ * server_sim_players.c, which counts teammates for a different purpose — so
+ * the two team arms below share this one. Pass MAX_TANKS to exclude nobody.
+ * Bots count: a seat with a bot on it holds the team as much as a person's
+ * does. */
+static int lobbyTeamMemberCount(const ServerSim *sim, BYTE team,
+                                BYTE exceptSlot) {
+    int count = 0;
+    BYTE i;
+
+    if (team == 0 || team >= MAX_TANKS) {
+        return 0;
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == exceptSlot) continue;
+        if (!sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].teamNumber == team) count++;
+    }
+    return count;
+}
+
+/* Whether this slot may be put on this team. The policy is asked about
+ * extra teams — teams beyond the ones that exist — so it is asked only when
+ * the write is what brings the team into existence. Three writes create
+ * nothing and go through unasked:
+ *
+ *   - team 0, which is no team at all but where a slot goes to be
+ *     unassigned, and a number past the end, which both arms turn down on
+ *     their own;
+ *   - a re-send of the team the slot already holds, which moves nothing;
+ *   - a move onto a team another connected slot is already on.
+ *
+ * The moving slot is left out of the count because it is the one being
+ * placed: the question is whether the team it is going to exists without
+ * it. So the sole member of a team moving off it and onto an empty one is
+ * asked, even though the number of teams in play does not rise — the team
+ * it lands on is one the scenario did not lay out, which is what the
+ * pointer is there to refuse.
+ *
+ * With no policy, or one with no opinion, the answer is yes and both arms
+ * behave exactly as they did. The roster is not walked in that case. */
+static bool scenarioAllowsExtraTeams(ServerSim *sim, BYTE slot, BYTE team) {
+    const LobbyPlayer *lp;
+    bool allow;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->allowExtraTeams == NULL) {
+        return TRUE;
+    }
+    if (team == 0 || team >= MAX_TANKS) {
+        return TRUE;
+    }
+    lp = serverSimGetLobbyPlayer(sim, slot);
+    if (lp != NULL && lp->teamNumber == team) {
+        return TRUE;
+    }
+    if (lobbyTeamMemberCount(sim, team, slot) > 0) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->allowExtraTeams(sim->scenarioPolicy->ctx);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 /* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
 static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
     const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
@@ -79,6 +145,14 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if ((int)cmd->u.teamSet.slot != senderSlot &&
             !lobbyClientMayEdit(sim, senderSlot)) {
             return CMD_REJECT_NOT_HOST;
+        }
+        /* A scenario that has laid out its teams can refuse the lobby a new
+           one. Nothing has been written yet, so the move is turned down
+           outright and the sender hears it, the way this arm answers every
+           other refusal. */
+        if (!scenarioAllowsExtraTeams(sim, cmd->u.teamSet.slot,
+                                      cmd->u.teamSet.team)) {
+            return CMD_REJECT_INVALID;
         }
         serverSimSetTeam(sim, cmd->u.teamSet.slot, cmd->u.teamSet.team);
         logAddEvent(log_TeamSet,
@@ -652,7 +726,12 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         transportUdpServerSetBotName(slot, botName);
-        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS) {
+        /* The same question the team-set arm asks. The bot is already seated
+           by here, so unlike that arm the refusal cannot be a return code:
+           it is the team write, and the bot lands unassigned where the
+           roster shows it. */
+        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS &&
+            scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
             serverSimSetTeam(sim, slot, p->teamNumber);
         }
         serverSimPublishLobbySlot(sim, slot);

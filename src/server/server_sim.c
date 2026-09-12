@@ -330,6 +330,12 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
+    /* The policy queries. Registered on the server alone: a ClientSim leaves
+     * them NULL, which is what keeps shared code on the classic branch
+     * there. */
+    sim->sim.callbacks.chooseStart = serverSimCbChooseStart;
+    sim->sim.callbacks.spawnLoadout = serverSimCbSpawnLoadout;
+    sim->sim.callbacks.canRespawn = serverSimCbCanRespawn;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {

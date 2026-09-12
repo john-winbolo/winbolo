@@ -379,6 +379,33 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 }
 
 /*********************************************************
+*NAME:          tankSpawnLoadout
+*PURPOSE:
+*  What a spawning tank is handed. The host is asked first,
+*  so a scenario can arm a tank the game type would leave
+*  empty; with nobody to ask, or nobody with an answer, the
+*  sim's game type decides as it always has. Every place the
+*  engine hands out a fresh loadout comes through here.
+*
+*ARGUMENTS:
+*  sim       - The game the tank belongs to
+*  playerNum - The slot being fuelled
+*  shells    - Pointer to hold the number of shells
+*  mines     - Pointer to hold the number of mines
+*  armour    - Pointer to hold the amount of armour
+*  trees     - Pointer to hold the number of trees
+*********************************************************/
+static void tankSpawnLoadout(GameSim *sim, BYTE playerNum, BYTE *shells,
+                             BYTE *mines, BYTE *armour, BYTE *trees) {
+  if (sim->callbacks.spawnLoadout != NULL &&
+      sim->callbacks.spawnLoadout(sim->callbacks.ctx, playerNum,
+                                  shells, mines, armour, trees) != FALSE) {
+    return;
+  }
+  gameTypeGetItems(sim, &sim->game, shells, mines, armour, trees);
+}
+
+/*********************************************************
 *NAME:          tankCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 23/11/98
@@ -406,7 +433,8 @@ void tankCreate(GameSim *sim, tank *value) {
   New(*value);
   (*value)->x = 0;
   (*value)->y = 0;
-  gameTypeGetItems(sim, &sim->game, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
+  tankSpawnLoadout(sim, gameSimGetTankPlayer(sim, value), &shellsAmount,
+                   &minesAmount, &armourAmount, &treesAmount);
   (*value)->armour = armourAmount;
   (*value)->destroyed = FALSE;
   (*value)->shells = shellsAmount;
@@ -570,6 +598,14 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
 
   if ((*value)->deathWait > 0) {
 	/* Tank is still waiting to respawn */
+    /* The last tick of the wait is the one the host can hold. Asked at one
+       rather than at zero so a "not yet" leaves the tank where it is — dead,
+       with a wait of one — and the same question is put again next tick. */
+    if ((*value)->deathWait == 1 && sim->callbacks.canRespawn != NULL &&
+        sim->callbacks.canRespawn(sim->callbacks.ctx,
+                                  gameSimGetTankPlayer(sim, value)) == FALSE) {
+      return;
+    }
     (*value)->deathWait--;
     if ((*value)->deathWait == 0) {
       (*value)->newTank = TRUE;
@@ -1269,7 +1305,8 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   (*value)->y = y;
   (*value)->angle = angle;
   if (setResources == TRUE) {
-    gameTypeGetItems(sim, &sim->game, &shells, &mines, &armour, &trees);
+    tankSpawnLoadout(sim, gameSimGetTankPlayer(sim, value), &shells, &mines,
+                     &armour, &trees);
     (*value)->shells = shells;
     (*value)->mines = mines;
     (*value)->armour = armour;
@@ -1530,7 +1567,8 @@ void tankDeath(GameSim *sim, tank *value) {
   } else if (isServer) {
     /* Server-authoritative respawn: pick a new start and reset resources */
     lgmTankDied(&sim->lgmen[gameSimGetTankPlayer(sim, value)]);
-    gameTypeGetItems(sim, &sim->game, &shellAmount, &minesAmount, &armourAmount, &treesAmount);
+    tankSpawnLoadout(sim, gameSimGetTankPlayer(sim, value), &shellAmount,
+                     &minesAmount, &armourAmount, &treesAmount);
     (*value)->armour = armourAmount;
     (*value)->destroyed = FALSE;
     (*value)->tankHitCount = 0;

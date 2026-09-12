@@ -2028,6 +2028,22 @@ int run_scenario_flow_set_game_time(void);
 int run_scenario_flow_set_game_time_refusals(void);
 int run_scenario_flow_arm_records(void);
 
+/* The six lifecycle and lobby policy pointers
+ * (test_scenario_policy_lifecycle.c). Where a tank starts, whether the base
+ * sweep may end the round, whether the lobby may make another team, how many
+ * people may join, what a spawning tank is handed and whether a dead tank may
+ * come back — each driven at its own call site with a policy answering the
+ * opposite of classic, and once more with nothing registered. */
+int run_scenario_policy_choose_start(void);
+int run_scenario_policy_choose_start_out_of_range(void);
+int run_scenario_policy_allow_base_win(void);
+int run_scenario_policy_allow_extra_teams(void);
+int run_scenario_policy_team_set_extra_teams(void);
+int run_scenario_policy_max_players(void);
+int run_scenario_policy_spawn_loadout(void);
+int run_scenario_policy_can_respawn(void);
+int run_scenario_policy_null_is_classic(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

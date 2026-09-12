@@ -1877,8 +1877,40 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
 *  playerNum - Player number requesting the start
 *********************************************************/
 void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir, BYTE playerNum) {
+  BYTE named = MAX_STARTS; /* A start the host named, MAX_STARTS for none */
+
   if (*value == NULL || (*value)->numStarts == 0) {
     return;
+  }
+
+  /* The host may name the start. Asked here rather than in each of the two
+     pickers below, so one selection asks one question, and above the batch
+     slot as well, so a named start is the answer wherever the tank is
+     coming from. An index off the end, or one naming a start that has been
+     removed, is refused and the engine picks as it always did. */
+  if (sim->callbacks.chooseStart != NULL &&
+      sim->callbacks.chooseStart(sim->callbacks.ctx, playerNum, &named) != FALSE) {
+    if (named < (*value)->numStarts && (*value)->active[named] != FALSE) {
+      BYTE rx;
+      BYTE ry;
+      BYTE bt;
+      /* The batch slot is spent either way: it was this selection's to use
+         and the named start has taken its place. */
+      if (playerNum < MAX_TANKS) {
+        sim->pendingStartIdx[playerNum] = MAX_STARTS;
+      }
+      startsScatterFind(sim, (*value)->item[named].x, (*value)->item[named].y, &rx, &ry, playerNum);
+      bt = startsConvertDir((*value)->item[named].dir);
+      *x = rx;
+      *y = ry;
+      *dir = (TURNTYPE)(bt * START_TIMES_16);
+      return;
+    }
+    WB_LOG_WARN(WB_LOG_CAT_SIM,
+                "startsGetStart: start %u named for player %u is not a live "
+                "start of the %u on the map; using the engine's pick",
+                (unsigned)named, (unsigned)playerNum,
+                (unsigned)(*value)->numStarts);
   }
 
   /* Tutorial: deterministic start gated on player progress. Unlike

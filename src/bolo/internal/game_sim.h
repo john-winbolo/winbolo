@@ -111,6 +111,24 @@ typedef struct GameSimCallbacks {
                                BYTE mapX, BYTE mapY);
     void (*recordPillPickup)(void *ctx, BYTE picker, BYTE pillIndex,
                              BYTE mapX, BYTE mapY);
+    /* Policy queries — the members that return an answer rather than
+     * announcing something. Each asks the host a decision the sim would
+     * otherwise make alone; the server's implementation is the only place
+     * that knows what is deciding, so shared code asks the question and
+     * never learns who answered it. NULL is the classic rule and every call
+     * site treats it as such, which is how the client — which registers none
+     * of these — keeps the classic answer.
+     *
+     * chooseStart: where `player` starts. True with a start index in
+     * *startIdx; the caller range-checks it and falls back to its own pick.
+     * spawnLoadout: what a spawning tank is handed. True with the four
+     * amounts filled; false leaves the sim's game type to decide.
+     * canRespawn: whether a dead tank may come back. False holds the death
+     * wait where it is and the question is asked again next tick. */
+    bool (*chooseStart)(void *ctx, BYTE player, BYTE *startIdx);
+    bool (*spawnLoadout)(void *ctx, BYTE player, BYTE *shells, BYTE *mines,
+                         BYTE *armour, BYTE *trees);
+    bool (*canRespawn)(void *ctx, BYTE player);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 

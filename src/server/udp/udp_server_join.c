@@ -922,7 +922,7 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
      * ahead of the duplicate check (Phase 5) so the WBN-verification
      * step below has a slot to bind its player_key to, and the collision
      * policy has the slot available before applying any preempt. */
-    slot = serverSimFindFreeSlot(sim);
+    slot = serverSimFindFreeSlot(sim, false);
     if (slot < 0) {
         serverSimConsoleMessage("Join rejected: Server full");
         serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
