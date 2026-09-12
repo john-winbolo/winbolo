@@ -18,10 +18,11 @@
  * predicate both copies of the filter call (the per-client snapshot build and
  * the UDP drain), so pinning it pins both.
  *
- * The mute has a client half too — the bit the players panel draws from — and
- * the last test here is that one, because it only means anything against the
- * server sweep the test above it pins: both sides have to forget a departing
- * slot's mute or a recycled slot lies about who is muted.
+ * The last two tests are the client's side of the same ground, kept here
+ * because neither means much apart from the server behaviour above it: the
+ * mute mirror the players panel draws from, which has to forget a departing
+ * slot exactly as the server does or a recycled slot lies about who is muted,
+ * and the sender name a received ping carries, which the markers draw.
  */
 
 #include <stdint.h>
@@ -37,6 +38,7 @@
 #include "client_sim.h"            /* the client half of the mute mirror */
 #include "client_sim_internal.h"   /* the render-limiter ring behind that mute */
 #include "client_sim_control.h"    /* clientSimApplyControl */
+#include "players.h"               /* playersSetPlayer — a name to find */
 #include "control_event.h"         /* CTRL_PLAYER_LEAVE */
 #include "game_sim.h"
 #include "players.h"
@@ -676,6 +678,53 @@ int run_ping_mute_client_mirror_cleared_on_leave(void) {
     clientSimApplyControl(cs, &evt);
     UT_ASSERT_MSG(clientSimIsPingMuted(cs, 4),
                   "a self or out-of-range leave disturbed the mask");
+
+    clientSimDestroy(cs);   /* frees cs itself */
+    return 0;
+}
+
+/* ClientPing promises an empty senderName for a slot that was not in use, and
+ * both markers lean on it: each skips drawing a name that comes back empty and
+ * neither second-guesses one that does not. playersGetPlayerName does not
+ * answer "" for an empty or out-of-range slot though — it answers NO_TANK,
+ * "???" — so clientSimAddPing has to ask only for a slot worth asking about.
+ * A "???" leaking through would be drawn on the map as the sender's name. */
+int run_ping_sender_name_empty_for_unused_slot(void) {
+    ClientSim *cs = clientSimAlloc();
+    GameSim   *gs;
+    ClientPing out[MAX_CLIENT_PINGS];
+    int n;
+
+    UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 0);
+    gs = clientSimGetGameSim(cs);
+
+    /* Slot 1 is in use and named; slots 2+ are not, and MAX_TANKS is not a
+     * slot at all. NEUTRAL is "not allied to me", as elsewhere. */
+    playersSetPlayer(cs, &gs->plyrs, NEUTRAL, 1, (char *)"Mate", "??",
+                     0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
+
+    clientSimAddPing(cs, 1,         PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y, 1000);
+    clientSimAddPing(cs, 2,         PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y, 1000);
+    clientSimAddPing(cs, MAX_TANKS, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y, 1000);
+
+    n = clientSimGetPings(cs, 1000, out, MAX_CLIENT_PINGS);
+    UT_ASSERT_MSG(n == 3, "expected three live pings, got %d", n);
+
+    /* clientSimGetPings walks oldest first from the write cursor, so the three
+     * come back in the order they were added. */
+    UT_ASSERT_MSG(out[0].sender == 1, "first ping is not the in-use sender");
+    UT_ASSERT_MSG(strcmp(out[0].senderName, "Mate") == 0,
+                  "an in-use sender's name did not come through: \"%s\"",
+                  out[0].senderName);
+
+    UT_ASSERT_MSG(out[1].senderName[0] == '\0',
+                  "an unused sender slot gave \"%s\" rather than an empty "
+                  "name — a marker would draw it", out[1].senderName);
+    UT_ASSERT_MSG(out[2].senderName[0] == '\0',
+                  "an out-of-range sender gave \"%s\" rather than an empty "
+                  "name", out[2].senderName);
 
     clientSimDestroy(cs);   /* frees cs itself */
     return 0;

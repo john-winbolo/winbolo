@@ -1728,6 +1728,7 @@ int run_ping_dispatch_new_round_clears_rate_limit(void);
 int run_ping_reaches_team_only(void);
 int run_ping_mute_relay_skip(void);
 int run_ping_mute_client_mirror_cleared_on_leave(void);
+int run_ping_sender_name_empty_for_unused_slot(void);
 
 /* Smart ping across the wire (test_ping_network.c): the full client -> server
  * -> client path over the real loopback UDP transport, driven through

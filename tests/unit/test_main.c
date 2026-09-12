@@ -781,6 +781,8 @@ static const UnitTestEntry s_tests[] = {
     { "ping_mute_relay_skip",                    run_ping_mute_relay_skip                    },
     { "ping_mute_client_mirror_cleared_on_leave",
                                                  run_ping_mute_client_mirror_cleared_on_leave },
+    { "ping_sender_name_empty_for_unused_slot",
+                                                 run_ping_sender_name_empty_for_unused_slot },
     { "ping_network",                            run_ping_network                            },
     { "lang_name_table",                         run_lang_name_table                         },
     { "screencalc_river_road_counts_as_water",   run_screencalc_river_road_counts_as_water   },

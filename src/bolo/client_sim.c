@@ -2172,10 +2172,18 @@ void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
   slot->worldY = worldY;
   slot->recvMs = nowMs;
   /* The sender's name, taken now — see ClientPing. The players object is
-     gone between games, and a ping cannot arrive then; the guard is for the
-     order teardown happens in, not for a case that has a name to find. */
+     gone between games, and a ping cannot arrive then; the NULL guard is for
+     the order teardown happens in, not for a case that has a name to find.
+
+     Asked only for a slot that is in use and in range, because
+     playersGetPlayerName answers NO_TANK — "???" — for one that is not, and
+     ClientPing promises an empty name there. Both drawers skip an empty name
+     and neither has a reason to distrust one that is not, so a "???" would go
+     on the map as a sender. The sender is server-validated, so this is the
+     belt and not the braces. */
   slot->senderName[0] = '\0';
-  if (clientSimGetGameSim(cs)->plyrs != NULL) {
+  if (clientSimGetGameSim(cs)->plyrs != NULL && sender < MAX_TANKS &&
+      playersIsInUse(&clientSimGetGameSim(cs)->plyrs, sender) == TRUE) {
     playersGetPlayerName(&clientSimGetGameSim(cs)->plyrs, sender,
                          slot->senderName, sizeof(slot->senderName), FALSE);
   }

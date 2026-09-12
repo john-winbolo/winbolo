@@ -4612,6 +4612,7 @@ set(_unit_test_names
     ping_reaches_team_only
     ping_mute_relay_skip
     ping_mute_client_mirror_cleared_on_leave
+    ping_sender_name_empty_for_unused_slot
     ping_network
     lang_name_table
     screencalc_river_road_counts_as_water
