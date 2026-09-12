@@ -230,17 +230,6 @@ struct ServerSim {
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */
-    bool     startInProgress;      /* TRUE while serverSimStartGame /
-                                    * serverSimStartGameInPlace is running.
-                                    * Guards serverSimLobbyCheckAllReady:
-                                    * roster edits DURING a start re-enter
-                                    * the all-ready check via
-                                    * serverSimRemovePlayer, and with the
-                                    * state still Lobby that recursively
-                                    * started a second game mid-teardown
-                                    * (the Ready-click crash:
-                                    * botManagerOnGameStart walked a
-                                    * half-removed bot). */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from
                                     * serverSimCreate*; FALSE after the first
                                     * serverSimResetGameWorld. Drives the
@@ -662,7 +651,9 @@ struct ServerSim {
      * that edits the roster from that publish re-enters
      * serverSimLobbyCheckAllReady with every player still ready — which
      * would start a second game on top of the one being set up. The
-     * detector returns at its first line while this is set. */
+     * detector returns at its first line while this is set. (The
+     * Ready-click crash was exactly this: botManagerOnGameStart walked a
+     * half-removed bot.) */
     void                  *scenario;
     const ScenarioPolicy  *scenarioPolicy;
     uint8_t                inScenarioPolicy;

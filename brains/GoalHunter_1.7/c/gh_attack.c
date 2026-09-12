@@ -155,6 +155,13 @@ typedef struct NaAttackCtx {
     int      t_swamp, t_river, t_pillbox;
     uint8_t  passable[16];           /* TERRAIN_COST_LAND < 9999 && !water   */
     double   aim_off[GH_ATK_AIMS][2];/* shield.AIM_OFFSETS_TILE_FIRE         */
+
+    /* The brain's pathfinder, refreshed by getCtx on every entry. The shot
+     * walk reads this sim's shell rules off it, so aim_line_trees has to
+     * simulate with the same one cpf_simulate_shot would use. NULL until a
+     * pathfinder is registered; the simulate call answers 0 tiles for that,
+     * which reads as a blocked line. */
+    BrainPathfinder *pf;
 } NaAttackCtx;
 
 /* ── Registry-backed ctx lookup ───────────────────────────────────── */
@@ -171,6 +178,10 @@ static NaAttackCtx *getCtx(lua_State *L) {
     NaAttackCtx *ctx = (NaAttackCtx *)lua_touserdata(L, -1);
     lua_pop(L, 1);
     if (!ctx) luaL_error(L, "gh_attack: ctx not initialized");
+    /* Re-read every entry rather than latch: the instance's pathfinder is
+     * created and destroyed with the brain, and the ctx outlives neither
+     * reliably. */
+    ctx->pf = brainCoreGetPathfinder(L);
     return ctx;
 }
 
@@ -667,7 +678,12 @@ static int aim_line_trees(NaAttackCtx *ctx, const BYTE *w,
     int awy = (pmy << 8) + (int)floor(ctx->aim_off[i][1] * 256.0);
 
     BrainShotTile tiles[GH_ATK_SHOT_TILES];
-    int n = brainPathfinderSimulateShot((WORLD)ox, (WORLD)oy,
+    /* The same pathfinder cpf_simulate_shot uses: the shot walk reads this
+     * sim's shell rules off it, so an aim line simulated without it is not
+     * the line the engine will fire. It answers 0 tiles when there is none,
+     * which this treats as a blocked line — the safe reading. */
+    int n = brainPathfinderSimulateShot(ctx->pf,
+                                        (WORLD)ox, (WORLD)oy,
                                         (WORLD)awx, (WORLD)awy,
                                         BRAIN_SHOT_SHOOTER_TANK, 0,
                                         tiles, GH_ATK_SHOT_TILES);

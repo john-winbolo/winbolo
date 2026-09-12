@@ -2440,6 +2440,22 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     lua_pushcclosure(L, funcs[i].func, 1);
     lua_setglobal(L, funcs[i].name);
   }
+  /* Same pointer-to-pointer in the registry, for C the brains link in
+   * alongside this file (brains/<brain>/c). Those modules register their
+   * own Lua functions, so they have no cpf_* upvalue to read, and the
+   * pathfinder is what the shot and movement rules hang off. Kept in
+   * step with the upvalue because it IS the upvalue: one pfPtr, stored
+   * twice. */
+  lua_pushlightuserdata(L, (void *)pfPtr);
+  lua_setfield(L, LUA_REGISTRYINDEX, BRAINCORE_PATHFINDER_REGKEY);
+}
+
+BrainPathfinder *brainCoreGetPathfinder(lua_State *L) {
+  BrainPathfinder **ppf;
+  lua_getfield(L, LUA_REGISTRYINDEX, BRAINCORE_PATHFINDER_REGKEY);
+  ppf = (BrainPathfinder **)lua_touserdata(L, -1);
+  lua_pop(L, 1);
+  return (ppf != NULL) ? *ppf : NULL;
 }
 
 /* ------------------------------------------------------------------ */

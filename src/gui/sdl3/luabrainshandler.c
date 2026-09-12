@@ -868,7 +868,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     lua_pushnil(L);
   }
   lua_setglobal(L, "BRAIN_INIT_ARG");
-  s_next_init_arg[0] = ' ';
+  s_next_init_arg[0] = '\0';
 
   /* BRAIN_START_ENGINE_TICK: the server sim's tick at the moment this brain
    * was created. Always a number (0 = created at game start), never nil, so
