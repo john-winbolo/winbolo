@@ -1745,12 +1745,15 @@ static int l_cpf_rebuild_edge_costs(lua_State *L) {
 /* cpf_simulate_shot(origin_wx, origin_wy, target_wx, target_wy,
  *                   shooter_type=TANK, sight_len=0)
  *   -> { {mx=..., my=...}, ... }
- * Stateless wrapper over brainPathfinderSimulateShot (no pf instance
- * needed — uses only static physics constants). The angle is derived
- * from origin → target via atan2 + lroundf. For sub-brad precision
- * matching the engine's actual shell flight, use
- * cpf_simulate_shot_angle with BrainInfo.tank_angle (a float). */
+ * Wrapper over brainPathfinderSimulateShot. It keeps no state of its
+ * own, but it does read this sim's shell rules off the pathfinder the
+ * bot manager pushes to each think — the same upvalue cpf_predict_stop
+ * takes its movement rules from. The angle is derived from
+ * origin → target via atan2 + lroundf. For sub-brad precision matching
+ * the engine's actual shell flight, use cpf_simulate_shot_angle with
+ * BrainInfo.tank_angle (a float). */
 static int l_cpf_simulate_shot(lua_State *L) {
+  CPF_GET(L);
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
   WORLD tx = (WORLD)luaL_checkinteger(L, 3);
@@ -1759,7 +1762,7 @@ static int l_cpf_simulate_shot(lua_State *L) {
   int sight_len = (int)luaL_optinteger(L, 6, 0);
 
   BrainShotTile tiles[64];
-  int n = brainPathfinderSimulateShot(ox, oy, tx, ty, shooter, sight_len,
+  int n = brainPathfinderSimulateShot(pf, ox, oy, tx, ty, shooter, sight_len,
                                       tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
   lua_createtable(L, n, 0);
   for (int i = 0; i < n; i++) {
@@ -1781,6 +1784,7 @@ static int l_cpf_simulate_shot(lua_State *L) {
  * predicts using the BYTE-floored direction will be off by up to
  * one brad. */
 static int l_cpf_simulate_shot_angle(lua_State *L) {
+  CPF_GET(L);
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
   float angle  = (float)luaL_checknumber(L, 3);
@@ -1788,7 +1792,7 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   int sight_len= (int)luaL_optinteger(L, 5, 0);
 
   BrainShotTile tiles[64];
-  int n = brainPathfinderSimulateShotAngle(ox, oy, angle, shooter, sight_len,
+  int n = brainPathfinderSimulateShotAngle(pf, ox, oy, angle, shooter, sight_len,
                                            tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
   lua_createtable(L, n, 0);
   for (int i = 0; i < n; i++) {
@@ -1894,6 +1898,7 @@ static int l_cpf_predict_stop(lua_State *L) {
  * tanks_table is an array of {wx=, wy=, player_num=} entries.
  * hit_type: 0=tile, 1=tank hit. hit_id: player number (when hit_type==1). */
 static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
+  CPF_GET(L);
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
   WORLD tx = (WORLD)luaL_checkinteger(L, 3);
@@ -1920,7 +1925,7 @@ static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
   }
 
   BrainShotTile tiles[64];
-  int n = brainPathfinderSimulateShotWithTanks(ox, oy, tx, ty,
+  int n = brainPathfinderSimulateShotWithTanks(pf, ox, oy, tx, ty,
             shooter, sight_len, tanks, num_tanks, owner,
             tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
   lua_createtable(L, n, 0);

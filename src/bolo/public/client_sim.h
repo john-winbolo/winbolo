@@ -173,7 +173,7 @@ typedef struct {
     WORLD y;
     float fx;            /* float position accumulator — authoritative position */
     float fy;
-    float vx;            /* float velocity per tick (SHELL_SPEED * cos/sin) */
+    float vx;            /* float velocity per tick (shell_speed * cos/sin) */
     float vy;
     TURNTYPE angle;
     uint8_t length;
@@ -192,7 +192,7 @@ typedef struct {
 typedef struct {
     float fx;            /* float position accumulator (world units) */
     float fy;
-    float vx;            /* per-game-tick velocity (SHELL_SPEED * cos/sin) */
+    float vx;            /* per-game-tick velocity (shell_speed * cos/sin) */
     float vy;
     uint8_t angle;       /* snapshot angle (bradians 0-255), for render frame */
     uint8_t owner;
@@ -331,11 +331,13 @@ void clientSimReconcilePredictedShells(ClientSim *cs, uint32_t lastProcessedInpu
  * (20ms each), the unit the projection velocity steps in. Pure helper. */
 int  clientShellProjectAgeTicks(uint16_t pingMs);
 
-/* Pure projection: derive the per-tick velocity from angle+SHELL_SPEED and the
- * anchored float position snap + velocity*ageTicks. Unit-testable without a
- * ClientSim. */
+/* Pure projection: derive the per-tick velocity from angle+shellSpeed and the
+ * anchored float position snap + velocity*ageTicks. Takes the speed rather
+ * than reading a constant, so it stays unit-testable without a ClientSim
+ * while still following the sim's shell_speed. */
 void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
-                        int ageTicks, float *outFx, float *outFy,
+                        int ageTicks, int shellSpeed,
+                        float *outFx, float *outFy,
                         float *outVx, float *outVy);
 
 /* (Re)build the projected-shell array from the current serverShellSnaps,

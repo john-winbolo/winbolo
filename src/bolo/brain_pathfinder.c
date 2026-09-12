@@ -407,6 +407,10 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->brake_rate = classic.tank_brake_rate;
   pf->terrain_decel_rate = classic.tank_decel_rate;
   pf->min_move = classic.tank_min_move;
+  pf->shell_life = classic.shell_life;
+  pf->shell_speed = classic.shell_speed;
+  pf->shell_start_add = classic.shell_start_add;
+  pf->gunsight_max = classic.gunsight_max;
 
   /* Resource drain config */
   /* A tuned A* cost, not a copy of tank_water_ticks: ~85 ticks/tile at
@@ -604,6 +608,16 @@ void brainPathfinderSetMoveRules(BrainPathfinder *pf, float brakeRate,
   pf->brake_rate = brakeRate;
   pf->terrain_decel_rate = terrainDecelRate;
   pf->min_move = minMove;
+}
+
+void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
+                                  int32_t shellSpeed, int32_t shellStartAdd,
+                                  int32_t gunsightMax) {
+  if (pf == NULL) return;
+  pf->shell_life = shellLife;
+  pf->shell_speed = shellSpeed;
+  pf->shell_start_add = shellStartAdd;
+  pf->gunsight_max = gunsightMax;
 }
 
 /* One-line check used by the inner search loops. NULL flag → never
@@ -3494,7 +3508,8 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
  * out for the configured shell life. Bit-identical to the engine's
  * shellsAddItem + per-tick shellsUpdate when called with the same
  * angle, sight_len, and origin the engine sees. */
-static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
+static int simulate_shot_walk(const BrainPathfinder *pf,
+                               WORLD origin_wx, WORLD origin_wy,
                                TURNTYPE angle,
                                int shooter_type, int sight_len,
                                BrainShotTile *out_tiles, int max_tiles) {
@@ -3509,20 +3524,23 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
     len_units = PILLBOX_FIRE_DISTANCE;
   } else {
-    int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
+    int sl = (sight_len > 0) ? sight_len : (int) pf->gunsight_max;
     len_units = sl / 2.0f;
   }
 
   /* Spawn position + lifetime budget come from shells.c so the
-   * simulator can never drift from the engine's actual shell. */
+   * simulator can never drift from the engine's actual shell. The
+   * numbers they run on come off the pathfinder, pushed this think. */
   WORLD x, y;
-  shellSpawnPos(origin_wx, origin_wy, angle, &x, &y);
+  shellSpawnPos(origin_wx, origin_wy, angle, (int) pf->shell_speed,
+                (int) pf->shell_start_add, &x, &y);
 
-  int ticks = shellLifeTicks(len_units);
+  int ticks = shellLifeTicks(len_units, (int) pf->shell_life,
+                             (int) pf->shell_start_add);
 
   /* High-precision per-tick step (24.8 fixed point), same as shellsUpdate. */
   int32_t xStep = 0, yStep = 0;
-  utilCalcDistanceHP(&xStep, &yStep, angle, SHELL_SPEED);
+  utilCalcDistanceHP(&xStep, &yStep, angle, pf->shell_speed);
   int32_t xAcc = 0, yAcc = 0;
 
   int count = 0;
@@ -3587,7 +3605,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
  * tankIsTankHit in tank.c) at every sub-tick position. When a tank is
  * hit, a hit_type=BRAIN_SHOT_HIT_TANK entry is emitted and the walk
  * stops (shell consumed). Owner tank is excluded from hit checks. */
-static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
+static int simulate_shot_walk_tanks(const BrainPathfinder *pf,
+                                     WORLD origin_wx, WORLD origin_wy,
                                      TURNTYPE angle,
                                      int shooter_type, int sight_len,
                                      const BrainShotTankPos *tanks, int num_tanks,
@@ -3599,16 +3618,18 @@ static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
     len_units = (int)PILLBOX_FIRE_DISTANCE;
   } else {
-    int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
+    int sl = (sight_len > 0) ? sight_len : (int) pf->gunsight_max;
     len_units = sl / 2;
   }
 
   WORLD x, y;
-  shellSpawnPos(origin_wx, origin_wy, angle, &x, &y);
-  int ticks = shellLifeTicks(len_units);
+  shellSpawnPos(origin_wx, origin_wy, angle, (int) pf->shell_speed,
+                (int) pf->shell_start_add, &x, &y);
+  int ticks = shellLifeTicks((float) len_units, (int) pf->shell_life,
+                             (int) pf->shell_start_add);
 
   int32_t xStep = 0, yStep = 0;
-  utilCalcDistanceHP(&xStep, &yStep, angle, SHELL_SPEED);
+  utilCalcDistanceHP(&xStep, &yStep, angle, pf->shell_speed);
   int32_t xAcc = 0, yAcc = 0;
 
   int count = 0;
@@ -3685,49 +3706,52 @@ static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
  * lroundf to avoid the truncation-by-1-brad bug; even so, the round
  * trip atan2 → integer is approximate, so use the *Angle variant
  * when bit-exact engine match matters. */
-int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShot(const BrainPathfinder *pf,
+                                 WORLD origin_wx, WORLD origin_wy,
                                  WORLD target_wx, WORLD target_wy,
                                  int shooter_type, int sight_len,
                                  BrainShotTile *out_tiles, int max_tiles) {
-  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   if (origin_wx == target_wx && origin_wy == target_wy) return 0;
   /* Angle conversion lives in shells.c so both engine and brain use
    * the same int rounding. */
   TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
                                         target_wx, target_wy);
-  return simulate_shot_walk(origin_wx, origin_wy, angle,
+  return simulate_shot_walk(pf, origin_wx, origin_wy, angle,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
 }
 
 /* Public entry: take the firing angle directly. Bit-exact match to a
  * real shell when called with the engine's tank.direction. */
-int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShotAngle(const BrainPathfinder *pf,
+                                     WORLD origin_wx, WORLD origin_wy,
                                      float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles) {
-  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   /* Wrap to [0, 256) keeping the fractional part — utilCalcDistance
    * uses a 256-entry sin/cos table internally but interpolates at
    * the call site for sub-brad accuracy. */
   float a = fmodf(fmodf(angle, 256.0f) + 256.0f, 256.0f);
-  return simulate_shot_walk(origin_wx, origin_wy, (TURNTYPE)a,
+  return simulate_shot_walk(pf, origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
 }
 
 /* Public entry: shot simulation with tank hitbox checking. */
-int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShotWithTanks(const BrainPathfinder *pf,
+                                          WORLD origin_wx, WORLD origin_wy,
                                           WORLD target_wx, WORLD target_wy,
                                           int shooter_type, int sight_len,
                                           const BrainShotTankPos *tanks, int num_tanks,
                                           uint8_t owner_player,
                                           BrainShotTile *out_tiles, int max_tiles) {
-  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   if (origin_wx == target_wx && origin_wy == target_wy) return 0;
   TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
                                         target_wx, target_wy);
-  return simulate_shot_walk_tanks(origin_wx, origin_wy, angle,
+  return simulate_shot_walk_tanks(pf, origin_wx, origin_wy, angle,
                                   shooter_type, sight_len,
                                   tanks, num_tanks, owner_player,
                                   out_tiles, max_tiles);

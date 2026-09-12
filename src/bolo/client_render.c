@@ -304,7 +304,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
       WORLD gsrx, gsry;
       float gsra;
       clientSimGetRenderedTankPos(csPtr, &gsrx, &gsry, &gsra);
-      tankGetGunsightAt(&MY_TANK(csPtr), gsrx, gsry, gsra, &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
+      tankGetGunsightAt(clientSimGetGameSim(csPtr), &MY_TANK(csPtr), gsrx, gsry, gsra, &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
       gs.mapX = gsX;
 
       if (gs.mapX >= clientSimGetXOffset(csPtr) && gs.mapX < (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1) && gs.mapY >= clientSimGetYOffset(csPtr) && gs.mapY < (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y -1 )) {

@@ -4805,6 +4805,14 @@ static void shotSimRunCallback(int oWX, int oWY, int tWX, int tWY,
                                 int shooter, bool useTankAngle,
                                 float tankAngle, void *ud) {
     BrainTestApp *app = (BrainTestApp *)ud;
+    /* The shell rules ride the pathfinder, so the panel asks the followed
+     * bot's — the one the server pushed this sim's rules onto, and the one
+     * whose prediction the panel is showing. With no bot followed, the debug
+     * pathfinder stands in on the classic seed. */
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
+    if (pf == NULL) {
+        pf = app->debugPF;
+    }
     app->shotOriginWX    = oWX;
     app->shotOriginWY    = oWY;
     app->shotTargetWX    = tWX;
@@ -4812,12 +4820,12 @@ static void shotSimRunCallback(int oWX, int oWY, int tWX, int tWY,
     app->shotShooterType = shooter;
     if (useTankAngle) {
         app->shotTileCount = brainPathfinderSimulateShotAngle(
-            (WORLD)oWX, (WORLD)oWY, tankAngle,
+            pf, (WORLD)oWX, (WORLD)oWY, tankAngle,
             shooter, 0, app->shotTiles,
             (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
     } else {
         app->shotTileCount = brainPathfinderSimulateShot(
-            (WORLD)oWX, (WORLD)oWY, (WORLD)tWX, (WORLD)tWY,
+            pf, (WORLD)oWX, (WORLD)oWY, (WORLD)tWX, (WORLD)tWY,
             shooter, 0, app->shotTiles,
             (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
     }

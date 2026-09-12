@@ -824,10 +824,11 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
     }
     botUpdateBrainMap(bot, sim);
 
-    /* Hand the pathfinder this tank's acceleration modifier before the think,
-     * so cpf_predict_stop brakes at the rate the engine will rather than at
-     * the classic one. Read from the ServerSim, which is immutable during the
-     * brain phase. */
+    /* Hand the pathfinder this tank's acceleration modifier and this sim's
+     * rules before the think, so cpf_predict_stop brakes at the rate the
+     * engine will and the shot simulator flies the shell the engine will
+     * fire, rather than the classic ones. Read from the ServerSim, which is
+     * immutable during the brain phase. */
     if (bot->brain.pathfinder != NULL) {
         TankModifiers mods;
         memset(&mods, 0, sizeof(mods));
@@ -839,6 +840,11 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
                                     gs->rules.tank_brake_rate,
                                     gs->rules.tank_decel_rate,
                                     gs->rules.tank_min_move);
+        brainPathfinderSetShellRules(bot->brain.pathfinder,
+                                     gs->rules.shell_life,
+                                     gs->rules.shell_speed,
+                                     gs->rules.shell_start_add,
+                                     gs->rules.gunsight_max);
     }
 
     /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.

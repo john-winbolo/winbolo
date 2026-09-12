@@ -162,7 +162,7 @@ typedef struct {
     uint8_t  trees;        /* Only meaningful for the owning player */
     uint8_t  firstLeft;    /* Turn ramp-up counter for left turns (0-10) */
     uint8_t  firstRight;   /* Turn ramp-up counter for right turns (0-10) */
-    uint8_t  gunsightLen;  /* Gunsight range (GUNSIGHT_MIN..GUNSIGHT_MAX), owning player only */
+    uint8_t  gunsightLen;  /* Gunsight range (gunsight_min..gunsight_max), owning player only */
     uint16_t deathWait;    /* Ticks remaining until respawn (0 = alive) */
     uint8_t  reload;       /* Ticks remaining until can fire again (owning player only) */
     uint16_t pingMs;       /* This player's ping in ms */

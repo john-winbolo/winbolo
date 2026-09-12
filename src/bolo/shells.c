@@ -103,18 +103,18 @@ static void shellsDebugHitLogAdd(int wx, int wy, uint32_t tick, uint8_t owner) {
     if (g_shell_hit_log_count < SHELL_HIT_LOG_SIZE) g_shell_hit_log_count++;
 }
 
-#undef SHELL_START_ADD
-#define SHELL_START_ADD 5
-
 /* ── Pure shell-physics primitives ────────────────────────────────
  * These are the single source of truth for shell motion. Both the
  * live engine (shellsUpdate, shellsAddItem) and the brain's
  * stateless trajectory simulator call into these so the trajectory
- * math can't drift between them. */
+ * math can't drift between them. Each takes the shell numbers it
+ * needs: the engine reads them off sim->rules, the brain off the
+ * pathfinder the bot manager pushed to. */
 
-void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd) {
-  *x = (WORLD)((int)*x + (SHELL_START_ADD) * xAdd);
-  *y = (WORLD)((int)*y + (SHELL_START_ADD) * yAdd);
+void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd,
+                           int startAdd) {
+  *x = (WORLD)((int)*x + startAdd * xAdd);
+  *y = (WORLD)((int)*y + startAdd * yAdd);
 }
 
 void shellAdvance1Tick(WORLD *x, WORLD *y,
@@ -130,8 +130,8 @@ void shellAdvance1Tick(WORLD *x, WORLD *y,
   *y = (WORLD)((int)*y + yMove);
 }
 
-int shellLifeTicks(float len) {
-  int t = 1 + (int)(SHELL_LIFE * len) - SHELL_START_ADD;
+int shellLifeTicks(float len, int shellLife, int startAdd) {
+  int t = 1 + (int)(shellLife * len) - startAdd;
   return t < 0 ? 0 : t;
 }
 
@@ -153,12 +153,13 @@ TURNTYPE shellAngleFromTarget(WORLD ox, WORLD oy, WORLD tx, WORLD ty) {
 }
 
 void shellSpawnPos(WORLD tank_x, WORLD tank_y, TURNTYPE angle,
+                   int shellSpeed, int startAdd,
                    WORLD *out_x, WORLD *out_y) {
   int xAdd, yAdd;
-  utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
+  utilCalcDistance(&xAdd, &yAdd, angle, shellSpeed);
   *out_x = tank_x;
   *out_y = tank_y;
-  shellApplyStartOffset(out_x, out_y, xAdd, yAdd);
+  shellApplyStartOffset(out_x, out_y, xAdd, yAdd, startAdd);
 }
 
 
@@ -225,8 +226,8 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   BYTE soundMX = (BYTE)(x >> TANK_SHIFT_MAPSIZE);  /* Tank position before shell offset */
   BYTE soundMY = (BYTE)(y >> TANK_SHIFT_MAPSIZE);
 
-  utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
-  shellApplyStartOffset(&x, &y, xAdd, yAdd);
+  utilCalcDistance(&xAdd, &yAdd, angle, sim->rules.shell_speed);
+  shellApplyStartOffset(&x, &y, xAdd, yAdd, sim->rules.shell_start_add);
 /*
   if (xAdd >= 0) {
     x += 22;
@@ -243,7 +244,8 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->x = x;
   q->y = y;
   q->angle = angle;
-  q->length = (BYTE) shellLifeTicks(len);
+  q->length = (BYTE) shellLifeTicks(len, sim->rules.shell_life,
+                                    sim->rules.shell_start_add);
   q->onBoat = onBoat;
   q->creator = sim->viewPlayer;
   q->owner = owner;
@@ -251,7 +253,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->packSent = FALSE;
   q->shellDead = FALSE;
   q->compensationTicks = sim->lagCompTicks;
-  utilCalcDistanceHP(&q->xStep, &q->yStep, angle, SHELL_SPEED);
+  utilCalcDistanceHP(&q->xStep, &q->yStep, angle, sim->rules.shell_speed);
   q->xAcc = 0;
   q->yAcc = 0;
 
@@ -1072,7 +1074,7 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
         }
       } else {
         /* Fired from a pill - Check locality */
-        utilCalcDistance(&xAdd, &yAdd, tt, SHELL_SPEED);
+        utilCalcDistance(&xAdd, &yAdd, tt, sim->rules.shell_speed);
         xAdd *=2;
         yAdd *=2;
 		// Becuase the pillbox fires from the 'center' of the pill, this doesn't translate perfectly back to the pillbox on the east and south side
@@ -1098,9 +1100,15 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
 
     if (length > 68 && owner == NEUTRAL) { /* Added length check to stop cheating */
       shouldAdd = FALSE;
-    } else if (length > 52 && owner != NEUTRAL) {
+    } else if ((int) length > shellLifeTicks(sim->rules.gunsight_max / 2.0f,
+                                             sim->rules.shell_life,
+                                             sim->rules.shell_start_add) &&
+               owner != NEUTRAL) {
 		/* FIXME: Check shells fired from a tank are near the tank that fired them, they have sufficent shells etc */
-      /* Tank max length */
+      /* Tank max length: the longest budget shellLifeTicks can hand out, at
+         the widest gunsight. Asked of the same function shellsAddItem stores
+         from, so the cap cannot drift from what a legitimate client fires.
+         The pair in simRulesValidate keeps it inside a BYTE. */
       shouldAdd = FALSE;
     }
 
@@ -1123,7 +1131,7 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
       q->onBoat = onBoat;
       q->creator = creator;
       q->fireTick = 0;  /* network-extracted shell — no local fire tick */
-      utilCalcDistanceHP(&q->xStep, &q->yStep, tt, SHELL_SPEED);
+      utilCalcDistanceHP(&q->xStep, &q->yStep, tt, sim->rules.shell_speed);
       q->xAcc = 0;
       q->yAcc = 0;
       /* Add it to the structure */

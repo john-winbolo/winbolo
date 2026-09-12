@@ -1494,6 +1494,8 @@ int run_sim_rules_pill_empties_without_wrapping(void);
 int run_sim_rules_pairs(void);
 int run_sim_rules_capture_threshold_moves(void);
 int run_sim_rules_builder_cost_follows(void);
+int run_sim_rules_shell_flight_follows(void);
+int run_sim_rules_brain_shot_follows(void);
 
 int run_snapshot_compaction(void);
 

@@ -33,7 +33,6 @@
 #define WSIM_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
 #define WSIM_SLIDE_FRICTION      0.80f /* velocity multiplier per tick */
 #define WSIM_SLIDE_STOP_THRESH   0.5f  /* stop sliding below this speed */
-#define WSIM_SHELL_DAMAGE     5   /* armor per shell hit */
 #define WSIM_PILL_RANGE    2048   /* WU range for pill firing */
 #define WSIM_PILL_FOREST_RANGE 768 /* 3 tiles — pills can't see into forest beyond this */
 #define WSIM_ANGER_COOLDOWN  32   /* ticks of anger chain */
@@ -180,13 +179,13 @@ BrainWorldSim *brainWorldSimCreate(void) {
   wsim_init_tables();
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
-  sim->shell_damage = WSIM_SHELL_DAMAGE;
 
-  /* Default terrain speeds. The ten a rule names come from the classic
-     rules table, so the forward model starts on the same numbers the engine
-     does; a brain that pushes its own through wsim_set_terrain_speed
-     overwrites them. */
+  /* The shell damage and the ten terrain speeds a rule names come from the
+     classic rules table, so the forward model starts on the same numbers the
+     engine does; a brain that pushes its own through wsim_set_terrain_speed
+     overwrites the speeds. */
   simRulesClassic(&classic);
+  sim->shell_damage = classic.shell_damage;
   sim->terrain_speed[0]  =  0; /* BUILDING */
   sim->terrain_speed[1]  = (float) classic.speed_river;
   sim->terrain_speed[2]  = (float) classic.speed_swamp;
@@ -214,6 +213,10 @@ void brainWorldSimDestroy(BrainWorldSim *sim) {
 void brainWorldSimClear(BrainWorldSim *sim) {
   const BYTE *saved_map = sim->map;
   float saved_speed[16];
+  /* The rules the sim was built with survive a clear, the same way the
+     terrain speeds beside them do — a clear drops the world, not the
+     numbers the world runs on. */
+  int saved_shell_damage = sim->shell_damage;
   memcpy(saved_speed, sim->terrain_speed, sizeof(saved_speed));
 
   sim->num_pills = 0;
@@ -222,7 +225,7 @@ void brainWorldSimClear(BrainWorldSim *sim) {
   sim->num_path = 0;
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
-  sim->shell_damage = WSIM_SHELL_DAMAGE;
+  sim->shell_damage = saved_shell_damage;
 
   memset(&sim->lgm, 0, sizeof(sim->lgm));
   sim->lgm.dispatch_tick = -1;

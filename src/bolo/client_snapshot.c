@@ -331,7 +331,8 @@ void clientBaseArmourArrived(ClientSim *csPtr, BYTE idx, BYTE armour,
   stamp = csPtr->sim.basePredictedDeadTick[idx];
   hit = csPtr->sim.basePredictedHitTick[idx];
   oneHitKills = armour > csPtr->sim.rules.base_capture_armour &&
-                (int)armour - DAMAGE <= csPtr->sim.rules.base_capture_armour;
+                (int)armour - csPtr->sim.rules.shell_damage <=
+                    csPtr->sim.rules.base_capture_armour;
 
   if (!oneHitKills) {
     /* Dead already (the real rule makes it drivable), or high enough that

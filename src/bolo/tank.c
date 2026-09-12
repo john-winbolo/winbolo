@@ -445,7 +445,7 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->leavingBoatTimer = 0;
   (*value)->leavingBoatAxis = 0;
   (*value)->showSight = FALSE;
-  (*value)->sightLen = GUNSIGHT_MAX;
+  (*value)->sightLen = (BYTE) sim->rules.gunsight_max;
   (*value)->numKills = 0;
   (*value)->numDeaths = 0;
   (*value)->reload = 0;
@@ -1138,8 +1138,8 @@ bool tankIsGunsightShow(tank *value) {
 *  xPixel - Pointer to hold X Pixel
 *  yPixel - Pointer to hold Y Pixel
 *********************************************************/
-void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel) {
-  tankGetGunsightAt(value, (*value)->x, (*value)->y, (*value)->angle,
+void tankGetGunsight(GameSim *sim, tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel) {
+  tankGetGunsightAt(sim, value, (*value)->x, (*value)->y, (*value)->angle,
                     xMap, yMap, xPixel, yPixel);
 }
 
@@ -1154,6 +1154,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *  still come from the tank.
 *
 *ARGUMENTS:
+*  sim    - The game whose shell rules the flight comes from
 *  value  - Pointer to the tank structure
 *  posX   - World X to compute the crosshair from
 *  posY   - World Y to compute the crosshair from
@@ -1163,7 +1164,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *  xPixel - Pointer to hold X Pixel
 *  yPixel - Pointer to hold Y Pixel
 *********************************************************/
-void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
+void tankGetGunsightAt(GameSim *sim, tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
                        BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel) {
   WORLD x;
   WORLD y;
@@ -1172,12 +1173,12 @@ void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
   if (!(*value)->destroyed) {
     /* Use the same HP fixed-point accumulator as shellsUpdate so the crosshair
      * lands on the exact WORLD position the real shell reaches.
-     * Total ticks = SHELL_LIFE * (sightLen/2) covers the SHELL_START_ADD
-     * advance (5 in shells.c) plus the live travel distance.
+     * Total ticks = shell_life * (sightLen/2) covers the shell_start_add
+     * advance plus the live travel distance.
      * TANK_SUBTRACT is kept so the rendering formula stays unchanged. */
     int32_t xStepHP, yStepHP, xAccHP = 0, yAccHP = 0;
-    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, SHELL_SPEED);
-    int totalTicks = (SHELL_LIFE * (int)(*value)->sightLen) / 2;
+    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, sim->rules.shell_speed);
+    int totalTicks = (sim->rules.shell_life * (int)(*value)->sightLen) / 2;
     x = posX;
     y = posY;
     for (int i = 0; i < totalTicks; i++) {
@@ -1185,13 +1186,13 @@ void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
       x = (WORLD)(x + (xAccHP >> 8));  xAccHP &= 0xFF;
       y = (WORLD)(y + (yAccHP >> 8));  yAccHP &= 0xFF;
     }
-    /* Live shells travel ~2 game units (32 WORLD units = one SHELL_SPEED
-     * tick) further than the point computed above, so the crosshair sat
-     * 2 game units short of where shells actually land. Nudge it out
+    /* Live shells travel one shell_speed tick further than the point
+     * computed above (~2 game units at the classic 32 WORLD units), so the
+     * crosshair sat short of where shells actually land. Nudge it out
      * along the aim direction to compensate. */
     {
       int leadX, leadY;
-      utilCalcDistance(&leadX, &leadY, angle, SHELL_SPEED);
+      utilCalcDistance(&leadX, &leadY, angle, sim->rules.shell_speed);
       x = (WORLD)(x + leadX);
       y = (WORLD)(y + leadY);
     }
@@ -1238,7 +1239,7 @@ void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
 *********************************************************/
 void tankGunsightIncrease(ClientSim *csParam, GameSim *sim, tank *value) {
   bool isServer = sim->isServer;
-  if ((*value)->sightLen < GUNSIGHT_MAX) {
+  if ((*value)->sightLen < sim->rules.gunsight_max) {
     (*value)->sightLen++;
   } else if ((*value)->autoHideGunsight == TRUE && (*value)->showSight == TRUE) {
     (*value)->showSight = FALSE;
@@ -1261,7 +1262,7 @@ void tankGunsightIncrease(ClientSim *csParam, GameSim *sim, tank *value) {
 *********************************************************/
 void tankGunsightDecrease(ClientSim *csParam, GameSim *sim, tank *value) {
   bool isServer = sim->isServer;
-  if ((*value)->sightLen > GUNSIGHT_MIN) {
+  if ((*value)->sightLen > sim->rules.gunsight_min) {
     (*value)->sightLen--;
   }
   if ((*value)->showSight == FALSE && (*value)->autoHideGunsight == TRUE) {
@@ -1281,14 +1282,15 @@ void tankGunsightDecrease(ClientSim *csParam, GameSim *sim, tank *value) {
 *  Sets the gunsight on or off
 *
 *ARGUMENTS:
+*  sim    - The game whose gunsight range the reset uses
 *  value  - Pointer to the tank structure
 *  shown  - if TRUE then gunsight shown
 *********************************************************/
-void tankSetGunsight(tank *value, bool shown) {
+void tankSetGunsight(GameSim *sim, tank *value, bool shown) {
  if ((*value) != NULL) {
    (*value)->showSight = shown;
    if (shown == FALSE) {
-     (*value)->sightLen = GUNSIGHT_MAX;
+     (*value)->sightLen = (BYTE) sim->rules.gunsight_max;
    }
  }
 }
@@ -1411,7 +1413,7 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
+		BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.shell_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
 		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
@@ -3912,7 +3914,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
+		BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.shell_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
 		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;

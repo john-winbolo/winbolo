@@ -39,6 +39,14 @@
  *   sim_rules_base_regen_seed_follows — the base regeneration timer is seeded
  *     from its rule, one player's slot at a time.
  *
+ *   sim_rules_shell_flight_follows — the per-tick step and the tick budget a
+ *     fired shell carries are built from shell_speed and shell_life, read off
+ *     the shell record shellsAddItem just made.
+ *
+ *   sim_rules_brain_shot_follows — the brain's shot simulator, which has no
+ *     sim to read, flies the shell rules pushed onto its pathfinder, and a
+ *     pathfinder nobody has pushed to flies the classic one.
+ *
  *   sim_rules_terrain_life_follows — how many hits a building takes before it
  *     is rubble follows its life rule.
  *
@@ -82,6 +90,7 @@
 #include "client_sim_internal.h"
 #include "brain.h"
 #include "brain_data.h"
+#include "brain_pathfinder.h"
 #include "loopback_harness.h"
 #include "test_harness.h"
 
@@ -149,13 +158,10 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(turn_deep_sea, MAP_TURN_TDEEPSEA);
     SR_FEQ(turn_refuel_base, MAP_TURN_TREFBASE);
 
-    /* Shells. shell_start_add is the one field with no constant to check
-     * against: shells.h declares SHELL_START_ADD as 6 and both users override
-     * it to 5 with their own #define (shells.c and client_sim.c), so 5 is what
-     * a shell is actually fired with and the header's 6 is read by nothing. */
+    /* Shells */
     SR_EQ(shell_life, SHELL_LIFE);
     SR_EQ(shell_speed, SHELL_SPEED);
-    SR_EQ(shell_start_add, 5);
+    SR_EQ(shell_start_add, SHELL_START_ADD);
 
     /* Builder */
     SR_EQ(lgm_build_ticks, LGM_BUILD_TIME);
@@ -334,9 +340,41 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_INT(tank_full_armour, 0, 255);
     SR_RANGE_INT(tank_death_ticks, 0, 65535);
     SR_RANGE_INT(tank_water_ticks, 1, 255);
+    SR_RANGE_INT(shell_damage, 1, 255);
     SR_RANGE_INT(mine_damage, 1, 255);
     SR_RANGE_INT(just_fired_ticks, 0, 255);
     SR_RANGE_INT(tank_min_move, 0, 255);
+    SR_RANGE_INT(shell_speed, 1, 255);
+
+    /* The gunsight ends and the two shell numbers the budget is built from
+       all sit in one arithmetic, so each bound needs the others brought
+       along. At the low end the range collapses onto gunsight_min, and the
+       start offset has to come down to what one tick of that shortest shot
+       can pay for. At the high end the budget has to stay inside the BYTE
+       the shell record keeps it in, which pins shell_life down as the
+       gunsight opens and pins the gunsight in as shell_life grows. */
+    SR_RANGE_INT_WITH(gunsight_min, 1, 255,
+                      t.shell_start_add = 0,
+                      t.gunsight_max = 255; t.shell_life = 1);
+    SR_RANGE_INT_WITH(gunsight_max, 1, 255,
+                      t.gunsight_min = 1; t.shell_start_add = 0,
+                      t.shell_life = 1; t.shell_start_add = 0);
+    SR_RANGE_INT_WITH(shell_life, 1, 255,
+                      t.shell_start_add = 0,
+                      t.gunsight_max = 1; t.gunsight_min = 1);
+    /* shell_start_add has no ceiling of its own — RULE_INT_MIN gives it only
+       a floor — so the sweep uses the largest offset any legal table can
+       carry, which is what the shortest-shot pair allows at the top of every
+       partner's range: shell_life 255 and gunsight_min 255, halved. Sweeping
+       to INT32_MAX instead would only re-test the pair, since above this
+       number no partners exist that accept it. The one past the end is still
+       refused against the classic partners, and by the pair rather than by a
+       row of its own — which is the honest answer for a field whose ceiling
+       is another field. */
+    SR_RANGE_INT_WITH(shell_start_add, 0, 255 * 255 / 2,
+                      (void) 0,
+                      t.shell_life = 255; t.gunsight_min = 255;
+                      t.gunsight_max = 255);
     SR_RANGE_FLT(tank_accel_rate, 0.01, 16.0, 0.005);
     SR_RANGE_FLT(tank_decel_rate, 0.01, 16.0, 0.005);
     SR_RANGE_FLT(tank_brake_rate, 0.01, 16.0, 0.005);
@@ -1015,6 +1053,30 @@ int run_sim_rules_pairs(void) {
     SR_PAIR_OK(t.pill_repair_amount = t.pill_max_armour,
                "one tree worth a whole pill");
 
+    /* The gunsight range needs somewhere to stand: a minimum above the
+       maximum is a range with nothing in it. */
+    SR_PAIR_REFUSED(t.gunsight_min = t.gunsight_max + 1,
+                    "gunsight_min", "gunsight_max");
+    SR_PAIR_OK(t.gunsight_min = t.gunsight_max,
+               "a gunsight pinned to one length");
+
+    /* The start offset comes off the life budget, so at the shortest shot a
+       player can take — gunsight_min — it cannot swallow the whole budget.
+       Classic is 5 against 8*2/2, so 9 is the first refusal. */
+    SR_PAIR_REFUSED(t.shell_start_add =
+                        t.shell_life * t.gunsight_min / 2 + 1,
+                    "shell_start_add", "shell_life");
+    SR_PAIR_OK(t.shell_start_add = t.shell_life * t.gunsight_min / 2,
+               "an offset that exactly spends the shortest shot's budget");
+
+    /* And at the longest shot the budget still has to fit the BYTE the shell
+       record stores it in. At the classic gunsight_max of 14 the budget is
+       7 per point of shell_life, so 37 lands on 255 exactly and 38 is one
+       past it. */
+    SR_PAIR_REFUSED(t.shell_life = 38, "shell_life", "gunsight_max");
+    SR_PAIR_OK(t.shell_life = 37,
+               "the longest shot whose budget still fits a byte");
+
     /* A pair refuses a table; it never rewrites one. The classic values come
      * back unchanged from a call that passes and from one that does not. */
     {
@@ -1133,5 +1195,126 @@ int run_sim_rules_builder_cost_follows(void) {
                   "wood to match");
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* A shell is built from shell_speed and shell_life at the moment it is fired:
+ * the speed becomes the 24.8 per-tick step it carries for its whole flight,
+ * and the life becomes the tick budget on its record. Both are read here off
+ * the shell shellsAddItem just made, which is the same record shellsUpdate
+ * walks, so a rule that moves moves the shell rather than only the number. */
+int run_sim_rules_shell_flight_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Gunner");
+    GameSim *gs;
+    int32_t classicStep, fastStep;
+    BYTE classicLen, longLen;
+    const TURNTYPE east = (TURNTYPE) BRADIANS_EAST;
+    /* Half the widest gunsight, which is what the tank hands shellsAddItem. */
+    TURNTYPE len;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    len = (TURNTYPE) (gs->rules.gunsight_max / 2.0f);
+
+    /* Fired east, so the whole step lands on X and the comparison is the
+       speed itself, in 24.8 fixed point. */
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    UT_ASSERT_MSG(gs->shs != NULL, "the classic shot produced no shell");
+    classicStep = gs->shs->xStep;
+    classicLen = gs->shs->length;
+    UT_ASSERT_MSG(classicStep == gs->rules.shell_speed * 256,
+                  "a shell east steps %ld per tick, not the rule's %ld",
+                  (long) classicStep, (long) (gs->rules.shell_speed * 256));
+    UT_ASSERT_MSG(classicLen ==
+                      (BYTE) (1 + gs->rules.shell_life *
+                                      (gs->rules.gunsight_max / 2) -
+                              gs->rules.shell_start_add),
+                  "a classic shell lives %u ticks, not the budget the rules "
+                  "give it", (unsigned) classicLen);
+
+    /* Double the speed and the next shell steps twice as far per tick. */
+    gs->rules.shell_speed *= 2;
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    fastStep = gs->shs->xStep;
+    UT_ASSERT_MSG(fastStep == classicStep * 2,
+                  "doubling shell_speed gave a step of %ld, not %ld",
+                  (long) fastStep, (long) (classicStep * 2));
+
+    /* And a longer life is a longer budget, on the same gunsight. */
+    gs->rules.shell_speed /= 2;
+    gs->rules.shell_life *= 2;
+    shellsAddItem(gs, &gs->shs, 10000, 20000, east, len, 0, FALSE);
+    longLen = gs->shs->length;
+    UT_ASSERT_MSG(longLen > classicLen,
+                  "doubling shell_life left the shell living %u ticks, not "
+                  "more than %u", (unsigned) longLen, (unsigned) classicLen);
+    UT_ASSERT_MSG(longLen ==
+                      (BYTE) (1 + gs->rules.shell_life *
+                                      (gs->rules.gunsight_max / 2) -
+                              gs->rules.shell_start_add),
+                  "a longer-lived shell lives %u ticks, not the budget the "
+                  "raised rule gives it", (unsigned) longLen);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The brain's shot simulator has no sim to read, so the shell rules reach it
+ * on the pathfinder the bot manager pushes to each think — the same carrier
+ * the movement rules already ride. A pathfinder nobody has pushed to holds
+ * the classic shell, and one that has been pushed flies what it was given. */
+int run_sim_rules_brain_shot_follows(void) {
+    BrainPathfinder *pf = brainPathfinderCreate();
+    SimRules classic;
+    BrainShotTile seeded[64];
+    BrainShotTile pushed[64];
+    BrainShotTile shortLife[64];
+    BrainShotTile fast[64];
+    int nSeeded, nPushed, nShort, nFast;
+    const int cap = (int) (sizeof(seeded) / sizeof(seeded[0]));
+
+    UT_ASSERT(pf != NULL);
+    simRulesClassic(&classic);
+
+    /* A fresh pathfinder is seeded from the defaults table, so its walk is
+       the classic one — the same answer as pushing the classic rules in. */
+    nSeeded = brainPathfinderSimulateShot(pf, 10000, 20000, 14000, 20000,
+                                          BRAIN_SHOT_SHOOTER_TANK, 0,
+                                          seeded, cap);
+    UT_ASSERT_MSG(nSeeded > 0, "a classic shot walked no tiles");
+
+    brainPathfinderSetShellRules(pf, classic.shell_life, classic.shell_speed,
+                                 classic.shell_start_add, classic.gunsight_max);
+    nPushed = brainPathfinderSimulateShot(pf, 10000, 20000, 14000, 20000,
+                                          BRAIN_SHOT_SHOOTER_TANK, 0,
+                                          pushed, cap);
+    UT_ASSERT_MSG(nPushed == nSeeded &&
+                      memcmp(seeded, pushed, (size_t) nSeeded * sizeof(seeded[0])) == 0,
+                  "a fresh pathfinder walked %d tiles and one pushed the "
+                  "classic rules walked %d", nSeeded, nPushed);
+
+    /* A shorter-lived shell dies sooner, so the walk is shorter. */
+    brainPathfinderSetShellRules(pf, 2, classic.shell_speed,
+                                 classic.shell_start_add, classic.gunsight_max);
+    nShort = brainPathfinderSimulateShot(pf, 10000, 20000, 14000, 20000,
+                                         BRAIN_SHOT_SHOOTER_TANK, 0,
+                                         shortLife, cap);
+    UT_ASSERT_MSG(nShort < nSeeded,
+                  "cutting shell_life walked %d tiles, not fewer than %d",
+                  nShort, nSeeded);
+
+    /* And a faster shell covers more ground in the same budget. */
+    brainPathfinderSetShellRules(pf, classic.shell_life,
+                                 classic.shell_speed * 2,
+                                 classic.shell_start_add, classic.gunsight_max);
+    nFast = brainPathfinderSimulateShot(pf, 10000, 20000, 14000, 20000,
+                                        BRAIN_SHOT_SHOOTER_TANK, 0,
+                                        fast, cap);
+    UT_ASSERT_MSG(nFast > nSeeded,
+                  "doubling shell_speed walked %d tiles, not more than %d",
+                  nFast, nSeeded);
+
+    brainPathfinderDestroy(pf);
     return 0;
 }

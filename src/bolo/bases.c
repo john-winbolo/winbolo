@@ -1391,10 +1391,11 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
          subtracting first and reading the wrap: the wrapped value only
          looked like "was full" while the cap and the damage were both
          compile-time, and a rules table can put any pair of numbers here. */
-      if (DAMAGE > before) {
+      if (sim->rules.shell_damage > before) {
         (*value)->item[count].armour = 0;
       } else {
-        (*value)->item[count].armour = (BYTE) (before - DAMAGE);
+        (*value)->item[count].armour =
+            (BYTE) (before - sim->rules.shell_damage);
       }
       if (sim->callbacks.recordDamage) {
         sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_BASE,

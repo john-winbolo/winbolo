@@ -1004,7 +1004,7 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   /* Get initial estimate */
   estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
   /* Calculate distance */
-  utilCalcDistance(&shellAddX, &shellAddY, estimate, SHELL_SPEED);
+  utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);
   shellX = (WORLD) (xValue + shellAddX);
   shellY = (WORLD) (yValue + shellAddY);
   
@@ -1052,7 +1052,7 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     }
     
     estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
-    utilCalcDistance(&shellAddX, &shellAddY, estimate, SHELL_SPEED);    
+    utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);    
     shellX = (WORLD) (xValue + ((count+  5) * shellAddX));
     shellY = (WORLD) (yValue + ((count +  5) * shellAddY));
     /* Set it anyway */

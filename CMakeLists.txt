@@ -4493,6 +4493,8 @@ set(_unit_test_names
     sim_rules_pairs
     sim_rules_capture_threshold_moves
     sim_rules_builder_cost_follows
+    sim_rules_shell_flight_follows
+    sim_rules_brain_shot_follows
     screen_bullets_build
     ping_smoother
     client_timing

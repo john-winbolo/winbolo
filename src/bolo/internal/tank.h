@@ -580,13 +580,14 @@ bool tankIsGunsightShow(tank *value);
 *  gunsight.
 *
 *ARGUMENTS:
+*  sim    - The game whose shell rules the flight comes from
 *  value  - Pointer to the tank structure
 *  xMap   - Pointer to hold Map X Co-ord
 *  yMap   - Pointer to hold Map X Co-ord
 *  xPixel - Pointer to hold X Pixel
 *  yPixel - Pointer to hold Y Pixel
 *********************************************************/
-void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel);
+void tankGetGunsight(struct GameSim *sim, tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel);
 
 /*********************************************************
 *NAME:          tankGetGunsightAt
@@ -596,6 +597,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *  tank's own. RENDER ONLY (render-error smoothing).
 *
 *ARGUMENTS:
+*  sim    - The game whose shell rules the flight comes from
 *  value  - Pointer to the tank structure
 *  posX   - World X to compute the crosshair from
 *  posY   - World Y to compute the crosshair from
@@ -605,7 +607,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *  xPixel - Pointer to hold X Pixel
 *  yPixel - Pointer to hold Y Pixel
 *********************************************************/
-void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
+void tankGetGunsightAt(struct GameSim *sim, tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
                        BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel);
 
 /*********************************************************
@@ -643,10 +645,11 @@ void tankGunsightDecrease(struct ClientSim *cs, struct GameSim *sim, tank *value
 *  Sets the gunsight on or off
 *
 *ARGUMENTS:
+*  sim    - The game whose gunsight range the reset uses
 *  value  - Pointer to the tank structure
 *  shown  - if TRUE then gunsight shown
 *********************************************************/
-void tankSetGunsight(tank *value, bool shown);
+void tankSetGunsight(struct GameSim *sim, tank *value, bool shown);
 
 /*********************************************************
 *NAME:          tankGetWorld

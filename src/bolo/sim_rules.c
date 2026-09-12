@@ -25,7 +25,7 @@
 #include "gametype.h"    /* TANK_FULL_* */
 #include "tank.h"        /* the tank timings, rates and MINE_DAMAGE */
 #include "bolo_map.h"    /* MAP_SPEED_T* / MAP_TURN_T* */
-#include "shells.h"      /* SHELL_LIFE / SHELL_SPEED */
+#include "shells.h"      /* SHELL_LIFE / SHELL_SPEED / SHELL_START_ADD */
 #include "lgm.h"         /* LGM_* */
 #include "pillbox.h"     /* PILLS_MAX_ARMOUR / PILLBOX_* */
 #include "bases.h"       /* BASE_* / MIN_ARMOUR_CAPTURE */
@@ -84,14 +84,10 @@ void simRulesClassic(SimRules *out) {
     out->turn_deep_sea       = (float) MAP_TURN_TDEEPSEA;
     out->turn_refuel_base    = (float) MAP_TURN_TREFBASE;
 
-    /* ---- Shells ----
-     * shell_start_add is 5, not shells.h's SHELL_START_ADD. That header
-     * declares 6 and both users override it to 5 with their own #define
-     * (shells.c and client_sim.c), so 5 is the number a shell is actually
-     * fired with and 6 is a value nothing reads. */
+    /* ---- Shells ---- */
     out->shell_life          = SHELL_LIFE;
     out->shell_speed         = SHELL_SPEED;
-    out->shell_start_add     = 5;
+    out->shell_start_add     = SHELL_START_ADD;
 
     /* ---- Builder ---- */
     out->lgm_build_ticks          = LGM_BUILD_TIME;
@@ -454,6 +450,37 @@ bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
               "pill_repair_amount is %ld, above pill_max_armour %ld",
               (long) rules->pill_repair_amount,
               (long) rules->pill_max_armour)
+
+    /* The gunsight is a range the player walks between two ends, so a
+     * minimum above the maximum leaves nowhere to stand: tankCreate would
+     * start the tank outside it and neither the increase nor the decrease
+     * key could bring it back. */
+    RULE_PAIR(rules->gunsight_min <= rules->gunsight_max,
+              "gunsight_min is %ld, above gunsight_max %ld",
+              (long) rules->gunsight_min, (long) rules->gunsight_max)
+
+    /* shellLifeTicks takes the start offset off the life budget, so an
+     * offset bigger than the shortest shot's whole budget gives a shell
+     * that dies where it is born. Measured at gunsight_min, the shortest
+     * shot a player can take. The product is 64-bit because neither field
+     * is bounded above by the other. */
+    RULE_PAIR((int64_t) rules->shell_start_add <=
+                  (int64_t) rules->shell_life * rules->gunsight_min / 2,
+              "shell_start_add is %ld, above shell_life %ld times "
+              "gunsight_min %ld halved",
+              (long) rules->shell_start_add, (long) rules->shell_life,
+              (long) rules->gunsight_min)
+
+    /* And the other end: the tank fires at sightLen / 2 and shellLifeTicks
+     * stores the answer in the shell record's BYTE, so the longest shot a
+     * player can take has to still fit. Computed the way shellLifeTicks
+     * computes it, so the check and the code cannot disagree. */
+    RULE_PAIR((int64_t) rules->shell_life * rules->gunsight_max / 2 -
+                      rules->shell_start_add + 1 <= 255,
+              "shell_life %ld times gunsight_max %ld halved, less "
+              "shell_start_add %ld, plus 1, is above 255",
+              (long) rules->shell_life, (long) rules->gunsight_max,
+              (long) rules->shell_start_add)
 
     return true;
 }

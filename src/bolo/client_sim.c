@@ -74,11 +74,6 @@
 #include "../common/mp_diag_log.h"
 #include "frontend.h"
 
-/* Must match the value used inside shellsAddItem (shells.c redefines
- * SHELL_START_ADD from 6 to 5 locally). */
-#undef SHELL_START_ADD
-#define SHELL_START_ADD 5
-
 /* Forward declarations */
 static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURNTYPE angle, tank *tk, uint32_t fireTick);
 
@@ -1130,9 +1125,9 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
   sightLen = tankGetGunsightLength(tk);
 
   /* Replicate shellsAddItem's offset calculation */
-  utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
-  wx = (WORLD)(wx + SHELL_START_ADD * xAdd);
-  wy = (WORLD)(wy + SHELL_START_ADD * yAdd);
+  utilCalcDistance(&xAdd, &yAdd, angle, cs->sim.rules.shell_speed);
+  wx = (WORLD)(wx + cs->sim.rules.shell_start_add * xAdd);
+  wy = (WORLD)(wy + cs->sim.rules.shell_start_add * yAdd);
 
   ps = &cs->predictedShells[cs->predictedShellCount];
   ps->x = wx;
@@ -1141,12 +1136,13 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
   ps->fy = (float)(int)wy;
   {
     int32_t xStepHP, yStepHP;
-    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, SHELL_SPEED);
+    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, cs->sim.rules.shell_speed);
     ps->vx = (float)xStepHP / 256.0f;
     ps->vy = (float)yStepHP / 256.0f;
   }
   ps->angle = angle;
-  ps->length = (uint8_t)(1 + (SHELL_LIFE * (sightLen / 2)) - SHELL_START_ADD);
+  ps->length = (uint8_t) shellLifeTicks(sightLen / 2, cs->sim.rules.shell_life,
+                                        cs->sim.rules.shell_start_add);
   ps->owner = gameSimGetTankPlayer(&cs->sim, tk);
   ps->onBoat = tankIsOnBoat(tk);
   ps->fireTick = fireTick;
@@ -1275,7 +1271,8 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
          * hit's armour lands. */
         cs->sim.basePredictedHitTick[hitBaseIdx] = cs->sim.replayTick;
         if (armour > cs->sim.rules.base_capture_armour &&
-            armour - DAMAGE <= cs->sim.rules.base_capture_armour) {
+            armour - cs->sim.rules.shell_damage <=
+                cs->sim.rules.base_capture_armour) {
           cs->sim.basePredictedDeadTick[hitBaseIdx] = cs->sim.replayTick;
         }
       }
@@ -1314,16 +1311,18 @@ int clientShellProjectAgeTicks(uint16_t pingMs) {
  *NAME:          clientShellProject
  *PURPOSE:
  *  Pure dead-reckoning of a snapshot shell: derives the
- *  per-game-tick velocity from angle+SHELL_SPEED (same basis
+ *  per-game-tick velocity from angle+shellSpeed (same basis
  *  as predicted shells) and returns the anchored float
- *  position snap + velocity*ageTicks. No ClientSim needed.
+ *  position snap + velocity*ageTicks. No ClientSim needed —
+ *  the caller hands in the speed off its own rules.
  *********************************************************/
 void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
-                        int ageTicks, float *outFx, float *outFy,
+                        int ageTicks, int shellSpeed,
+                        float *outFx, float *outFy,
                         float *outVx, float *outVy) {
   int32_t xStepHP, yStepHP;
   float vx, vy;
-  utilCalcDistanceHP(&xStepHP, &yStepHP, (TURNTYPE)angle, SHELL_SPEED);
+  utilCalcDistanceHP(&xStepHP, &yStepHP, (TURNTYPE)angle, shellSpeed);
   vx = (float)xStepHP / 256.0f;
   vy = (float)yStepHP / 256.0f;
   *outVx = vx;
@@ -1333,11 +1332,12 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
 }
 
 /* Cross-snapshot match tolerance for projected shells, in world units.
- * A shell travels SHELL_SPEED units per tick, so this is a few ticks of
+ * A shell travels shell_speed units per tick, so this is a few ticks of
  * travel: within it an incoming shell is taken to be the same shell as one
  * we were already carrying (re-anchored, keeping its smooth accumulator);
- * beyond it the old shell is dropped and the new one anchored fresh. */
-#define PROJECTION_MATCH_DIST (4 * SHELL_SPEED)
+ * beyond it the old shell is dropped and the new one anchored fresh. It
+ * follows the rule because the travel it is measuring does. */
+#define PROJECTION_MATCH_TICKS 4
 
 /*********************************************************
  *NAME:          clientSimRebuildProjectedShells
@@ -1346,7 +1346,7 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
  *  serverShellSnaps (already own-filtered for humans),
  *  anchoring each to snap + velocity*age. Incoming shells
  *  that match one carried from the previous snapshot (same
- *  owner, nearest position within PROJECTION_MATCH_DIST)
+ *  owner, nearest position within the match distance)
  *  keep that shell's float accumulator so frame-to-frame
  *  age-estimate jitter doesn't twitch the rendered position;
  *  unmatched incoming shells anchor fresh; carried shells
@@ -1361,6 +1361,7 @@ void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
   bool usedPrev[MAX_SNAPSHOT_SHELLS];
   int nextCount = 0;
   int ageTicks = clientShellProjectAgeTicks(pingMs);
+  int matchDist = PROJECTION_MATCH_TICKS * cs->sim.rules.shell_speed;
   int i, j;
 
   for (j = 0; j < cs->projectedShellCount; j++) {
@@ -1372,9 +1373,10 @@ void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
     ProjectedShell *ns = &next[nextCount];
     float fx, fy, vx, vy;
     int best = -1;
-    float bestDistSq = (float)PROJECTION_MATCH_DIST * (float)PROJECTION_MATCH_DIST;
+    float bestDistSq = (float)matchDist * (float)matchDist;
 
-    clientShellProject(s->worldX, s->worldY, s->angle, ageTicks, &fx, &fy, &vx, &vy);
+    clientShellProject(s->worldX, s->worldY, s->angle, ageTicks,
+                       cs->sim.rules.shell_speed, &fx, &fy, &vx, &vy);
 
     for (j = 0; j < cs->projectedShellCount; j++) {
       const ProjectedShell *prev = &cs->projectedShells[j];
@@ -1732,7 +1734,7 @@ void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide) {
 }
 
 void clientSimSetGunsight(ClientSim *cs, bool shown) {
-  tankSetGunsight(&MY_TANK(cs), shown);
+  tankSetGunsight(&cs->sim, &MY_TANK(cs), shown);
 }
 
 BYTE clientSimGetTank256Dir(ClientSim *cs) {
@@ -3151,7 +3153,7 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
 bool clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
   if (!cs || MY_TANK(cs) == NULL) return false;
   BYTE px, py;
-  tankGetGunsight(&MY_TANK(cs), mapX, mapY, &px, &py);
+  tankGetGunsight(&cs->sim, &MY_TANK(cs), mapX, mapY, &px, &py);
   return true;
 }
 
@@ -3165,7 +3167,7 @@ bool clientSimGetGunsightPos(ClientSim *cs, BYTE *mapX, BYTE *mapY,
    * the smoothed pose, so the two agree there; a caller that draws the tank
    * straight from screenTanksPrepare has no such fixup, and smoothing only the
    * crosshair would put it out of step with the tank sprite beside it. */
-  tankGetGunsight(&MY_TANK(cs), mapX, mapY, pixelX, pixelY);
+  tankGetGunsight(&cs->sim, &MY_TANK(cs), mapX, mapY, pixelX, pixelY);
   return true;
 }
 
