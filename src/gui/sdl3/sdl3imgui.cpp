@@ -1646,12 +1646,22 @@ static void renderGameInfoContent(ClientSim *cs) {
         }
     }
 
-    /* Classic mode and the allies-in-trees rule, read-only mirrors of the
-     * lobby's two checkboxes. */
+    /* Classic mode, the allies-in-trees rule, what the map overview keeps
+     * live round the tank and what blocks sight inside it — read-only
+     * mirrors of the lobby's visibility dialog. */
     ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
                 clientSimGetClassicMode(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
     ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
                 clientSimGetAlliesInTrees(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
+    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW),
+                langGetText(clientSimGetOverviewWindow(cs) ==
+                                    (uint8_t)overviewWindowClassic
+                                ? STR_DLGLOBBY_WINDOW_CLASSIC
+                                : STR_DLGLOBBY_WINDOW_EXPANDED));
+    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),
+                langGetText(clientSimGetLineOfSight(cs) !=
+                                    (uint8_t)lineOfSightOff
+                                ? STR_YES : STR_NO));
 }
 
 static void renderGameInfoPanel(ClientSim *cs) {
