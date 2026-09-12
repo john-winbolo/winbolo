@@ -374,6 +374,7 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     {
         unsigned armor = dead ? 0 : (unsigned)bi->armour;
         float dir_rad = (float)bi->direction * (2.0f * 3.14159265f / 256.0f);
+        int32_t reload_ticks = gs->rules.tank_reload_ticks;
 
         obs->scalar[0]  = (float)armor / 40.0f;
         obs->scalar[1]  = (float)bi->shells / 40.0f;
@@ -382,7 +383,13 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
         obs->scalar[4]  = (float)bi->speed / 128.0f;
         obs->scalar[5]  = sinf(dir_rad);
         obs->scalar[6]  = cosf(dir_rad);
-        obs->scalar[7]  = (float)bi->reload / 15.0f;
+        /* Ticks left to wait, over the rule that set them, the way the gym
+           and the headless scale it. A reload rule of 0 fires every tick, so
+           the counter is never set and there is never anything outstanding —
+           0 there is the value the numerator gives anyway, and it keeps an
+           infinity out of the vector. */
+        obs->scalar[7]  = reload_ticks > 0
+                              ? (float)bi->reload / (float)reload_ticks : 0.0f;
         obs->scalar[8]  = bi->inboat ? 1.0f : 0.0f;
         obs->scalar[9]  = bi->carriedpills > 0 ? 1.0f : 0.0f;
         obs->scalar[10] = (float)bi->carriedpills / 16.0f;

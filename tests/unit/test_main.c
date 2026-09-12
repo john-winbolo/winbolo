@@ -710,6 +710,7 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_brain_shot_follows",            run_sim_rules_brain_shot_follows            },
     { "sim_rules_worldsim_pill_follows",         run_sim_rules_worldsim_pill_follows         },
     { "sim_rules_boat_speed_follows",            run_sim_rules_boat_speed_follows            },
+    { "sim_rules_obs_reload_follows",            run_sim_rules_obs_reload_follows            },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },

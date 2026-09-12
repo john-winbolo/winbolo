@@ -1510,6 +1510,7 @@ int run_sim_rules_shell_flight_follows(void);
 int run_sim_rules_brain_shot_follows(void);
 int run_sim_rules_worldsim_pill_follows(void);
 int run_sim_rules_boat_speed_follows(void);
+int run_sim_rules_obs_reload_follows(void);
 
 int run_snapshot_compaction(void);
 

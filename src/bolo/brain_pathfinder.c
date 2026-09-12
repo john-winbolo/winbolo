@@ -2001,7 +2001,8 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
   for (int t = 0; t < 16; t++) {
     float spd_foot = pf->terrain_speed_table[t];
     inv_speed_foot[t] = 16.0f / fmaxf(spd_foot, 0.1f);
-    float spd_boat = is_water_tile(t) ? 16.0f : spd_foot;
+    float spd_boat = is_water_tile(t) ? pf->terrain_speed_table[TT_BOAT]
+                                      : spd_foot;
     inv_speed_boat[t] = 16.0f / fmaxf(spd_boat, 0.1f);
   }
   float turn_lut[8][8];
@@ -2337,7 +2338,7 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
   for (int t = 0; t < 16; t++) {
     float spd = pf->terrain_speed_table[t];
     inv_speed_foot[t] = 16.0f / fmaxf(spd, 0.1f);
-    float spd_b = is_water_tile(t) ? 16.0f : spd;
+    float spd_b = is_water_tile(t) ? pf->terrain_speed_table[TT_BOAT] : spd;
     inv_speed_boat[t] = 16.0f / fmaxf(spd_b, 0.1f);
   }
 

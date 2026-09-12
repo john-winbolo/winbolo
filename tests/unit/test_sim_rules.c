@@ -80,10 +80,20 @@
  *     the fields, what they hold, and what a clear does to them are what this
  *     pins.
  *
- *   sim_rules_boat_speed_follows — the three places the pathfinder moves a
+ *   sim_rules_boat_speed_follows — the five places the pathfinder moves a
  *     tank at boat speed read its terrain speed table like every other speed
  *     it reads, so a boat speed pushed through the setter moves the travel
- *     estimate, the straight-line cost estimate and the searched cost.
+ *     estimate, the straight-line cost estimate, the searched cost, and both
+ *     lookup tables the navigation search builds — the last two being the
+ *     ones the search actually expands.
+ *
+ *   sim_rules_obs_reload_follows — the observation's reload scalar is the
+ *     ticks still to wait over the rule that set them, not over a constant
+ *     15 that the classic 13 could never reach. The other two builders
+ *     already scale it this way. Only the classic case is drivable:
+ *     obsBuildMultiView refuses a table that is not classic, so neither a
+ *     moved tank_reload_ticks nor the rule of 0 the divide guards against
+ *     can be put in front of it from here.
  */
 
 #include <stddef.h>
@@ -1547,7 +1557,33 @@ int run_sim_rules_worldsim_pill_follows(void) {
     return 0;
 }
 
-/* The three places the pathfinder moves a tank at boat speed, each driven
+/* A flat per-tile pill contribution. The subtract table scales whatever this
+   returns by the tile's inverse speed, which is the slot under test, so a
+   constant here leaves the speed as the only thing that can move the result. */
+static float srTileContrib(void *user, int tile_key) {
+    (void) user;
+    (void) tile_key;
+    return 1.0f;
+}
+
+/* Run one navigation slate to completion and read the destination back both
+   ways: the cost the search settled on, and that cost with a pill's
+   contribution taken off the path it realized. */
+static void srRunBoatDijkstra(BrainPathfinder *pf, int sx, int sy,
+                              int dx, int dy, float *outCost, float *outLess) {
+    int step;
+    int done = 0;
+    brainPathfinderDijkstraStart(pf, 0, 1, sx, sy, 1, 40, 40, 40, 40,
+                                 0.0f, 0, 1.0f, 1, 1);
+    for (step = 0; step < 4000 && !done; step++) {
+        done = brainPathfinderDijkstraStep(pf, 0, (uint32_t) (2 + step), 100000);
+    }
+    *outCost = brainPathfinderDijkstraLookupByKind(pf, 1, dx, dy, 1);
+    *outLess = brainPathfinderDijkstraLookupSubtractByKind(pf, 1, dx, dy, 1,
+                                                           srTileContrib, NULL);
+}
+
+/* The five places the pathfinder moves a tank at boat speed, each driven
    through its own entry point on an all-river map with the tank afloat: every
    tile it crosses is water it stays afloat on, so the speed it moves at is the
    table's boat slot and nothing else. */
@@ -1559,6 +1595,9 @@ int run_sim_rules_boat_speed_follows(void) {
     int ticksClassic, ticksSlow, ticksFast;
     float estClassic, estSlow;
     float costClassic, costSlow;
+    float dijClassic, dijSlow;
+    float lessClassic, lessSlow;
+    float subClassic, subSlow;
     const int sx = 100, sy = 100, dx = 120, dy = 100;
 
     UT_ASSERT(pf != NULL && map != NULL);
@@ -1624,7 +1663,101 @@ int run_sim_rules_boat_speed_follows(void) {
                   "not more than the %f the classic speed searched out",
                   costSlow, costClassic);
 
+    /* Last the two tables the navigation search builds for itself, which are
+       what it expands — a boat speed that reached the estimates above but not
+       these would steer the bot by one number and time it by another. */
+    brainPathfinderSetTerrainSpeed(pf, BBOAT, (float) classic.speed_boat);
+    srRunBoatDijkstra(pf, sx, sy, dx, dy, &dijClassic, &lessClassic);
+    UT_ASSERT_MSG(dijClassic > 0.0f,
+                  "the navigation search costed the crossing at %f", dijClassic);
+
+    brainPathfinderSetTerrainSpeed(pf, BBOAT, (float) classic.speed_boat / 2.0f);
+    srRunBoatDijkstra(pf, sx, sy, dx, dy, &dijSlow, &lessSlow);
+
+    UT_ASSERT_MSG(dijSlow > dijClassic,
+                  "halving the boat speed cost the navigation search %f, not "
+                  "more than the %f the classic speed cost it",
+                  dijSlow, dijClassic);
+
+    /* The second table is the one the subtraction is scaled by, so read it as
+       the size of the subtraction rather than the cost it came off — the cost
+       itself already moved with the table above. */
+    subClassic = dijClassic - lessClassic;
+    subSlow    = dijSlow    - lessSlow;
+    UT_ASSERT_MSG(subClassic > 0.0f,
+                  "a pill's contribution came off the classic-speed path as "
+                  "%f, so the subtraction table was never reached", subClassic);
+    UT_ASSERT_MSG(subSlow > subClassic,
+                  "halving the boat speed took %f off the path, not more than "
+                  "the %f the classic speed took off", subSlow, subClassic);
+
     brainPathfinderDestroy(pf);
     free(map);
+    return 0;
+}
+
+/* The observation's reload scalar. obsBuildMultiView refuses a table that is
+   not classic, so the only case reachable from here is the classic one — which
+   is the one that moved: the old divisor of 15 put a tank one tick from firing
+   at 12/15, and the rule that set the counter is 13. */
+int run_sim_rules_obs_reload_follows(void) {
+    LoopbackHarness h;
+    BrainInfo       bi;
+    WinBoloObs     *obs;
+    GameSim        *gs;
+    BYTE            me;
+    bool            built;
+    float           want, wasBefore;
+    const BYTE      reload = 6;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "ObsReload", false, NULL, 4323),
+                  "loopback start failed");
+    loopbackHarnessPumpUntil(&h, 40, NULL, NULL);
+    UT_ASSERT_MSG(h.cs != NULL, "the harness produced no client");
+
+    obs = (WinBoloObs *) malloc(sizeof(*obs));
+    UT_ASSERT_MSG(obs != NULL, "could not allocate an observation");
+
+    gs = clientSimGetGameSim(h.cs);
+    me = clientSimGetMyPlayerNum(h.cs);
+    UT_ASSERT_MSG(gs != NULL, "the harness produced no sim");
+    UT_ASSERT_MSG(simRulesAreClassic(&gs->rules),
+                  "setup: a fresh client is not running the classic rules, so "
+                  "the builder below would refuse and prove nothing");
+    UT_ASSERT_MSG(gs->rules.tank_reload_ticks == TANK_RELOAD_TIME,
+                  "setup: the classic reload rule is %d, not %d",
+                  (int) gs->rules.tank_reload_ticks, TANK_RELOAD_TIME);
+
+    /* Park the gun mid-reload so the scalar has something to scale. */
+    tankSetReload(&gs->tanks[me], reload);
+    memset(&bi, 0, sizeof(bi));
+    brainDataMakeInfo(h.cs, &bi, true, aiNone);
+    UT_ASSERT_MSG(bi.reload == reload,
+                  "the tank went into the builder at reload %d, not %d",
+                  (int) bi.reload, (int) reload);
+
+    built = obsBuildMultiView(h.cs, &bi, obs);
+    UT_ASSERT_MSG(built, "the builder refused a sim running the classic rules");
+
+    want      = (float) reload / (float) gs->rules.tank_reload_ticks;
+    wasBefore = (float) reload / 15.0f;
+
+    UT_ASSERT_MSG(obs->scalar[7] > want - 0.0005f &&
+                      obs->scalar[7] < want + 0.0005f,
+                  "a tank %d ticks off firing reads %f, not the %f its reload "
+                  "rule of %d makes it",
+                  (int) reload, obs->scalar[7], want,
+                  (int) gs->rules.tank_reload_ticks);
+
+    /* And it is no longer on the scale that could not reach 1.0. */
+    UT_ASSERT_MSG(obs->scalar[7] > wasBefore + 0.0005f,
+                  "the scalar reads %f, which is still the %f a divisor of 15 "
+                  "gives — the rule is not being read",
+                  obs->scalar[7], wasBefore);
+
+    srFreeBrainInfo(&bi);
+    free(obs);
+    loopbackHarnessStop(&h);
     return 0;
 }
