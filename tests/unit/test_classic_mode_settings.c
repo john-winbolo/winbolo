@@ -74,14 +74,14 @@ int run_classic_mode_defaults(void) {
                   "a fresh sim must not be in classic mode");
 
     /* The three view policies are untouched by the new field. */
-    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) == viewPolicyAlways,
-                  "pill view default = %d, want always",
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) == viewPolicyKey,
+                  "pill view default = %d, want key",
                   (int)serverSimGetViewPolicy(sim, viewCategoryPill));
     UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryBase) == viewPolicyOff,
                   "base view default = %d, want off",
                   (int)serverSimGetViewPolicy(sim, viewCategoryBase));
-    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways,
-                  "ally view default = %d, want always",
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyOff,
+                  "ally view default = %d, want off",
                   (int)serverSimGetViewPolicy(sim, viewCategoryAlly));
 
     /* NULL-safe read matches the off default. */
@@ -324,6 +324,11 @@ int run_classic_mode_lock_blocks_dispatch(void) {
     /* Host in slot 0, which is the default hostSlot, so lobbyClientMayEdit
      * passes and the lock is the only thing left to refuse the command. */
     serverSimAddPlayer(sim, 0, "Host", false);
+    /* The operator's own choice, set before the lock and deliberately not
+     * the value classic mode writes, so the control at the end of the case
+     * proves classic mode moved it. */
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
     serverSimSetServerLocks(sim, LOBBY_LOCK_ALLY_VIEW);
     UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways,
                   "precondition: the operator's ally view is always");
@@ -416,8 +421,8 @@ int run_classic_mode_lobby_reset(void) {
     serverSimResetLobbyToDefaults(sim);
     UT_ASSERT_MSG(!serverSimGetClassicMode(sim),
                   "the reset must restore classic mode off, not leave it on");
-    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways,
-                  "ally view after reset = %d, want always",
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyOff,
+                  "ally view after reset = %d, want off",
                   (int)serverSimGetViewPolicy(sim, viewCategoryAlly));
 
     serverSimDestroy(sim);

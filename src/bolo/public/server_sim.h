@@ -1670,13 +1670,15 @@ bool        serverSimRankedShapeReady(const ServerSim *sim);
 /* Per-category visibility rules (pillboxes / bases / allied tanks).
  * Set from the dedicated-server and headless CLI switches and from the
  * GUI hosting prefs after the sim is created, and from the lobby via
- * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW. Defaults are
- * pill = viewPolicyAlways, base = viewPolicyOff, ally = viewPolicyAlways,
- * all with VIEW_DECAY_DEFAULT_SECS.
+ * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW. A sim nobody has
+ * configured holds pill = viewPolicyKey, base = viewPolicyOff,
+ * ally = viewPolicyOff, all with VIEW_DECAY_DEFAULT_SECS.
  *
  * The setter clamps decaySecs to VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS
- * and ignores an out-of-range category or policy. The getters return the
- * defaults for a NULL sim or an out-of-range category. */
+ * and ignores an out-of-range category or policy. The getters answer
+ * viewPolicyAlways and VIEW_DECAY_DEFAULT_SECS for a NULL sim or an
+ * out-of-range category — what a reader assumes of a sender that named
+ * no policy, not what a sim starts on. */
 void        serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
                                    ViewPolicy policy, uint16_t decaySecs);
 ViewPolicy  serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat);
@@ -1707,14 +1709,15 @@ bool        serverSimGetAlliesInTrees(const ServerSim *sim);
 /* Overview window — which block of squares the map overview keeps live
  * around the player's own tank, and line of sight — whether anything
  * stops the player seeing inside that block. Values are OverviewWindow
- * and LineOfSightMode from view_policy.h, carried a byte wide. Expanded
- * and off are the defaults and today's behaviour.
+ * and LineOfSightMode from view_policy.h, carried a byte wide. A sim
+ * nobody has configured holds the classic window with sight off.
  *
  * Turning classic mode on writes both — the narrow window, with nothing
  * blocking sight inside it — so an operator lock on either locks classic
  * mode as well; see serverSimAddImpliedLocks. Each setter ignores a
- * value outside its enum, and each getter returns the default for a
- * NULL sim. */
+ * value outside its enum. Each getter answers overviewWindowExpanded
+ * and lineOfSightOff for a NULL sim — what a reader assumes of a sender
+ * that named neither, not what a sim starts on. */
 void        serverSimSetOverviewWindow(ServerSim *sim, uint8_t window);
 uint8_t     serverSimGetOverviewWindow(const ServerSim *sim);
 void        serverSimSetLineOfSight(ServerSim *sim, uint8_t mode);

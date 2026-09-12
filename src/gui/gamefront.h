@@ -1019,10 +1019,11 @@ void gameFrontSetHostingVoiceMode(int mode);
  * serverSimSetViewPolicy in gameFrontSetupServer. Each policy global
  * holds a ViewPolicy value; the decay globals hold seconds in the
  * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Defaults match the
- * sim: pills and allied tanks always visible, bases off. */
-extern int gameFrontViewPillPolicy;     /* default viewPolicyAlways (0) */
-extern int gameFrontViewBasePolicy;     /* default viewPolicyOff (3)    */
-extern int gameFrontViewAllyPolicy;     /* default viewPolicyAlways (0) */
+ * sim: a pillbox shows only while it is watched, bases and allied
+ * tanks not at all. */
+extern int gameFrontViewPillPolicy;     /* default viewPolicyKey (1) */
+extern int gameFrontViewBasePolicy;     /* default viewPolicyOff (3) */
+extern int gameFrontViewAllyPolicy;     /* default viewPolicyOff (3) */
 extern int gameFrontViewPillDecaySecs;  /* 5-600, default 30 */
 extern int gameFrontViewBaseDecaySecs;
 extern int gameFrontViewAllyDecaySecs;

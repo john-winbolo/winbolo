@@ -594,9 +594,9 @@ void printArgs() {
   fprintf(stderr, "-specdelay <S> - Spectator view delay in seconds (default 90, 0 = live).\n");
 
   fprintf(stderr, "\nVisibility (what players see of pills, bases and allied tanks):\n");
-  fprintf(stderr, "-pillview <M> - Pillbox visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-pillview <M> - Pillbox visibility: always, key (default), decay, off\n");
   fprintf(stderr, "-baseview <M> - Base visibility: always, key, decay, off (default off)\n");
-  fprintf(stderr, "-allyview <M> - Allied tank visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-allyview <M> - Allied tank visibility: always, key, decay, off (default off)\n");
   fprintf(stderr, "-pillviewdecay <S> - Seconds a pill stays visible under \"decay\"\n");
   fprintf(stderr, "                (5-600, default 30)\n");
   fprintf(stderr, "-baseviewdecay <S> - Same for bases (5-600, default 30)\n");
@@ -607,7 +607,7 @@ void printArgs() {
   fprintf(stderr, "-alliesintrees- Allied tanks standing in trees are sent to their allies\n");
   fprintf(stderr, "                instead of being withheld (fog of war still applies).\n");
   fprintf(stderr, "                Off by default, and off under -classicmode.\n");
-  fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded (default), classic\n");
+  fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded, classic (default)\n");
   fprintf(stderr, "-lineofsight  - Buildings and stands of trees block sight inside the live\n");
   fprintf(stderr, "                block. Off by default, and off under -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
@@ -1584,10 +1584,11 @@ int main(int argc, char **argv) {
       const char  *decayArg;
       ViewCategory cat;
       ViewPolicy   def;
+      const char  *defWord;   /* what the warning below prints */
     } viewArgs[] = {
-      { "pillview", "pillviewdecay", viewCategoryPill, viewPolicyAlways },
-      { "baseview", "baseviewdecay", viewCategoryBase, viewPolicyOff    },
-      { "allyview", "allyviewdecay", viewCategoryAlly, viewPolicyAlways },
+      { "pillview", "pillviewdecay", viewCategoryPill, viewPolicyKey, "key" },
+      { "baseview", "baseviewdecay", viewCategoryBase, viewPolicyOff, "off" },
+      { "allyview", "allyviewdecay", viewCategoryAlly, viewPolicyOff, "off" },
     };
     for (int vi = 0; vi < (int)(sizeof(viewArgs) / sizeof(viewArgs[0])); vi++) {
       ViewPolicy policy = viewArgs[vi].def;
@@ -1608,8 +1609,7 @@ int main(int argc, char **argv) {
           policy = viewPolicyOff;
         } else {
           fprintf(stderr, "Unknown -%s '%s'; using %s\n",
-                  viewArgs[vi].modeArg, modeStr,
-                  viewArgs[vi].def == viewPolicyOff ? "off" : "always");
+                  viewArgs[vi].modeArg, modeStr, viewArgs[vi].defWord);
           policy = viewArgs[vi].def;
         }
       }
@@ -1640,10 +1640,10 @@ int main(int argc, char **argv) {
   }
 
   /* -overviewwindow <M>: which block of squares the map overview keeps
-   * live. An unrecognised word warns and falls back to expanded, the
+   * live. An unrecognised word warns and falls back to classic, the
    * same as the three view switches. */
   {
-    OverviewWindow window = overviewWindowExpanded;
+    OverviewWindow window = overviewWindowClassic;
     int windowNum = findArg(argc, argv, "overviewwindow");
     if (windowNum != ARG_NOT_FOUND) {
       char modeStr[32];
@@ -1655,9 +1655,9 @@ int main(int argc, char **argv) {
       } else if (strcmp(modeStr, "classic") == 0) {
         window = overviewWindowClassic;
       } else {
-        fprintf(stderr, "Unknown -overviewwindow '%s'; using expanded\n",
+        fprintf(stderr, "Unknown -overviewwindow '%s'; using classic\n",
                 modeStr);
-        window = overviewWindowExpanded;
+        window = overviewWindowClassic;
       }
     }
     serverSimSetOverviewWindow(serverSim, (uint8_t)window);

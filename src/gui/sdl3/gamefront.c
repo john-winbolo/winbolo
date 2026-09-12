@@ -268,11 +268,12 @@ bool           gameFrontHostingServeReplays   = TRUE;
 int            gameFrontHostingVoiceMode      = serverVoiceOn;
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
- * Defaults match serverSimInit so hosting with an untouched INI leaves
- * the sim exactly as it was created. */
-int gameFrontViewPillPolicy    = viewPolicyAlways;
+ * Defaults match serverSimInit — a pillbox shows only while it is
+ * watched, bases and allied tanks not at all — so hosting with an
+ * untouched INI leaves the sim exactly as it was created. */
+int gameFrontViewPillPolicy    = viewPolicyKey;
 int gameFrontViewBasePolicy    = viewPolicyOff;
-int gameFrontViewAllyPolicy    = viewPolicyAlways;
+int gameFrontViewAllyPolicy    = viewPolicyOff;
 int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
@@ -3415,7 +3416,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Visibility rules for games this client hosts. Clamped on read so a
    * hand-edited INI can't inject an out-of-range decay. A word that is
    * none of the four reads as that row's own default, matching the
-   * dedicated server's -pillview / -baseview / -allyview (Off for bases). */
+   * dedicated server's -pillview / -baseview / -allyview (Key for
+   * pills, Off for bases and allied tanks). */
   {
     static const struct {
       const char *policyKey;
@@ -3424,11 +3426,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       int        *policyOut;
       int        *decayOut;
     } viewPrefs[] = {
-      { "Pill View", "Pill View Decay", "Always",
+      { "Pill View", "Pill View Decay", "Key",
         &gameFrontViewPillPolicy, &gameFrontViewPillDecaySecs },
       { "Base View", "Base View Decay", "Off",
         &gameFrontViewBasePolicy, &gameFrontViewBaseDecaySecs },
-      { "Ally View", "Ally View Decay", "Always",
+      { "Ally View", "Ally View Decay", "Off",
         &gameFrontViewAllyPolicy, &gameFrontViewAllyDecaySecs },
     };
     intToStr(VIEW_DECAY_DEFAULT_SECS, def, sizeof(def));

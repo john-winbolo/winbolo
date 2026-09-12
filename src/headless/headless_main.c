@@ -142,10 +142,11 @@ static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
 /* Visibility rules for the fast-mode server sim, indexed by
- * ViewCategory. Defaults match serverSimInit: pills and allied tanks
- * always visible, bases off, 30-second decay everywhere. */
+ * ViewCategory. Defaults match serverSimInit: a pillbox shows only
+ * while it is watched, bases and allied tanks not at all, 30-second
+ * decay everywhere. */
 static ViewPolicy optViewPolicy[VIEW_CATEGORY_COUNT] = {
-  viewPolicyAlways, viewPolicyOff, viewPolicyAlways
+  viewPolicyKey, viewPolicyOff, viewPolicyOff
 };
 static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
   VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS
@@ -155,8 +156,9 @@ static bool optClassicMode = false;
 /* Send allied tanks standing in trees to their allies; off is classic. */
 static bool optAlliesInTrees = false;
 /* Which block of squares the map overview keeps live, and what blocks
- * sight inside it. Both default to today's behaviour. */
-static OverviewWindow optOverviewWindow = overviewWindowExpanded;
+ * sight inside it. Both match serverSimInit: the narrow window, with
+ * nothing blocking sight inside it. */
+static OverviewWindow optOverviewWindow = overviewWindowClassic;
 static bool optLineOfSight = false;
 
 /* Binary observation format constants */
@@ -1921,9 +1923,10 @@ static void printUsage(const char *prog) {
     "                    first game tick and closed at exit\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
-    "  --pillview MODE   Pillbox visibility: always (default), key, decay, off\n"
+    "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
     "  --baseview MODE   Base visibility: always, key, decay, off (default off)\n"
-    "  --allyview MODE   Allied tank visibility: always (default), key, decay, off\n"
+    "  --allyview MODE   Allied tank visibility: always, key, decay, off\n"
+    "                    (default off)\n"
     "  --pillviewdecay S Seconds a pill stays visible under \"decay\" (5-600,\n"
     "                    default 30)\n"
     "  --baseviewdecay S Same for bases (5-600, default 30)\n"
@@ -1931,7 +1934,7 @@ static void printUsage(const char *prog) {
     "  --alliesintrees   Send allied tanks standing in trees to their allies\n"
     "                    instead of withholding them (off by default, and off\n"
     "                    under --classicmode)\n"
-    "  --overviewwindow M  Map overview live block: expanded (default), classic\n"
+    "  --overviewwindow M  Map overview live block: expanded, classic (default)\n"
     "  --lineofsight     Buildings and stands of trees block sight inside the\n"
     "                    live block (off by default, and off under\n"
     "                    --classicmode)\n"

@@ -229,9 +229,9 @@ int            gameFrontHostingVoiceMode        = serverVoiceOn;
 
 /* Visibility rules a hosted game starts with. Same story as the hosting
  * knobs above — held for the dialogs, never applied to a server here. */
-int gameFrontViewPillPolicy    = viewPolicyAlways;
+int gameFrontViewPillPolicy    = viewPolicyKey;
 int gameFrontViewBasePolicy    = viewPolicyOff;
-int gameFrontViewAllyPolicy    = viewPolicyAlways;
+int gameFrontViewAllyPolicy    = viewPolicyOff;
 int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;

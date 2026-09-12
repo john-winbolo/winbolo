@@ -66,8 +66,8 @@ int run_fog_settings_defaults(void) {
     UT_ASSERT(sim != NULL);
 
     UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
-                      (uint8_t)overviewWindowExpanded,
-                  "a fresh sim's overview window = %u, want expanded",
+                      (uint8_t)overviewWindowClassic,
+                  "a fresh sim's overview window = %u, want classic",
                   (unsigned)serverSimGetOverviewWindow(sim));
     UT_ASSERT_MSG(serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff,
                   "a fresh sim's line of sight = %u, want off",
@@ -79,12 +79,14 @@ int run_fog_settings_defaults(void) {
                   (uint8_t)overviewWindowExpanded);
     UT_ASSERT(serverSimGetLineOfSight(NULL) == (uint8_t)lineOfSightOff);
 
-    /* Both values round-trip through their setters. */
-    serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowClassic);
+    /* Both values round-trip through their setters. Each is set to the
+     * opposite of what the sim starts on, so a setter that wrote nothing
+     * would be caught rather than reading back the value already there. */
+    serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowExpanded);
     serverSimSetLineOfSight(sim, (uint8_t)lineOfSightBuildingsAndTrees);
     UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
-                      (uint8_t)overviewWindowClassic,
-                  "overview window after set = %u, want classic",
+                      (uint8_t)overviewWindowExpanded,
+                  "overview window after set = %u, want expanded",
                   (unsigned)serverSimGetOverviewWindow(sim));
     UT_ASSERT_MSG(serverSimGetLineOfSight(sim) ==
                       (uint8_t)lineOfSightBuildingsAndTrees,
@@ -97,7 +99,7 @@ int run_fog_settings_defaults(void) {
     serverSimSetOverviewWindow(sim, (uint8_t)OVERVIEW_WINDOW_COUNT);
     serverSimSetOverviewWindow(sim, 200);
     UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
-                      (uint8_t)overviewWindowClassic,
+                      (uint8_t)overviewWindowExpanded,
                   "an out-of-range window moved the stored value to %u",
                   (unsigned)serverSimGetOverviewWindow(sim));
     serverSimSetLineOfSight(sim, (uint8_t)LINE_OF_SIGHT_COUNT);
@@ -382,13 +384,13 @@ int run_fog_settings_lobby_reset(void) {
     memset(&cfg, 0, sizeof(cfg));
     serverSimApplyInstanceConfig(sim, &cfg);
 
-    serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowClassic);
+    serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowExpanded);
     serverSimSetLineOfSight(sim, (uint8_t)lineOfSightBuildingsAndTrees);
     serverSimResetLobbyToDefaults(sim);
 
     UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
-                      (uint8_t)overviewWindowExpanded,
-                  "the reset must restore expanded, not leave %u",
+                      (uint8_t)overviewWindowClassic,
+                  "the reset must restore classic, not leave %u",
                   (unsigned)serverSimGetOverviewWindow(sim));
     UT_ASSERT_MSG(serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff,
                   "the reset must restore off, not leave %u",

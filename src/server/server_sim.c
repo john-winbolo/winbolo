@@ -285,15 +285,20 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->savedAllowNewPlayers = TRUE;
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
-    /* Visibility rules. Pills and allied tanks stay always-visible (the
-     * historical behaviour); bases start off. memset would give every
+    /* Visibility rules. A server nobody has configured runs the classic
+     * set: a pillbox shows only while the player is watching it, and
+     * bases and allied tanks show not at all. memset would give every
      * category viewPolicyAlways and a zero decay, so set all three. */
-    sim->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+    sim->viewPolicy[viewCategoryPill] = viewPolicyKey;
     sim->viewPolicy[viewCategoryBase] = viewPolicyOff;
-    sim->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+    sim->viewPolicy[viewCategoryAlly] = viewPolicyOff;
     for (count = 0; count < VIEW_CATEGORY_COUNT; count++) {
         sim->viewDecaySecs[count] = VIEW_DECAY_DEFAULT_SECS;
     }
+    /* The map overview keeps the narrow window live, with nothing
+     * blocking sight inside it. overviewWindowClassic is 1, so it has to
+     * be written; lineOfSightOff is 0 and rides on the memset above. */
+    sim->overviewWindow = (uint8_t)overviewWindowClassic;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
