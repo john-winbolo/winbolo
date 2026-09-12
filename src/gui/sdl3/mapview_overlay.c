@@ -22,11 +22,61 @@
  *********************************************************/
 
 #include "mapview_overlay.h"
+#include "gfx_settings.h"
 #include "../tiles.h"     /* MOUSE_SQUARE_X / Y, TILE_SIZE_X / Y */
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+/* Replay viewer's tank triangle and 1.5 px outline. Use the same sprite
+   positions and allegiance frames as the normal draw, including boats. */
+static void overlayDrawTankMarkers(MapViewCtx *ctx, screenTanks *tks,
+                                   float baseX, float baseY, float tileW, float tileH) {
+  int mode = (int)gfxGetAnimSmoothness();
+  BYTE total = screenTanksGetNumEntries(tks);
+  SDL_BlendMode oldBlend;
+  SDL_GetRenderDrawBlendMode(ctx->renderer, &oldBlend);
+  SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+  for (BYTE count = 1; count <= total; count++) {
+    BYTE mx, my, px, py, frame, playerNum, wx, wy, angle;
+    char name[256];
+    screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum, name);
+    if (frame > TANK_EVILBOAT_15) continue;
+    screenTanksGetSubPixel(tks, count, &wx, &wy, &angle);
+    float cx = baseX + tileW / 2 + spritePositionOffset(mode, ctx->scale,
+                                                       ctx->sheetScale, mx, px, wx);
+    float cy = baseY + tileH / 2 + spritePositionOffset(mode, ctx->scale,
+                                                       ctx->sheetScale, my, py, wy);
+    /* The viewer faces north at frame 0, clockwise in sixteen steps. */
+    float turn = (float)(frame % 16) * 6.28318530718f / 16.0f;
+    float cosine = SDL_cosf(turn), sine = SDL_sinf(turn);
+    float radius = SDL_max(3.0f, tileW * 0.45f);
+    SDL_FColor color = { 1, 1, 1, 1 };
+    if (frame >= TANK_EVIL_0) color = (SDL_FColor){ 1, 93 / 255.0f, 93 / 255.0f, 1 };
+    else if (frame >= TANK_GOOD_0) color = (SDL_FColor){ 88 / 255.0f, 216 / 255.0f, 88 / 255.0f, 1 };
+    SDL_FPoint points[3] = { { 0, -radius * 1.2f },
+                             { radius * 0.85f, radius }, { -radius * 0.85f, radius } };
+    /* Scaling about the incenter offsets each edge equally, giving the
+       same mitered stroke as Canvas rather than a thicker tip. */
+    float inradius = radius * (0.85f * 2.2f) / (0.85f + SDL_sqrtf(0.85f * 0.85f + 2.2f * 2.2f));
+    float incenterY = radius - inradius;
+    SDL_FColor shades[3] = { { 0, 0, 0, 0.7f },
+                             { color.r * 0.3f, color.g * 0.3f, color.b * 0.3f, 1 }, color };
+    for (int layer = 0; layer < 3; layer++) {
+      float factor = 1 + 0.75f * (1 - layer) / inradius;
+      SDL_Vertex vertices[3];
+      for (int i = 0; i < 3; i++) {
+        float x = points[i].x * factor;
+        float y = incenterY + (points[i].y - incenterY) * factor;
+        vertices[i] = (SDL_Vertex){ { cx + x * cosine - y * sine,
+                                      cy + x * sine + y * cosine }, shades[layer], { 0, 0 } };
+      }
+      SDL_RenderGeometry(ctx->renderer, NULL, vertices, 3, NULL, 0);
+    }
+  }
+  SDL_SetRenderDrawBlendMode(ctx->renderer, oldBlend);
+}
 
 /* The host's clip, put back after the labels are drawn. */
 typedef struct {
@@ -249,7 +299,8 @@ void mapViewDrawOverlay(MapViewCtx *ctx, const MapViewOverlay *ov,
   }
 
   mapViewDrawShells(ctx, sb, originX, originY, tileW, tileH, edgeX, edgeY);
-  mapViewDrawTanks(ctx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
+  if (ov->simpleTanks) overlayDrawTankMarkers(ctx, tks, baseX, baseY, tileW, tileH);
+  else mapViewDrawTanks(ctx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
   overlayDrawTankLabels(ctx, ov, tks, baseX, baseY);
   mapViewDrawLGMs(ctx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
 

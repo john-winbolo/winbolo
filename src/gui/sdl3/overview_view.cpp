@@ -61,6 +61,7 @@ extern "C" {
 #include "screenbullet.h"
 #include "../tiles.h"       /* MINE_X / MINE_Y, TILE_SIZE_X / TILE_SIZE_Y */
 #include "sprite_positions.h"
+#include "tilenum.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
@@ -287,6 +288,89 @@ static bool overviewViewEnsureTarget(OverviewView *v, SDL_Renderer *r,
     return true;
 }
 
+static bool overviewViewItem(BYTE tile, bool *base, bool *friendly) {
+    *base = tile == BASE_GOOD || tile == BASE_EVIL || tile == BASE_NEUTRAL;
+    *friendly = tile == BASE_GOOD || (tile >= PILL_GOOD_15 && tile <= PILL_GOOD_0);
+    return *base || *friendly || tile == PILL_EVIL_15 ||
+           (tile >= PILL_EVIL_14 && tile <= PILL_EVIL_0);
+}
+
+static void overviewViewCircle(SDL_Renderer *r, float cx, float cy, float radius,
+                                SDL_FColor color) {
+    SDL_Vertex vertices[33];
+    int indices[96];
+    vertices[0] = { { cx, cy }, color, { 0, 0 } };
+    for (int i = 0; i < 32; i++) {
+        float angle = (float)i * 6.28318530718f / 32.0f;
+        vertices[i + 1] = { { cx + radius * SDL_cosf(angle),
+                              cy + radius * SDL_sinf(angle) }, color, { 0, 0 } };
+        indices[i * 3] = 0;
+        indices[i * 3 + 1] = i + 1;
+        indices[i * 3 + 2] = (i + 1) % 32 + 1;
+    }
+    SDL_RenderGeometry(r, NULL, vertices, 33, indices, 96);
+}
+
+static void overviewViewDrawItem(SDL_Renderer *r, const SDL_FRect *dest,
+                                  bool base, bool friendly, bool neutralBase) {
+    /* renderer.js draw_bases/draw_pills: same sizes and 1.5 px dark outlines.
+     * Neutral bases are amber, neutral pills red; all pill health states draw alike. */
+    SDL_FColor color = friendly ? SDL_FColor{ 88 / 255.0f, 216 / 255.0f, 88 / 255.0f, 1 }
+                               : SDL_FColor{ 1, 93 / 255.0f, 93 / 255.0f, 1 };
+    if (neutralBase) color = { 240 / 255.0f, 180 / 255.0f, 41 / 255.0f, 1 };
+    float radius = base ? SDL_max(2.5f, dest->w * 0.42f) : SDL_max(2.0f, dest->w * 0.36f);
+    float cx = dest->x + dest->w / 2, cy = dest->y + dest->h / 2;
+    /* Layer the outer stroke, the fill darkened by the inner half of the
+     * stroke, then the unstroked centre. */
+    SDL_FColor shades[3] = { { 0, 0, 0, 0.65f },
+        { color.r * 0.35f, color.g * 0.35f, color.b * 0.35f, 1 }, color };
+    for (int i = 0; i < 3; i++) {
+        float size = radius + 0.75f * (1 - i);
+        if (base) {
+            SDL_FRect rect = { cx - size, cy - size, size * 2, size * 2 };
+            SDL_SetRenderDrawColorFloat(r, shades[i].r, shades[i].g, shades[i].b, shades[i].a);
+            SDL_RenderFillRect(r, &rect);
+        } else {
+            overviewViewCircle(r, cx, cy, size, shades[i]);
+        }
+    }
+}
+
+static bool overviewViewTerrainColor(BYTE tile, SDL_Color *color) {
+    /* The snapshot holds sprite IDs, including remembered pillboxes and
+     * bases. Their markers are drawn separately over road/grass backgrounds.
+     * Palette from winbolo_parser/viewer/renderer.js TERRAIN_COLORS. */
+    Uint32 rgb;
+    bool base, friendly;
+    if (overviewViewItem(tile, &base, &friendly)) {
+        rgb = base ? 0x000000 : 0x002806;
+    } else if (tile >= ROAD_HORZ && tile <= ROAD_SIDE4) {
+        rgb = 0x000000;
+    } else if (tile >= BUILD_SINGLE && tile <= BUILD_MOST4) {
+        rgb = 0x785e41;
+    } else if (tile >= RIVER_END1 && tile <= RIVER_CORN4) {
+        rgb = 0x008c9c;
+    } else if (tile >= DEEP_SEA_SOLID && tile <= DEEP_SEA_SIDE4) {
+        rgb = 0x008a9e;
+    } else if (tile == FOREST || (tile >= FOREST_SINGLE && tile <= FOREST_RIGHT)) {
+        rgb = 0x045311;
+    } else if (tile == CRATER || (tile >= CRATER_SINGLE && tile <= CRATER_RIGHT)) {
+        rgb = 0x292911;
+    } else if (tile >= BOAT_0 && tile <= BOAT_8) {
+        rgb = 0x61848b;
+    } else {
+        switch (tile) {
+            case SWAMP:        rgb = 0x003933; break;
+            case RUBBLE:       rgb = 0x303819; break;
+            case GRASS:        rgb = 0x002806; break;
+            case HALFBUILDING: rgb = 0x56422c; break;
+            default: return false;
+        }
+    }
+    *color = { (Uint8)(rgb >> 16), (Uint8)(rgb >> 8), (Uint8)rgb, 255 };
+    return true;
+}
+
 /* Every square the view covers, all at full brightness — what the player can
  * see this instant and what they are only remembering alike. The fog pass
  * below takes the second kind back down; keeping the two apart is what lets
@@ -300,7 +384,9 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
      * the classic view mods for its own purposes. */
     SDL_SetTextureColorMod(tiles, 255, 255, 255);
 
-    float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(cam);
+    float zoomScale = overviewCameraZoomScale(cam);
+    float tilePx = (float)OVERVIEW_TILE_PX * zoomScale;
+    bool simpleTerrain = zoomScale < 1.0f;
     SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
                                         TILE_SIZE_X, TILE_SIZE_Y, ss);
 
@@ -313,28 +399,44 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
 
             BYTE flags = om->flags[mx][my];
             float sx = 0.0f, sy = 0.0f;
-            overviewCameraWorldToScreen(cam, viewW, viewH,
-                                        (float)mx, (float)my, &sx, &sy);
-            /* Whole pixels. The camera is continuous, so a tile boundary can
-             * land on a half-pixel, and neighbouring tiles then either leave
-             * a gap that shows the black clear colour or sample a texel from
-             * the next atlas cell. Rounding here is exact rather than
-             * approximate: tilePx is OVERVIEW_TILE_PX * zoomScale, and every
-             * rung of the zoom ladder makes that a whole number, so
-             * round(sx + tilePx) == round(sx) + tilePx. Tiles keep their
-             * exact size and abut. */
-            sx = SDL_roundf(sx);
-            sy = SDL_roundf(sy);
+            /* Independently rounding each world-to-screen result can put
+             * neighbours on opposite sides of a half-pixel due to float
+             * precision. Use one snapped grid for terrain, items and fog. */
+            overviewCameraTileToScreen(cam, viewW, viewH, mx, my, &sx, &sy);
             SDL_FRect dest = { sx, sy, tilePx, tilePx };
-            SDL_FRect src  = mapViewAtlasSrc(mapViewPosX[tile],
+            SDL_Color color;
+            if (simpleTerrain && overviewViewTerrainColor(tile, &color)) {
+                SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
+                SDL_RenderFillRect(r, &dest);
+            } else {
+                SDL_FRect src = mapViewAtlasSrc(mapViewPosX[tile],
                                              mapViewPosY[tile],
                                              TILE_SIZE_X, TILE_SIZE_Y, ss);
-            SDL_RenderTexture(r, tiles, &src, &dest);
+                SDL_RenderTexture(r, tiles, &src, &dest);
+            }
 
             if ((flags & OVERVIEW_F_MINE) != 0) {
                 SDL_RenderTexture(r, tiles, &mineSrc, &dest);
             }
         }
+    }
+    /* Minimum marker sizes can exceed a tile. Draw after all ground so the
+     * next square cannot paint over them, and before the usual fog pass. */
+    if (simpleTerrain) {
+        SDL_BlendMode oldBlend;
+        SDL_GetRenderDrawBlendMode(r, &oldBlend);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        for (int mx = left; mx <= right; mx++) {
+            for (int my = top; my <= bottom; my++) {
+                bool base, friendly;
+                if (!overviewViewItem(om->tile[mx][my], &base, &friendly)) continue;
+                float sx, sy;
+                overviewCameraTileToScreen(cam, viewW, viewH, mx, my, &sx, &sy);
+                SDL_FRect dest = { sx, sy, tilePx, tilePx };
+                overviewViewDrawItem(r, &dest, base, friendly, om->tile[mx][my] == BASE_NEUTRAL);
+            }
+        }
+        SDL_SetRenderDrawBlendMode(r, oldBlend);
     }
 }
 
@@ -451,9 +553,9 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
 
     float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(cam);
     float sx = 0.0f, sy = 0.0f;
-    overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &sx, &sy);
+    overviewCameraTileToScreen(cam, viewW, viewH, 0, 0, &sx, &sy);
 
-    SDL_FRect dst = { SDL_roundf(sx), SDL_roundf(sy),
+    SDL_FRect dst = { sx, sy,
                       tilePx * (float)MAP_ARRAY_SIZE,
                       tilePx * (float)MAP_ARRAY_SIZE };
     SDL_RenderTexture(r, v->fog, NULL, &dst);
@@ -863,6 +965,7 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.sprites    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
+    ov.simpleTanks = zoomScale < 1.0f;
 
     /* Where a build will land, from the same mouse_square sprite the main view
      * draws. Solid while cursor mode is on or the pointer is over the map (the

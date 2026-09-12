@@ -80,6 +80,8 @@ void itemLabelCacheFlush(ItemLabelCache *c);
 /* Squares and game pixels here are in the sprite lists' frame: the classic
    view's 17x17 buffer squares, the overview's absolute map squares. */
 typedef struct MapViewOverlay {
+  /* Overview below 1x: directional markers in place of tank sprites. */
+  bool             simpleTanks;
   /* Build cursor, drawn under the sprites. Faint is the locked target with
      build mode off; solid is build mode on or the pointer over the map. */
   bool             cursorShown;

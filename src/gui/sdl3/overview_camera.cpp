@@ -157,6 +157,14 @@ void overviewCameraWorldToScreen(const OverviewCamera *cam, int viewW, int viewH
     if (outSY) *outSY = (mapY - cam->cy) * tilePx + (float)viewH * 0.5f;
 }
 
+void overviewCameraTileToScreen(const OverviewCamera *cam, int viewW, int viewH,
+                                int mapX, int mapY, float *outSX, float *outSY) {
+    if (!cam) return;
+    float tilePx = overviewTilePx(cam);
+    if (outSX) *outSX = roundf(-cam->cx * tilePx + (float)viewW * 0.5f) + mapX * tilePx;
+    if (outSY) *outSY = roundf(-cam->cy * tilePx + (float)viewH * 0.5f) + mapY * tilePx;
+}
+
 bool overviewCameraScreenToWorld(const OverviewCamera *cam, int viewW, int viewH,
                                  float sx, float sy, int *outMapX, int *outMapY) {
     if (!cam) return false;

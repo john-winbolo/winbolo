@@ -110,6 +110,11 @@ void overviewCameraSetZoomScale(OverviewCamera *cam, float scale);
 void overviewCameraWorldToScreen(const OverviewCamera *cam, int viewW, int viewH,
                                  float mapX, float mapY, float *outSX, float *outSY);
 
+/* Whole-pixel tile grid: snap the origin once so adjacent squares share
+ * exactly the same edge, even at floating-point rounding boundaries. */
+void overviewCameraTileToScreen(const OverviewCamera *cam, int viewW, int viewH,
+                                int mapX, int mapY, float *outSX, float *outSY);
+
 /* The map square under a view pixel. Returns false when it falls outside
  * 0..MAP_ARRAY_SIZE-1, and still writes the out-of-range square so the
  * caller can see how far outside the map the pixel landed. */

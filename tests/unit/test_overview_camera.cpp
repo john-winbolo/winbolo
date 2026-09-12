@@ -1488,8 +1488,41 @@ static int camera_set_zoom_scale(void) {
     return 0;
 }
 
+static int camera_tile_grid_has_no_seams(void) {
+    OverviewCamera cam;
+    overviewCameraInit(&cam);
+    for (int z = 0; z < overviewCameraZoomCount(); z++) {
+        cam.zoomIndex = z;
+        float tilePx = OVERVIEW_TILE_PX * overviewCameraZoomScale(&cam);
+        for (int sample = 0; sample < 256; sample++) {
+            /* Half-pixel boundaries, including cx=32.041667 at 0.75x:
+             * independently rounded tiles 11 and 12 left a 1 px gap. */
+            cam.cx = (sample * 12 + 0.5f) / tilePx;
+            cam.cy = (sample * 12 + 0.5f) / tilePx;
+            float originX, originY, prevX, prevY;
+            overviewCameraTileToScreen(&cam, 1000, 999, 0, 0, &originX, &originY);
+            prevX = originX;
+            prevY = originY;
+            for (int tile = 1; tile <= MAP_ARRAY_SIZE; tile++) {
+                float x, y;
+                overviewCameraTileToScreen(&cam, 1000, 999, tile, tile, &x, &y);
+                UT_ASSERT_MSG(x == prevX + tilePx && y == prevY + tilePx,
+                              "tile gap/overlap at zoom %d sample %d tile %d", z, sample, tile);
+                UT_ASSERT_MSG(x == originX + tile * tilePx && y == originY + tile * tilePx,
+                              "tile/fog misalignment at zoom %d sample %d tile %d", z, sample, tile);
+                UT_ASSERT_MSG(x == roundf(x) && y == roundf(y),
+                              "fractional tile edge at zoom %d sample %d tile %d", z, sample, tile);
+                prevX = x;
+                prevY = y;
+            }
+        }
+    }
+    return 0;
+}
+
 extern "C" int run_overview_camera(void) {
     int rc;
+    rc = camera_tile_grid_has_no_seams();   if (rc) return rc;
     rc = camera_round_trip_every_zoom();    if (rc) return rc;
     rc = camera_zoom_anchors_cursor();      if (rc) return rc;
     rc = camera_follow_centres_on_tank();   if (rc) return rc;
