@@ -1926,6 +1926,13 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Ustawia Widok bunkra na Klawisz, a Widok bazy i Wi
 STR_MENU_CLASSIC_MODE_TIP=Serwer ma włączony tryb klasyczny, więc ten widok jest wyłączony.
 STR_DLGLOBBY_ALLIES_TREES_CB=Widok sojuszników w lasie
 STR_DLGLOBBY_ALLIES_TREES_TIP=Sojusznicze czołgi stojące w lasie są rysowane na twoim\nekranie, a nie ukrywane. Mgła wojny nadal obowiązuje,\nwięc widzisz je tylko tam, gdzie i tak widzisz.\nWyłączone to zasada klasyczna, a tryb klasyczny wymusza\nwyłączenie.
+# Map overview live block, and what blocks sight inside it
+STR_DLGLOBBY_OVERVIEW_WINDOW=Okno podglądu
+STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Blok pól, w którym podgląd mapy jest aktywny wokół\ntwojego czołgu. Rozszerzone to wszystko, do czego może\nprzewinąć klasyczny widok; Klasyczne zawęża to do okna,\nktóre ten widok pokazuje. Tryb klasyczny ustawia je\nna Klasyczne i tak je utrzymuje. Serwer i tak wysyła\nte same dane mapy.
+STR_DLGLOBBY_LINE_OF_SIGHT_CB=Linia widzenia
+STR_DLGLOBBY_LINE_OF_SIGHT_TIP=Budynki i skupiska drzew nie pozwalają ci widzieć\ndalej w aktywnym bloku. Wyłączone to zasada klasyczna,\na tryb klasyczny wymusza wyłączenie. Serwer i tak\nwysyła te same dane mapy, więc jest to ułatwienie,\na nie gwarancja wobec zmodyfikowanego klienta.
+STR_DLGLOBBY_WINDOW_EXPANDED=Rozszerzone
+STR_DLGLOBBY_WINDOW_CLASSIC=Klasyczne
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skórka
 STR_DLGSKIN_DEFAULT=Domyślna

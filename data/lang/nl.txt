@@ -1932,6 +1932,13 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Zet Bunkerweergave op Toets, en Basisweergave en W
 STR_MENU_CLASSIC_MODE_TIP=Op de server staat de klassieke modus aan, dus deze weergave is uitgeschakeld.
 STR_DLGLOBBY_ALLIES_TREES_CB=Bondgenoten in bomen zien
 STR_DLGLOBBY_ALLIES_TREES_TIP=Bondgenoottanks die in de bomen staan worden op je\nscherm getekend in plaats van verborgen. De oorlogsmist\ngeldt nog steeds, dus je ziet ze alleen waar je toch al\nziet. Uit is de klassieke regel, en de klassieke modus\nzet het verplicht uit.
+# Map overview live block, and what blocks sight inside it
+STR_DLGLOBBY_OVERVIEW_WINDOW=Overzichtsvenster
+STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Welk blok tegels het kaartoverzicht rond je eigen tank\nlive houdt. Uitgebreid is alles waarheen de klassieke\nweergave kan scrollen; Klassiek beperkt het tot het\nvenster dat die weergave laat zien. Klassieke modus\nzet het op Klassiek en houdt het daar. De server\nstuurt hoe dan ook dezelfde kaartgegevens.
+STR_DLGLOBBY_LINE_OF_SIGHT_CB=Zichtlijn
+STR_DLGLOBBY_LINE_OF_SIGHT_TIP=Gebouwen en groepjes bomen beletten je verder in het\nlive blok te zien. Uit is de klassieke regel, en de\nklassieke modus zet het verplicht uit. De server stuurt\nin beide gevallen dezelfde kaartgegevens, dus dit is een\ngemaksregel en geen garantie tegen een aangepaste client.
+STR_DLGLOBBY_WINDOW_EXPANDED=Uitgebreid
+STR_DLGLOBBY_WINDOW_CLASSIC=Klassiek
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standaard
