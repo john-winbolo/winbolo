@@ -1327,9 +1327,9 @@ BYTE pillsGetPillOwner(pillboxes *value, BYTE pillNum) {
 *LAST MODIFIED: 04/04/02
 *PURPOSE:
 * Sets the pillbox pillNum to owner. Returns the previous
-* owner. If migrate is set to TRUE then it has migrated 
-* from a alliance when a player left and we shouldn't 
-* make a message
+* owner. If migrate is set to TRUE then it has migrated
+* from a alliance when a player left and nothing is
+* reported at all
 *
 *ARGUMENTS:
 *  value   - Pointer to the pillbox structure
@@ -1346,33 +1346,11 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
     pillNum--;
     returnValue = (*value)->item[pillNum].owner;
     (*value)->item[pillNum].owner = owner;
-    /* Make the message if required */
-    if (returnValue == NEUTRAL && migrate == FALSE && owner != NEUTRAL) {
-      /* Neutral pill */
-      MessageArgs args;
-      memset(&args, 0, sizeof(args));
-      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
-      args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
-      playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
-    } else if (owner == NEUTRAL) {
-      /* Do nothing */
-    } else if (playersIsAllie(&sim->plyrs, returnValue, owner) == FALSE && migrate == FALSE) {
-      /* Stole pill */
-      MessageArgs args;
-      memset(&args, 0, sizeof(args));
-      playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
-      args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
-      playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
-      playersGetPlayerName(&sim->plyrs, returnValue, args.otherName,
-                           sizeof(args.otherName), sim->isServer);
-      args.otherFlags = playersGetAccountFlags(&sim->plyrs, returnValue);
-      playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
-    }
-    /* Report the change, which is what networked clients get the message from.
-       A pill going neutral is reported the same way; the message chain above
-       already says nothing for one, and the client draws no line for it. */
+    /* Report the change. This is the only thing said about it: no newswire
+       line is written here, so every client — the hosting one included —
+       draws its line from the event, which carries the announce policy's
+       answer. A pill going neutral is reported the same way, and the client
+       draws no line for one. */
     if (migrate == FALSE && sim->isServer) {
       if (sim->callbacks.pillOwnerChanged) {
         BYTE captureClass;

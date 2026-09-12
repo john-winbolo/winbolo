@@ -191,11 +191,15 @@ bool playersSetSelf(struct ClientSim *cs, struct GameSim *sim, players *plrs, BY
 * sccueeds then it makes the appropriate anouncement
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum  - The player number to set
 * playerName - The player name to set
+* announce   - FALSE writes no newswire line, the way playersLeaveGame's
+*              own flag does. The rename arm in client_sim_control.c passes
+*              the announce policy's answer through it; every other caller
+*              passes TRUE.
 *********************************************************/
-bool playersSetPlayerName(struct ClientSim *cs, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, char *playerName, bool isServer);
+bool playersSetPlayerName(struct ClientSim *cs, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, char *playerName, bool isServer, bool announce);
 
 /*********************************************************
 *NAME:          playersSetPlayersMenu

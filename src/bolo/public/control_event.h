@@ -205,6 +205,13 @@ typedef enum {
     ENTITY_KIND_START = 2
 } EntityKind;
 
+/* `quiet` on the five variants that carry one is the announce policy's
+ * answer, stamped by the server where it built the event: 0 to announce the
+ * fact, 1 to hold the line back. It rides the wire like any other field, and
+ * the client's line-emitting site reads it before writing a line. Nothing
+ * else about the event changes — the roster update, the alliance bitmap and
+ * the rename all still apply. With no scenario policy registered it is
+ * always 0. */
 typedef struct ControlEvent {
     ControlEventType type;
     union {
@@ -218,11 +225,13 @@ typedef struct ControlEvent {
         struct {
             BYTE acceptedBy;
             BYTE newMember;
+            BYTE quiet;
         } allianceAccept;
 
         /* CTRL_ALLIANCE_LEAVE — alliance leave, not player leave */
         struct {
             BYTE playerNum;
+            BYTE quiet;
         } allianceLeave;
 
         /* CTRL_ALLIANCE_RESET — full alliance matrix snapshot.
@@ -244,6 +253,7 @@ typedef struct ControlEvent {
             uint8_t clientFlags;
             BYTE  numAllies;
             BYTE  allies[MAX_TANKS];
+            BYTE  quiet;
         } playerJoin;
 
         /* CTRL_PLAYER_LEAVE — server announces a player has disconnected.
@@ -252,12 +262,14 @@ typedef struct ControlEvent {
             BYTE playerNum;
             char name[PACKET_MAX_PLAYER_NAME];
             char country[3];            /* 2 chars + NUL */
+            BYTE quiet;
         } playerLeave;
 
         /* CTRL_PLAYER_NAME */
         struct {
             BYTE playerNum;
             char name[PACKET_MAX_PLAYER_NAME];
+            BYTE quiet;
         } playerName;
 
         /* CTRL_LOBBY_SLOT */

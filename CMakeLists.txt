@@ -3367,6 +3367,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # pill placed, picked up and killed, the finished build, the mine laid
     # and the mine exploded — and the one of them that never leaves the host.
     tests/unit/test_game_events_new.c
+    # The announce policy: the quiet byte on every fact that carries one,
+    # the client line sites that read it, the vote line the server holds
+    # back, and the same over a real loopback client.
+    tests/unit/test_scenario_announce.c
     # The init table a bot is created with: one table per brain VM, an
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
@@ -4840,6 +4844,14 @@ set(_unit_test_names
     game_events_mine_laid
     game_events_mine_exploded
     game_events_mine_placed_is_local
+    scenario_announce_null_policy_is_classic
+    scenario_announce_policy_asked_per_kind
+    scenario_announce_quiet_stamped_on_every_fact
+    scenario_announce_client_lines_read_the_byte
+    scenario_announce_wire_bytes
+    scenario_announce_pill_line_written_once
+    scenario_announce_vote_line_held
+    scenario_announce_loopback_quiet_draws_no_line
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

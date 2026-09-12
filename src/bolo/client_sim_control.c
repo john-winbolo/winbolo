@@ -212,7 +212,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                          nameBuf, ccBuf,
                          0, 0, 0, 0, 0, FALSE,
                          numAllies, numAllies > 0 ? allies : NULL, FALSE);
-        if ((cs->isSpectator || pNum != cs->myPlayerNum) && cs->inLobby) {
+        /* The roster above is applied whatever the answer; only the line is
+         * the policy's to withhold. quiet is 0 with no scenario registered. */
+        if ((cs->isSpectator || pNum != cs->myPlayerNum) && cs->inLobby &&
+            evt->u.playerJoin.quiet == 0) {
             char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", joinMsg);
@@ -226,7 +229,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         memcpy(nameBuf, evt->u.playerName.name, sizeof(nameBuf));
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         playersSetPlayerName(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                             evt->u.playerName.playerNum, nameBuf, FALSE);
+                             evt->u.playerName.playerNum, nameBuf, FALSE,
+                             evt->u.playerName.quiet == 0);
         break;
     }
 
@@ -1012,10 +1016,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         /* announce=false in the lobby: the in-game newswire is wrong there
          * (it would queue and pop at game start); the lobby chat line below
-         * is the right surface. In-game, announce the leave on the newswire. */
+         * is the right surface. In-game, announce the leave on the newswire.
+         * A departure the announce policy turned down writes neither: the
+         * removal itself still happens on both surfaces' behalf. */
         playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                         pNum, FALSE, !cs->inLobby);
-        if (cs->inLobby) {
+                         pNum, FALSE,
+                         evt->u.playerLeave.quiet == 0 && !cs->inLobby);
+        if (cs->inLobby && evt->u.playerLeave.quiet == 0) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", leaveMsg);

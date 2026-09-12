@@ -540,6 +540,22 @@ typedef struct {
     BYTE slot;
 } ScnOpOut;
 
+/* announce kind — which newswire-worthy fact is being put to the policy.
+ * The values are the policy's own vocabulary and never reach the wire; what
+ * travels is the one-byte answer.
+ *
+ * subject is what the fact is about: the player slot for a roster fact, the
+ * 0-based item[] index for a capture, the team for a vote line. actor is who
+ * caused it, NEUTRAL where nobody did. */
+#define ANNOUNCE_KIND_JOINED        0
+#define ANNOUNCE_KIND_LEFT          1
+#define ANNOUNCE_KIND_BASE_CAPTURED 2
+#define ANNOUNCE_KIND_PILL_CAPTURED 3
+#define ANNOUNCE_KIND_BUILDER_LOST  4
+#define ANNOUNCE_KIND_NAME_CHANGED  5
+#define ANNOUNCE_KIND_ALLIANCE      6
+#define ANNOUNCE_KIND_VOTE          7
+
 /* The decisions the sim asks the scenario, in the shape GameSimCallbacks
  * has. The sim calls through this and never knows Lua exists. */
 typedef struct ScenarioPolicy {
@@ -565,9 +581,12 @@ typedef struct ScenarioPolicy {
                        /* locked objectives, flag rules */
     bool (*announce)(void *ctx, BYTE kind, BYTE subject, BYTE actor);
                        /* may this newswire-worthy fact be shown to
-                        * players? kind: joined, left, base captured,
-                        * pill captured, builder lost, name changed,
-                        * alliance changed, vote line. NULL = always */
+                        * players? kind is an ANNOUNCE_KIND_* above, with
+                        * subject and actor as documented there. False
+                        * stamps the quiet byte the fact carries, which
+                        * every client line site reads before it writes a
+                        * line; a vote line, which the server writes as
+                        * text, is simply not sent. NULL = always */
     bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause);
                        /* may this tank, builder or pill be destroyed
                         * by this blow? kind: tank, builder, pill;

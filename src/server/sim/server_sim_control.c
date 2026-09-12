@@ -83,7 +83,7 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
                            ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
             r.targetIndex = d[2];   /* 0-based pill/base array index; on the wire */
             r.newOwner = d[0]; r.prevOwner = d[1];
-            /* d[3] is the reserved byte. The class and the square are past the
+            /* d[3] is the quiet byte. The class and the square are past the
                wire size, stashed at emit for this funnel alone. */
             r.captureClass = d[4];
             r.mapX = d[5]; r.mapY = d[6];
@@ -96,7 +96,8 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
             AttrLgmRecord r;
             r.type = ATTR_REC_LGM; r.tick = sim->tick;
             r.victim = d[0]; r.killer = d[1];
-            r.mapX = d[2]; r.mapY = d[3];   /* LGM map cell, stashed at emit */
+            /* d[2] is the quiet byte; the cell sits behind it. */
+            r.mapX = d[3]; r.mapY = d[4];   /* LGM map cell, stashed at emit */
             serverSimTrackAppend(sim, &r, sizeof r);
             roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
                                   &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
@@ -304,6 +305,12 @@ void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         }
     }
     evt->u.playerJoin.numAllies = numAllies;
+    /* Asked here rather than at the publishes, because both of them — the
+       live announce in server_sim_players.c and the sync replay below — go
+       through this filler, and a wave of bots a script silenced must stay
+       silent for a client that joins in the middle of it. */
+    evt->u.playerJoin.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_JOINED, i, i) ? 0 : 1;
 }
 
 void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -315,6 +322,8 @@ void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
     evt->u.playerLeave.country[0] = sim->sim.plyrs->item[i].location[0];
     evt->u.playerLeave.country[1] = sim->sim.plyrs->item[i].location[1];
     evt->u.playerLeave.country[2] = '\0';
+    evt->u.playerLeave.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_LEFT, i, i) ? 0 : 1;
 }
 
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, ControlEvent *evt) {

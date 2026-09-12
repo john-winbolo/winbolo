@@ -73,6 +73,10 @@
  * ControlEventType already discriminates request/accept/leave). */
 #define ALLIANCE_UPDATE_PAYLOAD 3
 #define ALLIANCE_BODY_PAYLOAD   2
+/* ACCEPT and LEAVE carry one byte more: the announce policy's quiet answer,
+ * appended after the pair so neither existing field moves. A REQUEST is not a
+ * newswire fact and keeps the two-byte body. */
+#define ALLIANCE_QUIET_BODY_PAYLOAD 3
 /* CTRL_ALLIANCE_RESET — full matrix carried as MAX_TANKS×uint16_t bigendian
  * (per-player ally bitmap). Discriminator byte ALLIANCE_EVENT_RESET prefixes
  * the wire-packet payload; the body-only flavor (reliable carrier) drops
@@ -117,10 +121,11 @@ static EncodeResult encodeAllianceAcceptBody(const ControlEvent *evt,
                                              uint8_t *buf, size_t bufCap,
                                              size_t *outLen) {
     (void)recipient;
-    if (bufCap < ALLIANCE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    if (bufCap < ALLIANCE_QUIET_BODY_PAYLOAD) return ENCODE_OVERFLOW;
     buf[0] = evt->u.allianceAccept.acceptedBy;
     buf[1] = evt->u.allianceAccept.newMember;
-    *outLen = ALLIANCE_BODY_PAYLOAD;
+    buf[2] = evt->u.allianceAccept.quiet;
+    *outLen = ALLIANCE_QUIET_BODY_PAYLOAD;
     return ENCODE_OK;
 }
 
@@ -128,7 +133,7 @@ static EncodeResult encodeAllianceAccept(const ControlEvent *evt,
                                          const struct UdpServerClient *recipient,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
+    const size_t needed = PACKET_HEADER_SIZE + 1 + ALLIANCE_QUIET_BODY_PAYLOAD;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
     buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_ACCEPT;
@@ -148,10 +153,11 @@ static EncodeResult encodeAllianceLeaveBody(const ControlEvent *evt,
                                             uint8_t *buf, size_t bufCap,
                                             size_t *outLen) {
     (void)recipient;
-    if (bufCap < ALLIANCE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    if (bufCap < ALLIANCE_QUIET_BODY_PAYLOAD) return ENCODE_OVERFLOW;
     buf[0] = evt->u.allianceLeave.playerNum;
     buf[1] = 0; /* unused for leave — preserved for wire compat */
-    *outLen = ALLIANCE_BODY_PAYLOAD;
+    buf[2] = evt->u.allianceLeave.quiet;
+    *outLen = ALLIANCE_QUIET_BODY_PAYLOAD;
     return ENCODE_OK;
 }
 
@@ -159,7 +165,7 @@ static EncodeResult encodeAllianceLeave(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
+    const size_t needed = PACKET_HEADER_SIZE + 1 + ALLIANCE_QUIET_BODY_PAYLOAD;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
     buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_LEAVE;
@@ -208,9 +214,11 @@ static EncodeResult encodeAllianceReset(const ControlEvent *evt,
 /* PACKET_PLAYER_JOINED wire format:
  *   [header 8] [pNum 1] [name PACKET_MAX_PLAYER_NAME] [cc 2]
  *   [clientType 1] [clientFlags 1] [numAllies 1] [ally 1 × numAllies]
+ *   [quiet 1]
  * The trailing numAllies/allies pair is an additive change from the
  * pre-codec wire format — receiving clients now have the join's full
- * alliance bitmap on the wire from the join event itself. */
+ * alliance bitmap on the wire from the join event itself. quiet sits after
+ * the variable-length ally list, which numAllies already sizes. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
@@ -220,7 +228,7 @@ static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
     (void)recipient;
     BYTE numAllies = evt->u.playerJoin.numAllies;
     if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
-    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + 1 + 1 + numAllies;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + 1 + 1 + numAllies + 1;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.playerJoin.playerNum;
@@ -239,6 +247,7 @@ static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
         memcpy(buf + pos, evt->u.playerJoin.allies, numAllies);
         pos += numAllies;
     }
+    buf[pos++] = evt->u.playerJoin.quiet;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -260,7 +269,7 @@ static EncodeResult encodePlayerJoin(const ControlEvent *evt,
 
 /* PACKET_PLAYER_LEFT wire format:
  *   [header 8] [playerNum 1] [name PACKET_MAX_PLAYER_NAME (NUL-padded)]
- *   [cc 2] */
+ *   [cc 2] [quiet 1] */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
@@ -268,7 +277,7 @@ static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
     (void)recipient;
-    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.playerLeave.playerNum;
@@ -280,6 +289,7 @@ static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
     pos += PACKET_MAX_PLAYER_NAME;
     buf[pos++] = (uint8_t)evt->u.playerLeave.country[0];
     buf[pos++] = (uint8_t)evt->u.playerLeave.country[1];
+    buf[pos++] = evt->u.playerLeave.quiet;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -300,7 +310,11 @@ static EncodeResult encodePlayerLeave(const ControlEvent *evt,
 }
 
 /* PACKET_NAME_CHANGE wire format:
- *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME (NUL-padded)] */
+ *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME (NUL-padded)]
+ *   [quiet 1]
+ * The client-to-server rename command is a different encoder
+ * (transport_command_codec.c) and carries no quiet byte: a request is not a
+ * fact, and the answer is stamped on the broadcast the server sends back. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodePlayerNameBody(const ControlEvent *evt,
@@ -308,7 +322,7 @@ static EncodeResult encodePlayerNameBody(const ControlEvent *evt,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
     (void)recipient;
-    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 1;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     buf[0] = evt->u.playerName.playerNum;
     memset(buf + 1, 0, PACKET_MAX_PLAYER_NAME);
@@ -316,6 +330,7 @@ static EncodeResult encodePlayerNameBody(const ControlEvent *evt,
         size_t nameLen = strnlen(evt->u.playerName.name, PACKET_MAX_PLAYER_NAME - 1);
         if (nameLen > 0) memcpy(buf + 1, evt->u.playerName.name, nameLen);
     }
+    buf[1 + PACKET_MAX_PLAYER_NAME] = evt->u.playerName.quiet;
     *outLen = needed;
     return ENCODE_OK;
 }
@@ -1861,20 +1876,22 @@ static bool decodeAllianceRequestBody(const uint8_t *buf, size_t len,
 
 static bool decodeAllianceAcceptBody(const uint8_t *buf, size_t len,
                                      ControlEvent *outEvt) {
-    if (len < ALLIANCE_BODY_PAYLOAD) return false;
+    if (len < ALLIANCE_QUIET_BODY_PAYLOAD) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_ALLIANCE_ACCEPT;
     outEvt->u.allianceAccept.acceptedBy = buf[0];
     outEvt->u.allianceAccept.newMember  = buf[1];
+    outEvt->u.allianceAccept.quiet      = buf[2];
     return true;
 }
 
 static bool decodeAllianceLeaveBody(const uint8_t *buf, size_t len,
                                     ControlEvent *outEvt) {
-    if (len < ALLIANCE_BODY_PAYLOAD) return false;
+    if (len < ALLIANCE_QUIET_BODY_PAYLOAD) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_ALLIANCE_LEAVE;
     outEvt->u.allianceLeave.playerNum = buf[0];
+    outEvt->u.allianceLeave.quiet     = buf[2];
     return true;
 }
 
@@ -1926,30 +1943,33 @@ static bool decodePlayerJoinBody(const uint8_t *buf, size_t len,
     {
         BYTE numAllies = buf[pos++];
         if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
-        if (pos + numAllies > len) return false;
+        if (pos + numAllies + 1 > len) return false;
         outEvt->u.playerJoin.numAllies = numAllies;
         if (numAllies > 0) {
             memcpy(outEvt->u.playerJoin.allies, buf + pos, numAllies);
         }
+        pos += numAllies;
+        outEvt->u.playerJoin.quiet = buf[pos];
     }
     return true;
 }
 
 static bool decodePlayerNameBody(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
-    if (len < (size_t)(1 + PACKET_MAX_PLAYER_NAME)) return false;
+    if (len < (size_t)(1 + PACKET_MAX_PLAYER_NAME + 1)) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_PLAYER_NAME;
     outEvt->u.playerName.playerNum = buf[0];
     memcpy(outEvt->u.playerName.name, buf + 1, PACKET_MAX_PLAYER_NAME);
     outEvt->u.playerName.name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    outEvt->u.playerName.quiet = buf[1 + PACKET_MAX_PLAYER_NAME];
     return true;
 }
 
 static bool decodePlayerLeaveBody(const uint8_t *buf, size_t len,
                                   ControlEvent *outEvt) {
     /* Layout matches encodePlayerLeaveBody's wire format. */
-    const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2;
+    const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1;
     if (len < fixedLen) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_PLAYER_LEAVE;
@@ -1961,6 +1981,7 @@ static bool decodePlayerLeaveBody(const uint8_t *buf, size_t len,
     outEvt->u.playerLeave.country[0] = (char)buf[pos++];
     outEvt->u.playerLeave.country[1] = (char)buf[pos++];
     outEvt->u.playerLeave.country[2] = '\0';
+    outEvt->u.playerLeave.quiet = buf[pos];
     return true;
 }
 

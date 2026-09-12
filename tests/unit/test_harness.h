@@ -2095,6 +2095,22 @@ int run_game_events_mine_laid(void);
 int run_game_events_mine_exploded(void);
 int run_game_events_mine_placed_is_local(void);
 
+/* The announce policy (test_scenario_announce.c): no policy is the classic
+ * newswire; each kind is asked with the subject and actor its row names; a
+ * refusal stamps the quiet byte on every fact that carries one; every client
+ * line site reads that byte; the byte survives the wire, composed by hand; a
+ * pill capture draws one line now that pillsSetPillOwner draws none; a vote
+ * line is held back by not being sent; and a real loopback client receiving
+ * the byte writes nothing. */
+int run_scenario_announce_null_policy_is_classic(void);
+int run_scenario_announce_policy_asked_per_kind(void);
+int run_scenario_announce_quiet_stamped_on_every_fact(void);
+int run_scenario_announce_client_lines_read_the_byte(void);
+int run_scenario_announce_wire_bytes(void);
+int run_scenario_announce_pill_line_written_once(void);
+int run_scenario_announce_vote_line_held(void);
+int run_scenario_announce_loopback_quiet_draws_no_line(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

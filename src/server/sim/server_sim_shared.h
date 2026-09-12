@@ -96,6 +96,20 @@ bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player);
 bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
                        BYTE cause);
 
+/* Whether a newswire-worthy fact may be shown to players, also in
+ * server_sim_callbacks.c. Unlike the queries above this one is not a GameSim
+ * callback: nothing in shared code asks it. The server asks it where it builds
+ * the fact — the two capture callbacks and the builder death here, the control
+ * events in server_sim_control.c, server_sim_players.c and server_sim_round.c,
+ * and the vote's own text in server_sim_vote.c — and stamps the answer as the
+ * quiet byte the fact carries. TRUE with no policy registered, which is why a
+ * plain map's newswire reads exactly as it always has.
+ *
+ * kind is an ANNOUNCE_KIND_* (scenario_defs.h) and subject and actor are what
+ * that table says they are. This is the single bracketed call: the policy
+ * enter and leave are here rather than at each of the sites. */
+bool serverSimAnnounce(ServerSim *sim, BYTE kind, BYTE subject, BYTE actor);
+
 /* Defined in server_sim_callbacks.c. Appends a packed attribution record to
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
  * server_sim_control.c both feed it. */

@@ -1600,7 +1600,9 @@ bool clientSimSetPlayerName(ClientSim *csPtr, char *value) {
   bool returnValue;              /* Value to return */
 
   utilStripNameReplace(value);
-  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE);
+  /* The local player's own rename request. The server's broadcast of it is
+     where the announce policy gets its say; this is the typist's own copy. */
+  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE, TRUE);
   if (returnValue == TRUE) {
     if (clientSimGetNetType(csPtr) != netSingle) {
       clientSimSendChangePlayerName(csPtr, clientSimGetMyPlayerNum(csPtr), value);

@@ -483,6 +483,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         memset(&allyLeaveEvt, 0, sizeof(allyLeaveEvt));
         allyLeaveEvt.type = CTRL_ALLIANCE_LEAVE;
         allyLeaveEvt.u.allianceLeave.playerNum = playerNum;
+        /* Nobody asked for this one — it falls out of the departure — so it
+           is put to the policy with no actor. */
+        allyLeaveEvt.u.allianceLeave.quiet =
+            serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, playerNum, NEUTRAL)
+                ? 0 : 1;
         serverSimPublishControl(sim, &allyLeaveEvt);
     }
 
@@ -678,6 +683,9 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
     evt.type = CTRL_ALLIANCE_ACCEPT;
     evt.u.allianceAccept.acceptedBy = accepter;
     evt.u.allianceAccept.newMember  = newMember;
+    evt.u.allianceAccept.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, newMember, accepter)
+            ? 0 : 1;
     serverSimPublishControl(sim, &evt);
     /* WBN tracker + replay-log side effects live here so every input
      * source (UDP wire, local transport, headless cmd-stdin) fires
@@ -700,6 +708,9 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_LEAVE;
     evt.u.allianceLeave.playerNum = playerNum;
+    evt.u.allianceLeave.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, playerNum, playerNum)
+            ? 0 : 1;
     serverSimPublishControl(sim, &evt);
     /* WBN + replay-log side effects — see serverSimAcceptAlliance. */
     winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
@@ -718,11 +729,17 @@ void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
     gs = serverSimGetGameSim(sim);
     strncpy(nameBuf, name, sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE);
+    /* announce is moot with no ClientSim — the server has no newswire — so
+       this passes TRUE and the quiet byte below carries the real answer. */
+    playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE,
+                         TRUE);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_PLAYER_NAME;
     evt.u.playerName.playerNum = playerNum;
     snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+    evt.u.playerName.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_NAME_CHANGED, playerNum, playerNum)
+            ? 0 : 1;
     serverSimPublishControl(sim, &evt);
 }
 

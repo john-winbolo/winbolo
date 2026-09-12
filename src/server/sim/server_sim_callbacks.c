@@ -367,9 +367,9 @@ void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
  *
  * data[0] to data[3] are the wire payload — gameEventDataSize() gives
  * EVENT_BASE_CAPTURED four bytes, so a client learns which base as well as who
- * holds it. data[3] is reserved and written 0. From data[4] on is the
- * server-internal side channel the stats funnel in serverSimAddEvent reads:
- * the capture class and the base's map cell. */
+ * holds it. data[3] is the quiet byte the announce policy answers with. From
+ * data[4] on is the server-internal side channel the stats funnel in
+ * serverSimAddEvent reads: the capture class and the base's map cell. */
 void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
                                  BYTE newOwner, BYTE captureClass,
                                  BYTE mapX, BYTE mapY) {
@@ -380,7 +380,8 @@ void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
     ev.data[0] = newOwner;
     ev.data[1] = oldOwner;
     ev.data[2] = index;
-    ev.data[3] = 0;
+    ev.data[3] = serverSimAnnounce(sim, ANNOUNCE_KIND_BASE_CAPTURED, index,
+                                   newOwner) ? 0 : 1;
     ev.data[4] = captureClass;
     ev.data[5] = mapX;
     ev.data[6] = mapY;
@@ -399,16 +400,18 @@ void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
     ev.data[0] = newOwner;
     ev.data[1] = oldOwner;
     ev.data[2] = index;
-    ev.data[3] = 0;
+    ev.data[3] = serverSimAnnounce(sim, ANNOUNCE_KIND_PILL_CAPTURED, index,
+                                   newOwner) ? 0 : 1;
     ev.data[4] = captureClass;
     ev.data[5] = mapX;
     ev.data[6] = mapY;
     serverSimAddEvent(sim, &ev);
 }
 
-/* A builder was lost. data[0] and data[1] are the two wire bytes; data[2] and
- * data[3] are the man's map cell, past gameEventDataSize() and read by the
- * stats funnel for the LGM record's mapX/mapY. */
+/* A builder was lost. data[0] to data[2] are the three wire bytes, the third
+ * being the quiet byte the announce policy answers with; data[3] and data[4]
+ * are the man's map cell, past gameEventDataSize() and read by the stats
+ * funnel for the LGM record's mapX/mapY. */
 void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
                         BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
@@ -417,8 +420,10 @@ void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = victim;
     ev.data[1] = killer;
-    ev.data[2] = mapX;
-    ev.data[3] = mapY;
+    ev.data[2] = serverSimAnnounce(sim, ANNOUNCE_KIND_BUILDER_LOST, victim,
+                                   killer) ? 0 : 1;
+    ev.data[3] = mapX;
+    ev.data[4] = mapY;
     serverSimAddEvent(sim, &ev);
 }
 
@@ -668,4 +673,23 @@ bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
                                       killer, cause);
     serverSimScenarioPolicyLeave(sim);
     return may;
+}
+
+/* Whether this fact may be shown to players. Every site that builds a
+ * newswire-worthy fact comes through here, so the enter and leave bracket is
+ * written once and a policy that answers by writing back through the op funnel
+ * is refused there. A ServerSim rather than a void *ctx: the askers are server
+ * sources holding the sim, not GameSim callbacks. */
+bool serverSimAnnounce(ServerSim *sim, BYTE kind, BYTE subject, BYTE actor) {
+    bool show;
+
+    if (sim == NULL || sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->announce == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    show = sim->scenarioPolicy->announce(sim->scenarioPolicy->ctx, kind,
+                                         subject, actor);
+    serverSimScenarioPolicyLeave(sim);
+    return show;
 }

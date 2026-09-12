@@ -1272,6 +1272,11 @@ void serverSimStartGame(ServerSim *sim) {
             memset(&leaveEvt, 0, sizeof(leaveEvt));
             leaveEvt.type = CTRL_ALLIANCE_LEAVE;
             leaveEvt.u.allianceLeave.playerNum = i;
+            /* The round reset clears every alliance; no player asked for it,
+               so the policy is asked with no actor. */
+            leaveEvt.u.allianceLeave.quiet =
+                serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, i, NEUTRAL)
+                    ? 0 : 1;
             serverSimPublishControl(sim, &leaveEvt);
         }
     }

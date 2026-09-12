@@ -250,7 +250,7 @@ int run_round_stats_lgm(void) {
     ServerSim *sim = make_sim_running();
     UT_ASSERT(sim != NULL);
 
-    /* EVENT_LGM_LOST data: [victim, killer]. */
+    /* EVENT_LGM_LOST data: [victim, killer, quiet, mapX, mapY]. */
     const uint8_t killed[8] = { 5, 0, 0, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_LGM_LOST, killed);
 

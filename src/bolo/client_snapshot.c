@@ -566,7 +566,11 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
           if (ownerRow != NULL) ownerRow->baseCaptures++;
         }
-        if (isHuman) {
+        /* data[3] is the announce policy's answer. A quiet capture never
+         * enters the debounce queue at all, so there is nothing left there
+         * to pop on a later tick; a line already pending from an earlier,
+         * announced capture is that capture's line and still comes out. */
+        if (isHuman && events[i].data[3] == 0) {
           basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
                                      events[i].data[0], events[i].data[1]);
         }
@@ -605,7 +609,11 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
           if (ownerRow != NULL) ownerRow->pillCaptures++;
         }
-        if (isHuman) {
+        /* data[3] is the announce policy's answer; the scoreboard, the Steam
+         * stat and the achievement latch below are not lines and run either
+         * way. This is now the only site that writes a pill-capture line —
+         * pillsSetPillOwner writes none. */
+        if (isHuman && events[i].data[3] == 0) {
           BYTE newOwner = events[i].data[0];
           BYTE prevOwner = events[i].data[1];
           bool suppressAllied = (prevOwner != NEUTRAL &&
@@ -711,7 +719,7 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         break;
       case EVENT_LGM_LOST:
-        /* data: [victim, killer] — builder killed, broadcast newswire */
+        /* data: [victim, killer, quiet] — builder killed, broadcast newswire */
         /* Live scoreboard: counted for every slot. Killing your own LGM
          * credits no lgmKills, matching the Steam branch below. */
         {
@@ -722,7 +730,8 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
             if (killerRow != NULL) killerRow->lgmKills++;
           }
         }
-        if (isHuman) {
+        /* data[2] is the announce policy's answer. */
+        if (isHuman && events[i].data[2] == 0) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
           playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],

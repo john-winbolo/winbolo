@@ -23,8 +23,9 @@
  *      the control one, with all seven meaningful bytes — from neutral and as
  *      a steal, which are the two capture classes this path can produce.
  *   2. The same for a pillbox.
- *   3. The same for a builder death, which keeps its two wire bytes and
- *      carries the man's map cell behind them rather than a class and index.
+ *   3. The same for a builder death, which puts the two slots and a quiet
+ *      byte on the wire and carries the man's map cell behind them rather
+ *      than a class and index.
  *   4. A subscriber that registered no event callback hears none of it and
  *      still receives control events; the setter refuses a handle that names
  *      no live subscriber.
@@ -393,15 +394,16 @@ int run_game_event_channel_lgm_lost(void) {
     ev = gecFind(&sink, EVENT_LGM_LOST);
     UT_ASSERT(ev != NULL);
 
-    /* The old emit wrote [victim, killer] and then the man's map cell into
-       data[2]/data[3], read after lgmKill had already moved him to the start
-       he flies back in from. data[4] upwards stayed zero: this event carries
-       no class and no index. */
+    /* [victim, killer, quiet] on the wire, then the man's map cell, read
+       after lgmKill had already moved him to the start he flies back in
+       from. data[5] upwards stays zero: this event carries no class and no
+       index. With no policy registered the quiet byte is 0. */
     memset(want, 0, sizeof(want));
     want[0] = GEC_HOLDER;
     want[1] = GEC_THIEF;
-    want[2] = (BYTE)(gs->lgmen[GEC_HOLDER]->x >> M_W_SHIFT_SIZE);
-    want[3] = (BYTE)(gs->lgmen[GEC_HOLDER]->y >> M_W_SHIFT_SIZE);
+    want[2] = 0;
+    want[3] = (BYTE)(gs->lgmen[GEC_HOLDER]->x >> M_W_SHIFT_SIZE);
+    want[4] = (BYTE)(gs->lgmen[GEC_HOLDER]->y >> M_W_SHIFT_SIZE);
     GEC_ASSERT_BYTES(ev, want, "builder lost");
 
     buffered = gecBuffered(sim, EVENT_LGM_LOST);
@@ -418,8 +420,9 @@ int run_game_event_channel_lgm_lost(void) {
     memset(want, 0, sizeof(want));
     want[0] = GEC_THIEF;
     want[1] = NEUTRAL;
-    want[2] = (BYTE)(gs->lgmen[GEC_THIEF]->x >> M_W_SHIFT_SIZE);
-    want[3] = (BYTE)(gs->lgmen[GEC_THIEF]->y >> M_W_SHIFT_SIZE);
+    want[2] = 0;
+    want[3] = (BYTE)(gs->lgmen[GEC_THIEF]->x >> M_W_SHIFT_SIZE);
+    want[4] = (BYTE)(gs->lgmen[GEC_THIEF]->y >> M_W_SHIFT_SIZE);
     GEC_ASSERT_BYTES(ev, want, "builder lost to nobody");
 
     serverSimUnregisterSubscriber(sim, h);

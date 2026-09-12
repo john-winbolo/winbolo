@@ -245,13 +245,21 @@ typedef struct {
 #define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner, index, quiet] */
 #define EVENT_TANK_KILLED   6  /* data: [killer, killed, deathCause, carriedPills] */
 
+/* The `quiet` byte, on the events whose payload names one (both captures and
+ * EVENT_LGM_LOST), is the announce policy's answer, stamped by the server
+ * where it built the fact: 0 to announce, 1 to hold the line back. The
+ * client's line-emitting site reads it before messageAdd and writes nothing
+ * for a 1; every other effect of the event — the scoreboard, the Steam stat,
+ * the map state — runs either way. With no scenario policy registered it is
+ * always 0, which is the classic newswire. */
+
 /* Both capture events carry four bytes on the wire and three more the server
  * keeps to itself:
  *
  *   [0] newOwner   the slot that now holds it, or NEUTRAL for a neutralisation
  *   [1] prevOwner  the slot that held it, or NEUTRAL
  *   [2] index      the 0-based pill/base item[] slot, as every op uses
- *   [3] quiet      reserved, always 0
+ *   [3] quiet      the announce policy's answer
  *   [4] captureClass    CAPTURE_CLASS_*, server-internal
  *   [5] mapX            the objective's square, server-internal
  *   [6] mapY
@@ -269,7 +277,9 @@ typedef struct {
 #define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner] — owner change (reliable) */
 #define EVENT_PLAYER_LEAVE 12  /* data: [playerNum] */
 #define EVENT_ASSISTANT_MSG 13 /* data: [targetPlayer, msgId] — player-specific assistant message */
-#define EVENT_LGM_LOST     14 /* data: [victim, killer] — builder killed, broadcast newswire */
+#define EVENT_LGM_LOST     14 /* data: [victim, killer, quiet] — builder killed, broadcast newswire.
+                               * The man's map cell follows at data[3]/data[4], past the wire size
+                               * and read by the server's stats funnel alone. */
 #define EVENT_SOUND_TANK_HIT 15 /* data: [soundId, tier or mx, direction or my, hitPlayer] — see Sound event payloads below */
 #define EVENT_SOUND_SHOOT    16 /* data: [soundId, tier or mx, direction or my, firingPlayer] — see Sound event payloads below */
 #define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
@@ -426,7 +436,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_BASE_STOCK:     return 4;
     case EVENT_PLAYER_LEAVE:   return 1;
     case EVENT_ASSISTANT_MSG:  return 2;
-    case EVENT_LGM_LOST:       return 2;
+    case EVENT_LGM_LOST:       return 3;
     case EVENT_SOUND_TANK_HIT: return 4;
     case EVENT_SOUND_SHOOT:    return 4;
     case EVENT_TANK_KILLED:    return 4;
