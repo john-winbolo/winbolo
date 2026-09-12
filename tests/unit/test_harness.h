@@ -2057,6 +2057,12 @@ int run_scenario_tick_called_both_branches(void);
 int run_scenario_start_flag_set_during_start(void);
 int run_scenario_start_guard_blocks_reentry(void);
 int run_scenario_start_flag_cleared_after_start(void);
+int run_scenario_round_start_called_both_starts(void);
+int run_scenario_setup_window_admits_ops(void);
+int run_scenario_setup_window_roster_refused(void);
+int run_scenario_setup_window_shut_refuses_all(void);
+int run_scenario_setup_window_no_callback(void);
+int run_scenario_setup_window_holds_publish(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -2074,6 +2080,7 @@ int run_scenario_tank_set_boat(void);
 int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
+int run_scenario_tank_death_ticks_respawn(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);

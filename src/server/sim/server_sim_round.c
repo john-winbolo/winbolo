@@ -1223,6 +1223,17 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         serverSimPublishControl(sim, &phaseEvt);
     }
 
+    /* The round-start callback, at the point where the world, the tanks
+     * and the roster are built and the state already reads running. The
+     * setup window is open across it, so the funnel takes the ops it
+     * issues although the start has not finished; the publish below then
+     * carries whatever rules those ops set. */
+    if (sim->scenarioRoundStart != NULL) {
+        sim->scenarioSetupWindow = true;
+        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
+        sim->scenarioSetupWindow = false;
+    }
+
     /* And the table the round is starting on, beside the phase. The twin of
      * the publish at the end of serverSimStartGame: this path does not run
      * that function, so it states the table itself. Between the two of them
@@ -1359,6 +1370,17 @@ void serverSimStartGame(ServerSim *sim) {
     sim->state = serverStateRunning;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
+
+    /* The round-start callback, as in serverSimStartGameInPlace: the world,
+     * the tanks and the roster are built and the state already reads
+     * running, and the setup window is open across the call so the funnel
+     * takes the ops it issues. The publish below carries whatever rules
+     * those ops set. */
+    if (sim->scenarioRoundStart != NULL) {
+        sim->scenarioSetupWindow = true;
+        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
+        sim->scenarioSetupWindow = false;
+    }
 
     /* The table the round is starting on, stated here rather than by each
      * caller. This and serverSimStartGameInPlace are the two authoritative

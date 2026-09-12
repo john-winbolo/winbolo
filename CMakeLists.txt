@@ -4829,6 +4829,12 @@ set(_unit_test_names
     scenario_start_flag_set_during_start
     scenario_start_guard_blocks_reentry
     scenario_start_flag_cleared_after_start
+    scenario_round_start_called_both_starts
+    scenario_setup_window_admits_ops
+    scenario_setup_window_roster_refused
+    scenario_setup_window_shut_refuses_all
+    scenario_setup_window_no_callback
+    scenario_setup_window_holds_publish
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -4844,6 +4850,7 @@ set(_unit_test_names
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records
+    scenario_tank_death_ticks_respawn
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill

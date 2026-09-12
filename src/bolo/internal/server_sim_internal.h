@@ -610,13 +610,24 @@ struct ServerSim {
      * that edits the roster from that publish re-enters
      * serverSimLobbyCheckAllReady with every player still ready — which
      * would start a second game on top of the one being set up. The
-     * detector returns at its first line while this is set. */
+     * detector returns at its first line while this is set.
+     *
+     * scenarioSetupWindow is open across the round-start callback, at a
+     * point in the start where the world and the roster are already
+     * built. A start is not a settled point and startInProgress refuses
+     * every op, but the one thing that guard exists for is the roster
+     * edit re-entering the all-ready detector mid-start. So while the
+     * window is open the funnel admits every op except the six roster
+     * handlers, which keep refusing. */
     void                  *scenario;
     const ScenarioPolicy  *scenarioPolicy;
     uint8_t                inScenarioPolicy;
     bool                   startInProgress;
     void                 (*scenarioTick)(void *ctx);
     void                  *scenarioTickCtx;
+    void                 (*scenarioRoundStart)(void *ctx);
+    void                  *scenarioRoundStartCtx;
+    bool                   scenarioSetupWindow;
 
     /* What is left of a fill-rect that did not fit in one tick, and how
      * much of this tick's tile budget has been spent on one. The

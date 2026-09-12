@@ -64,6 +64,19 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
                               void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioRoundStart
+ *PURPOSE:
+ *  Registers the callback both authoritative round starts
+ *  invoke, after the world and the roster are built and
+ *  before the round's CTRL_SIM_RULES publish. The setup
+ *  window is open across the call, so the funnel takes the
+ *  ops it issues although the start is still in progress.
+ *  NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx),
+                                    void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioState
  *PURPOSE:
  *  Stores the host's opaque state pointer on the sim. The
