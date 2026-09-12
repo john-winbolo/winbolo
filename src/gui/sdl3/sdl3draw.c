@@ -3026,9 +3026,18 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
              + ((float)(pings[pi].worldY >> 8) + 0.5f
                 - (float)(clientSimGetYOffset(cs) + 1)) * (float)tileH
              - (float)edgeY;
+          /* The sender's name under the square, in the tank labels' own
+             face and look. The face is opened at 13 px times this window's
+             zoom, so it needs no scaling of its own. */
+          PingMarkerLabel label;
+          label.cache = sdl3DrawGetPingNameCache();
+          label.font  = sdl3DrawGetMessageFont();
+          label.name  = pings[pi].senderName;
+          label.slot  = pings[pi].sender;
+          label.scale = 1.0f;
           pingMarkerDraw(gRenderer, pings[pi].kind, cx, cy,
                          (float)tileW, (float)tileH,
-                         nowMs - pings[pi].recvMs, alpha);
+                         nowMs - pings[pi].recvMs, alpha, &label);
         }
       }
 

@@ -58,9 +58,17 @@
 
 /* --- Logviewer-side accessors. Declared extern (no logviewer header
  *     include) so this TU stays on bolo types. --- */
-extern bool lv_screenGetPing(int index, unsigned char *kind, uint16_t *worldX,
+extern bool lv_screenGetPing(int index, unsigned char *sender,
+                             unsigned char *kind, uint16_t *worldX,
                              uint16_t *worldY, uint32_t *ageMs);
 extern int  lv_screenGetPingCapacity(void);
+
+/* The names under the replay's ping markers, in a cache of their own rather
+ * than the classic label pass's: the shared drawer in tank_label.c keys on
+ * the player slot, and this one holds the bare name for a slot while that one
+ * holds the full "name@location" label for it. Flushed with the view's other
+ * textures in lv_drawGameViewTeardown. */
+static TankLabelCache s_pingNameCache;
 
 extern void *lv_gameViewGetScreen(void);
 extern void *lv_gameViewGetMineView(void);
@@ -607,6 +615,7 @@ void lv_drawGameViewTeardown(void) {
   lv_messageDestroy();
 
   sdl3DrawStatusShutdown();
+  tankLabelCacheFlush(&s_pingNameCache);
 
   if (s_tankBarsTex) { SDL_DestroyTexture(s_tankBarsTex); s_tankBarsTex = NULL; }
   if (s_baseBarsTex) { SDL_DestroyTexture(s_baseBarsTex); s_baseBarsTex = NULL; }
@@ -658,14 +667,28 @@ static void gv_drawPings(SDL_Renderer *renderer,
   pingIconsInit(renderer);
 
   for (i = 0; i < cap; i++) {
+    unsigned char sender = 0;
     unsigned char kind = 0;
     uint16_t wx = 0, wy = 0;
     uint32_t ageMs = 0;
     float alpha, cx, cy;
+    char senderName[PLAYER_NAME_LEN];
+    PingMarkerLabel label;
 
-    if (!lv_screenGetPing(i, &kind, &wx, &wy, &ageMs)) continue;
+    if (!lv_screenGetPing(i, &sender, &kind, &wx, &wy, &ageMs)) continue;
     alpha = pingDisplayAlpha((int)ageMs);
     if (alpha <= 0.0f) continue;
+
+    /* Who sent it, from the recording's own player table — the live game
+     * carries the name on the ping record instead, but a replay has the
+     * whole table and can simply look the slot up. */
+    senderName[0] = '\0';
+    lv_playersGetPlayerName(sender, senderName, sizeof(senderName));
+    label.cache = &s_pingNameCache;
+    label.font  = sdl3DrawGetMessageFont();
+    label.name  = senderName;
+    label.slot  = sender;
+    label.scale = 1.0f;
 
     /* WORLD units are 256 to a map square; the marker names the square the
      * ping landed in, so anchor on that square's centre. The view shows
@@ -679,7 +702,7 @@ static void gv_drawPings(SDL_Renderer *renderer,
        - (float)edgeY;
 
     pingMarkerDraw(renderer, kind, cx, cy, (float)tileW, (float)tileH,
-                   ageMs, alpha);
+                   ageMs, alpha, &label);
   }
 }
 

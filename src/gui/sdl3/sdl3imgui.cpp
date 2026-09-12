@@ -2498,6 +2498,12 @@ static void renderPlayersContent(ClientSim *cs) {
         float fullWidth = ImGui::GetContentRegionAvail().x;
         float pingWidth = ImGui::CalcTextSize(pingStr).x;
         float spacing = ImGui::GetStyle().ItemSpacing.x;
+        /* Width the smart-ping mute cell takes out of the row, cell plus its
+         * trailing spacing. Independent of voice, so reserved outside the
+         * voice block below; a blank is drawn on the local row so the name
+         * still starts at the same x there. */
+        float pingMuteWidth  = ImGui::GetFrameHeight();
+        float pingMuteColumn = pingMuteWidth + spacing;
 #if defined(WINBOLO_VOICE)
         /* Width the mic icon takes out of the row, icon plus its trailing
          * spacing, so the name Selectable gives it room the same way it
@@ -2534,6 +2540,11 @@ static void renderPlayersContent(ClientSim *cs) {
             }
             ImGui::SameLine();
         }
+
+        /* Smart-ping mute toggle, beside the voice cell. Independent of voice,
+         * so drawn for every build; a blank on the local player's own row. */
+        renderPlayerPingMuteCell(cs, i, i == self, pingMuteWidth);
+        ImGui::SameLine();
 
 #if defined(WINBOLO_VOICE)
         /* Voice state, between the checkbox and the name. */
@@ -2577,7 +2588,7 @@ static void renderPlayersContent(ClientSim *cs) {
         char selectLabel[64];
         snprintf(selectLabel, sizeof(selectLabel), "%s##psel%d", label, i);
         float nameW = fullWidth - pingReserve - spacing - statBlock - micColumn -
-                      volColumn -
+                      volColumn - pingMuteColumn -
                       (i != self ? ImGui::GetFrameHeight() + spacing : 0);
         /* A Selectable given zero or less collapses and the row loses its
          * name. Four characters is enough to tell two players apart; the
@@ -7374,6 +7385,51 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
     if (isBot) ImGui::EndDisabled();
 }
 #endif
+
+/* One player's smart-ping mute cell for a player row, beside the voice cell.
+ * A size x size toggle: click it to hide (mute) or show that player's smart
+ * pings for this client, locally and on the server. Independent of the voice
+ * mute, so it is not gated on WINBOLO_VOICE and draws in every build. The
+ * local player's own row draws a blank of the same size — you always see your
+ * own pings and the server rejects a ping-mute against yourself — so the name
+ * still starts at the same x on that row.
+ *
+ * Drawn as a tinted "P" rather than an SVG: the ping icon set lives in the
+ * render files an in-flight PR owns, so a glyph is used here for now — dim
+ * when pings are shown, red when muted, with a tooltip naming the state. */
+void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
+                              float size) {
+    if (isSelf) {
+        ImGui::Dummy(ImVec2(size, size));
+        return;
+    }
+
+    bool muted = clientSimIsPingMuted(cs, playerNum);
+    char label[32];
+    snprintf(label, sizeof(label), "P##ping%d", playerNum);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.15f));
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          muted ? ImVec4(0.95f, 0.35f, 0.35f, 1.0f)
+                                : ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
+    bool clicked = ImGui::Button(label, ImVec2(size, size));
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+    imguiHelpTooltip(langGetText(muted ? STR_PLAYER_TIP_PING_MUTED
+                                       : STR_PLAYER_TIP_PING_SHOWN));
+    imguiHandOnHover();
+    if (clicked) {
+        bool nowMuted = !muted;
+        /* Both legs: the local one reflects the toggle at once while the
+         * server is told, and the server is the authority that stops
+         * delivering that player's pings. */
+        clientSimSetPingMuted(cs, playerNum, nowMuted);
+        clientSimNetSendPlayerPingMute(cs, (BYTE)playerNum, nowMuted);
+    }
+}
 
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {
     if (playerNum >= MAX_PLAYERS) return;

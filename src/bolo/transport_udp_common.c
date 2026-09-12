@@ -161,7 +161,8 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_MAP_DL_READY, "MAP_DL_READY") \
     X(PACKET_PLAYER_MUTE, "PLAYER_MUTE") \
     X(PACKET_VOICE_STATE, "VOICE_STATE") \
-    X(PACKET_MAP_PING, "MAP_PING")
+    X(PACKET_MAP_PING, "MAP_PING") \
+    X(PACKET_PLAYER_PING_MUTE, "PLAYER_PING_MUTE")
 
 const char *packetTypeName(uint8_t type) {
     switch (type) {

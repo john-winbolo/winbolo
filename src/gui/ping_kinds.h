@@ -32,6 +32,9 @@
 #ifndef WINBOLO_PING_KINDS_H
 #define WINBOLO_PING_KINDS_H
 
+#include <stddef.h>         /* size_t */
+#include <string.h>         /* memcpy, strlen */
+
 #include "input_packet.h"   /* PING_KIND_*, PING_KIND_COUNT */
 #include "lang.h"           /* MESSAGE_PING_* / STR_PING_* — the per-kind text */
 
@@ -42,11 +45,32 @@ extern "C" {
 /* PING_DISPLAY_MS / PING_FADE_MS come in with input_packet.h: the client's
  * ping ring expires on them too, so they are not a drawing-only choice.
  *
- * The off-screen edge marker: a bar this thick and this long, laid along the
- * border of the game view where the line from the viewer's tank to the ping
- * leaves it. */
+ * The off-screen edge marker: a bar this thick, laid along the border of the
+ * game view where the line from the viewer's tank to the ping leaves it. */
 #define PING_EDGE_THICKNESS_PX 10.0f
-#define PING_EDGE_LENGTH_PX    40.0f
+
+/* How long that bar is, and how big the icon on it, both from how far away
+ * the ping is: near is a big marker, far is a small one, so the size alone
+ * says roughly how much of the map is between the player and it.
+ *
+ * The two distances are in map squares from the viewer's tank. Eight is about
+ * half the classic 15x15 view — a ping that has only just gone off the edge —
+ * and 64 is a quarter of the map away, past which there is nothing left to
+ * tell apart. Between them pingEdgeSizeFactor (ping_edge.h) ramps the size,
+ * and the pixel sizes below are at the view's own scale, like every other
+ * number here.
+ *
+ * The icon's minimum is the floor the whole thing is designed around: below
+ * about 12 px the glyphs stop reading as anything and the marker is a
+ * coloured dash. The name under the bar does not shrink with it. */
+#define PING_EDGE_NEAR_TILES      8.0f   /* map squares: at or under, biggest */
+#define PING_EDGE_FAR_TILES      64.0f   /* map squares: at or over, smallest */
+#define PING_EDGE_LENGTH_MIN_PX  14.0f   /* bar length at PING_EDGE_FAR_TILES */
+#define PING_EDGE_LENGTH_MAX_PX  52.0f   /* bar length at PING_EDGE_NEAR_TILES */
+#define PING_EDGE_ICON_MIN_PX    12.0f   /* icon at PING_EDGE_FAR_TILES */
+#define PING_EDGE_ICON_MAX_PX    30.0f   /* icon at PING_EDGE_NEAR_TILES */
+/* Air between the bar and the icon, and between the icon and the name. */
+#define PING_EDGE_GAP_PX          3.0f
 
 typedef struct {
     unsigned char r, g, b;   /* the kind's colour, opaque */
@@ -101,6 +125,134 @@ static inline langid pingKindNameId(unsigned char kind) {
     case PING_KIND_BOT_COMMAND: return STR_PING_BOT_COMMAND;
     default:                    return STR_PING_STANDARD;
     }
+}
+
+/* How much of the sender's name a ping marker shows. Counts CHARACTERS, not
+ * bytes: six Cyrillic letters are twelve bytes and are still six characters,
+ * and a name is never cut inside a UTF-8 sequence. A name at or under this is
+ * drawn as it is.
+ *
+ * The marker is a hint on the map, not a scoreboard — a long name under it
+ * covers the ground the ping is pointing at, and the edge bars are laid along
+ * a border where a long name runs into the next one. The message line in the
+ * newswire keeps the whole name, so nothing is lost. */
+#define PING_NAME_MAX_CHARS 6
+
+/* What a shortened name ends in. U+2026 HORIZONTAL ELLIPSIS, spelled out in
+ * UTF-8 so this header needs no wide literals.
+ *
+ * Every renderer can draw it: the marker names use the Sarasa faces, which
+ * carry the glyph, and the edge bars draw from the ImGui atlas, which has it
+ * added by name (imguiBoloGlyphRanges in src/gui/imgui_fonts.h) because it
+ * sits in General Punctuation, outside the ranges that atlas is built over.
+ * An ellipsis an atlas has no glyph for would come out as a missing-glyph
+ * box, which is what the `ellipsis` argument to pingDisplayName below is for
+ * — a caller whose font cannot manage U+2026 passes its own. No renderer
+ * needs that today. */
+#define PING_NAME_ELLIPSIS "\xE2\x80\xA6"
+
+/* How a ping's name is drawn against the tank labels it borrows its face and
+ * its black shadow from. Both renderers read these: the world marker, which
+ * draws the name through the tank label's own drawer, and the off-screen edge
+ * bars, which draw it with the ImGui atlas.
+ *
+ * PING_NAME_SCALE is a fraction of the tank label's text size, so it follows
+ * the font and the zoom like the label does. Smaller is the point: a name over
+ * the map should not be read as a tank's at a glance, and the marker names a
+ * spot on the ground rather than something driving around on it.
+ *
+ * PING_NAME_GREY is the 0-255 grey the text itself is drawn at: tank labels
+ * are 200-grey, ping names sit a little brighter than that but short of pure
+ * white so the two read as different things; the size difference
+ * (PING_NAME_SCALE) does most of the telling-apart. The shadow under it is the
+ * label's own — same offset, same black — because the terrain under a name
+ * runs from black sea to pale road either way. */
+#define PING_NAME_SCALE 0.8f
+#define PING_NAME_GREY  225
+
+/* A buffer this big always holds a shortened name whole: every character kept
+ * at UTF-8's maximum four bytes, the ellipsis's three, and the terminator. A
+ * caller passing its own ellipsis longer than that sizes its own buffer. */
+#define PING_NAME_DISPLAY_MAX (PING_NAME_MAX_CHARS * 4 + 3 + 1)
+
+/*********************************************************
+*NAME:          pingDisplayName
+*PURPOSE:
+*  The name a ping marker draws: `name` unchanged when it is
+*  PING_NAME_MAX_CHARS characters or fewer, and otherwise its
+*  first PING_NAME_MAX_CHARS characters followed by the
+*  ellipsis. The one copy of that rule — the world marker,
+*  the overview, the replay viewer and the off-screen edge
+*  bars all shorten a name through here, so they cannot
+*  disagree about where it stops.
+*
+*  Characters are UTF-8 code points, counted by their lead
+*  bytes, so the cut always lands on a character boundary.
+*  Nothing is written past `outSize`; a buffer too small for
+*  the whole result loses whole characters off the end rather
+*  than half of one.
+*
+*ARGUMENTS:
+*  name     - the sender's name, or NULL for none
+*  ellipsis - what a shortened name ends in, or NULL for
+*             PING_NAME_ELLIPSIS
+*  out      - buffer to write into, PING_NAME_DISPLAY_MAX to
+*             be sure of the whole result
+*  outSize  - size of that buffer in bytes
+*
+*RETURNS:
+*  out, holding the name to draw, or "" when there is no
+*  buffer to write into
+*********************************************************/
+static inline const char *pingDisplayName(const char *name,
+                                          const char *ellipsis,
+                                          char *out, size_t outSize) {
+    size_t bytes = 0;   /* the whole name, in bytes */
+    size_t chars = 0;   /* the whole name, in characters */
+    size_t cut = 0;     /* byte the character past the cap starts at */
+    size_t keep;
+    size_t tailLen;
+    const char *tail;
+
+    if (out == NULL || outSize == 0) return "";
+    out[0] = '\0';
+    if (name == NULL) return out;
+
+    /* A byte that is not a continuation byte (10xxxxxx) starts a character. */
+    while (name[bytes] != '\0') {
+        if (((unsigned char)name[bytes] & 0xC0) != 0x80) {
+            if (chars == PING_NAME_MAX_CHARS) cut = bytes;
+            chars++;
+        }
+        bytes++;
+    }
+
+    if (chars <= PING_NAME_MAX_CHARS) {
+        keep = bytes;
+        tail = "";
+    } else {
+        keep = cut;
+        tail = (ellipsis != NULL) ? ellipsis : PING_NAME_ELLIPSIS;
+    }
+    tailLen = strlen(tail);
+
+    /* Whatever the caller's buffer is, the result fits in it. The ellipsis
+     * goes first if even it will not fit, then whole characters come off the
+     * end until the rest does. */
+    if (tailLen + 1 > outSize) {
+        tail = "";
+        tailLen = 0;
+    }
+    while (keep + tailLen + 1 > outSize) {
+        do {
+            keep--;
+        } while (keep > 0 && ((unsigned char)name[keep] & 0xC0) == 0x80);
+    }
+
+    memcpy(out, name, keep);
+    memcpy(out + keep, tail, tailLen);
+    out[keep + tailLen] = '\0';
+    return out;
 }
 
 /* 0..1 opacity for a ping `ageMs` old: solid until the fade window, then a

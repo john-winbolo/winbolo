@@ -43,6 +43,7 @@
 #include "ping_display.h"  /* PingDisplay — per-slot ping readout smoothing */
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
+#include "input_packet.h"  /* PING_SPAM_MAX_30S — client render backstop ring */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -241,6 +242,22 @@ struct ClientSim {
      * are expired by age at read time, so nothing has to tick it. */
     ClientPing  pings[MAX_CLIENT_PINGS];
     int         pingWriteIdx;
+
+    /* Per-target smart-ping mute this client has set (bit N set = player N's
+     * pings are muted). Session-scoped UI state mirroring what was sent to the
+     * server via CMD_PLAYER_PING_MUTE; the server is the authority that drops
+     * the pings, this only reflects/persists the toggle. Zeroed with the
+     * ClientSim (clientSimAlloc calloc's it). */
+    PlayerBitMap pingMutedByMe;
+
+    /* Client render backstop against a flood of pings from one sender: a
+     * per-sender ring of the wall-clock ms at which a ping from that sender
+     * was last DRAWN, newest overwriting oldest. The EVENT_PING arm counts the
+     * entries inside the 5s and 30s windows and drops the excess before drawing
+     * a marker, playing a sound or adding a newswire line — the same caps the
+     * server relay limiter uses (input_packet.h). 0 is an empty slot. */
+    uint32_t     pingRenderMs[MAX_TANKS][PING_SPAM_MAX_30S];
+    uint8_t      pingRenderIdx[MAX_TANKS];
 
     /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
     BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];

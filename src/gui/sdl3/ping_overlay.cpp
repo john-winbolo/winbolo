@@ -46,6 +46,7 @@
 
 #include "ping_overlay.h"
 
+#include <float.h>   /* FLT_MAX — "no wrap" for ImFont::CalcTextSizeA */
 #include <math.h>
 #include <string.h>
 
@@ -869,41 +870,96 @@ void pingOverlayDraw(struct ClientSim *cs) {
         {
             PingEdgeMarker m;
             float thick  = PING_EDGE_THICKNESS_PX * vr.scale;
-            float length = PING_EDGE_LENGTH_PX * vr.scale;
-            float iconPx, ix, iy;
+            float gap    = PING_EDGE_GAP_PX * vr.scale;
+            float distTiles, sizeF, length, iconPx, ix, iy;
+
+            /* How far the ping is, in map squares. Measured on screen and
+               divided by what a square is drawn at, so the same arithmetic
+               serves the classic view and the overview at any zoom — and so
+               a viewer with no tank of its own, whose "tank" is the centre of
+               the view, still gets a sensible number. */
+            {
+                float ddx = px - tankX, ddy = py - tankY;
+                distTiles = (vr.tileW > 0.0f)
+                          ? sqrtf(ddx * ddx + ddy * ddy) / vr.tileW : 0.0f;
+            }
+            sizeF  = pingEdgeSizeFactor(distTiles, PING_EDGE_NEAR_TILES,
+                                        PING_EDGE_FAR_TILES);
+            length = pingEdgeSizeFor(sizeF, PING_EDGE_LENGTH_MIN_PX,
+                                     PING_EDGE_LENGTH_MAX_PX) * vr.scale;
+            iconPx = pingEdgeSizeFor(sizeF, PING_EDGE_ICON_MIN_PX,
+                                     PING_EDGE_ICON_MAX_PX) * vr.scale;
+
             if (!pingEdgeMarker(vr.x, vr.y, vr.w, vr.h, tankX, tankY, px, py,
                                 length, &m)) {
                 continue;
             }
             /* Pulled half a thickness inside the border so the whole bar is
-               on the game view rather than half over the chrome. */
-            if (m.side == PING_EDGE_LEFT)   { m.x0 += thick * 0.5f; m.x1 += thick * 0.5f; }
-            if (m.side == PING_EDGE_RIGHT)  { m.x0 -= thick * 0.5f; m.x1 -= thick * 0.5f; }
-            if (m.side == PING_EDGE_TOP)    { m.y0 += thick * 0.5f; m.y1 += thick * 0.5f; }
-            if (m.side == PING_EDGE_BOTTOM) { m.y0 -= thick * 0.5f; m.y1 -= thick * 0.5f; }
+               on the game view rather than half over the chrome. The midpoint
+               moves with it: it is what the icon and the name are placed
+               from. */
+            if (m.side == PING_EDGE_LEFT)   { m.x0 += thick * 0.5f; m.x1 += thick * 0.5f; m.cx += thick * 0.5f; }
+            if (m.side == PING_EDGE_RIGHT)  { m.x0 -= thick * 0.5f; m.x1 -= thick * 0.5f; m.cx -= thick * 0.5f; }
+            if (m.side == PING_EDGE_TOP)    { m.y0 += thick * 0.5f; m.y1 += thick * 0.5f; m.cy += thick * 0.5f; }
+            if (m.side == PING_EDGE_BOTTOM) { m.y0 -= thick * 0.5f; m.y1 -= thick * 0.5f; m.cy -= thick * 0.5f; }
             dl->AddLine(ImVec2(m.x0, m.y0), ImVec2(m.x1, m.y1),
                         IM_COL32(0, 0, 0, (int)(140 * alpha)), thick + 2.0f);
             dl->AddLine(ImVec2(m.x0, m.y0), ImVec2(m.x1, m.y1),
                         kindColour(pings[i].kind, alpha), thick);
 
             /* The kind's icon just inside the bar, so the colour alone does
-               not have to carry which ping it is. One tile across, never
-               smaller than legible, centred on the bar and stepped inward
-               from it by its own half-size plus a little air. */
-            iconPx = vr.tileW;
-            if (iconPx < 18.0f) iconPx = 18.0f;
-            ix = (m.x0 + m.x1) * 0.5f;
-            iy = (m.y0 + m.y1) * 0.5f;
-            {
-                float step = thick * 0.5f + iconPx * 0.5f + 3.0f * vr.scale;
-                if (m.side == PING_EDGE_LEFT)   ix += step;
-                if (m.side == PING_EDGE_RIGHT)  ix -= step;
-                if (m.side == PING_EDGE_TOP)    iy += step;
-                if (m.side == PING_EDGE_BOTTOM) iy -= step;
-            }
+               not have to carry which ping it is. It shrinks with the bar,
+               down to the floor in ping_kinds.h below which a glyph stops
+               reading as anything. */
+            pingEdgeIconCentre(&m, thick, iconPx, gap, &ix, &iy);
             dl->AddCircleFilled(ImVec2(ix, iy), iconPx * 0.6f,
                                 IM_COL32(0, 0, 0, (int)(150 * alpha)), 24);
             drawIcon(dl, pings[i].kind, ix, iy, iconPx, alpha);
+
+            /* Who sent it, beside the icon and inside the view — the whole
+               point of the indicator is knowing who is on their way without
+               having to find them on the map first. In the overlay's own font
+               rather than the tank labels' TTF face, which this ImGui draw
+               list has no way to render, but over the same black shadow and
+               at the same PING_NAME_SCALE of the text around it and the same
+               PING_NAME_GREY the marker's own name uses, so a ping name is
+               one thing wherever it is drawn.
+
+               Unlike the bar it does not shrink with the distance: a name too
+               small to read says nothing at all. */
+            {
+                /* Shortened the same way the marker's name is, ending in the
+                   same "…": this draw list uses the ImGui atlas, which
+                   imguiBoloGlyphRanges builds with U+2026 in it for exactly
+                   this label. */
+                char        shown[PING_NAME_DISPLAY_MAX];
+                const char *who = pingDisplayName(pings[i].senderName,
+                                                  PING_NAME_ELLIPSIS,
+                                                  shown, sizeof(shown));
+                if (who[0] != '\0') {
+                    /* Measured at the size it is drawn at, not at the font's
+                       own: the anchor box centres the text on the icon and
+                       clamps it into the view off these two numbers, so a
+                       width from the wrong size would put it off centre and
+                       let it hang out of the rectangle at a corner. */
+                    ImFont *fnt  = ImGui::GetFont();
+                    float   fpx  = ImGui::GetFontSize() * PING_NAME_SCALE;
+                    ImVec2  sz   = fnt->CalcTextSizeA(fpx, FLT_MAX, 0.0f, who);
+                    PingEdgeNameBox box;
+                    int   ia = (int)(alpha * 255.0f + 0.5f);
+                    float sh = vr.scale;
+                    if (sh < 1.0f) sh = 1.0f;
+                    if (pingEdgeNameAnchor(m.side, ix, iy, iconPx, gap,
+                                           sz.x, sz.y, vr.x, vr.y, vr.w, vr.h,
+                                           &box)) {
+                        dl->AddText(fnt, fpx, ImVec2(box.x + sh, box.y + sh),
+                                    IM_COL32(0, 0, 0, ia), who);
+                        dl->AddText(fnt, fpx, ImVec2(box.x, box.y),
+                                    IM_COL32(PING_NAME_GREY, PING_NAME_GREY,
+                                             PING_NAME_GREY, ia), who);
+                    }
+                }
+            }
         }
     }
 }

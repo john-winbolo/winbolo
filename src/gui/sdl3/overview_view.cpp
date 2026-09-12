@@ -237,6 +237,11 @@ struct OverviewView {
      * itself when the font (reopened on zoom change) or the renderer
      * changes. */
     TankLabelCache labelCache;
+    /* The names under this view's smart-ping markers. Separate from the tank
+     * names above because both caches are keyed on the player slot and hold
+     * different text for it — the note in sdl3draw_status.c has the whole
+     * story. */
+    TankLabelCache pingNameCache;
     /* The pill and base numbers, on this view's renderer for the same reason
      * the tank names are: the pop-out has its own. */
     ItemLabelCache itemLabelCache;
@@ -890,6 +895,7 @@ extern "C" OverviewView *overviewViewCreate(void) {
 extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
     tankLabelCacheFlush(&v->labelCache);
+    tankLabelCacheFlush(&v->pingNameCache);
     itemLabelCacheFlush(&v->itemLabelCache);
     if (v->fog) {
         SDL_DestroyTexture(v->fog);
@@ -1078,8 +1084,27 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             const ClientPing *pl   = overviewSnapshotPings(snap);
             int               np   = overviewSnapshotPingCount(snap);
             Uint32            nowMs = (Uint32)SDL_GetTicks();
-            float tilePx =
-                (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(&v->cam);
+            float zoomScale = overviewCameraZoomScale(&v->cam);
+            float tilePx = (float)OVERVIEW_TILE_PX * zoomScale;
+            /* The sender's names, through this view's own cache and the main
+             * window's face — the same arrangement, and the same scaling from
+             * the face's own size to this view's zoom, the tank names use.
+             *
+             * Where they part company is the zoomed-out end. Below
+             * OVERVIEW_LABEL_MIN_ZOOM the tank names are dropped, because a
+             * map full of tanks at that size is a wall of unreadable text; a
+             * ping is one of a handful and naming it is the whole point, so
+             * instead of dropping it the size stops following the zoom down.
+             * The name is then larger than the map around it, which is what a
+             * player zoomed out to see the whole board wants. */
+            int mainZoom = sdl3DrawGetZoomFactor();
+            if (mainZoom < 1) mainZoom = 1;
+            float nameZoom = (zoomScale > OVERVIEW_LABEL_MIN_ZOOM)
+                           ? zoomScale : OVERVIEW_LABEL_MIN_ZOOM;
+            PingMarkerLabel label;
+            label.cache = &v->pingNameCache;
+            label.font  = sdl3DrawGetMessageFont();
+            label.scale = nameZoom / (float)mainZoom;
             for (int i = 0; i < np; i++) {
                 Uint32 ageMs = nowMs - pl[i].recvMs;
                 float  alpha = pingDisplayAlpha((int)ageMs);
@@ -1089,8 +1114,10 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             (float)(pl[i].worldX >> 8) + 0.5f,
                                             (float)(pl[i].worldY >> 8) + 0.5f,
                                             &sx, &sy);
+                label.name = pl[i].senderName;
+                label.slot = pl[i].sender;
                 pingMarkerDraw(r, pl[i].kind, sx, sy, tilePx, tilePx,
-                               ageMs, alpha);
+                               ageMs, alpha, &label);
             }
         }
 

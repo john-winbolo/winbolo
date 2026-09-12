@@ -96,6 +96,11 @@ static float         gStatusBasesOrgX = -1, gStatusBasesOrgY = -1;
  * renderer by the shared drawer in tank_label.c. The overview hosts hold
  * their own caches for their renderers. */
 static TankLabelCache gLabelCache;
+/* The classic view's smart-ping names, in a cache of their own. Both are
+ * keyed on the player slot, and a ping marker's line is the bare name while
+ * the tank's is the full label, so one cache holding both would rebuild the
+ * same slot's texture twice a frame. */
+static TankLabelCache gPingNameCache;
 
 static char gMsgTop[SDL3_MSG_LEN];
 static char gMsgBottom[SDL3_MSG_LEN];
@@ -697,6 +702,10 @@ TankLabelCache *sdl3DrawGetTankLabelCache(void) {
   return &gLabelCache;
 }
 
+TankLabelCache *sdl3DrawGetPingNameCache(void) {
+  return &gPingNameCache;
+}
+
 TTF_Font *sdl3DrawGetLabelFont(void) {
   return gFontLabel;
 }
@@ -858,6 +867,7 @@ void sdl3DrawStatusSetPanelOrigins(float tanksX, float tanksY,
 void sdl3DrawStatusShutdown(void) {
   /* Destroy owned (b)-class texture caches */
   tankLabelCacheFlush(&gLabelCache);
+  tankLabelCacheFlush(&gPingNameCache);
   if (gTexMsgTop) { SDL_DestroyTexture(gTexMsgTop); gTexMsgTop = NULL; }
   if (gTexMsgBot) { SDL_DestroyTexture(gTexMsgBot); gTexMsgBot = NULL; }
   if (gTexKills)  { SDL_DestroyTexture(gTexKills);  gTexKills  = NULL; }

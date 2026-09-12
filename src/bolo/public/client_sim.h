@@ -157,13 +157,20 @@ typedef void (*ControlObserverCb)(void *ctx, const struct ControlEvent *evt);
 
 /* One received ping, in the shape the renderer wants: who sent it, which
  * kind, where in WORLD units, and the SDL_GetTicks() millisecond it landed
- * so the drawer can age it without knowing anything about sim ticks. */
+ * so the drawer can age it without knowing anything about sim ticks.
+ *
+ * The sender's name is copied in beside the slot rather than looked up when
+ * the marker is drawn. Two reasons: the map overview renders off a snapshot
+ * and has no sim to ask, and a slot can be left and taken by somebody else
+ * inside the five seconds a ping lives — the name that goes on the marker
+ * should be the one that sent it. Empty for a slot that was not in use. */
 typedef struct {
     uint8_t  sender;
     uint8_t  kind;      /* PING_KIND_* */
     uint16_t worldX;
     uint16_t worldY;
     uint32_t recvMs;
+    char     senderName[PACKET_MAX_PLAYER_NAME];
 } ClientPing;
 
 /* A client-side predicted shell, created instantly on fire input
@@ -763,6 +770,13 @@ const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
  * (never more than maxOut, never more than MAX_CLIENT_PINGS). */
 int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
                       ClientPing *out, int maxOut);
+
+/* Reflect and persist (within the session) this client's per-player smart-ping
+ * mute — the state the players-menu toggle shows. Setting it only records the
+ * toggle; the caller sends CMD_PLAYER_PING_MUTE separately, and the server is
+ * the authority that actually stops delivering the muted player's pings. */
+void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted);
+bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player);
 
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained
