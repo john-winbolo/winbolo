@@ -1209,6 +1209,10 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         serverSimPublishControl(sim, &phaseEvt);
     }
 
+    /* And the table the round is starting on, beside the phase, the way the
+     * countdown→running path in server_lifecycle.c does. */
+    serverSimPublishSimRules(sim);
+
     sim->startInProgress = false;
 }
 

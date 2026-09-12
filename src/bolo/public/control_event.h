@@ -181,6 +181,24 @@ typedef enum {
      * the body carries no per-recipient state; a change after this event
      * travels as a CTRL_ENTITY_CHANGE to everyone at once. */
     CTRL_ENTITY_SYNC,
+    /* CTRL_SIM_RULES — the gameplay numbers the simulation is running on,
+     * for every rule a client reads. A server and its clients clamp the
+     * same pill and base records, predict the same tank movement and fire
+     * the same shells, so they have to be reading the same table; a client
+     * left on the classic one quietly disagrees with the server about how
+     * far a tank slides, how much a shell takes off a base and what a
+     * pillbox's armour caps at.
+     *
+     * Carries only the rules a client reads. The rest of the table — the
+     * builder's costs, the base refuel and give amounts, the terrain
+     * lifetimes and the tree weights — is read by server code alone and
+     * stays on the server. Broadcast: the numbers are the same for
+     * everybody and none of them is private.
+     *
+     * Published at the round start, again whenever a scenario changes a
+     * rule the event carries, and replayed into a joining client's sync so
+     * it arrives with the table the round is already using. */
+    CTRL_SIM_RULES,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -204,6 +222,84 @@ typedef enum {
     ENTITY_KIND_BASE  = 1,
     ENTITY_KIND_START = 2
 } EntityKind;
+
+/* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
+ *
+ * A rule is here because code a ClientSim reaches reads it: the movement
+ * and gunsight code the client predicts with, the shell numbers it fires
+ * predicted shells on, the base thresholds it draws and tests captures
+ * against, the caps its own clamp pass applies to the pill and base
+ * records a map hands it, and the rules view a bot's brain is given every
+ * tick. A rule only the server reads is not here — sending it would be
+ * bytes no client could use.
+ *
+ * The widths are each rule's own range, from the checks in sim_rules.c:
+ * a row bounded 0..255 travels as one byte and a row bounded by another
+ * row travels as wide as that bound allows. Two of them lean on a pair
+ * rather than on their own row: pill_attack_min_ticks cannot exceed
+ * pill_attack_ticks and base_capture_armour cannot exceed
+ * base_full_armour, both of which are bounded at 255, so both fit a byte.
+ *
+ * The float rules travel as their four raw bytes. A fixed-point scale
+ * would round them: tank_accel_rate is allowed down to 0.01, and at ×256
+ * that is 2.56, which rounds to 3 and arrives as 0.0117 — a client
+ * predicting with a number the server is not simulating with, which is
+ * the disagreement this event exists to end.
+ *
+ * One list per width, each in the order SimRules declares its fields. The
+ * variant's members, the encoder, the decoder, the server's fill and the
+ * client's apply are all written from these lists, so a rule cannot be
+ * encoded and not decoded, or sent and not applied. */
+#define CTRL_SIM_RULES_U8_FIELDS(F)                                          \
+    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)              \
+    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)               \
+    F(shell_damage) F(mine_damage) F(just_fired_ticks)                       \
+    F(gunsight_min) F(gunsight_max) F(tank_min_move)                         \
+    F(speed_road) F(speed_grass) F(speed_forest) F(speed_river)              \
+    F(speed_swamp) F(speed_crater) F(speed_rubble) F(speed_boat)             \
+    F(speed_deep_sea) F(speed_refuel_base)                                   \
+    F(shell_life) F(shell_speed)                                             \
+    F(pill_max_armour) F(pill_attack_ticks) F(pill_attack_min_ticks)         \
+    F(pill_cooldown_ticks)                                                   \
+    F(base_full_armour) F(base_full_shells) F(base_full_mines)               \
+    F(base_capture_armour) F(base_hit_armour)
+
+#define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
+    F(tank_death_ticks)
+
+#define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
+    F(shell_start_add) F(base_regen_ticks) F(tree_grow_initial_ticks)
+
+#define CTRL_SIM_RULES_F32_FIELDS(F)                                         \
+    F(tank_accel_rate) F(tank_decel_rate) F(tank_brake_rate)                 \
+    F(tank_autoslow_rate)                                                    \
+    F(turn_road) F(turn_grass) F(turn_forest) F(turn_river) F(turn_swamp)    \
+    F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
+    F(turn_refuel_base)
+
+/* Every carried rule, whatever its width, for the callers that do not care
+ * how wide one goes — the check for whether a changed rule is one this
+ * event carries, and the round-trip case that walks them all. */
+#define CTRL_SIM_RULES_ALL_FIELDS(F)                                         \
+    CTRL_SIM_RULES_U8_FIELDS(F)                                              \
+    CTRL_SIM_RULES_U16_FIELDS(F)                                             \
+    CTRL_SIM_RULES_U32_FIELDS(F)                                             \
+    CTRL_SIM_RULES_F32_FIELDS(F)
+
+/* The member each list entry becomes. Integer rules keep the int32_t
+ * SimRules declares them as whatever width they travel in, so reading one
+ * back out needs no cast. */
+#define CTRL_SIM_RULES_INT_MEMBER(name) int32_t name;
+#define CTRL_SIM_RULES_FLT_MEMBER(name) float   name;
+
+/* Body size, so the encoder and the decoder agree on it by construction
+ * rather than by counting: one byte, two, four and four per entry. */
+#define CTRL_SIM_RULES_COUNT_ONE(name) + 1
+#define CTRL_SIM_RULES_BODY_LEN                                              \
+    ((size_t)((0 CTRL_SIM_RULES_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 1 +   \
+              (0 CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 2 +  \
+              (0 CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4 +  \
+              (0 CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4))
 
 /* `quiet` on the five variants that carry one is the announce policy's
  * answer, stamped by the server where it built the event: 0 to announce the
@@ -607,6 +703,19 @@ typedef struct ControlEvent {
             uint16_t bases;
             uint16_t starts;
         } entitySync;
+
+        /* CTRL_SIM_RULES — one member per rule the event carries, named
+         * exactly as SimRules names it, so the server fill and the client
+         * apply are plain assignments and a reader can find the field the
+         * value came from. Declared in four width groups because that is
+         * the order they sit in on the wire, and the widths follow each
+         * rule's own range: nothing is sent wider than it can be. */
+        struct {
+            CTRL_SIM_RULES_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
+        } simRules;
     } u;
 } ControlEvent;
 

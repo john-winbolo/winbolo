@@ -3473,6 +3473,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
+    # The rules event's body codec: every carried rule round-trips field by
+    # field, rates a fixed-point scale could not carry survive, and the
+    # body's bytes are pinned against a layout written out by hand.
+    tests/unit/test_sim_rules_codec.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
@@ -3530,6 +3534,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
+    # The rules table over the wire: a mid-round change reaching a connected
+    # client, a joiner arriving on the changed table, a server-only rule
+    # publishing nothing, and a new table clamping what the client holds.
+    tests/unit/test_loopback_sim_rules.c
     tests/unit/test_loopback_map_cull.c
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
@@ -4392,6 +4400,8 @@ set(_unit_test_names
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
+    sim_rules_codec_roundtrip
+    sim_rules_codec_golden
     voice_talking_stops_in_countdown
     voice_talking_clears_on_leave
     fx_viewport_cull
@@ -4820,6 +4830,9 @@ set(_unit_test_names
     scenario_entity_publish
     scenario_entity_add_out_null
     loopback_entity_change
+    loopback_sim_rules_change
+    loopback_sim_rules_join
+    loopback_sim_rules_reclamp
     scenario_map_set_tile
     scenario_map_fill_rect
     scenario_map_fill_paced

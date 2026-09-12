@@ -478,6 +478,26 @@ bool serverSimFillEntitySyncEvent(ServerSim *sim, ControlEvent *evt) {
     return true;
 }
 
+/* Fill a CTRL_SIM_RULES from the table this sim is running on. One
+ * assignment per carried rule, generated from the same lists the codec is
+ * written from, so a rule that travels on the wire cannot be one this
+ * forgets to read out of the table. */
+void serverSimFillSimRulesEvent(const ServerSim *sim, ControlEvent *evt) {
+    if (sim == NULL || evt == NULL) return;
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SIM_RULES;
+#define SIM_RULES_FILL_FIELD(name) evt->u.simRules.name = sim->sim.rules.name;
+    CTRL_SIM_RULES_ALL_FIELDS(SIM_RULES_FILL_FIELD)
+#undef SIM_RULES_FILL_FIELD
+}
+
+void serverSimPublishSimRules(ServerSim *sim) {
+    ControlEvent evt;
+    if (sim == NULL) return;
+    serverSimFillSimRulesEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
 /* Wrapper used to enforce the documented sync ordering:
  *   a CTRL_GAME_PHASE_* event first; CTRL_PLAYER_JOIN events last
  *   (a regression that reorders sync would silently mis-initialize a
@@ -558,6 +578,14 @@ static void serverSimSyncSubscriber(
 
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
+    deliver(ctx, &evt);
+
+    /* The gameplay numbers this sim is running on. A joiner's own table
+     * starts classic, and the round it is joining may not be on the classic
+     * one — a scenario can have changed a rule before it arrived. Replayed
+     * here so it starts the round reading what the server simulates with
+     * rather than finding out at the first rule change after it joined. */
+    serverSimFillSimRulesEvent(sim, &evt);
     deliver(ctx, &evt);
 
     /* BrainList (~900 bytes) is only used by the lobby AiConfig combobox.

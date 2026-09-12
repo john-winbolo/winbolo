@@ -1,5 +1,6 @@
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}
 {"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":3,"hasLobby":false,"voiceMode":0}
+{"tick":0,"type":"CTRL_SIM_RULES"}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":1,"in_use":1,"color":0,"namingPool":0,"name":"Team 1"}
 {"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":2,"in_use":1,"color":1,"namingPool":0,"name":"Team 2"}
@@ -10,4 +11,4 @@
 {"tick":0,"type":"CTRL_LOBBY_SYNC_COMPLETE"}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot has joined."}
 {"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
-{"tick":56,"type":"CTRL_PLAYER_NAME","playerNum":0,"name":"Renamed"}
+{"tick":64,"type":"CTRL_PLAYER_NAME","playerNum":0,"name":"Renamed"}

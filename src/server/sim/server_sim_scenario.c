@@ -2217,13 +2217,27 @@ static void scenarioRecordRuleSet(uint16_t rule, double written) {
     logAddEvent(log_RuleSet, 0, 0, 0, 0, rule, blob);
 }
 
+/* Whether a rule is one CTRL_SIM_RULES carries. A change to a rule only the
+ * server reads publishes nothing: no client holds a value for it, so there
+ * is nothing out there to correct. Written from the event's own field lists,
+ * so a rule that starts being carried starts being republished here with no
+ * second edit. */
+static bool scenarioRuleIsCarried(uint16_t rule) {
+    switch (rule) {
+#define SCN_RULE_CARRIED_CASE(name) case SCN_RULE_##name: return true;
+        CTRL_SIM_RULES_ALL_FIELDS(SCN_RULE_CARRIED_CASE)
+#undef SCN_RULE_CARRIED_CASE
+        default: return false;
+    }
+}
+
 /* Write one rule. The write lands in a copy of the sim's table, the copy is
  * checked whole, and only a copy that passes is committed: a refused op
  * leaves the sim's table byte for byte as it was rather than half-applied.
  *
- * Nothing is published. Carrying rules to a client is the rules event's job
- * and that event is not written yet, so this changes the server's own
- * numbers and the recording of them and nothing else.
+ * A committed change to a rule clients read is published, so their tables
+ * follow the server's within the tick. A change to a server-only rule
+ * publishes nothing.
  *
  * No state check. A rule belongs to the simulation rather than to a round,
  * the way a pill belongs to the map, so a lobby setting its table up and a
@@ -2281,6 +2295,9 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
 
     sim->sim.rules = copy;
     scenarioRecordRuleSet(p->rule, written);
+    if (scenarioRuleIsCarried(p->rule)) {
+        serverSimPublishSimRules(sim);
+    }
     return SCN_OP_OK;
 }
 

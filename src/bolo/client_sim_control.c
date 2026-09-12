@@ -36,6 +36,7 @@
 #include "client_sim_internal.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
+#include "bolo_map.h"    /* mapClampToRules — the re-clamp a new table needs */
 #include "frontend.h"    /* frontEndAudioReturningToLobby */
 #include "messages.h"
 #include "netpacks.h"
@@ -1151,6 +1152,27 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * entity-change apply for the same reason: the lists live behind
          * client_snapshot.c. */
         clientApplyEntitySync(cs, evt);
+        break;
+
+    case CTRL_SIM_RULES:
+        /* The gameplay numbers the server is running on. Written straight
+           into this sim's own table: from here the movement this client
+           predicts, the shells it fires predicted, the base thresholds it
+           tests captures against and the rules view a brain is handed all
+           read what the server reads. One assignment per carried rule,
+           generated from the event's own field lists, so a rule that arrives
+           cannot be one nothing writes. */
+#define SIM_RULES_APPLY_FIELD(name) cs->sim.rules.name = evt->u.simRules.name;
+        CTRL_SIM_RULES_ALL_FIELDS(SIM_RULES_APPLY_FIELD)
+#undef SIM_RULES_APPLY_FIELD
+        /* The pill and base records this client is already holding were
+           capped against the table that has just been replaced, so a lower
+           cap would leave records standing above it — a pill showing more
+           armour than the new table allows, a base holding more shells than
+           it can. This is the pass a sim runs when it takes a map on, which
+           is the same question asked the other way round, and it is
+           idempotent, so records already inside the new caps are untouched. */
+        mapClampToRules(&cs->sim);
         break;
     }
 }

@@ -668,6 +668,10 @@ void serverInstanceTick(ServerSim *sim) {
           evt.type = CTRL_GAME_PHASE_RUNNING;
           serverSimPublishControl(sim, &evt);
         }
+        /* State the table the round is starting on, so every client that sat
+         * through the lobby predicts and clamps against the numbers this
+         * round runs on rather than the ones it last heard. */
+        serverSimPublishSimRules(sim);
         if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }

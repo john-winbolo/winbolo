@@ -330,6 +330,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
     case CTRL_STATS_SEED:            return "CTRL_STATS_SEED";
     case CTRL_VOICE_TALKING:         return "CTRL_VOICE_TALKING";
+    case CTRL_SIM_RULES:             return "CTRL_SIM_RULES";
     default:                         return NULL;
   }
 }

@@ -1031,6 +1031,13 @@ int run_voice_flags_snapshot_masking(void);
  * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
 int run_voice_talking_codec(void);
 
+/* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
+ * round-trips through the body tables, compared field by field and
+ * including rates a fixed-point scale could not carry; and the body's bytes
+ * against a layout written out by hand. */
+int run_sim_rules_codec_roundtrip(void);
+int run_sim_rules_codec_golden(void);
+
 /* The lobby's talking set over the loopback transport (test_voice_talking_set.c),
  * read off the watching client's mirror of it: a talker who goes quiet after the
  * countdown has begun still ages out of the set (the silence is measured on a
@@ -2037,6 +2044,14 @@ int run_scenario_entity_add_out_null(void);
 /* One pillbox removed and put back over the real loopback transport
  * (test_loopback_entity_change.c): the client's list follows the server's. */
 int run_loopback_entity_change(void);
+
+/* The rules table over the real loopback transport
+ * (test_loopback_sim_rules.c): a mid-round change reaching a connected
+ * client, a joiner arriving on the changed table, a server-only rule
+ * publishing nothing, and a new table clamping what the client holds. */
+int run_loopback_sim_rules_change(void);
+int run_loopback_sim_rules_join(void);
+int run_loopback_sim_rules_reclamp(void);
 
 int run_scenario_map_set_tile(void);
 int run_scenario_map_fill_rect(void);
