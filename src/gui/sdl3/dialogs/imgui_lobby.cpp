@@ -1455,7 +1455,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * The offset is re-synced to the clamped result each frame, so
              * dragging past a floor doesn't build up slack the user has to
              * drag back out before the split moves again. */
-            const float kSplitterW     = 8.0f;
+            /* Scaled, with a floor. A windowed desktop lobby is always 1x but
+             * a fullscreen one takes the height-derived scale (see
+             * lobbyComputeUiScale), so a flat 8 left the gutter at 8 physical
+             * pixels beside controls 1.5x-2x larger -- proportionally half the
+             * target it is windowed, which is why fullscreen read as having no
+             * divider at all. The floor keeps it grabbable if that scale ever
+             * comes out below 1 on a small fullscreen display. */
+            const float kSplitterW     = ImMax(8.0f, 8.0f * s);
             const float kSplitLeftMinW = 180.0f;
             const float kSplitMapMinW  = 220.0f;
             if (!s_lobbySplitOffsetInit) {
@@ -1816,10 +1823,41 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * are computed, above. */
             ImGui::SameLine(0, 0.0f);
             ImVec2 splitPos = ImGui::GetCursorScreenPos();
-            ImGui::InvisibleButton("##LobbyColSplitter",
-                                   ImVec2(kSplitterW, leftFillH));
-            bool splitActive = ImGui::IsItemActive();
-            if (splitActive || ImGui::IsItemHovered()) {
+            /* The gutter is driven BY HAND, not by an InvisibleButton.
+             *
+             * The player panel and the map panel are CHILD windows either side
+             * of this gap, and ImGui hit-tests a child in front of its parent.
+             * So the map panel claimed the pointer inside the gutter and the
+             * button never hovered: no line, no resize cursor, no drag.
+             * Measured, not guessed — with the pointer at x=1293 inside a
+             * gutter spanning 1289.0 to 1297.9, the hovered window was
+             * ##LobbyBg/##MapPanel. It appeared only in full screen because the
+             * panel widths are fractional there, so the children land
+             * differently against the gap.
+             *
+             * IsMouseHoveringRect tests the pointer against a rectangle with no
+             * window-order test, so it sees the gutter whatever is layered over
+             * it. The press is taken only while no other item is active, so a
+             * drag that began inside either panel is never stolen; and the drag
+             * ends with the mouse BUTTON, not with hover, so it survives the
+             * pointer wandering off the gutter mid-drag. */
+            const ImVec2 splitMin = splitPos;
+            const ImVec2 splitMax(splitPos.x + kSplitterW,
+                                  splitPos.y + leftFillH);
+            ImGui::Dummy(ImVec2(kSplitterW, leftFillH));  /* holds the layout */
+
+            static bool s_splitDragging = false;
+            const bool splitHovered =
+                ImGui::IsMouseHoveringRect(splitMin, splitMax, false);
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                s_splitDragging = false;
+            } else if (splitHovered &&
+                       ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                       ImGui::GetActiveID() == 0) {
+                s_splitDragging = true;
+            }
+            const bool splitActive = s_splitDragging;
+            if (splitActive || splitHovered) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
                 /* Only visible while the user is on it — the resting lobby
                  * keeps the plain gap it has always had. */
@@ -1828,7 +1866,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y + leftFillH),
                     ImGui::GetColorU32(splitActive ? ImGuiCol_SeparatorActive
                                                    : ImGuiCol_SeparatorHovered),
-                    2.0f);
+                    ImMax(2.0f, 2.0f * s));
             }
             if (splitActive) {
                 /* Mouse delta is real pixels; the offset is logical. Moves
