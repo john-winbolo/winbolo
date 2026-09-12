@@ -109,8 +109,12 @@ void sdl3DrawSetTanksStatusClear(void);
 void sdl3DrawStatusTank(BYTE tankNum, tankAlliance ta);
 void sdl3DrawCopyTanksStatus(int x, int y);
 
+/* The four amounts and the four caps they are drawn against; a bar fills
+   at its cap. The caller supplies both because this file has no sim. */
 void sdl3DrawStatusTankBars(int x, int y,
-                            BYTE shells, BYTE mines, BYTE armour, BYTE trees);
+                            BYTE shells, BYTE mines, BYTE armour, BYTE trees,
+                            BYTE fullShells, BYTE fullMines,
+                            BYTE fullArmour, BYTE fullTrees);
 void sdl3DrawCopyTankStatusBars(int x, int y);
 
 void sdl3DrawStatusBaseBars(int x, int y,

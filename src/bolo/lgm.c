@@ -1341,13 +1341,16 @@ void lgmBackInTank(GameSim *sim, lgm *lgman, tank *tnk, bool sendItems) {
 *  above unloads it into one.
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  lgman  - Pointer to the lgm sturcture
 *  trees  - Trees he is to carry
 *  mines  - Mines he is to carry
 *********************************************************/
-void lgmSetCarried(lgm *lgman, BYTE trees, BYTE mines) {
-  (*lgman)->numTrees = (trees > TANK_FULL_TREES) ? TANK_FULL_TREES : trees;
-  (*lgman)->numMines = (mines > TANK_FULL_MINES) ? TANK_FULL_MINES : mines;
+void lgmSetCarried(GameSim *sim, lgm *lgman, BYTE trees, BYTE mines) {
+  BYTE maxTrees = (BYTE) sim->rules.tank_full_trees;
+  BYTE maxMines = (BYTE) sim->rules.tank_full_mines;
+  (*lgman)->numTrees = (trees > maxTrees) ? maxTrees : trees;
+  (*lgman)->numMines = (mines > maxMines) ? maxMines : mines;
 }
 
 /*********************************************************

@@ -1470,6 +1470,14 @@ int run_interp_respawn_no_death_flash(void);
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
+/* The per-simulation rules table (test_sim_rules.c). Defaults walked field
+ * by field against the constants they replaced; the range checks for every
+ * field this change converted, at both ends and inside; and the display and
+ * brain copies reporting a rule that has been moved off its classic value. */
+int run_sim_rules_classic_defaults(void);
+int run_sim_rules_validate_ranges(void);
+int run_sim_rules_copies_follow(void);
+
 int run_snapshot_compaction(void);
 
 /* Render-only error smoothing (test_error_smoothing.c): the offset

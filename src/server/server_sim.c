@@ -195,6 +195,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     memset(sim, 0, sizeof(ServerSim));
 
+    /* The classic gameplay numbers. A zeroed table would make every rule 0, so
+     * this runs before anything can read one. */
+    simRulesClassic(&sim->sim.rules);
+
     /* Sentinel value for "no batch start assigned" — memset gives 0, but 0
      * is a valid start index, so initialise explicitly. */
     for (count = 0; count < MAX_TANKS; count++) {

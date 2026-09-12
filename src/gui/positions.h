@@ -199,7 +199,9 @@
 
 /* 3x - 80y - 9 Between Items From bottom of icons to top 13 8 from left */  
 
-#define BAR_TANK_MULTIPLY 2 /* Times item amounts by 2 for 80 pixel high bars */
+/* Pixels a full bar occupies. The scale is this over the tank's cap for
+   that item, so a bar still fills at full however high full is. */
+#define BAR_TANK_FULL_PIXELS 80
 #define STATUS_TANK_BARS_TOP 155 // was 105 but it cut off part of the tombstone
 #define STATUS_TANK_BARS_HEIGHT 85 // was 135 but it cut off part of the tombstone
 #define STATUS_TANK_BARS_WIDTH 3

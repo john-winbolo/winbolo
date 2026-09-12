@@ -1015,9 +1015,9 @@ void clientApplySnapshot(ClientSim *csPtr,
           tankSetDestroyed(&MY_TANK(csPtr), destroyed);
           csPtr->lastServerDestroyed = destroyed;
         }
-        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
-        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
-        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         {
@@ -1152,7 +1152,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                       tankGetShells(&MY_TANK(csPtr)) > 0 &&
                       !tankIsDestroyed(&MY_TANK(csPtr))) {
                     tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
-                    tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
+                    tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
               }
@@ -1226,9 +1226,9 @@ void clientApplySnapshot(ClientSim *csPtr,
         /* Sync resources from server — but not reload/shells, which are
          * already set correctly by the reconciliation replay (it accounts
          * for unprocessed fire inputs that the server hasn't seen yet). */
-        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
-        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
-        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetDeathWait(&MY_TANK(csPtr), tanks[i].deathWait);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
@@ -1271,7 +1271,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                 tankGetShells(&MY_TANK(csPtr)) > 0 &&
                 !tankIsDestroyed(&MY_TANK(csPtr))) {
               tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
-              tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
+              tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }
         }

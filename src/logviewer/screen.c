@@ -2914,6 +2914,14 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   if (lv == NULL) {
     return NULL;
   }
+  /* The classic gameplay numbers. calloc gave zeroes, and a zero cap would
+     draw every bar empty and divide by zero. */
+  lv->rules.tankFullShells = 40;
+  lv->rules.tankFullMines  = 40;
+  lv->rules.tankFullArmour = 40;
+  lv->rules.tankFullTrees  = 40;
+  lv->rules.mineDamage     = 10;
+
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
   lv->screenSizeY = MAIN_SCREEN_SIZE_Y + 15; /* default 30 */

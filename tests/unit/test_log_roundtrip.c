@@ -809,10 +809,10 @@ int run_log_roundtrip_snapshot_tank_stocks(void) {
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
     GameSim *gs = serverSimGetGameSim(sim);
     UT_ASSERT_MSG(gs != NULL && gs->tanks[0] != NULL, "no slot-0 tank");
-    tankSetShells(&gs->tanks[0], wantShells);
-    tankSetMines(&gs->tanks[0], wantMines);
+    tankSetShells(gs, &gs->tanks[0], wantShells);
+    tankSetMines(gs, &gs->tanks[0], wantMines);
     tankSetArmour(&gs->tanks[0], wantArmour);
-    tankSetTrees(&gs->tanks[0], wantTrees);
+    tankSetTrees(gs, &gs->tanks[0], wantTrees);
 
     /* logStart writes the opening snapshot, which is the one decoded below.
      * Lobby mode would make that an empty world with 16 stubs, and it is

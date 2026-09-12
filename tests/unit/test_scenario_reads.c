@@ -269,10 +269,10 @@ int run_scenario_read_tank_info(void) {
 
     t = &sim->sim.tanks[SR_SLOT];
     UT_ASSERT(*t != NULL);
-    tankSetShells(t, 11);
-    tankSetMines(t, 7);
+    tankSetShells(&sim->sim, t, 11);
+    tankSetMines(&sim->sim, t, 7);
     tankSetArmour(t, 23);
-    tankSetTrees(t, 5);
+    tankSetTrees(&sim->sim, t, 5);
     memset(&mods, 0, sizeof(mods));
     mods.speed  = 150;
     mods.reload = 80;

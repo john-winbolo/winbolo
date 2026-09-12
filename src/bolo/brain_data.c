@@ -197,6 +197,24 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   tankGetStats(&MY_TANK(csPtr), &(value->shells), &(value->mines), &(value->armour), &(value->trees));
   value->destroyed = tankIsDestroyed(&MY_TANK(csPtr)) ? TRUE : FALSE;
 
+  /* The rules view: the gameplay numbers this sim is running on, copied
+     once per tick so a brain reads the same values the engine acts on
+     rather than the classic ones it used to be able to assume. */
+  value->rules.tank_reload_ticks  = gs->rules.tank_reload_ticks;
+  value->rules.tank_full_shells   = gs->rules.tank_full_shells;
+  value->rules.tank_full_mines    = gs->rules.tank_full_mines;
+  value->rules.tank_full_trees    = gs->rules.tank_full_trees;
+  value->rules.tank_full_armour   = gs->rules.tank_full_armour;
+  value->rules.tank_death_ticks   = gs->rules.tank_death_ticks;
+  value->rules.tank_water_ticks   = gs->rules.tank_water_ticks;
+  value->rules.mine_damage        = gs->rules.mine_damage;
+  value->rules.just_fired_ticks   = gs->rules.just_fired_ticks;
+  value->rules.tank_min_move      = gs->rules.tank_min_move;
+  value->rules.tank_accel_rate    = gs->rules.tank_accel_rate;
+  value->rules.tank_decel_rate    = gs->rules.tank_decel_rate;
+  value->rules.tank_brake_rate    = gs->rules.tank_brake_rate;
+  value->rules.tank_autoslow_rate = gs->rules.tank_autoslow_rate;
+
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */
   {

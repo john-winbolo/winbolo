@@ -1306,6 +1306,11 @@ bool         clientSimGetStart(ClientSim *cs, BYTE i,
 
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+/* What a full tank holds on this sim: the four caps the stats above are
+   drawn against. A scenario can change any of them, so a bar that divides
+   by a literal 40 draws the wrong length the moment one does. This is the
+   frontend's only route to the rules — src/gui/ cannot see the sim. */
+void         clientSimGetTankFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
 
 /*********************************************************

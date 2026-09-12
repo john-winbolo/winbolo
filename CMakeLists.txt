@@ -3489,6 +3489,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_sim_rules.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -4476,6 +4477,9 @@ set(_unit_test_names
     lgm_request_quiet
     jitter_buffer_grow
     shell_projection
+    sim_rules_classic_defaults
+    sim_rules_validate_ranges
+    sim_rules_copies_follow
     screen_bullets_build
     ping_smoother
     client_timing

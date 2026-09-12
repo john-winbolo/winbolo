@@ -523,7 +523,8 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     obs->scalar[24] = (float)bi->manobstructed / 2.0f;
 
     /* Scalar 25: death_wait from ClientSim (matches gymBuildObs) */
-    obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) / 255.0f;
+    obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) /
+                      (float)gs->rules.tank_death_ticks;
 }
 
 /* Build pill/base lists and metadata from ClientSim (matches gymBuildObs) */

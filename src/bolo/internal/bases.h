@@ -37,9 +37,6 @@
 struct GameSim;
 struct ClientSim;
 
-/* The time between base get new units of armour/shells/mines */
-#define BASE_ADD_TIME  1670 /* Old time was 3340 in 1.09 */
-
 /* Defines how much the bases can hold */
 #define BASE_FULL_ARMOUR 90
 #define BASE_FULL_SHELLS 90

@@ -1097,11 +1097,16 @@ static void renderResourceBars(ClientSim *cs) {
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
       BYTE vals[4] = { shells, mines, armour, trees };
+      /* Each bar fills at its own cap, so a tuned sim draws a full tank
+         full rather than off the end of the bar. */
+      BYTE fullShells, fullMines, fullArmour, fullTrees;
+      clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
+      BYTE fulls[4] = { fullShells, fullMines, fullArmour, fullTrees };
 
       for (int i = 0; i < 4; i++) {
         float bx = winPos.x + winPad + i * (barW + barGap);
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
-        float fillH = (vals[i] / 40.0f) * maxBarH;
+        float fillH = fulls[i] ? (vals[i] / (float)fulls[i]) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
@@ -1188,10 +1193,12 @@ static void renderStatusDrawer(ClientSim *cs) {
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_TANK_RESOURCES), ImGuiTreeNodeFlags_DefaultOpen)) {
       BYTE shells, mines, armour, trees;
       clientSimGetTankStats(cs, &shells, &mines, &armour, &trees);
-      ImGui::ProgressBar((float)shells / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_SHELLS));
-      ImGui::ProgressBar((float)mines  / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_MINES));
-      ImGui::ProgressBar((float)armour / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_ARMOUR));
-      ImGui::ProgressBar((float)trees  / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_TREES));
+      BYTE fullShells, fullMines, fullArmour, fullTrees;
+      clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
+      ImGui::ProgressBar(fullShells ? (float)shells / fullShells : 0.0f, ImVec2(-1, 0), langGetText(STR_TABLET_SHELLS));
+      ImGui::ProgressBar(fullMines  ? (float)mines  / fullMines  : 0.0f, ImVec2(-1, 0), langGetText(STR_TABLET_MINES));
+      ImGui::ProgressBar(fullArmour ? (float)armour / fullArmour : 0.0f, ImVec2(-1, 0), langGetText(STR_TABLET_ARMOUR));
+      ImGui::ProgressBar(fullTrees  ? (float)trees  / fullTrees  : 0.0f, ImVec2(-1, 0), langGetText(STR_TABLET_TREES));
     }
 
     /* Pillbox status */

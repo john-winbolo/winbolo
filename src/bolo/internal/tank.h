@@ -400,7 +400,7 @@ BYTE tankGetArmour(tank *value);
 *  Returns whether the tank has been destroyed.
 *
 *  Ask this rather than comparing armour against
-*  TANK_FULL_ARMOUR: a live tank can sit at zero armour,
+*  tank_full_armour: a live tank can sit at zero armour,
 *  so the armour value alone cannot tell the two apart.
 *
 *ARGUMENTS:
@@ -1437,10 +1437,11 @@ BYTE tankGetTrees(tank *value);
 *  Sets the number of shells in tank
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  value  - Pointer to the tank structure
 *  amount - The amount to set to
 *********************************************************/
-void tankSetShells(tank *value, BYTE amount);
+void tankSetShells(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
 *NAME:          tankSetArmour
@@ -1465,10 +1466,11 @@ void tankSetArmour(tank *value, BYTE amount);
 *  Sets the number of mines in tank
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  value  - Pointer to the tank structure
 *  amount - The amount to set to
 *********************************************************/
-void tankSetMines(tank *value, BYTE amount);
+void tankSetMines(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
 *NAME:          tankSetTrees
@@ -1479,10 +1481,11 @@ void tankSetMines(tank *value, BYTE amount);
 *  Sets the number of trees in tank
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  value  - Pointer to the tank structure
 *  amount - The amount to set to
 *********************************************************/
-void tankSetTrees(tank *value, BYTE amount);
+void tankSetTrees(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
 *NAME:          tankSetModifiers

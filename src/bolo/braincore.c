@@ -50,8 +50,9 @@
 #include "util.h"
 #include "braincore.h"
 #include "brain_pathfinder.h"
-#include "tank.h"  /* the movement rates and tankModPct, so the stop
-                    * predictor and the engine cannot drift apart */
+#include "tank.h"  /* tankModPct. The movement rates themselves arrive on
+                    * the pathfinder each think, so the stop predictor and
+                    * the engine cannot drift apart */
 
 /* C-side pill_grid from the gh_threat brain module (same link unit). */
 extern float *naThreatGetPillGrid(lua_State *L);
@@ -1805,14 +1806,14 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
  * mirroring the engine's exact decel + residual-move model (tank.c tankAccel
  * + tankMoveUnified) so the brain can decide whether a stop here lands it in
  * firing range of a pill:
- *   - brake = TANK_SLOWKEY_RATE per tick; a further TANK_TERRAIN_DECEL_RATE
+ *   - brake = tank_brake_rate per tick; a further tank_decel_rate
  *     applies WHILE speed > terrain_cap (terrain only drags speed down to its
  *     cap, never below). Auto-slowdown is the same rate and does NOT stack
  *     with the brake key, so a brake-to-stop is a flat ramp on uniform
  *     terrain. Both rates take this tank's acceleration modifier, so a
  *     modified bot predicts against the rate it will actually brake at.
  *   - each tick (decel first, then move): residual += floor(speed); when
- *     residual >= TANK_MIN_MOVE_SPEED advance `residual` wu along
+ *     residual >= tank_min_move advance `residual` wu along
  *     utilGet16Dir(angle) (16-dir quantized) via utilCalcDistance, reset.
  * residualSpeed is assumed 0 at entry (the brain can't observe it → the stop
  * can be up to one sub-move, <6 wu, short of reality). terrain_cap defaults to
@@ -1828,9 +1829,9 @@ static int l_cpf_predict_stop(lua_State *L) {
   BrainPathfinder **ppfRates = (BrainPathfinder **)lua_touserdata(L, lua_upvalueindex(1));
   BrainPathfinder *pfRates = (ppfRates && *ppfRates) ? *ppfRates : NULL;
   const int accelPct = tankModPct(pfRates ? pfRates->accel_pct : 0);
-  const double BRAKE_RATE   = TANK_SLOWKEY_RATE * accelPct / 100;
-  const double TERRAIN_RATE = TANK_TERRAIN_DECEL_RATE * accelPct / 100;
-  const int    MIN_MOVE     = TANK_MIN_MOVE_SPEED;
+  const double BRAKE_RATE   = (pfRates ? pfRates->brake_rate : 0.0f) * accelPct / 100;
+  const double TERRAIN_RATE = (pfRates ? pfRates->terrain_decel_rate : 0.0f) * accelPct / 100;
+  const int    MIN_MOVE     = pfRates ? (int) pfRates->min_move : 0;
 
   WORLD x  = (WORLD)luaL_checkinteger(L, 1);
   WORLD y  = (WORLD)luaL_checkinteger(L, 2);

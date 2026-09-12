@@ -38,7 +38,6 @@
 
 #include <stdint.h>
 #include "global.h"    /* MAX_TANKS, NEUTRAL */
-#include "gametype.h"  /* TANK_FULL_ARMOUR — backs DMG_PER_CAPTURE */
 
 /* Per-player per-round gameplay stats. A projection of the attribution
  * records: both the live server and the offline log viewer build this by
@@ -185,7 +184,11 @@ typedef struct {
 } RoundStatsSummary;
 
 /* Awards tuning (tunable). */
-#define DMG_PER_CAPTURE        TANK_FULL_ARMOUR  /* 40 */
+/* Not tank_full_armour, though it started as the same number: awards are
+ * compared between rounds, so a scenario that doubles a tank's armour must
+ * not reprice the Warmonger key underneath them. It moves when the award
+ * is retuned and at no other time. */
+#define DMG_PER_CAPTURE        40
 #define AWARD_MIN_KILLS_KD     3
 #define AWARD_MIN_SHELLS_ACC   20
 #define AWARD_MIN_DMG_WARMONGER 40

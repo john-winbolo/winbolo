@@ -127,7 +127,7 @@ int run_stall_mine_late_lays_once(void) {
 
     GameSim *gs = serverSimGetGameSim(sim);
     UT_ASSERT(gs != NULL && gs->tanks[SA_SLOT] != NULL);
-    tankSetMines(&gs->tanks[SA_SLOT], 40);
+    tankSetMines(gs, &gs->tanks[SA_SLOT], 40);
 
     sa_establish(sim, INPUT_BTN_LEFT, 0);  /* lastProcessedInput = 12 */
 
@@ -224,7 +224,7 @@ int run_stall_mine_duplicate_not_relaid(void) {
 
     GameSim *gs = serverSimGetGameSim(sim);
     UT_ASSERT(gs != NULL && gs->tanks[SA_SLOT] != NULL);
-    tankSetMines(&gs->tanks[SA_SLOT], 40);
+    tankSetMines(gs, &gs->tanks[SA_SLOT], 40);
 
     sa_establish(sim, INPUT_BTN_LEFT, 0);  /* lastProcessedInput = 12 */
 

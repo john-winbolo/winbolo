@@ -1728,14 +1728,14 @@ static void logStateBinary(int tickNum) {
     unsigned armor = dead ? 0 : (unsigned)bi.armour;
     float dir_rad = (float)bi.direction * (2.0f * 3.14159265f / 256.0f);
 
-    scalars[0]  = (float)armor / 40.0f;
-    scalars[1]  = (float)bi.shells / 40.0f;
-    scalars[2]  = (float)bi.mines / 40.0f;
-    scalars[3]  = (float)bi.trees / 40.0f;
+    scalars[0]  = (float)armor / (float)bi.rules.tank_full_armour;
+    scalars[1]  = (float)bi.shells / (float)bi.rules.tank_full_shells;
+    scalars[2]  = (float)bi.mines / (float)bi.rules.tank_full_mines;
+    scalars[3]  = (float)bi.trees / (float)bi.rules.tank_full_trees;
     scalars[4]  = (float)bi.speed / 128.0f;
     scalars[5]  = sinf(dir_rad);
     scalars[6]  = cosf(dir_rad);
-    scalars[7]  = (float)bi.reload / 15.0f;
+    scalars[7]  = (float)bi.reload / (float)bi.rules.tank_reload_ticks;
     scalars[8]  = bi.inboat ? 1.0f : 0.0f;
     scalars[9]  = bi.carriedpills > 0 ? 1.0f : 0.0f;
     scalars[10] = (float)bi.carriedpills / 16.0f;

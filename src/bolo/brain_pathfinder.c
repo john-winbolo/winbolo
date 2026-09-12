@@ -46,6 +46,7 @@
 #include "brain_pathfinder.h"
 #include "util.h"
 #include "lgm.h"
+#include "sim_rules.h"
 #include "tank.h"
 #include "shells.h"
 #include "pillbox.h"
@@ -397,8 +398,23 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->estimate_samples = 60.0f;
   pf->danger_scale = 1.0f;
 
+  /* The classic movement rules, until a think pushes this sim's own. Taken
+     from the defaults table rather than from the constants, so there is one
+     place the classic numbers are written down. */
+  {
+    SimRules classic;
+    simRulesClassic(&classic);
+    pf->brake_rate = classic.tank_brake_rate;
+    pf->terrain_decel_rate = classic.tank_decel_rate;
+    pf->min_move = classic.tank_min_move;
+  }
+
   /* Resource drain config */
-  pf->water_drain_rate = 6.0f;     /* ~85 ticks/tile at speed 3, drain every 15 = ~5.7 */
+  /* A tuned A* cost, not a copy of tank_water_ticks: ~85 ticks/tile at
+   * speed 3 with a drain every 15 ticks is ~5.7, rounded up. It does not
+   * follow the rule — recomputing it from one is a change to how the
+   * pathfinder scores water, not a conversion. */
+  pf->water_drain_rate = 6.0f;
   pf->shell_loss_cost = 3.0f;      /* A* cost per shell lost to water */
   pf->mine_loss_cost = 2.0f;       /* A* cost per mine lost to water */
   pf->armour_drain_rate = 0.02f;   /* armour lost per danger-exposure unit */
@@ -578,6 +594,14 @@ void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag) {
 
 void brainPathfinderSetAccelPct(BrainPathfinder *pf, uint8_t pct) {
   if (pf) pf->accel_pct = pct;
+}
+
+void brainPathfinderSetMoveRules(BrainPathfinder *pf, float brakeRate,
+                                 float terrainDecelRate, int32_t minMove) {
+  if (pf == NULL) return;
+  pf->brake_rate = brakeRate;
+  pf->terrain_decel_rate = terrainDecelRate;
+  pf->min_move = minMove;
 }
 
 /* One-line check used by the inner search loops. NULL flag → never
@@ -937,7 +961,7 @@ static float compute_cost(BrainPathfinder *pf, int nx, int ny,
   cost = base + danger * pf->danger_scale * (16.0f / fmaxf(speed, 0.1f)) + overlay;
 
   /* Water resource drain: on foot in river, tank loses shells and mines.
-   * Game mechanic: every TANK_WATER_TIME (15) ticks at speed <= 3,
+   * Game mechanic: every tank_water_ticks (15 classic) ticks at speed <= 3,
    * lose 1 shell + 1 mine.  At speed 3, ~85 ticks per tile = ~6 drains.
    * In a boat there is no drain. */
   if (!onBoat && type == TT_RIVER && pf->water_drain_rate > 0.0f) {

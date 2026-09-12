@@ -122,10 +122,10 @@ int run_scenario_tank_set_stocks(void) {
     UT_ASSERT(*t != NULL);
 
     /* Absolute: -1 leaves a stock where it was, everything else is written. */
-    tankSetShells(t, 5);
-    tankSetMines(t, 5);
+    tankSetShells(&sim->sim, t, 5);
+    tankSetMines(&sim->sim, t, 5);
     tankSetArmour(t, 5);
-    tankSetTrees(t, 5);
+    tankSetTrees(&sim->sim, t, 5);
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_TANK_SET_STOCKS;
     op.u.tankSetStocks.slot = TA_SLOT;

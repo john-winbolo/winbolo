@@ -318,11 +318,12 @@ void lgmKill(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE owner);
 *  came out of one and unloads back into one.
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  lgman  - Pointer to the lgm structure
 *  trees  - Trees he is to carry
 *  mines  - Mines he is to carry
 *********************************************************/
-void lgmSetCarried(lgm *lgman, BYTE trees, BYTE mines);
+void lgmSetCarried(struct GameSim *sim, lgm *lgman, BYTE trees, BYTE mines);
 
 /*********************************************************
 *NAME:          lgmMoveAway

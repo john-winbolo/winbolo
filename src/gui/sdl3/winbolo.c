@@ -2167,7 +2167,10 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
-  sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
+  BYTE fullShells, fullMines, fullArmour, fullTrees;
+  clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
+  sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
+                         fullShells, fullMines, fullArmour, fullTrees);
   dwSysFrame += (SDL_GetTicks() - tick);
 }
 

@@ -153,10 +153,10 @@ int run_replay_roundtrip_world(void) {
     /* Tank stocks: four values it never spawns with, and all different from
      * each other, so a replay that filled them in from spawn defaults or
      * left them empty cannot match by luck. */
-    tankSetShells(&gs->tanks[0], 7);
-    tankSetMines(&gs->tanks[0], 11);
+    tankSetShells(gs, &gs->tanks[0], 7);
+    tankSetMines(gs, &gs->tanks[0], 11);
     tankSetArmour(&gs->tanks[0], 23);
-    tankSetTrees(&gs->tanks[0], 5);
+    tankSetTrees(gs, &gs->tanks[0], 5);
 
     /* Carry the changes into the file: events raised between ticks are
      * flushed by the next recorded tick, and the tank's stocks are read by

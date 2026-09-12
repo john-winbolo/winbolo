@@ -703,7 +703,7 @@ int run_scenario_policy_spawn_loadout(void) {
 
     /* The re-fuel, which is the same question asked from tankSetWorld. */
     tankGetWorld(&gs->tanks[0], &wx, &wy);
-    tankSetShells(&gs->tanks[0], 0);
+    tankSetShells(gs, &gs->tanks[0], 0);
     tankSetWorld(gs, &gs->tanks[0], wx, wy, 0, TRUE);
     UT_ASSERT_MSG(tankGetShells(&gs->tanks[0]) == PL_SHELLS,
                   "a re-fuel should have been answered by the policy, got %u",

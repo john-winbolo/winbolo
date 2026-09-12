@@ -236,7 +236,7 @@ int run_entity_removed_base_is_gone_from_gameplay(void) {
         /* The refuel: the base is the tank's own and the tank is short of
            shells, which is all a live base needs to hand some over. */
         gs->bs->item[0].owner = 0;
-        tankSetShells(tnk, 0);
+        tankSetShells(gs, tnk, 0);
         basesRefueling(gs, tnk, 1);
         UT_ASSERT_MSG(tankGetShells(tnk) == 0,
                       "a removed base refuelled a tank");

@@ -59,6 +59,7 @@ typedef struct GameSim GameSim;
 #include "sounddist.h"
 #include "util.h"
 #include "position_history.h"
+#include "sim_rules.h"
 #include "../../gui/lang.h"
 
 /* recordDamage targetKind */
@@ -236,6 +237,12 @@ struct GameSim {
     /* Game rules */
     gameType    game;
     bool        hiddenMines;
+
+    /* The gameplay numbers this sim runs on. Filled with the classic values
+     * at creation, so a sim that nobody has tuned plays the original game.
+     * Shared code reads sim->rules.<field> where it used to read a constant;
+     * a frontend reaches the client's copy through clientSimGetRules. */
+    SimRules    rules;
 
     /* Originating client input tick of the fire currently being applied,
      * set by the server right before the firing tankUpdate and read by

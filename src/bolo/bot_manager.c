@@ -831,6 +831,10 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
             tankGetModifiers(gs->tanks[bot->playerNum], &mods);
         }
         brainPathfinderSetAccelPct(bot->brain.pathfinder, mods.accel);
+        brainPathfinderSetMoveRules(bot->brain.pathfinder,
+                                    gs->rules.tank_brake_rate,
+                                    gs->rules.tank_decel_rate,
+                                    gs->rules.tank_min_move);
     }
 
     /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.

@@ -1215,21 +1215,21 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
       /* A destroyed tank draws nothing from the base. Its armour reads as a
        * real 0 rather than a wrapped value, so the capacity test below no
        * longer rejects it on its own. */
-      if (!tankIsDestroyed(tnk) && armour < TANK_FULL_ARMOUR && ((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
+      if (!tankIsDestroyed(tnk) && armour < sim->rules.tank_full_armour && ((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
         (*value)->item[baseNum].armour -= BASE_ARMOUR_GIVE;
         tankAddArmour(sim, tnk, BASE_ARMOUR_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
-      } else if (shellsAmount < TANK_FULL_SHELLS && ((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
+      } else if (shellsAmount < sim->rules.tank_full_shells && ((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
         (*value)->item[baseNum].shells -= BASE_SHELLS_GIVE;
         tankAddShells(sim, tnk, BASE_SHELLS_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_SHELL);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
-      } else if (mines < TANK_FULL_MINES && ((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
+      } else if (mines < sim->rules.tank_full_mines && ((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
         (*value)->item[baseNum].mines -= BASE_MINES_GIVE;
         tankAddMines(sim, tnk, BASE_MINES_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_MINE);

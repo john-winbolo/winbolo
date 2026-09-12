@@ -206,6 +206,16 @@ struct BrainPathfinder {
    * pathfinder nobody pushes to predicts for an unmodified tank. */
   uint8_t accel_pct;
 
+  /* The movement rules this sim runs on, pushed each think beside the
+   * modifier above. The stop predictor brakes and steps at these rather
+   * than at the numbers tank.c used to hold, so a bot on a sim whose rules
+   * were tuned predicts against the rates it will actually move at.
+   * brainPathfinderCreate seeds them with the classic values, so a
+   * pathfinder nobody pushes to predicts the classic game. */
+  float   brake_rate;
+  float   terrain_decel_rate;
+  int32_t min_move;
+
   /* ── Incremental Dijkstra slates ──
    * Each slate holds the full state of one Dijkstra search. The brain
    * can use them however it wants — typical pattern is double-buffered
@@ -233,6 +243,11 @@ void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag);
  * pushed to reads as an unmodified tank. Pushed each think by the bot
  * manager so the stop predictor brakes at the rate the engine will. */
 void brainPathfinderSetAccelPct(BrainPathfinder *pf, uint8_t pct);
+
+/* Push this sim's movement rules. Called each think beside the modifier
+ * above, from the one place that holds the sim. */
+void brainPathfinderSetMoveRules(BrainPathfinder *pf, float brakeRate,
+                                 float terrainDecelRate, int32_t minMove);
 
 /*
  * Eagerly allocate the per-slate working arrays for every slate AND touch

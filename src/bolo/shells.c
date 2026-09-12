@@ -1066,7 +1066,7 @@ void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BY
         if (amount > 0) {
           if (utilIsItemInRange(twx, twy, wx, wy, 512, &dummy) == TRUE) {
             amount--;
-            tankSetShells(tnk, amount);
+            tankSetShells(sim, tnk, amount);
             shouldAdd = TRUE;
           }
         }

@@ -183,7 +183,7 @@ typedef enum {
 struct tankObj {
   WORLD x;            /* World Co-ordinates */
   WORLD y;
-  BYTE armour;        /* Amount of armour in tank, 0..TANK_FULL_ARMOUR. Never wraps. */
+  BYTE armour;        /* Amount of armour in tank, 0..tank_full_armour. Never wraps. */
   bool destroyed;     /* TRUE once the tank has been destroyed. Set where damage
                        * exceeds the armour remaining, cleared on respawn. Ask
                        * tankIsDestroyed() rather than comparing armour: a live
@@ -208,7 +208,7 @@ struct tankObj {
   bool newTank;       /* Is this a new tank or not (ie just died */
   bool autoSlowdown;  /* Do we use autoslowdown or not */
   bool autoHideGunsight;  /* Auto show/hide of gunsight enabled/disabled */
-  BYTE justFired;         /* Tick countdown — set to JUST_FIRED_TICKS on shell fire, decremented each tankUpdate. Non-zero means "recently fired" and bypasses tree-hide for pillbox targeting. */
+  BYTE justFired;         /* Tick countdown — set to just_fired_ticks on shell fire, decremented each tankUpdate. Non-zero means "recently fired" and bypasses tree-hide for pillbox targeting. */
   BYTE tankHitCount;  /* Number of times a tank has been hit to determine if they are cheating */
   WORLD x_prev;       /* World Coordinates at last tick */
   WORLD y_prev;

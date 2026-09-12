@@ -716,7 +716,7 @@ int run_scenario_policy_can_build(void) {
                   "setup: the map must carry a deep sea tile");
 
     /* What an impossible square answers, with nothing registered. */
-    tankSetTrees(tnk, PC_TREES);
+    tankSetTrees(&sim->sim, tnk, PC_TREES);
     classicRefusal = pcRefusal(sim, LGM_ROAD_REQUEST, sx, sy);
     UT_ASSERT_MSG(classicRefusal == LGM_REFUSE_SQUARE,
                   "a road on deep sea gave refusal %u, expected %u",
@@ -744,7 +744,7 @@ int run_scenario_policy_can_build(void) {
 
     /* The acting path agrees with the question, spends nothing and leaves
        the man where he was. */
-    tankSetTrees(tnk, PC_TREES);
+    tankSetTrees(&sim->sim, tnk, PC_TREES);
     pcOrder(sim, LGM_ROAD_REQUEST, gx, gy);
     UT_ASSERT_MSG(tankGetTrees(tnk) == PC_TREES,
                   "a refused order spent wood: %u left of %u",
@@ -975,7 +975,7 @@ int run_scenario_policy_combat_null_is_classic(void) {
     /* A build order on a square that can take it still can. */
     UT_ASSERT_MSG(pcFindTile(sim, GRASS, &gx, &gy),
                   "setup: the map must carry a plain grass tile");
-    tankSetTrees(tnk, PC_TREES);
+    tankSetTrees(&sim->sim, tnk, PC_TREES);
     UT_ASSERT_MSG(pcAsk(sim, LGM_ROAD_REQUEST, gx, gy),
                   "a road on grass with wood must still be valid");
 

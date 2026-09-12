@@ -128,7 +128,7 @@ typedef struct {
  * and the brain's "dead" read. Both bits go to every recipient, unlike armour,
  * which only the owning player sees — so this byte, not armour, is how a
  * client learns that any tank is destroyed. armour itself is a plain
- * 0..TANK_FULL_ARMOUR value and never carries a death sentinel. */
+ * 0..tank_full_armour value and never carries a death sentinel. */
 #define TANK_STATUS_ON_BOAT    0x01
 #define TANK_STATUS_DEAD       0x10
 #define TANK_STATUS_DESTROYED  0x20
@@ -156,7 +156,7 @@ typedef struct {
     uint8_t  lgmMY;
     uint8_t  lgmPX;
     uint8_t  lgmPY;
-    uint8_t  armour;       /* 0..TANK_FULL_ARMOUR, owning player only; death is in tankStatus */
+    uint8_t  armour;       /* 0..tank_full_armour, owning player only; death is in tankStatus */
     uint8_t  shells;       /* Only meaningful for the owning player */
     uint8_t  mines;        /* Only meaningful for the owning player */
     uint8_t  trees;        /* Only meaningful for the owning player */

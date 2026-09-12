@@ -571,7 +571,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             ent->allegiance = gymGetAllegiance(p, selfPlayer, alliesBits);
             ent->direction = (float)tankGetAngle(tk) / 256.0f;
             ent->speed = (float)tankGetSpeed(tk) / 128.0f;
-            ent->strength = tankDead ? 0.0f : (float)armour / 40.0f;
+            ent->strength = tankDead ? 0.0f : (float)armour / (float)gs->rules.tank_full_armour;
             ent->flags = 0;
             if (tankIsOnBoat(tk)) ent->flags |= WBGYM_FLAG_IN_BOAT;
             if (p == selfPlayer) ent->flags |= WBGYM_FLAG_IS_SELF;
@@ -698,14 +698,14 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         unsigned armor = dead ? 0 : (unsigned)bi.armour;
         float dir_rad = (float)bi.direction * (2.0f * 3.14159265f / 256.0f);
 
-        obs->scalar[0]  = (float)armor / 40.0f;
-        obs->scalar[1]  = (float)bi.shells / 40.0f;
-        obs->scalar[2]  = (float)bi.mines / 40.0f;
-        obs->scalar[3]  = (float)bi.trees / 40.0f;
+        obs->scalar[0]  = (float)armor / (float)gs->rules.tank_full_armour;
+        obs->scalar[1]  = (float)bi.shells / (float)gs->rules.tank_full_shells;
+        obs->scalar[2]  = (float)bi.mines / (float)gs->rules.tank_full_mines;
+        obs->scalar[3]  = (float)bi.trees / (float)gs->rules.tank_full_trees;
         obs->scalar[4]  = (float)bi.speed / 128.0f;
         obs->scalar[5]  = sinf(dir_rad);
         obs->scalar[6]  = cosf(dir_rad);
-        obs->scalar[7]  = (float)bi.reload / 15.0f;
+        obs->scalar[7]  = (float)bi.reload / (float)gs->rules.tank_reload_ticks;
         obs->scalar[8]  = bi.inboat ? 1.0f : 0.0f;
         obs->scalar[9]  = bi.carriedpills > 0 ? 1.0f : 0.0f;
         obs->scalar[10] = (float)bi.carriedpills / 16.0f;
@@ -770,7 +770,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         obs->scalar[24] = (float)bi.manobstructed / 2.0f;
 
         /* death_wait */
-        obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) / 255.0f;
+        obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) /
+                          (float)gs->rules.tank_death_ticks;
     }
 
     /* ---- LGM state ---- */

@@ -230,6 +230,9 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
   cs->pendingAllianceRequestFrom = 0xFF;
+  /* The classic gameplay numbers. A zeroed table would make every rule 0, so
+   * this runs before anything can read one. */
+  simRulesClassic(&cs->sim.rules);
   /* No view state reported yet — the first display tick of the session sends
    * one. The memset above would otherwise read as "tank view already sent". */
   cs->lastSentViewKind = 0xFF;
@@ -611,7 +614,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
     clientSimAddPredictedShellAt(cs, preX, preY, preAngle, &MY_TANK(cs), pkt->tick);
     /* Update predicted tank state to match what the server will do */
     tankSetReload(&MY_TANK(cs), tankReloadTicks(&cs->sim, MY_TANK(cs)));
-    tankSetShells(&MY_TANK(cs), tankGetShells(&MY_TANK(cs)) - 1);
+    tankSetShells(&cs->sim, &MY_TANK(cs), tankGetShells(&MY_TANK(cs)) - 1);
   }
 
   /* Advance existing predicted shells */
@@ -1060,7 +1063,7 @@ static void overviewMapTick(ClientSim *cs) {
    * by the update after it. Reporting a full wait across that gap holds the
    * block, where a wait of 0 would close it and reopen it a tick later. */
   if (inSlot == TRUE && deathWait <= 0) {
-    deathWait = TANK_DEATH_WAIT;
+    deathWait = cs->sim.rules.tank_death_ticks;
   }
 
   /* A map install armed this: stamp the whole map dimmed before the live
@@ -3781,6 +3784,13 @@ BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {
 /* Local tank stat accessors. */
 void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
   tankGetStats(&MY_TANK(cs), shellsAmount, minesAmount, armourAmount, treesAmount);
+}
+
+void clientSimGetTankFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
+  if (shellsAmount != NULL) *shellsAmount = (BYTE) cs->sim.rules.tank_full_shells;
+  if (minesAmount  != NULL) *minesAmount  = (BYTE) cs->sim.rules.tank_full_mines;
+  if (armourAmount != NULL) *armourAmount = (BYTE) cs->sim.rules.tank_full_armour;
+  if (treesAmount  != NULL) *treesAmount  = (BYTE) cs->sim.rules.tank_full_trees;
 }
 
 void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {

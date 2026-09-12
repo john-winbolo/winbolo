@@ -142,13 +142,13 @@ static ScnOpResult scenarioOpTankSetStocks(ServerSim *sim,
     }
 
     shells = scenarioStockTarget(p->mode, p->shells, tankGetShells(t),
-                                 TANK_FULL_SHELLS, &bad);
+                                 sim->sim.rules.tank_full_shells, &bad);
     mines  = scenarioStockTarget(p->mode, p->mines,  tankGetMines(t),
-                                 TANK_FULL_MINES,  &bad);
+                                 sim->sim.rules.tank_full_mines,  &bad);
     armour = scenarioStockTarget(p->mode, p->armour, tankGetArmour(t),
-                                 TANK_FULL_ARMOUR, &bad);
+                                 sim->sim.rules.tank_full_armour, &bad);
     trees  = scenarioStockTarget(p->mode, p->trees,  tankGetTrees(t),
-                                 TANK_FULL_TREES,  &bad);
+                                 sim->sim.rules.tank_full_trees,  &bad);
     if (bad) {
         return SCN_OP_RANGE;
     }
@@ -160,16 +160,16 @@ static ScnOpResult scenarioOpTankSetStocks(ServerSim *sim,
     }
 
     if (shells >= 0) {
-        tankSetShells(t, (BYTE)shells);
+        tankSetShells(&sim->sim, t, (BYTE)shells);
     }
     if (mines >= 0) {
-        tankSetMines(t, (BYTE)mines);
+        tankSetMines(&sim->sim, t, (BYTE)mines);
     }
     if (armour >= 0) {
         tankSetArmour(t, (BYTE)armour);
     }
     if (trees >= 0) {
-        tankSetTrees(t, (BYTE)trees);
+        tankSetTrees(&sim->sim, t, (BYTE)trees);
     }
     return SCN_OP_OK;
 }
@@ -645,14 +645,14 @@ static ScnOpResult scenarioOpLgmSetCarried(ServerSim *sim,
        Asking for more is a mistake worth reporting rather than clamping, the
        same answer the tank's own stock op gives. Both are asked before either
        is written, so a bad pair leaves him as he was. */
-    if (p->trees != SCN_NONE && p->trees > TANK_FULL_TREES) {
+    if (p->trees != SCN_NONE && p->trees > sim->sim.rules.tank_full_trees) {
         return SCN_OP_RANGE;
     }
-    if (p->mines != SCN_NONE && p->mines > TANK_FULL_MINES) {
+    if (p->mines != SCN_NONE && p->mines > sim->sim.rules.tank_full_mines) {
         return SCN_OP_RANGE;
     }
 
-    lgmSetCarried(l,
+    lgmSetCarried(&sim->sim, l,
                   (p->trees == SCN_NONE) ? (*l)->numTrees : p->trees,
                   (p->mines == SCN_NONE) ? (*l)->numMines : p->mines);
     return SCN_OP_OK;
