@@ -572,6 +572,11 @@ void transportUdpServerDrainPendingRemovals(struct ServerSim *sim);
 /* Returns true if a dedicated recv thread is running. */
 bool transportUdpServerHasRecvThread(void);
 
+/* Datagrams the recv thread has queued that the next drain will consume.
+ * Zero means the thread has nothing waiting — either none arrived or it
+ * has not been scheduled yet, which the caller cannot tell apart. */
+int transportUdpServerRecvQueuePending(void);
+
 /* Drain sim events into per-client reliable queues.
  * Call after each serverSimTick() so events aren't lost when
  * multiple ticks run before transportUdpServerSend(). */
