@@ -65,6 +65,31 @@ typedef struct {
     uint32_t ackedSeq;   /* client confirmed up to here (exclusive) */
 } ClientEventQueue;
 
+/* Held control events for one client (udp_server_control.c).
+ *
+ * The reliable control channel holds CHANNEL_CONTROL_WINDOW unacked events,
+ * and that window frees only when an ack ARRIVES — which cannot happen
+ * inside the call stack that is publishing, because the same thread reads
+ * the socket. A lobby commit that clears the enemy team and seeds ten bots
+ * emits about sixty events in one stack, so the window filled and the server
+ * disconnected the client. These bytes are the overflow buffer: a full
+ * window becomes backpressure, exactly as it already is for the map channel,
+ * and the next tick sends what would not fit.
+ *
+ * A byte ring, not fixed slots: a control message may be up to
+ * CHANNEL_CONTROL_SEG (1024) bytes, but most are well under a hundred, so
+ * fixed slots would waste nearly all of the space. Each entry is stored as
+ * [len u16 big-endian][body], and head/tail wrap. */
+#define CONTROL_HOLD_BYTES 16384
+
+typedef struct {
+    uint8_t  buf[CONTROL_HOLD_BYTES];
+    uint32_t head;    /* next byte to send */
+    uint32_t tail;    /* next byte to write */
+    uint32_t used;    /* bytes held, including the length prefixes */
+    uint32_t count;   /* events held */
+} ControlHoldQueue;
+
 /* Check if a reliable event queue has space. Returns false if the ring
  * buffer would wrap and overwrite unacked entries. */
 static inline bool eventQueueHasSpace(const ClientEventQueue *q) {

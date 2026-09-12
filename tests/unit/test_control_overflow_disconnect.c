@@ -1,25 +1,34 @@
 /*
- * Regression: a control-event queue overflow detected inside a publish must
- * DEFER the disconnect, not run it synchronously.
+ * The reliable control channel under a burst, in two parts.
  *
- * serverSimPublishControl fans an event out to each subscriber's deliver
- * callback while sim->publishing is true. The server's deliver callback
- * (udpClientDeliverControl) disconnects a client whose reliable control channel
- * (CHANNEL_CONTROL) window is full — but serverDisconnectClient broadcasts
- * "X has left." and the paired serverSimRemovePlayer fans out PLAYER_LEFT, and
- * both publish. Doing that from inside the deliver callback re-enters
- * serverSimPublishControl and trips its `assert(!publishing)` reentrancy guard
- * (and, under NDEBUG, corrupts the in-flight fan-out). The fix defers the whole
- * disconnect to transportUdpServerDrainPendingRemovals, which runs outside any
- * publish.
+ * 1. A burst bigger than the send window must NOT cost the client its
+ *    connection. CHANNEL_CONTROL_WINDOW is 64 unacked events, and that window
+ *    frees only when an ack ARRIVES — which cannot happen inside the call
+ *    stack that is publishing, because the same thread reads the socket. A
+ *    lobby commit that clears the enemy team and seeds ten bots emits about
+ *    sixty events in one stack, and that disconnected the host. Events the
+ *    window refuses now wait in the per-client hold buffer
+ *    (ControlHoldQueue) and go out on later ticks, oldest first — the same
+ *    backpressure the map channel already had.
  *
- * The test drives the real UDP server through the loopback harness: a client
- * joins, then — without ever acking (we don't pump the client during the
- * flood) — the test publishes more than CHANNEL_CONTROL_WINDOW (64) control
- * events at it. The channelSend that fills the window fails inside its own
- * fan-out: pre-fix that aborts the process on the reentrancy assert; post-fix
- * it defers, and the next server tick's drain disconnects the client cleanly.
- * Found by fuzz_server_dispatch once the JOIN gate was opened.
+ * 2. A client that never acks at all must still be reaped, or the hold buffer
+ *    would grow without bound. Past its capacity the old last resort stands:
+ *    the disconnect is DEFERRED, never run inside the publish.
+ *
+ * Why deferring matters, and what part 2 still pins: serverSimPublishControl
+ * fans an event out to each subscriber while sim->publishing is true.
+ * serverDisconnectClient broadcasts "X has left." and serverSimRemovePlayer
+ * fans out PLAYER_LEFT — both publish. Running that from inside the deliver
+ * callback re-enters serverSimPublishControl and trips its reentrancy guard
+ * (and corrupts the in-flight fan-out under NDEBUG). The teardown is deferred
+ * to transportUdpServerDrainPendingRemovals, outside any publish. Reaching
+ * the end of either flood below at all means no synchronous disconnect
+ * re-entered the publish. Found by fuzz_server_dispatch.
+ *
+ * Sizing, so the two floods stay meaningful if the buffer is resized: the
+ * probe text is 14 bytes, so the body is 16, the message 19, and one hold
+ * entry 21 bytes. CONTROL_HOLD_BYTES (16384) therefore holds about 780 of
+ * them. BURST_EVENTS sits well under that; FLOOD_EVENTS well over.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -36,26 +45,47 @@
 #include "test_harness.h"
 #include "loopback_harness.h"
 
-#define JOIN_MAX        2000  /* join + map download on the clean path */
-#define OVERFLOW_EVENTS 200   /* > CHANNEL_CONTROL_WINDOW (64), with margin */
-#define DRAIN_PUMPS     4     /* ticks for the deferred drain to remove the slot */
+#define JOIN_MAX       2000  /* join + map download on the clean path */
+#define BURST_EVENTS    200  /* > the 64-event window, « the hold buffer */
+#define FLOOD_EVENTS   2000  /* > the hold buffer's ~780 entries */
+#define DRAIN_PUMPS       4  /* ticks for the deferred drain to remove the slot */
+#define CATCHUP_PUMPS    60  /* ticks for the held burst to reach the client */
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
 }
 
-int run_control_overflow_defers_disconnect(void) {
+/* Publish `n` server-text events at the connected client without pumping it,
+ * so no ack can arrive and the window only fills. The tick mutex is held the
+ * way serverInstanceTick holds it when it publishes. */
+static void flood(LoopbackHarness *h, int n) {
+    ControlEvent evt;
+    int i;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SERVER_TEXT;
+    SDL_strlcpy(evt.u.serverText.text, "overflow probe",
+                sizeof(evt.u.serverText.text));
+    evt.u.serverText.destPlayer = 0xFF;  /* every client, not slot 0 alone */
+    threadsWaitForMutex();
+    for (i = 0; i < n; i++) {
+        serverSimPublishControl(h->sim, &evt);
+    }
+    threadsReleaseMutex();
+}
+
+/* ---- 1. A burst past the window is held, not fatal. ---- */
+int run_control_overflow_holds_burst(void) {
     LoopbackHarness h;
-    ControlEvent    evt;
-    int             numBefore;
-    int             i;
+    int numBefore;
+    int connectedAt;
+    int i;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Overflow", /*lobbyMode*/ false,
                                        /*impairSpec*/ NULL, /*seed*/ 0xC0FFEEu),
                   "harness start failed");
 
-    int connectedAt = loopbackHarnessPumpUntil(&h, JOIN_MAX, pred_connected, NULL);
+    connectedAt = loopbackHarnessPumpUntil(&h, JOIN_MAX, pred_connected, NULL);
     if (connectedAt < 0) {
         loopbackHarnessStop(&h);
         UT_FAIL("client never reached CONNECTED within %d pumps", JOIN_MAX);
@@ -63,34 +93,58 @@ int run_control_overflow_defers_disconnect(void) {
     numBefore = (int)serverSimGetNumPlayers(h.sim);
     UT_ASSERT_MSG(numBefore >= 1, "server has no connected player after join");
 
-    /* Flood the connected client's reliable control channel. We never pump the
-     * client during the flood, so its acks never arrive and the send window only
-     * fills; the publish whose channelSend fills CHANNEL_CONTROL_WINDOW fails
-     * inside its own fan-out — the reentrancy this test pins. Hold the tick mutex
-     * as serverInstanceTick would when it publishes. Pre-fix, one of these
-     * publishes aborts the process on assert(!publishing). */
-    memset(&evt, 0, sizeof(evt));
-    evt.type = CTRL_SERVER_TEXT;
-    SDL_strlcpy(evt.u.serverText.text, "overflow probe",
-                sizeof(evt.u.serverText.text));
-    evt.u.serverText.destPlayer = 0xFF;  /* every client, not slot 0 alone */
+    flood(&h, BURST_EVENTS);
 
-    threadsWaitForMutex();
-    for (i = 0; i < OVERFLOW_EVENTS; i++) {
-        serverSimPublishControl(h.sim, &evt);
+    /* The burst is three times the window. Pre-hold-buffer this disconnected
+     * the client; now it must survive, and the held remainder must go out as
+     * the client's acks free the window. */
+    for (i = 0; i < CATCHUP_PUMPS; i++) {
+        loopbackHarnessPump(&h);
     }
-    threadsReleaseMutex();
 
-    /* Reaching here at all means no synchronous disconnect re-entered the
-     * publish. Now let the server run: serverInstanceTick drains the deferred
-     * overflow-disconnect (outside any publish) and removes the slot. */
+    UT_ASSERT_MSG((int)serverSimGetNumPlayers(h.sim) == numBefore,
+                  "a %d-event burst must not disconnect anyone (numPlayers "
+                  "%d, was %d)", BURST_EVENTS,
+                  (int)serverSimGetNumPlayers(h.sim), numBefore);
+    UT_ASSERT_MSG(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED,
+                  "client must still be connected after the held burst");
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ---- 2. A client that never acks is still reaped, off the publish path. ---- */
+int run_control_overflow_defers_disconnect(void) {
+    LoopbackHarness h;
+    int numBefore;
+    int connectedAt;
+    int i;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Overflow", /*lobbyMode*/ false,
+                                       /*impairSpec*/ NULL, /*seed*/ 0xC0FFEEu),
+                  "harness start failed");
+
+    connectedAt = loopbackHarnessPumpUntil(&h, JOIN_MAX, pred_connected, NULL);
+    if (connectedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", JOIN_MAX);
+    }
+    numBefore = (int)serverSimGetNumPlayers(h.sim);
+    UT_ASSERT_MSG(numBefore >= 1, "server has no connected player after join");
+
+    /* Past the hold buffer as well: the client is not acking at all. */
+    flood(&h, FLOOD_EVENTS);
+
+    /* Reaching here means no synchronous disconnect re-entered the publish.
+     * The next ticks run the deferred drain, outside any publish. */
     for (i = 0; i < DRAIN_PUMPS; i++) {
         loopbackHarnessPump(&h);
     }
 
     UT_ASSERT_MSG((int)serverSimGetNumPlayers(h.sim) < numBefore,
-                  "overflowed client was not disconnected by the deferred drain "
-                  "(numPlayers stayed %d)", (int)serverSimGetNumPlayers(h.sim));
+                  "a client that filled the hold buffer must be disconnected "
+                  "by the deferred drain (numPlayers stayed %d)",
+                  (int)serverSimGetNumPlayers(h.sim));
 
     loopbackHarnessStop(&h);
     return 0;

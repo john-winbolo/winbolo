@@ -235,6 +235,15 @@ typedef struct UdpServerState {
      * Game events ride CHANNEL_GAME directly; there is no game-event queue. */
     ClientEventQueue mapEventQueues[MAX_TANKS];
 
+    /* Per-client held control events (ControlHoldQueue). Anything the
+     * reliable control window refuses waits here and goes out on a later
+     * tick, oldest first, instead of costing the client its connection. */
+    ControlHoldQueue controlHold[MAX_TANKS];
+
+    /* Set while a slot is holding control events, so the stall is one log
+     * line per episode rather than one per tick spent catching up. */
+    bool controlChannelStalled[MAX_TANKS];
+
     /* Cumulative count of EVENT_MAP_CHANGE events dropped per slot because the
      * map-event queue was full (client too far behind on its acks). A drop
      * leaves the slot's copy of the terrain unwritten, so the catch-up sweep
@@ -547,6 +556,11 @@ void serverSendServerMessage(struct ServerSim *sim, langid id, int argCount,
  * mpDiagCtrlName. */
 const char *mpDiagCtrlName(int type);
 void transportUdpServerFlushChannel(int clientIdx);
+/* Send this client's held control events, oldest first, until the reliable
+ * window refuses one. Runs once per tick per connected client from both
+ * carriers: the lobby path in transportUdpServerCheckTimeouts and the
+ * snapshot path in serverSendSnapshot. */
+void transportUdpServerDrainControlHold(int clientIdx);
 void udpClientDeliverControl(void *ctx, const ControlEvent *evt);
 
 /* Map movement in both directions between the transport and one client: the

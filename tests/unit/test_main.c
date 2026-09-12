@@ -792,6 +792,7 @@ static const UnitTestEntry s_tests[] = {
     { "client_slot_reassign_back_to_zero",       run_client_slot_reassign_back_to_zero       },
     { "players_oob_index_safe",                  run_players_oob_index_safe                  },
     { "control_oob_player_dropped",              run_control_oob_player_dropped              },
+    { "control_overflow_holds_burst",              run_control_overflow_holds_burst              },
     { "control_overflow_defers_disconnect",      run_control_overflow_defers_disconnect      },
     { "shells_survive_cleared_lgm_slot",         run_shells_survive_cleared_lgm_slot         },
     { "ping_kick_defers_teardown",               run_ping_kick_defers_teardown               },

@@ -110,6 +110,72 @@ void transportUdpServerFlushChannel(int clientIdx) {
  * tail handles running).  The controlSyncInProgress flag suppresses
  * the immediate-send during a serverSimRegisterSubscriber replay so
  * the burst lands in one carrier datagram rather than one per event. */
+/* Put one encoded control message at the back of this client's hold queue.
+ * FALSE when the queue is full, which means the client has stopped acking
+ * altogether — the caller then falls back to the deferred disconnect. */
+static bool controlHoldPush(int idx, const uint8_t *msg, uint16_t len) {
+    ControlHoldQueue *q = &udpServer.controlHold[idx];
+    uint32_t need = (uint32_t)len + 2u;
+    uint32_t i;
+
+    if (need > (uint32_t)CONTROL_HOLD_BYTES - q->used) return false;
+    q->buf[q->tail] = (uint8_t)(len >> 8);
+    q->tail = (q->tail + 1u) % CONTROL_HOLD_BYTES;
+    q->buf[q->tail] = (uint8_t)(len & 0xFFu);
+    q->tail = (q->tail + 1u) % CONTROL_HOLD_BYTES;
+    for (i = 0; i < len; i++) {
+        q->buf[q->tail] = msg[i];
+        q->tail = (q->tail + 1u) % CONTROL_HOLD_BYTES;
+    }
+    q->used += need;
+    q->count++;
+    return true;
+}
+
+void transportUdpServerDrainControlHold(int clientIdx) {
+    ControlHoldQueue *q;
+    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return;
+    if (!udpServer.clients[clientIdx].connected) return;
+    q = &udpServer.controlHold[clientIdx];
+
+    while (q->count > 0) {
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        uint32_t h = q->head;
+        uint32_t i;
+        uint16_t len;
+
+        len = (uint16_t)((uint16_t)q->buf[h] << 8);
+        h = (h + 1u) % CONTROL_HOLD_BYTES;
+        len = (uint16_t)(len | q->buf[h]);
+        h = (h + 1u) % CONTROL_HOLD_BYTES;
+        if (len == 0 || len > sizeof(msg)) {
+            /* Cannot happen: push takes only what the encoder produced. Drop
+             * the entry rather than spin on it for the life of the server. */
+            q->head = h;
+            q->used -= 2u;
+            q->count--;
+            continue;
+        }
+        for (i = 0; i < len; i++) {
+            msg[i] = q->buf[h];
+            h = (h + 1u) % CONTROL_HOLD_BYTES;
+        }
+        if (!channelSend(&udpServer.channelMux[clientIdx], CHANNEL_CONTROL,
+                         msg, len)) {
+            return;      /* window still full — the rest waits for an ack */
+        }
+        q->head = h;
+        q->used -= (uint32_t)len + 2u;
+        q->count--;
+    }
+
+    if (udpServer.controlChannelStalled[clientIdx]) {
+        udpServer.controlChannelStalled[clientIdx] = false;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "control channel caught up for slot %d", clientIdx);
+    }
+}
+
 void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     UdpServerClient *client = (UdpServerClient *)ctx;
     int idx;
@@ -289,17 +355,42 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         }
         msg[0] = (uint8_t)evt->type;
         packU16(msg + 1, (uint16_t)bodyLen);
-        if (!channelSend(&udpServer.channelMux[idx], CHANNEL_CONTROL,
-                         msg, (uint16_t)(3 + bodyLen))) {
-            if (!udpServer.pendingSimRemove[idx]) {
-                WB_LOG_ERROR(WB_LOG_CAT_NET,
-                             "control channel overflow for slot %d, deferring disconnect",
-                             idx);
-                mpDiagLog("[srv] OVERFLOW slot=%d type=%s -> deferring disconnect",
-                          idx, mpDiagCtrlName((int)evt->type));
-                udpServer.pendingSimRemove[idx] = true;
+        {
+            /* The control channel now has the backlog treatment the map
+             * channel has: a full window is backpressure, not a disconnect.
+             * ORDER FIRST — while anything is held for this slot, every new
+             * event goes behind it, or events would arrive out of order. */
+            uint16_t msgLen = (uint16_t)(3 + bodyLen);
+            ControlHoldQueue *q = &udpServer.controlHold[idx];
+            bool sent = false;
+
+            if (q->count == 0) {
+                sent = channelSend(&udpServer.channelMux[idx], CHANNEL_CONTROL,
+                                   msg, msgLen);
             }
-            return;
+            if (!sent) {
+                if (!controlHoldPush(idx, msg, msgLen)) {
+                    /* The hold buffer is full as well, so this client has
+                     * stopped acking entirely. Keep the old last resort: the
+                     * disconnect is deferred off this publish path. */
+                    if (!udpServer.pendingSimRemove[idx]) {
+                        WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                     "control hold full for slot %d, deferring disconnect",
+                                     idx);
+                        mpDiagLog("[srv] OVERFLOW slot=%d type=%s -> deferring disconnect",
+                                  idx, mpDiagCtrlName((int)evt->type));
+                        udpServer.pendingSimRemove[idx] = true;
+                    }
+                    return;
+                }
+                if (!udpServer.controlChannelStalled[idx]) {
+                    udpServer.controlChannelStalled[idx] = true;
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                                "control channel window full for slot %d, holding "
+                                "%u event(s) until acks free it",
+                                idx, (unsigned)q->count);
+                }
+            }
         }
         mpDiagLog("[srv] CTRL->ch2 slot=%d type=%s bodyLen=%u",
                   idx, mpDiagCtrlName((int)evt->type), (unsigned)bodyLen);

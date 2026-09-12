@@ -1772,6 +1772,7 @@ int run_control_oob_player_dropped(void);
  * (serverDisconnectClient + serverSimRemovePlayer both publish) rather than run
  * it synchronously and re-enter serverSimPublishControl
  * (test_control_overflow_disconnect.c). */
+int run_control_overflow_holds_burst(void);
 int run_control_overflow_defers_disconnect(void);
 
 /* A player removed mid-sim-frame must not invalidate the arrays simRunHalfStep

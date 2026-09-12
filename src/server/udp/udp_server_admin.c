@@ -346,6 +346,12 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     /* Reset the channel mux so a re-using slot starts fresh. */
     channelMuxInit(&udpServer.channelMux[idx]);
     udpServer.channelFramesRx[idx] = 0;
+    /* Drop anything still held for the slot with the mux it belonged to. */
+    udpServer.controlHold[idx].head  = 0;
+    udpServer.controlHold[idx].tail  = 0;
+    udpServer.controlHold[idx].used  = 0;
+    udpServer.controlHold[idx].count = 0;
+    udpServer.controlChannelStalled[idx] = false;
     udpServer.mapGen[idx] = 0;
     bulkSenderReset(&udpServer.bulkSend[idx]);
     bulkReceiverInit(&udpServer.bulkRecvUp[idx]);

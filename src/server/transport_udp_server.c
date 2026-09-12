@@ -869,6 +869,10 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
         if (serverSimGetState(sim) != serverStateRunning) {
             int frames;
             serverServiceMapTransfer(sim, i);
+            /* Anything the control window refused earlier goes out now, before
+             * the frame below carries it. This is the lobby carrier; the
+             * snapshot path drains the same queue while the game runs. */
+            transportUdpServerDrainControlHold(i);
             bulkSenderPump(&udpServer.bulkSend[i], &udpServer.channelMux[i]);
             channelTick(&udpServer.channelMux[i], udpServer.tickCount,
                         udpServer.clients[i].pingMs);

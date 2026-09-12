@@ -338,6 +338,11 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         }
     }
 
+    /* Same treatment for held CONTROL events: send what the window refused
+     * on an earlier tick, oldest first, before the channel frame is built
+     * below. */
+    transportUdpServerDrainControlHold(clientIdx);
+
     /* Control events ride reliable channel 2 (CHANNEL_CONTROL), carried by the
      * channel-frame trailer appended below — not this snapshot tail. */
 

@@ -1167,6 +1167,12 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
      * slot does not inherit the previous occupant's drops. */
     udpServer.mapEventQueueDrops[slot] = 0;
     udpServer.mapChannelStalled[slot] = false;
+    /* A held control event must never reach the next occupant of a slot. */
+    udpServer.controlHold[slot].head  = 0;
+    udpServer.controlHold[slot].tail  = 0;
+    udpServer.controlHold[slot].used  = 0;
+    udpServer.controlHold[slot].count = 0;
+    udpServer.controlChannelStalled[slot] = false;
     udpServer.mapGen[slot] = 0;
 
     /* Bring up this slot's parallel channel mux alongside the queues. */
