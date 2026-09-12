@@ -141,13 +141,15 @@ static inline langid pingKindNameId(unsigned char kind) {
 /* What a shortened name ends in. U+2026 HORIZONTAL ELLIPSIS, spelled out in
  * UTF-8 so this header needs no wide literals.
  *
- * The ASCII form is for a renderer whose font has no U+2026 to draw: the
- * marker names use the Sarasa faces, which carry it, but the edge bars are
- * drawn with the ImGui atlas, and that is built over Latin, Cyrillic, Greek
- * and Vietnamese only (imguiBoloGlyphRanges in src/gui/imgui_fonts.h) — a
- * U+2026 there would come out as a missing-glyph box. */
-#define PING_NAME_ELLIPSIS       "\xE2\x80\xA6"
-#define PING_NAME_ELLIPSIS_ASCII "..."
+ * Every renderer can draw it: the marker names use the Sarasa faces, which
+ * carry the glyph, and the edge bars draw from the ImGui atlas, which has it
+ * added by name (imguiBoloGlyphRanges in src/gui/imgui_fonts.h) because it
+ * sits in General Punctuation, outside the ranges that atlas is built over.
+ * An ellipsis an atlas has no glyph for would come out as a missing-glyph
+ * box, which is what the `ellipsis` argument to pingDisplayName below is for
+ * — a caller whose font cannot manage U+2026 passes its own. No renderer
+ * needs that today. */
+#define PING_NAME_ELLIPSIS "\xE2\x80\xA6"
 
 /* How a ping's name is drawn against the tank labels it borrows its face and
  * its black shadow from. Both renderers read these: the world marker, which
@@ -169,8 +171,8 @@ static inline langid pingKindNameId(unsigned char kind) {
 #define PING_NAME_GREY  225
 
 /* A buffer this big always holds a shortened name whole: every character kept
- * at UTF-8's maximum four bytes, the longer of the two ellipses, and the
- * terminator. */
+ * at UTF-8's maximum four bytes, the ellipsis's three, and the terminator. A
+ * caller passing its own ellipsis longer than that sizes its own buffer. */
 #define PING_NAME_DISPLAY_MAX (PING_NAME_MAX_CHARS * 4 + 3 + 1)
 
 /*********************************************************
