@@ -453,9 +453,144 @@ typedef struct {
 
 /* ── Rules ─────────────────────────────────────────────────────── */
 
+/* Every SimRules field, in the order the struct declares them. The index
+ * enum below is generated from this one list, and so is the arm's write
+ * table in server_sim_scenario.c, so an index and a field cannot drift
+ * apart by hand: there is one list and two readings of it.
+ *
+ * What holds the list against the struct is in server_sim_scenario.c,
+ * which can see both: a static assertion that the table is exactly
+ * SCN_RULE_COUNT fields wide, so a field added to SimRules without a line
+ * here does not compile, and the offsets case in
+ * tests/unit/test_scenario_rule_arms.c, which walks the list against the
+ * struct and fails on a line out of order or a field named twice.
+ *
+ * A field's name is the name a scenario uses for it (sim_rules.h), so the
+ * enumerator carries that name verbatim rather than an upper-case
+ * respelling of it: one spelling, and no second column to get wrong. */
+#define SCN_RULE_LIST(X)                                                     \
+    /* Tank */                                                               \
+    X(tank_reload_ticks)                                                     \
+    X(tank_full_shells)                                                      \
+    X(tank_full_mines)                                                       \
+    X(tank_full_trees)                                                       \
+    X(tank_full_armour)                                                      \
+    X(tank_death_ticks)                                                      \
+    X(tank_water_ticks)                                                      \
+    X(shell_damage)                                                          \
+    X(mine_damage)                                                           \
+    X(just_fired_ticks)                                                      \
+    X(gunsight_min)                                                          \
+    X(gunsight_max)                                                          \
+    X(tank_accel_rate)                                                       \
+    X(tank_decel_rate)                                                       \
+    X(tank_brake_rate)                                                       \
+    X(tank_autoslow_rate)                                                    \
+    X(tank_min_move)                                                         \
+    /* Terrain: the cap a tank's speed clamps to */                          \
+    X(speed_road)                                                            \
+    X(speed_grass)                                                           \
+    X(speed_forest)                                                          \
+    X(speed_river)                                                           \
+    X(speed_swamp)                                                           \
+    X(speed_crater)                                                          \
+    X(speed_rubble)                                                          \
+    X(speed_boat)                                                            \
+    X(speed_deep_sea)                                                        \
+    X(speed_refuel_base)                                                     \
+    /* Terrain: bradians turned per tick */                                  \
+    X(turn_road)                                                             \
+    X(turn_grass)                                                            \
+    X(turn_forest)                                                           \
+    X(turn_river)                                                            \
+    X(turn_swamp)                                                            \
+    X(turn_crater)                                                           \
+    X(turn_rubble)                                                           \
+    X(turn_boat)                                                             \
+    X(turn_deep_sea)                                                         \
+    X(turn_refuel_base)                                                      \
+    /* Shells */                                                             \
+    X(shell_life)                                                            \
+    X(shell_speed)                                                           \
+    X(shell_start_add)                                                       \
+    /* Builder */                                                            \
+    X(lgm_build_ticks)                                                       \
+    X(lgm_cost_road)                                                         \
+    X(lgm_cost_building)                                                     \
+    X(lgm_cost_repair_building)                                              \
+    X(lgm_cost_pill_repair)                                                  \
+    X(lgm_cost_boat)                                                         \
+    X(lgm_cost_pill_new)                                                     \
+    X(lgm_cost_mine)                                                         \
+    X(lgm_pill_repair_load)                                                  \
+    X(lgm_gather_trees)                                                      \
+    X(lgm_helicopter_speed)                                                  \
+    /* Pillbox */                                                            \
+    X(pill_max_armour)                                                       \
+    X(pill_attack_ticks)                                                     \
+    X(pill_attack_min_ticks)                                                 \
+    X(pill_cooldown_ticks)                                                   \
+    X(pill_repair_amount)                                                    \
+    X(pill_range)                                                            \
+    /* Base */                                                               \
+    X(base_full_armour)                                                      \
+    X(base_full_shells)                                                      \
+    X(base_full_mines)                                                       \
+    X(base_capture_armour)                                                   \
+    X(base_hit_armour)                                                       \
+    X(base_min_armour)                                                       \
+    X(base_min_shells)                                                       \
+    X(base_min_mines)                                                        \
+    X(base_armour_give)                                                      \
+    X(base_shells_give)                                                      \
+    X(base_mines_give)                                                       \
+    X(base_refuel_armour_ticks)                                              \
+    X(base_refuel_shells_ticks)                                              \
+    X(base_refuel_mines_ticks)                                               \
+    X(base_regen_ticks)                                                      \
+    /* Terrain destruction and explosions */                                 \
+    X(building_life)                                                         \
+    X(rubble_life)                                                           \
+    X(grass_life)                                                            \
+    X(swamp_life)                                                            \
+    X(mine_fuse_ticks)                                                       \
+    X(big_explosion_threshold)                                               \
+    /* Tree growth */                                                        \
+    X(tree_grow_ticks)                                                       \
+    X(tree_grow_initial_ticks)                                               \
+    X(tree_weight_forest)                                                    \
+    X(tree_weight_grass)                                                     \
+    X(tree_weight_river)                                                     \
+    X(tree_weight_boat)                                                      \
+    X(tree_weight_deep_sea)                                                  \
+    X(tree_weight_swamp)                                                     \
+    X(tree_weight_rubble)                                                    \
+    X(tree_weight_building)                                                  \
+    X(tree_weight_half_building)                                             \
+    X(tree_weight_crater)                                                    \
+    X(tree_weight_road)                                                      \
+    X(tree_weight_mine)
+
+/* How a rule is named on the op: one member per SimRules field, in the
+ * struct's own field order. SCN_RULE_COUNT is one past the last, and an
+ * index at or above it names no rule. */
+typedef enum {
+#define SCN_RULE_ENUM_MEMBER(name) SCN_RULE_##name,
+    SCN_RULE_LIST(SCN_RULE_ENUM_MEMBER)
+#undef SCN_RULE_ENUM_MEMBER
+    SCN_RULE_COUNT
+} ScnRuleIndex;
+
+/* Sixteen of the fields are float — the four tank rates, the ten terrain
+ * turn rates and the two half-tick refuel intervals — so the value is a
+ * double: an int32_t could not carry the 0.25 four of them hold today.
+ * A double is exact for every integer rule in the table and for every
+ * value a float rule can hold, which keeps the wire's fixed-point
+ * encoding a wire concern rather than something the op has to know. The
+ * arm converts to each field's own type as it writes. */
 typedef struct {
-    uint16_t rule;
-    int32_t  value;
+    uint16_t rule;    /* a ScnRuleIndex */
+    double   value;
 } ScnOpSetRule;
 
 /* One op, tagged by type. */

@@ -838,6 +838,20 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt3;
     out[off++] = opt4;
     break;
+  case log_RuleSet:
+    /* Which rule changed, as a big-endian u16 index into the simulation's
+       rules table, then the value the field ended up holding as a
+       length-prefixed blob of eight bytes. The value travels as a blob
+       because it does not fit the four opt bytes, the way
+       log_TankSetModifiers carries its six; its layout is in
+       docs/replay-format.md. */
+    out[off++] = log_RuleSet;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
   default:
     return 0;
   }

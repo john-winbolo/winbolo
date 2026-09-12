@@ -50,6 +50,7 @@
 #include "mines.h"         /* the mine list the map arms add to and clear */
 #include "starts.h"        /* startsGetStart — the teleport arm's start mode */
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
+#include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
@@ -2168,6 +2169,123 @@ static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* ── Rules ──────────────────────────────────────────────────────────────
+ *
+ * One arm over the table of gameplay numbers the simulation runs on. */
+
+/* Every field in the table is four bytes wide and SCN_RULE_LIST has a line
+ * for each of them, so the struct is exactly as many fields long as the list
+ * is entries. A field added to SimRules without a line in the list, a line
+ * written twice, or a field that is not four bytes, all fail here rather than
+ * leaving an index quietly naming the wrong field. Which field each index
+ * names, and that the list is in the struct's order, is the offsets case in
+ * tests/unit/test_scenario_rule_arms.c. */
+BOLO_STATIC_ASSERT(sizeof(SimRules) == SCN_RULE_COUNT * sizeof(int32_t),
+                   scn_rule_list_covers_sim_rules);
+
+/* One switch arm per rule, generated from the list the index enum is
+ * generated from, so the two cannot name different fields. The assignment
+ * converts the op's double to whatever the field is declared as — an integer
+ * rule takes the whole part of it, a float rule takes the value — and reading
+ * it straight back out says what the field ended up holding, which is what is
+ * checked below and what the record carries. */
+#define SCN_RULE_WRITE_CASE(name)                                            \
+    case SCN_RULE_##name:                                                    \
+        copy.name = p->value;                                                \
+        written   = (double)copy.name;                                       \
+        break;
+
+/* The record: which rule, and the value the field ended up holding. */
+BOLO_STATIC_ASSERT(sizeof(double) == 8, scn_rule_value_is_eight_bytes);
+
+static void scenarioRecordRuleSet(uint16_t rule, double written) {
+    uint64_t bits;
+    char     blob[9];
+    int      i;
+
+    /* The value as the eight bytes of its IEEE-754 double, most significant
+       first. Every rule fits one exactly — an int32_t field's whole range and
+       every value a float field can hold — so the record states what the
+       table holds rather than a scaled approximation of it. The bit pattern
+       is serialised as an integer, so a host's own byte order does not reach
+       the file. */
+    memcpy(&bits, &written, sizeof(bits));
+    blob[0] = 8;
+    for (i = 0; i < 8; i++) {
+        blob[1 + i] = (char)((bits >> (56 - 8 * i)) & 0xFF);
+    }
+    logAddEvent(log_RuleSet, 0, 0, 0, 0, rule, blob);
+}
+
+/* Write one rule. The write lands in a copy of the sim's table, the copy is
+ * checked whole, and only a copy that passes is committed: a refused op
+ * leaves the sim's table byte for byte as it was rather than half-applied.
+ *
+ * Nothing is published. Carrying rules to a client is the rules event's job
+ * and that event is not written yet, so this changes the server's own
+ * numbers and the recording of them and nothing else.
+ *
+ * No state check. A rule belongs to the simulation rather than to a round,
+ * the way a pill belongs to the map, so a lobby setting its table up and a
+ * round changing a number mid-play are both ordinary. */
+static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
+    SimRules      copy    = sim->sim.rules;
+    double        written = 0.0;
+    SimRulesFault fault;
+    char          why[SIM_RULES_WHY_LEN];
+
+    /* An index past the end of the list names no rule, which is what every
+       other arm answers SCN_OP_NO_SUCH_ITEM for. */
+    if (p->rule >= SCN_RULE_COUNT) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    /* A NaN, and anything past the int32 window, cannot be converted to a
+       field's type at all — that conversion is undefined rather than wrong —
+       so both are refused before the write instead of checked after it.
+       Written as a negated in-range test so a NaN fails it. No row's range
+       comes near either end; every bound a row actually has is stated by the
+       check below and by nothing here. */
+    if (!(p->value >= -2147483648.0 && p->value <= 2147483647.0)) {
+        return SCN_OP_RANGE;
+    }
+
+    switch (p->rule) {
+        SCN_RULE_LIST(SCN_RULE_WRITE_CASE)
+        default:
+            /* Unreachable: the bounds check above has already passed, and
+               the cases come from the list the enum comes from. */
+            return SCN_OP_NO_SUCH_ITEM;
+    }
+
+    fault = simRulesCheck(&copy, why, sizeof(why));
+    if (fault != SIM_RULES_OK) {
+        /* The reason names the row and the bound it missed, which is the only
+           place a script author is told which of the table's numbers it was
+           and what it had to be. */
+        char line[SIM_RULES_WHY_LEN + 32];
+        SDL_snprintf(line, sizeof(line), "rule refused: %s", why);
+        serverSimConsoleMessage(line);
+    }
+    switch (fault) {
+        case SIM_RULES_OK:
+            break;
+        case SIM_RULES_FAULT_PAIR:
+            return SCN_OP_PAIR;
+        case SIM_RULES_FAULT_RANGE:
+        /* No table is not reachable from here — the one checked is on this
+           stack — and there is no result code for it, so it answers as the
+           range refusal it would have to be reported as anyway. */
+        case SIM_RULES_FAULT_NO_TABLE:
+            return SCN_OP_RANGE;
+    }
+
+    sim->sim.rules = copy;
+    scenarioRecordRuleSet(p->rule, written);
+    return SCN_OP_OK;
+}
+
+#undef SCN_RULE_WRITE_CASE
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     /* Loud in a development build, because either of these is a caller bug
@@ -2289,7 +2407,8 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpEndRound(sim, &op->u.endRound);
         case SCN_OP_SET_GAME_TIME:
             return scenarioOpSetGameTime(sim, &op->u.setGameTime);
-        case SCN_OP_SET_RULE:            return SCN_OP_UNSUPPORTED;
+        case SCN_OP_SET_RULE:
+            return scenarioOpSetRule(sim, &op->u.setRule);
     }
 
     /* A value that is not a member of the enum at all. */

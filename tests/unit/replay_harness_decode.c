@@ -258,6 +258,8 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
         /* The viewer's map name is at most MAP_STR_SIZE; the buffer is
          * larger than that. */
         lv_screenGetMapName(info->mapName);
+        /* Computed by the load's byte walk, before any playback. */
+        info->totalTimeMs = lv_screenGetState()->totalTimeMs;
     }
 
     /* The load decodes the header and the opening snapshot only; the event

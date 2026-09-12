@@ -182,7 +182,7 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     if (rules->field < (int32_t) (lo) || rules->field > (int32_t) (hi)) {    \
         simRulesWhyInt(why, whyLen, #field, rules->field, (int32_t) (lo),    \
                        (int32_t) (hi));                                      \
-        return false;                                                        \
+        return SIM_RULES_FAULT_RANGE;                                        \
     }
 
 /* Only the fixed end of a row bounded by another field. */
@@ -190,7 +190,7 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     if (rules->field < (int32_t) (lo)) {                                     \
         simRulesWhyInt(why, whyLen, #field, rules->field, (int32_t) (lo),    \
                        INT32_MAX);                                           \
-        return false;                                                        \
+        return SIM_RULES_FAULT_RANGE;                                        \
     }
 
 /* One arm per pair of fields. The reason names both sides and the numbers
@@ -202,7 +202,7 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
         if (why != NULL && whyLen > 0) {                                     \
             snprintf(why, whyLen, __VA_ARGS__);                              \
         }                                                                    \
-        return false;                                                        \
+        return SIM_RULES_FAULT_PAIR;                                         \
     }
 
 /* Written as a negated in-range test so a NaN fails rather than passing. */
@@ -210,10 +210,10 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     if (!(rules->field >= (float) (lo) && rules->field <= (float) (hi))) {   \
         simRulesWhyFloat(why, whyLen, #field, rules->field, (float) (lo),    \
                          (float) (hi));                                      \
-        return false;                                                        \
+        return SIM_RULES_FAULT_RANGE;                                        \
     }
 
-bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
+SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
     if (why != NULL && whyLen > 0) {
         why[0] = '\0';
     }
@@ -221,7 +221,7 @@ bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
         if (why != NULL && whyLen > 0) {
             snprintf(why, whyLen, "no rules table");
         }
-        return false;
+        return SIM_RULES_FAULT_NO_TABLE;
     }
 
     /* ---- Tank ---- */
@@ -299,7 +299,9 @@ bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
                      (long) rules->pill_attack_min_ticks,
                      (long) rules->pill_attack_ticks);
         }
-        return false;
+        /* A pair, though it is asked here rather than in the pairs block
+           below: both its sides are pillbox rows and it sits with them. */
+        return SIM_RULES_FAULT_PAIR;
     }
     RULE_INT(pill_cooldown_ticks, 0, 255)
     RULE_INT_MIN(pill_repair_amount, 1)
@@ -482,10 +484,15 @@ bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
               (long) rules->shell_life, (long) rules->gunsight_max,
               (long) rules->shell_start_add)
 
-    return true;
+    return SIM_RULES_OK;
 }
 
 #undef RULE_INT
 #undef RULE_INT_MIN
 #undef RULE_FLT
 #undef RULE_PAIR
+
+/* For the callers that only want to know whether the table is usable. */
+bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
+    return simRulesCheck(rules, why, whyLen) == SIM_RULES_OK;
+}

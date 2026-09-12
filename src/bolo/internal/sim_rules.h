@@ -166,6 +166,32 @@ typedef struct SimRules {
  *********************************************************/
 void simRulesClassic(SimRules *out);
 
+/* Which kind of check a table failed. A caller that has to answer for the
+ * table in its own vocabulary — the scenario funnel's set-rule arm answers
+ * SCN_OP_RANGE or SCN_OP_PAIR — needs to know which of the two happened,
+ * which the reason string says in words and nothing said in a value. */
+typedef enum {
+    SIM_RULES_OK = 0,
+    SIM_RULES_FAULT_RANGE,    /* a field outside the range its own row allows */
+    SIM_RULES_FAULT_PAIR,     /* a field against another field */
+    SIM_RULES_FAULT_NO_TABLE  /* there was no table to check */
+} SimRulesFault;
+
+/*********************************************************
+ *NAME:          simRulesCheck
+ *PURPOSE:
+ *  simRulesValidate, answering with the kind of check that
+ *  failed rather than with a bool. Every range and every
+ *  pair is asked in the same order and the reason string is
+ *  the same one.
+ *
+ *ARGUMENTS:
+ *  rules  - table to check
+ *  why    - buffer the reason is written into, or NULL
+ *  whyLen - bytes available at why
+ *********************************************************/
+SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen);
+
 /*********************************************************
  *NAME:          simRulesValidate
  *PURPOSE:
@@ -176,9 +202,10 @@ void simRulesClassic(SimRules *out);
  *
  *  Rows whose bound is another field — a builder cost
  *  against the tank's carrying capacity, a base's give
- *  against its reserve — are checked here only as far as
- *  their own numbers go. What one field allows another is
- *  a separate question and is not asked here.
+ *  against its reserve — have their own numbers checked
+ *  with the ranges and are then asked against each other
+ *  by the pair arms that follow, once every range is known
+ *  to hold.
  *
  *ARGUMENTS:
  *  rules  - table to check

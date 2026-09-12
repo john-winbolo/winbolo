@@ -976,6 +976,18 @@ void lv_screenProcessLog(unsigned short numEvents) {
                                   ((uint32_t)opt3 << 8)  |
                                   (uint32_t)opt4);
       break;
+    case log_RuleSet:
+      /* One simulation rule a scenario changed: the rule's index as a
+         big-endian u16, then the value the field ended up holding as an
+         eight-byte blob. Read and dropped. The viewer has nowhere to show a
+         rule yet — that belongs with the recording's rules manifest — and
+         what it has to do here is consume the record so everything after it
+         is still read from the right byte. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -1924,7 +1936,12 @@ static int walkSkipEventBody(BYTE code) {
       return 2 + lenByte;
     case log_MessagePlayers:
     case log_ServerText:
-      /* 2 opt bytes + pascal string */
+    case log_RuleSet:
+      /* 2 opt bytes + pascal string. The rule record's two bytes are its rule
+         index and its blob is always the eight bytes of one value, but both
+         are walked the way a text record's are. Only a v2 log can carry a
+         rule record; the v1 walker is given the case anyway, for the reason
+         it is given one for log_Ping. */
       { BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;

@@ -2089,6 +2089,16 @@ int run_scenario_flow_set_game_time(void);
 int run_scenario_flow_set_game_time_refusals(void);
 int run_scenario_flow_arm_records(void);
 
+/* The rules op (test_scenario_rule_arms.c). The index list against the table
+ * it indexes, a rule written and read back, a rate the op's double carries
+ * and an int32 could not, the two refusals and the table each leaves
+ * untouched, and the record the write puts in a recording. */
+int run_scenario_rule_index_matches_table(void);
+int run_scenario_rule_set(void);
+int run_scenario_rule_set_float(void);
+int run_scenario_rule_refusals(void);
+int run_scenario_rule_arm_records(void);
+
 /* The six lifecycle and lobby policy pointers
  * (test_scenario_policy_lifecycle.c). Where a tank starts, whether the base
  * sweep may end the round, whether the lobby may make another team, how many

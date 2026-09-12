@@ -99,6 +99,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
 | 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
 | 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `ticks:i32` big-endian |
+| 61 | `log_RuleSet` | One simulation rule a scenario changed (below) |
 
 ### `log_GameSettings` payload
 
@@ -230,6 +231,40 @@ It is **not** written when every index within every count is on the map. That
 is what loading a map produces and what a reader's own load assumes, so a
 round that never takes an item off the map carries none of these records and
 its bytes are unchanged.
+
+### `log_RuleSet` payload
+
+One number in the simulation's rules table — the per-simulation table of
+gameplay values in `src/bolo/internal/sim_rules.h` — after a scenario changed
+it. Two header bytes, then the value as a Pascal form: a 1-byte length
+followed by that many binary bytes, which may contain `0x00`:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0–1 | Rule | Big-endian; the field's index in the table, counting from 0 in the order `SimRules` declares its fields (`ScnRuleIndex`, `src/bolo/scenario_api/scenario_defs.h`) |
+| 2 | Value length | Always 8 |
+| 3–10 | Value | Big-endian IEEE-754 binary64 of the value the field ended up holding |
+
+The value is written as a double rather than as a scaled integer because the
+table holds both kinds of field: most are `int32_t` and sixteen are `float`,
+and one fixed width has to carry either. A double is exact for an `int32_t`
+field across its whole range and for every value a `float` field can hold, so
+the record states the number the rule actually took rather than a rounded
+copy of it — the `×256` fixed point the rules control event uses on the wire
+is a wire budget and does not reach the file. The eight bytes are the
+double's bit pattern serialised most significant first, so a host's own byte
+order does not reach the file either.
+
+The record carries the value **after** the write, not the value the scenario
+asked for: a script that asks an integer rule for `3.7` leaves the field
+holding `3`, and `3` is what a reader sees. A rule the scenario asked for and
+was refused writes no record at all, because a refused change leaves the
+table exactly as it was.
+
+Written by the scenario funnel's set-rule arm
+(`src/server/sim/server_sim_scenario.c`). The viewer consumes the record to
+keep its place in the stream and does not yet show it; showing a rule needs
+the recording's rules manifest, which states the table a round opened with.
 
 ## Snapshot body
 

@@ -3347,6 +3347,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The rules op: the index list against the table it indexes, a rule
+    # written and read back, a rate the op's double carries and an int32
+    # could not, the value outside a row and the value that breaks a pair
+    # with the table each of them leaves untouched, and the record a write
+    # puts in a recording — its bytes on disk and both of the viewer's
+    # readers over them.
+    tests/unit/test_scenario_rule_arms.c
     # The six lifecycle and lobby policy pointers: the start a tank is given,
     # the base sweep, the team write in both lobby arms that make one, the
     # player cap, the loadout at all three places one is handed out, and the
@@ -4848,6 +4855,11 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    scenario_rule_index_matches_table
+    scenario_rule_set
+    scenario_rule_set_float
+    scenario_rule_refusals
+    scenario_rule_arm_records
     scenario_policy_choose_start
     scenario_policy_choose_start_out_of_range
     scenario_policy_allow_base_win
