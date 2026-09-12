@@ -823,6 +823,18 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
 
+    /* Bot-config events queued by serverSimApplyNewBotDefaults — a freshly
+     * added or seeded bot's mode and difficulty — sent a couple per tick
+     * instead of inside the add. A scenario seeds ten bots in one call stack
+     * while no client ack can be read; ten more events there would grow the
+     * burst that once overran a client's 64-event reliable window and
+     * dropped the host. Runs for single player too: its timer drives this
+     * same function. */
+    if (sim->state == serverStateLobby ||
+        sim->state == serverStateCountdown) {
+      serverSimFlushBotConfigPublishes(sim);
+    }
+
     /* Timeout check — not called via transportUdpServerSend() during lobby */
     transportUdpServerCheckTimeouts(sim);
   }

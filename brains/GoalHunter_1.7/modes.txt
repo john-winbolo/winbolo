@@ -17,13 +17,14 @@
 
 [default]
 label = Default
-levels = easy:Easy, medium:Medium, hard:Hard
+levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard
 
-# Survival Scenario. Its real levels have not been decided — these three
-# are placeholders so the dropdown is wired end to end; edit them here and
-# nothing else has to change.
+# Survival. Its real levels have not been decided — these three are
+# placeholders so the dropdown is wired end to end; edit them here and
+# nothing else has to change. The label is what the lobby shows on the
+# row's mode tag, so it is kept to one short word.
 [survival]
-label = Survival Scenario
-levels = easy:Easy, medium:Medium, hard:Hard
+label = Survival
+levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard

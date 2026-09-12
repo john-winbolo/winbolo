@@ -103,11 +103,17 @@ struct ServerSim {
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
 
-    /* The mode and difficulty the host last chose for ANY bot, so the next
-     * bot added starts there instead of back at the lobby default. Setting
-     * up a lobby means picking a difficulty once and adding five bots, and
-     * re-picking it five times is the kind of chore nobody should have to
-     * do twice.
+    /* The mode and difficulty the host last chose BY HAND for any bot, so
+     * the next bot added with Add Bot starts there instead of back at the
+     * default. Setting up a lobby means picking a difficulty once and adding
+     * five bots, and re-picking it five times is the kind of chore nobody
+     * should have to do twice.
+     *
+     * Written only by serverSimRememberManualBotPick — CMD_LOBBY_BOT_CONFIG,
+     * when it changes mode or difficulty — and never by an automatic write
+     * (a scenario seed, single player's own add path, the CLI). Otherwise
+     * the game's defaults pass for the host's choice: that is how single
+     * player's skill guess used to override Survival's Hard.
      *
      * Stored as the brain's own KEYS, not the indices that are kept in
      * botConfigs. An index only means something against one manifest: mode
@@ -122,6 +128,12 @@ struct ServerSim {
      * rounds with the rest and is cleared with it. */
     char            lastBotModeKey[BRAIN_MODE_KEY_LEN];
     char            lastBotLevelKey[BRAIN_MODE_KEY_LEN];
+
+    /* One bit per slot: a CTRL_LOBBY_BOT_CONFIG still to publish. Set by
+     * serverSimApplyNewBotDefaults, sent a couple per lobby tick by
+     * serverSimFlushBotConfigPublishes, so a scenario seed's ten bots do not
+     * add ten events to the burst it already makes in one call stack. */
+    uint16_t        botConfigPublishPending;
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 

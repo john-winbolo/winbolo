@@ -109,11 +109,13 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         sim->botConfigs[i].difficulty = BOT_DIFFICULTY_HARD;
     }
     memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
-    /* Forget the last-picked bot mode/difficulty with the configs it came
-     * from: this is "the lobby is empty, restore the operator's startup
-     * state", and the next occupants inherit nothing from the last ones. */
+    /* Forget the host's manual bot mode/difficulty pick with the configs it
+     * came from, and any bot-config event still queued: this is "the lobby
+     * is empty, restore the operator's startup state", and the next
+     * occupants inherit nothing from the last ones. */
     sim->lastBotModeKey[0]  = '\0';
     sim->lastBotLevelKey[0] = '\0';
+    sim->botConfigPublishPending = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
      * allow-new-players gate and the transport-level admin lock. */

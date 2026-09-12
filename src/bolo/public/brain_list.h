@@ -71,6 +71,7 @@ bool brainListLoadMeta(const char *name,
  * found; *rgb is 0xRRGGBB. */
 bool brainListLoadColor(const char *name, uint32_t *rgb);
 
+
 /* ── Bot modes and their difficulty levels ────────────────────────────
  *
  * A brain says for itself which MODES it can be run in, and which
@@ -84,17 +85,32 @@ bool brainListLoadColor(const char *name, uint32_t *rgb);
  *   # comments run to end of line
  *   [default]
  *   label   = Default
- *   levels  = easy:Easy, medium:Medium, hard:Hard
+ *   levels  = easy:Easy:1, medium:Medium:2, hard:Hard:3
  *   default = hard
  *
  *   [survival]
- *   label   = Survival Scenario
- *   levels  = easy:Easy, medium:Medium, hard:Hard
+ *   label   = Survival
+ *   levels  = easy:Easy:1, medium:Medium:2, hard:Hard:3
  *   default = hard
  *
- * The section header is the mode KEY, one `levels` entry is `key:Label`,
- * and `default` names the level key a freshly added bot starts at. The
- * FIRST section is mode 0 — the mode every ordinary game uses.
+ * The section header is the mode KEY, one `levels` entry is
+ * `key:Label:chips`, and `default` names the level key a freshly added bot
+ * starts at. The FIRST section is mode 0 — the mode every ordinary game
+ * uses.
+ *
+ * `chips` is 1, 2 or 3: how many of the lobby's three difficulty chips the
+ * level lights. It is OPTIONAL. A level that omits it takes its POSITION on
+ * the scale instead — first kept level 1, second 2, third and later 3 — so a
+ * manifest written before chips existed still means what it always meant, and
+ * a third-party brain does not have to be edited to keep working. A level that
+ * DOES declare it and gives anything other than 1, 2 or 3 is dropped.
+ *
+ * `levels` itself is OPTIONAL too. A mode may declare none, which says the
+ * brain has one way of playing and no difficulty to pick. The lobby then shows
+ * no difficulty tag on the row and no difficulty dropdown in the gear form for
+ * that mode. Note the consequence: a `levels` line whose entries are all
+ * malformed is indistinguishable from an absent one, so it reads as "no
+ * difficulty" rather than falling back.
  *
  * Keys are what reach the brain (the "mode=" / "difficulty=" init tokens);
  * labels are what the lobby shows. A brain with no modes.txt is given the
@@ -109,6 +125,14 @@ bool brainListLoadColor(const char *name, uint32_t *rgb);
 typedef struct {
     char key[BRAIN_MODE_KEY_LEN];      /* "hard" — reaches the brain  */
     char label[BRAIN_MODE_LABEL_LEN];  /* "Hard" — shown in the lobby */
+    /* How many of the lobby's three difficulty chips this level lights, 1..3.
+     * DECLARED by the brain, never inferred from the level's position in the
+     * list: a brain that offers four levels, or names them something other
+     * than easy/medium/hard, still has to say where each one sits on the
+     * three-chip scale. A level that declares anything else is DROPPED at
+     * parse time rather than defaulted, because the lobby has nothing
+     * meaningful to draw for it. */
+    int  chips;
 } BrainLevel;
 
 typedef struct {

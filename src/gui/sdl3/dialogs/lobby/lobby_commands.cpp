@@ -521,6 +521,34 @@ static void lobbySendAddBot(ClientSim *cs,
         } else {
             serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
         }
+        /* Now the bot exists and runs its final brain, give it the mode and
+         * difficulty every new lobby bot gets (serverSimResolveNewBotConfig):
+         * the player's own chosen level as the base, then what the map
+         * requires for the bot's side, then what the player last picked by
+         * hand. Before this, single player's add wrote only the base and
+         * skipped the map and the manual pick altogether — which is why a bot
+         * added to the Survival horde came up at the player's skill guess
+         * instead of Hard. The team is the header's when it named one (that
+         * is applied asynchronously below), else the one the add just gave
+         * the slot. The brain reloads from this config at round start, so
+         * setting it after the create is enough. */
+        {
+            const char *botBrain = (stickyBrainIdx != 0xFF)
+                ? serverSimGetBrainPathForIdx(sim, stickyBrainIdx)
+                : serverSimGetBotBrainPath(sim);
+            const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
+            int team = (teamNumber > 0 && teamNumber < MAX_TANKS)
+                ? (int)teamNumber : (lp ? (int)lp->teamNumber : 0);
+            if (botBrain != NULL && botBrain[0] != '\0') {
+                uint8_t mode  = gameFrontSpBotMode(botBrain);
+                uint8_t level = gameFrontSpBotLevel(botBrain, mode);
+                if (serverSimResolveNewBotConfig(sim, team, botBrain, true,
+                                                 &mode, &level)) {
+                    serverSimSetBotConfig(sim, slot, mode, level,
+                                          0 /* personality: normal */, NULL);
+                }
+            }
+        }
         /* Publish the slot's new state. serverSimSetBotBrainIdxFor
          * (called via either branch above) publishes the bot-brain
          * event itself. */

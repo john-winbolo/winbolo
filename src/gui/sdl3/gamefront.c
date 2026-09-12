@@ -1642,7 +1642,7 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. */
-        if (!isTutorial && gameFrontBotSetupData.count == 0) {
+                if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
@@ -1850,7 +1850,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * sim via cfg above; here we only need brainPath as a
              * per-bot default for the serverSimCreateBot loop. */
             bool haveBrain = (spBrainPath[0] != '\0');
-            if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+                        if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
               for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
@@ -1863,9 +1863,17 @@ bool gameFrontSetDlgState(openingStates newState) {
                  * on its very first load. */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
                 if (botBrain[0] == '\0') botBrain = spBrainPath;
-                uint8_t spMode = gameFrontSpBotMode(botBrain);
-                serverSimSetBotConfig(spServerSim, slot, spMode,
-                                      gameFrontSpBotLevel(botBrain, spMode),
+                uint8_t spMode  = gameFrontSpBotMode(botBrain);
+                uint8_t spLevel = gameFrontSpBotLevel(botBrain, spMode);
+                /* Resolved through the one rule a new bot follows, so the
+                 * single-player path and the lobby cannot disagree. These bots
+                 * are appearing for the first time, so the player's remembered
+                 * manual pick is NOT applied — that pick is for the Add Bot
+                 * button afterwards. */
+                serverSimResolveNewBotConfig(spServerSim,
+                                             (int)gameFrontBotSetupData.bots[bi].teamNumber,
+                                             botBrain, false, &spMode, &spLevel);
+                serverSimSetBotConfig(spServerSim, slot, spMode, spLevel,
                                       0 /* personality: normal */, NULL);
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy, spGameType, hiddenMines);
                 /* serverSimCreateBot loads the brain from the path but leaves

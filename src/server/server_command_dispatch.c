@@ -225,9 +225,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
             transportUdpServerSetBotName(p->slot, validatedName);
         }
-        serverSimSetBotConfig(sim, p->slot, p->mode, p->difficulty,
-                              p->personality,
-                              p->nameLen > 0 ? validatedName : NULL);
+        {
+            /* The gear popup sends this command for a rename or a
+             * personality edit too, carrying the bot's unchanged mode and
+             * difficulty. Only a real change is the host choosing a
+             * difficulty, so only that is remembered for the next Add Bot. */
+            uint8_t prevMode  = sim->botConfigs[p->slot].mode;
+            uint8_t prevLevel = sim->botConfigs[p->slot].difficulty;
+            serverSimSetBotConfig(sim, p->slot, p->mode, p->difficulty,
+                                  p->personality,
+                                  p->nameLen > 0 ? validatedName : NULL);
+            if (p->mode != prevMode || p->difficulty != prevLevel) {
+                serverSimRememberManualBotPick(sim, p->slot);
+            }
+        }
         return CMD_OK;
     }
     case CMD_LOBBY_TEAM_META: {
@@ -646,11 +657,6 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
-        /* Inherit the mode and difficulty the host last picked for a bot,
-         * written BEFORE the brain is created so it reaches the brain as its
-         * init-arg tokens and publishes nothing. Adding five bots at Medium
-         * should mean choosing Medium once. */
-        serverSimApplyLastBotConfig(sim, slot, serverSimGetBotBrainPath(sim));
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
@@ -662,6 +668,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         transportUdpServerSetBotName(slot, botName);
         if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS) {
             serverSimSetTeam(sim, slot, p->teamNumber);
+        }
+        /* The new bot's brain mode and difficulty (serverSimResolveNewBotConfig):
+         * the lobby default, then what the map requires for this side, then
+         * what the host last picked by hand. Applied now the team is final —
+         * a plain Add Bot only learns its team inside the add — and the lobby
+         * brain reloads from this config at round start. Shown in the lobby
+         * by a queued bot-config event, not one sent inside the command. */
+        {
+            const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
+            serverSimApplyNewBotDefaults(sim, slot,
+                                         lp ? (int)lp->teamNumber : 0,
+                                         serverSimGetBotBrainPath(sim), TRUE);
         }
         serverSimPublishLobbySlot(sim, slot);
         serverSimPublishLobbyBotBrain(sim, slot);

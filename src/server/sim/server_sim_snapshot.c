@@ -411,6 +411,23 @@ void serverSimPillShadowSeedRoundStart(ServerSim *sim, BYTE slot) {
         sim->clientKnownPillX[slot][p] = sim->roundStartPillX[p];
         sim->clientKnownPillY[slot][p] = sim->roundStartPillY[p];
     }
+    /* A scenario can CREATE a pill mid-round (game.add_pill), so the live list
+     * can be LONGER than the round-start capture. Those indices have no
+     * round-start square to hand out — but serverSimGetPillsForSlot and the fog
+     * filter both read this record for every index below the LIVE count, so
+     * leaving them unseeded feeds a junk square into what this slot is sent and
+     * into mapCalcChecksum's pill fold: the endless map resync again, this time
+     * only for a client that joined AFTER the pill was made. Seed those from
+     * the live list — a pill created after the round started has no earlier
+     * position that could be withheld from anybody. */
+    if (sim->sim.pb != NULL) {
+        BYTE live = pillsGetNumPills(&sim->sim.pb);
+        if (live > MAX_PILLS) live = MAX_PILLS;
+        for (p = sim->roundStartPillCount; p < live; p++) {
+            sim->clientKnownPillX[slot][p] = (*sim->sim.pb).item[p].x;
+            sim->clientKnownPillY[slot][p] = (*sim->sim.pb).item[p].y;
+        }
+    }
 }
 
 void serverSimShadowApplySlot(ServerSim *sim, BYTE slot, BYTE x, BYTE y,

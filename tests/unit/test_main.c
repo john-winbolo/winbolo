@@ -117,6 +117,8 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_bot_config_memory_applies",          run_lobby_bot_config_memory_applies          },
     { "lobby_bot_config_memory_empty_is_noop",    run_lobby_bot_config_memory_empty_is_noop    },
     { "lobby_bot_config_memory_unknown_key",      run_lobby_bot_config_memory_unknown_key_ignored },
+    { "lobby_bot_config_memory_not_honoured",     run_lobby_bot_config_memory_not_honoured     },
+    { "lobby_bot_config_memory_manual_only",      run_lobby_bot_config_memory_manual_only      },
     { "lobby_add_bot_rejects_empty_brain_path",   run_lobby_add_bot_rejects_empty_brain_path   },
     { "lobby_add_bot_rejects_ai_none",            run_lobby_add_bot_rejects_ai_none            },
     { "lobby_add_bot_rejects_not_in_lobby",       run_lobby_add_bot_rejects_not_in_lobby       },

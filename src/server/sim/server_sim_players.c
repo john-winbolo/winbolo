@@ -345,6 +345,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 
     sim->playerConnected[playerNum] = FALSE;
+    /* Drop any bot-config event still queued for this slot: the bot is gone,
+     * and whoever takes the slot next resolves and queues its own. */
+    sim->botConfigPublishPending &= (uint16_t)~(1u << playerNum);
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
         sim->sim.tanks[playerNum] = NULL;

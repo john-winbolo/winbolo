@@ -111,6 +111,8 @@ int run_shell_death_rejected_culls_without_impact(void);
 int run_lobby_bot_config_memory_applies(void);
 int run_lobby_bot_config_memory_empty_is_noop(void);
 int run_lobby_bot_config_memory_unknown_key_ignored(void);
+int run_lobby_bot_config_memory_not_honoured(void);
+int run_lobby_bot_config_memory_manual_only(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);

@@ -934,7 +934,18 @@ static void simRunHalfStep(ServerSim *sim) {
         int np = serverSimGetPills(sim, currentPills, MAX_SNAPSHOT_PILLS);
         int p;
         for (p = 0; p < np; p++) {
-            if (memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
+            /* An index at or above prevPillCount is one the previous tick did
+             * not have at all: a scenario created a pill (game.add_pill).
+             * prevPills[] is zeroed only at sim create, so in round 2 those
+             * slots still hold LAST round's final records — and an attacker
+             * landing on the same shoreline tile and being handed its pill by
+             * the same Lua call produces an identical 4-byte record. memcmp
+             * then reports "unchanged" and the creation is never sent, leaving
+             * every client a pill short until the next full sync. Count a new
+             * index as changed rather than trust a compare against data from
+             * another round. */
+            if (p >= (int)sim->prevPillCount ||
+                memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
                 GameEvent ev;
                 ev.type = EVENT_PILL_UPDATE;
                 memset(ev.data, 0, sizeof(ev.data));
