@@ -593,7 +593,10 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt3;
     break;
   case log_PillSetHealth:
-    /* The index and the armour in a byte each: armour outgrew a nibble. */
+    /* The index and the armour in a byte each: armour outgrew a nibble.
+       This is what LOG_VERSION 3 says about a file — up to version 2 the
+       pair shared one byte, so a reader has to take the version's word
+       for the length rather than this writer's. */
     out[off++] = log_PillSetHealth;
     out[off++] = opt1;
     out[off++] = opt2;

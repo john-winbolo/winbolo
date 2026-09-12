@@ -717,7 +717,9 @@ static void recordingReconstructMap(RecordingBuffer *rb, int targetFrame) {
 /* ================================================================== */
 /* Session loading: read a winbolods brainrec.btr (gzipped) into the   */
 /* recording buffer so the existing playback/scrub machinery replays   */
-/* it. See src/bolo/brain_record.{c,h} for the on-disk format (v4).    */
+/* it. See src/bolo/brain_record.c and src/bolo/public/brain_record.h  */
+/* for the on-disk format, and BRAINREC_VERSION for the one version    */
+/* this build reads.                                                   */
 /* ================================================================== */
 
 static uint8_t  bt_gz_u8 (gzFile g){ uint8_t v=0;  gzread(g,&v,1); return v; }
@@ -733,8 +735,17 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
     if (!g) return false;
     BrainRecHeader hdr;
     if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
-        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
-        || hdr.version != BRAINREC_VERSION) { gzclose(g); return false; }
+        || !brainRecMagicMatches(&hdr)) { gzclose(g); return false; }
+    if (!brainRecVersionMatches(&hdr)) {
+        /* Say which version it is rather than reading it: the frame bodies
+           are raw snapshot structs and an older file's are a different size,
+           so there is nothing to salvage by trying. */
+        fprintf(stderr, "%s: brainrec version %u, this build reads %u only — "
+                        "record the session again\n",
+                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION);
+        gzclose(g);
+        return false;
+    }
     if (mapNameOut) { memcpy(mapNameOut, hdr.mapName, 64); mapNameOut[63] = '\0'; }
     uint32_t llen = bt_gz_u32(g);
     if (llen) gzseek(g, llen, SEEK_CUR);
@@ -920,8 +931,16 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
     if (!g) return -1;
     BrainRecHeader hdr;
     if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
-        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
-        || hdr.version != BRAINREC_VERSION) { gzclose(g); return -1; }
+        || !brainRecMagicMatches(&hdr)) { gzclose(g); return -1; }
+    if (!brainRecVersionMatches(&hdr)) {
+        /* Same refusal as the peek above, and for the same reason: an older
+           file's frames are raw structs of a size this build cannot walk. */
+        fprintf(stderr, "%s: brainrec version %u, this build reads %u only — "
+                        "record the session again\n",
+                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION);
+        gzclose(g);
+        return -1;
+    }
 
     /* Legend: recorded viz_idx -> category name. Remap to BrainTest's own
      * registry index by name (the bots registered the same categories). */

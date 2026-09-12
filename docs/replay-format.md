@@ -32,7 +32,7 @@ by the first `LOG_EVENT_SNAPSHOT` record.
 | Field | Size | Notes                                                           |
 |---|---|-----------------------------------------------------------------|
 | Magic | 8 | Literal `WBOLOMOV`                                              |
-| Version | 1 | `0`, `1`, or `2` (current)                                      |
+| Version | 1 | `0`, `1`, `2`, or `3` (current)                                 |
 | Map name | 1 + N | Length byte + UTF-8 name                                        |
 | Game type | 1 | From `gameTypeGet()`                                            |
 | Allow hidden mines | 1 | Boolean                                                         |
@@ -61,8 +61,8 @@ opcode (`src/bolo/public/log.h`):
 
 ## Events
 
-Events live inside `LOG_EVENT` / `LOG_EVENT_LONG` blocks. In the current
-format (V2) each event is framed as:
+Events live inside `LOG_EVENT` / `LOG_EVENT_LONG` blocks. From V2 on each
+event is framed as:
 
 ```
 [type:u8][payload_len:u16 big-endian][payload:payload_len bytes]
@@ -87,7 +87,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |
 | 27 | `log_PillSetOwner` | pillbox owner |
-| 28 | `log_PillSetHealth` | pillbox index, then its armour — one byte each |
+| 28 | `log_PillSetHealth` | Version-dependent. V3: pillbox index, then its armour — one byte each. V2 and earlier: one byte holding the index in the high nibble and the armour in the low. A reader must take the length from the file's version byte; reading two bytes from a V2 file eats the next event's type code |
 | 29–30 | `log_PillSetPlace`, `log_PillSetInTank` | pillbox placement / in-tank |
 | 31 | `log_SaveMap` | the host saved the map mid-game |
 | 32–33 | `log_LostMan`, `log_KillPlayer` | man lost / player killed |
@@ -263,10 +263,15 @@ table holds both kinds of field: most are `int32_t` and sixteen are `float`,
 and one fixed width has to carry either. A double is exact for an `int32_t`
 field across its whole range and for every value a `float` field can hold, so
 the record states the number the rule actually took rather than a rounded
-copy of it — the `×256` fixed point the rules control event uses on the wire
-is a wire budget and does not reach the file. The eight bytes are the
-double's bit pattern serialised most significant first, so a host's own byte
-order does not reach the file either.
+copy of it. The eight bytes are the double's bit pattern serialised most
+significant first, so a host's own byte order does not reach the file.
+
+The rules control event on the wire (`CTRL_SIM_RULES`) makes the same choice
+for the same reason, in four bytes rather than eight: a float rule travels as
+its own IEEE-754 bit pattern, most significant byte first, not as a
+fixed-point scaling of it. Scaling a float rule would round it — an
+acceleration allowed down to 0.01 comes back as 0.0117 at a ×256 scale, which
+is not the number the server is simulating with.
 
 The record carries the value **after** the write, not the value the scenario
 asked for: a script that asks an integer rule for `3.7` leaves the field
@@ -342,18 +347,27 @@ no stocks reads as zero rather than as a guess.
 |---|---|
 | V0 (`0`) | Player-join events carry raw IP octets. Body XOR-encrypted. |
 | V1 (`1`) | Join events carry country code + account flags (WBN / Steam / bot) instead of IP. Body XOR-encrypted. |
-| V2 (`2`, current) | Plaintext; events gain the `[type][u16 len][payload]` framing. Payload shapes unchanged from V1. |
+| V2 (`2`) | Plaintext; events gain the `[type][u16 len][payload]` framing. Payload shapes unchanged from V1. |
+| V3 (`3`, current) | `log_PillSetHealth` carries the pillbox index and its armour in a byte each, where V2 and earlier packed the pair into one byte's nibbles. Every other payload, and the framing, unchanged from V2. |
+
+V3 exists because that one record changed shape without changing its name: a
+reader that takes two bytes from a V2 file reads the next event's type code as
+the armour and loses the stream from there, and nothing in a V2 file says which
+shape it holds. So the version byte says it instead, and a reader sizes the
+record by the version the file states rather than by the writer it was built
+alongside. The widening it follows is the pillbox armour's own: armour moved out
+of a shared nibble and can now hold more than 15.
 
 In V0/V1 the event stream is XOR-encrypted: the key starts at
 `gmeCreateTime & 0xFF` and, after each event block, advances to the type code of
-the last event processed. Snapshot opcodes and bodies are never XOR'd. V2 uses
-no encryption (`blockKey = 0`). The Log Viewer reads all three versions.
+the last event processed. Snapshot opcodes and bodies are never XOR'd. V2 and V3
+use no encryption (`blockKey = 0`). The Log Viewer reads all four versions.
 
 ## Playback sequence
 
 1. Open the ZIP, locate `log.dat`, begin DEFLATE decompression.
 2. Read and verify the `WBOLOMOV` magic, then the version byte.
-3. Read the header fields; seed the XOR key (0 for V2).
+3. Read the header fields; seed the XOR key (0 for V2 and V3).
 4. Read the first `LOG_EVENT_SNAPSHOT` and reconstruct the initial world.
 5. Loop on opcodes — `LOG_QUIT` stops; `LOG_NOEVENTS` / `LOG_NOEVENTS_LONG`
    advance ticks; `LOG_EVENT` / `LOG_EVENT_LONG` parse and apply events;
