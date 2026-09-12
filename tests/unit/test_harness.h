@@ -852,6 +852,18 @@ int run_lv_tank_stocks_from_snapshot(void);
 int run_lv_tank_stocks_snapshot_without_tail(void);
 int run_lv_tank_stocks_from_record(void);
 
+/* The viewer reading a recording it cannot trust (test_lv_hostile_records.c):
+ * hand-built bytes through lv_specSeedLoad / lv_specRecordPump. A count byte
+ * past the item arrays or past the block's length is clamped before it is
+ * stored or walked; a log_EntityChange removal naming an index past the array
+ * is refused for every kind; a server line to a slot past the roster reads as
+ * an empty seat; a log_TankSetModifiers blob of the wrong length is consumed
+ * by its length so the record behind it still decodes. */
+int run_lv_hostile_item_counts(void);
+int run_lv_hostile_entity_remove_index(void);
+int run_lv_hostile_server_text_slot(void);
+int run_lv_hostile_modifiers_length(void);
+
 /* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
  * and asserts the decode succeeds with the expected header/snapshot

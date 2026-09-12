@@ -29,6 +29,9 @@
 #include "lv_global.h"
 #include "lv_starts.h"
 
+/* Bytes per start record in a snapshot's start block: x, y, dir. */
+#define LV_START_NET_RECORD 3
+
 /*********************************************************
 *NAME:          lv_startsCreate
 *AUTHOR:        John Morrison
@@ -130,7 +133,7 @@ bool lv_startsRemoveItem(starts *value, BYTE startNum) {
   if (value == NULL || *value == NULL) {
     return FALSE;
   }
-  if (startNum == 0 || startNum > (*value)->numStarts) {
+  if (startNum == 0 || startNum > MAX_STARTS || startNum > (*value)->numStarts) {
     return FALSE;
   }
   startNum--;
@@ -324,8 +327,21 @@ void lv_startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen) {
   BYTE len = 1;
   BYTE known = (*value)->numStarts; /* How many numbers this list already had */
   BYTE live;                        /* Numbers the blob actually describes */
+  BYTE avail;                       /* Records the block's length can hold */
 
-  (*value)->numStarts = buff[0];
+  /* The count is a byte read off the recording and item[] holds MAX_STARTS,
+     so a count past that, or past what the block's own length can describe,
+     is a damaged or hostile file. Clamp it before it is stored or walked;
+     nothing below indexes by the raw byte. */
+  live = buff[0];
+  avail = (BYTE)(dataLen >= 1 ? (dataLen - 1) / LV_START_NET_RECORD : 0);
+  if (live > MAX_STARTS) {
+    live = MAX_STARTS;
+  }
+  if (live > avail) {
+    live = avail;
+  }
+  (*value)->numStarts = live;
   /* The blob is the map: a count and a record per start, with no room for
      which of them are on it — the live flags sit past the wire region on both
      sides. So a snapshot restates the records and leaves the flags to the
@@ -334,7 +350,6 @@ void lv_startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen) {
      map, and a number the blob no longer reaches is off it. Without that a
      start a log_EntityChange had taken away would come back at the next
      snapshot and stay. */
-  live = (*value)->numStarts > MAX_STARTS ? MAX_STARTS : (*value)->numStarts;
   if (known > MAX_STARTS) {
     known = MAX_STARTS;
   }
@@ -346,7 +361,7 @@ void lv_startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen) {
   }
 
   count = 0;
-  while (count < (*value)->numStarts) {
+  while (count < live) {
     (*value)->item[count].x = buff[len];
     len++;
     (*value)->item[count].y = buff[len];

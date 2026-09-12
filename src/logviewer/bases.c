@@ -33,6 +33,10 @@
 #include "lv_messages.h"
 #include "../gui/lang.h"
 
+/* Bytes per base record in a snapshot's base block: x, y, owner, armour,
+   shells, mines, refuelTime, baseTime (two bytes), justStopped. */
+#define LV_BASE_NET_RECORD 10
+
 
 /*********************************************************
 *NAME:         lv_basesCreate 
@@ -138,7 +142,7 @@ bool lv_basesRemoveItem(bases *value, BYTE baseNum) {
   if (value == NULL || *value == NULL) {
     return FALSE;
   }
-  if (baseNum == 0 || baseNum > (*value)->numBases) {
+  if (baseNum == 0 || baseNum > MAX_BASES || baseNum > (*value)->numBases) {
     return FALSE;
   }
   baseNum--;
@@ -521,8 +525,21 @@ void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
   unsigned short us;
   BYTE known = (*value)->numBases; /* How many numbers this list already had */
   BYTE live;                       /* Numbers the blob actually describes */
+  int avail;                       /* Records the block's length can hold */
 
-  (*value)->numBases = buff[0];
+  /* The count is a byte read off the recording and item[] holds MAX_BASES,
+     so a count past that, or past what the block's own length can describe,
+     is a damaged or hostile file. Clamp it before it is stored or walked;
+     nothing below indexes by the raw byte. */
+  live = buff[0];
+  avail = len >= 1 ? (len - 1) / LV_BASE_NET_RECORD : 0;
+  if (live > MAX_BASES) {
+    live = MAX_BASES;
+  }
+  if ((int)live > avail) {
+    live = (BYTE)avail;
+  }
+  (*value)->numBases = live;
   /* The blob is the map: a count and a record per base, with no room for
      which of them are on it — the live flags sit past the wire region on both
      sides. So a snapshot restates the records and leaves the flags to the
@@ -530,9 +547,7 @@ void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
      given it, a number the blob has grown past the old count arrives on the
      map, and a number the blob no longer reaches is off it. Without that a
      base a log_EntityChange had taken away would come back at the next
-     snapshot and stay. A count past MAX_BASES describes no record the loop
-     below will read, so it puts nothing on the map either. */
-  live = (*value)->numBases > MAX_BASES ? 0 : (*value)->numBases;
+     snapshot and stay. */
   if (known > MAX_BASES) {
     known = MAX_BASES;
   }
@@ -544,10 +559,7 @@ void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
   }
 
   count = 0;
-  if ((*value)->numBases > 16) {
-    count = (*value)->numBases;
-  }
-  while (count < (*value)->numBases) {
+  while (count < live) {
     (*value)->item[count].x = buff[returnValue];
     returnValue++;
     (*value)->item[count].y = buff[returnValue];

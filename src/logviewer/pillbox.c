@@ -34,6 +34,10 @@
 #include "lv_messages.h"
 #include "../gui/lang.h"
 
+/* Bytes per pillbox record in a snapshot's pill block: x, y, armour, owner,
+   speed, inTank, reload, justSeen, coolDown. */
+#define LV_PILL_NET_RECORD 9
+
 /*********************************************************
 *NAME:          lv_pillsCreate
 *AUTHOR:        John Morrison
@@ -138,7 +142,7 @@ bool lv_pillsRemoveItem(pillboxes *value, BYTE pillNum) {
   if (value == NULL || *value == NULL) {
     return FALSE;
   }
-  if (pillNum == 0 || pillNum > (*value)->numPills) {
+  if (pillNum == 0 || pillNum > MAX_PILLS || pillNum > (*value)->numPills) {
     return FALSE;
   }
   pillNum--;
@@ -611,8 +615,21 @@ void lv_pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
   BYTE len = 1;
   BYTE known = (*value)->numPills; /* How many numbers this list already had */
   BYTE live;                       /* Numbers the blob actually describes */
+  BYTE avail;                      /* Records the block's length can hold */
 
-  (*value)->numPills = buff[0];
+  /* The count is a byte read off the recording and item[] holds MAX_PILLS,
+     so a count past that, or past what the block's own length can describe,
+     is a damaged or hostile file. Clamp it before it is stored or walked;
+     nothing below indexes by the raw byte. */
+  live = buff[0];
+  avail = (BYTE)(dataLen >= 1 ? (dataLen - 1) / LV_PILL_NET_RECORD : 0);
+  if (live > MAX_PILLS) {
+    live = MAX_PILLS;
+  }
+  if (live > avail) {
+    live = avail;
+  }
+  (*value)->numPills = live;
   /* The blob is the map: a count and a record per pillbox, with no room for
      which of them are on it — the live flags sit past the wire region on both
      sides. So a snapshot restates the records and leaves the flags to the
@@ -621,7 +638,6 @@ void lv_pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
      map, and a number the blob no longer reaches is off it. Without that a
      pillbox a log_EntityChange had taken away would come back at the next
      snapshot and stay. */
-  live = (*value)->numPills > MAX_PILLS ? MAX_PILLS : (*value)->numPills;
   if (known > MAX_PILLS) {
     known = MAX_PILLS;
   }
@@ -633,7 +649,7 @@ void lv_pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
   }
 
   count = 0;
-  while (count < (*value)->numPills) {
+  while (count < live) {
     (*value)->item[count].x = buff[len];
     len++;
     (*value)->item[count].y = buff[len];

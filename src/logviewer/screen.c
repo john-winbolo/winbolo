@@ -864,7 +864,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
       BYTE mods[6];
       logReadBytes(&opt1, 1);
       logReadBytes(&modLen, 1);
-      if (modLen == sizeof(mods) && logReadBytes(mods, sizeof(mods)) == (int)sizeof(mods)) {
+      /* Consume the blob whatever its length byte says, so a record with the
+         wrong length costs this one value and not the reader's alignment for
+         the rest of the file. Only a six-byte blob is a modifier set. */
+      if (modLen > 0) {
+        logReadBytes((BYTE *)mem, modLen);
+      }
+      if (modLen == sizeof(mods)) {
+        memcpy(mods, mem, sizeof(mods));
         lv_screenSetTankModifiers(opt1, mods);
       }
       break;

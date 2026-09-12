@@ -3807,6 +3807,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # (with and without the stock bytes) and a log_TankSetStock record, through
     # lv_specSeedLoad / lv_specRecordPump.
     tests/unit/test_lv_tank_stocks.c
+    # The viewer reading a recording it cannot trust: item counts past the
+    # arrays, an entity removal past the array, a server line to a slot past
+    # the roster, a modifiers blob of the wrong length.
+    tests/unit/test_lv_hostile_records.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4243,6 +4247,10 @@ set(_unit_test_names
     lv_tank_stocks_from_snapshot
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
+    lv_hostile_item_counts
+    lv_hostile_entity_remove_index
+    lv_hostile_server_text_slot
+    lv_hostile_modifiers_length
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
