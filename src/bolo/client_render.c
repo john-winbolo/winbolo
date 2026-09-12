@@ -42,7 +42,6 @@
 #include "screenlgm.h"
 #include "frontend.h"
 #include "interpolation.h"
-#include "overview_map.h"  /* overviewFogSightGet — is sight being worked out */
 #include "sight.h"         /* sightBuildMask — which squares the tank can see */
 #include "util.h"
 
@@ -158,7 +157,7 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
   BYTE mx; /* The square the view is looked out of */
   BYTE my;
 
-  if (overviewFogSightGet() == fogSightOff) {
+  if (clientSimGetLineOfSight(csPtr) == (uint8_t)lineOfSightOff) {
     return NULL;
   }
   if (clientSimIsInItemView(csPtr) == TRUE) {
@@ -453,7 +452,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     /* Nothing moving is drawn on a square the player cannot see into. The view
      * fill above decided which squares those are; with sight off none of them
      * is, and the three lists go through untouched. */
-    if (overviewFogSightGet() != fogSightOff) {
+    if (clientSimGetLineOfSight(csPtr) != (uint8_t)lineOfSightOff) {
       const screenHidden *hidden = clientSimGetHiddenView(csPtr);
       clientRenderDropHiddenTanks(&scnTnk, hidden,
                                   clientSimGetMyPlayerNum(csPtr));

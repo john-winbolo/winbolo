@@ -1040,8 +1040,8 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->viewKind = cs->viewport.viewKind;
   in->viewTarget = cs->viewport.viewTarget;
 
-  in->experiment = (uint8_t)overviewFogExperimentGet();
-  in->sightMode = (uint8_t)overviewFogSightGet();
+  in->window = (OverviewWindow)cs->overviewWindow;
+  in->lineOfSight = (LineOfSightMode)cs->lineOfSight;
 
   /* A player with no tank in their slot has no window to report: those fields
    * keep the zeroes the defaults gave them, and viewValid says so. */
@@ -3044,35 +3044,15 @@ void clientSimSetScrollMechanism(int mech) {
   scrollSetMechanism((ScrollMechanism)mech);
 }
 
-int clientSimGetFogExperiment(void) {
-  return (int)overviewFogExperimentGet();
-}
-
-/* Wrapped rather than cast straight through: the caller passes an int, and it
- * should not be able to leave the selector on a value the enum does not
- * name. */
-void clientSimSetFogExperiment(int e) {
-  e = ((e % FOG_EXPERIMENT_COUNT) + FOG_EXPERIMENT_COUNT) % FOG_EXPERIMENT_COUNT;
-  overviewFogExperimentSet((FogExperiment)e);
-}
-
-/* Which kind of experiment is running, for a frontend that cannot see the enum
- * and has to tell the two apart: the block is either placed from the classic
- * view or centred on the tank, and the scroll keys belong to whichever of them
- * is actually moving something. */
-bool clientSimFogViewDrivesBlock(void) {
-  return overviewFogBlockFollowsView(overviewFogExperimentGet());
-}
-
-int clientSimGetFogSight(void) {
-  return (int)overviewFogSightGet();
-}
-
-/* Wrapped for the same reason clientSimSetFogExperiment is: an int from a
- * caller must not leave the selector on a value the enum does not name. */
-void clientSimSetFogSight(int m) {
-  m = ((m % FOG_SIGHT_COUNT) + FOG_SIGHT_COUNT) % FOG_SIGHT_COUNT;
-  overviewFogSightSet((FogSightMode)m);
+/* Which window is in force, for a frontend that cannot see the enum and has to
+ * tell the two apart: the block is either placed from the classic view or
+ * centred on the tank, and the scroll keys belong to whichever of them is
+ * actually moving something. No sim, no window to follow. */
+bool clientSimOverviewWindowFollowsView(const ClientSim *cs) {
+  if (cs == NULL) {
+    return FALSE;
+  }
+  return overviewWindowFollowsView((OverviewWindow)cs->overviewWindow);
 }
 
 /* Read from the same struct the overview places the block from, so the two
@@ -3080,26 +3060,27 @@ void clientSimSetFogSight(int m) {
  * square the classic view has scrolled past its offset, the same reading the
  * classic renderer folds in as a drag offset, so it adds to the position.
  *
- * An experiment whose block is centred on the tank has nothing here to follow:
- * declining leaves the caller following the tank, which is where the block is.
+ * A window centred on the tank has nothing here to follow: declining leaves
+ * the caller following the tank, which is where the block is.
  */
-bool clientSimGetFogViewCentreF(const ClientSim *cs, float *outX, float *outY) {
+bool clientSimGetOverviewWindowCentreF(const ClientSim *cs, float *outX,
+                                       float *outY) {
   OverviewViewInputs in; /* Where the block is this tick */
 
   if (cs == NULL || outX == NULL || outY == NULL) {
     return FALSE;
   }
   clientSimFillOverviewViewInputs(cs, &in);
-  if (overviewFogBlockFollowsView((FogExperiment)in.experiment) == FALSE) {
+  if (overviewWindowFollowsView(in.window) == FALSE) {
     return FALSE;
   }
   if (in.viewValid == FALSE) {
     return FALSE;
   }
 
-  *outX = (float)in.viewLeft + (float)OVERVIEW_LENS_HALF + 0.5f +
+  *outX = (float)in.viewLeft + (float)OVERVIEW_CLASSIC_HALF + 0.5f +
           (float)in.viewSubX / 256.0f;
-  *outY = (float)in.viewTop + (float)OVERVIEW_LENS_HALF + 0.5f +
+  *outY = (float)in.viewTop + (float)OVERVIEW_CLASSIC_HALF + 0.5f +
           (float)in.viewSubY / 256.0f;
   return TRUE;
 }
@@ -3331,12 +3312,13 @@ struct OverviewSnapshot {
   int           pillViewX;
   int           pillViewY;
 
-  /* The centre of the live block, for a fog mode that places it from the
-   * classic view. Invalid under a mode that centres its block on the tank,
-   * where the tank position the camera already follows is the same thing. */
-  bool          fogCentreValid;
-  float         fogCentreX;
-  float         fogCentreY;
+  /* The centre of the live block, for an overview window that places it from
+   * the classic view. Invalid under a window that centres its block on the
+   * tank, where the tank position the camera already follows is the same
+   * thing. */
+  bool          windowCentreValid;
+  float         windowCentreX;
+  float         windowCentreY;
 
   /* Every pill and base at its square, numbered as the classic view numbers
    * them. Rebuilt on every fill; nothing is filtered here. */
@@ -3469,9 +3451,9 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->viewTarget    = 0;
   s->pillViewX     = 0;
   s->pillViewY     = 0;
-  s->fogCentreValid = false;
-  s->fogCentreX     = 0.0f;
-  s->fogCentreY     = 0.0f;
+  s->windowCentreValid = false;
+  s->windowCentreX     = 0.0f;
+  s->windowCentreY     = 0.0f;
   s->itemLabelCount = 0;
   s->pingCount     = 0;
   s->haveMap       = (cs != NULL);
@@ -3507,8 +3489,9 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->viewTarget = clientSimGetViewTarget(cs);
   s->pillViewX  = clientSimGetPillViewX(cs);
   s->pillViewY  = clientSimGetPillViewY(cs);
-  s->fogCentreValid = clientSimGetFogViewCentreF(cs, &s->fogCentreX,
-                                                 &s->fogCentreY);
+  s->windowCentreValid =
+      clientSimGetOverviewWindowCentreF(cs, &s->windowCentreX,
+                                        &s->windowCentreY);
 
   /* Every pill and base on the map at its square. The number is the one the
    * classic view draws — pillsGetViewPillNum / basesGetBaseNum at that
@@ -3637,11 +3620,11 @@ void overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
   if (mapY) *mapY = s ? s->pillViewY : 0;
 }
 
-bool overviewSnapshotFogViewCentre(const OverviewSnapshot *s, float *mapX,
-                                   float *mapY) {
-  if (s == NULL || !s->fogCentreValid) return false;
-  if (mapX) *mapX = s->fogCentreX;
-  if (mapY) *mapY = s->fogCentreY;
+bool overviewSnapshotWindowCentre(const OverviewSnapshot *s, float *mapX,
+                                  float *mapY) {
+  if (s == NULL || !s->windowCentreValid) return false;
+  if (mapX) *mapX = s->windowCentreX;
+  if (mapY) *mapY = s->windowCentreY;
   return true;
 }
 

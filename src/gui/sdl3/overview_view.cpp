@@ -1094,7 +1094,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * steps the way the classic view's scroll does. The block follow reads
          * and snaps the same way. */
         float tankX = 0.0f, tankY = 0.0f;
-        float lensX = 0.0f, lensY = 0.0f;
+        float winX = 0.0f, winY = 0.0f;
         if (overviewCameraScrollTick(&v->cam, dtMs)) {
             /* The scroll has the centre this frame. */
         } else if (inItemView) {
@@ -1103,12 +1103,12 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             overviewCameraFollowTick(&v->cam, w, h,
                                      (float)itemMX + 0.5f,
                                      (float)itemMY + 0.5f);
-        } else if (overviewSnapshotFogViewCentre(snap, &lensX, &lensY)) {
+        } else if (overviewSnapshotWindowCentre(snap, &winX, &winY)) {
             if (!smoothScrollingEnabled) {
-                lensX = SDL_floorf(lensX) + 0.5f;
-                lensY = SDL_floorf(lensY) + 0.5f;
+                winX = SDL_floorf(winX) + 0.5f;
+                winY = SDL_floorf(winY) + 0.5f;
             }
-            overviewCameraFollowTick(&v->cam, w, h, lensX, lensY);
+            overviewCameraFollowTick(&v->cam, w, h, winX, winY);
         } else if (overviewSnapshotTankPos(snap, &tankX, &tankY)) {
             if (!smoothScrollingEnabled) {
                 tankX = SDL_floorf(tankX) + 0.5f;
@@ -1478,16 +1478,16 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * Not while an item view has them: there the scroll keys step between
      * pills, bases or allied tanks, which is still their job with the classic
      * view hidden. Not while a text box has the keyboard either, or typing a
-     * message would pan the map behind it. Not under a fog mode that places
-     * the live block from the classic view either: there the scroll keys
-     * are what drags the block, and the classic scroll wants them back.
+     * message would pan the map behind it. Not under an overview window that
+     * places the live block from the classic view either: there the scroll
+     * keys are what drags the block, and the classic scroll wants them back.
      *
      * Panning clears follow, the way a drag does, so a held key wins over the
      * tank exactly as manual scrolling wins over auto-scroll in the classic
      * view. Home hands the map back to the tank. */
     if (!io.WantTextInput) {
         bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs) &&
-                                !clientSimFogViewDrivesBlock();
+                                !clientSimOverviewWindowFollowsView(cs);
         float dx = 0.0f, dy = 0.0f;
         if (overviewKeyDown(keys, ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;

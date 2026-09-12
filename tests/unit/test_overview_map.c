@@ -267,12 +267,12 @@ int run_overview_regions(void) {
         ASSERT_RECT(out[maxOut], -1, -1, -1, -1);
     }
 
-    /* Which block the tank gets is the fog experiment's, and overviewMapUpdate
+    /* Which block the tank gets is the overview window's, and overviewMapUpdate
      * is the only thing that places it, so these run through it. The memory is
      * a hundred kilobytes and more, too much to put on the stack. */
     {
         OverviewMap *om;        /* The memory the update writes */
-        OverviewViewInputs fog; /* Inputs carrying the experiment and the view */
+        OverviewViewInputs fog; /* Inputs carrying the window and the view */
 
         om = (OverviewMap *)calloc(1, sizeof(OverviewMap));
         UT_ASSERT_MSG(om != NULL, "no memory for an OverviewMap");
@@ -292,7 +292,7 @@ int run_overview_regions(void) {
          * not at the tank, which is a hundred squares off it. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentClassic;
+        fog.window = overviewWindowClassic;
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
@@ -305,7 +305,7 @@ int run_overview_regions(void) {
          * puts the same 15x15 round the tank instead. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentClassic;
+        fog.window = overviewWindowClassic;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
         UT_ASSERT_MSG(om->liveCount == 1,
                       "Classic without a view gave %d regions, expected 1",
@@ -317,7 +317,7 @@ int run_overview_regions(void) {
          * standing near one. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentClassic;
+        fog.window = overviewWindowClassic;
         fog.viewValid = TRUE;
         fog.viewLeft = 250;
         fog.viewTop = 0;
@@ -329,7 +329,7 @@ int run_overview_regions(void) {
 
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentClassic;
+        fog.window = overviewWindowClassic;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 250);
         ASSERT_RECT(om->live[0], 0, 243, 10, 255);
 
@@ -339,7 +339,7 @@ int run_overview_regions(void) {
          * wreck it would be the 15x15 round 100,100. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentClassic;
+        fog.window = overviewWindowClassic;
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
@@ -395,7 +395,7 @@ int run_overview_regions(void) {
             }
         }
 
-        /* Line of sight, which rides on top of whichever experiment is
+        /* Line of sight, which rides on top of whichever window is
          * running: inside the blocks round the tank a square with a building
          * between it and the tank keeps the tile it last showed and has
          * nothing drawn moving on it. The wall itself is seen - what is hidden
@@ -442,7 +442,7 @@ int run_overview_regions(void) {
 
             /* And with it on the ground behind the building drops out of the
              * block while the building itself stays in it. */
-            fog.sightMode = (uint8_t)fogSightBuildingsAndTrees;
+            fog.lineOfSight = lineOfSightBuildingsAndTrees;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
             UT_ASSERT_MSG(om->hiddenActive == TRUE,
                           "the map hid nothing with the toggle on");
@@ -526,7 +526,7 @@ int run_overview_regions(void) {
 
             /* Turning the toggle off puts the square back in the block, and
              * what it shows then is what has been there all along. */
-            fog.sightMode = (uint8_t)fogSightOff;
+            fog.lineOfSight = lineOfSightOff;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
             UT_ASSERT_MSG(om->hiddenActive == FALSE,
                           "the map went on hiding squares after the toggle was "
@@ -563,7 +563,7 @@ int run_overview_regions(void) {
                 hiddenTile = om->tile[106][100];
                 seenTile = om->tile[102][100];
 
-                fog.sightMode = (uint8_t)fogSightBuildingsAndTrees;
+                fog.lineOfSight = lineOfSightBuildingsAndTrees;
                 overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
                 UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0,
                               "the square behind the building carries flags "

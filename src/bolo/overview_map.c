@@ -78,21 +78,19 @@
 #include "sight.h"
 #include "viewport.h"
 
-/* ------------------------------------------------------------------
- * Which rule builds the block round the player's own tank, and what stops
- * the player seeing inside it. Process-global, and not saved: every launch
- * starts on Expanded with sight off, and the settings the server sends
- * write both as they arrive. */
-static FogExperiment g_fogExperiment = fogExperimentExpanded;
-static FogSightMode  g_fogSightMode  = fogSightOff;
+/* Every block this file builds round the tank is at most SIGHT_MAX_SIDE on a
+ * side, so one SIGHT_MASK_BYTES buffer always holds its mask: the only two
+ * halves in play are OVERVIEW_TANK_HALF for Expanded and OVERVIEW_CLASSIC_HALF
+ * for Classic, and the wider of the two is what SIGHT_MAX_HALF is sized from.
+ * overviewStampRect indexes that buffer by the block's own width, so a block
+ * wider than this would run off the end of it. */
+BOLO_STATIC_ASSERT(2 * OVERVIEW_TANK_HALF + 1 <= SIGHT_MAX_SIDE,
+                   tank_block_fits_the_sight_mask);
+BOLO_STATIC_ASSERT(2 * OVERVIEW_CLASSIC_HALF + 1 <= SIGHT_MAX_SIDE,
+                   classic_block_fits_the_sight_mask);
 
-FogExperiment overviewFogExperimentGet(void) { return g_fogExperiment; }
-void overviewFogExperimentSet(FogExperiment e) { g_fogExperiment = e; }
-FogSightMode overviewFogSightGet(void) { return g_fogSightMode; }
-void overviewFogSightSet(FogSightMode m) { g_fogSightMode = m; }
-
-bool overviewFogBlockFollowsView(FogExperiment e) {
-  return e == fogExperimentClassic;
+bool overviewWindowFollowsView(OverviewWindow w) {
+  return w == overviewWindowClassic;
 }
 
 /* Brings an inclusive rect back inside the map. Shared so a block placed by
@@ -134,7 +132,7 @@ static OverviewRect overviewRectAround(int cx, int cy, int half) {
 }
 
 /* The block of squares round the player's own tank, which is the one thing the
- * fog experiment picks between. Expanded is the whole scroll envelope centred
+ * overview window picks between. Expanded is the whole scroll envelope centred
  * on the tank, the block the map has always drawn.
  *
  * Classic is the classic window's own 15x15 placed where that view is sitting:
@@ -146,12 +144,12 @@ static OverviewRect overviewRectAround(int cx, int cy, int half) {
  * tank has always had. */
 static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
                               BYTE tankMY, OverviewRect *out) {
-  if (overviewFogBlockFollowsView((FogExperiment)in->experiment) == FALSE) {
+  if (overviewWindowFollowsView(in->window) == FALSE) {
     *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_TANK_HALF);
     return;
   }
   if (in->viewValid == FALSE) {
-    *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_LENS_HALF);
+    *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_CLASSIC_HALF);
     return;
   }
 
@@ -163,8 +161,8 @@ static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
   out->originY = tankMY;
   out->left = (int)in->viewLeft;
   out->top = (int)in->viewTop;
-  out->right = out->left + 2 * OVERVIEW_LENS_HALF;
-  out->bottom = out->top + 2 * OVERVIEW_LENS_HALF;
+  out->right = out->left + 2 * OVERVIEW_CLASSIC_HALF;
+  out->bottom = out->top + 2 * OVERVIEW_CLASSIC_HALF;
   overviewRectTrimToMap(out);
 }
 
@@ -647,9 +645,10 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    *
    * Where the classic view was sitting is recorded alongside the square, for
    * the same reason: a dead tank leaves that view wherever it stopped and
-   * reports nothing, so an experiment that places the block from the view has
-   * to be handed the last readings taken while the tank was alive. The block
-   * then holds where the player was looking rather than snapping to the wreck.
+   * reports nothing, so the Classic window, which places the block from that
+   * view, has to be handed the last readings taken while the tank was alive.
+   * The block then holds where the player was looking rather than snapping to
+   * the wreck.
    */
   tankLive = haveTank;
   useMX = tankMX;
@@ -838,15 +837,17 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    *
    * With sight off nothing is masked at all and no square ever carries the
    * flag, which is the picture the map has always drawn. */
-  hideOn = (in->sightMode != (uint8_t)fogSightOff && om->liveCount > 0);
+  hideOn = (in->lineOfSight != lineOfSightOff && om->liveCount > 0);
   om->hiddenActive = hideOn;
 
   for (i = 0; i < om->liveCount; i++) {
     visPtr = NULL;
     if (hideOn == TRUE) {
-      /* Every square seen until something says otherwise, so a block too big
-       * for the buffer - which no experiment builds today - reads as nothing
-       * being hidden rather than as whatever the last one left behind. */
+      /* Every square seen until something says otherwise, so a block
+       * sightBuildMask refuses reads as nothing being hidden rather than as
+       * whatever the last one left behind. No block reaches here that it can
+       * refuse for width: the static assertions at the top of this file pin
+       * both halves inside SIGHT_MAX_SIDE. */
       memset(vis, 1, sizeof(vis));
       sightBuildMask(&sim->mp, om->live[i].originX, om->live[i].originY,
                      &om->live[i], vis);

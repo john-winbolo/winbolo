@@ -288,14 +288,12 @@ int run_lobby_settings_codec_and_apply(void) {
                       (uint8_t)lineOfSightBuildingsAndTrees,
                   "line of sight did not reach the client mirror (got %u)",
                   (unsigned)clientSimGetLineOfSight(cs));
-    /* And the client honours them: the selectors the overview and the
-     * classic view actually read hold what the server asked for. */
-    UT_ASSERT_MSG(clientSimGetFogExperiment() == (int)overviewWindowClassic,
-                  "the overview window the server asked for was not applied "
-                  "(got %d)", clientSimGetFogExperiment());
-    UT_ASSERT_MSG(clientSimGetFogSight() == (int)lineOfSightBuildingsAndTrees,
-                  "the line of sight the server asked for was not applied "
-                  "(got %d)", clientSimGetFogSight());
+    /* And the client honours them where it counts: the test the overview and
+     * the scroll keys actually ask answers from the mirror the server wrote,
+     * so Classic really does put the block on the classic view. */
+    UT_ASSERT_MSG(clientSimOverviewWindowFollowsView(cs) == true,
+                  "the Classic overview window the server asked for did not "
+                  "reach the block placement");
     clientSimDestroy(cs);
 
     /* A byte outside either enum reads as the default rather than wrapping
@@ -317,10 +315,8 @@ int run_lobby_settings_codec_and_apply(void) {
         clientSimDestroy(oddCs);
     }
 
-    /* Both selectors are process globals, so put them back where the rest
-     * of the suite expects to find them. */
-    clientSimSetFogExperiment((int)overviewWindowExpanded);
-    clientSimSetFogSight((int)lineOfSightOff);
+    /* Nothing to put back: both settings live on the ClientSim, so the next
+     * case's own sim starts on Expanded with line of sight off. */
     return 0;
 }
 

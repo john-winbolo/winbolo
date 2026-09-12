@@ -57,10 +57,10 @@
  * pillbox, a base and an allied tank all take the pill block. */
 #define OVERVIEW_TANK_HALF   (MAIN_SCREEN_SIZE_X - 1)   /* 14 -> 29x29 */
 #define OVERVIEW_PILL_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
-/* The classic view's own visible block, which is what the Classic fog mode
- * narrows the tank's region down to. Same number as the item block and a
- * different thing, so tuning one never moves the other. */
-#define OVERVIEW_LENS_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
+/* The classic view's own visible block, which is what the Classic overview
+ * window narrows the tank's region down to. Same number as the item block and
+ * a different thing, so tuning one never moves the other. */
+#define OVERVIEW_CLASSIC_HALF (MAIN_SCREEN_SIZE_X / 2)  /* 7  -> 15x15 */
 
 /* One round the player's own tank, and one for each item a view policy grants
  * a block to. */

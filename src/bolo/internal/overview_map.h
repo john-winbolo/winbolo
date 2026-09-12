@@ -31,48 +31,21 @@
 #include "client_command.h" /* VIEW_KIND_* — which item the player is watching */
 #include "overview_types.h"
 #include "types.h"
-#include "view_policy.h"    /* ViewPolicy / ViewCategory / VIEW_DECAY_* */
+#include "view_policy.h"    /* ViewPolicy / ViewCategory / OverviewWindow /
+                               LineOfSightMode / VIEW_DECAY_* */
 
 struct GameSim;
 
-/* Which rule decides the block of squares round the player's own tank.
- * Expanded is what the map has always drawn - everything the classic 15x15
- * view could scroll to - and Classic narrows it to the window that view is
- * actually showing. Both are client presentation: the server picks which one
- * and sends the same map data either way. */
-typedef enum {
-  fogExperimentExpanded = 0,
-  fogExperimentClassic,
-  FOG_EXPERIMENT_COUNT
-} FogExperiment;
-
-/* Whether anything stops the player seeing inside that block: nothing, or
- * buildings and any stand of trees more than SIGHT_TREE_MAX_DEPTH deep. Held
- * as a selector rather than a bool so another rule can join it without a
- * second setting. */
-typedef enum {
-  fogSightOff = 0,
-  fogSightBuildingsAndTrees,
-  FOG_SIGHT_COUNT
-} FogSightMode;
-
-/* The block in force and what blocks sight inside it. Both are process
- * globals, not saved: every launch starts on Expanded with sight off, and
- * the server's lobby settings write them as they arrive — the client applies
- * what it is told rather than choosing for itself.
+/* Which block of squares the overview keeps live round the player's own tank,
+ * and what stops the player seeing inside it, are the server's OverviewWindow
+ * and LineOfSightMode. Both are per-connection settings carried on the
+ * ClientSim the caller already holds; nothing in this module keeps a copy.
  *
- * Frontends reach both through the int-typed clientSim mirrors rather than
- * this header, which they may not include. */
-FogExperiment overviewFogExperimentGet(void);
-void          overviewFogExperimentSet(FogExperiment e);
-FogSightMode  overviewFogSightGet(void);
-void          overviewFogSightSet(FogSightMode m);
-
-/* Whether this experiment places the block round the tank from the classic
- * view rather than round the tank itself. The block builder and the camera the
- * frontend follows both ask here, so the two cannot disagree about what the
- * scroll keys are driving. */
-bool overviewFogBlockFollowsView(FogExperiment e);
+ * Whether the window in force places that block from the classic view rather
+ * than round the tank itself. The block builder and the camera the frontend
+ * follows both ask here, so the two cannot disagree about what the scroll keys
+ * are driving. */
+bool overviewWindowFollowsView(OverviewWindow w);
 
 /* What the region build needs beyond the sim itself: the server's visibility
  * rules, the proximity clocks the client keeps for the local player under
@@ -91,12 +64,12 @@ bool overviewFogBlockFollowsView(FogExperiment e);
  * (clientSimAllyViewMask); with no bits set no allied tank ever earns a
  * region, whatever the policy says.
  *
- * The rest is the fog experiment and the state the narrower block is placed
- * from: the classic view is still scrolling under the full screen map, so its
- * first visible square and the sub-square part of its position say where the
- * window the player is driving actually is. viewValid is false when there is
- * no live tank or the player is watching an item, which is when the view
- * readings mean nothing. */
+ * The rest is the overview window in force and the state the narrower block is
+ * placed from: the classic view is still scrolling under the full screen map,
+ * so its first visible square and the sub-square part of its position say
+ * where the window the player is driving actually is. viewValid is false when
+ * there is no live tank or the player is watching an item, which is when the
+ * view readings mean nothing. */
 typedef struct OverviewViewInputs {
     ViewPolicy      policy[VIEW_CATEGORY_COUNT];
     uint16_t        decaySecs[VIEW_CATEGORY_COUNT];
@@ -108,8 +81,8 @@ typedef struct OverviewViewInputs {
     PlayerBitMap    allyViewable;
     uint8_t         viewKind;      /* VIEW_KIND_* the player is watching */
     BYTE            viewTarget;    /* the pill/base index or ally player number */
-    uint8_t         experiment;    /* FogExperiment */
-    uint8_t         sightMode;     /* FogSightMode */
+    OverviewWindow  window;        /* which block goes round the tank */
+    LineOfSightMode lineOfSight;   /* what stops the player seeing inside it */
     bool            viewValid;     /* the classic-view fields below mean something */
     BYTE            viewLeft, viewTop;  /* first visible square of that view */
     bool            manualHold;    /* the player is holding the view off autoscroll */
@@ -119,9 +92,9 @@ typedef struct OverviewViewInputs {
 /* The rules a server ships with: pillboxes always, bases off, allied tanks
  * always. No clocks, no item view, no viewable allies — so what comes out is
  * the tank block and the pillboxes the player can view through, which is the
- * region set the overview has always had. The fog fields zero with it, which
- * reads as Expanded with sight off and no classic view to place a block
- * from. */
+ * region set the overview has always had. The visibility fields zero with it,
+ * which reads as Expanded with line of sight off and no classic view to place
+ * a block from. */
 void overviewViewInputsDefaults(OverviewViewInputs *in);
 
 /* Whether one proximity clock is still inside its category's window, and how
@@ -167,7 +140,7 @@ void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
  * ramping to 0 over the last VIEW_DECAY_FADE_SECS of a decay window.
  *
  * tankRect is the block round the player's own tank, already placed and sized
- * by the caller — the fog experiment decides where it goes and how wide it is,
+ * by the caller — the overview window decides where it goes and how wide it is,
  * so the choice is made once, in overviewMapUpdate, and this only copies what
  * it is handed. NULL means no tank rect at all. It is copied as it is handed
  * over, so where it goes and what it grants is settled before the call. Every
@@ -207,7 +180,7 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  * keeps stamping underneath it. A tank that has really gone drops its block
  * outright.
  *
- * With sightMode past fogSightOff, every live block is masked by what the
+ * With lineOfSight past lineOfSightOff, every live block is masked by what the
  * thing it belongs to can actually see from where it stands: a square with a
  * building, or a deep enough stand of trees, between it and that square keeps
  * the tile it last showed, carries OVERVIEW_F_HIDDEN instead of the live and

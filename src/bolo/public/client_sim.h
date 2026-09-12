@@ -1175,38 +1175,24 @@ void         clientSimSetAutoScrollOverride(ClientSim *cs, bool value);
 int          clientSimGetScrollMechanism(void);
 void         clientSimSetScrollMechanism(int mech);
 
-/* Which rule builds the block of live squares round the player's own tank
-   (0 = Expanded, the block the map has always drawn; 1 = Classic, the window
-   the classic view is showing). Values match FogExperiment, exposed as int so
-   GUI callers needn't include the internal overview header. The server chooses
-   it and the client applies it here; process-global, not saved. */
-int          clientSimGetFogExperiment(void);
-void         clientSimSetFogExperiment(int e);
-
-/* Whether the experiment running places that block from the classic view, as
-   against centring it on the tank. It is the one thing a GUI caller has to know
-   about the experiments apart from their names: with the block on the classic
-   view the scroll keys are what drags it, so they go back to the classic
-   scroll, and with the block on the tank they move nothing and the map overview
-   pans its own camera with them instead. */
-bool         clientSimFogViewDrivesBlock(void);
-
-/* And what stops the player seeing inside that block: 0 = off, nothing blocks;
-   1 = buildings, and no further than two trees deep into a stand of forest.
-   Values match FogSightMode, exposed the same way and set the same way.
-   Process-global, not saved. */
-int          clientSimGetFogSight(void);
-void         clientSimSetFogSight(int m);
+/* Whether the overview window in force (clientSimGetOverviewWindow) places the
+   block of live squares from the classic view, as against centring it on the
+   tank. It is the one thing a GUI caller has to know about the two windows
+   apart from their names: with the block on the classic view the scroll keys
+   are what drags it, so they go back to the classic scroll, and with the block
+   on the tank they move nothing and the map overview pans its own camera with
+   them instead. False for a NULL sim. */
+bool         clientSimOverviewWindowFollowsView(const ClientSim *cs);
 
 /* The centre of the block of live squares round the player's own tank, in map
    squares and including the sub-square part, for a camera that has to follow
    the block rather than the tank. That is the classic view's own centre, under
-   the experiment placed from that view. False — leaving the outputs alone —
-   under the experiment whose block is centred on the tank, where the tank
-   position is what to follow, and whenever there is no live tank view to read
-   that centre from. */
-bool         clientSimGetFogViewCentreF(const ClientSim *cs, float *outX,
-                                        float *outY);
+   the window placed from that view. False — leaving the outputs alone — under
+   the window whose block is centred on the tank, where the tank position is
+   what to follow, and whenever there is no live tank view to read that centre
+   from. */
+bool         clientSimGetOverviewWindowCentreF(const ClientSim *cs, float *outX,
+                                               float *outY);
 
 /* My-tank helpers for clients that need the local tank's current map
  * tile (e.g. gamepad build cursor).  Return false when the local tank
@@ -1303,12 +1289,12 @@ BYTE    overviewSnapshotViewTarget(const OverviewSnapshot *s);
 /* The square an item view watches — clientSimGetPillViewX / Y at fill time. */
 void    overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
                                        int *mapY);
-/* The centre of the live block as clientSimGetFogViewCentreF reported it, at
-   sub-square precision: false, with nothing written, where it declined — the
-   experiments that centre their block on the tank, and no live view to read a
+/* The centre of the live block as clientSimGetOverviewWindowCentreF reported
+   it, at sub-square precision: false, with nothing written, where it declined
+   — the window that centres its block on the tank, and no live view to read a
    centre from. A camera that follows the block falls back to the tank there. */
-bool    overviewSnapshotFogViewCentre(const OverviewSnapshot *s, float *mapX,
-                                      float *mapY);
+bool    overviewSnapshotWindowCentre(const OverviewSnapshot *s, float *mapX,
+                                     float *mapY);
 /* Every pill and base at its square, with the number the classic view puts
    on it: the first the sim lists at that square, counted from 0. */
 int                      overviewSnapshotItemLabelCount(const OverviewSnapshot *s);

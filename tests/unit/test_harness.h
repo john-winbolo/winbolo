@@ -1235,10 +1235,11 @@ int run_viewport_calc_pill_square_moved(void);
  * writes the tank's block, which it is handed, first, gives every viewable
  * pillbox a 15x15 one trimmed at the map edges, keeps the pills in index
  * order and never writes more rects than the caller allowed for; where that
- * block goes is the fog experiment's to decide, and is covered through
- * overviewMapUpdate — the 29x29 on the tank under Envelope, the 15x15 at the
- * classic view under the lens, the same 15x15 round the tank with no view to
- * read, and the view a dying tank last had; line of sight hides a square behind
+ * block goes is the overview window's to decide, and is covered through
+ * overviewMapUpdate — the 29x29 on the tank under the Expanded window, the
+ * 15x15 at the classic view under the Classic one, the same 15x15 round the
+ * tank with no view to read, and the view a dying tank last had;
+ * line of sight hides a square behind
  * a building without touching the tile it last showed, leaves the building and
  * the tank's own square in the block, reaches no watched item's block, holds
  * that tile through the update the block stops being live, and sets nothing at
