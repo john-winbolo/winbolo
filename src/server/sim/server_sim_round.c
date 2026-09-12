@@ -1223,8 +1223,10 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         serverSimPublishControl(sim, &phaseEvt);
     }
 
-    /* And the table the round is starting on, beside the phase, the way the
-     * countdown→running path in server_lifecycle.c does. */
+    /* And the table the round is starting on, beside the phase. The twin of
+     * the publish at the end of serverSimStartGame: this path does not run
+     * that function, so it states the table itself. Between the two of them
+     * every start path states it exactly once. */
     serverSimPublishSimRules(sim);
 
     sim->startInProgress = false;
@@ -1357,6 +1359,17 @@ void serverSimStartGame(ServerSim *sim) {
     sim->state = serverStateRunning;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
+
+    /* The table the round is starting on, stated here rather than by each
+     * caller. This and serverSimStartGameInPlace are the two authoritative
+     * starts — every start path in the server runs one of them and neither
+     * runs the other — so a publish in each is a publish exactly once per
+     * round however the round was started: the countdown expiring, a lobby
+     * skipped at boot, an empty server resetting, a map rotation, the
+     * console's start command or the headless fast path. The callers used to
+     * do it, and only two of them did, which left the rest of those paths
+     * starting a round nobody was told the numbers for. */
+    serverSimPublishSimRules(sim);
 
     sim->startInProgress = false;
 

@@ -15,6 +15,7 @@
 {"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
 {"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":2}
 {"tick":20,"type":"CTRL_ALLIANCE_RESET","allies":[1,2,4,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"tick":20,"type":"CTRL_SIM_RULES"}
 {"tick":50,"type":"CTRL_ALLIANCE_REQUEST","fromPlayer":0,"toPlayer":1}
 {"tick":52,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":1,"newMember":0}
 {"tick":70,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}

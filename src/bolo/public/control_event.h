@@ -195,9 +195,11 @@ typedef enum {
      * stays on the server. Broadcast: the numbers are the same for
      * everybody and none of them is private.
      *
-     * Published at the round start, again whenever a scenario changes a
-     * rule the event carries, and replayed into a joining client's sync so
-     * it arrives with the table the round is already using. */
+     * Published at every round start — from the two authoritative start
+     * functions themselves, so no start path can forget to state its
+     * table — again whenever a scenario changes a rule the event carries,
+     * and replayed into a joining client's sync so it arrives with the
+     * table the round is already using. */
     CTRL_SIM_RULES,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;

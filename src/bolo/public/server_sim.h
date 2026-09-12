@@ -1475,9 +1475,13 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, struct ControlEvent *evt);
  *NAME:          serverSimPublishSimRules
  *PURPOSE:
  *  Publish the table this sim is running on to every
- *  subscriber. Called at the round start and again whenever
- *  a rule the event carries changes; a joining client is
- *  given the same event by the sync replay instead.
+ *  subscriber. Called at the end of each of the two
+ *  authoritative round starts — serverSimStartGame and
+ *  serverSimStartGameInPlace, one of which every start path
+ *  runs — so every round states its table exactly once
+ *  however it was started. Called again whenever a rule the
+ *  event carries changes mid-round; a joining client is given
+ *  the same event by the sync replay instead.
  *
  *ARGUMENTS:
  *  sim - The sim whose table is being stated
