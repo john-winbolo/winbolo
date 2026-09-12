@@ -57,8 +57,18 @@
 /* How much audio each remote talker's output stream is kept topped up to.
  * The audio device drains it at real time, so this is the depth playback is
  * refilled to whenever it is looked at - deep enough that a late call still
- * finds audio to play, shallow enough not to add audible delay of its own. */
-#define VOICE_PLAYBACK_TARGET_FRAMES 2
+ * finds audio to play, shallow enough not to add audible delay of its own.
+ *
+ * The refill happens on the render loop, so the depth is really "how long a
+ * frame may take before the device runs dry": at two frames a stall past
+ * 40 ms left it with nothing to play, which is a hiccup the player hears and
+ * which no amount of network or codec work can help. Four costs 40 ms of
+ * delay and covers twice the stall. It is not a measured optimum — how long
+ * a machine stalls depends on that machine and on whatever else it is doing
+ * — it is a better default, and it is what the canceller below is told: the
+ * reference is handed the live queue depth, so a deeper queue adjusts its
+ * alignment rather than hiding from it. */
+#define VOICE_PLAYBACK_TARGET_FRAMES 4
 
 /* Frames queued per talker per call.  A caller that has been stalled long
  * enough for a talker to bank more than this leaves the excess in the jitter
