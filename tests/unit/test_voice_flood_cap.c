@@ -1,18 +1,22 @@
 /*
  * Per-client voice flood cap over the real loopback transport.
  *
- * serverPumpVoice forwards at most VOICE_SEGMENTS_PER_TICK segments from one
- * client per tick and drains the rest. That cap is an abuse control: without
- * it a client that ignores the 20 ms capture cadence buys itself unbounded
- * fan-out bandwidth, multiplied by every listener. The transport's cumulative
- * accepted / dropped counters are what makes it observable, so this drives
- * the whole path (encode -> client send wrapper -> CHANNEL_VOICE -> server
- * pump) and reads the counters back.
+ * serverPumpVoice spends a per-sender credit, refilled a segment a tick and
+ * banked to VOICE_CREDIT_BURST, and drains whatever it cannot pay for. The
+ * refill rate is the abuse control: without it a client that ignores the
+ * 20 ms capture cadence buys itself unbounded fan-out bandwidth, multiplied
+ * by every listener. The depth is what keeps it off a well-behaved one — a
+ * client drains its capture device on its render loop, so a hitch there
+ * flushes several frames at once through no fault of the sender, and every
+ * segment refused arrives at the listener as a concealed frame. The
+ * transport's cumulative accepted / dropped counters are what makes it
+ * observable, so this drives the whole path (encode -> client send wrapper ->
+ * CHANNEL_VOICE -> server pump) and reads the counters back.
  *
- *   1. A burst queued inside one client tick rides one channel frame, so the
- *      server sees all of it in a single pump: the cap forwards two and drops
- *      the remainder.
- *   2. A steady one-frame-per-tick stream is never dropped — the cap must
+ *   1. A burst inside the depth, queued in one client tick, rides one channel
+ *      frame and must be forwarded whole.
+ *   1b. A burst past the depth is still refused down to it.
+ *   2. A steady one-frame-per-tick stream is never dropped — the control must
  *      cost a well-behaved talker nothing.
  *   3. The separate concurrent-talker cap stays out of the way throughout:
  *      one talker is far below it, so its suppression counter must not move.
@@ -44,12 +48,16 @@
 #define CONNECT_MAX   2000   /* join + map download                        */
 #define SETTLE_MAX     300   /* pumps allowed for a burst to be pumped out */
 #define STEADY_FRAMES   20   /* one frame per tick, the capture cadence    */
-#define BURST_FRAMES     5   /* > the cap, queued inside one client tick   */
-#define TEST_FRAMES    (STEADY_FRAMES + BURST_FRAMES)
+#define BURST_FRAMES     5   /* inside the burst depth: all must go through */
+#define OVER_FRAMES      8   /* past it: the excess must still be refused.
+                              * Held to CHANNEL_VOICE_WINDOW so the client's
+                              * own ring carries the whole burst and the
+                              * server is what refuses it.                  */
+#define TEST_FRAMES    (STEADY_FRAMES + BURST_FRAMES + OVER_FRAMES)
 
-/* Mirrors VOICE_SEGMENTS_PER_TICK in transport_udp_server.c, which is file
- * local to the transport. Must track it. */
-#define EXPECT_CAP       2
+/* Mirrors VOICE_CREDIT_BURST in udp_server_voice.c, which is file local to
+ * the transport. Must track it. */
+#define EXPECT_BURST_DEPTH 6
 
 #define TONE_HZ        440.0
 #define TONE_AMPLITUDE 0.3
@@ -118,9 +126,20 @@ int run_voice_flood_cap_enforced(void) {
         UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
     }
 
-    /* 1. The burst. Every send queues a segment on the client's best-effort
-     * voice ring; nothing leaves until the next client tick, so one frame
-     * carries all of them and one server pump sees the lot. */
+    /* 1. A burst inside the credit depth goes through whole. Every send
+     * queues a segment on the client's best-effort voice ring; nothing leaves
+     * until the next client tick, so one frame carries all of them and one
+     * server pump sees the lot. This is what a render hitch on the sender
+     * produces — the client drains its capture device on the render loop —
+     * and refusing it costs the listener a concealed frame per lost segment,
+     * which is audible.
+     *
+     * The credit banks a segment a tick and starts a fresh slot empty, so
+     * pump it to full first: a hitch that bunches frames happens inside a
+     * conversation, not in the first tenth of a second after joining. */
+    for (i = 0; i < EXPECT_BURST_DEPTH + 4; i++) {
+        loopbackHarnessPump(&h);
+    }
     transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped, &baseCapped);
     for (i = 0; i < BURST_FRAMES; i++) {
         clientSimNetSendVoice(h.cs, frames[i].data, frames[i].len, 0);
@@ -149,16 +168,11 @@ int run_voice_flood_cap_enforced(void) {
                 "dropped within %d pumps", BURST_FRAMES, (unsigned)accepted,
                 (unsigned)dropped, SETTLE_MAX);
     }
-    if (accepted > EXPECT_CAP) {
+    if (accepted != BURST_FRAMES || dropped != 0) {
         loopbackHarnessStop(&h);
-        UT_FAIL("cap did not bite: %u of %d burst segments forwarded, at most "
-                "%d allowed per tick", (unsigned)accepted, BURST_FRAMES,
-                EXPECT_CAP);
-    }
-    if (dropped != (uint32_t)(BURST_FRAMES - EXPECT_CAP)) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("burst: %u dropped, expected the %d not forwarded",
-                (unsigned)dropped, BURST_FRAMES - EXPECT_CAP);
+        UT_FAIL("a burst of %d inside the %d-segment credit depth must be "
+                "forwarded whole: %u forwarded, %u dropped", BURST_FRAMES,
+                EXPECT_BURST_DEPTH, (unsigned)accepted, (unsigned)dropped);
     }
     if (capped != 0) {
         loopbackHarnessStop(&h);
@@ -168,13 +182,51 @@ int run_voice_flood_cap_enforced(void) {
     fprintf(stderr, "  voice flood cap: burst of %d -> %u forwarded, %u "
             "dropped\n", BURST_FRAMES, (unsigned)accepted, (unsigned)dropped);
 
-    /* 2. The steady stream: one frame per tick, the rate a real capture
-     * produces. Nothing may be dropped. The cap's second slot absorbs a tick
-     * of bunching, so a segment that lands a tick late still gets forwarded. */
+    /* 1b. Past the depth the control still bites. The credit refills one a
+     * tick, so pump it back to full first and then hand the server more than
+     * it can ever hold: the excess is drained and dropped exactly as an
+     * unbounded sender's would be. */
+    for (i = 0; i < EXPECT_BURST_DEPTH + 4; i++) {
+        loopbackHarnessPump(&h);
+    }
     transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped, &baseCapped);
-    for (i = 0; i < STEADY_FRAMES; i++) {
+    for (i = 0; i < OVER_FRAMES; i++) {
         clientSimNetSendVoice(h.cs, frames[BURST_FRAMES + i].data,
                               frames[BURST_FRAMES + i].len, 0);
+    }
+    for (i = 1; i <= SETTLE_MAX; i++) {
+        loopbackHarnessPump(&h);
+        transportUdpServerGetVoiceStats(&accepted, &dropped, &capped);
+        if ((accepted - baseAccepted) + (dropped - baseDropped) >=
+            OVER_FRAMES) {
+            break;
+        }
+    }
+    transportUdpServerGetVoiceStats(&accepted, &dropped, &capped);
+    accepted -= baseAccepted;
+    dropped -= baseDropped;
+
+    if (accepted > EXPECT_BURST_DEPTH) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("credit did not bite: %u of %d segments forwarded from one "
+                "tick, at most %d held", (unsigned)accepted, OVER_FRAMES,
+                EXPECT_BURST_DEPTH);
+    }
+    if (accepted + dropped != OVER_FRAMES) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("over-depth burst of %d accounted for as %u accepted + %u "
+                "dropped", OVER_FRAMES, (unsigned)accepted, (unsigned)dropped);
+    }
+    fprintf(stderr, "  voice flood cap: burst of %d -> %u forwarded, %u "
+            "dropped\n", OVER_FRAMES, (unsigned)accepted, (unsigned)dropped);
+
+    /* 2. The steady stream: one frame per tick, the rate a real capture
+     * produces. Nothing may be dropped — a credit a tick is exactly this
+     * rate, and the depth above it absorbs a segment that lands late. */
+    transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped, &baseCapped);
+    for (i = 0; i < STEADY_FRAMES; i++) {
+        clientSimNetSendVoice(h.cs, frames[BURST_FRAMES + OVER_FRAMES + i].data,
+                              frames[BURST_FRAMES + OVER_FRAMES + i].len, 0);
         loopbackHarnessPump(&h);
     }
     /* Drain the last frames still in flight. */

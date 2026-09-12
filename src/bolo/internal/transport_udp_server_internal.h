@@ -343,8 +343,7 @@ typedef struct UdpServerState {
     /* Cumulative voice segments this server forwarded, meaning unpacked and
      * re-packed downstream, and segments pass 1 of serverPumpVoice drained
      * and did not forward.  A segment is dropped when voice is switched off
-     * for the server, when the sender is past VOICE_SEGMENTS_PER_TICK for
-     * the tick, when the sender's map download is not yet complete, when
+     * for the server, when the sender has no flood-control credit left, when the sender's map download is not yet complete, when
      * voiceSegmentUnpackUp rejects it, or when voiceSegmentPackDown fails.
      * The pre-download drop is expected: a client with voice on while still
      * taking the map produces a steady drop rate that indicates nothing
@@ -378,6 +377,12 @@ typedef struct UdpServerState {
         uint32_t forwarded;
         uint32_t capped;
     } voiceSlot[MAX_TANKS];
+
+    /* Voice flood-control credit per sender, in segments. Refilled a tick's
+     * worth per pump and spent one per segment accepted, so it bounds the
+     * sustained rate while letting a sender's bunched frames through — see
+     * VOICE_CREDIT_BURST. Cleared with the slot on disconnect. */
+    uint8_t  voiceCredits[MAX_TANKS];
 
     /* Per-slot voice arrival bookkeeping, in tickCount ticks, feeding the
      * concurrent-talker cap: the tick this slot's last voice frame landed on,

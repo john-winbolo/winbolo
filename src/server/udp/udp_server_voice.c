@@ -135,12 +135,25 @@ static void voiceStatsWrite(void) {
 #define voiceStatsWrite() ((void)0)
 #endif /* WB_VOICEDEBUG */
 
-/* Most voice frames a client may have accepted from it in one tick: one is
- * the steady state at the 20 ms wire cadence, and the second absorbs drift
- * between the capture clock and the server tick. Anything past that is
- * drained and dropped so a flooding client cannot buy itself extra
- * bandwidth or leave a backlog behind. */
-#define VOICE_SEGMENTS_PER_TICK 2
+/* Voice flood control, held as a credit per sender rather than a ceiling per
+ * tick.
+ *
+ * Capture produces one 20 ms frame per server tick, so a credit a tick is
+ * both what a well-behaved client needs and the rate a flooding one is held
+ * to: it still cannot buy itself extra bandwidth or leave a backlog behind.
+ *
+ * The depth is what a fixed ceiling lacked. A client captures on the audio
+ * device's clock but drains into the channel on its render loop, so a render
+ * hitch parks three or four frames and flushes them together, and one server
+ * tick then sees the lot. A ceiling of two discarded the rest permanently
+ * while the very next tick sat idle, and every discarded frame arrived at the
+ * listener as a concealed one — an audible click. Measured across a game on
+ * 2026-09-12: eleven frames refused from one talker, eleven concealed frames
+ * reported by the listener, and the client nearest the server losing the most,
+ * so the bunching is local scheduling rather than the network. Six absorbs a
+ * hitch of that size and leaves the sustained rate at the capture cadence. */
+#define VOICE_CREDITS_PER_TICK 1
+#define VOICE_CREDIT_BURST     6
 
 /* Most talkers forwarded to any one recipient at once. Not an MTU limit —
  * four ~64 B frames on top of a snapshot sit far inside UDP_MAX_PAYLOAD — but
@@ -183,7 +196,7 @@ void serverPumpVoice(ServerSim *sim) {
     uint32_t tick = udpServer.tickCount;
     /* Every frame accepted this tick, held until pass 2 knows who hears it.
      * Bounded by the per-sender flood cap, so it cannot overflow. */
-    VoiceStagedFrame staged[MAX_TANKS * VOICE_SEGMENTS_PER_TICK];
+    VoiceStagedFrame staged[MAX_TANKS * VOICE_CREDIT_BURST];
     int stagedCount = 0;
     /* One entry per sender that staged at least one frame. */
     VoiceTalkerCandidate talkers[MAX_TANKS];
@@ -205,6 +218,16 @@ void serverPumpVoice(ServerSim *sim) {
          * bot — has no voice to forward. */
         if (!udpServer.clients[from].connected) continue;
 
+        /* One tick's worth of credit, banked up to the burst depth. Pass 1
+         * runs exactly once per tick in every server state, so this is the
+         * sender's whole allowance for the tick. */
+        if (udpServer.voiceCredits[from] <
+            (VOICE_CREDIT_BURST - VOICE_CREDITS_PER_TICK + 1)) {
+            udpServer.voiceCredits[from] += VOICE_CREDITS_PER_TICK;
+        } else {
+            udpServer.voiceCredits[from] = VOICE_CREDIT_BURST;
+        }
+
         while (channelReceiveBestEffort(&udpServer.channelMux[from],
                                         CHANNEL_VOICE, segBuf, &segLen)) {
             uint8_t seq, flags;
@@ -225,7 +248,10 @@ void serverPumpVoice(ServerSim *sim) {
                 continue;
             }
 
-            if (accepted >= VOICE_SEGMENTS_PER_TICK) {
+            /* Out of credit: this sender is past the sustained rate even
+             * after the burst allowance, so the segment is drained and
+             * dropped rather than queued behind frames nobody will read. */
+            if (udpServer.voiceCredits[from] == 0) {
                 udpServer.voiceSegsDropped++;
                 udpServer.voiceSlot[from].dropPerTickCap++;
                 continue;
@@ -243,8 +269,8 @@ void serverPumpVoice(ServerSim *sim) {
                 udpServer.voiceSlot[from].dropUnpack++;
                 continue;
             }
-            /* Counts towards the per-sender flood cap from here, whatever
-             * the pack below does with it. */
+            /* Spent from here, whatever the pack below does with it. */
+            udpServer.voiceCredits[from]--;
             accepted++;
 
             downLen = voiceSegmentPackDown(downBuf, (int)sizeof(downBuf),
