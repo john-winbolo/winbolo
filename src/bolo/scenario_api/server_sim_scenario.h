@@ -17,7 +17,8 @@
  *  Reads are public accessors on server_sim.h and events
  *  are the control bus, so this header is the whole of the
  *  non-public surface. It is on the include path of
- *  scenario_host, sim_owner and unittests alone.
+ *  scenario_host and of the privileged profiles, and not of
+ *  gui or runtime_only.
  *********************************************************/
 
 #ifndef SERVER_SIM_SCENARIO_H

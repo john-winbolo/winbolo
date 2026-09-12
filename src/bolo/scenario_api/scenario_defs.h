@@ -15,9 +15,10 @@
  *
  *  Types only — no function declarations, no behaviour.
  *  server_sim_scenario.h beside it carries the calls. The
- *  directory is on the include path of scenario_host,
- *  sim_owner and unittests alone, so a frontend that
- *  includes this fails to build.
+ *  directory is on the include path of scenario_host and of
+ *  the privileged profiles (sim_owner, unittests, mapeditor,
+ *  braintest, gym) and not of gui or runtime_only, so a
+ *  frontend that includes this fails to build.
  *********************************************************/
 
 #ifndef SCENARIO_DEFS_H

@@ -2079,13 +2079,18 @@ the POD types they take. Reads are ordinary T1 accessors on
 of the non-public scenario surface.
 
 Scope: `scenario_defs.h` and `server_sim_scenario.h`. `sim_owner`
-sees them to implement the funnel and `unittests` to drive it;
-`gui`, `runtime_only`, `mapeditor`, `braintest` and `gym` do not, so
-a frontend translation unit that includes the funnel header fails to
-compile. That is checked rather than assumed: the CTest entry
-`include_rules.scenario_api_hidden_from_gui` builds exactly such a
-translation unit under the `gui` profile and expects the build to
-fail.
+sees them to implement the funnel and `unittests` to drive it, and
+because `server_sim_internal.h` includes `scenario_defs.h`, the other
+three privileged profiles (`mapeditor`, `braintest`, `gym`) see the
+directory too; they already see the whole tree. `gui` and
+`runtime_only` do not, so a frontend translation unit that includes
+the funnel header fails to compile. That is checked rather than
+assumed: the CTest entry `include_rules.scenario_api_hidden_from_gui`
+builds exactly such a translation unit under the `gui` profile and
+expects the build to fail. One POD the funnel's payloads use,
+`ScnTable`, lives in `public/scenario_table.h` rather than here,
+because it is also the parameter of the public `serverSimCreateBot`;
+a type a public call takes cannot live behind this door.
 
 **Rests on** these being server-authoritative entry points, the same
 footing the lifecycle start functions already have: a frontend that

@@ -1538,6 +1538,8 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
   bool isServer = sim->isServer;
   starts *sts = &sim->ss;
   BYTE lgmMapX;                     /* LGM X Map co-ordinate (from real position) */
+  BYTE deathMX;                     /* The square he died on, for the record */
+  BYTE deathMY;
   BYTE lgmMapY;                     /* LGM Y Map co-ordinate (from real position) */
   TURNTYPE dummy;                   /* Dummy variable used for paremeter passing */
   pillbox item;   /* Item to add to the pillbox */
@@ -1620,6 +1622,12 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
     (*lgman)->destY = (*lgman)->y;
   }
 
+  /* Where he died, before the fly-in start below overwrites his position:
+     the record and the loss event name this square, not the one he flies
+     back in from. */
+  deathMX = (BYTE)((*lgman)->x >> M_W_SHIFT_SIZE);
+  deathMY = (BYTE)((*lgman)->y >> M_W_SHIFT_SIZE);
+
   startsGetRandStart(sim, sts, &lgmMapX, &lgmMapY, &dummy);
   (*lgman)->x = lgmMapX;
   (*lgman)->x <<= TANK_SHIFT_MAPSIZE;
@@ -1640,24 +1648,13 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
     winbolonetAddEvent(WINBOLO_NET_EVENT_LGM_KILL, TRUE, owner, (*lgman)->playerNum,
                        playersIsBot(&sim->plyrs, owner), playersIsBot(&sim->plyrs, (*lgman)->playerNum));
   }
-  /* Process message */
-  {
-    MessageArgs args;
-    memset(&args, 0, sizeof(args));
-    playersGetPlayerName(&sim->plyrs, (*lgman)->playerNum, args.playerName,
-                         sizeof(args.playerName), sim->isServer);
-    args.playerFlags = playersGetAccountFlags(&sim->plyrs, (*lgman)->playerNum);
-    playersGetCountryCode(&sim->plyrs, (*lgman)->playerNum, args.playerCountry);
-    sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
-  }
-  /* Report the loss, which is what all clients see the newswire message from.
-   * The square is the man's position as it stands here, which the random
-   * start above has already moved to the one he flies back in from. */
+  /* Report the loss. Every client's newswire line comes from the event this
+   * raises, read against its quiet byte; the server's own message callback
+   * drops newswire text, so there is no line written here. */
   if (sim->isServer) {
     if (sim->callbacks.lgmDied) {
       sim->callbacks.lgmDied(sim->callbacks.ctx, (*lgman)->playerNum, owner,
-                             (BYTE)((*lgman)->x >> M_W_SHIFT_SIZE),
-                             (BYTE)((*lgman)->y >> M_W_SHIFT_SIZE));
+                             deathMX, deathMY);
     }
   }
 }

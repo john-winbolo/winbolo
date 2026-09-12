@@ -57,6 +57,7 @@
 #include "../../common/md5.h" /* Md5Ctx, md5Init/Update/Final/Compute — hmacMd5 */
 #include "../../common/wb_log.h"      /* WB_LOG_* */
 #include "../../common/mp_diag_log.h" /* mpDiagLog */
+#include "../sim/server_sim_shared.h"  /* serverSimAnnounce */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning, winbolonetAddEvent,
                                                  * WINBOLONET_KEY_LEN */
 #include "../../winbolonet/winbolonet_server.h" /* winboloNetVerifyClientKey,
@@ -1346,7 +1347,9 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
      * for lock-toggle / ping-enforcement announcements. The unready
      * call is a no-op outside lobby/countdown (no human is ready in
      * running state), so it stays unconditional. */
-    {
+    /* Newswire-worthy, so the scenario is asked first; a silenced window
+     * keeps the join off every lobby chat panel. */
+    if (serverSimAnnounce(sim, ANNOUNCE_KIND_JOINED, (BYTE)slot, (BYTE)slot)) {
         char chatMsg[32 + PACKET_MAX_PLAYER_NAME];
         snprintf(chatMsg, sizeof(chatMsg), "%s has joined.",
                  udpServer.clients[slot].playerName);

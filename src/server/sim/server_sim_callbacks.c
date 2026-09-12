@@ -513,6 +513,11 @@ void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer) {
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = mapX;
     ev.data[1] = mapY;
+    /* The layer sits behind the wire bytes (gameEventDataSize is 2), so an
+       in-process subscriber reads it and a remote client does not: the wire
+       has never said whose minefield a square belongs to, and a client that
+       could read it back by shelling squares would learn hidden mines'
+       owners. */
     ev.data[2] = layer;
     serverSimAddEvent(sim, &ev);
 }

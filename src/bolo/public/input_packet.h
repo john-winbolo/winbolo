@@ -450,7 +450,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_PILL_PICKED_UP: return 2;
     case EVENT_PILL_KILLED:    return 2;
     case EVENT_BUILT:          return 4;
-    case EVENT_MINE_EXPLODED:  return 3;
+    case EVENT_MINE_EXPLODED:  return 2;   /* the layer stays behind the wire */
     default:                   return GAME_EVENT_MAX_DATA;
     }
 }

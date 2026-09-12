@@ -371,6 +371,7 @@ int run_game_event_channel_lgm_lost(void) {
     const GameEvent *ev;
     const GameEvent *buffered;
     BYTE want[GAME_EVENT_MAX_DATA];
+    BYTE diedX, diedY;
 
     UT_ASSERT(sim != NULL);
     serverSimAddPlayer(sim, GEC_THIEF, "Thief", false);
@@ -383,6 +384,8 @@ int run_game_event_channel_lgm_lost(void) {
     UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
 
     gecDrain(sim, &sink);
+    diedX = (BYTE)(gs->lgmen[GEC_HOLDER]->x >> M_W_SHIFT_SIZE);
+    diedY = (BYTE)(gs->lgmen[GEC_HOLDER]->y >> M_W_SHIFT_SIZE);
     lgmKill(gs, &gs->lgmen[GEC_HOLDER], &gs->tanks[GEC_HOLDER], GEC_THIEF);
 
     UT_ASSERT_MSG(gecCount(&sink, EVENT_LGM_LOST) == 1,
@@ -394,16 +397,21 @@ int run_game_event_channel_lgm_lost(void) {
     ev = gecFind(&sink, EVENT_LGM_LOST);
     UT_ASSERT(ev != NULL);
 
-    /* [victim, killer, quiet] on the wire, then the man's map cell, read
-       after lgmKill had already moved him to the start he flies back in
-       from. data[5] upwards stays zero: this event carries no class and no
-       index. With no policy registered the quiet byte is 0. */
+    /* [victim, killer, quiet] on the wire, then the square he died on — read
+       before the kill, because lgmKill then moves him to the start he flies
+       back in from and the record must not name that. data[5] upwards stays
+       zero: this event carries no class and no index. With no policy
+       registered the quiet byte is 0. */
+    UT_ASSERT_MSG((BYTE)(gs->lgmen[GEC_HOLDER]->x >> M_W_SHIFT_SIZE) != diedX ||
+                  (BYTE)(gs->lgmen[GEC_HOLDER]->y >> M_W_SHIFT_SIZE) != diedY,
+                  "setup: the fly-in start should be a different square from"
+                  " the death, or the case cannot tell the two apart");
     memset(want, 0, sizeof(want));
     want[0] = GEC_HOLDER;
     want[1] = GEC_THIEF;
     want[2] = 0;
-    want[3] = (BYTE)(gs->lgmen[GEC_HOLDER]->x >> M_W_SHIFT_SIZE);
-    want[4] = (BYTE)(gs->lgmen[GEC_HOLDER]->y >> M_W_SHIFT_SIZE);
+    want[3] = diedX;
+    want[4] = diedY;
     GEC_ASSERT_BYTES(ev, want, "builder lost");
 
     buffered = gecBuffered(sim, EVENT_LGM_LOST);
@@ -412,6 +420,8 @@ int run_game_event_channel_lgm_lost(void) {
 
     /* A death nobody caused credits NEUTRAL, which is what a mine produces. */
     gecDrain(sim, &sink);
+    diedX = (BYTE)(gs->lgmen[GEC_THIEF]->x >> M_W_SHIFT_SIZE);
+    diedY = (BYTE)(gs->lgmen[GEC_THIEF]->y >> M_W_SHIFT_SIZE);
     lgmKill(gs, &gs->lgmen[GEC_THIEF], &gs->tanks[GEC_THIEF], NEUTRAL);
 
     ev = gecFind(&sink, EVENT_LGM_LOST);
@@ -421,8 +431,8 @@ int run_game_event_channel_lgm_lost(void) {
     want[0] = GEC_THIEF;
     want[1] = NEUTRAL;
     want[2] = 0;
-    want[3] = (BYTE)(gs->lgmen[GEC_THIEF]->x >> M_W_SHIFT_SIZE);
-    want[4] = (BYTE)(gs->lgmen[GEC_THIEF]->y >> M_W_SHIFT_SIZE);
+    want[3] = diedX;
+    want[4] = diedY;
     GEC_ASSERT_BYTES(ev, want, "builder lost to nobody");
 
     serverSimUnregisterSubscriber(sim, h);
