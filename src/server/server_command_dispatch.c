@@ -699,14 +699,15 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         BYTE slot;
-        bool found = false;
-        for (slot = 0; slot < MAX_TANKS; slot++) {
-            if (!serverSimIsPlayerConnected(sim, slot)) { found = true; break; }
-        }
-        if (!found) {
+        /* The one seat rule a bot has, shared with the scenario's spawn and
+           lobby-add arms: the first free seat below MAX_TANKS, outside the
+           human caps. */
+        int freeSlot = serverSimFindFreeSlot(sim, true);
+        if (freeSlot < 0) {
             fprintf(stderr, "ADD_BOT reject INVALID: no free slot (all %d slots in use)\n", MAX_TANKS);
             return CMD_REJECT_INVALID;
         }
+        slot = (BYTE)freeSlot;
         char botName[64];
         if (haveName) {
             SDL_strlcpy(botName, validatedName, sizeof(botName));

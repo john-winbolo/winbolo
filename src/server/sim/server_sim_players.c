@@ -228,11 +228,16 @@ int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
     int  i;
     BYTE limit;
     if (sim == NULL) return -1;
-    limit = (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
-    /* A scenario may hold the round to fewer people than the operator
-       configured; it never widens it, so both caps bind and the tighter one
-       wins. Bots seat above it: the cap counts the people a round is meant
-       for, and the bots a scenario fields are its own business. */
+    /* Both caps count people. The operator's -maxplayers and a scenario's
+       max_players are how many humans a round is meant for; a scenario may
+       hold the round to fewer than the operator configured and never widens
+       it, so both bind and the tighter one wins. A bot seats anywhere below
+       MAX_TANKS whichever way it arrives — a host's Add Bot, a scripted
+       spawn, a lobby add — so a six-human map keeps its ten bot seats. */
+    limit = (BYTE)MAX_TANKS;
+    if (!forBot && sim->maxPlayers > 0) {
+        limit = sim->maxPlayers;
+    }
     if (!forBot && sim->scenarioPolicy != NULL &&
         sim->scenarioPolicy->maxPlayers != NULL) {
         int cap;

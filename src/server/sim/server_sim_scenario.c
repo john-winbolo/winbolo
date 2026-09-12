@@ -196,6 +196,11 @@ static ScnOpResult scenarioOpTankKill(ServerSim *sim,
     if (killer >= MAX_TANKS || !sim->playerConnected[killer]) {
         return SCN_OP_NO_SUCH_PLAYER;
     }
+    /* The cause goes on the wire in the kill event and into the tank's own
+       last-death field, so it is one of the four values those carry. */
+    if (p->cause > LAST_DEATH_BY_SCRIPT) {
+        return SCN_OP_RANGE;
+    }
 
     tankSetLastTankDeath(t, p->cause);
     tankKillNow(&sim->sim, t, killer, p->cause);
@@ -248,21 +253,26 @@ static ScnOpResult scenarioOpTankTeleport(ServerSim *sim,
            the square the tank arrives at is the nearest free one the scatter
            search finds around it. inStartFind keeps the rest of the sim from
            acting on a tank that is between places, as the respawn path does. */
-        if (p->start == SCN_NONE) {
-            sim->sim.inStartFind = TRUE;
-            startsGetStart(&sim->sim, &sim->sim.ss, &sx, &sy, &sdir, p->slot);
-            sim->sim.inStartFind = FALSE;
-        } else {
-            /* Naming a start is asking for that same resolution on a chosen
-               record, which is what the reserved-start slot already means to
-               startsGetStart. The slot is borrowed and handed back: a start
-               reserved for this player's next respawn is not this op's to
-               spend. */
+        if (p->start != SCN_NONE &&
+            startsIsActive(&sim->sim.ss, (BYTE)(p->start + 1)) == FALSE) {
+            return SCN_OP_NO_SUCH_ITEM;
+        }
+        {
+            /* Saved and restored: a start reserved for this player's next
+               respawn by the batch placement is not this op's to spend. */
             BYTE reserved = sim->sim.pendingStartIdx[p->slot];
-            sim->sim.pendingStartIdx[p->slot] = p->start;
+            bool wasFinding = sim->sim.inStartFind;
+            /* Naming a start is asking for that same resolution on a chosen
+               record. The scenario's own start slot is what startsGetStart
+               honours first, ahead of the placement policy: the op is the
+               scenario choosing, and the policy is asked only when the
+               engine is. Consumed by the resolver. */
+            sim->sim.scenarioStartIdx[p->slot] =
+                (p->start == SCN_NONE) ? MAX_STARTS : p->start;
             sim->sim.inStartFind = TRUE;
             startsGetStart(&sim->sim, &sim->sim.ss, &sx, &sy, &sdir, p->slot);
-            sim->sim.inStartFind = FALSE;
+            sim->sim.inStartFind = wasFinding;
+            sim->sim.scenarioStartIdx[p->slot] = MAX_STARTS;
             sim->sim.pendingStartIdx[p->slot] = reserved;
         }
 
@@ -1681,6 +1691,32 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
     if (p->team >= MAX_TANKS) {
         return SCN_OP_RANGE;
     }
+    /* A named start must be one on the map; it is honoured through the
+       reserved-start slot as the spawn lands. */
+    if (p->start != SCN_NONE &&
+        (p->start >= startsGetNumStarts(&sim->sim.ss) ||
+         startsIsActive(&sim->sim.ss, (BYTE)(p->start + 1)) == FALSE)) {
+        return SCN_OP_RANGE;
+    }
+    /* The loadout is the spawnLoadout policy's until an override exists;
+       a value that asks for one is refused rather than quietly dropped. */
+    if (p->loadout != 0) {
+        return SCN_OP_RANGE;
+    }
+    /* The init table reaches a Lua VM, so every string in it must end inside
+       its own field, as the name and the brain must. */
+    if (p->init.count > SCN_TABLE_MAX) {
+        return SCN_OP_TOO_BIG;
+    }
+    {
+        BYTE k;
+        for (k = 0; k < p->init.count; k++) {
+            if (!scenarioTextTerminated(p->init.kv[k].key, SCN_TABLE_KEY_LEN) ||
+                !scenarioTextTerminated(p->init.kv[k].value, SCN_TABLE_VALUE_LEN)) {
+                return SCN_OP_TOO_BIG;
+            }
+        }
+    }
     r = scenarioSpawnSeat(sim, p->slot, &slot);
     if (r != SCN_OP_OK) return r;
     r = scenarioBotName(p->name, slot, name, sizeof(name));
@@ -1755,7 +1791,6 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     BYTE maxBots;
     BYTE slot = 0;
     ScnOpResult r;
-    int freeSlot;
 
     r = scenarioRequireLobby(sim);
     if (r != SCN_OP_OK) return r;
@@ -1779,11 +1814,10 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
     r = scenarioBrainPath(sim, p->brain, &brain);
     if (r != SCN_OP_OK) return r;
-    freeSlot = serverSimFindFreeSlot(sim, true);
-    if (freeSlot < 0) {
-        return SCN_OP_FULL;
-    }
-    slot = (BYTE)freeSlot;
+    /* The seat the op names, or the first free one, by the rule the spawn
+       arm and the lobby's Add Bot share. */
+    r = scenarioSpawnSeat(sim, p->slot, &slot);
+    if (r != SCN_OP_OK) return r;
     /* Again with the seat, because an op that named no name is given the
        lobby's default for the one it got. */
     (void)scenarioBotName(p->name, slot, name, sizeof(name));
@@ -1856,7 +1890,16 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
                     "scenario: queued bot spawn dropped, its seat or brain is gone");
         return;
     }
+    /* A named start goes into the scenario's own start slot, which the tank
+       create's resolver honours ahead of the placement policy and consumes;
+       a start removed since the op was accepted is left to the engine. */
+    if (p->start != SCN_NONE &&
+        p->start < startsGetNumStarts(&sim->sim.ss) &&
+        startsIsActive(&sim->sim.ss, (BYTE)(p->start + 1)) != FALSE) {
+        sim->sim.scenarioStartIdx[slot] = p->start;
+    }
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, &p->init)) {
+        sim->sim.scenarioStartIdx[slot] = MAX_STARTS;
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                     "scenario: queued bot spawn for slot %d would not start",
                     (int)slot);
@@ -1880,6 +1923,13 @@ void serverSimScenarioDrainRoster(ServerSim *sim) {
     ScnRosterQueueEntry entry;
 
     if (sim == NULL || sim->scenarioRosterCount == 0) {
+        return;
+    }
+    /* Only into a running round. The hook that runs just before this drain
+       can end the round, and a spawn landing in a round that has just ended
+       would put a bot, its brain and its join event into the game-over
+       state; the queue is dropped at the next start anyway. */
+    if (sim->state != serverStateRunning) {
         return;
     }
     /* Off the queue before it runs, so what the change does to the roster
@@ -2046,6 +2096,10 @@ static ScnOpResult scenarioOpEndRound(ServerSim *sim, const ScnOpEndRound *p) {
     if (r != SCN_OP_OK) return r;
     if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
         return SCN_OP_TOO_BIG;
+    }
+    /* 0 is no winner; otherwise a lobby team, which is a slot number. */
+    if (p->winnerTeam >= MAX_TANKS) {
+        return SCN_OP_RANGE;
     }
 
     sim->returnToLobbyReason = RETURN_REASON_SCENARIO;

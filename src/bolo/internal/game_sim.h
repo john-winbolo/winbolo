@@ -334,6 +334,10 @@ struct GameSim {
      * consumption so siblings already created in the batch loop are
      * visible during the per-square nudge. */
     BYTE        pendingStartIdx[MAX_TANKS];
+    /* A start a scenario op named for a slot, MAX_STARTS for none. Honoured
+       by startsGetStart ahead of the placement policy and consumed there; the
+       batch slot above is the engine choosing and stays below the policy. */
+    BYTE        scenarioStartIdx[MAX_TANKS];
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
        returns this fixed start (not the open-game algorithm). The GUI raises
        it from 0 (sea) to 1 (far bank) once the player passes the boat step.
@@ -386,6 +390,32 @@ static inline int gameSimDamageScale(GameSim *sim, BYTE attacker, BYTE victim,
   }
   pct = sim->callbacks.damageScale(sim->callbacks.ctx, attacker, victim, cause);
   return (pct < 0) ? 0 : pct;
+}
+
+/* The start the host names for a player, or FALSE for the engine's pick. */
+static inline bool gameSimChooseStart(GameSim *sim, BYTE player, BYTE *startIdx) {
+  if (sim->callbacks.chooseStart == NULL) {
+    return FALSE;
+  }
+  return sim->callbacks.chooseStart(sim->callbacks.ctx, player, startIdx);
+}
+
+/* What a spawning tank is handed, or FALSE for the game type's loadout. */
+static inline bool gameSimSpawnLoadout(GameSim *sim, BYTE player, BYTE *shells,
+                                       BYTE *mines, BYTE *armour, BYTE *trees) {
+  if (sim->callbacks.spawnLoadout == NULL) {
+    return FALSE;
+  }
+  return sim->callbacks.spawnLoadout(sim->callbacks.ctx, player, shells, mines,
+                                     armour, trees);
+}
+
+/* Whether a dead tank may come back this tick. */
+static inline bool gameSimCanRespawn(GameSim *sim, BYTE player) {
+  if (sim->callbacks.canRespawn == NULL) {
+    return TRUE;
+  }
+  return sim->callbacks.canRespawn(sim->callbacks.ctx, player);
 }
 
 static inline bool gameSimCanBuild(GameSim *sim, BYTE player, BYTE action,

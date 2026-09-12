@@ -254,6 +254,7 @@ bool clientSimCreate(ClientSim *cs) {
    * single-player tankCreate runs, so leave them all unset. */
   for (int i = 0; i < MAX_TANKS; i++) {
     cs->sim.pendingStartIdx[i] = MAX_STARTS;
+    cs->sim.scenarioStartIdx[i] = MAX_STARTS;
   }
 
   /* Initialize GameSim identity and callbacks */

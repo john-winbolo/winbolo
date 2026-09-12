@@ -4306,6 +4306,7 @@ set(_unit_test_names
     entity_event_client_add_lands_on_the_server_index
     entity_event_removed_index_sends_no_delta
     entity_event_wire_corpus_fixture
+    entity_event_client_refuses_out_of_range_index
     entity_sync_codec_roundtrip
     entity_sync_client_clears_the_holes
     entity_sync_client_restores_the_live
@@ -4807,6 +4808,8 @@ set(_unit_test_names
     scenario_lobby_add_bot
     scenario_lobby_remove_bot
     scenario_lobby_set_team
+    scenario_roster_bots_seat_past_the_human_cap
+    scenario_roster_spawn_named_start
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player
@@ -4830,6 +4833,8 @@ set(_unit_test_names
     scenario_policy_spawn_loadout
     scenario_policy_can_respawn
     scenario_policy_null_is_classic
+    scenario_policy_hostile_answers
+    scenario_policy_named_start_outranks_choose_start
     scenario_policy_damage_scale
     scenario_policy_invulnerable_tank
     scenario_policy_protected_builder

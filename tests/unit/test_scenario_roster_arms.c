@@ -42,6 +42,10 @@
 #include "server_sim_internal.h"   /* state, lobbyPlayers, the roster queue */
 #include "server_sim_lifecycle.h"  /* serverSimSetBotAiType / BrainPath */
 #include "server_sim_scenario.h"
+#include "server_sim_join.h"       /* serverSimFindFreeSlot */
+#include "game_sim.h"
+#include "tank.h"                  /* tankGetWorld */
+#include "starts.h"                /* startsGetNumStarts */
 #include "everard_map.h"
 #include "test_harness.h"
 
@@ -678,6 +682,116 @@ int run_scenario_lobby_set_team(void) {
                   (int)sim->lobbyPlayers[0].teamNumber);
     UT_ASSERT_MSG(!sim->lobbyPlayers[0].ready,
                   "the team change should have unreadied the lobby");
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* ── Seats ───────────────────────────────────────────────────────── */
+
+/* The operator's -maxplayers caps humans, not bots: with a cap of one and
+ * the one human seated, a scripted spawn still lands, in the first seat
+ * past the cap, and the lobby add takes the seat it names. */
+int run_scenario_roster_bots_seat_past_the_human_cap(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    ScnOpOut out;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_bots_seat_past_the_human_cap"));
+    ut_brain_stub_arm(true);
+    sim = raRunningSim();
+    UT_ASSERT(sim != NULL);
+    sim->maxPlayers = 1;
+
+    UT_ASSERT_MSG(serverSimFindFreeSlot(sim, false) == -1,
+                  "setup: with a cap of one and a human seated, no human seat");
+    raSpawnOp(&op, SCN_NONE, 2, "Wave", NULL);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED,
+                  "a spawn was refused by the human cap");
+    serverSimTick(sim);
+    UT_ASSERT_MSG(serverSimIsBot(sim, 1),
+                  "the bot did not land in the first seat past the cap");
+    serverSimDestroy(sim);
+
+    sim = raLobbySim();
+    UT_ASSERT(sim != NULL);
+    sim->maxPlayers = 1;
+    memset(&out, 0, sizeof(out));
+    raLobbyAddOp(&op, 0, true, "Named", NULL);
+    op.u.lobbyAddBot.slot = 5;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, &out) == SCN_OP_OK,
+                  "a lobby add naming seat 5 was refused");
+    UT_ASSERT_MSG(out.slot == 5 && serverSimIsBot(sim, 5),
+                  "the lobby add took seat %u, wanted the named 5",
+                  (unsigned)out.slot);
+    raLobbyAddOp(&op, 0, true, "Second", NULL);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, &out) == SCN_OP_OK,
+                  "a lobby add for the first free seat was refused by the cap");
+    UT_ASSERT_MSG(out.slot == 1, "the first free seat was %u, wanted 1",
+                  (unsigned)out.slot);
+    /* And the same seat again is refused rather than doubled up. */
+    raLobbyAddOp(&op, 0, true, "Again", NULL);
+    op.u.lobbyAddBot.slot = 5;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, &out) == SCN_OP_ALREADY);
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* A spawn that names a start lands there, and a start the map does not have
+ * is refused when the op is made rather than dropped when it lands. */
+int run_scenario_roster_spawn_named_start(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    GameSim *gs;
+    BYTE numStarts;
+    BYTE slot = SCN_NONE;
+    int i;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_named_start"));
+    ut_brain_stub_arm(true);
+    sim = raRunningSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    numStarts = startsGetNumStarts(&gs->ss);
+    UT_ASSERT(numStarts >= 2);
+
+    raSpawnOp(&op, SCN_NONE, 2, "Placed", NULL);
+    op.u.rosterSpawnBot.start = numStarts;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
+                  "a start past the end was not refused");
+    op.u.rosterSpawnBot.start = (BYTE)(numStarts - 1);
+    op.u.rosterSpawnBot.loadout = 1;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
+                  "a loadout override was accepted before one exists");
+    op.u.rosterSpawnBot.loadout = 0;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (serverSimIsBot(sim, (BYTE)i)) { slot = (BYTE)i; break; }
+    }
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn did not land");
+    UT_ASSERT(gs->tanks[slot] != NULL);
+    {
+        WORLD wx, wy;
+        int mx, my, best = -1, bestDist = 0;
+        tankGetWorld(&gs->tanks[slot], &wx, &wy);
+        mx = (int)(wx >> M_W_SHIFT_SIZE);
+        my = (int)(wy >> M_W_SHIFT_SIZE);
+        for (i = 0; i < (int)numStarts; i++) {
+            int dx = (int)(*gs->ss).item[i].x - mx;
+            int dy = (int)(*gs->ss).item[i].y - my;
+            int dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+            if (best < 0 || dist < bestDist) { best = i; bestDist = dist; }
+        }
+        UT_ASSERT_MSG(best == (int)(numStarts - 1),
+                      "the bot landed nearest start %d, wanted the named %u",
+                      best, (unsigned)(numStarts - 1));
+    }
+    UT_ASSERT_MSG(gs->scenarioStartIdx[slot] == MAX_STARTS,
+                  "the spawn left its start slot set");
 
     serverSimDestroy(sim);
     raDropBrainFile();

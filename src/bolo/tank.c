@@ -397,9 +397,7 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 *********************************************************/
 static void tankSpawnLoadout(GameSim *sim, BYTE playerNum, BYTE *shells,
                              BYTE *mines, BYTE *armour, BYTE *trees) {
-  if (sim->callbacks.spawnLoadout != NULL &&
-      sim->callbacks.spawnLoadout(sim->callbacks.ctx, playerNum,
-                                  shells, mines, armour, trees) != FALSE) {
+  if (gameSimSpawnLoadout(sim, playerNum, shells, mines, armour, trees) != FALSE) {
     return;
   }
   gameTypeGetItems(sim, &sim->game, shells, mines, armour, trees);
@@ -609,9 +607,8 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     /* The last tick of the wait is the one the host can hold. Asked at one
        rather than at zero so a "not yet" leaves the tank where it is — dead,
        with a wait of one — and the same question is put again next tick. */
-    if ((*value)->deathWait == 1 && sim->callbacks.canRespawn != NULL &&
-        sim->callbacks.canRespawn(sim->callbacks.ctx,
-                                  gameSimGetTankPlayer(sim, value)) == FALSE) {
+    if ((*value)->deathWait == 1 &&
+        gameSimCanRespawn(sim, gameSimGetTankPlayer(sim, value)) == FALSE) {
       return;
     }
     (*value)->deathWait--;
@@ -2291,10 +2288,19 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 		/* centre, 4 edge midpoints, 4 corners */
 		WORLD probeX[9] = { tankX, tankX, tankX, left,  right, right, right,  left,   left };
 		WORLD probeY[9] = { tankY, top,   bottom, tankY, tankY, top,   bottom, bottom, top  };
+		/* A square the host refused this tick; several probes land on one
+		 * square, and a refused pill stays capturable, so without this the
+		 * same question would be put up to nine times per tick. */
+		bool refused = FALSE;
+		BYTE refusedX = 0;
+		BYTE refusedY = 0;
 
 		for (p = 0; p < 9; p++) {
 			bmx = (BYTE)(probeX[p] >> TANK_SHIFT_MAPSIZE);
 			bmy = (BYTE)(probeY[p] >> TANK_SHIFT_MAPSIZE);
+			if (refused && bmx == refusedX && bmy == refusedY) {
+				continue;
+			}
 
 			/* The probe is not at the origin and the pill is capturable. A
 			 * tile captured by an earlier probe is already inTank, so
@@ -2312,6 +2318,9 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 				if (pillNum != PILL_NOT_FOUND &&
 				    gameSimCanCapture(sim, CAPTURE_KIND_PILL, (BYTE)(pillNum - 1),
 				                      gameSimGetTankPlayer(sim, value)) == FALSE) {
+					refused = TRUE;
+					refusedX = bmx;
+					refusedY = bmy;
 					continue;
 				}
 				while (pillNum != PILL_NOT_FOUND) {

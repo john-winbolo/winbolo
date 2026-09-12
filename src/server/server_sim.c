@@ -199,6 +199,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * is a valid start index, so initialise explicitly. */
     for (count = 0; count < MAX_TANKS; count++) {
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
+        sim->sim.scenarioStartIdx[count] = MAX_STARTS;
     }
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below

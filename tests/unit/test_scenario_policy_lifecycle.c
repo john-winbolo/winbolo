@@ -93,13 +93,16 @@ typedef struct {
     ScnLoadout loadout;
     int        respawnAsks;
     bool       respawn;
+    bool       startWritesNothing; /* answer true and leave *startIdx alone */
+    BYTE       lastPlayer;         /* the player the last question named */
 } PlCtx;
 
 static bool plChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
     PlCtx *p = (PlCtx *)ctx;
-    (void)player;
+    p->lastPlayer = player;
     p->startAsks++;
     if (!p->startAnswers) return FALSE;
+    if (p->startWritesNothing) return TRUE;
     *startIdx = p->startNamed;
     return TRUE;
 }
@@ -118,7 +121,7 @@ static int plMaxPlayers(void *ctx) {
 
 static bool plSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
     PlCtx *p = (PlCtx *)ctx;
-    (void)player;
+    p->lastPlayer = player;
     if (!p->loadoutAnswers) return FALSE;
     *out = p->loadout;
     return TRUE;
@@ -126,7 +129,7 @@ static bool plSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
 
 static bool plCanRespawn(void *ctx, BYTE player) {
     PlCtx *p = (PlCtx *)ctx;
-    (void)player;
+    p->lastPlayer = player;
     p->respawnAsks++;
     return p->respawn;
 }
@@ -363,6 +366,9 @@ int run_scenario_policy_choose_start(void) {
     UT_ASSERT_MSG(pc.startAsks == 3,
                   "three placements should ask three times, asked %d",
                   pc.startAsks);
+    UT_ASSERT_MSG(pc.lastPlayer == 2,
+                  "the last placement asked about player %u, wanted 2",
+                  (unsigned)pc.lastPlayer);
 
     serverSimDestroy(sim);
     return 0;
@@ -664,6 +670,9 @@ int run_scenario_policy_spawn_loadout(void) {
                   (unsigned)tankGetShells(&gs->tanks[0]));
     UT_ASSERT(tankGetMines(&gs->tanks[0]) == TANK_FULL_MINES);
     UT_ASSERT(tankGetTrees(&gs->tanks[0]) == TANK_FULL_TREES);
+    UT_ASSERT_MSG(pc.lastPlayer == 0,
+                  "the loadout question named player %u, wanted 0",
+                  (unsigned)pc.lastPlayer);
 
     /* The four amounts, at the same site. */
     pc.loadout.useGameType = 0;
@@ -749,6 +758,9 @@ int run_scenario_policy_can_respawn(void) {
     UT_ASSERT_MSG(pc.respawnAsks == 100,
                   "each held tick must ask again, asked %d times",
                   pc.respawnAsks);
+    UT_ASSERT_MSG(pc.lastPlayer == 0,
+                  "the respawn question named player %u, wanted 0",
+                  (unsigned)pc.lastPlayer);
 
     pc.respawn = true;
     tankUpdate(gs, &gs->tanks[0], TNONE, FALSE, FALSE);
@@ -839,5 +851,120 @@ int run_scenario_policy_null_is_classic(void) {
                   (unsigned)sim->lobbyPlayers[slot].teamNumber);
     serverSimDestroy(sim);
     plDropBrainFile();
+    return 0;
+}
+
+/* ================================================================
+ * 9. Answers a careless script can give, none of which may hurt the sim.
+ *
+ * chooseStart returning true without writing leaves the engine's pick; a
+ * negative or absurd maxPlayers leaves the seat search where it was.
+ * ================================================================ */
+int run_scenario_policy_hostile_answers(void) {
+    ServerSim *sim = plRunningSim(gameOpen);
+    ScenarioPolicy pol;
+    PlCtx pc;
+    GameSim *gs;
+    BYTE numStarts;
+    BYTE enginePick;
+    int i;
+
+    UT_ASSERT_MSG(sim != NULL, "plRunningSim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    numStarts = startsGetNumStarts(&gs->ss);
+    UT_ASSERT(numStarts >= 2);
+    enginePick = (BYTE)(numStarts - 1);
+
+    plFillPolicy(&pol, &pc);
+    pc.startAnswers = true;
+    pc.startWritesNothing = true;
+    serverSimSetScenarioPolicy(sim, &pol);
+
+    /* The out-parameter starts as MAX_STARTS in the caller, so an answer that
+       writes nothing reads as out of range and the engine's pick stands. The
+       reservation is consumed first, so the pick is the one below. */
+    gs->pendingStartIdx[0] = MAX_STARTS;
+    for (i = 0; i < 10; i++) {
+        int chosen = plSelectStart(gs, 0);
+        UT_ASSERT_MSG(chosen >= 0 && chosen < (int)numStarts,
+                      "a policy that wrote nothing placed the tank at %d",
+                      chosen);
+    }
+    gs->pendingStartIdx[0] = enginePick;
+    UT_ASSERT_MSG(plSelectStart(gs, 0) == (int)enginePick,
+                  "a reservation must be honoured whatever the policy answers");
+
+    for (i = 0; i < PL_CAP; i++) {
+        sim->playerConnected[i] = TRUE;
+    }
+    pc.maxPlayers = -5;
+    UT_ASSERT_MSG(serverSimFindFreeSlot(sim, false) == PL_CAP,
+                  "a negative cap must leave the search where it was");
+    pc.maxPlayers = 1000000;
+    UT_ASSERT_MSG(serverSimFindFreeSlot(sim, false) == PL_CAP,
+                  "an absurd cap must leave the search where it was");
+    pc.maxPlayers = 1;
+    UT_ASSERT_MSG(serverSimFindFreeSlot(sim, false) == -1,
+                  "a cap of one with six seated must refuse");
+    UT_ASSERT_MSG(serverSimFindFreeSlot(sim, true) == PL_CAP,
+                  "a bot seats past every human cap");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 10. A start named by an op outranks the placement policy.
+ *
+ * The policy names the last start for everyone. A teleport to start 0 must
+ * land at start 0: the op is the scenario choosing, and the policy is asked
+ * only when the engine is choosing.
+ * ================================================================ */
+int run_scenario_policy_named_start_outranks_choose_start(void) {
+    ServerSim *sim = plRunningSim(gameOpen);
+    ScenarioPolicy pol;
+    PlCtx pc;
+    GameSim *gs;
+    ScenarioOp op;
+    BYTE numStarts;
+
+    UT_ASSERT_MSG(sim != NULL, "plRunningSim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    numStarts = startsGetNumStarts(&gs->ss);
+    UT_ASSERT(numStarts >= 3);
+
+    plFillPolicy(&pol, &pc);
+    pc.startAnswers = true;
+    pc.startNamed   = (BYTE)(numStarts - 1);
+    serverSimSetScenarioPolicy(sim, &pol);
+
+    serverSimAddPlayer(sim, 0, "Tester", false);
+    UT_ASSERT(gs->tanks[0] != NULL);
+    UT_ASSERT_MSG(plTankNearestStart(gs, 0) == (int)pc.startNamed,
+                  "setup: the policy should have placed the tank at its start");
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_TANK_TELEPORT;
+    op.u.tankTeleport.slot  = 0;
+    op.u.tankTeleport.mode  = SCN_TELEPORT_START;
+    op.u.tankTeleport.start = 0;
+    op.u.tankTeleport.dir   = SCN_NONE;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
+                  "the teleport to a named start was refused");
+    UT_ASSERT_MSG(plTankNearestStart(gs, 0) == 0,
+                  "the tank landed nearest start %d after a teleport to start 0 "
+                  "under a policy naming %u: the policy pre-empted the op",
+                  plTankNearestStart(gs, 0), (unsigned)pc.startNamed);
+    UT_ASSERT_MSG(gs->scenarioStartIdx[0] == MAX_STARTS,
+                  "the op left its start slot set: %u",
+                  (unsigned)gs->scenarioStartIdx[0]);
+
+    /* And a start the op does not name is still the policy's to choose. */
+    op.u.tankTeleport.start = SCN_NONE;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT_MSG(plTankNearestStart(gs, 0) == (int)pc.startNamed,
+                  "with no start named the policy must still decide");
+
+    serverSimDestroy(sim);
     return 0;
 }

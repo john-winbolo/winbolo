@@ -687,6 +687,7 @@ int run_entity_event_client_remove_keeps_the_slot(void);
 int run_entity_event_client_add_lands_on_the_server_index(void);
 int run_entity_event_removed_index_sends_no_delta(void);
 int run_entity_event_wire_corpus_fixture(void);
+int run_entity_event_client_refuses_out_of_range_index(void);
 
 /* What an entity change reaches (test_entity_record.c). The six arms write a
  * log_EntityChange beside the CTRL_ENTITY_CHANGE they publish, carrying the
@@ -2019,6 +2020,8 @@ int run_scenario_roster_set_team(void);
 int run_scenario_lobby_add_bot(void);
 int run_scenario_lobby_remove_bot(void);
 int run_scenario_lobby_set_team(void);
+int run_scenario_roster_bots_seat_past_the_human_cap(void);
+int run_scenario_roster_spawn_named_start(void);
 
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient
@@ -2060,6 +2063,8 @@ int run_scenario_policy_max_players(void);
 int run_scenario_policy_spawn_loadout(void);
 int run_scenario_policy_can_respawn(void);
 int run_scenario_policy_null_is_classic(void);
+int run_scenario_policy_hostile_answers(void);
+int run_scenario_policy_named_start_outranks_choose_start(void);
 
 /* The four combat policy pointers (test_scenario_policy_combat.c). What a
  * blow is worth, whether a square may be built on, whether an objective may

@@ -85,22 +85,24 @@ typedef struct {
     BYTE lastDieKind, lastDieIndex, lastDieKiller, lastDieCause;
     BYTE lastBuildAction, lastBuildX, lastBuildY, lastBuildPillIdx;
     BYTE lastCaptureKind, lastCaptureIndex, lastCapturePlayer;
+    BYTE lastScaleAttacker, lastScaleVictim, lastScaleCause;
+    BYTE lastBuildPlayer;
 } PcCtx;
 
 static int pcDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
     PcCtx *p = (PcCtx *)ctx;
-    (void)attacker;
-    (void)victim;
-    (void)cause;
     p->scaleAsks++;
+    p->lastScaleAttacker = attacker;
+    p->lastScaleVictim = victim;
+    p->lastScaleCause = cause;
     return p->scalePct;
 }
 
 static bool pcCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
                        BYTE mapY, BYTE pillIdx) {
     PcCtx *p = (PcCtx *)ctx;
-    (void)player;
     p->buildAsks++;
+    p->lastBuildPlayer = player;
     p->lastBuildAction = action;
     p->lastBuildX = mapX;
     p->lastBuildY = mapY;
@@ -431,6 +433,12 @@ int run_scenario_policy_damage_scale(void) {
                                         LAST_DEATH_BY_SHELL),
                   DAMAGE);
     UT_ASSERT_MSG(pc.scaleAsks > 0, "the scale must actually be asked");
+    UT_ASSERT_MSG(pc.lastScaleAttacker == PC_SHOOTER &&
+                  pc.lastScaleVictim == PC_TARGET,
+                  "the scale was asked about attacker %u and victim %u, wanted"
+                  " %u and %u", (unsigned)pc.lastScaleAttacker,
+                  (unsigned)pc.lastScaleVictim, (unsigned)PC_SHOOTER,
+                  (unsigned)PC_TARGET);
     classicHits = pcHitsToDestroy(sim);
     UT_ASSERT_MSG(classicHits > 1 && classicHits < 512,
                   "the classic run took %d hits", classicHits);

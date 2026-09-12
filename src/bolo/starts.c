@@ -1913,13 +1913,35 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     return;
   }
 
+  /* A start a scenario op named for this player is honoured first and
+     consumed. It outranks the host's policy below because a start an op
+     named is the scenario choosing, and the policy is only asked when the
+     engine is choosing. The lobby's batch reservation further down is the
+     engine choosing, so it stays below the policy. */
+  if (playerNum < MAX_TANKS && sim->scenarioStartIdx[playerNum] < (*value)->numStarts &&
+      (*value)->active[sim->scenarioStartIdx[playerNum]] != FALSE) {
+    BYTE idx = sim->scenarioStartIdx[playerNum];
+    BYTE rx;
+    BYTE ry;
+    BYTE bt;
+    sim->scenarioStartIdx[playerNum] = MAX_STARTS;
+    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry, playerNum);
+    bt = startsConvertDir((*value)->item[idx].dir);
+    *x = rx;
+    *y = ry;
+    *dir = (TURNTYPE)(bt * START_TIMES_16);
+    return;
+  }
+  if (playerNum < MAX_TANKS) {
+    sim->scenarioStartIdx[playerNum] = MAX_STARTS;
+  }
+
   /* The host may name the start. Asked here rather than in each of the two
      pickers below, so one selection asks one question, and above the batch
      slot as well, so a named start is the answer wherever the tank is
      coming from. An index off the end, or one naming a start that has been
      removed, is refused and the engine picks as it always did. */
-  if (sim->callbacks.chooseStart != NULL &&
-      sim->callbacks.chooseStart(sim->callbacks.ctx, playerNum, &named) != FALSE) {
+  if (gameSimChooseStart(sim, playerNum, &named) != FALSE) {
     if (named < (*value)->numStarts && (*value)->active[named] != FALSE) {
       BYTE rx;
       BYTE ry;

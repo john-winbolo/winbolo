@@ -855,3 +855,45 @@ int run_entity_event_wire_corpus_fixture(void) {
                   seenPill, seenBase, seenStart);
     return 0;
 }
+
+/* An index past the array, from a server that should not have sent one, is
+ * refused at the client's lists for every kind and both directions, and the
+ * lists are left exactly as they were. */
+int run_entity_event_client_refuses_out_of_range_index(void) {
+    ClientSim *cs = ecClientWithLists(3);
+    GameSim *gs;
+    ControlEvent evt;
+    static const uint8_t bad[3] = { MAX_PILLS, 200, 255 };
+    int i;
+
+    UT_ASSERT(cs != NULL);
+    gs = clientSimGetGameSim(cs);
+
+    for (i = 0; i < 3; i++) {
+        ecPillAdd(&evt, bad[i], 50, 50, NEUTRAL, PILLS_MAX_ARMOUR, PILLBOX_ATTACK_NORMAL);
+        clientSimApplyControl(cs, &evt);
+        UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) == 3,
+                      "a pill add at index %u changed the count to %u",
+                      (unsigned)bad[i], (unsigned)pillsGetNumPills(&gs->pb));
+        ecHeader(&evt, ENTITY_KIND_PILL, bad[i], 0);
+        clientSimApplyControl(cs, &evt);
+        ecHeader(&evt, ENTITY_KIND_BASE, bad[i], 0);
+        clientSimApplyControl(cs, &evt);
+        ecHeader(&evt, ENTITY_KIND_START, bad[i], 0);
+        clientSimApplyControl(cs, &evt);
+        ecHeader(&evt, ENTITY_KIND_BASE, bad[i], 1);
+        clientSimApplyControl(cs, &evt);
+        ecHeader(&evt, ENTITY_KIND_START, bad[i], 1);
+        clientSimApplyControl(cs, &evt);
+    }
+    UT_ASSERT(pillsGetNumPills(&gs->pb) == 3 && basesGetNumBases(&gs->bs) == 3 &&
+              startsGetNumStarts(&gs->ss) == 3);
+    for (i = 1; i <= 3; i++) {
+        UT_ASSERT_MSG(pillsIsActive(&gs->pb, (BYTE)i) && basesIsActive(&gs->bs, (BYTE)i) &&
+                      startsIsActive(&gs->ss, (BYTE)i),
+                      "an out-of-range change touched item %d's flag", i);
+    }
+
+    clientSimDestroy(cs);
+    return 0;
+}
