@@ -861,6 +861,16 @@ int run_replay_roundtrip_base_migrate(void);
  * than as an armour that happens to match. */
 int run_replay_roundtrip_pill_health(void);
 
+/* Older recordings read by today's viewer (test_replay_version_compat.c):
+ * hand-built v2 and v1 logs carrying log_PillSetHealth in its one-byte nibble
+ * form, the shape every file before LOG_VERSION 3 holds. Each puts a
+ * placement record for the same pillbox straight behind the health one, so a
+ * reader that sized the health record by today's shape is caught by the
+ * square the pillbox ends up on rather than by its armour. The v1 case also
+ * covers the load's sizing walk, which has no framed length to fall back on. */
+int run_replay_v2_pill_health_nibble(void);
+int run_replay_v1_pill_health_nibble(void);
+
 /* The brain recorder's own version (test_brainrec_version.c): a session file
  * written by an older build states a version this build cannot read, because
  * the frames are raw snapshot structs and the structs changed size. The check

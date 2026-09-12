@@ -28,6 +28,8 @@
  * per-change events carried all of it.
  */
 
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "global.h"
@@ -37,6 +39,7 @@
 #include "bases.h"
 #include "pillbox.h"
 #include "tank.h"
+#include "log.h"            /* LOG_VERSION_V3 — the version the file states */
 #include "replay_harness.h"
 #include "test_harness.h"
 
@@ -185,7 +188,13 @@ int run_replay_roundtrip_world(void) {
  * than as an armour value that happens to match.
  *
  * pillsSetPill is the sim's own function for this and writes four records —
- * owner, health, in-tank, placement — so nothing here is a hand-built log. */
+ * owner, health, in-tank, placement — so nothing here is a hand-built log.
+ *
+ * The two-byte record is what LOG_VERSION 3 means, so the case also opens the
+ * file and reads its version byte: a recording that carries this record while
+ * stating version 2 is the ambiguity the version bump exists to remove, and no
+ * reader could size it. The nibble form every earlier version holds is covered
+ * by test_replay_version_compat.c. */
 int run_replay_roundtrip_pill_health(void) {
     ReplayHarness h;
     GameSim *gs;
@@ -228,6 +237,23 @@ int run_replay_roundtrip_pill_health(void) {
     replayHarnessTick(&h, 6);
 
     UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+
+    /* The file says which shape its health record holds. */
+    {
+        uint8_t *logDat = NULL;
+        size_t   logLen = 0;
+        uint8_t  version;
+        UT_ASSERT_MSG(extractLogDat(h.path, &logDat, &logLen),
+                      "could not read log.dat out of %s", h.path);
+        UT_ASSERT_MSG(logLen > 9, "log.dat is %u bytes", (unsigned) logLen);
+        version = logDat[8];
+        free(logDat);
+        UT_ASSERT_MSG(version == LOG_VERSION_V3,
+                      "the recording states version %u; the two-byte health "
+                      "record is version %u", (unsigned) version,
+                      (unsigned) LOG_VERSION_V3);
+    }
+
     UT_ASSERT_MSG(replayHarnessDecode(&h),
                   "replay did not decode to end-of-log");
     UT_ASSERT_MSG(replayHarnessCompare(&h), "replayed world differs: %s",
