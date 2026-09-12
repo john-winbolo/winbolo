@@ -1638,7 +1638,7 @@ BYTE        serverSimGetHostSlot(const ServerSim *sim);
  * The stored mask is the CLI mask plus its implied locks, so what the
  * getter returns — and what the lobby-settings event carries to every
  * client's lock badges — may hold more bits than the operator typed. */
-uint16_t    serverSimGetServerLocks(const ServerSim *sim);
+uint32_t    serverSimGetServerLocks(const ServerSim *sim);
 
 /* Expand a LOBBY_LOCK_* mask with the locks it implies, and return it.
  * One setting can write another's value, and a lock the host can reach
@@ -1650,15 +1650,16 @@ uint16_t    serverSimGetServerLocks(const ServerSim *sim);
  * through this, so callers rarely need it directly — it is exposed so
  * the CLI can report the expanded set and tests can check the mapping
  * without a sim. Idempotent. */
-uint16_t    serverSimAddImpliedLocks(uint16_t locks);
+uint32_t    serverSimAddImpliedLocks(uint32_t locks);
 
 /* Map an LST_* setting id to the LOBBY_LOCK_* bit that gates it.
- * Returns 0 for settings with no lock, 0xFFFF for unknown ids. The
+ * Returns 0 for settings with no lock, 0xFFFFFFFF for unknown ids. The
  * PACKET_LOBBY_SET_SETTING handler uses this to decide whether to
  * REJECT_LOCKED; tests use it to verify the lock table is correct. */
-uint16_t    serverSimGetSettingLockBit(uint8_t lstSettingType);
+uint32_t    serverSimGetSettingLockBit(uint8_t lstSettingType);
 /* True iff sim has the lock bit for `lstSettingType` set AND that
- * setting actually has a lock bit (i.e., bit != 0 and bit != 0xFFFF). */
+ * setting actually has a lock bit (i.e., bit != 0 and
+ * bit != 0xFFFFFFFF). */
 bool        serverSimIsSettingLocked(const ServerSim *sim,
                                      uint8_t lstSettingType);
 

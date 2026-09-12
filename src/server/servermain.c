@@ -1501,7 +1501,7 @@ int main(int argc, char **argv) {
    * Valid names: gametype, ai, mines, timelimit, autolock, password,
    * ranked, openhost, map. Unknown names emit a warning and are
    * skipped (forward-compat for future locks). */
-  uint16_t serverLocks = 0;
+  uint32_t serverLocks = 0;
   {
     int argNum = findArg(argc, argv, "lock");
     if (argNum != ARG_NOT_FOUND) {
@@ -1550,7 +1550,7 @@ int main(int argc, char **argv) {
        * turning classic mode on writes those same values. The sim does
        * this for us; say so here so the operator isn't surprised by a
        * locked checkbox they never named. */
-      uint16_t implied = serverSimAddImpliedLocks(serverLocks);
+      uint32_t implied = serverSimAddImpliedLocks(serverLocks);
       if (implied != serverLocks) {
         fprintf(stderr,
                 "Note: -lock of pillview / baseview / allyview / "

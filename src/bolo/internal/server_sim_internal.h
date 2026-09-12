@@ -127,7 +127,7 @@ struct ServerSim {
                                       * 0 is empty (or unowned), the next
                                       * incoming player is promoted to host.
                                       * Consumed by the join handler. */
-    uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+    uint32_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
     /* WBN lobby_update batching: lobby/setting/map changes mark the
      * snapshot dirty; it is flushed on the periodic WBN tick at most
      * every WBN_LOBBY_UPDATE_INTERVAL seconds, and force-sent before
@@ -201,7 +201,7 @@ struct ServerSim {
         bool     openHost;
         bool     autoLockOnGameStart;
         bool     ranked;
-        uint16_t serverLocks;
+        uint32_t serverLocks;
         ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         bool       classicMode;

@@ -604,7 +604,7 @@ struct ClientSim {
                                     * lobby can hide WBN-mediated UI
                                     * (Balance from WBN) when the host
                                     * process isn't signed in to WBN. */
-    uint16_t lobbyServerLocks;
+    uint32_t lobbyServerLocks;
 
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */

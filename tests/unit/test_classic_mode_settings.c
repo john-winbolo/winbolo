@@ -184,14 +184,14 @@ int run_classic_mode_lock_bit(void) {
 
     UT_ASSERT_MSG(serverSimGetSettingLockBit(LST_CLASSIC_MODE)
                       == LOBBY_LOCK_CLASSIC_MODE,
-                  "LST_CLASSIC_MODE lock bit = 0x%04X, want 0x%04X",
+                  "LST_CLASSIC_MODE lock bit = 0x%08X, want 0x%08X",
                   (unsigned)serverSimGetSettingLockBit(LST_CLASSIC_MODE),
                   (unsigned)LOBBY_LOCK_CLASSIC_MODE);
 
     /* The new bit must not collide with any existing one — a shared bit
      * would freeze the wrong control on every client. */
     {
-        uint16_t others =
+        uint32_t others =
             LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_AI_POLICY | LOBBY_LOCK_MINES |
             LOBBY_LOCK_TIME_LIMIT | LOBBY_LOCK_AUTO_LOCK_ON_GAME |
             LOBBY_LOCK_PASSWORD | LOBBY_LOCK_RANKED | LOBBY_LOCK_OPEN_HOST |
@@ -238,7 +238,7 @@ int run_classic_mode_lock_bit(void) {
  * run_classic_mode_lock_blocks_dispatch drives it end-to-end. */
 int run_classic_mode_lock_implied(void) {
     ServerSim *sim = make_classic_sim();
-    static const uint16_t owned[] = {
+    static const uint32_t owned[] = {
         LOBBY_LOCK_PILL_VIEW, LOBBY_LOCK_BASE_VIEW,
         LOBBY_LOCK_ALLY_VIEW, LOBBY_LOCK_ALLIES_IN_TREES,
     };
@@ -246,7 +246,7 @@ int run_classic_mode_lock_implied(void) {
      * LOBBY_LOCK_PASSWORD are in here deliberately: they have no LST_*
      * of their own, so a fold that keyed off "any lock at all" would
      * still catch them and freeze a checkbox for no reason. */
-    static const uint16_t unrelated[] = {
+    static const uint32_t unrelated[] = {
         LOBBY_LOCK_GAME_TYPE, LOBBY_LOCK_AI_POLICY, LOBBY_LOCK_MINES,
         LOBBY_LOCK_TIME_LIMIT, LOBBY_LOCK_AUTO_LOCK_ON_GAME,
         LOBBY_LOCK_PASSWORD, LOBBY_LOCK_RANKED, LOBBY_LOCK_OPEN_HOST,
@@ -259,20 +259,20 @@ int run_classic_mode_lock_implied(void) {
                   "an empty mask must imply no locks");
 
     for (size_t i = 0; i < sizeof(owned) / sizeof(owned[0]); i++) {
-        uint16_t in  = owned[i];
-        uint16_t out = serverSimAddImpliedLocks(in);
+        uint32_t in  = owned[i];
+        uint32_t out = serverSimAddImpliedLocks(in);
         /* Exactly the input plus the classic-mode bit: the fold must add
          * that one bit and nothing else, or an operator who locked the
          * ally view finds unrelated controls frozen too. */
-        UT_ASSERT_MSG(out == (uint16_t)(in | LOBBY_LOCK_CLASSIC_MODE),
-                      "lock 0x%04X implied 0x%04X, want 0x%04X",
+        UT_ASSERT_MSG(out == (uint32_t)(in | LOBBY_LOCK_CLASSIC_MODE),
+                      "lock 0x%08X implied 0x%08X, want 0x%08X",
                       (unsigned)in, (unsigned)out,
                       (unsigned)(in | LOBBY_LOCK_CLASSIC_MODE));
         /* Idempotent — the stored mask is re-folded on every lobby
          * reset (serverSimResetLobbyToDefaults restores the snapshot
          * through the same setter), so a second pass must not drift. */
         UT_ASSERT_MSG(serverSimAddImpliedLocks(out) == out,
-                      "serverSimAddImpliedLocks is not idempotent for 0x%04X",
+                      "serverSimAddImpliedLocks is not idempotent for 0x%08X",
                       (unsigned)in);
 
         /* Through a sim: what the getter reports is what the lobby
@@ -280,22 +280,22 @@ int run_classic_mode_lock_implied(void) {
          * the lock badge and the disabled checkbox are drawn from. */
         serverSimSetServerLocks(sim, in);
         UT_ASSERT_MSG(serverSimGetServerLocks(sim) == out,
-                      "sim mask for 0x%04X = 0x%04X, want 0x%04X",
+                      "sim mask for 0x%08X = 0x%08X, want 0x%08X",
                       (unsigned)in, (unsigned)serverSimGetServerLocks(sim),
                       (unsigned)out);
         UT_ASSERT_MSG(serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
-                      "lock 0x%04X must also lock classic mode",
+                      "lock 0x%08X must also lock classic mode",
                       (unsigned)in);
     }
 
     for (size_t i = 0; i < sizeof(unrelated) / sizeof(unrelated[0]); i++) {
-        uint16_t in = unrelated[i];
+        uint32_t in = unrelated[i];
         UT_ASSERT_MSG(serverSimAddImpliedLocks(in) == in,
-                      "lock 0x%04X must imply nothing (got 0x%04X)",
+                      "lock 0x%08X must imply nothing (got 0x%08X)",
                       (unsigned)in, (unsigned)serverSimAddImpliedLocks(in));
         serverSimSetServerLocks(sim, in);
         UT_ASSERT_MSG(!serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
-                      "lock 0x%04X must leave classic mode editable",
+                      "lock 0x%08X must leave classic mode editable",
                       (unsigned)in);
     }
 

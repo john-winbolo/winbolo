@@ -881,7 +881,7 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
                      evt->u.playerJoin.name);
         } else if (evt->type == CTRL_LOBBY_SETTINGS) {
             snprintf(extra, sizeof(extra),
-                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%04x]",
+                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%08x]",
                      evt->u.lobbySettings.mapName,
                      (int)evt->u.lobbySettings.lobbyGameType,
                      (int)evt->u.lobbySettings.lobbyHiddenMines,

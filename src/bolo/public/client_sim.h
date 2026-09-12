@@ -925,7 +925,7 @@ bool        clientSimGetLobbyAllowNewPlayers(const ClientSim *cs);
  * this the button would be visible but every click would be dropped
  * by the server's wbnRunning guard. Mirrored via CTRL_LOBBY_SETTINGS. */
 bool        clientSimGetLobbyWbnAvailable(const ClientSim *cs);
-uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
+uint32_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */

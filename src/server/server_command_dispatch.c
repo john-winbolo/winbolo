@@ -259,8 +259,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
         const CmdLobbySetting *p = &cmd->u.lobbySetting;
         if (p->valueLen > 32) return CMD_REJECT_INVALID;
-        uint16_t lockBit = serverSimGetSettingLockBit(p->settingType);
-        if (lockBit == 0xFFFFu) {
+        uint32_t lockBit = serverSimGetSettingLockBit(p->settingType);
+        if (lockBit == 0xFFFFFFFFu) {
             /* Unknown setting — silent forward-compat drop. */
             return CMD_OK;
         }

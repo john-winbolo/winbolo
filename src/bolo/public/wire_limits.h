@@ -58,12 +58,13 @@
  * over-cap log never enters memory. */
 #define ROUND_LOG_MAX_BYTES (4u * 1024u * 1024u)
 
-/* ServerLocks bitmask — sent in extended PACKET_LOBBY_STATE. Set by
- * bolod CLI flags (--lock-game-type etc); never changes after server
- * startup. Hosts cannot modify locks; clients render matching settings
- * disabled with a lock badge. Surfaced publicly so servermain.c (which
- * parses the CLI flags) and the GUI lobby (which renders the disabled
- * state) can both reach these without including internal/netpacks.h. */
+/* ServerLocks bitmask — 32 bits wide, sent in extended
+ * PACKET_LOBBY_STATE. Set by bolod CLI flags (--lock-game-type etc);
+ * never changes after server startup. Hosts cannot modify locks;
+ * clients render matching settings disabled with a lock badge.
+ * Surfaced publicly so servermain.c (which parses the CLI flags) and
+ * the GUI lobby (which renders the disabled state) can both reach
+ * these without including internal/netpacks.h. */
 #define LOBBY_LOCK_GAME_TYPE         (1u << 0)
 #define LOBBY_LOCK_AI_POLICY         (1u << 1)
 #define LOBBY_LOCK_MINES             (1u << 2)

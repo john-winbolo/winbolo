@@ -66,7 +66,7 @@ typedef struct {
   bool     hasLobby;                 /* Server has a lobby (false for -nolobby/-maprotate) */
   bool     timeLimit;               /* Time limit enabled (false=unlimited) */
   uint16_t timeMinutes;              /* Time limit in minutes */
-  uint16_t lobbyLocks;               /* LOBBY_LOCK_* bitmask */
+  uint32_t lobbyLocks;               /* LOBBY_LOCK_* bitmask */
   BYTE     numBases;                 /* Total bases */
   BYTE     numPills;                 /* Total pills */
   BYTE     freeBases;                /* Neutral bases */

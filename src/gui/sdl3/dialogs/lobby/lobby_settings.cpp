@@ -459,7 +459,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 int          label;
                 ViewCategory cat;
                 uint8_t      lst;
-                uint16_t     lockBit;
+                uint32_t     lockBit;
                 const char  *id;
             };
             static const ViewRow rows[] = {

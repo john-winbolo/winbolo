@@ -561,11 +561,11 @@ void serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v) {
     if (sim) sim->firstJoinerBecomesHost = v;
 }
 
-uint16_t serverSimGetServerLocks(const ServerSim *sim) {
+uint32_t serverSimGetServerLocks(const ServerSim *sim) {
     return sim ? sim->serverLocks : 0;
 }
 
-uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
+uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
     switch (lstSettingType) {
         case LST_GAME_TYPE:         return LOBBY_LOCK_GAME_TYPE;
         case LST_HIDDEN_MINES:      return LOBBY_LOCK_MINES;
@@ -579,18 +579,18 @@ uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
         case LST_CLASSIC_MODE:      return LOBBY_LOCK_CLASSIC_MODE;
         case LST_ALLIES_IN_TREES:   return LOBBY_LOCK_ALLIES_IN_TREES;
-        default:                    return 0xFFFFu;  /* unknown setting */
+        default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
 
 bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
     if (sim == NULL) return false;
-    uint16_t bit = serverSimGetSettingLockBit(lstSettingType);
-    if (bit == 0u || bit == 0xFFFFu) return false;
+    uint32_t bit = serverSimGetSettingLockBit(lstSettingType);
+    if (bit == 0u || bit == 0xFFFFFFFFu) return false;
     return (sim->serverLocks & bit) != 0u;
 }
 
-uint16_t serverSimAddImpliedLocks(uint16_t locks) {
+uint32_t serverSimAddImpliedLocks(uint32_t locks) {
     /* Turning classic mode on writes the three view policies and allies
      * in trees (serverSimSetClassicMode), so leaving the checkbox
      * editable while any of those four is locked would let a host change
@@ -731,7 +731,7 @@ void serverSimSetState(ServerSim *sim, ServerState s) {
     if (sim) sim->state = s;
 }
 
-void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
+void serverSimSetServerLocks(ServerSim *sim, uint32_t locks) {
     if (sim) sim->serverLocks = serverSimAddImpliedLocks(locks);
 }
 

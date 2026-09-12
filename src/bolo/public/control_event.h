@@ -271,7 +271,7 @@ typedef struct ControlEvent {
             bool     lobbyWbnAvailable;  /* host's winbolonetIsRunning() —
                                           * gates WBN-only UI (Balance
                                           * from WBN) on remote clients */
-            uint16_t lobbyServerLocks;
+            uint32_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
             uint8_t  hostSlot;   /* current lobby host's player slot */
             /* Visibility rules, indexed by ViewCategory. */

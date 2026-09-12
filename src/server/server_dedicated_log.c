@@ -350,6 +350,9 @@ static void serverDedicatedLogBuildSettings(ServerSim *sim, char *out) {
     out[10] = (char)flags;
     out[11] = (char)((timeMinutes >> 8) & 0xFF);
     out[12] = (char)(timeMinutes & 0xFF);
+    /* The blob carries 16 bits of the lock mask. No lock uses bit 16 or
+     * above, so nothing is lost; widening the blob would version the
+     * format for a value that is still zero. */
     out[13] = (char)((sim->serverLocks >> 8) & 0xFF);
     out[14] = (char)(sim->serverLocks & 0xFF);
 }

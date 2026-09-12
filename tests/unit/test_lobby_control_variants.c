@@ -89,7 +89,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.hasLobby                  = false;
     in.u.lobbySettings.lobbyOpenHost            = true;
     in.u.lobbySettings.lobbyAutoLockOnGameStart = true;
-    in.u.lobbySettings.lobbyServerLocks         = 0xABCD;
+    in.u.lobbySettings.lobbyServerLocks         = 0xABCD1234u;
     in.u.lobbySettings.lobbyRanked              = true;
     in.u.lobbySettings.lobbyAllowNewPlayers     = false;
     in.u.lobbySettings.lobbyWbnAvailable        = true;
@@ -120,8 +120,8 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT(out.u.lobbySettings.hasLobby                  == false);
     UT_ASSERT(out.u.lobbySettings.lobbyOpenHost            == true);
     UT_ASSERT(out.u.lobbySettings.lobbyAutoLockOnGameStart == true);
-    UT_ASSERT_MSG(out.u.lobbySettings.lobbyServerLocks == 0xABCD,
-                  "serverLocks got 0x%04X want 0xABCD",
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyServerLocks == 0xABCD1234u,
+                  "serverLocks got 0x%08X want 0xABCD1234",
                   (unsigned)out.u.lobbySettings.lobbyServerLocks);
     UT_ASSERT_MSG(out.u.lobbySettings.lobbyRanked == true,
                   "lobbyRanked did not survive codec round-trip");
@@ -242,7 +242,7 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT(cs->inLobby                  == false);
     UT_ASSERT(cs->lobbyOpenHost            == true);
     UT_ASSERT(cs->lobbyAutoLockOnGameStart == true);
-    UT_ASSERT(cs->lobbyServerLocks         == 0xABCD);
+    UT_ASSERT(cs->lobbyServerLocks         == 0xABCD1234u);
     UT_ASSERT(cs->lobbyRanked              == true);
     UT_ASSERT(cs->lobbyAllowNewPlayers     == false);
     UT_ASSERT(cs->lobbyWbnAvailable        == true);
