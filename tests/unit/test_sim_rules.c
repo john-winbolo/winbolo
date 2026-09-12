@@ -71,6 +71,19 @@
  *     build on a sim whose rules are not classic and builds on one whose
  *     rules are, so a model is never handed a vector on a scale it was not
  *     trained against.
+ *
+ *   sim_rules_worldsim_pill_follows — the forward model's four pill numbers
+ *     carry the classic values it was built with rather than constants of its
+ *     own, and a clear keeps them the way it keeps the terrain speeds beside
+ *     them. brainWorldSimCreate takes no rules and always reads the classic
+ *     table, so a model built on a moved pill rule cannot be made from here;
+ *     the fields, what they hold, and what a clear does to them are what this
+ *     pins.
+ *
+ *   sim_rules_boat_speed_follows — the three places the pathfinder moves a
+ *     tank at boat speed read its terrain speed table like every other speed
+ *     it reads, so a boat speed pushed through the setter moves the travel
+ *     estimate, the straight-line cost estimate and the searched cost.
  */
 
 #include <stddef.h>
@@ -103,6 +116,7 @@
 #include "brain.h"
 #include "brain_data.h"
 #include "brain_pathfinder.h"
+#include "brain_worldsim.h"
 #include "obs_builder.h"  /* obsBuildMultiView — the refusal a case can drive */
 #include "loopback_harness.h"
 #include "test_harness.h"
@@ -1485,5 +1499,132 @@ int run_sim_rules_obs_refuses_non_classic(void) {
     free(obs);
     free(zero);
     loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* The forward model's pill numbers. brainWorldSimCreate takes no rules, so a
+   model built on a moved pill rule cannot be made here; what is checkable is
+   that the numbers live on the model, that they are the classic ones, and
+   that a clear leaves them alone. */
+int run_sim_rules_worldsim_pill_follows(void) {
+    BrainWorldSim *sim = brainWorldSimCreate();
+    SimRules classic;
+
+    UT_ASSERT(sim != NULL);
+    simRulesClassic(&classic);
+
+    UT_ASSERT_MSG(sim->pill_range == (int) classic.pill_range,
+                  "the model fires pills within %d, not the classic %d",
+                  sim->pill_range, (int) classic.pill_range);
+    UT_ASSERT_MSG(sim->pill_attack_ticks == (int) classic.pill_attack_ticks,
+                  "the model's calm fire interval is %d, not the classic %d",
+                  sim->pill_attack_ticks, (int) classic.pill_attack_ticks);
+    UT_ASSERT_MSG(sim->pill_attack_min_ticks == (int) classic.pill_attack_min_ticks,
+                  "the model's angriest fire interval is %d, not the classic %d",
+                  sim->pill_attack_min_ticks, (int) classic.pill_attack_min_ticks);
+    UT_ASSERT_MSG(sim->pill_cooldown_ticks == (int) classic.pill_cooldown_ticks,
+                  "the model's anger chain runs %d ticks, not the classic %d",
+                  sim->pill_cooldown_ticks, (int) classic.pill_cooldown_ticks);
+
+    /* A calm pill is added at the calm interval, which is one of the places
+       the model reads the field rather than a constant of its own. */
+    brainWorldSimAddPill(sim, 10, 10, 15, 0.0f, 0xFF, 0);
+    UT_ASSERT_MSG(sim->num_pills == 1, "the pill was not added");
+    UT_ASSERT_MSG(sim->pills[0].speed == (uint8_t) classic.pill_attack_ticks,
+                  "a calm pill fires every %d ticks, not the rule's %d",
+                  (int) sim->pills[0].speed, (int) classic.pill_attack_ticks);
+
+    /* A clear drops the world and keeps the numbers the world runs on. */
+    brainWorldSimClear(sim);
+    UT_ASSERT_MSG(sim->num_pills == 0, "a clear kept the world");
+    UT_ASSERT_MSG(sim->pill_range == (int) classic.pill_range &&
+                      sim->pill_attack_ticks == (int) classic.pill_attack_ticks &&
+                      sim->pill_attack_min_ticks == (int) classic.pill_attack_min_ticks &&
+                      sim->pill_cooldown_ticks == (int) classic.pill_cooldown_ticks,
+                  "a clear lost the pill numbers the model was built with");
+
+    brainWorldSimDestroy(sim);
+    return 0;
+}
+
+/* The three places the pathfinder moves a tank at boat speed, each driven
+   through its own entry point on an all-river map with the tank afloat: every
+   tile it crosses is water it stays afloat on, so the speed it moves at is the
+   table's boat slot and nothing else. */
+int run_sim_rules_boat_speed_follows(void) {
+    BrainPathfinder *pf = brainPathfinderCreate();
+    BYTE *map = (BYTE *) malloc((size_t) MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+    SimRules classic;
+    int x, y;
+    int ticksClassic, ticksSlow, ticksFast;
+    float estClassic, estSlow;
+    float costClassic, costSlow;
+    const int sx = 100, sy = 100, dx = 120, dy = 100;
+
+    UT_ASSERT(pf != NULL && map != NULL);
+    simRulesClassic(&classic);
+
+    memset(map, BRIVER, (size_t) MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+    brainPathfinderSetMap(pf, map);
+
+    /* The travel estimate, which moves the tank a tick at a time. */
+    ticksClassic = brainPathfinderEstimateTankTravelTicks(pf, sx, sy, dx, dy,
+                                                          1, 20000, 200);
+    UT_ASSERT_MSG(ticksClassic > 0,
+                  "a boat crossing river arrived in %d ticks", ticksClassic);
+
+    brainPathfinderSetTerrainSpeed(pf, BBOAT, (float) classic.speed_boat / 2.0f);
+    ticksSlow = brainPathfinderEstimateTankTravelTicks(pf, sx, sy, dx, dy,
+                                                       1, 20000, 200);
+    UT_ASSERT_MSG(ticksSlow > ticksClassic,
+                  "halving the boat speed crossed in %d ticks, not more than "
+                  "the %d the classic speed took", ticksSlow, ticksClassic);
+
+    brainPathfinderSetTerrainSpeed(pf, BBOAT, (float) classic.speed_boat * 2.0f);
+    ticksFast = brainPathfinderEstimateTankTravelTicks(pf, sx, sy, dx, dy,
+                                                       1, 20000, 200);
+    UT_ASSERT_MSG(ticksFast < ticksClassic,
+                  "doubling the boat speed crossed in %d ticks, not fewer than "
+                  "the %d the classic speed took", ticksFast, ticksClassic);
+
+    /* The other two weigh danger by how long the tank is in it, so it has to
+       be there for the boat speed to reach the cost at all. Stamp it over the
+       whole map rather than a corridor: a corridor is something the search can
+       route around, and then neither cost would move. Small enough that the
+       armour drain it also feeds still rounds to nothing. */
+    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+        for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+            brainPathfinderSetDanger(pf, x, y, 6.0f);
+        }
+    }
+
+    brainPathfinderSetTerrainSpeed(pf, BBOAT, (float) classic.speed_boat);
+    estClassic = brainPathfinderEstimateCost(pf, sx, sy, dx, dy, 1);
+    costClassic = brainPathfinderCostTo(pf, sx, sy, dx, dy, 1,
+                                        40, 40, 40, 40, 2000000);
+    UT_ASSERT_MSG(estClassic > 0.0f,
+                  "the straight-line estimate across river was %f", estClassic);
+    UT_ASSERT_MSG(costClassic > 0.0f,
+                  "the searched cost across river was %f", costClassic);
+
+    brainPathfinderSetTerrainSpeed(pf, BBOAT, (float) classic.speed_boat / 2.0f);
+    estSlow = brainPathfinderEstimateCost(pf, sx, sy, dx, dy, 1);
+    costSlow = brainPathfinderCostTo(pf, sx, sy, dx, dy, 1,
+                                     40, 40, 40, 40, 2000000);
+
+    /* The straight-line cost estimate. */
+    UT_ASSERT_MSG(estSlow > estClassic,
+                  "halving the boat speed estimated %f across the danger, not "
+                  "more than the %f the classic speed estimated",
+                  estSlow, estClassic);
+
+    /* And the cost the search itself works out. */
+    UT_ASSERT_MSG(costSlow > costClassic,
+                  "halving the boat speed searched out %f across the danger, "
+                  "not more than the %f the classic speed searched out",
+                  costSlow, costClassic);
+
+    brainPathfinderDestroy(pf);
+    free(map);
     return 0;
 }

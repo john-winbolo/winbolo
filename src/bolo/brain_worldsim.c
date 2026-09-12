@@ -33,11 +33,7 @@
 #define WSIM_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
 #define WSIM_SLIDE_FRICTION      0.80f /* velocity multiplier per tick */
 #define WSIM_SLIDE_STOP_THRESH   0.5f  /* stop sliding below this speed */
-#define WSIM_PILL_RANGE    2048   /* WU range for pill firing */
 #define WSIM_PILL_FOREST_RANGE 768 /* 3 tiles — pills can't see into forest beyond this */
-#define WSIM_ANGER_COOLDOWN  32   /* ticks of anger chain */
-#define WSIM_PILL_MIN_SPEED   6   /* fastest fire rate */
-#define WSIM_PILL_MAX_SPEED 100   /* calm fire rate */
 #define WSIM_LGM_ARRIVE_DIST 32   /* WU threshold for LGM arrival */
 #define WSIM_WU_PER_TILE    256
 
@@ -115,13 +111,13 @@ static int wsim_line_hits_pill(BrainWorldSim *sim, int ax, int ay,
 }
 
 /* Anger escalation: halve fire interval, start cooldown chain */
-static void wsim_anger_pill(WSimPill *pill) {
-  if (pill->speed > WSIM_PILL_MIN_SPEED) {
+static void wsim_anger_pill(const BrainWorldSim *sim, WSimPill *pill) {
+  if (pill->speed > sim->pill_attack_min_ticks) {
     pill->speed = (uint8_t)(pill->speed / 2);
-    if (pill->speed < WSIM_PILL_MIN_SPEED)
-      pill->speed = WSIM_PILL_MIN_SPEED;
+    if (pill->speed < sim->pill_attack_min_ticks)
+      pill->speed = (uint8_t)sim->pill_attack_min_ticks;
   }
-  pill->cooldown = WSIM_ANGER_COOLDOWN;
+  pill->cooldown = (uint8_t)sim->pill_cooldown_ticks;
 }
 
 /* Apply knockback slide to a tank for one tick (exponential decay) */
@@ -180,12 +176,16 @@ BrainWorldSim *brainWorldSimCreate(void) {
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
 
-  /* The shell damage and the ten terrain speeds a rule names come from the
-     classic rules table, so the forward model starts on the same numbers the
-     engine does; a brain that pushes its own through wsim_set_terrain_speed
-     overwrites the speeds. */
+  /* The shell damage, the four pill numbers and the ten terrain speeds a rule
+     names come from the classic rules table, so the forward model starts on
+     the same numbers the engine does; a brain that pushes its own through
+     wsim_set_terrain_speed overwrites the speeds. */
   simRulesClassic(&classic);
-  sim->shell_damage = classic.shell_damage;
+  sim->shell_damage          = classic.shell_damage;
+  sim->pill_range            = classic.pill_range;
+  sim->pill_attack_ticks     = classic.pill_attack_ticks;
+  sim->pill_attack_min_ticks = classic.pill_attack_min_ticks;
+  sim->pill_cooldown_ticks   = classic.pill_cooldown_ticks;
   sim->terrain_speed[0]  =  0; /* BUILDING */
   sim->terrain_speed[1]  = (float) classic.speed_river;
   sim->terrain_speed[2]  = (float) classic.speed_swamp;
@@ -217,6 +217,10 @@ void brainWorldSimClear(BrainWorldSim *sim) {
      terrain speeds beside them do — a clear drops the world, not the
      numbers the world runs on. */
   int saved_shell_damage = sim->shell_damage;
+  int saved_pill_range = sim->pill_range;
+  int saved_pill_attack_ticks = sim->pill_attack_ticks;
+  int saved_pill_attack_min_ticks = sim->pill_attack_min_ticks;
+  int saved_pill_cooldown_ticks = sim->pill_cooldown_ticks;
   memcpy(saved_speed, sim->terrain_speed, sizeof(saved_speed));
 
   sim->num_pills = 0;
@@ -226,6 +230,10 @@ void brainWorldSimClear(BrainWorldSim *sim) {
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
   sim->shell_damage = saved_shell_damage;
+  sim->pill_range = saved_pill_range;
+  sim->pill_attack_ticks = saved_pill_attack_ticks;
+  sim->pill_attack_min_ticks = saved_pill_attack_min_ticks;
+  sim->pill_cooldown_ticks = saved_pill_cooldown_ticks;
 
   memset(&sim->lgm, 0, sizeof(sim->lgm));
   sim->lgm.dispatch_tick = -1;
@@ -263,17 +271,18 @@ void brainWorldSimAddPill(BrainWorldSim *sim, int mx, int my,
   p->reload = 0;
 
   /* Convert anger (0..1 float) to fire speed.
-   * anger=0 → speed=100 (calm), anger=1 → speed=6 (max anger) */
+   * anger=0 → the calm interval, anger=1 → the interval at full anger */
   if (anger <= 0.0f) {
-    p->speed = WSIM_PILL_MAX_SPEED;
+    p->speed = (uint8_t)sim->pill_attack_ticks;
     p->cooldown = 0;
   } else {
-    int spd = (int)(WSIM_PILL_MAX_SPEED - anger * (WSIM_PILL_MAX_SPEED - WSIM_PILL_MIN_SPEED));
-    if (spd < WSIM_PILL_MIN_SPEED) spd = WSIM_PILL_MIN_SPEED;
-    if (spd > WSIM_PILL_MAX_SPEED) spd = WSIM_PILL_MAX_SPEED;
+    int spd = (int)(sim->pill_attack_ticks
+                    - anger * (sim->pill_attack_ticks - sim->pill_attack_min_ticks));
+    if (spd < sim->pill_attack_min_ticks) spd = sim->pill_attack_min_ticks;
+    if (spd > sim->pill_attack_ticks) spd = sim->pill_attack_ticks;
     p->speed = (uint8_t)spd;
     /* If already angry, assume some cooldown remains */
-    p->cooldown = (uint8_t)(anger * WSIM_ANGER_COOLDOWN);
+    p->cooldown = (uint8_t)(anger * sim->pill_cooldown_ticks);
   }
 
   sim->num_pills++;
@@ -474,7 +483,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
     for (i = 0; i < sim->num_pills; i++) {
       WSimPill *pill = &sim->pills[i];
       int best_target = -1;  /* -1 = no target, 0..WSIM_MAX_TANKS = tank idx, 100 = lgm */
-      int best_dist_sq = WSIM_PILL_RANGE * WSIM_PILL_RANGE + 1;
+      int best_dist_sq = sim->pill_range * sim->pill_range + 1;
       int pill_wx, pill_wy;
       int j;
 
@@ -486,11 +495,11 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       /* Cooldown: anger decays over time */
       if (pill->cooldown > 0) {
         pill->cooldown--;
-        if (pill->cooldown == 0 && pill->speed < WSIM_PILL_MAX_SPEED) {
+        if (pill->cooldown == 0 && pill->speed < sim->pill_attack_ticks) {
           /* Anger expired: speed drifts back up (simplified) */
           pill->speed = (uint8_t)(pill->speed * 2);
-          if (pill->speed > WSIM_PILL_MAX_SPEED)
-            pill->speed = WSIM_PILL_MAX_SPEED;
+          if (pill->speed > sim->pill_attack_ticks)
+            pill->speed = (uint8_t)sim->pill_attack_ticks;
         }
       }
 
@@ -563,7 +572,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
             WSimPill *hit_pill = &sim->pills[intercepted];
             if (hit_pill->health > 0) {
               hit_pill->health--;
-              wsim_anger_pill(hit_pill);
+              wsim_anger_pill(sim, hit_pill);
             }
           } else if (is_lgm_target) {
             /* LGM instant kill */
@@ -580,10 +589,10 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
              */
             WSimTank *t = &sim->tanks[best_target];
             int dsq = wsim_dist_sq(pill_wx, pill_wy, t->wx, t->wy);
-            float dist_frac = sqrtf((float)dsq) / (float)WSIM_PILL_RANGE;
+            float dist_frac = sqrtf((float)dsq) / (float)sim->pill_range;
             if (dist_frac > 1.0f) dist_frac = 1.0f;
             int scaled = (int)(sim->shell_damage * (1.0f - dist_frac) + 0.5f);
-            if (scaled < 1 && dsq <= (WSIM_PILL_RANGE/2) * (WSIM_PILL_RANGE/2)) {
+            if (scaled < 1 && dsq <= (sim->pill_range/2) * (sim->pill_range/2)) {
               /* floor: very close shots always do at least 1 dmg */
               scaled = 1;
             }
@@ -630,7 +639,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
         int target_wy = (target->my << 8) + 128;
         int range_sq = wsim_dist_sq(our_wx, our_wy, target_wx, target_wy);
 
-        if (range_sq <= WSIM_PILL_RANGE * WSIM_PILL_RANGE && target->health > 0) {
+        if (range_sq <= sim->pill_range * sim->pill_range && target->health > 0) {
           int intercepted;
           our_shoot_timer = 0;
 
@@ -642,13 +651,13 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
             WSimPill *hit_pill = &sim->pills[intercepted];
             if (hit_pill->health > 0) {
               hit_pill->health--;
-              wsim_anger_pill(hit_pill);
+              wsim_anger_pill(sim, hit_pill);
             }
           } else {
             /* Hit the target pill */
             if (target->health > 0) {
               target->health--;
-              wsim_anger_pill(target);
+              wsim_anger_pill(sim, target);
             }
           }
         }

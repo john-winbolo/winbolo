@@ -2940,7 +2940,6 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.baseFullShells = 90;
   lv->rules.baseFullMines  = 90;
   lv->rules.baseFullArmour = 90;
-  lv->rules.mineDamage     = 10;
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */

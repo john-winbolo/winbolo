@@ -99,7 +99,6 @@ typedef struct {
   BYTE baseFullShells;
   BYTE baseFullMines;
   BYTE baseFullArmour;
-  BYTE mineDamage;
 } LvRules;
 
 typedef struct LogViewerState {

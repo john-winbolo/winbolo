@@ -4514,6 +4514,8 @@ set(_unit_test_names
     sim_rules_obs_refuses_non_classic
     sim_rules_shell_flight_follows
     sim_rules_brain_shot_follows
+    sim_rules_worldsim_pill_follows
+    sim_rules_boat_speed_follows
     screen_bullets_build
     ping_smoother
     client_timing

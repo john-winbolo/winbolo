@@ -964,13 +964,13 @@ static float compute_cost(BrainPathfinder *pf, int nx, int ny,
   }
 
   /* Danger scaling by terrain speed.
-   * In a boat on water, we move at full speed (like road), so danger
-   * exposure time is much lower than the base terrain speed suggests. */
+   * In a boat on water, we move at the boat's speed, so danger exposure
+   * time is much lower than the base terrain speed suggests. */
   danger = (float)pf->danger_grid[midx] + (float)pf->danger_offset_grid[midx];
   if (danger < 0.0f) danger = 0.0f;
   speed = pf->terrain_speed_table[type];
   if (onBoat && is_water_tile(type)) {
-    speed = 16.0f; /* boat speed matches road speed */
+    speed = pf->terrain_speed_table[TT_BOAT];
   }
   overlay = (float)pf->overlay_grid[midx];
 
@@ -3061,7 +3061,7 @@ float brainPathfinderEstimateCost(BrainPathfinder *pf,
       float cost;
 
       if (onBoat && is_water_tile(type)) {
-        speed = 16.0f; /* boat speed matches road speed */
+        speed = pf->terrain_speed_table[TT_BOAT];
       }
 
       if (base >= WALL_THRESHOLD) {
@@ -3464,9 +3464,9 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
     curBoat = next_boat_state(curBoat, type);
 
     /* Get speed from terrain speed table.
-     * In a boat on water, use full boat speed (16). */
+     * In a boat on water, move at the boat's speed. */
     if (curBoat && is_water_tile(type)) {
-      fspeed = 16.0f;
+      fspeed = pf->terrain_speed_table[TT_BOAT];
     } else {
       fspeed = pf->terrain_speed_table[type];
     }
