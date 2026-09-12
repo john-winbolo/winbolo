@@ -52,7 +52,8 @@
 #define LOG_VERSION_V0 0  /* Original: IP address octets in player join events */
 #define LOG_VERSION_V1 1  /* Country codes replace IP addresses; opt4 carries accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot) */
 #define LOG_VERSION_V2 2  /* Plaintext (no XOR); each event framed [type][u16 BE payload-length][payload]. Join payload semantics unchanged from V1 */
-#define LOG_VERSION LOG_VERSION_V1
+#define LOG_VERSION_V3 3  /* log_PillSetHealth carries the pill index and its armour in a byte each; V2 and earlier pack the pair into one byte's nibbles. Everything else unchanged from V2 */
+#define LOG_VERSION LOG_VERSION_V3
 
 /* The events we record in our log file */
 typedef enum {

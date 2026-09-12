@@ -656,8 +656,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
   char name2[256];
 
   while (count < numEvents) {
-    bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
-    unsigned short evLen = 0; /* v2 only: framed payload length after code */
+    /* Framing, not a single version: v2 brought it in and every version
+       since keeps it. */
+    bool isV2 = (g_lv->loadedLogVersion >= LOG_VERSION_V2);
+    unsigned short evLen = 0; /* framed payload length after code */
 
     logReadBytes(&code, 1);
 
@@ -687,9 +689,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
           snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
           lv_dnsLookup(mem, str, sizeof(str));
           snprintf(mem, sizeof(mem), "%s", str);
-        } else if (g_lv->loadedLogVersion == LOG_VERSION_V1 ||
-                   g_lv->loadedLogVersion == LOG_VERSION_V2) {
-          /* Version 1/2: opt2-opt3 are 2-char country code,
+        } else if (g_lv->loadedLogVersion >= LOG_VERSION_V1) {
+          /* Version 1 and later: opt2-opt3 are 2-char country code,
            * opt4 is accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot),
            * opt5 reserved (zero in current writers). */
           snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
@@ -1019,9 +1020,20 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_pillsSetPos(&g_lv->pb, opt1, opt2, opt3);
       break;
     case log_PillSetHealth:
+      /* v3 names the pillbox and its armour in a byte each. Up to v2 the
+         pair shared one byte — index in the high nibble, armour in the low
+         — which is all the armour a pillbox could hold back then. Reading
+         two bytes from an older file would take the next record's type
+         code as the armour and lose the stream from there, so the length
+         follows the version the file states. */
       logReadBytes(&opt1, 1);
-      logReadBytes(&opt2, 1);
-      lv_pillsSetHealth(&g_lv->pb, opt1, opt2);
+      if (g_lv->loadedLogVersion >= LOG_VERSION_V3) {
+        logReadBytes(&opt2, 1);
+        lv_pillsSetHealth(&g_lv->pb, opt1, opt2);
+      } else {
+        lv_utilGetNibbles(opt1, &opt2, &opt3);
+        lv_pillsSetHealth(&g_lv->pb, opt2, opt3);
+      }
       break;
     case log_PillSetInTank:
       logReadBytes(&opt1, 1);
@@ -1860,10 +1872,21 @@ static int walkSkipEventBody(BYTE code) {
       /* 1 byte */
       { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
       return 1;
+    case log_PillSetHealth:
+      /* Two bytes from v3 on — index and armour — and one before it, where
+         the pair shared a byte's nibbles. This walker only ever runs on a
+         v0/v1 file (v2 and later are skipped by their framed length), but
+         it sizes by the version so it stays right whichever file reaches
+         it. */
+      if (g_lv->loadedLogVersion >= LOG_VERSION_V3) {
+        BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1;
+        return 2;
+      }
+      { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
+      return 1;
     case log_AllyRequest:
     case log_AllyAccept:
     case log_KillPlayer:
-    case log_PillSetHealth:
     case log_TeamSet:
     case log_SoundBuild:
     case log_SoundFarm:
@@ -1976,7 +1999,9 @@ static int walkSkipEventBody(BYTE code) {
 static bool walkSkipEvents(unsigned short numEvents) {
   unsigned short i;
   BYTE code;
-  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
+  /* Framing, not a single version: every version from v2 on frames its
+     events, so every one of them is skipped by the framed length. */
+  bool isV2 = (g_lv->loadedLogVersion >= LOG_VERSION_V2);
   for (i = 0; i < numEvents; i++) {
     if (logReadBytes(&code, 1) != 1) return FALSE;
     if (isV2) {
@@ -2281,7 +2306,8 @@ static bool walkReadGameSettings(void) {
 static bool walkScanNames(unsigned short numEvents) {
   unsigned short i;
   BYTE code;
-  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
+  /* Framing again, so v2 and every version after it take this arm. */
+  bool isV2 = (g_lv->loadedLogVersion >= LOG_VERSION_V2);
   for (i = 0; i < numEvents; i++) {
     bool named;
     if (logReadBytes(&code, 1) != 1) return FALSE;
@@ -2400,7 +2426,7 @@ static void lv_screenParkAtWindowStart(void) {
   }
 }
 
-/* Scan one v2 LOG_EVENT frame for base-ownership gains, counting matches of
+/* Scan one framed LOG_EVENT frame for base-ownership gains, counting matches of
  * (cell, owner) for the two anchors and latching each anchor's time when its
  * ordinal is reached. Base positions are static per round, so the cell is
  * resolved from the base index via the caller-maintained table (parsed from
@@ -2446,7 +2472,7 @@ static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
  * before game over every owner<MAX_TANKS gain has a matching capture record —
  * but the game-over handover re-assigns every base to the winner with no
  * record, so "last gain at this cell" can be a later event than the track's
- * last capture (observed inflating the fitted slope ~10%). v2 logs only
+ * last capture (observed inflating the fitted slope ~10%). v2 and later only
  * (framed events); false otherwise or if either anchor is missing. Walks from
  * the recorded event-stream start; saves and restores position + key.
  *
@@ -2474,11 +2500,13 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
 
   if (ordE <= 0 || ordL <= 0) return FALSE;
 
-  if (g_lv == NULL || g_lv->loadedLogVersion != LOG_VERSION_V2) return FALSE;
+  /* Framed events only: walkScanBaseOwners steps by the framed length, so
+     v2 and every version after it, and nothing older. */
+  if (g_lv == NULL || g_lv->loadedLogVersion < LOG_VERSION_V2) return FALSE;
   savedPos = lv_logGetCurrentPosition();
   savedKey = lv_blocksGetKey();
   lv_logSetPosition(s_walkStartPos);
-  lv_blocksSetKey(0);   /* v2 is plaintext (identity de-XOR) */
+  lv_blocksSetKey(0);   /* v2 and later are plaintext (identity de-XOR) */
 
   /* Seed from the loaded base table (empty on a lobby-started log). */
   for (i = 0; i < (int)lv_basesGetNumBases(&g_lv->bs) && i < MAX_BASES; i++) {
@@ -2574,8 +2602,10 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     len = logReadBytes(&logVersion, 1);
     if (len <= 0) {
       returnValue = FALSE;
-    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1 ||
-               logVersion == LOG_VERSION_V2) {
+    } else if (logVersion <= LOG_VERSION_V3) {
+      /* Every version up to the newest one loads: v0 and v1 XOR'd, v2 and
+         v3 plaintext and framed, and the readers below take the version
+         the file states rather than assuming the newest. */
       g_lv->loadedLogVersion = logVersion;
     } else {
       returnValue = FALSE;
@@ -2619,9 +2649,9 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     }
   }
 
-  /* v2 is plaintext: blockKey stays 0 (identity de-XOR). v0/v1 seed the
-     rolling key from the low byte of the game create time. */
-  lv_blocksSetKey(g_lv->loadedLogVersion == LOG_VERSION_V2
+  /* v2 and later are plaintext: blockKey stays 0 (identity de-XOR). v0/v1
+     seed the rolling key from the low byte of the game create time. */
+  lv_blocksSetKey(g_lv->loadedLogVersion >= LOG_VERSION_V2
                       ? 0
                       : (BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);
@@ -2719,8 +2749,10 @@ static bool lv_logLoadCommon(void) {
     len = logReadBytes(&logVersion, 1);
     if (len <= 0) {
       returnValue = FALSE;
-    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1 ||
-               logVersion == LOG_VERSION_V2) {
+    } else if (logVersion <= LOG_VERSION_V3) {
+      /* Every version up to the newest one loads: v0 and v1 XOR'd, v2 and
+         v3 plaintext and framed, and the readers below take the version
+         the file states rather than assuming the newest. */
       g_lv->loadedLogVersion = logVersion;
     } else {
       returnValue = FALSE;
@@ -2762,9 +2794,9 @@ static bool lv_logLoadCommon(void) {
     }
   }
 
-  /* v2 is plaintext: blockKey stays 0 (identity de-XOR). v0/v1 seed the
-     rolling key from the low byte of the game create time. */
-  lv_blocksSetKey(g_lv->loadedLogVersion == LOG_VERSION_V2
+  /* v2 and later are plaintext: blockKey stays 0 (identity de-XOR). v0/v1
+     seed the rolling key from the low byte of the game create time. */
+  lv_blocksSetKey(g_lv->loadedLogVersion >= LOG_VERSION_V2
                       ? 0
                       : (BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);

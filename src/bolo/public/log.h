@@ -46,9 +46,19 @@
 
 /* Log header and version information. Version 2 drops the XOR
  * obfuscation (plaintext stream) and frames each event record as
- * [type][u16 big-endian payload length][payload]. */
+ * [type][u16 big-endian payload length][payload]. Version 3 keeps that
+ * framing and gives log_PillSetHealth two payload bytes — the pillbox
+ * index and its armour — where every earlier version packed the pair
+ * into one byte's nibbles.
+ *
+ * The same ladder is mirrored in src/logviewer/lv_log.h, which is what
+ * reads the files; keep the two in step. */
 #define LOG_HEADER "WBOLOMOV"
-#define LOG_VERSION 2
+#define LOG_VERSION_V0 0
+#define LOG_VERSION_V1 1
+#define LOG_VERSION_V2 2
+#define LOG_VERSION_V3 3
+#define LOG_VERSION LOG_VERSION_V3
 
 /* Memory buffer for writing events */
 #define LOG_MEMORY_BUFFER_SIZE (64 *1024)
