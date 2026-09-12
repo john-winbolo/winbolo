@@ -671,6 +671,8 @@ int run_pill_repair_full_load_covers_a_dead_pill(void);
 int run_entity_removed_pill_is_gone_from_gameplay(void);
 int run_entity_removed_base_is_gone_from_gameplay(void);
 int run_entity_removed_start_is_never_chosen(void);
+int run_entity_tournament_removed_start_is_never_chosen(void);
+int run_entity_tournament_neutral_share_counts_live_bases(void);
 int run_entity_add_reuses_lowest_removed_slot(void);
 int run_entity_add_refused_when_full(void);
 int run_entity_remove_refuses_already_removed(void);
@@ -1333,6 +1335,9 @@ int run_overview_dead_tank(void);
  * picture with it until the view is left. */
 int run_overview_entities(void);
 
+/* A pillbox or base a removal has taken off the map earns no region. */
+int run_overview_removed_item_has_no_region(void);
+
 /* Overview gunsight accessor (test_overview_map.c): clientSimGetGunsightPos
  * reports the crosshair's square and pixel offset while the tank is alive and
  * the sight is shown, and declines — writing nothing — for a hidden sight and
@@ -1360,6 +1365,9 @@ int run_overview_snapshot_mirror(void);
 int run_overview_snapshot_isolation(void);
 int run_overview_snapshot_filter(void);
 int run_overview_snapshot_generation(void);
+/* A pillbox or base a removal has taken off the map has no label in the
+ * snapshot's list. */
+int run_overview_snapshot_removed_item_has_no_label(void);
 
 /* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
  * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic

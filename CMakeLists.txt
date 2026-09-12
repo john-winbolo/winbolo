@@ -4294,6 +4294,8 @@ set(_unit_test_names
     entity_removed_pill_is_gone_from_gameplay
     entity_removed_base_is_gone_from_gameplay
     entity_removed_start_is_never_chosen
+    entity_tournament_removed_start_is_never_chosen
+    entity_tournament_neutral_share_counts_live_bases
     entity_add_reuses_lowest_removed_slot
     entity_add_refused_when_full
     entity_remove_refuses_already_removed
@@ -4441,12 +4443,14 @@ set(_unit_test_names
     overview_hud_layout
     overview_dead_tank
     overview_entities
+    overview_removed_item_has_no_region
     overview_gunsight
     tank_pos_dead
     overview_snapshot_mirror
     overview_snapshot_isolation
     overview_snapshot_filter
     overview_snapshot_generation
+    overview_snapshot_removed_item_has_no_label
     mapview_sprite_classic
     mapview_sprite_ladder
     mapview_sprite_shell_tip

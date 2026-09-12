@@ -3370,18 +3370,25 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->pillViewX  = clientSimGetPillViewX(cs);
   s->pillViewY  = clientSimGetPillViewY(cs);
 
-  /* Every pill and base at its square. The number is the one the classic
-   * view draws — pillsGetViewPillNum / basesGetBaseNum at that square, less
-   * one — so two pills the sim reports on one square number as the classic
-   * view numbers them. Which squares show a number is decided at draw time
-   * from the memory copy above: the tile there, and whether it is live. */
+  /* Every pill and base on the map at its square. The number is the one the
+   * classic view draws — pillsGetViewPillNum / basesGetBaseNum at that
+   * square, less one — so two pills the sim reports on one square number as
+   * the classic view numbers them. Which squares show a number is decided at
+   * draw time from the memory copy above: the tile there, and whether it is
+   * live. An item a removal has taken off the map is left out here: its slot
+   * still holds a record, but no lookup by square would find it, and the
+   * number that lookup gives is nothing a label can draw. */
   {
     GameSim *gs = clientSimGetGameSim(cs);
     BYTE n = pillsGetNumPills(&gs->pb);
     BYTE i;
     for (i = 1; i <= n && s->itemLabelCount < MAX_PILLS + MAX_BASES; i++) {
       pillbox item;
-      OverviewItemLabel *l = &s->itemLabels[s->itemLabelCount++];
+      OverviewItemLabel *l;
+      if (pillsIsActive(&gs->pb, i) == FALSE) {
+        continue;
+      }
+      l = &s->itemLabels[s->itemLabelCount++];
       memset(&item, 0, sizeof(item));
       pillsGetPill(&gs->pb, &item, i);
       l->mapX   = item.x;
@@ -3393,7 +3400,11 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
     n = basesGetNumBases(&gs->bs);
     for (i = 1; i <= n && s->itemLabelCount < MAX_PILLS + MAX_BASES; i++) {
       base item;
-      OverviewItemLabel *l = &s->itemLabels[s->itemLabelCount++];
+      OverviewItemLabel *l;
+      if (basesIsActive(&gs->bs, i) == FALSE) {
+        continue;
+      }
+      l = &s->itemLabels[s->itemLabelCount++];
       memset(&item, 0, sizeof(item));
       basesGetBase(&gs->bs, &item, i);
       l->mapX   = item.x;

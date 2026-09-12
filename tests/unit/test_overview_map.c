@@ -2067,3 +2067,57 @@ int run_overview_loopback(void) {
     loopbackHarnessStop(&h);
     return 0;
 }
+
+/* A pill or base a removal has taken off the map earns no region, whatever
+ * its slot still says about who owns it. */
+int run_overview_removed_item_has_no_region(void) {
+    ServerSim *sim = ut_make_running_sim("Over");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+
+    /* One pill and one base, both the player's own, and nothing else. */
+    pillbox p;
+    memset(&p, 0, sizeof(p));
+    p.x = 60;
+    p.y = 60;
+    p.owner = 0;
+    p.armour = PILLS_MAX_ARMOUR;
+    p.inTank = FALSE;
+    pillsSetNumPills(&gs->pb, 1);
+    pillsSetPill(&gs->pb, &p, 1);
+
+    base b;
+    memset(&b, 0, sizeof(b));
+    b.x = 180;
+    b.y = 180;
+    b.owner = 0;
+    b.armour = BASE_FULL_ARMOUR;
+    basesSetNumBases(&gs->bs, 1);
+    basesSetBase(&gs->bs, &b, 1);
+
+    OverviewViewInputs in;
+    overviewViewInputsDefaults(&in);
+    in.policy[viewCategoryBase] = viewPolicyAlways;
+
+    OverviewRect out[OVERVIEW_MAX_REGIONS + 1];
+    int n;
+
+    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 0, 0, -1, out,
+                                OVERVIEW_MAX_REGIONS);
+    UT_ASSERT_MSG(n == 2, "a live pill and base gave %d regions, expected 2", n);
+    UT_ASSERT_MSG(overviewInAnyRect(out, n, 60, 60) == TRUE,
+                  "the live pill's square is in no region");
+    UT_ASSERT_MSG(overviewInAnyRect(out, n, 180, 180) == TRUE,
+                  "the live base's square is in no region");
+
+    UT_ASSERT(pillsRemoveItem(&gs->pb, 1) == TRUE);
+    UT_ASSERT(basesRemoveItem(&gs->bs, 1) == TRUE);
+    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 0, 0, -1, out,
+                                OVERVIEW_MAX_REGIONS);
+    UT_ASSERT_MSG(n == 0, "a removed pill and base still gave %d regions", n);
+
+    serverSimDestroy(sim);
+    return 0;
+}

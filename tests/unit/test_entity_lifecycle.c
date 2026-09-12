@@ -9,12 +9,18 @@
  *
  * What the cases pin:
  *   - removed_pill_is_gone_from_gameplay: a removed pill does not fire,
- *     cannot be shot, cannot be picked up, and is not counted by a rect
- *     query.
- *   - removed_base_is_gone_from_gameplay: a removed base does not restock,
- *     cannot be captured, and neither blocks nor completes a base win.
+ *     cannot be shot, damaged, repaired or picked up, and is not counted by
+ *     a rect query.
+ *   - removed_base_is_gone_from_gameplay: a removed base does not restock
+ *     or refuel, cannot be captured, shot or driven into, masks no armour,
+ *     is not in a brain's list, and neither blocks nor completes a base win.
  *   - removed_start_is_never_chosen: neither the batch placement nor the
  *     per-player pickers put a tank on a removed start.
+ *   - tournament_removed_start_is_never_chosen: the tournament picker and
+ *     its no-candidate fallback likewise.
+ *   - tournament_neutral_share_counts_live_bases: the share of neutral bases
+ *     that decides the tournament picker's tiers is taken over the bases on
+ *     the map, not the slots.
  *   - add_reuses_lowest_removed_slot: the lowest removed slot first, then
  *     an append that raises the count.
  *   - add_refused_when_full: no free slot at MAX_PILLS live items.
@@ -32,10 +38,14 @@
 
 #include "global.h"
 #include "game_sim.h"
+#include "gametype.h"     /* gameTournament */
 #include "bolo_map.h"
+#include "bolo_rand.h"    /* bolo_srand */
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
+#include "tank.h"         /* tankSetShells / tankGetShells */
+#include "client_sim.h"   /* the brain object list, and ObjectInfo */
 #include "server_sim.h"
 #include "server/sim/server_sim_shared.h" /* serverSimWinningOwner */
 #include "test_harness.h"
@@ -121,6 +131,28 @@ int run_entity_removed_pill_is_gone_from_gameplay(void) {
                       "a removed pill must not be ticked by the firing pass");
     }
 
+    /* Damage, splash and repair each find a pill by its square, and none of
+       them finds a removed one: a shell takes nothing off it and kills
+       nothing, an explosion landing on the square leaves its armour alone,
+       and the builder carries every tree home. */
+    {
+        BYTE armourBefore;
+        gs->pb->item[0].armour = PILLS_MAX_ARMOUR;
+        armourBefore = gs->pb->item[0].armour;
+        UT_ASSERT_MSG(pillsDamagePos(gs, px, py, TRUE, TRUE, 0) == FALSE,
+                      "a shell reported a kill on a removed pill");
+        UT_ASSERT_MSG(gs->pb->item[0].armour == armourBefore,
+                      "a shell took armour off a removed pill");
+        pillsGetDamagePos(gs, &gs->pb, px, py, PILLS_MAX_ARMOUR);
+        UT_ASSERT_MSG(gs->pb->item[0].armour == armourBefore,
+                      "an explosion took armour off a removed pill");
+        gs->pb->item[0].armour = 1;
+        UT_ASSERT_MSG(pillsRepairPos(gs, &gs->pb, px, py, 4) == 4,
+                      "the builder spent trees on a removed pill");
+        UT_ASSERT_MSG(gs->pb->item[0].armour == 1,
+                      "the builder repaired a removed pill");
+    }
+
     /* And the server accessor reports the flag rather than a constant. */
     {
         ServerSimPillInfo info;
@@ -178,6 +210,73 @@ int run_entity_removed_base_is_gone_from_gameplay(void) {
     basesSetBaseOwner(gs, 1, 0, FALSE, FALSE);
     UT_ASSERT_MSG(gs->bs->item[0].owner == NEUTRAL,
                   "a removed base must not change hands");
+
+    /* A shell, the shot and drive tests, the armour mask and a refuel each
+       find a base by its square or its index, and none of them finds a
+       removed one. The base is stocked and handed to a hostile slot first,
+       so a live one would answer yes to each question below. */
+    {
+        tank *tnk = &gs->tanks[0];
+        UT_ASSERT_MSG(*tnk != NULL, "slot 0 has no tank to refuel");
+        gs->bs->item[0].owner = 1;
+        gs->bs->item[0].armour = BASE_FULL_ARMOUR;
+        gs->bs->item[0].shells = BASE_FULL_SHELLS;
+        gs->bs->item[0].mines = BASE_FULL_MINES;
+        gs->bs->item[0].refuelTime = 0;
+        UT_ASSERT_MSG(basesCanHit(gs, bx, by, 0) == FALSE,
+                      "a removed base can be shot");
+        UT_ASSERT_MSG(basesCantDrive(gs, bx, by, 0) == FALSE,
+                      "a removed base blocks a tank");
+        basesDamagePos(gs, bx, by, 0);
+        UT_ASSERT_MSG(gs->bs->item[0].armour == BASE_FULL_ARMOUR,
+                      "a shell took armour off a removed base");
+        UT_ASSERT_MSG(basesArmourVisibleToPlayer(gs, 0, 0) == FALSE,
+                      "a removed base's armour is sent as the real value");
+
+        /* The refuel: the base is the tank's own and the tank is short of
+           shells, which is all a live base needs to hand some over. */
+        gs->bs->item[0].owner = 0;
+        tankSetShells(tnk, 0);
+        basesRefueling(gs, tnk, 1);
+        UT_ASSERT_MSG(tankGetShells(tnk) == 0,
+                      "a removed base refuelled a tank");
+        UT_ASSERT_MSG(gs->bs->item[0].shells == BASE_FULL_SHELLS &&
+                          gs->bs->item[0].armour == BASE_FULL_ARMOUR,
+                      "a removed base gave up stock");
+
+        /* Back to the neutral, empty slot the base-win check below is
+           about. */
+        gs->bs->item[0].owner = NEUTRAL;
+        gs->bs->item[0].armour = 0;
+        gs->bs->item[0].shells = 0;
+        gs->bs->item[0].mines = 0;
+    }
+
+    /* A brain's base list is built from the bases on the map, so a removed
+       one is not in it, whatever its slot still holds. */
+    {
+        ClientSim *cs = clientSimAlloc();
+        ObjectInfo *objects;
+        unsigned short *numObjects;
+        unsigned short i;
+        UT_ASSERT(cs != NULL);
+        UT_ASSERT(clientSimCreate(cs) == true);
+        objects = clientSimGetBrainObjects(cs);
+        numObjects = clientSimGetBrainsNumObjects(cs);
+        UT_ASSERT(objects != NULL && numObjects != NULL);
+        *numObjects = 0;
+        basesGetBrainBaseInRect(cs, gs, 0, 255, 0, 255);
+        UT_ASSERT_MSG(*numObjects == (unsigned short)basesGetNumActive(&gs->bs),
+                      "a brain saw %u bases, wanted the %u on the map",
+                      (unsigned)*numObjects,
+                      (unsigned)basesGetNumActive(&gs->bs));
+        for (i = 0; i < *numObjects; i++) {
+            UT_ASSERT_MSG(!(objects[i].object == BASES_BRAIN_OBJECT_TYPE &&
+                            objects[i].idnum == 0),
+                          "the removed base is still in the brain's list");
+        }
+        clientSimDestroy(cs);
+    }
 
     /* Base win: hand every live base to slot 0 and the round is won even
        though base 1 is a neutral, empty, removed slot. */
@@ -558,4 +657,162 @@ int run_entity_blob_load_marks_every_item_live(void) {
     mapDestroy(&mp);   pillsDestroy(&pb);   basesDestroy(&bs);   startsDestroy(&ss);
     mapDestroy(&mp2);  pillsDestroy(&pb2);  basesDestroy(&bs2);  startsDestroy(&ss2);
     return rc;
+}
+
+/* ── The tournament picker ───────────────────────────────────────── */
+
+#define TP_A 0
+#define TP_B 1
+#define TP_C 2
+
+/* Three starts far apart on deep sea, the map's own pills and bases cleared
+ * so only what a case places counts, and the game type that sends the
+ * dispatcher to the tournament picker. */
+static void ut_tournament_scene(GameSim *gs) {
+    static const BYTE sx[3] = {40, 200, 40};
+    static const BYTE sy[3] = {40, 40, 200};
+    int i;
+    for (i = 0; i < 3; i++) {
+        mapSetPos(gs, &gs->mp, sx[i], sy[i], DEEP_SEA, FALSE, TRUE);
+        gs->ss->item[i].x = sx[i];
+        gs->ss->item[i].y = sy[i];
+        gs->ss->item[i].dir = 0;
+    }
+    startsSetNumStarts(&gs->ss, 3);
+    gs->pb->numPills = 0;
+    gs->bs->numBases = 0;
+    gs->game = gameTournament;
+}
+
+/* Which of the three start squares the returned square is nearest to. The
+ * starts are far apart, so the scatter round one never reaches another. */
+static int ut_nearest_of_three(GameSim *gs, BYTE x, BYTE y) {
+    int best = -1;
+    int bestD = 1 << 30;
+    int i;
+    for (i = 0; i < 3; i++) {
+        int dx = (int)x - gs->ss->item[i].x;
+        int dy = (int)y - gs->ss->item[i].y;
+        int d = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+        if (d < bestD) {
+            bestD = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/* One pick for slot 0 through the dispatcher with no reservation and no
+ * named start, so the tournament picker is what answers. */
+static int ut_tournament_pick(GameSim *gs, uint64_t seed) {
+    BYTE x = 0;
+    BYTE y = 0;
+    TURNTYPE dir = 0;
+    gs->pendingStartIdx[0] = MAX_STARTS;
+    gs->scenarioStartIdx[0] = MAX_STARTS;
+    bolo_srand(seed);
+    startsGetStart(gs, &gs->ss, &x, &y, &dir, 0);
+    return ut_nearest_of_three(gs, x, y);
+}
+
+/* The tournament picker never chooses a removed start, and when nothing
+ * qualifies its fallback is the first start on the map rather than slot 0. */
+int run_entity_tournament_removed_start_is_never_chosen(void) {
+    ServerSim *sim = ut_make_running_sim("Remover");
+    GameSim *gs;
+    int chosenA = 0;
+    int s;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    ut_tournament_scene(gs);
+    UT_ASSERT(startsRemoveItem(&gs->ss, 1) == TRUE);
+
+    for (s = 0; s < 64; s++) {
+        if (ut_tournament_pick(gs, (uint64_t)(s + 1)) == TP_A) {
+            chosenA++;
+        }
+    }
+    UT_ASSERT_MSG(chosenA == 0,
+                  "the tournament picker chose a removed start %d times",
+                  chosenA);
+
+    /* With the other two starts on land nothing qualifies, and the fallback
+       is still not the removed one. */
+    mapSetPos(gs, &gs->mp, gs->ss->item[TP_B].x, gs->ss->item[TP_B].y, GRASS, FALSE, TRUE);
+    mapSetPos(gs, &gs->mp, gs->ss->item[TP_C].x, gs->ss->item[TP_C].y, GRASS, FALSE, TRUE);
+    UT_ASSERT_MSG(ut_tournament_pick(gs, 7) != TP_A,
+                  "the tournament fallback placed the tank on a removed start");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The share of neutral bases that decides whether the tournament picker
+ * pools own and neutral starts is measured over the bases on the map. With
+ * one neutral base in six the player's own base decides and the neutral
+ * start is never chosen; take four bases off the map and the same neutral
+ * base is one in two, so the two starts are pooled. */
+int run_entity_tournament_neutral_share_counts_live_bases(void) {
+    static const BYTE bx[6] = {45, 205, 120, 130, 140, 150};
+    static const BYTE by[6] = {40, 40, 200, 200, 200, 200};
+    ServerSim *sim = ut_make_running_sim("Remover");
+    GameSim *gs;
+    int chosenA;
+    int chosenB;
+    int s;
+    BYTE i;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    ut_tournament_scene(gs);
+
+    /* Two starts: A with the player's own base beside it, B with a neutral
+       base beside it. The other four bases are the player's, far from both. */
+    startsSetNumStarts(&gs->ss, 2);
+    basesSetNumBases(&gs->bs, 6);
+    for (i = 0; i < 6; i++) {
+        base b;
+        memset(&b, 0, sizeof(b));
+        b.x = bx[i];
+        b.y = by[i];
+        b.owner = (i == 1) ? NEUTRAL : 0;
+        b.armour = BASE_FULL_ARMOUR;
+        b.shells = BASE_FULL_SHELLS;
+        b.mines = BASE_FULL_MINES;
+        basesSetBase(&gs->bs, &b, (BYTE)(i + 1));
+    }
+
+    chosenA = 0;
+    chosenB = 0;
+    for (s = 0; s < 32; s++) {
+        int p = ut_tournament_pick(gs, (uint64_t)(s + 1));
+        if (p == TP_A) chosenA++;
+        if (p == TP_B) chosenB++;
+    }
+    UT_ASSERT_MSG(chosenB == 0,
+                  "with one neutral base in six the neutral start was chosen "
+                  "%d times", chosenB);
+    UT_ASSERT_MSG(chosenA == 32,
+                  "the own start was chosen %d times of 32", chosenA);
+
+    for (i = 3; i <= 6; i++) {
+        UT_ASSERT(basesRemoveItem(&gs->bs, i) == TRUE);
+    }
+    chosenA = 0;
+    chosenB = 0;
+    for (s = 0; s < 32; s++) {
+        int p = ut_tournament_pick(gs, (uint64_t)(s + 1));
+        if (p == TP_A) chosenA++;
+        if (p == TP_B) chosenB++;
+    }
+    UT_ASSERT_MSG(chosenB > 0,
+                  "the neutral start was never chosen: a removed base still "
+                  "counts against the neutral share");
+    UT_ASSERT_MSG(chosenA > 0, "the own start dropped out of the pool");
+
+    serverSimDestroy(sim);
+    return 0;
 }
