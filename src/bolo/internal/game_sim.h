@@ -59,6 +59,7 @@ typedef struct GameSim GameSim;
 #include "sounddist.h"
 #include "util.h"
 #include "position_history.h"
+#include "sim_rules.h"
 #include "../../gui/lang.h"
 
 /* recordDamage targetKind */
@@ -237,17 +238,34 @@ struct GameSim {
     gameType    game;
     bool        hiddenMines;
 
+    /* The gameplay numbers this sim runs on. Filled with the classic values
+     * at creation, so a sim that nobody has tuned plays the original game.
+     * Shared code reads sim->rules.<field> where it used to read a constant;
+     * a frontend reaches the client's copy through clientSimGetRules. */
+    SimRules    rules;
+
     /* Originating client input tick of the fire currently being applied,
      * set by the server right before the firing tankUpdate and read by
      * shellsAddItem to stamp the shell's fireTick. 0 outside a player fire
      * (pill shells, gap-fill, substitutes, client). */
     uint32_t    fireInputTick;
 
+    /* The half a tick basesHalfTickCalulator is carrying for this sim's
+     * shell and mine refuel intervals. Those intervals are 7.5 ticks, so the
+     * function hands back 7 and then 8, keeping the leftover here between
+     * calls. One pair per sim: these were function-level statics, which gave
+     * every sim in the process one shared phase, and both a server's sim and
+     * a client's reach the function — the client through basesUpdate and
+     * through basesRefueling, which calls it before its isServer test. Zero
+     * means no half is owing, which is where the phase starts. */
+    double      halfTickShell;
+    double      halfTickMine;
+
     /* Client-side base-death prediction (client only; both 0 on the server,
      * which holds the real armour and needs no prediction).
      *
      * basePredictedDeadTick[b] is the input tick at which this client's own
-     * predicted shell is expected to drop base b to MIN_ARMOUR_CAPTURE, or 0
+     * predicted shell is expected to drop base b to base_capture_armour, or 0
      * for none. tankBuildingCollision treats the square as drivable from that
      * tick on, so a tank driving into a base it is killing does not spend a
      * round trip fighting its own prediction. Authoritative armour for the

@@ -396,12 +396,12 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
 	  /* Clicked on a square that has a tank on a boat on it */
 	  proceed = FALSE;
 	  lgmAssist(sim, announce, LGM_NO_BUILD_UNDER_BOAT);
-    } else if (tankGetLgmTrees(sim, tnk, LGM_COST_ROAD, perform) == FALSE) {
+    } else if (tankGetLgmTrees(sim, tnk, sim->rules.lgm_cost_road, perform) == FALSE) {
       proceed = FALSE;
       why = LGM_REFUSE_STOCK;
       lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
 	} else {
-      *trees = LGM_COST_ROAD;
+      *trees = sim->rules.lgm_cost_road;
     }
     break;
   case LGM_BUILDING_REQUEST:
@@ -417,33 +417,33 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     } else if (pos == RIVER) {
 	  /* Build a wall on a river, that means build a boat */
       *action = LGM_BOAT_REQUEST;
-      if (tankGetLgmTrees(sim, tnk, LGM_COST_BOAT, perform) == FALSE) {
+      if (tankGetLgmTrees(sim, tnk, sim->rules.lgm_cost_boat, perform) == FALSE) {
         proceed = FALSE;
         why = LGM_REFUSE_STOCK;
         lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
       } else {
-        *trees = LGM_COST_BOAT;
+        *trees = sim->rules.lgm_cost_boat;
       }
 
     } else if (tankX == mapX && tankY == mapY) {
       proceed = FALSE;
       lgmAssist(sim, announce, LGM_BUILDTANK);
     } else if (pos == HALFBUILDING) {
-      if (tankGetLgmTrees(sim, tnk, LGM_COST_REPAIRBUILDING, perform) == FALSE) {
+      if (tankGetLgmTrees(sim, tnk, sim->rules.lgm_cost_repair_building, perform) == FALSE) {
         proceed = FALSE;
         why = LGM_REFUSE_STOCK;
         lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
       } else {
-        *trees = LGM_COST_REPAIRBUILDING;
+        *trees = sim->rules.lgm_cost_repair_building;
       }
     } else if (pos == BUILDING) {
       proceed = FALSE;
-    } else if (tankGetLgmTrees(sim, tnk, LGM_COST_BUILDING, perform) == FALSE) {
+    } else if (tankGetLgmTrees(sim, tnk, sim->rules.lgm_cost_building, perform) == FALSE) {
         proceed = FALSE;
         why = LGM_REFUSE_STOCK;
         lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
     } else {
-      *trees = LGM_COST_BUILDING;
+      *trees = sim->rules.lgm_cost_building;
     }
 
     break;
@@ -457,10 +457,10 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       proceed = FALSE;
       lgmAssist(sim, announce, LGM_BUILDTANK);
     } else if (isPill == TRUE) {
-      if (pillsGetArmourPos(pb, mapX, mapY) == PILLS_MAX_ARMOUR) {
+      if (pillsGetArmourPos(pb, mapX, mapY) == sim->rules.pill_max_armour) {
         proceed= FALSE;
         lgmAssist(sim, announce, LGM_PILL_NO_NEED_REPAIR);
-      } else if (tankTrees<LGM_COST_PILLREPAIR) {
+      } else if (tankTrees<sim->rules.lgm_cost_pill_repair) {
         proceed = FALSE;
         why = LGM_REFUSE_STOCK;
         lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
@@ -468,7 +468,8 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
         /* Take a full load rather than sizing it to the damage we can see
            now. The pill can be shot a lot more while the man walks over, and
            a load picked from today's armour would arrive short. */
-        *trees = LGM_COST_PILLREPAIR * LGM_LOAD_PILLREPAIR;
+        *trees = sim->rules.lgm_cost_pill_repair *
+                 sim->rules.lgm_pill_repair_load;
         if (tankTrees < *trees) {
           *trees = tankTrees;
         }
@@ -481,22 +482,22 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
       proceed = FALSE;
       why = LGM_REFUSE_STOCK;
       lgmAssist(sim, announce, LGM_NO_PILLS);
-    } else if (tankGetLgmTrees(sim, tnk, LGM_COST_PILLNEW, perform) == FALSE) {
+    } else if (tankGetLgmTrees(sim, tnk, sim->rules.lgm_cost_pill_new, perform) == FALSE) {
       proceed = FALSE;
       why = LGM_REFUSE_STOCK;
       lgmAssist(sim, announce, LGM_INSUFFICIENT_TREES);
     } else {
-      *trees = LGM_COST_PILLNEW;
+      *trees = sim->rules.lgm_cost_pill_new;
     }
     break;
   case LGM_BOAT_REQUEST:
     if (pos != RIVER || isPill == TRUE || isBase == TRUE) {
       proceed = FALSE;
-    } else if (tankGetLgmTrees(sim, tnk, LGM_COST_BOAT, perform) == FALSE) {
+    } else if (tankGetLgmTrees(sim, tnk, sim->rules.lgm_cost_boat, perform) == FALSE) {
       proceed = FALSE;
       why = LGM_REFUSE_STOCK;
     } else {
-      *trees = LGM_COST_BOAT;
+      *trees = sim->rules.lgm_cost_boat;
     }
     break;
   default:
@@ -504,12 +505,12 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     if (pos == DEEP_SEA || pos == RIVER || pos == BUILDING || pos == BOAT || pos == HALFBUILDING || isPill == TRUE || isBase == TRUE) {
       proceed = FALSE;
       lgmAssist(sim, announce, LGM_NO_BUILD);
-    } else if (tankGetLgmMines(sim, tnk, LGM_COST_MINE, perform) == FALSE) {
+    } else if (tankGetLgmMines(sim, tnk, sim->rules.lgm_cost_mine, perform) == FALSE) {
       proceed = FALSE;
       why = LGM_REFUSE_STOCK;
       lgmAssist(sim, announce, LGM_INSUFFICIENT_MINES);
     } else {
-      *minesAmount = LGM_COST_MINE;
+      *minesAmount = sim->rules.lgm_cost_mine;
     }
     break;
   }
@@ -835,7 +836,7 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   /* Check for achieved goal */
   if (((*lgman)->x - (*lgman)->destX) >= LGM_MIN_GOAL  && ((*lgman)->x - (*lgman)->destX) <= LGM_MAX_GOAL && ((*lgman)->y - (*lgman)->destY) >= LGM_MIN_GOAL && ((*lgman)->y - (*lgman)->destY) <= LGM_MAX_GOAL) {
     /* Arrived */
-    (*lgman)->waitTime = LGM_BUILD_TIME;
+    (*lgman)->waitTime = (BYTE) sim->rules.lgm_build_ticks;
     (*lgman)->state = LGM_STATE_RETURN;
     lgmDoWork(sim, lgman, tnk);
   }
@@ -1120,14 +1121,14 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
 
   switch ((*lgman)->action) {
   case LGM_TREE_REQUEST:
-    minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+    minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
     if (terrain == FOREST && isBase == FALSE && isPill == FALSE) {
       if (isMine == TRUE) {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (GRASS+MINE_SUBTRACT), TRUE, FALSE);
       } else {
         mapSetPos(sim, mp, bmx, bmy, GRASS, TRUE, FALSE);
       }
-      (*lgman)->numTrees = LGM_GATHER_TREE;
+      (*lgman)->numTrees = (BYTE) sim->rules.lgm_gather_trees;
       sim->callbacks.soundDist(sim->callbacks.ctx, farmingTreeNear, bmx, bmy);
       if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_FARM, bmx, bmy);
       if (isServer && sim->callbacks.built) {
@@ -1167,7 +1168,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
                                (*lgman)->action, bmx, bmy);
         }
       } else {
-        minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+        minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
       }
       (*lgman)->numTrees = 0;
       sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
@@ -1189,7 +1190,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
   case LGM_MINE_REQUEST:
     if ((isPill == FALSE && isBase == FALSE) && (terrain == SWAMP || terrain == CRATER || terrain == ROAD || terrain == FOREST || terrain == RUBBLE || terrain == GRASS)) {
       if (isMine == TRUE) {
-        minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+        minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
       } else {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
         minesAddItem(&sim->mns, bmx, bmy);
@@ -1224,7 +1225,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     } else {
       if (isPill == FALSE && isBase == FALSE && minesExistPos(&sim->mns, &sim->mp, bmx, bmy) == FALSE && terrain != BUILDING && terrain != HALFBUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA) {
         if (isMine == TRUE) {
-          minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+          minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
           floodAddItem(&sim->ff, bmx, bmy);
           lgmDeathCheck(sim, lgman, (WORLD) ((bmx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((bmy<< M_W_SHIFT_SIZE)+MAP_SQUARE_MIDDLE), NEUTRAL, tnk);
           sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
@@ -1232,12 +1233,12 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         } else {
           (*lgman)->numTrees = 0;
           addPill.owner = (*lgman)->playerNum;
-          addPill.armour = PILLS_MAX_ARMOUR;
+          addPill.armour = (BYTE) sim->rules.pill_max_armour;
           addPill.speed = pillsGetAttackSpeed(pb, (*lgman)->numPills);
           addPill.coolDown = 0;
           addPill.inTank = FALSE;
           addPill.justSeen = FALSE;
-          pillsSetPill(pb, &addPill, (*lgman)->numPills);
+          pillsSetPill(sim, pb, &addPill, (*lgman)->numPills);
           sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
           if (isServer == FALSE) {
             frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
@@ -1341,13 +1342,16 @@ void lgmBackInTank(GameSim *sim, lgm *lgman, tank *tnk, bool sendItems) {
 *  above unloads it into one.
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  lgman  - Pointer to the lgm sturcture
 *  trees  - Trees he is to carry
 *  mines  - Mines he is to carry
 *********************************************************/
-void lgmSetCarried(lgm *lgman, BYTE trees, BYTE mines) {
-  (*lgman)->numTrees = (trees > TANK_FULL_TREES) ? TANK_FULL_TREES : trees;
-  (*lgman)->numMines = (mines > TANK_FULL_MINES) ? TANK_FULL_MINES : mines;
+void lgmSetCarried(GameSim *sim, lgm *lgman, BYTE trees, BYTE mines) {
+  BYTE maxTrees = (BYTE) sim->rules.tank_full_trees;
+  BYTE maxMines = (BYTE) sim->rules.tank_full_mines;
+  (*lgman)->numTrees = (trees > maxTrees) ? maxTrees : trees;
+  (*lgman)->numMines = (mines > maxMines) ? maxMines : mines;
 }
 
 /*********************************************************
@@ -1481,7 +1485,7 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
     mx = (BYTE) (wx >> 8);
     my = (BYTE) (wy >> 8);
 
-    utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, PILLBOX_RANGE, &distance);
+    utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
     pos = mapGetPos(mp, mx, my);
     solid = FALSE;
     if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
@@ -1593,12 +1597,12 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
       }
       item.armour = 0;
       item.owner = (*lgman)->playerNum;
-      item.speed = PILLBOX_ATTACK_NORMAL;
-      item.reload = PILLBOX_ATTACK_NORMAL;
+      item.speed = (BYTE) sim->rules.pill_attack_ticks;
+      item.reload = (BYTE) sim->rules.pill_attack_ticks;
       item.coolDown = 0;
       item.inTank = FALSE;
       item.justSeen = FALSE;
-      pillsSetPill(pb,&item,(*lgman)->numPills);
+      pillsSetPill(sim, pb,&item,(*lgman)->numPills);
       if (isServer == FALSE) {
         frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
       }
@@ -1683,7 +1687,7 @@ void lgmParchutingIn(GameSim *sim, lgm *lgman) {
 
 
   angle = utilCalcAngle((*lgman)->x, (*lgman)->y, (*lgman)->destX, (*lgman)->destY);
-  utilCalcDistance(&xAdd, &yAdd, angle, LGM_HELICOPTER_SPEED);
+  utilCalcDistance(&xAdd, &yAdd, angle, sim->rules.lgm_helicopter_speed);
   (*lgman)->x = (WORLD) ((*lgman)->x + xAdd);
   (*lgman)->y = (WORLD) ((*lgman)->y + yAdd);
 

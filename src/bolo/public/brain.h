@@ -129,6 +129,60 @@ typedef WORD WORLD_X, WORLD_Y;
 #endif
 
 
+/* The rules view a brain reads. One field per gameplay number that has
+   moved onto the sim's rules table; the names match the names a scenario
+   uses, so a rule has one spelling across C, Lua and the scenario file.
+   Grows as each group of constants converts — append only. */
+typedef struct {
+	int32_t tank_reload_ticks;
+	int32_t tank_full_shells;
+	int32_t tank_full_mines;
+	int32_t tank_full_trees;
+	int32_t tank_full_armour;
+	int32_t tank_death_ticks;
+	int32_t tank_water_ticks;
+	int32_t mine_damage;
+	int32_t just_fired_ticks;
+	int32_t tank_min_move;
+	float   tank_accel_rate;
+	float   tank_decel_rate;
+	float   tank_brake_rate;
+	float   tank_autoslow_rate;
+	/* The cap a tank's speed clamps to on each terrain, and the bradians it
+	   turns per tick there. Building, half-building and pillbox have no rule:
+	   they are impassable because the collision test says so, not because
+	   their speed is zero. */
+	int32_t speed_road;
+	int32_t speed_grass;
+	int32_t speed_forest;
+	int32_t speed_river;
+	int32_t speed_swamp;
+	int32_t speed_crater;
+	int32_t speed_rubble;
+	int32_t speed_boat;
+	int32_t speed_deep_sea;
+	int32_t speed_refuel_base;
+	float   turn_road;
+	float   turn_grass;
+	float   turn_forest;
+	float   turn_river;
+	float   turn_swamp;
+	float   turn_crater;
+	float   turn_rubble;
+	float   turn_boat;
+	float   turn_deep_sea;
+	float   turn_refuel_base;
+	/* What a pill's armour and a base's stocks top out at, and the interval
+	   a pill fires on. A brain reading a pill or base strength against a
+	   literal 15 or 90 is wrong the moment a sim changes one. */
+	int32_t pill_max_armour;
+	int32_t pill_attack_ticks;
+	int32_t pill_attack_min_ticks;
+	int32_t base_full_armour;
+	int32_t base_full_shells;
+	int32_t base_full_mines;
+} BrainRules;
+
 enum { GameType_open=1, GameType_tournament, GameType_strict_tment };
 
 #define GAMEINFO_HIDDENMINES 0x80
@@ -313,9 +367,17 @@ typedef struct
 	// TRUE once the tank has been destroyed, which is not the same question as
 	// "dead" above: "dead" is set for the whole respawn wait, while "destroyed"
 	// tracks the tank's own state and clears when it respawns. Ask this rather
-	// than comparing "armour" against TANK_FULL_ARMOUR — a live tank can sit at
+	// than comparing "armour" against tank_full_armour — a live tank can sit at
 	// zero armour, so the armour value alone cannot tell the two apart.
 	BYTE destroyed;
+
+	// The gameplay numbers this sim runs on, as of this tick. Read these
+	// rather than assuming the classic values: a scenario can change any of
+	// them, and a brain that divides by 40 or waits 13 ticks is wrong the
+	// moment one does. brain_data.c fills it from the sim once per tick.
+	// Appended, as every addition to this struct is — brains index the
+	// fields in front of it by offset, so nothing above may move.
+	BrainRules rules;
 
 	} BrainInfo;
 

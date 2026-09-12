@@ -786,7 +786,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                         }
                         evToSend.data[2] = 0;
                         evToSend.data[3] = 0;
-                        if (serverSimGetEvents(sim)[i].data[1] <= MIN_ARMOUR_CAPTURE) {
+                        if (serverSimGetEvents(sim)[i].data[1] <=
+                            gs->rules.base_capture_armour) {
                             forceReliable = true;
                         }
                     }

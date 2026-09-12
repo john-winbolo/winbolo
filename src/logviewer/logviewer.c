@@ -94,6 +94,20 @@ uint32_t lv_gameViewGetDeathTimeMs(BYTE slot) {
   if (slot >= MAX_TANKS) return 0;
   return g_lv->gameViewHud[slot].deathTimeMs;
 }
+/* The caps the tank bars are drawn against, off the viewer's own rules
+   holder. The viewer has no sim to ask, and the drawing code reaches its
+   state through these accessors rather than the global. */
+void lv_gameViewGetTankFulls(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
+  if (shells) *shells = g_lv->rules.tankFullShells;
+  if (mines)  *mines  = g_lv->rules.tankFullMines;
+  if (armour) *armour = g_lv->rules.tankFullArmour;
+  if (trees)  *trees  = g_lv->rules.tankFullTrees;
+}
+void lv_gameViewGetBaseFulls(BYTE *shells, BYTE *mines, BYTE *armour) {
+  if (shells) *shells = g_lv->rules.baseFullShells;
+  if (mines)  *mines  = g_lv->rules.baseFullMines;
+  if (armour) *armour = g_lv->rules.baseFullArmour;
+}
 void lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
   if (slot >= MAX_TANKS) {
     if (shells) *shells = 0;

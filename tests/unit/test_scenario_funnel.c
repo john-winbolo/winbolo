@@ -153,7 +153,8 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_SOUND ||
            t == SCN_OP_LOG ||
            t == SCN_OP_END_ROUND ||          /* test_scenario_flow_arms.c */
-           t == SCN_OP_SET_GAME_TIME;
+           t == SCN_OP_SET_GAME_TIME ||
+           t == SCN_OP_SET_RULE;             /* test_scenario_rule_arms.c */
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The

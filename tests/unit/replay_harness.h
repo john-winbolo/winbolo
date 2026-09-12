@@ -232,9 +232,17 @@ bool replayHarnessDecode(ReplayHarness *h);
 /* What the decoder reports about a .wbv besides its world. */
 #define REPLAY_MAP_NAME_LEN 128
 typedef struct {
-    char mapName[REPLAY_MAP_NAME_LEN];  /* from the log header */
-    int  ticks;                          /* playback ticks to end-of-log */
+    char     mapName[REPLAY_MAP_NAME_LEN];  /* from the log header */
+    int      ticks;         /* playback ticks to end-of-log */
+    uint32_t totalTimeMs;   /* what the load's byte walk made of the file */
 } ReplayFileInfo;
+
+/* totalTimeMs is the other reader in the viewer: the walk the load runs over
+ * the whole file to size the scrubber, which knows every record by its own
+ * length rather than by the framed one playback can fall back on. A walk that
+ * meets a record it cannot size stops where it is and the duration comes back
+ * short, so a case that records a known number of ticks can tell a walker
+ * that lost its place from one that kept it. Twenty ms a tick. */
 
 /* The same decode for a .wbv at any path: play it to end-of-log and
  * capture the world into w; info, when not NULL, receives the header's map

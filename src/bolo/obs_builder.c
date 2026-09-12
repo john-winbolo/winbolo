@@ -19,8 +19,31 @@
  *  Builds V3 WinBoloObs from BrainInfo for in-game ML
  *  brain inference.
  *
- *  obsBuildFromBrainInfo: single-view (tank view rect)
- *  obsBuildMultiView:     multi-view (tank + owned pills)
+ *  obsBuildMultiView is the one way in: the tank's own view
+ *  rect, plus the rect around each pillbox it or an ally
+ *  owns, gathered into one observation.
+ *
+ *  ── The scale these observations are on ──────────────────
+ *  An observation is a vector a model was trained against,
+ *  so the numbers in it have to mean the same thing on every
+ *  tick of every episode. The entries that normalise a stock
+ *  against what full means divide by a written-out number —
+ *  armour and the tank's other stocks by 40, a pillbox's
+ *  armour by 15, a base's by 90 — and those stay written out
+ *  on purpose. They are not oversights left behind by the
+ *  move to the rules table.
+ *
+ *  Dividing by the live rule instead would make the vector
+ *  rescale itself the moment a scenario changed one, so a
+ *  trajectory recorded before the change and one recorded
+ *  after would be on two different scales with nothing in
+ *  the data saying which. A model trained across that reads
+ *  them as one world.
+ *
+ *  What keeps that honest is the check the builder opens
+ *  with: it refuses to build at all on a sim whose rules are
+ *  not the classic ones, rather than handing back a vector
+ *  on a scale nothing was trained for.
  *********************************************************/
 
 #include <string.h>
@@ -38,6 +61,8 @@
 #include "util.h"
 #include "client_sim.h"
 #include "game_sim.h"
+#include "sim_rules.h"           /* simRulesAreClassic — what the scale needs */
+#include "../common/wb_log.h"    /* the line a refused build leaves */
 
 /* Helper to determine allegiance from object info flags */
 static int8_t obsGetAllegiance(const ObjectInfo *o, BYTE selfPlayer) {
@@ -47,15 +72,10 @@ static int8_t obsGetAllegiance(const ObjectInfo *o, BYTE selfPlayer) {
     return WBGYM_ALLEG_ENEMY;
 }
 
-/* Helper to determine owner constant from object info flags */
-static uint8_t obsGetOwner(const ObjectInfo *o) {
-    if (o->info & OBJECT_NEUTRAL) return WBGYM_OWNER_NEUTRAL;
-    if (!(o->info & OBJECT_HOSTILE)) return WBGYM_OWNER_SELF;
-    return WBGYM_OWNER_ENEMY;
-}
-
 /* Convert an ObjectInfo into a WinBoloEntity and append to entity list.
- * cs may be NULL (single-view path); when non-NULL, used for tank armour/flags.
+ * cs is used for tank armour and flags. The NULL test below is what is left
+ * of a caller that had no ClientSim to pass; the one caller there is now
+ * always has one.
  * Returns true if added, false if skipped (dedup or full). */
 static bool obsAddObjectAsEntity(const ObjectInfo *o, float self_wx, float self_wy,
                                  BYTE selfPlayer, struct ClientSim *cs,
@@ -341,94 +361,6 @@ static void obsBuildTerrain(const BrainInfo *bi, WinBoloObs *obs) {
     }
 }
 
-/* Build scalars from BrainInfo */
-static void obsBuildScalars(const BrainInfo *bi, WinBoloObs *obs) {
-    bool dead = bi->destroyed != 0;
-    int tank_tx = bi->tankx >> 8;
-    int tank_ty = bi->tanky >> 8;
-
-    /* Scalars 0-11 */
-    {
-        unsigned armor = dead ? 0 : (unsigned)bi->armour;
-        float dir_rad = (float)bi->direction * (2.0f * 3.14159265f / 256.0f);
-
-        obs->scalar[0]  = (float)armor / 40.0f;
-        obs->scalar[1]  = (float)bi->shells / 40.0f;
-        obs->scalar[2]  = (float)bi->mines / 40.0f;
-        obs->scalar[3]  = (float)bi->trees / 40.0f;
-        obs->scalar[4]  = (float)bi->speed / 128.0f;
-        obs->scalar[5]  = sinf(dir_rad);
-        obs->scalar[6]  = cosf(dir_rad);
-        obs->scalar[7]  = (float)bi->reload / 15.0f;
-        obs->scalar[8]  = bi->inboat ? 1.0f : 0.0f;
-        obs->scalar[9]  = bi->carriedpills > 0 ? 1.0f : 0.0f;
-        obs->scalar[10] = (float)bi->carriedpills / 16.0f;
-        obs->scalar[11] = dead ? 1.0f : 0.0f;
-    }
-
-    /* Scalars 12-16: pill/base ownership fractions */
-    {
-        int self_pills = 0, enemy_pills = 0, ally_pills = 0, total_pills = 0;
-        int self_bases = 0, ally_bases = 0, total_bases = 0;
-
-        for (int i = 0; i < bi->num_objects; i++) {
-            ObjectInfo *o = &bi->objects[i];
-            if (o->object == OBJECT_PILLBOX) {
-                total_pills++;
-                if (o->info & OBJECT_NEUTRAL) {
-                    /* neutral */
-                } else if (!(o->info & OBJECT_HOSTILE)) {
-                    self_pills++;
-                } else {
-                    enemy_pills++;
-                }
-            } else if (o->object == OBJECT_REFBASE) {
-                total_bases++;
-                if (o->info & OBJECT_NEUTRAL) {
-                    /* neutral */
-                } else if (!(o->info & OBJECT_HOSTILE)) {
-                    self_bases++;
-                }
-            }
-        }
-
-        if (bi->max_pillboxes > 0) total_pills = bi->max_pillboxes;
-        if (bi->max_refbases > 0)  total_bases = bi->max_refbases;
-
-        float tp = total_pills > 0 ? (float)total_pills : 1.0f;
-        float tb = total_bases > 0 ? (float)total_bases : 1.0f;
-        obs->scalar[12] = (float)self_pills / tp;
-        obs->scalar[13] = (float)enemy_pills / tp;
-        obs->scalar[14] = (float)ally_pills / tp;
-        obs->scalar[15] = (float)self_bases / tb;
-        obs->scalar[16] = (float)ally_bases / tb;
-    }
-
-    /* Scalars 17-18 */
-    obs->scalar[17] = (float)tank_tx / 256.0f;
-    obs->scalar[18] = (float)tank_ty / 256.0f;
-
-    /* Scalars 19-25 */
-    obs->scalar[19] = (float)bi->gunrange / 14.0f;
-    obs->scalar[20] = bi->hidden ? 1.0f : 0.0f;
-    obs->scalar[21] = bi->newtank ? 1.0f : 0.0f;
-    obs->scalar[22] = bi->tankobstructed ? 1.0f : 0.0f;
-
-    {
-        BYTE ms = bi->man_status;
-        if (ms == LGM_BRAIN_INTANK) {
-            obs->scalar[23] = 0.0f;
-        } else if (ms == LGM_BRAIN_DEAD) {
-            obs->scalar[23] = 1.0f;
-        } else {
-            obs->scalar[23] = 0.33f;
-        }
-    }
-
-    obs->scalar[24] = (float)bi->manobstructed / 2.0f;
-    obs->scalar[25] = 0.0f; /* death_wait not available in BrainInfo */
-}
-
 /* Build scalars with ClientSim data for accurate pill/base fracs, LGM, death_wait */
 static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs *obs) {
     bool dead = bi->destroyed != 0;
@@ -438,10 +370,11 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     BYTE selfPlayer = clientSimGetMyPlayerNum(cs);
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
 
-    /* Scalars 0-11: same as obsBuildScalars */
+    /* Scalars 0-11 */
     {
         unsigned armor = dead ? 0 : (unsigned)bi->armour;
         float dir_rad = (float)bi->direction * (2.0f * 3.14159265f / 256.0f);
+        int32_t reload_ticks = gs->rules.tank_reload_ticks;
 
         obs->scalar[0]  = (float)armor / 40.0f;
         obs->scalar[1]  = (float)bi->shells / 40.0f;
@@ -450,7 +383,13 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
         obs->scalar[4]  = (float)bi->speed / 128.0f;
         obs->scalar[5]  = sinf(dir_rad);
         obs->scalar[6]  = cosf(dir_rad);
-        obs->scalar[7]  = (float)bi->reload / 15.0f;
+        /* Ticks left to wait, over the rule that set them, the way the gym
+           and the headless scale it. A reload rule of 0 fires every tick, so
+           the counter is never set and there is never anything outstanding —
+           0 there is the value the numerator gives anyway, and it keeps an
+           infinity out of the vector. */
+        obs->scalar[7]  = reload_ticks > 0
+                              ? (float)bi->reload / (float)reload_ticks : 0.0f;
         obs->scalar[8]  = bi->inboat ? 1.0f : 0.0f;
         obs->scalar[9]  = bi->carriedpills > 0 ? 1.0f : 0.0f;
         obs->scalar[10] = (float)bi->carriedpills / 16.0f;
@@ -523,7 +462,8 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     obs->scalar[24] = (float)bi->manobstructed / 2.0f;
 
     /* Scalar 25: death_wait from ClientSim (matches gymBuildObs) */
-    obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) / 255.0f;
+    obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) /
+                      (float)gs->rules.tank_death_ticks;
 }
 
 /* Build pill/base lists and metadata from ClientSim (matches gymBuildObs) */
@@ -593,82 +533,6 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
     obs->tick = bi->server_tick;
 }
 
-/* Build LGM state, tank position, pill/base lists from BrainInfo */
-static void obsBuildMeta(const BrainInfo *bi, WinBoloObs *obs) {
-    float self_wx = (float)bi->tankx;
-    float self_wy = (float)bi->tanky;
-    bool dead = bi->destroyed != 0;
-
-    /* LGM state */
-    obs->man_rx = ((float)bi->man_x - self_wx) / 256.0f;
-    obs->man_ry = ((float)bi->man_y - self_wy) / 256.0f;
-    obs->man_direction = (float)bi->man_direction / 256.0f;
-
-    /* Full-precision tank position */
-    obs->tank_x = (float)bi->tankx / 256.0f;
-    obs->tank_y = (float)bi->tanky / 256.0f;
-
-    /* Pill list from objects */
-    for (int i = 0; i < bi->num_objects; i++) {
-        ObjectInfo *o = &bi->objects[i];
-        if (o->object != OBJECT_PILLBOX) continue;
-        if (obs->num_pillboxes >= WBGYM_MAX_PILLBOXES) break;
-        WinBoloPillObs *po = &obs->pillboxes[obs->num_pillboxes];
-        po->tx = (uint8_t)(o->x >> 8);
-        po->ty = (uint8_t)(o->y >> 8);
-        po->armor = o->pillbox_strength;
-        po->owner = obsGetOwner(o);
-        obs->num_pillboxes++;
-    }
-
-    /* Base list from objects */
-    for (int i = 0; i < bi->num_objects; i++) {
-        ObjectInfo *o = &bi->objects[i];
-        if (o->object != OBJECT_REFBASE) continue;
-        if (obs->num_bases >= WBGYM_MAX_BASES) break;
-        WinBoloBaseObs *bo = &obs->bases[obs->num_bases];
-        bo->tx = (uint8_t)(o->x >> 8);
-        bo->ty = (uint8_t)(o->y >> 8);
-        bo->owner = obsGetOwner(o);
-        if (bo->owner == WBGYM_OWNER_SELF && bi->base != NULL &&
-            bo->tx == (uint8_t)(bi->base->x >> 8) &&
-            bo->ty == (uint8_t)(bi->base->y >> 8)) {
-            bo->shells = bi->base_shells;
-            bo->mines  = bi->base_mines;
-            bo->armour = bi->base_armour;
-        }
-        obs->num_bases++;
-    }
-
-    obs->dead = dead ? 1 : 0;
-    obs->tick = bi->server_tick;
-}
-
-/* ------------------------------------------------------------------ */
-/* Single-view obs builder (unchanged interface)                       */
-/* ------------------------------------------------------------------ */
-
-void obsBuildFromBrainInfo(const BrainInfo *bi, WinBoloObs *obs) {
-    memset(obs, 0, sizeof(*obs));
-
-    BYTE selfPlayer = (BYTE)bi->player_number;
-    float self_wx = (float)bi->tankx;
-    float self_wy = (float)bi->tanky;
-
-    obsBuildEvents(bi, obs);
-    obsBuildTerrain(bi, obs);
-
-    /* Entity list from BrainInfo objects (single view, no ClientSim) */
-    uint16_t ne = 0;
-    for (int i = 0; i < bi->num_objects && ne < WBGYM_MAX_ENTITIES; i++) {
-        obsAddObjectAsEntity(&bi->objects[i], self_wx, self_wy, selfPlayer, NULL, obs, &ne);
-    }
-    obs->num_entities = ne;
-
-    obsBuildScalars(bi, obs);
-    obsBuildMeta(bi, obs);
-}
-
 /* ------------------------------------------------------------------ */
 /* Multi-view obs builder                                              */
 /* ------------------------------------------------------------------ */
@@ -708,8 +572,47 @@ static bool obsLgmAlreadySeen(const WinBoloObs *obs, uint16_t ne, uint8_t idnum)
     return false;
 }
 
-void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs *obs) {
+/* What an operator sees when a build is refused. Said once a run: the check
+ * below runs on every build, and a rule a scenario has moved stays moved for
+ * the rest of the round, so saying it every tick would bury everything else
+ * in the log and tell nobody anything new. */
+static void obsWarnNotClassic(const GameSim *gs) {
+    static bool said = false;
+
+    if (said) {
+        return;
+    }
+    said = true;
+    if (gs == NULL) {
+        WB_LOG_ERROR(WB_LOG_CAT_SIM,
+                     "observation refused: no simulation to read the rules "
+                     "from. The ML brain will not act.");
+        return;
+    }
+    WB_LOG_ERROR(WB_LOG_CAT_SIM,
+                 "observation refused: this simulation's rules are not the "
+                 "classic ones — scenario rule index %d is the first that "
+                 "differs — and the observation scale is the classic game's. "
+                 "The ML brain will not act.",
+                 simRulesFirstDifference(&gs->rules));
+}
+
+bool obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs *obs) {
     memset(obs, 0, sizeof(*obs));
+
+    /* The scale this vector is on is the classic game's, written out above.
+       A sim running anything else would fill the same entries against
+       different meanings of full, so there is nothing useful to hand back
+       and this says so instead of handing back a vector that looks fine.
+       Asked on every build rather than once: a scenario can change a rule
+       mid-round, and an answer given at the first tick would not have heard
+       about it. It costs one comparison of the table against a classic one,
+       against the tens of thousands of floats filled below. */
+    GameSim *gs = clientSimGetGameSim(cs);
+    if (gs == NULL || !simRulesAreClassic(&gs->rules)) {
+        obsWarnNotClassic(gs);
+        return false;
+    }
 
     BYTE selfPlayer = (BYTE)tankBi->player_number;
     PlayerBitMap alliesBits = tankBi->allies ? *(tankBi->allies) : 0;
@@ -732,7 +635,6 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
     /* Identify owned alive pills and gather dynamic objects from their 15x15 rects.
      * Pills/bases are already in the entity list (gathered globally by aiYes mode or
      * from visible objects). We only need shells, tanks, and LGMs from pill rects. */
-    GameSim *gs = clientSimGetGameSim(cs);
     BYTE np = pillsGetNumPills(&gs->pb);
     for (BYTE pi = 1; pi <= np; pi++) {
         pillbox p;
@@ -792,4 +694,5 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
 
     obsBuildScalarsCS(tankBi, cs, obs);
     obsBuildMetaCS(tankBi, cs, obs);
+    return true;
 }

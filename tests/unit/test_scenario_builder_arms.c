@@ -130,7 +130,7 @@ static bool baFindTile(ServerSim *sim, BYTE want, BYTE *ox, BYTE *oy) {
    its tank through the op itself. Returns what the op answered. */
 static ScnOpResult baSendOut(ServerSim *sim, BYTE slot, BYTE x, BYTE y) {
     ScenarioOp op;
-    tankSetTrees(baTank(sim, slot), TANK_FULL_TREES);
+    tankSetTrees(&sim->sim, baTank(sim, slot), TANK_FULL_TREES);
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_LGM_DISPATCH;
     op.u.lgmDispatch.slot   = slot;
@@ -199,7 +199,7 @@ int run_scenario_lgm_dispatch(void) {
     /* The square will not take the job: there is no tree on grass to farm.
        This answer comes from the engine's own validator, not from a copy of
        its rules living in the arm. */
-    tankSetTrees(t, TANK_FULL_TREES);
+    tankSetTrees(&sim->sim, t, TANK_FULL_TREES);
     op.u.lgmDispatch.action = (BYTE)builderJobTrees;
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_BAD_TERRAIN,
                   "a tree harvest on grass should be refused on the square");
@@ -207,7 +207,7 @@ int run_scenario_lgm_dispatch(void) {
     /* The square is fine and the tank cannot pay. Same validator, other
        answer, which is what proves the two are told apart. Asking is a dry
        run, so the wood it could not spend is all still there. */
-    tankSetTrees(t, (BYTE)(LGM_COST_BUILDING - 1));
+    tankSetTrees(&sim->sim, t, (BYTE)(LGM_COST_BUILDING - 1));
     op.u.lgmDispatch.action = (BYTE)builderJobBuilding;
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_STOCK,
                   "a wall with too little wood should be refused for stock");
@@ -223,7 +223,7 @@ int run_scenario_lgm_dispatch(void) {
 
     /* The order lands: the man leaves the tank on the job he was given, and
        the wood it costs has come out of the tank and gone with him. */
-    tankSetTrees(t, LGM_COST_BUILDING);
+    tankSetTrees(&sim->sim, t, LGM_COST_BUILDING);
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
     UT_ASSERT_MSG(!(*l)->inTank, "the man should have left the tank");
     UT_ASSERT_MSG((*l)->state == LGM_STATE_GOING, "state %u",

@@ -7,7 +7,12 @@
  * of vectors:
  *
  *   - committed golden fixtures in tests/fixtures/wire/<label>.hex (captured
- *     from a real loopback session by test_wire_corpus_capture), and
+ *     from a real loopback session by test_wire_corpus_capture; the second
+ *     tank_snapshot vector is hand-composed instead, because no loopback
+ *     session has yet emitted a tank inside its respawn wait and the
+ *     presence-mask group for that wait would otherwise go uncovered here.
+ *     test_wire_corpus_capture rewrites the whole file, so a re-capture drops
+ *     it), and
  *   - programmatic boundary vectors (every field 0, then every field at its
  *     type maximum), so coverage does not depend on which messages a session
  *     happened to emit.
@@ -151,11 +156,11 @@ MSG_CHECK_FN(check_pill, PillSnapshot, packPillSnapshot, unpackPillSnapshot,
 
 /* ---- TankSnapshot: differential check against a pre-migration oracle -------
  *
- * packTankRef / unpackTankRef are the hand-rolled presence-bitmask codec copied
- * verbatim from transport_udp_common.c as it stood before the masked codec
- * replaced it (the corpus tap removed). They are the reference the generated
- * packTankSnapshot / unpackTankSnapshot must match byte-for-byte and
- * struct-for-struct. */
+ * packTankRef / unpackTankRef are the hand-rolled presence-bitmask codec taken
+ * from transport_udp_common.c as it stood before the masked codec replaced it
+ * (the corpus tap removed), and hand-maintained since against the field list.
+ * They are the reference the generated packTankSnapshot / unpackTankSnapshot
+ * must match byte-for-byte and struct-for-struct. */
 static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
     uint16_t mask = 0;
     int pos;
@@ -198,7 +203,10 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
         buf[pos++] = s->gunsightLen;
     }
     if (mask & TANK_PRESENT_RELOAD)    buf[pos++] = s->reload;
-    if (mask & TANK_PRESENT_DEATHWAIT) buf[pos++] = s->deathWait;
+    if (mask & TANK_PRESENT_DEATHWAIT) {
+        packU16(buf + pos, s->deathWait);
+        pos += 2;
+    }
     if (mask & TANK_PRESENT_LGM) {
         buf[pos++] = s->lgmFrame;
         buf[pos++] = s->lgmMX;
@@ -260,8 +268,9 @@ static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
         s->reload = buf[pos++];
     }
     if (mask & TANK_PRESENT_DEATHWAIT) {
-        if (avail < pos + 1) return 0;
-        s->deathWait = buf[pos++];
+        if (avail < pos + 2) return 0;
+        s->deathWait = unpackU16(buf + pos);
+        pos += 2;
     }
     if (mask & TANK_PRESENT_LGM) {
         if (avail < pos + 5) return 0;
@@ -320,7 +329,7 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->armour = 0x31; s->shells = 0x32; s->mines = 0x33;
         s->trees = 0x34;  s->gunsightLen = 0x35;
         s->reload = 0x41;
-        s->deathWait = 0x51;
+        s->deathWait = 0x5152;   /* past a byte: the group carries two */
         s->lgmFrame = 0x61; s->lgmMX = 0x62; s->lgmMY = 0x63;
         s->lgmPX = 0x64;    s->lgmPY = 0x65;
         s->firstLeft = 0x71; s->firstRight = 0x72;
@@ -337,7 +346,7 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->armour = 0xFF; s->shells = 0xFF; s->mines = 0xFF;
         s->trees = 0xFF;  s->gunsightLen = 0xFF;
         s->reload = 0xFF;
-        s->deathWait = 0xFF;
+        s->deathWait = 0xFFFF;
         s->lgmFrame = 0xFF; s->lgmMX = 0xFF; s->lgmMY = 0xFF;
         s->lgmPX = 0xFF;    s->lgmPY = 0xFF;
         s->firstLeft = 0xFF; s->firstRight = 0xFF;

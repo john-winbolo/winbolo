@@ -1,20 +1,22 @@
 /*
- * mapRead field-range clamping.
+ * .map field-range clamping.
  *
  * The .map wire format has documented per-field ranges (pillbox
  * armour 0..15, base stocks 0..90, start dir 0..15, pillbox speed
  * 6..100 at runtime) but the parser historically accepted any byte
- * value. This test feeds mapRead a hand-built map blob whose
- * pillbox / base / start records hold values past every cap and
- * verifies the post-load structures sit inside the runtime range.
+ * value. These cases feed mapRead a hand-built map blob whose
+ * pillbox / base / start records hold values past every cap.
  *
- * It also exercises in-range values to confirm legitimate maps
- * survive the clamps untouched.
+ * Where the clamp lands depends on who is loading. What a pill or a
+ * base may hold is a gameplay number, so mapRead leaves it and the
+ * sim that adopts the map caps it through mapClampToRules; the start
+ * dir indexes a direction table whatever the rules say, so the
+ * loader still settles that one for everybody. The no_sim case is
+ * the map editor and the preview, which load the same file with no
+ * sim at all and must come through it intact.
  *
- * Coverage is at the pillsSetPill / basesSetBase / startsSetStart
- * boundary — those are the single entry points the parser uses,
- * so this catches every wire path that funnels through them
- * (mapRead, snapshot decode, network state restore).
+ * A legitimate blob goes through both routes to confirm maxed-out
+ * values a real editor would produce survive untouched.
  */
 
 #include <stdint.h>
@@ -26,6 +28,7 @@
 
 #include "global.h"
 #include "bolo_map.h"
+#include "game_sim.h"
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
@@ -89,6 +92,7 @@ static const uint8_t kAngryStartMap[] = {
 #define TEMP_PATH_EVIL        "data/maps/.test_field_clamps_evil.map"
 #define TEMP_PATH_PASSTHROUGH "data/maps/.test_field_clamps_passthrough.map"
 #define TEMP_PATH_ANGRY       "data/maps/.test_field_clamps_angry.map"
+#define TEMP_PATH_NO_SIM      "data/maps/.test_field_clamps_no_sim.map"
 
 static bool write_blob(const char *path, const void *bytes, size_t len) {
     SDL_CreateDirectory("data/maps");
@@ -99,12 +103,15 @@ static bool write_blob(const char *path, const void *bytes, size_t len) {
     return w == len;
 }
 
+/* withSim says whether a sim takes the map on afterwards, which is what
+ * caps the pill and base fields. False is the map editor and the preview. */
 static bool load_and_inspect(const char *path,
                               const void *blob, size_t blobLen,
                               pillbox *outPill,
                               base    *outBase,
                               start   *outStart,
-                              bool wantPill, bool wantBase, bool wantStart) {
+                              bool wantPill, bool wantBase, bool wantStart,
+                              bool withSim) {
     if (!write_blob(path, blob, blobLen)) return false;
 
     map mp = NULL;
@@ -117,6 +124,16 @@ static bool load_and_inspect(const char *path,
     startsCreate(&ss);
 
     bool ok = mapRead((char *)path, &mp, &pb, &bs, &ss);
+    if (ok && withSim) {
+        GameSim *gs = ut_rules_only_sim();
+        /* Point the holder at these lists and run the real entry point, so
+           this walks the call an adopting sim makes and not a copy of it. */
+        gs->pb = pb;
+        gs->bs = bs;
+        mapClampToRules(gs);
+        gs->pb = NULL;
+        gs->bs = NULL;
+    }
     if (ok) {
         if (wantPill)  pillsGetPill(&pb, outPill, 1);
         if (wantBase)  basesGetBase(&bs, outBase, 1);
@@ -136,10 +153,10 @@ int run_map_field_clamps_evil(void) {
     start   s; memset(&s, 0, sizeof(s));
 
     UT_ASSERT_MSG(load_and_inspect(TEMP_PATH_EVIL, kEvilMap, sizeof(kEvilMap),
-                                    &p, &b, &s, true, true, true),
+                                    &p, &b, &s, true, true, true, true),
                   "mapRead must accept a malformed-but-decodable map");
 
-    /* Pill: armour clamped to 15, speed floored at 6. */
+    /* Pill: armour clamped to 15, speed floored at 6, once a sim owns it. */
     UT_ASSERT_MSG(p.armour == PILLS_MAX_ARMOUR,
                   "pill armour 255 must clamp to %d, got %d",
                   PILLS_MAX_ARMOUR, p.armour);
@@ -173,7 +190,7 @@ int run_map_field_clamps_passthrough(void) {
 
     UT_ASSERT(load_and_inspect(TEMP_PATH_PASSTHROUGH, kLegitMap,
                                 sizeof(kLegitMap),
-                                &p, &b, &s, true, true, true));
+                                &p, &b, &s, true, true, true, true));
 
     /* Maxed-but-legitimate values must survive unchanged. */
     UT_ASSERT_MSG(p.armour == PILLS_MAX_ARMOUR,
@@ -195,7 +212,7 @@ int run_map_field_clamps_angry_start(void) {
 
     UT_ASSERT(load_and_inspect(TEMP_PATH_ANGRY, kAngryStartMap,
                                 sizeof(kAngryStartMap),
-                                &p, NULL, NULL, true, false, false));
+                                &p, NULL, NULL, true, false, false, true));
 
     /* speed = PILLBOX_MAX_FIRERATE is the legitimate "starts angry"
      * floor — the clamp must accept it untouched, not bounce it
@@ -205,5 +222,39 @@ int run_map_field_clamps_angry_start(void) {
                   PILLBOX_MAX_FIRERATE, p.speed);
 
     SDL_RemovePath(TEMP_PATH_ANGRY);
+    return 0;
+}
+
+/* The map editor and the preview load the same file with no sim behind them.
+ * They must come through it — the caps are the sim's to apply, so the records
+ * keep what the file said, and nothing here reaches for rules that are not
+ * there. The start dir is the loader's own business and is clamped for them
+ * as it is for the game. */
+int run_map_field_clamps_no_sim(void) {
+    pillbox p; memset(&p, 0, sizeof(p));
+    base    b; memset(&b, 0, sizeof(b));
+    start   s; memset(&s, 0, sizeof(s));
+
+    UT_ASSERT_MSG(load_and_inspect(TEMP_PATH_NO_SIM, kEvilMap, sizeof(kEvilMap),
+                                    &p, &b, &s, true, true, true, false),
+                  "a sim-free load of a malformed-but-decodable map must work");
+
+    UT_ASSERT_MSG(p.armour == 255,
+                  "a sim-free load must keep the file's pill armour, got %d",
+                  p.armour);
+    UT_ASSERT_MSG(p.speed == 2,
+                  "a sim-free load must keep the file's pill speed, got %d",
+                  p.speed);
+    UT_ASSERT_MSG(b.armour == 200 && b.shells == 150 && b.mines == 255,
+                  "a sim-free load must keep the file's base stocks, got %d/%d/%d",
+                  b.armour, b.shells, b.mines);
+
+    /* Still the loader's: dir indexes a direction table whatever the rules
+       are, so it is clamped for a caller with no sim as well. */
+    UT_ASSERT_MSG(s.dir == 0,
+                  "start dir 200 must clamp to 0 with or without a sim, got %d",
+                  s.dir);
+
+    SDL_RemovePath(TEMP_PATH_NO_SIM);
     return 0;
 }

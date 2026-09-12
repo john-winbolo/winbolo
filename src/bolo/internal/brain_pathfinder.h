@@ -206,6 +206,27 @@ struct BrainPathfinder {
    * pathfinder nobody pushes to predicts for an unmodified tank. */
   uint8_t accel_pct;
 
+  /* The movement rules this sim runs on, pushed each think beside the
+   * modifier above. The stop predictor brakes and steps at these rather
+   * than at the numbers tank.c used to hold, so a bot on a sim whose rules
+   * were tuned predicts against the rates it will actually move at.
+   * brainPathfinderCreate seeds them with the classic values, so a
+   * pathfinder nobody pushes to predicts the classic game. */
+  float   brake_rate;
+  float   terrain_decel_rate;
+  int32_t min_move;
+
+  /* The shell rules this sim runs on, pushed on the same carrier and in
+   * the same place as the movement rules above. The shot simulator flies
+   * its trajectory on these rather than on the constants shells.c used to
+   * read, so a bot on a tuned sim predicts the shell it will actually
+   * fire. brainPathfinderCreate seeds them with the classic values, so a
+   * pathfinder nobody pushes to simulates the classic shell. */
+  int32_t shell_life;
+  int32_t shell_speed;
+  int32_t shell_start_add;
+  int32_t gunsight_max;
+
   /* ── Incremental Dijkstra slates ──
    * Each slate holds the full state of one Dijkstra search. The brain
    * can use them however it wants — typical pattern is double-buffered
@@ -233,6 +254,18 @@ void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag);
  * pushed to reads as an unmodified tank. Pushed each think by the bot
  * manager so the stop predictor brakes at the rate the engine will. */
 void brainPathfinderSetAccelPct(BrainPathfinder *pf, uint8_t pct);
+
+/* Push this sim's movement rules. Called each think beside the modifier
+ * above, from the one place that holds the sim. */
+void brainPathfinderSetMoveRules(BrainPathfinder *pf, float brakeRate,
+                                 float terrainDecelRate, int32_t minMove);
+
+/* Push this sim's shell rules, beside the movement rules and from the
+ * same place. The shot simulator has no sim of its own to read, so this
+ * is how a tuned shell reaches it. */
+void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
+                                  int32_t shellSpeed, int32_t shellStartAdd,
+                                  int32_t gunsightMax);
 
 /*
  * Eagerly allocate the per-slate working arrays for every slate AND touch
@@ -506,9 +539,12 @@ int brainPathfinderFindFrontLine(BrainPathfinder *pf,
  * Quick geometric simulation of a shell flying from (origin_wx,
  * origin_wy) toward (target_wx, target_wy), as if fired by a tank
  * or pillbox. Mirrors the real shell physics from shellsAddItem +
- * shellsUpdate (SHELL_SPEED, SHELL_START_ADD initial offset, the
+ * shellsUpdate (shell_speed, the shell_start_add initial offset, the
  * 24.8 fixed-point per-tick step) so tile crossings match what an
- * actual fired shell would touch.
+ * actual fired shell would touch. The numbers come off the
+ * pathfinder, which the bot manager pushes each think — these have
+ * no sim to read and must not fall back to the constants, or a
+ * tuned sim would fire one shell and predict another.
  *
  * Does NOT short-circuit on collision — the full geometric flight
  * to the shooter's max range is recorded. Callers can intersect
@@ -541,13 +577,16 @@ typedef struct {
  * tiles — a shot that loops would record both visits, but real
  * shells fly straight so this is a non-issue).
  *
+ * pf:           the pathfinder carrying this sim's shell rules.
  * shooter_type: BRAIN_SHOT_SHOOTER_TANK or BRAIN_SHOT_SHOOTER_PILL.
- * sight_len:    tank's sightLen (1..GUNSIGHT_MAX). Pass 0 to use
- *               GUNSIGHT_MAX. Ignored when shooter_type is PILL.
+ * sight_len:    tank's sightLen (1..gunsight_max). Pass 0 to use
+ *               the pathfinder's gunsight_max. Ignored when
+ *               shooter_type is PILL.
  *
- * Returns 0 if origin == target, out_tiles is NULL, or max_tiles<=0.
- * Stops early (returning max_tiles) if the buffer fills. */
-int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
+ * Returns 0 if pf is NULL, origin == target, out_tiles is NULL, or
+ * max_tiles<=0. Stops early (returning max_tiles) if the buffer fills. */
+int brainPathfinderSimulateShot(const BrainPathfinder *pf,
+                                 WORLD origin_wx, WORLD origin_wy,
                                  WORLD target_wx, WORLD target_wy,
                                  int shooter_type, int sight_len,
                                  BrainShotTile *out_tiles, int max_tiles);
@@ -559,7 +598,8 @@ int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
  * and shellsAddItem fires at that exact value, so a brain that has
  * the float angle (BrainInfo.tank_angle) gets sub-brad precision by
  * passing it here. Integer callers can promote freely. */
-int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShotAngle(const BrainPathfinder *pf,
+                                     WORLD origin_wx, WORLD origin_wy,
                                      float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles);
@@ -570,7 +610,8 @@ int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
  * point in the sequence (interspersed with tile entries). The shell
  * stops on the first tank hit (same as the engine). owner_player is
  * the firing player — own tank is excluded from hit checks. */
-int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShotWithTanks(const BrainPathfinder *pf,
+                                          WORLD origin_wx, WORLD origin_wy,
                                           WORLD target_wx, WORLD target_wy,
                                           int shooter_type, int sight_len,
                                           const BrainShotTankPos *tanks, int num_tanks,

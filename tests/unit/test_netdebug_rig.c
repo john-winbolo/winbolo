@@ -274,7 +274,7 @@ int run_netdebug_mine_once_under_loss(void) {
     GameSim *gs = serverSimGetGameSim(sim);
     UT_ASSERT(gs != NULL);
     UT_ASSERT(gs->tanks[NETDEBUG_PLAYER] != NULL);
-    tankSetMines(&gs->tanks[NETDEBUG_PLAYER], 40);
+    tankSetMines(gs, &gs->tanks[NETDEBUG_PLAYER], 40);
 
     uint32_t startTick = nd_warmup(cs);
     serverSimNetdebugResetCounters(sim);

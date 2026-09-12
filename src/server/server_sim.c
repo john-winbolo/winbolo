@@ -195,6 +195,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     memset(sim, 0, sizeof(ServerSim));
 
+    /* The classic gameplay numbers. A zeroed table would make every rule 0, so
+     * this runs before anything can read one. */
+    simRulesClassic(&sim->sim.rules);
+
     /* Sentinel value for "no batch start assigned" — memset gives 0, but 0
      * is a valid start index, so initialise explicitly. */
     for (count = 0; count < MAX_TANKS; count++) {
@@ -404,7 +408,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         for (i = 0; i < MAX_TANKS; i++) {
             sim->sim.baseTimer[i] = BASE_TIMER_OFF;
         }
-        sim->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
+        sim->sim.baseTimer[0] = sim->sim.rules.base_regen_ticks;
     }
 
     /* Bind every slot's copy of the terrain to the map just created. The
@@ -439,6 +443,8 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         serverSimDestroy(sim);
         return NULL;
     }
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
 
     /* Hash the canonical BMAPBOLO file so WBN can match it on register. */
     serverSimCacheMapMd5FromFile(sim, mapFileName);
@@ -494,6 +500,8 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
         serverSimDestroy(sim);
         return NULL;
     }
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
 
     if (mapName != NULL && mapName[0] != '\0') {
         strncpy(sim->mapName, mapName, MAP_STR_SIZE - 1);
@@ -563,7 +571,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
         BYTE i;
         for (i = 0; i < sim->sim.pb->numPills; i++) {
             pillbox tmp = sim->sim.pb->item[i];
-            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+            pillsSetPill(&sim->sim, &sim->sim.pb, &tmp, (BYTE)(i + 1));
         }
         for (i = 0; i < sim->sim.bs->numBases; i++) {
             base tmp = sim->sim.bs->item[i];
@@ -574,6 +582,9 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
             startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
         }
     }
+    /* The generated map is this sim's too: cap what it put in the lists
+       against the rules, as a loaded one is capped. */
+    mapClampToRules(&sim->sim);
 
     basesClearMines(&sim->sim);
 

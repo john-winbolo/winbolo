@@ -1017,7 +1017,7 @@ static bool ms_find_plain_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
 static void ms_pill_owned_by_slot0(ServerSim *sim, BYTE p) {
     GameSim *gs = serverSimGetGameSim(sim);
     (*gs->pb).item[p].owner  = 0;
-    (*gs->pb).item[p].armour = PILL_MAX_HEALTH;
+    (*gs->pb).item[p].armour = PILLS_MAX_ARMOUR;
     (*gs->pb).item[p].inTank = FALSE;
     serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyAlways,
                            VIEW_DECAY_DEFAULT_SECS);
@@ -1396,8 +1396,8 @@ int run_pill_shadow_fullsync_move_matches(void) {
         scratch.item[i].x      = po[i].x;
         scratch.item[i].y      = po[i].y;
         scratch.item[i].owner  = po[i].owner;
-        scratch.item[i].armour = pillArmourFromByte(po[i].armourInTank);
-        scratch.item[i].inTank = pillInTankFromByte(po[i].armourInTank) ? TRUE : FALSE;
+        scratch.item[i].armour = po[i].armour;
+        scratch.item[i].inTank = pillInTankFromByte(po[i].pillFlags) ? TRUE : FALSE;
     }
     for (i = 0; i < hdr.reliableEventCount; i++) {
         BYTE idx;
@@ -1407,7 +1407,7 @@ int run_pill_shadow_fullsync_move_matches(void) {
         scratch.item[idx].x      = ev[i].data[1];
         scratch.item[idx].y      = ev[i].data[2];
         scratch.item[idx].owner  = ev[i].data[3];
-        scratch.item[idx].armour = pillArmourFromByte(ev[i].data[4]);
+        scratch.item[idx].armour = ev[i].data[5];
         scratch.item[idx].inTank = pillInTankFromByte(ev[i].data[4]) ? TRUE : FALSE;
     }
 
@@ -1510,7 +1510,7 @@ int run_pill_shadow_withheld_crc_matches(void) {
                   "the build stamped no checksum — it was not a full sync");
     UT_ASSERT_MSG(hdr.pillCount > 0, "the full sync carried no pill entries");
     UT_ASSERT_MSG(po[0].x == keptX && po[0].y == keptY &&
-                      !pillPosCurrentFromByte(po[0].armourInTank),
+                      !pillPosCurrentFromByte(po[0].pillFlags),
                   "the pill block reports %u,%u for a pill slot 0 cannot see, "
                   "not the withheld %u,%u", (unsigned)po[0].x,
                   (unsigned)po[0].y, (unsigned)keptX, (unsigned)keptY);
@@ -1528,8 +1528,8 @@ int run_pill_shadow_withheld_crc_matches(void) {
         scratch.item[i].x      = po[i].x;
         scratch.item[i].y      = po[i].y;
         scratch.item[i].owner  = po[i].owner;
-        scratch.item[i].armour = pillArmourFromByte(po[i].armourInTank);
-        scratch.item[i].inTank = pillInTankFromByte(po[i].armourInTank) ? TRUE : FALSE;
+        scratch.item[i].armour = po[i].armour;
+        scratch.item[i].inTank = pillInTankFromByte(po[i].pillFlags) ? TRUE : FALSE;
     }
     for (i = 0; i < hdr.reliableEventCount; i++) {
         BYTE idx;
@@ -1548,7 +1548,7 @@ int run_pill_shadow_withheld_crc_matches(void) {
         scratch.item[idx].x      = ev[i].data[1];
         scratch.item[idx].y      = ev[i].data[2];
         scratch.item[idx].owner  = ev[i].data[3];
-        scratch.item[idx].armour = pillArmourFromByte(ev[i].data[4]);
+        scratch.item[idx].armour = ev[i].data[5];
         scratch.item[idx].inTank = pillInTankFromByte(ev[i].data[4]) ? TRUE : FALSE;
     }
     UT_ASSERT_MSG(sawPillEvent,

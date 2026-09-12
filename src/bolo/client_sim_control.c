@@ -36,6 +36,8 @@
 #include "client_sim_internal.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
+#include "bolo_map.h"    /* mapClampToRules — the re-clamp a new table needs */
+#include "sim_rules.h"   /* simRulesCheckCarried — the check before the keep */
 #include "frontend.h"    /* frontEndAudioReturningToLobby */
 #include "messages.h"
 #include "netpacks.h"
@@ -860,7 +862,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             }
             owner = basesGetBaseOwner(&cs->sim.bs, b);
             basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
-            if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            if (owner == NEUTRAL ||
+                armourAmt <= cs->sim.rules.base_capture_armour) {
                 allOwned = false;
             } else if (liveBases == 0) {
                 first = owner;
@@ -1176,5 +1179,57 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * client_snapshot.c. */
         clientApplyEntitySync(cs, evt);
         break;
+
+    case CTRL_SIM_RULES: {
+        /* The gameplay numbers the server is running on. From this table the
+           movement this client predicts, the shells it fires predicted, the
+           base thresholds it tests captures against and the rules view a
+           brain is handed all read what the server reads.
+
+           Checked before it is kept. What arrives is bytes off the wire, and
+           a hostile or broken server can put anything in them: a NaN turn
+           rate that the tank code later casts to a byte, which is undefined
+           behaviour; a zero shell_life or tank_water_ticks the server's own
+           validator would never have passed; a u32 rule wide enough to
+           decode negative. The candidate is this client's table with the
+           carried rules written over it, so the rules the event does not
+           carry stay whatever the client already had, and only the arms that
+           can speak about the carried half are asked — see
+           simRulesCheckCarried.
+
+           A refusal keeps the table exactly as it was: a client reading the
+           numbers it had is out of step with the server, but a client
+           reading a NaN is out of step with the C standard. One line names
+           the reason so the disagreement is visible rather than silent.
+
+           One assignment per carried rule, generated from the event's own
+           field lists, so a rule that arrives cannot be one nothing
+           writes. */
+        SimRules candidate = cs->sim.rules;
+        char     why[SIM_RULES_WHY_LEN];
+
+#define SIM_RULES_APPLY_FIELD(name) candidate.name = evt->u.simRules.name;
+        CTRL_SIM_RULES_ALL_FIELDS(SIM_RULES_APPLY_FIELD)
+#undef SIM_RULES_APPLY_FIELD
+
+        if (simRulesCheckCarried(&candidate, why, sizeof(why)) !=
+            SIM_RULES_OK) {
+            WB_LOG_ERROR(WB_LOG_CAT_SIM,
+                         "refused the server's rules table: %s", why);
+            break;
+        }
+
+        cs->sim.rules = candidate;
+
+        /* The pill and base records this client is already holding were
+           capped against the table that has just been replaced, so a lower
+           cap would leave records standing above it — a pill showing more
+           armour than the new table allows, a base holding more shells than
+           it can. This is the pass a sim runs when it takes a map on, which
+           is the same question asked the other way round, and it is
+           idempotent, so records already inside the new caps are untouched. */
+        mapClampToRules(&cs->sim);
+        break;
+    }
     }
 }

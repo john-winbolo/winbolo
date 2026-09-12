@@ -3347,6 +3347,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The rules op: the index list against the table it indexes, a rule
+    # written and read back, a rate the op's double carries and an int32
+    # could not, the value outside a row and the value that breaks a pair
+    # with the table each of them leaves untouched, and the record a write
+    # puts in a recording — its bytes on disk and both of the viewer's
+    # readers over them.
+    tests/unit/test_scenario_rule_arms.c
     # The six lifecycle and lobby policy pointers: the start a tank is given,
     # the base sweep, the team write in both lobby arms that make one, the
     # player cap, the loadout at all three places one is handed out, and the
@@ -3461,12 +3468,17 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_base_half_tick.c
     tests/unit/test_base_death_prediction.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
+    # The rules event's body codec: every carried rule round-trips field by
+    # field, rates a fixed-point scale could not carry survive, and the
+    # body's bytes are pinned against a layout written out by hand.
+    tests/unit/test_sim_rules_codec.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
@@ -3492,6 +3504,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_sim_rules.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -3509,6 +3522,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/replay_harness.c
     tests/unit/replay_harness_decode.c
     tests/unit/test_replay_roundtrip.c
+    # Recordings older than the reader that opens them.
+    tests/unit/test_replay_version_compat.c
+    # The brain recorder's own version check.
+    tests/unit/test_brainrec_version.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -3524,6 +3541,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
+    # The rules table over the wire: a mid-round change reaching a connected
+    # client, a joiner arriving on the changed table, a server-only rule
+    # publishing nothing, and a new table clamping what the client holds.
+    tests/unit/test_loopback_sim_rules.c
+    # The client's own check of the rules table before it keeps one.
+    tests/unit/test_sim_rules_client_check.c
+    # The sixteen pillbox pictures against a pill armour cap above 15.
+    tests/unit/test_pill_armour_scale.c
     tests/unit/test_loopback_map_cull.c
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
@@ -4157,6 +4182,7 @@ set(_unit_test_names
     map_field_clamps_evil
     map_field_clamps_passthrough
     map_field_clamps_angry_start
+    map_field_clamps_no_sim
     map_reload_rollback
     map_read_memory_matches_file
     map_read_memory_handbuilt
@@ -4253,6 +4279,10 @@ set(_unit_test_names
     log_roundtrip_tank_stock_record
     replay_roundtrip_world
     replay_roundtrip_base_migrate
+    replay_roundtrip_pill_health
+    replay_v2_pill_health_nibble
+    replay_v1_pill_health_nibble
+    brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
@@ -4375,6 +4405,8 @@ set(_unit_test_names
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
+    base_half_tick_per_sim_sequence
+    base_half_tick_other_sim_does_not_disturb
     base_armour_fog_of_war
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
@@ -4388,6 +4420,8 @@ set(_unit_test_names
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
+    sim_rules_codec_roundtrip
+    sim_rules_codec_golden
     voice_talking_stops_in_countdown
     voice_talking_clears_on_leave
     fx_viewport_cull
@@ -4486,6 +4520,25 @@ set(_unit_test_names
     lgm_request_quiet
     jitter_buffer_grow
     shell_projection
+    sim_rules_classic_defaults
+    sim_rules_validate_ranges
+    sim_rules_copies_follow
+    sim_rules_terrain_caps_follow
+    sim_rules_river_cap_moves_drowning
+    sim_rules_base_regen_seed_follows
+    sim_rules_terrain_life_follows
+    sim_rules_base_empties_without_wrapping
+    sim_rules_pill_empties_without_wrapping
+    sim_rules_pairs
+    sim_rules_capture_threshold_moves
+    sim_rules_builder_cost_follows
+    sim_rules_are_classic
+    sim_rules_obs_refuses_non_classic
+    sim_rules_shell_flight_follows
+    sim_rules_brain_shot_follows
+    sim_rules_worldsim_pill_follows
+    sim_rules_boat_speed_follows
+    sim_rules_obs_reload_follows
     screen_bullets_build
     ping_smoother
     client_timing
@@ -4815,6 +4868,18 @@ set(_unit_test_names
     scenario_entity_publish
     scenario_entity_add_out_null
     loopback_entity_change
+    pill_armour_scale_classic_cap
+    pill_armour_scale_raised_cap
+    pill_armour_scale_client_caps
+    sim_rules_client_check_every_carried_field
+    sim_rules_client_check_nan_and_inf
+    sim_rules_client_check_attack_pair
+    sim_rules_client_check_server_only_pair
+    sim_rules_client_check_valid_applies
+    loopback_sim_rules_change
+    loopback_sim_rules_join
+    loopback_sim_rules_reclamp
+    loopback_sim_rules_agree
     scenario_map_set_tile
     scenario_map_fill_rect
     scenario_map_fill_paced
@@ -4850,6 +4915,13 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    scenario_rule_index_matches_table
+    scenario_rule_set
+    scenario_rule_set_float
+    scenario_rule_refusals
+    scenario_rule_arm_records
+    scenario_rule_clamps_world
+    scenario_rule_clamp_records
     scenario_policy_choose_start
     scenario_policy_choose_start_out_of_range
     scenario_policy_allow_base_win

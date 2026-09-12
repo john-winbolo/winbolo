@@ -59,7 +59,9 @@ int specReplayWriteHeader(const SpecReplayHeaderInfo *info, BYTE *out, int cap) 
   memcpy(out + pos, LOG_HEADER, 8);
   pos += 8;
 
-  /* Version byte (v2: plaintext stream, block key 0). */
+  /* Version byte. A seed is built here and read straight away, so it
+     states the current version: plaintext stream, block key 0, framed
+     events, and the pill health record in its two-byte form. */
   if (pos + 1 > cap) return -1;
   out[pos++] = (BYTE) LOG_VERSION;
 
@@ -91,7 +93,8 @@ int specReplayWriteHeader(const SpecReplayHeaderInfo *info, BYTE *out, int cap) 
   memcpy(out + pos, &port, sizeof(unsigned short));
   pos += (int) sizeof(unsigned short);
 
-  /* Create time: htonl(0). Display-only under v2 (it no longer seeds a key). */
+  /* Create time: htonl(0). Display-only from v2 on (it no longer seeds a
+     key). */
   if (pos + (int) sizeof(int32_t) > cap) return -1;
   startTime = (int32_t) htonl(0);
   memcpy(out + pos, &startTime, sizeof(int32_t));

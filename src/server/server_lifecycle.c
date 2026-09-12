@@ -668,6 +668,9 @@ void serverInstanceTick(ServerSim *sim) {
           evt.type = CTRL_GAME_PHASE_RUNNING;
           serverSimPublishControl(sim, &evt);
         }
+        /* The table this round runs on has already been stated: the tick
+         * that ended the countdown ran serverSimStartGame, which publishes
+         * it at the end of every start. */
         if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }

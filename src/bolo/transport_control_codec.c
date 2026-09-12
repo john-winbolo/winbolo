@@ -1325,6 +1325,104 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_SIM_RULES body wire format (fixed length):
+ *   [one byte per CTRL_SIM_RULES_U8_FIELDS entry, in list order]
+ *   [two bytes big-endian per U16 entry]
+ *   [four bytes big-endian per U32 entry]
+ *   [four bytes per F32 entry — the float's own bit pattern, most
+ *    significant byte first]
+ *
+ * Every rule the event carries is written and every one is read back: both
+ * halves are generated from the lists in control_event.h, so a rule the
+ * encoder writes cannot be one the decoder forgets to set. A decoder that
+ * skipped a field would leave it zero on every wire client, which is worse
+ * than a stale value — a zero reload interval or a zero armour cap is not a
+ * table the game can run on.
+ *
+ * Fixed length, so the decoder rejects any other size outright rather than
+ * reading a truncated table. Delivered body-only on CHANNEL_CONTROL, as
+ * CTRL_ENTITY_SYNC is: there is no full-packet wrapper or PACKET_* type. */
+
+/* The float rules ride as their bit pattern, so the four bytes are exact
+ * whatever the value is. Serialised through a uint32_t and packU32 rather
+ * than memcpy'd wholesale, so the host's own byte order never reaches the
+ * wire. */
+BOLO_STATIC_ASSERT(sizeof(float) == 4, ctrl_sim_rules_float_is_four_bytes);
+
+static void packF32(uint8_t *buf, float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    packU32(buf, bits);
+}
+
+static float unpackF32(const uint8_t *buf) {
+    uint32_t bits = unpackU32(buf);
+    float    value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+/* recipient: safe — ignored. The table reads the same for every client. */
+static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < CTRL_SIM_RULES_BODY_LEN) return ENCODE_OVERFLOW;
+
+#define SIM_RULES_PACK_U8(name)                                              \
+    buf[pos++] = (uint8_t)evt->u.simRules.name;
+#define SIM_RULES_PACK_U16(name)                                             \
+    packU16(buf + pos, (uint16_t)evt->u.simRules.name); pos += 2;
+#define SIM_RULES_PACK_U32(name)                                             \
+    packU32(buf + pos, (uint32_t)evt->u.simRules.name); pos += 4;
+#define SIM_RULES_PACK_F32(name)                                             \
+    packF32(buf + pos, evt->u.simRules.name); pos += 4;
+
+    CTRL_SIM_RULES_U8_FIELDS(SIM_RULES_PACK_U8)
+    CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_PACK_U16)
+    CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_PACK_U32)
+    CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_PACK_F32)
+
+#undef SIM_RULES_PACK_U8
+#undef SIM_RULES_PACK_U16
+#undef SIM_RULES_PACK_U32
+#undef SIM_RULES_PACK_F32
+
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (len != CTRL_SIM_RULES_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SIM_RULES;
+
+#define SIM_RULES_UNPACK_U8(name)                                            \
+    outEvt->u.simRules.name = (int32_t)buf[pos++];
+#define SIM_RULES_UNPACK_U16(name)                                           \
+    outEvt->u.simRules.name = (int32_t)unpackU16(buf + pos); pos += 2;
+#define SIM_RULES_UNPACK_U32(name)                                           \
+    outEvt->u.simRules.name = (int32_t)unpackU32(buf + pos); pos += 4;
+#define SIM_RULES_UNPACK_F32(name)                                           \
+    outEvt->u.simRules.name = unpackF32(buf + pos); pos += 4;
+
+    CTRL_SIM_RULES_U8_FIELDS(SIM_RULES_UNPACK_U8)
+    CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_UNPACK_U16)
+    CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_UNPACK_U32)
+    CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_UNPACK_F32)
+
+#undef SIM_RULES_UNPACK_U8
+#undef SIM_RULES_UNPACK_U16
+#undef SIM_RULES_UNPACK_U32
+#undef SIM_RULES_UNPACK_F32
+
+    return true;
+}
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -2543,6 +2641,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_VOICE_TALKING]         = encodeVoiceTalkingBody,
     [CTRL_ENTITY_CHANGE]         = encodeEntityChangeBody,
     [CTRL_ENTITY_SYNC]           = encodeEntitySyncBody,
+    [CTRL_SIM_RULES]             = encodeSimRulesBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2587,6 +2686,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_VOICE_TALKING]         = decodeVoiceTalkingBody,
     [CTRL_ENTITY_CHANGE]         = decodeEntityChangeBody,
     [CTRL_ENTITY_SYNC]           = decodeEntitySyncBody,
+    [CTRL_SIM_RULES]             = decodeSimRulesBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

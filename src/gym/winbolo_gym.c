@@ -189,7 +189,8 @@ static bool gymCheckGameWin(WinBoloGym *g, bool *agentWon) {
         BYTE shellsAmt = 0, minesAmt = 0, armourAmt = 0;
         if (!serverSimGetBase(g->serverSim, i, NULL, NULL, &owner)) continue;
         serverSimGetBaseStats(g->serverSim, i, &shellsAmt, &minesAmt, &armourAmt);
-        if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) return false;
+        if (owner == NEUTRAL ||
+            armourAmt <= gs->rules.base_capture_armour) return false;
         if (i == 1) {
             first = owner;
         } else if (!playersIsAllie(&gs->plyrs, owner, first)) {
@@ -319,6 +320,31 @@ static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
 /* gymBuildObs — V3 observation builder                                */
 /* ------------------------------------------------------------------ */
 
+/* A training run on a sim whose rules are not the classic ones has nothing
+ * worth recording, so it stops here rather than filling episodes nobody can
+ * use. Ending the process is the loud answer this wants: the caller is a
+ * training harness, and every other answer — a zeroed observation, a flag in
+ * a struct — is one a training loop can miss and keep running past. Dying on
+ * the first observation of the first episode costs the operator a restart;
+ * not dying costs them the run, after it finishes and looks fine. */
+static void gymDieNotClassic(const GameSim *gs) {
+    if (gs == NULL) {
+        fprintf(stderr,
+                "winbolo_gym: no simulation to read the rules from; "
+                "refusing to build an observation.\n");
+    } else {
+        fprintf(stderr,
+                "winbolo_gym: this simulation's rules are not the classic "
+                "ones — scenario rule index %d is the first that differs. "
+                "The observation scale is the classic game's, so every "
+                "trajectory recorded here would be on a scale nothing was "
+                "trained against. Refusing to run.\n",
+                simRulesFirstDifference(&gs->rules));
+    }
+    fflush(stderr);
+    exit(1);
+}
+
 static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     BrainInfo bi;
     memset(obs, 0, sizeof(*obs));
@@ -327,6 +353,25 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     g->needMapInit = FALSE;
 
     GameSim *gs = serverSimGetGameSim(g->serverSim);
+
+    /* The observation this fills is a vector a model trains against, so its
+       entries have to mean the same thing on every tick of every episode.
+       The entries that normalise a stock against what full means read the
+       rule below rather than a written-out number, which would rescale the
+       vector the moment a scenario moved one: trajectories recorded either
+       side of the change would be on two scales with nothing in the data
+       saying so, and a model trained across them reads them as one world.
+       What stops that is this — the run refuses to go on at all rather than
+       record observations on a scale nothing was trained for, so every
+       divisor below is the classic value and the space holds still.
+
+       Asked on every build rather than once at startup: a scenario can move
+       a rule mid-round, and an answer given at the first reset would not
+       have heard about it. One comparison of a 368-byte table against a
+       classic one, against the tens of thousands of floats filled below. */
+    if (gs == NULL || !simRulesAreClassic(&gs->rules)) {
+        gymDieNotClassic(gs);
+    }
 
     BYTE selfPlayer = (BYTE)bi.player_number;
     PlayerBitMap alliesBits = bi.allies ? *(bi.allies) : 0;
@@ -571,7 +616,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             ent->allegiance = gymGetAllegiance(p, selfPlayer, alliesBits);
             ent->direction = (float)tankGetAngle(tk) / 256.0f;
             ent->speed = (float)tankGetSpeed(tk) / 128.0f;
-            ent->strength = tankDead ? 0.0f : (float)armour / 40.0f;
+            ent->strength = tankDead ? 0.0f : (float)armour / (float)gs->rules.tank_full_armour;
             ent->flags = 0;
             if (tankIsOnBoat(tk)) ent->flags |= WBGYM_FLAG_IN_BOAT;
             if (p == selfPlayer) ent->flags |= WBGYM_FLAG_IS_SELF;
@@ -660,7 +705,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
                         : gymGetAllegiance(powner, selfPlayer, alliesBits);
         ent->direction = 0.0f;
         ent->speed = 0.0f;
-        ent->strength = (float)parmour / 15.0f;
+        ent->strength = (float)parmour / (float)gs->rules.pill_max_armour;
         ent->flags = 0;
         if (pinTank) ent->flags |= WBGYM_FLAG_IN_TANK;
         ent->id = pi - 1; /* 0-based index */
@@ -685,7 +730,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         {
             BYTE shellsAmt, minesAmt, armourAmt;
             serverSimGetBaseStats(g->serverSim, bsi, &shellsAmt, &minesAmt, &armourAmt);
-            ent->strength = (float)armourAmt / 90.0f;
+            ent->strength = (float)armourAmt / (float)gs->rules.base_full_armour;
         }
         ent->flags = 0;
         ent->id = bsi - 1; /* 0-based index */
@@ -698,14 +743,14 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         unsigned armor = dead ? 0 : (unsigned)bi.armour;
         float dir_rad = (float)bi.direction * (2.0f * 3.14159265f / 256.0f);
 
-        obs->scalar[0]  = (float)armor / 40.0f;
-        obs->scalar[1]  = (float)bi.shells / 40.0f;
-        obs->scalar[2]  = (float)bi.mines / 40.0f;
-        obs->scalar[3]  = (float)bi.trees / 40.0f;
+        obs->scalar[0]  = (float)armor / (float)gs->rules.tank_full_armour;
+        obs->scalar[1]  = (float)bi.shells / (float)gs->rules.tank_full_shells;
+        obs->scalar[2]  = (float)bi.mines / (float)gs->rules.tank_full_mines;
+        obs->scalar[3]  = (float)bi.trees / (float)gs->rules.tank_full_trees;
         obs->scalar[4]  = (float)bi.speed / 128.0f;
         obs->scalar[5]  = sinf(dir_rad);
         obs->scalar[6]  = cosf(dir_rad);
-        obs->scalar[7]  = (float)bi.reload / 15.0f;
+        obs->scalar[7]  = (float)bi.reload / (float)gs->rules.tank_reload_ticks;
         obs->scalar[8]  = bi.inboat ? 1.0f : 0.0f;
         obs->scalar[9]  = bi.carriedpills > 0 ? 1.0f : 0.0f;
         obs->scalar[10] = (float)bi.carriedpills / 16.0f;
@@ -770,7 +815,8 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         obs->scalar[24] = (float)bi.manobstructed / 2.0f;
 
         /* death_wait */
-        obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) / 255.0f;
+        obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) /
+                          (float)gs->rules.tank_death_ticks;
     }
 
     /* ---- LGM state ---- */

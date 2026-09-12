@@ -74,11 +74,6 @@
 #include "../common/mp_diag_log.h"
 #include "frontend.h"
 
-/* Must match the value used inside shellsAddItem (shells.c redefines
- * SHELL_START_ADD from 6 to 5 locally). */
-#undef SHELL_START_ADD
-#define SHELL_START_ADD 5
-
 /* Forward declarations */
 static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURNTYPE angle, tank *tk, uint32_t fireTick);
 
@@ -230,6 +225,9 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
   cs->pendingAllianceRequestFrom = 0xFF;
+  /* The classic gameplay numbers. A zeroed table would make every rule 0, so
+   * this runs before anything can read one. */
+  simRulesClassic(&cs->sim.rules);
   /* No view state reported yet — the first display tick of the session sends
    * one. The memset above would otherwise read as "tank view already sent". */
   cs->lastSentViewKind = 0xFF;
@@ -319,7 +317,7 @@ bool clientSimCreate(ClientSim *cs) {
     for (i = 0; i < MAX_TANKS; i++) {
       cs->sim.baseTimer[i] = BASE_TIMER_OFF;
     }
-    cs->sim.baseTimer[cs->myPlayerNum] = BASE_TICKS_BETWEEN_REFUEL;
+    cs->sim.baseTimer[cs->myPlayerNum] = cs->sim.rules.base_regen_ticks;
   }
   pillsCreate(&cs->sim.pb);
   screenBrainMapCreate(cs);
@@ -406,7 +404,7 @@ void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
         lgmSetPlayerNum(&cs->sim.lgmen[playerNum], playerNum);
     }
     if (playerNum != 0) {
-        cs->sim.baseTimer[playerNum] = BASE_TICKS_BETWEEN_REFUEL;
+        cs->sim.baseTimer[playerNum] = cs->sim.rules.base_regen_ticks;
     }
 }
 
@@ -628,7 +626,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
     clientSimAddPredictedShellAt(cs, preX, preY, preAngle, &MY_TANK(cs), pkt->tick);
     /* Update predicted tank state to match what the server will do */
     tankSetReload(&MY_TANK(cs), tankReloadTicks(&cs->sim, MY_TANK(cs)));
-    tankSetShells(&MY_TANK(cs), tankGetShells(&MY_TANK(cs)) - 1);
+    tankSetShells(&cs->sim, &MY_TANK(cs), tankGetShells(&MY_TANK(cs)) - 1);
   }
 
   /* Advance existing predicted shells */
@@ -1102,7 +1100,7 @@ static void overviewMapTick(ClientSim *cs) {
    * by the update after it. Reporting a full wait across that gap holds the
    * block, where a wait of 0 would close it and reopen it a tick later. */
   if (inSlot == TRUE && deathWait <= 0) {
-    deathWait = TANK_DEATH_WAIT;
+    deathWait = cs->sim.rules.tank_death_ticks;
   }
 
   /* A map install armed this: stamp the whole map dimmed before the live
@@ -1169,9 +1167,9 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
   sightLen = tankGetGunsightLength(tk);
 
   /* Replicate shellsAddItem's offset calculation */
-  utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
-  wx = (WORLD)(wx + SHELL_START_ADD * xAdd);
-  wy = (WORLD)(wy + SHELL_START_ADD * yAdd);
+  utilCalcDistance(&xAdd, &yAdd, angle, cs->sim.rules.shell_speed);
+  wx = (WORLD)(wx + cs->sim.rules.shell_start_add * xAdd);
+  wy = (WORLD)(wy + cs->sim.rules.shell_start_add * yAdd);
 
   ps = &cs->predictedShells[cs->predictedShellCount];
   ps->x = wx;
@@ -1180,12 +1178,13 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
   ps->fy = (float)(int)wy;
   {
     int32_t xStepHP, yStepHP;
-    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, SHELL_SPEED);
+    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, cs->sim.rules.shell_speed);
     ps->vx = (float)xStepHP / 256.0f;
     ps->vy = (float)yStepHP / 256.0f;
   }
   ps->angle = angle;
-  ps->length = (uint8_t)(1 + (SHELL_LIFE * (sightLen / 2)) - SHELL_START_ADD);
+  ps->length = (uint8_t) shellLifeTicks(sightLen / 2, cs->sim.rules.shell_life,
+                                        cs->sim.rules.shell_start_add);
   ps->owner = gameSimGetTankPlayer(&cs->sim, tk);
   ps->onBoat = tankIsOnBoat(tk);
   ps->fireTick = fireTick;
@@ -1271,7 +1270,7 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
  *  removes any that have expired.
  *
  *  A shell that lands on an enemy base also arms base-death
- *  prediction when the hit would drop it to MIN_ARMOUR_CAPTURE:
+ *  prediction when the hit would drop it to base_capture_armour:
  *  see tankBasePredictedDrivable. This is what stops a tank
  *  driving into a base it is killing from fighting its own
  *  prediction for a round trip.
@@ -1313,8 +1312,9 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
          * clientBaseArmourArrived arms the stamp from this tick once that
          * hit's armour lands. */
         cs->sim.basePredictedHitTick[hitBaseIdx] = cs->sim.replayTick;
-        if (armour > MIN_ARMOUR_CAPTURE &&
-            armour - DAMAGE <= MIN_ARMOUR_CAPTURE) {
+        if (armour > cs->sim.rules.base_capture_armour &&
+            armour - cs->sim.rules.shell_damage <=
+                cs->sim.rules.base_capture_armour) {
           cs->sim.basePredictedDeadTick[hitBaseIdx] = cs->sim.replayTick;
         }
       }
@@ -1353,16 +1353,18 @@ int clientShellProjectAgeTicks(uint16_t pingMs) {
  *NAME:          clientShellProject
  *PURPOSE:
  *  Pure dead-reckoning of a snapshot shell: derives the
- *  per-game-tick velocity from angle+SHELL_SPEED (same basis
+ *  per-game-tick velocity from angle+shellSpeed (same basis
  *  as predicted shells) and returns the anchored float
- *  position snap + velocity*ageTicks. No ClientSim needed.
+ *  position snap + velocity*ageTicks. No ClientSim needed —
+ *  the caller hands in the speed off its own rules.
  *********************************************************/
 void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
-                        int ageTicks, float *outFx, float *outFy,
+                        int ageTicks, int shellSpeed,
+                        float *outFx, float *outFy,
                         float *outVx, float *outVy) {
   int32_t xStepHP, yStepHP;
   float vx, vy;
-  utilCalcDistanceHP(&xStepHP, &yStepHP, (TURNTYPE)angle, SHELL_SPEED);
+  utilCalcDistanceHP(&xStepHP, &yStepHP, (TURNTYPE)angle, shellSpeed);
   vx = (float)xStepHP / 256.0f;
   vy = (float)yStepHP / 256.0f;
   *outVx = vx;
@@ -1372,11 +1374,12 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
 }
 
 /* Cross-snapshot match tolerance for projected shells, in world units.
- * A shell travels SHELL_SPEED units per tick, so this is a few ticks of
+ * A shell travels shell_speed units per tick, so this is a few ticks of
  * travel: within it an incoming shell is taken to be the same shell as one
  * we were already carrying (re-anchored, keeping its smooth accumulator);
- * beyond it the old shell is dropped and the new one anchored fresh. */
-#define PROJECTION_MATCH_DIST (4 * SHELL_SPEED)
+ * beyond it the old shell is dropped and the new one anchored fresh. It
+ * follows the rule because the travel it is measuring does. */
+#define PROJECTION_MATCH_TICKS 4
 
 /*********************************************************
  *NAME:          clientSimRebuildProjectedShells
@@ -1385,7 +1388,7 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
  *  serverShellSnaps (already own-filtered for humans),
  *  anchoring each to snap + velocity*age. Incoming shells
  *  that match one carried from the previous snapshot (same
- *  owner, nearest position within PROJECTION_MATCH_DIST)
+ *  owner, nearest position within the match distance)
  *  keep that shell's float accumulator so frame-to-frame
  *  age-estimate jitter doesn't twitch the rendered position;
  *  unmatched incoming shells anchor fresh; carried shells
@@ -1400,6 +1403,7 @@ void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
   bool usedPrev[MAX_SNAPSHOT_SHELLS];
   int nextCount = 0;
   int ageTicks = clientShellProjectAgeTicks(pingMs);
+  int matchDist = PROJECTION_MATCH_TICKS * cs->sim.rules.shell_speed;
   int i, j;
 
   for (j = 0; j < cs->projectedShellCount; j++) {
@@ -1411,9 +1415,10 @@ void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
     ProjectedShell *ns = &next[nextCount];
     float fx, fy, vx, vy;
     int best = -1;
-    float bestDistSq = (float)PROJECTION_MATCH_DIST * (float)PROJECTION_MATCH_DIST;
+    float bestDistSq = (float)matchDist * (float)matchDist;
 
-    clientShellProject(s->worldX, s->worldY, s->angle, ageTicks, &fx, &fy, &vx, &vy);
+    clientShellProject(s->worldX, s->worldY, s->angle, ageTicks,
+                       cs->sim.rules.shell_speed, &fx, &fy, &vx, &vy);
 
     for (j = 0; j < cs->projectedShellCount; j++) {
       const ProjectedShell *prev = &cs->projectedShells[j];
@@ -1771,7 +1776,7 @@ void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide) {
 }
 
 void clientSimSetGunsight(ClientSim *cs, bool shown) {
-  tankSetGunsight(&MY_TANK(cs), shown);
+  tankSetGunsight(&cs->sim, &MY_TANK(cs), shown);
 }
 
 BYTE clientSimGetTank256Dir(ClientSim *cs) {
@@ -2494,6 +2499,8 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
                             (BYTE *)buf, len)) {
     return false;
   }
+  /* The map is this sim's now: cap what it brought against the rules. */
+  mapClampToRules(gs);
 
   /* First map load (initViewport): clientSimCreate deliberately skips
    * viewport init (see comment above on clientSimCreate); the map install
@@ -3276,7 +3283,7 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
 bool clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
   if (!cs || MY_TANK(cs) == NULL) return false;
   BYTE px, py;
-  tankGetGunsight(&MY_TANK(cs), mapX, mapY, &px, &py);
+  tankGetGunsight(&cs->sim, &MY_TANK(cs), mapX, mapY, &px, &py);
   return true;
 }
 
@@ -3290,7 +3297,7 @@ bool clientSimGetGunsightPos(ClientSim *cs, BYTE *mapX, BYTE *mapY,
    * the smoothed pose, so the two agree there; a caller that draws the tank
    * straight from screenTanksPrepare has no such fixup, and smoothing only the
    * crosshair would put it out of step with the tank sprite beside it. */
-  tankGetGunsight(&MY_TANK(cs), mapX, mapY, pixelX, pixelY);
+  tankGetGunsight(&cs->sim, &MY_TANK(cs), mapX, mapY, pixelX, pixelY);
   return true;
 }
 
@@ -3935,6 +3942,32 @@ BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {
 /* Local tank stat accessors. */
 void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
   tankGetStats(&MY_TANK(cs), shellsAmount, minesAmount, armourAmount, treesAmount);
+}
+
+void clientSimGetTankFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
+  if (shellsAmount != NULL) *shellsAmount = (BYTE) cs->sim.rules.tank_full_shells;
+  if (minesAmount  != NULL) *minesAmount  = (BYTE) cs->sim.rules.tank_full_mines;
+  if (armourAmount != NULL) *armourAmount = (BYTE) cs->sim.rules.tank_full_armour;
+  if (treesAmount  != NULL) *treesAmount  = (BYTE) cs->sim.rules.tank_full_trees;
+}
+
+void clientSimGetBaseFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount) {
+  if (shellsAmount != NULL) *shellsAmount = (BYTE) cs->sim.rules.base_full_shells;
+  if (minesAmount  != NULL) *minesAmount  = (BYTE) cs->sim.rules.base_full_mines;
+  if (armourAmount != NULL) *armourAmount = (BYTE) cs->sim.rules.base_full_armour;
+}
+
+/* No sim is not a classic sim: a caller with nothing to read cannot be told
+   the numbers it would have read are the right ones. */
+bool clientSimRulesAreClassic(ClientSim *cs) {
+  return cs != NULL && simRulesAreClassic(&cs->sim.rules);
+}
+
+int clientSimRulesFirstDifference(ClientSim *cs) {
+  if (cs == NULL) {
+    return 0;
+  }
+  return simRulesFirstDifference(&cs->sim.rules);
 }
 
 void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {

@@ -180,7 +180,7 @@ typedef struct {
     WORLD y;
     float fx;            /* float position accumulator — authoritative position */
     float fy;
-    float vx;            /* float velocity per tick (SHELL_SPEED * cos/sin) */
+    float vx;            /* float velocity per tick (shell_speed * cos/sin) */
     float vy;
     TURNTYPE angle;
     uint8_t length;
@@ -199,7 +199,7 @@ typedef struct {
 typedef struct {
     float fx;            /* float position accumulator (world units) */
     float fy;
-    float vx;            /* per-game-tick velocity (SHELL_SPEED * cos/sin) */
+    float vx;            /* per-game-tick velocity (shell_speed * cos/sin) */
     float vy;
     uint8_t angle;       /* snapshot angle (bradians 0-255), for render frame */
     uint8_t owner;
@@ -338,11 +338,13 @@ void clientSimReconcilePredictedShells(ClientSim *cs, uint32_t lastProcessedInpu
  * (20ms each), the unit the projection velocity steps in. Pure helper. */
 int  clientShellProjectAgeTicks(uint16_t pingMs);
 
-/* Pure projection: derive the per-tick velocity from angle+SHELL_SPEED and the
- * anchored float position snap + velocity*ageTicks. Unit-testable without a
- * ClientSim. */
+/* Pure projection: derive the per-tick velocity from angle+shellSpeed and the
+ * anchored float position snap + velocity*ageTicks. Takes the speed rather
+ * than reading a constant, so it stays unit-testable without a ClientSim
+ * while still following the sim's shell_speed. */
 void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
-                        int ageTicks, float *outFx, float *outFy,
+                        int ageTicks, int shellSpeed,
+                        float *outFx, float *outFy,
                         float *outVx, float *outVy);
 
 /* (Re)build the projected-shell array from the current serverShellSnaps,
@@ -1368,6 +1370,30 @@ bool         clientSimGetStart(ClientSim *cs, BYTE i,
 
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+/* What a full tank holds on this sim: the four caps the stats above are
+   drawn against. A scenario can change any of them, so a bar that divides
+   by a literal 40 draws the wrong length the moment one does. This is the
+   frontend's only route to the rules — src/gui/ cannot see the sim. */
+void         clientSimGetTankFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+
+/* Whether this sim is running the classic game's numbers, every rule of
+   them, and which rule is the first that is not.
+   clientSimRulesFirstDifference answers with the index the scenario surface
+   names a rule by, or -1 when the whole table is classic.
+
+   Asked by code whose own numbers describe the classic game and which has
+   nothing sensible to do on a sim running anything else — the observation
+   writers, whose normalisation is a fixed scale a model was trained
+   against. This is their only route to the question: the table itself is
+   internal, and a caller outside src/bolo/ can reach the brain's view of it,
+   which carries part of the table and would call a sim classic on the
+   strength of the part it can see. */
+bool         clientSimRulesAreClassic(ClientSim *cs);
+int          clientSimRulesFirstDifference(ClientSim *cs);
+/* What a full base holds on this sim: the three caps the base status bars
+   are drawn against, reached the same way and for the same reason as the
+   tank's caps above. */
+void         clientSimGetBaseFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
 
 /*********************************************************

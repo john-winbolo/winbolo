@@ -198,7 +198,8 @@
 
 /* 3x - 80y - 9 Between Items From bottom of icons to top 13 8 from left */  
 
-#define BAR_TANK_MULTIPLY 2 /* Times item amounts by 2 for 80 pixel high bars */
+/* The tank bars are drawn by src/gui/sdl3/sdl3draw_status.c against the caps
+   the viewer passes it, so the multiplier that used to live here is gone. */
 #define STATUS_TANK_BARS_TOP 105
 #define STATUS_TANK_BARS_HEIGHT 135
 #define STATUS_TANK_BARS_WIDTH 3
@@ -208,7 +209,6 @@
 #define STATUS_TANK_ARMOUR (STATUS_TANK_SHELLS + 2 * (STATUS_TANK_BARS_WIDTH + STATUS_TANK_BARS_GAP))
 #define STATUS_TANK_TREES (STATUS_TANK_SHELLS + 3 * (STATUS_TANK_BARS_WIDTH + STATUS_TANK_BARS_GAP))
 
-#define BAR_BASE_MULTIPLY (2.0/3.0) /* Times item amounts by 2/3 for 54 pixel wide bars */
 #define STATUS_BASE_BARS_TOP 230
 #define STATUS_BASE_BARS_HEIGHT 3
 #define STATUS_BASE_BARS_LEFT 350

@@ -103,18 +103,18 @@ static void shellsDebugHitLogAdd(int wx, int wy, uint32_t tick, uint8_t owner) {
     if (g_shell_hit_log_count < SHELL_HIT_LOG_SIZE) g_shell_hit_log_count++;
 }
 
-#undef SHELL_START_ADD
-#define SHELL_START_ADD 5
-
 /* ── Pure shell-physics primitives ────────────────────────────────
  * These are the single source of truth for shell motion. Both the
  * live engine (shellsUpdate, shellsAddItem) and the brain's
  * stateless trajectory simulator call into these so the trajectory
- * math can't drift between them. */
+ * math can't drift between them. Each takes the shell numbers it
+ * needs: the engine reads them off sim->rules, the brain off the
+ * pathfinder the bot manager pushed to. */
 
-void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd) {
-  *x = (WORLD)((int)*x + (SHELL_START_ADD) * xAdd);
-  *y = (WORLD)((int)*y + (SHELL_START_ADD) * yAdd);
+void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd,
+                           int startAdd) {
+  *x = (WORLD)((int)*x + startAdd * xAdd);
+  *y = (WORLD)((int)*y + startAdd * yAdd);
 }
 
 void shellAdvance1Tick(WORLD *x, WORLD *y,
@@ -130,8 +130,8 @@ void shellAdvance1Tick(WORLD *x, WORLD *y,
   *y = (WORLD)((int)*y + yMove);
 }
 
-int shellLifeTicks(float len) {
-  int t = 1 + (int)(SHELL_LIFE * len) - SHELL_START_ADD;
+int shellLifeTicks(float len, int shellLife, int startAdd) {
+  int t = 1 + (int)(shellLife * len) - startAdd;
   return t < 0 ? 0 : t;
 }
 
@@ -153,12 +153,13 @@ TURNTYPE shellAngleFromTarget(WORLD ox, WORLD oy, WORLD tx, WORLD ty) {
 }
 
 void shellSpawnPos(WORLD tank_x, WORLD tank_y, TURNTYPE angle,
+                   int shellSpeed, int startAdd,
                    WORLD *out_x, WORLD *out_y) {
   int xAdd, yAdd;
-  utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
+  utilCalcDistance(&xAdd, &yAdd, angle, shellSpeed);
   *out_x = tank_x;
   *out_y = tank_y;
-  shellApplyStartOffset(out_x, out_y, xAdd, yAdd);
+  shellApplyStartOffset(out_x, out_y, xAdd, yAdd, startAdd);
 }
 
 
@@ -225,8 +226,8 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   BYTE soundMX = (BYTE)(x >> TANK_SHIFT_MAPSIZE);  /* Tank position before shell offset */
   BYTE soundMY = (BYTE)(y >> TANK_SHIFT_MAPSIZE);
 
-  utilCalcDistance(&xAdd, &yAdd, angle, SHELL_SPEED);
-  shellApplyStartOffset(&x, &y, xAdd, yAdd);
+  utilCalcDistance(&xAdd, &yAdd, angle, sim->rules.shell_speed);
+  shellApplyStartOffset(&x, &y, xAdd, yAdd, sim->rules.shell_start_add);
 /*
   if (xAdd >= 0) {
     x += 22;
@@ -243,7 +244,8 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->x = x;
   q->y = y;
   q->angle = angle;
-  q->length = (BYTE) shellLifeTicks(len);
+  q->length = (BYTE) shellLifeTicks(len, sim->rules.shell_life,
+                                    sim->rules.shell_start_add);
   q->onBoat = onBoat;
   q->creator = sim->viewPlayer;
   q->owner = owner;
@@ -251,7 +253,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->packSent = FALSE;
   q->shellDead = FALSE;
   q->compensationTicks = sim->lagCompTicks;
-  utilCalcDistanceHP(&q->xStep, &q->yStep, angle, SHELL_SPEED);
+  utilCalcDistanceHP(&q->xStep, &q->yStep, angle, sim->rules.shell_speed);
   q->xAcc = 0;
   q->yAcc = 0;
 
@@ -364,7 +366,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				 * at the true position. Reached once per shell (collision path);
 				 * NULL on the client, which is not authoritative over shell death. */
 				if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, newX, newY, shellOutcome);
-				minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+				minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
 					/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
@@ -448,7 +450,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			 * Reached once per shell (expiry path); same owner-closure as the
 			 * collision branch but with the shell's own end-of-life position. */
 			if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, position->x, position->y, SHELL_OUTCOME_EXPIRED);
-			minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+			minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {
 				/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
@@ -797,7 +799,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 			switch (terrain)
 			{
 				case BUILDING:
-					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(&sim->blds, mapX, mapY)), FALSE, FALSE);
+					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY)), FALSE, FALSE);
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case FOREST:
@@ -809,7 +811,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotTreeNear, mapX, mapY);
 					break;
 				case HALFBUILDING:
-					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(&sim->blds, mapX, mapY)), FALSE, FALSE);
+					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY)), FALSE, FALSE);
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case BOAT:
@@ -820,7 +822,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, GRASS+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
-						newTerrain = grassAddItem(&sim->grs, mapX, mapY);
+						newTerrain = grassAddItem(sim, &sim->grs, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
 							floodAddItem(&sim->ff, mapX, mapY);
@@ -831,7 +833,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, SWAMP+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
-						newTerrain = swampAddItem(&sim->swp, mapX, mapY);
+						newTerrain = swampAddItem(sim, &sim->swp, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
 							floodAddItem(&sim->ff, mapX, mapY);
@@ -842,7 +844,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, RUBBLE+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
-						newTerrain = rubbleAddItem(&sim->rbl, mapX, mapY);
+						newTerrain = rubbleAddItem(sim, &sim->rbl, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
 							floodAddItem(&sim->ff, mapX, mapY);
@@ -985,167 +987,6 @@ BYTE shellsNetMake(shells *value, BYTE *buff, BYTE noPlayerNum, bool sentState) 
     q = ShellsTail(q);
   }
   return returnValue;
-}
-
-/*********************************************************
-*NAME:          shellsNetExtract
-*AUTHOR:        John Morrison
-*CREATION DATE:  6/3/99
-*LAST MODIFIED: 23/9/00
-*PURPOSE:
-* Network shells data have arrived. Add them to our 
-* shells structure here.
-*  
-*ARGUMENTS:
-*  value    - Pointer to shells structure
-*  pb       - Pointer to the pillboxes structure
-*  buff     - Pointer to a buffer to hold the shells 
-*             net data
-*  dataLen  - Length of the data
-*  isServer - TRUE if we are the game server.
-*********************************************************/
-void shellsNetExtract(GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BYTE dataLen, bool isServer, tank *tanks) {
-  BYTE pos;   /* Position through the data we are */
-  BYTE *pnt;  /* Pointer to offset in the buffer */
-  shells q;   /* Temp pointer to hold additions to the shells structure */
-  WORLD conv; /* Used in the conversion */
-  BYTE mx;    /* Map X position */
-  BYTE my;    /* Map Y position */
-  BYTE self;  /* Player Number */
-  WORLD wx;   /* An Item */
-  WORLD wy;
-  WORLD twx, twy;
-  TURNTYPE tt;
-  BYTE length;
-  BYTE owner;
-  bool onBoat;
-  BYTE creator;
-  bool shouldAdd;
-  BYTE amount;
-  tank *tnk;
-  double dummy;
-  int xAdd;
-  int yAdd;
-
-  self = sim->viewPlayer;
-  pos = 0;
-  pnt = buff;
-  q = NULL;
-
-  while (pos < dataLen) {
-    shouldAdd = FALSE;
-    /* Get each Data item out */
-    memcpy(&wx, pnt, sizeof(WORLD)); /* X */
-    pnt += sizeof(WORLD);
-    pos += sizeof(WORLD);
-    memcpy(&wy, pnt, sizeof(WORLD)); /* Y */
-    pnt += sizeof(WORLD);
-    pos += sizeof(WORLD);
-    memcpy(&tt, pnt, sizeof(TURNTYPE)); /* Angle */
-    pnt += sizeof(TURNTYPE);
-    pos += sizeof(TURNTYPE);
-    length = *pnt; /* Length */ 
-    pnt++;
-    pos++;
-    owner = *pnt; /* Owner */ 
-    pnt++;
-    pos++;
-    onBoat = *pnt; /* On boat */
-    pnt++;
-    pos++;
-    creator = *pnt; /* Who or what created it */
-    pnt++;
-    pos++;
-
-    /* Check to see if we should add to it */
-    if (isServer == TRUE) {
-      if (owner != NEUTRAL) {
-        tnk = (tanks != NULL) ? &tanks[creator] : NULL;
-        tankGetWorld(tnk, &twx, &twy);
-        amount = tankGetShells(tnk);
-        if (amount > 0) {
-          if (utilIsItemInRange(twx, twy, wx, wy, 512, &dummy) == TRUE) {
-            amount--;
-            tankSetShells(tnk, amount);
-            shouldAdd = TRUE;
-          }
-        }
-      } else {
-        /* Fired from a pill - Check locality */
-        utilCalcDistance(&xAdd, &yAdd, tt, SHELL_SPEED);
-        xAdd *=2;
-        yAdd *=2;
-		// Becuase the pillbox fires from the 'center' of the pill, this doesn't translate perfectly back to the pillbox on the east and south side
-		// so we have to add 1 world coordinate to the distance check, so that it properly determines that the pillbox did indeed fire the shells.
-		// Ultimately this should be fixed by making winbolo fire a pillbox from the turrets of the pillbox, instead of from the 'center' so this is just a 
-		// hack to get the code functioning correctly again. This problem was revealed becuase the new rounding code makes the bullets move 1 world coordinate
-		// more and this moved it just enough that this check no longer works properly.
-		if (xAdd == 64){
-			xAdd++;
-		}
-		if (yAdd == 64){
-			yAdd++;
-		}
-		/* If a pill exists at the location of ??? and a dead pill does not exist at that same location */
-        if ((pillsExistPos(pb, (BYTE) ((WORLD) (wx-xAdd) >> M_W_SHIFT_SIZE), (BYTE) ((WORLD) (wy-yAdd) >> M_W_SHIFT_SIZE)) == TRUE)
-			&& (pillsDeadPos(pb, (BYTE) ((WORLD) (wx-xAdd) >> M_W_SHIFT_SIZE), (BYTE) ((WORLD) (wy-yAdd) >> M_W_SHIFT_SIZE)) == FALSE)) {
-          shouldAdd = TRUE;
-        }
-      }
-    } else if (creator != self) {
-      shouldAdd = TRUE;
-    }
-
-    if (length > 68 && owner == NEUTRAL) { /* Added length check to stop cheating */
-      shouldAdd = FALSE;
-    } else if (length > 52 && owner != NEUTRAL) {
-		/* FIXME: Check shells fired from a tank are near the tank that fired them, they have sufficent shells etc */
-      /* Tank max length */
-      shouldAdd = FALSE;
-    }
-
-
-    /* Add it if required */
-    if (shouldAdd == TRUE) {
-      New(q);
-      if (isServer == TRUE) {
-        q->packSent = FALSE;
-      } else {
-        q->packSent = TRUE;
-      }
-      q->x = wx;
-      q->y = wy;
-      q->angle = tt;
-      q->shellDead = FALSE;
-      q->compensationTicks = 0;
-      q->length = length;
-      q->owner = owner;
-      q->onBoat = onBoat;
-      q->creator = creator;
-      q->fireTick = 0;  /* network-extracted shell — no local fire tick */
-      utilCalcDistanceHP(&q->xStep, &q->yStep, tt, SHELL_SPEED);
-      q->xAcc = 0;
-      q->yAcc = 0;
-      /* Add it to the structure */
-      q->next = *value;
-      q->prev = NULL;
-      if (NonEmpty(*value)) {
-        (*value)->prev = q;
-      }
-      *value = q;
-    }
-  }
-  
-  /* Play the last sound event if exist */
-  if (q != NULL) {
-    conv = q->x;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    mx = (BYTE) conv;
-    conv = q->y;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    my = (BYTE) conv;
-    sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, mx, my);
-  }
 }
 
 /*********************************************************

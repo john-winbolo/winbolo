@@ -400,7 +400,7 @@ BYTE tankGetArmour(tank *value);
 *  Returns whether the tank has been destroyed.
 *
 *  Ask this rather than comparing armour against
-*  TANK_FULL_ARMOUR: a live tank can sit at zero armour,
+*  tank_full_armour: a live tank can sit at zero armour,
 *  so the armour value alone cannot tell the two apart.
 *
 *ARGUMENTS:
@@ -580,13 +580,14 @@ bool tankIsGunsightShow(tank *value);
 *  gunsight.
 *
 *ARGUMENTS:
+*  sim    - The game whose shell rules the flight comes from
 *  value  - Pointer to the tank structure
 *  xMap   - Pointer to hold Map X Co-ord
 *  yMap   - Pointer to hold Map X Co-ord
 *  xPixel - Pointer to hold X Pixel
 *  yPixel - Pointer to hold Y Pixel
 *********************************************************/
-void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel);
+void tankGetGunsight(struct GameSim *sim, tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel);
 
 /*********************************************************
 *NAME:          tankGetGunsightAt
@@ -596,6 +597,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *  tank's own. RENDER ONLY (render-error smoothing).
 *
 *ARGUMENTS:
+*  sim    - The game whose shell rules the flight comes from
 *  value  - Pointer to the tank structure
 *  posX   - World X to compute the crosshair from
 *  posY   - World Y to compute the crosshair from
@@ -605,7 +607,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
 *  xPixel - Pointer to hold X Pixel
 *  yPixel - Pointer to hold Y Pixel
 *********************************************************/
-void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
+void tankGetGunsightAt(struct GameSim *sim, tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
                        BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel);
 
 /*********************************************************
@@ -643,10 +645,11 @@ void tankGunsightDecrease(struct ClientSim *cs, struct GameSim *sim, tank *value
 *  Sets the gunsight on or off
 *
 *ARGUMENTS:
+*  sim    - The game whose gunsight range the reset uses
 *  value  - Pointer to the tank structure
 *  shown  - if TRUE then gunsight shown
 *********************************************************/
-void tankSetGunsight(tank *value, bool shown);
+void tankSetGunsight(struct GameSim *sim, tank *value, bool shown);
 
 /*********************************************************
 *NAME:          tankGetWorld
@@ -1437,10 +1440,11 @@ BYTE tankGetTrees(tank *value);
 *  Sets the number of shells in tank
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  value  - Pointer to the tank structure
 *  amount - The amount to set to
 *********************************************************/
-void tankSetShells(tank *value, BYTE amount);
+void tankSetShells(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
 *NAME:          tankSetArmour
@@ -1465,10 +1469,11 @@ void tankSetArmour(tank *value, BYTE amount);
 *  Sets the number of mines in tank
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  value  - Pointer to the tank structure
 *  amount - The amount to set to
 *********************************************************/
-void tankSetMines(tank *value, BYTE amount);
+void tankSetMines(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
 *NAME:          tankSetTrees
@@ -1479,10 +1484,11 @@ void tankSetMines(tank *value, BYTE amount);
 *  Sets the number of trees in tank
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  value  - Pointer to the tank structure
 *  amount - The amount to set to
 *********************************************************/
-void tankSetTrees(tank *value, BYTE amount);
+void tankSetTrees(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
 *NAME:          tankSetModifiers
@@ -1548,13 +1554,15 @@ BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim,
 *NAME:          tankBoatExitSpeed
 *PURPOSE:
 *  The speed at which this tank leaves a boat onto soft
-*  ground, scaled by its speed modifier. A tank capped below
-*  the classic figure could never reach it otherwise.
+*  ground: the boat speed cap scaled by the tank's speed
+*  modifier. A tank capped below the cap could never reach
+*  it otherwise.
 *
 *ARGUMENTS:
+*  sim   - The game the tank belongs to
 *  value - The tank structure
 *********************************************************/
-BYTE tankBoatExitSpeed(tank value);
+BYTE tankBoatExitSpeed(struct GameSim *sim, tank value);
 
 void tankGetCarriedPillNum(tank *value, BYTE pillNum);
 
@@ -1664,8 +1672,8 @@ int tankGetLastTankDeath(tank *value);
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
 *********************************************************/
-int tankGetDeathWait(tank *value);
-void tankSetDeathWait(tank *value, int wait);
+uint16_t tankGetDeathWait(tank *value);
+void tankSetDeathWait(tank *value, uint16_t wait);
 
 void tankResetHitCount(tank *value);
 void tankAddHit(tank *value, int amount);

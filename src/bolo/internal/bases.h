@@ -37,9 +37,6 @@
 struct GameSim;
 struct ClientSim;
 
-/* The time between base get new units of armour/shells/mines */
-#define BASE_ADD_TIME  1670 /* Old time was 3340 in 1.09 */
-
 /* Defines how much the bases can hold */
 #define BASE_FULL_ARMOUR 90
 #define BASE_FULL_SHELLS 90
@@ -57,8 +54,6 @@ struct ClientSim;
  * arbitrary large number the original code used, now named so the "is this
  * slot armed?" test reads as one. */
 #define BASE_TIMER_OFF 30000
-/* A base is dead if it has 9 armour */
-#define BASE_DEAD 9
 
 /* Base will soak shots until it has this much armor */
 #define BASE_MIN_CAN_HIT 4
@@ -90,7 +85,8 @@ struct ClientSim;
 
 /* Range within which a player is sent an enemy base's true armour instead of
    BASE_FULL_ARMOUR. Their client needs it to work out for itself when its own
-   shell drops the base to MIN_ARMOUR_CAPTURE and the square becomes drivable;
+   shell drops the base to the capture threshold and the square becomes
+   drivable;
    without it the square stays solid on the client until the death event lands
    a round trip later, and a tank driving in fights its own prediction the
    whole way. Wide enough to cover shell flight plus a round trip at road
@@ -174,6 +170,12 @@ BYTE basesGetNumBases(bases *value);
 *LAST MODIFIED: 28/10/98
 *PURPOSE:
 *  Sets a specific base with its item data
+*
+*  Clamps the owner, which is a property of the file, but
+*  not the stocks, which are a property of the sim and are
+*  capped by mapClampToRules once one owns the records.
+*  pillsSetPill beside it does clamp, because the scenario
+*  arms that write a pill's armour and speed go through it.
 *
 *ARGUMENTS:
 *  value   - Pointer to the bases structure
@@ -670,7 +672,7 @@ bool basesCantDrive(struct GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy);
 *  player, rather than the BASE_FULL_ARMOUR stand-in the
 *  per-recipient cull substitutes for a live enemy base.
 *  True for a neutral/own/allied base, for one already at or
-*  below MIN_ARMOUR_CAPTURE (the capturable flip is public),
+*  below the capture threshold (the capturable flip is public),
 *  and for an enemy base within BASE_PREDICT_REVEAL_RANGE of
 *  the player's tank, which is what lets their client predict
 *  the square becoming drivable.
@@ -743,21 +745,6 @@ BYTE basesGetNumActive(bases *value);
 /*********************************************************
 *NAME:          basesSetBaseNetData
 *AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 27/2/99
-*PURPOSE:
-* Sets the base data to buff.
-*
-*ARGUMENTS:
-*  value - Pointer to the bases structure
-*  buff  - Buffer of data to set base structure to
-*  len   - Length of the data
-*********************************************************/
-void basesSetBaseNetData(bases *value, BYTE *buff, int len);
-
-/*********************************************************
-*NAME:          basesSetBaseNetData
-*AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99
 *LAST MODIFIED: 24/07/04
 *PURPOSE:
@@ -780,10 +767,11 @@ BYTE basesGetBaseNetData(bases *value, BYTE *buff);
 * armour from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveArmour(bases *bs, BYTE baseNum);
+void basesNetGiveArmour(struct GameSim *sim, bases *bs, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesNetGiveShells
@@ -795,10 +783,11 @@ void basesNetGiveArmour(bases *bs, BYTE baseNum);
 * shells from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveShells(bases *value, BYTE baseNum);
+void basesNetGiveShells(struct GameSim *sim, bases *value, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesNetGiveMines
@@ -810,10 +799,11 @@ void basesNetGiveShells(bases *value, BYTE baseNum);
 * mines from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveMines(bases *value, BYTE baseNum);
+void basesNetGiveMines(struct GameSim *sim, bases *value, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesSetNeutralOwner
@@ -892,11 +882,12 @@ void basesSetStock(struct GameSim *sim, BYTE baseNum, int16_t armour,
 *  location. Returns FALSE if it doesn't exist at location
 *
 *ARGUMENTS:
+*  sim    - Pointer to the game sim
 *  value  - Pointer to the bases structure
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-bool baseIsCapturable(bases *value, BYTE xValue, BYTE yValue);
+bool baseIsCapturable(struct GameSim *sim, bases *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
 *NAME:          basesGetBrainBaseItem
@@ -1023,15 +1014,20 @@ BYTE basesGetNumberOwnedByPlayer(bases *value, BYTE playerNum);
 * calculate what to return to average out half ticks
 *
 *ARGUMENTS:
+*  sim          - The game the base belongs to
 *  typeSelector - tells us what type of number to return.
 *********************************************************/
-int basesHalfTickCalulator(int typeSelector);
+int basesHalfTickCalulator(struct GameSim *sim, int typeSelector);
 
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen);
-/* Clamps every base field a map can supply to the range the rest of the
- * codebase assumes. The compressed load path memcpys structs wholesale and
- * reaches none of basesSetBase's clamps, so it must call this afterwards. */
+/* Clamps the base fields a map cannot be trusted on whatever the rules say —
+ * the count and each owner. The compressed load path memcpys structs
+ * wholesale and reaches neither this nor basesSetBase's owner clamp, so it
+ * must call this afterwards. */
 void basesValidate(bases *value);
+/* Clamps every base's stocks against the sim's gameplay caps. Called by
+ * mapClampToRules once a sim owns the records; see bolo_map.h. */
+void basesClampToRules(struct GameSim *sim, bases *value);
 
 
 #endif /* BASES_H */

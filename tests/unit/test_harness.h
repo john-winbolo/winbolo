@@ -280,6 +280,7 @@ int run_upload_cap_enforced(void);
 int run_map_field_clamps_evil(void);
 int run_map_field_clamps_passthrough(void);
 int run_map_field_clamps_angry_start(void);
+int run_map_field_clamps_no_sim(void);
 int run_map_reload_rollback(void);
 
 /* In-memory BMAP parser (test_map_read_memory.c). mapReadFromMemory
@@ -853,6 +854,28 @@ int run_replay_roundtrip_world(void);
 /* Same fixture: a base moved by basesMigrate (its owner left the game) is on
  * the same base, with the same new owner, after replay. */
 int run_replay_roundtrip_base_migrate(void);
+/* Same fixture: a pillbox's armour and square change together, so the health
+ * record has two more records behind it in the same stream. A viewer that
+ * takes the wrong number of bytes for the health record reads the ones after
+ * it off their boundaries, which shows up as a pill on the wrong square rather
+ * than as an armour that happens to match. */
+int run_replay_roundtrip_pill_health(void);
+
+/* Older recordings read by today's viewer (test_replay_version_compat.c):
+ * hand-built v2 and v1 logs carrying log_PillSetHealth in its one-byte nibble
+ * form, the shape every file before LOG_VERSION 3 holds. Each puts a
+ * placement record for the same pillbox straight behind the health one, so a
+ * reader that sized the health record by today's shape is caught by the
+ * square the pillbox ends up on rather than by its armour. The v1 case also
+ * covers the load's sizing walk, which has no framed length to fall back on. */
+int run_replay_v2_pill_health_nibble(void);
+int run_replay_v1_pill_health_nibble(void);
+
+/* The brain recorder's own version (test_brainrec_version.c): a session file
+ * written by an older build states a version this build cannot read, because
+ * the frames are raw snapshot structs and the structs changed size. The check
+ * every reader shares has to refuse it rather than walk it. */
+int run_brainrec_version_rejects_old(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
@@ -1031,6 +1054,13 @@ int run_voice_flags_snapshot_masking(void);
  * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
 int run_voice_talking_codec(void);
 
+/* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
+ * round-trips through the body tables, compared field by field and
+ * including rates a fixed-point scale could not carry; and the body's bytes
+ * against a layout written out by hand. */
+int run_sim_rules_codec_roundtrip(void);
+int run_sim_rules_codec_golden(void);
+
 /* The lobby's talking set over the loopback transport (test_voice_talking_set.c),
  * read off the watching client's mirror of it: a talker who goes quiet after the
  * countdown has begun still ages out of the set (the silence is measured on a
@@ -1041,6 +1071,11 @@ int run_voice_talking_clears_on_leave(void);
 
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
+
+/* The half-tick carry basesHalfTickCalulator keeps between calls
+   (test_base_half_tick.c): one pair of fields per sim, not per process. */
+int run_base_half_tick_per_sim_sequence(void);
+int run_base_half_tick_other_sim_does_not_disturb(void);
 int run_base_armour_fog_of_war(void);
 int run_base_armour_reveal_in_range(void);
 int run_two_clients_full_sync_independent(void);
@@ -1491,6 +1526,35 @@ int run_interp_respawn_no_death_flash(void);
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
+/* The per-simulation rules table (test_sim_rules.c). Defaults walked field
+ * by field against the constants they replaced; the range checks for every
+ * field this change converted, at both ends and inside; the display and
+ * brain copies reporting a rule that has been moved off its classic value;
+ * the terrain speed and turn rules at the two map readers; and the river cap
+ * carrying the wading test with it. */
+int run_sim_rules_classic_defaults(void);
+int run_sim_rules_validate_ranges(void);
+int run_sim_rules_copies_follow(void);
+int run_sim_rules_terrain_caps_follow(void);
+int run_sim_rules_river_cap_moves_drowning(void);
+int run_sim_rules_base_regen_seed_follows(void);
+int run_sim_rules_terrain_life_follows(void);
+int run_sim_rules_base_empties_without_wrapping(void);
+int run_sim_rules_pill_empties_without_wrapping(void);
+int run_sim_rules_pairs(void);
+int run_sim_rules_capture_threshold_moves(void);
+int run_sim_rules_builder_cost_follows(void);
+
+/* A table against the classic one, and the observation builder's refusal to
+ * build on a sim that is not running it (test_sim_rules.c). */
+int run_sim_rules_are_classic(void);
+int run_sim_rules_obs_refuses_non_classic(void);
+int run_sim_rules_shell_flight_follows(void);
+int run_sim_rules_brain_shot_follows(void);
+int run_sim_rules_worldsim_pill_follows(void);
+int run_sim_rules_boat_speed_follows(void);
+int run_sim_rules_obs_reload_follows(void);
+
 int run_snapshot_compaction(void);
 
 /* Render-only error smoothing (test_error_smoothing.c): the offset
@@ -2041,9 +2105,36 @@ int run_scenario_entity_remove_start(void);
 int run_scenario_entity_publish(void);
 int run_scenario_entity_add_out_null(void);
 
+/* Pillbox armour above 15 (test_pill_armour_scale.c): the sixteen pictures
+ * scaled across pill_max_armour, and the client capping the armour a server
+ * states about a pill. */
+int run_pill_armour_scale_classic_cap(void);
+int run_pill_armour_scale_raised_cap(void);
+int run_pill_armour_scale_client_caps(void);
+
 /* One pillbox removed and put back over the real loopback transport
  * (test_loopback_entity_change.c): the client's list follows the server's. */
 int run_loopback_entity_change(void);
+
+/* The rules table over the real loopback transport
+ * (test_loopback_sim_rules.c): a mid-round change reaching a connected
+ * client, a joiner arriving on the changed table, a server-only rule
+ * publishing nothing, a new table clamping what the client holds, and the two
+ * sides reading the same records after a cap drops. */
+/* What a client does with a CTRL_SIM_RULES event it should not trust
+ * (test_sim_rules_client_check.c): every carried rule driven outside its own
+ * row, NaN and infinity rates, a carried pair, a pair the event only carries
+ * half of, and the ordinary table still landing. */
+int run_sim_rules_client_check_every_carried_field(void);
+int run_sim_rules_client_check_nan_and_inf(void);
+int run_sim_rules_client_check_attack_pair(void);
+int run_sim_rules_client_check_server_only_pair(void);
+int run_sim_rules_client_check_valid_applies(void);
+
+int run_loopback_sim_rules_change(void);
+int run_loopback_sim_rules_join(void);
+int run_loopback_sim_rules_reclamp(void);
+int run_loopback_sim_rules_agree(void);
 
 int run_scenario_map_set_tile(void);
 int run_scenario_map_fill_rect(void);
@@ -2095,6 +2186,19 @@ int run_scenario_flow_end_round_refusals(void);
 int run_scenario_flow_set_game_time(void);
 int run_scenario_flow_set_game_time_refusals(void);
 int run_scenario_flow_arm_records(void);
+
+/* The rules op (test_scenario_rule_arms.c). The index list against the table
+ * it indexes, a rule written and read back, a rate the op's double carries
+ * and an int32 could not, the two refusals and the table each leaves
+ * untouched, the record the write puts in a recording, the records a lowered
+ * cap brings down to it, and what the clamp leaves in the replay. */
+int run_scenario_rule_index_matches_table(void);
+int run_scenario_rule_set(void);
+int run_scenario_rule_set_float(void);
+int run_scenario_rule_refusals(void);
+int run_scenario_rule_arm_records(void);
+int run_scenario_rule_clamps_world(void);
+int run_scenario_rule_clamp_records(void);
 
 /* The six lifecycle and lobby policy pointers
  * (test_scenario_policy_lifecycle.c). Where a tank starts, whether the base
@@ -2207,6 +2311,11 @@ int run_netdebug_error_offset_clamped(void);
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
 struct ServerSim *ut_make_running_sim(const char *player_name);
+
+/* A sim that carries nothing but the classic rules, for a case that builds a
+ * bare pill or base list and calls a function taking a sim only so it can
+ * read a cap off it. Shared and never destroyed; do not tick it. */
+struct GameSim *ut_rules_only_sim(void);
 
 /* The sounds frontEndPlaySound was handed, recorded by the stub in
  * test_stubs.c so a test can assert which variant the client played.

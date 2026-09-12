@@ -67,7 +67,7 @@ static void ut_stage_pills(pillboxes *pb, BYTE count) {
         item.armour = PILLS_MAX_ARMOUR;
         item.speed = PILLBOX_ATTACK_NORMAL;
         item.inTank = FALSE;
-        pillsSetPill(pb, &item, i);
+        pillsSetPill(ut_rules_only_sim(), pb, &item, i);
     }
 }
 
@@ -90,7 +90,7 @@ int run_entity_removed_pill_is_gone_from_gameplay(void) {
     pillsGetPill(&gs->pb, &item, 1);
     item.armour = PILLS_MAX_ARMOUR;
     item.inTank = FALSE;
-    pillsSetPill(&gs->pb, &item, 1);
+    pillsSetPill(gs, &gs->pb, &item, 1);
     px = item.x;
     py = item.y;
 
@@ -198,7 +198,7 @@ int run_entity_removed_base_is_gone_from_gameplay(void) {
                   "a removed base must not be at its square");
     UT_ASSERT_MSG(basesGetBaseNum(&gs->bs, bx, by) == BASE_NOT_FOUND,
                   "a removed base must not be found by square");
-    UT_ASSERT_MSG(baseIsCapturable(&gs->bs, bx, by) == FALSE,
+    UT_ASSERT_MSG(baseIsCapturable(gs, &gs->bs, bx, by) == FALSE,
                   "a removed base must not be capturable");
 
     /* Refuel: the stock tick must leave it alone. */
@@ -236,7 +236,7 @@ int run_entity_removed_base_is_gone_from_gameplay(void) {
         /* The refuel: the base is the tank's own and the tank is short of
            shells, which is all a live base needs to hand some over. */
         gs->bs->item[0].owner = 0;
-        tankSetShells(tnk, 0);
+        tankSetShells(gs, tnk, 0);
         basesRefueling(gs, tnk, 1);
         UT_ASSERT_MSG(tankGetShells(tnk) == 0,
                       "a removed base refuelled a tank");

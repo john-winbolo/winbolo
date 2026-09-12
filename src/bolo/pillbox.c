@@ -143,11 +143,12 @@ BYTE pillsGetNumPills(pillboxes *value) {
 *  Sets a specific pill with its item data
 *
 *ARGUMENTS:
+*  sim     - Pointer to the game sim
 *  value   - Pointer to the pillbox structure
 *  item    - Pointer to a pillbox
 *  pillNum - The pillbox number
 *********************************************************/
-void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
+void pillsSetPill(GameSim *sim, pillboxes *value, pillbox *item, BYTE pillNum) {
   if (pillNum > 0 && pillNum  <= (*value)->numPills) {
     pillNum--;
     (((*value)->item[pillNum]).x) = item->x;
@@ -156,38 +157,37 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
       item->owner = NEUTRAL;
     }
     (((*value)->item[pillNum]).owner) = item->owner;
-    /* Clamp armour to [0, PILLS_MAX_ARMOUR]. The damage path's
-     * unsigned-underflow guard at pillsGetDamagePos already catches
-     * overflow during gameplay, but an attacker-supplied map can
-     * load 255 directly — the repair path only caps on the way up,
-     * so an out-of-range value would persist until first repair. */
-    if (item->armour > PILLS_MAX_ARMOUR) {
-      item->armour = PILLS_MAX_ARMOUR;
+    /* Clamp armour to the sim's cap. The damage path's guard at
+     * pillsGetDamagePos already catches overflow during gameplay,
+     * but a caller can hand this a record holding anything — the
+     * repair path only caps on the way up, so an out-of-range
+     * value would persist until first repair. */
+    if (item->armour > sim->rules.pill_max_armour) {
+      item->armour = (BYTE) sim->rules.pill_max_armour;
     }
     (((*value)->item[pillNum]).armour) = item->armour;
 
 
-    /* Clamp speed to the runtime range [PILLBOX_MAX_FIRERATE,
-     * PILLBOX_ATTACK_NORMAL]. The damage path floors speed at
-     * PILLBOX_MAX_FIRERATE when the pill gets hit and the cooldown
-     * tick growth ceilings at PILLBOX_ATTACK_NORMAL — values
+    /* Clamp speed into the attack interval the sim allows. The damage
+     * path floors speed at the minimum when the pill gets hit and the
+     * cooldown tick growth ceilings it at the normal interval — values
      * outside that window are unreachable through normal play but
      * survive on the wire (speed=0 fires every tick; speed=255 is
      * a passive pillbox). The "starts angry" feature still works
-     * because any value in [6, 100] is legitimate. */
-    if (item->speed < PILLBOX_MAX_FIRERATE) {
-      item->speed = PILLBOX_MAX_FIRERATE;
-    } else if (item->speed > PILLBOX_ATTACK_NORMAL) {
-      item->speed = PILLBOX_ATTACK_NORMAL;
+     * because any value inside the pair is legitimate. */
+    if (item->speed < sim->rules.pill_attack_min_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_min_ticks;
+    } else if (item->speed > sim->rules.pill_attack_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_ticks;
     }
-    if (item->speed != PILLBOX_ATTACK_NORMAL) {
-      (*value)->item[pillNum].coolDown = PILLBOX_COOLDOWN_TIME;
+    if (item->speed != sim->rules.pill_attack_ticks) {
+      (*value)->item[pillNum].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
     }
     (((*value)->item[pillNum]).speed) = item->speed;
     (((*value)->item[pillNum]).inTank) = item->inTank;
     (((*value)->item[pillNum]).justSeen) = item->justSeen;
     logAddEvent(log_PillSetOwner, pillNum, item->owner, TRUE, 0, 0, NULL);
-    logAddEvent(log_PillSetHealth, utilPutNibble(pillNum, item->armour), 0, 0, 0, 0, NULL);
+    logAddEvent(log_PillSetHealth, pillNum, item->armour, 0, 0, 0, NULL);
     logAddEvent(log_PillSetInTank, utilPutNibble(pillNum, FALSE), 0, 0, 0, 0, NULL);
     logAddEvent(log_PillSetPlace, pillNum, item->x, item->y, 0, 0, NULL);
   }
@@ -555,8 +555,8 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       (*value)->item[count].coolDown--;
       if ((*value)->item[count].coolDown ==0) {
         (*value)->item[count].speed++;
-        if ((*value)->item[count].speed < PILLBOX_ATTACK_NORMAL) {
-          (*value)->item[count].coolDown = PILLBOX_COOLDOWN_TIME;
+        if ((*value)->item[count].speed < sim->rules.pill_attack_ticks) {
+          (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
         }
       }
     }
@@ -596,7 +596,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
           continue;
         }
 
-        if ((utilIsItemInRange(x, y, tankX, tankY, PILLBOX_RANGE, &amount)) == TRUE) {
+        if ((utilIsItemInRange(x, y, tankX, tankY, (WORLD) sim->rules.pill_range, &amount)) == TRUE) {
           if (amount < bestDist) {
             bestDist = amount;
             bestTankX = tankX;
@@ -612,7 +612,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       if (foundTarget) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
-          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(*bestTank));
+          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
           shellsAddItem(sim, shs, x, y, dir, (float) (PILLBOX_FIRE_DISTANCE), NEUTRAL, FALSE);
           (*value)->item[count].reload = 0;
           sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, (*value)->item[count].x, (*value)->item[count].y);
@@ -709,7 +709,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
                                     (uint16_t)(before - after), destroyed,
                                     (*value)->item[count].x, (*value)->item[count].y);
       }
-      logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+      logAddEvent(log_PillSetHealth, count, (*value)->item[count].armour, 0, 0, 0, NULL);
       if ((*value)->item[count].armour == 0) {
         returnValue = TRUE;
         /* The entry test above required armour > 0, so reaching zero here is
@@ -721,11 +721,11 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }
       } else if (wantDamage == TRUE) {
-        (*value)->item[count].coolDown = PILLBOX_COOLDOWN_TIME;
-        if ((*value)->item[count].speed > PILLBOX_MAX_FIRERATE) {
+        (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
+        if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
           (*value)->item[count].speed /=2;
-          if ((*value)->item[count].speed < PILLBOX_MAX_FIRERATE) {
-            (*value)->item[count].speed = PILLBOX_MAX_FIRERATE;
+          if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
+            (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
           }
         }
       }
@@ -734,6 +734,69 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
   }
 
   return returnValue;
+}
+
+/* The sixteen pictures a pillbox is drawn with, worst first: entry 0 is the
+ * empty pill and entry 15 the intact one. Two arrays because a pill an ally
+ * owns is drawn differently from one an enemy does, and each is written out
+ * rather than computed because PILL_EVIL_15 sits away from the other fifteen
+ * evil tiles in the tile numbering. */
+static const BYTE pillEvilTiles[PILLS_MAX_ARMOUR + 1] = {
+  PILL_EVIL_0,  PILL_EVIL_1,  PILL_EVIL_2,  PILL_EVIL_3,
+  PILL_EVIL_4,  PILL_EVIL_5,  PILL_EVIL_6,  PILL_EVIL_7,
+  PILL_EVIL_8,  PILL_EVIL_9,  PILL_EVIL_10, PILL_EVIL_11,
+  PILL_EVIL_12, PILL_EVIL_13, PILL_EVIL_14, PILL_EVIL_15
+};
+static const BYTE pillGoodTiles[PILLS_MAX_ARMOUR + 1] = {
+  PILL_GOOD_0,  PILL_GOOD_1,  PILL_GOOD_2,  PILL_GOOD_3,
+  PILL_GOOD_4,  PILL_GOOD_5,  PILL_GOOD_6,  PILL_GOOD_7,
+  PILL_GOOD_8,  PILL_GOOD_9,  PILL_GOOD_10, PILL_GOOD_11,
+  PILL_GOOD_12, PILL_GOOD_13, PILL_GOOD_14, PILL_GOOD_15
+};
+
+/*********************************************************
+*NAME:          pillsArmourTile
+*PURPOSE:
+*  Which of the sixteen pillbox pictures an armour value is
+*  drawn as.
+*
+*  There are sixteen pictures and pill_max_armour is a rule a
+*  scenario can set as high as 255, so the armour is scaled
+*  onto the pictures rather than used as an index into them.
+*  Armour 0 draws the empty pill, armour at the cap draws the
+*  intact one, and everything between lands in proportion.
+*  Before this, anything above 15 fell through to the empty
+*  tile, so on a sim with a raised cap every pill on the map
+*  drew as a wreck until somebody shot it down to 15.
+*
+*  Integer arithmetic, rounded down. Rounding down keeps the
+*  classic cap exact — armour times 15 over 15 is the armour
+*  itself, so each of the sixteen armour values still has its
+*  own picture — and means a pill that has taken any damage at
+*  all stops drawing as the intact one however high the cap
+*  goes.
+*
+*ARGUMENTS:
+*  sim    - The sim whose rules table holds the cap
+*  armour - The pillbox's armour
+*  allied - Whether the viewer is allied to the pill's owner
+*********************************************************/
+static BYTE pillsArmourTile(GameSim *sim, BYTE armour, bool allied) {
+  int32_t maxArmour = (sim != NULL) ? sim->rules.pill_max_armour
+                                    : PILLS_MAX_ARMOUR;
+  int32_t level;
+
+  /* The rules check holds the cap at 1 or above; a table that never went
+     through it would divide by zero here. */
+  if (maxArmour < 1) {
+    maxArmour = PILLS_MAX_ARMOUR;
+  }
+  if ((int32_t)armour >= maxArmour) {
+    level = PILLS_MAX_ARMOUR;
+  } else {
+    level = ((int32_t)armour * PILLS_MAX_ARMOUR) / maxArmour;
+  }
+  return allied ? pillGoodTiles[level] : pillEvilTiles[level];
 }
 
 /*********************************************************
@@ -766,111 +829,10 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
       /* Pillbox has been Hit */
       done = TRUE;
 
-      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, viewPlayer ) == FALSE) {
-        switch((*value)->item[count].armour) {
-        case PILLBOX_15:
-          returnValue = PILL_EVIL_15;
-          break;
-        case PILLBOX_14:
-          returnValue = PILL_EVIL_14;
-          break;
-        case PILLBOX_13:
-          returnValue = PILL_EVIL_13;
-          break;
-        case PILLBOX_12:
-          returnValue = PILL_EVIL_12;
-          break;
-        case PILLBOX_11:
-          returnValue = PILL_EVIL_11;
-          break;
-        case PILLBOX_10:
-          returnValue = PILL_EVIL_10;
-          break;
-        case PILLBOX_9:
-          returnValue = PILL_EVIL_9;
-          break;
-        case PILLBOX_8:
-          returnValue = PILL_EVIL_8;
-          break;
-        case PILLBOX_7:
-          returnValue = PILL_EVIL_7;
-          break;
-        case PILLBOX_6:
-          returnValue = PILL_EVIL_6;
-          break;
-        case PILLBOX_5:
-          returnValue = PILL_EVIL_5;
-          break;
-        case PILLBOX_4:
-          returnValue = PILL_EVIL_4;
-          break;
-        case PILLBOX_3:
-          returnValue = PILL_EVIL_3;
-          break;
-        case PILLBOX_2:
-          returnValue = PILL_EVIL_2;
-          break;
-        case PILLBOX_1:
-          returnValue = PILL_EVIL_1;
-          break;
-        case PILLBOX_0:
-        default:
-          returnValue = PILL_EVIL_0;
-          break;
-        }
-      } else {
-        switch((*value)->item[count].armour) {
-        case PILLBOX_15:
-          returnValue = PILL_GOOD_15;
-          break;
-        case PILLBOX_14:
-          returnValue = PILL_GOOD_14;
-          break;
-        case PILLBOX_13:
-          returnValue = PILL_GOOD_13;
-          break;
-        case PILLBOX_12:
-          returnValue = PILL_GOOD_12;
-          break;
-        case PILLBOX_11:
-          returnValue = PILL_GOOD_11;
-          break;
-        case PILLBOX_10:
-          returnValue = PILL_GOOD_10;
-          break;
-        case PILLBOX_9:
-          returnValue = PILL_GOOD_9;
-          break;
-        case PILLBOX_8:
-          returnValue = PILL_GOOD_8;
-          break;
-        case PILLBOX_7:
-          returnValue = PILL_GOOD_7;
-          break;
-        case PILLBOX_6:
-          returnValue = PILL_GOOD_6;
-          break;
-        case PILLBOX_5:
-          returnValue = PILL_GOOD_5;
-          break;
-        case PILLBOX_4:
-          returnValue = PILL_GOOD_4;
-          break;
-        case PILLBOX_3:
-          returnValue = PILL_GOOD_3;
-          break;
-        case PILLBOX_2:
-          returnValue = PILL_GOOD_2;
-          break;
-        case PILLBOX_1:
-          returnValue = PILL_GOOD_1;
-          break;
-        case PILLBOX_0:
-        default:
-          returnValue = PILL_GOOD_0;
-          break;
-        }
-      }
+      returnValue = pillsArmourTile(
+          sim, (*value)->item[count].armour,
+          playersIsAllie(&sim->plyrs, (*value)->item[count].owner,
+                         viewPlayer) != FALSE);
 
     }
     count++;
@@ -1004,7 +966,7 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   /* Get initial estimate */
   estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
   /* Calculate distance */
-  utilCalcDistance(&shellAddX, &shellAddY, estimate, SHELL_SPEED);
+  utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);
   shellX = (WORLD) (xValue + shellAddX);
   shellY = (WORLD) (yValue + shellAddY);
   
@@ -1052,7 +1014,7 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
     }
     
     estimate = utilCalcAngle(xValue, yValue, tankX,tankY);
-    utilCalcDistance(&shellAddX, &shellAddY, estimate, SHELL_SPEED);    
+    utilCalcDistance(&shellAddX, &shellAddY, estimate, sim->rules.shell_speed);    
     shellX = (WORLD) (xValue + ((count+  5) * shellAddX));
     shellY = (WORLD) (yValue + ((count +  5) * shellAddY));
     /* Set it anyway */
@@ -1407,9 +1369,14 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
   while (count < ((*value)->numPills)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       BYTE before = (*value)->item[count].armour;
-      (*value)->item[count].armour -= amount;
-      if ((*value)->item[count].armour > PILL_MAX_HEALTH) {
+      /* Ask whether the blow takes more than is left rather than subtracting
+         first and reading the wrap: a wrapped value only looks like "was
+         full" while the cap and the damage are both compile-time, and a rules
+         table can put any pair of numbers here. */
+      if (amount > before) {
         (*value)->item[count].armour = 0;
+      } else {
+        (*value)->item[count].armour = (BYTE) (before - amount);
       }
       /* The blow that would finish the pill is the host's to refuse, and a
          refusal holds it at one armour, where it goes on firing. Asked only
@@ -1431,7 +1398,7 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }
       }
-      logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+      logAddEvent(log_PillSetHealth, count, (*value)->item[count].armour, 0, 0, 0, NULL);
 
       count = (*value)->numPills;
     }
@@ -1504,23 +1471,25 @@ BYTE pillsRepairPos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BY
          been patched up by someone else. */
       armour = (*value)->item[count].armour;
       needed = 0;
-      if (armour < PILLS_MAX_ARMOUR) {
-        needed = (BYTE) (((PILLS_MAX_ARMOUR - armour) + PILL_REPAIR_AMOUNT - 1) / PILL_REPAIR_AMOUNT);
+      if (armour < sim->rules.pill_max_armour) {
+        needed = (BYTE) (((sim->rules.pill_max_armour - armour) +
+                          sim->rules.pill_repair_amount - 1) /
+                         sim->rules.pill_repair_amount);
       }
       used = treeAmount;
       if (used > needed) {
         used = needed;
       }
       if (used > 0) {
-        armour = (BYTE) (armour + (used * PILL_REPAIR_AMOUNT));
-        if (armour > PILLS_MAX_ARMOUR) {
-          armour = PILLS_MAX_ARMOUR;
+        armour = (BYTE) (armour + (used * sim->rules.pill_repair_amount));
+        if (armour > sim->rules.pill_max_armour) {
+          armour = (BYTE) sim->rules.pill_max_armour;
         }
         (*value)->item[count].armour = armour;
         if (sim->isServer == FALSE) {
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), (pillsGetAllianceNum(sim, value, (BYTE) (count+1))));
         }
-        logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+        logAddEvent(log_PillSetHealth, count, (*value)->item[count].armour, 0, 0, 0, NULL);
       }
       count = (*value)->numPills;
 
@@ -1762,11 +1731,11 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
     yDist = ((*value)->item[count].y) - my;
     if ((*value)->active[count] != FALSE && xDist >= PILL_BASE_HIT_LEFT && xDist <= PILL_BASE_HIT_RIGHT && yDist >= PILL_BASE_HIT_TOP && yDist <= PILL_BASE_HIT_BOTTOM && (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
-      (*value)->item[count].coolDown = PILLBOX_COOLDOWN_TIME;
-      if ((*value)->item[count].speed > PILLBOX_MAX_FIRERATE) {
+      (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
+      if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
         (*value)->item[count].speed /=2;
-        if ((*value)->item[count].speed < PILLBOX_MAX_FIRERATE) {
-          (*value)->item[count].speed = PILLBOX_MAX_FIRERATE;
+        if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
+          (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
         }
       }
     }
@@ -1801,12 +1770,13 @@ BYTE pillsGetNumNeutral(pillboxes *value) {
 /*********************************************************
 *NAME:          pillsValidate
 *PURPOSE:
-*  Clamps every pillbox field a map can supply to the range the
-*  rest of the codebase assumes. pillsSetPill applies these on
-*  the file-load path; the compressed path memcpys the structs
-*  wholesale and reaches none of them. Pure clamping — the
-*  coolDown that pillsSetPill sets alongside speed is gameplay
-*  state, not a safety property, so it is left alone.
+*  Clamps the pillbox fields a map cannot be trusted on
+*  whatever the rules are: the count, which indexes item[],
+*  and each owner, which indexes the player list. Both are
+*  properties of the file, so this runs without a sim and
+*  the map editor, the preview and the tile-test tool get it
+*  as the game does. The gameplay caps are pillsClampToRules
+*  below. Pure clamping, and idempotent.
 *
 *ARGUMENTS:
 *  value - Pointer to the pillboxes structure
@@ -1826,13 +1796,46 @@ void pillsValidate(pillboxes *value) {
     if (item->owner > (MAX_TANKS - 1) && item->owner != NEUTRAL) {
       item->owner = NEUTRAL;
     }
-    if (item->armour > PILLS_MAX_ARMOUR) {
-      item->armour = PILLS_MAX_ARMOUR;
+  }
+}
+
+/*********************************************************
+*NAME:          pillsClampToRules
+*PURPOSE:
+*  Clamps every pillbox to the gameplay caps this sim runs
+*  on: armour to the pill armour cap, and speed into the
+*  attack interval. The same clamps pillsSetPill applies to
+*  one record, over the whole list, for the load paths that
+*  do not go through it, and arms the cooldown alongside
+*  speed as that function does. Idempotent.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the pillboxes structure
+*********************************************************/
+void pillsClampToRules(GameSim *sim, pillboxes *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numPills; count++) {
+    pillbox *item = &((*value)->item[count]);
+    if (item->armour > sim->rules.pill_max_armour) {
+      item->armour = (BYTE) sim->rules.pill_max_armour;
     }
-    if (item->speed < PILLBOX_MAX_FIRERATE) {
-      item->speed = PILLBOX_MAX_FIRERATE;
-    } else if (item->speed > PILLBOX_ATTACK_NORMAL) {
-      item->speed = PILLBOX_ATTACK_NORMAL;
+    if (item->speed < sim->rules.pill_attack_min_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_min_ticks;
+    } else if (item->speed > sim->rules.pill_attack_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_ticks;
+    }
+    /* A pill firing faster than the normal interval is warming back up, and
+       the countdown is what walks it there. A record can arrive without one —
+       the .map format has no field for it — so arm it rather than leave the
+       pill angry for the rest of the game. One already counting down keeps
+       its countdown, so a map installed mid-game does not restart it. */
+    if (item->speed != sim->rules.pill_attack_ticks && item->coolDown == 0) {
+      item->coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
     }
   }
 }
@@ -1858,54 +1861,6 @@ void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen) {
   memset((*value)->active, TRUE, (*value)->numPills);
   memset((*value)->active + (*value)->numPills, FALSE,
          (size_t)(MAX_PILLS - (*value)->numPills));
-}
-
-/*********************************************************
-*NAME:          pillsSetPillNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/02/99
-*LAST MODIFIED: 27/07/04
-*PURPOSE:
-* Sets the pills data to buff.
-*
-*ARGUMENTS:
-*  value   - Pointer to the pills structure
-*  buff    - Buffer of data to set pills structure to
-*  dataLen - Length of the data
-*********************************************************/
-void pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
-  BYTE count = 0;
-  BYTE len = 1;
-  
-  (*value)->numPills = buff[0];
-  while (count < (*value)->numPills) {
-    (*value)->item[count].x = buff[len];
-    len++;
-    (*value)->item[count].y = buff[len];
-    len++;
-    (*value)->item[count].armour = buff[len];
-    len++;
-    (*value)->item[count].owner = buff[len];
-    len++;
-    (*value)->item[count].speed = buff[len];
-    len++;
-    (*value)->item[count].inTank = buff[len];
-    len++;
-    (*value)->item[count].reload = buff[len];
-    len++;
-    (*value)->item[count].justSeen = buff[len];
-    len++;
-    (*value)->item[count].coolDown = buff[len];
-    len++;
-    count++;
-  }
-
-/* was in old code to reset this on join? 
- while (count < MAX_TANKS) {
-    (*value)->item[count].reload = PILLBOX_ATTACK_NORMAL;
-    (*value)->item[count].speed = PILLBOX_ATTACK_NORMAL;
-    count++;
-  } */
 }
 
 /*********************************************************

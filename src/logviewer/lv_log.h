@@ -52,7 +52,8 @@
 #define LOG_VERSION_V0 0  /* Original: IP address octets in player join events */
 #define LOG_VERSION_V1 1  /* Country codes replace IP addresses; opt4 carries accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot) */
 #define LOG_VERSION_V2 2  /* Plaintext (no XOR); each event framed [type][u16 BE payload-length][payload]. Join payload semantics unchanged from V1 */
-#define LOG_VERSION LOG_VERSION_V1
+#define LOG_VERSION_V3 3  /* log_PillSetHealth carries the pill index and its armour in a byte each; V2 and earlier pack the pair into one byte's nibbles. Everything else unchanged from V2 */
+#define LOG_VERSION LOG_VERSION_V3
 
 /* The events we record in our log file */
 typedef enum {
@@ -115,7 +116,8 @@ log_TankSetModifiers,// opt1=player, then a 6-byte pascal blob: speed, accel, tu
 log_EntityChange,    // opt1=kind (LV_ENTITY_KIND_*), opt2=index (0 based), opt3=on the map, then the item's record as a pascal blob (layout in docs/replay-format.md)
 log_EntityMasks,     // which indices are on the map, as three big-endian u16: pills in opt1/opt2, bases in opt3/opt4, starts in short1. Follows every snapshot (layout in docs/replay-format.md)
 log_ServerText,      // a server line a scenario wrote: opt1=destTeam (0 = everyone), opt2=destPlayer (0xFF = everyone), then the text as a pascal string
-log_GameTimeSet      // the round's game time after a scenario changed it, as a big-endian int32 of ticks across opt1..opt4
+log_GameTimeSet,     // the round's game time after a scenario changed it, as a big-endian int32 of ticks across opt1..opt4
+log_RuleSet          // one simulation rule a scenario changed: short1=rule index, then the value the field ended up holding as an 8-byte pascal blob (layout in docs/replay-format.md)
 } logitem;
 
 /* Which list a log_EntityChange names. Mirrors ENTITY_KIND_* in

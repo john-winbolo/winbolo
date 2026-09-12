@@ -281,6 +281,24 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
   }
 }
 
+/* One pillbox's armour, capped to what this client's table says a pillbox
+ * can hold. The two places a pill's armour arrives — the per-pill event and
+ * the snapshot's pill array — both write the server's byte straight into the
+ * record, and the sim's own load paths cap it (pillsSetPill, and the
+ * re-clamp a new rules table runs), so these have to as well or a record
+ * lands above the cap and stays there until something else touches it. */
+static BYTE clientPillArmourToRules(const ClientSim *csPtr, BYTE armour) {
+  int32_t cap = csPtr->sim.rules.pill_max_armour;
+
+  if (cap < 0) {
+    return 0;
+  }
+  if ((int32_t)armour > cap) {
+    return (BYTE)cap;
+  }
+  return armour;
+}
+
 /* Bounds-checked live-scoreboard row. Slot bytes arrive off the wire and
  * an owner field can legitimately hold NEUTRAL, so nothing indexes
  * liveStats without passing through here. */
@@ -299,7 +317,7 @@ static ClientPlayerStats *liveStatsSlot(ClientSim *csPtr, BYTE slot) {
 *
 *  The stamp survives only while both hold: the server has not
 *  yet processed the stamped tick, and one more hit would still
-*  drop the armour to MIN_ARMOUR_CAPTURE. Armour from before the
+*  drop the armour to base_capture_armour. Armour from before the
 *  hit therefore leaves a live prediction alone (a full sync or
 *  a stock update for an earlier shell used to wipe it, and the
 *  shell that armed it was gone, so nothing put it back); armour
@@ -331,8 +349,9 @@ void clientBaseArmourArrived(ClientSim *csPtr, BYTE idx, BYTE armour,
   }
   stamp = csPtr->sim.basePredictedDeadTick[idx];
   hit = csPtr->sim.basePredictedHitTick[idx];
-  oneHitKills = armour > MIN_ARMOUR_CAPTURE &&
-                (int)armour - DAMAGE <= MIN_ARMOUR_CAPTURE;
+  oneHitKills = armour > csPtr->sim.rules.base_capture_armour &&
+                (int)armour - csPtr->sim.rules.shell_damage <=
+                    csPtr->sim.rules.base_capture_armour;
 
   if (!oneHitKills) {
     /* Dead already (the real rule makes it drivable), or high enough that
@@ -402,7 +421,8 @@ static void clientApplyBaseStock(ClientSim *csPtr, const GameEvent *ev) {
    * high-RTT catch-up onto the now-passable tile glides rather than
    * snapping. Restricted to a base within one tile of the local tank
    * so it stays a special case, not a global clamp raise. */
-  if (oldArmour > MIN_ARMOUR_CAPTURE && newArmour <= MIN_ARMOUR_CAPTURE &&
+  if (oldArmour > csPtr->sim.rules.base_capture_armour &&
+      newArmour <= csPtr->sim.rules.base_capture_armour &&
       MY_TANK(csPtr) != NULL) {
     int tankMX = tankGetMX(&MY_TANK(csPtr));
     int tankMY = tankGetMY(&MY_TANK(csPtr));
@@ -659,7 +679,7 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         csPtr->hasAnyPillCaptured = true;
         break;
       case EVENT_PILL_UPDATE:
-        /* data: [pillIndex, x, y, owner, armourInTank] */
+        /* data: [pillIndex, x, y, owner, pillFlags, armour] */
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
@@ -676,7 +696,12 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
             (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
             (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
             (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
-            (*csPtr->sim.pb).item[idx].armour = pillArmourFromByte(events[i].data[4]);
+            /* Capped as the sim's own load path caps it. The byte is what a
+               server said, and this client's table says what a pillbox can
+               hold; an armour above the cap would outlive the re-clamp a new
+               table runs and draw against a scale it is off the end of. */
+            (*csPtr->sim.pb).item[idx].armour =
+                clientPillArmourToRules(csPtr, events[i].data[5]);
             (*csPtr->sim.pb).item[idx].inTank = pillInTankFromByte(events[i].data[4]) ? TRUE : FALSE;
           }
         }
@@ -1061,9 +1086,9 @@ void clientApplySnapshot(ClientSim *csPtr,
           tankSetDestroyed(&MY_TANK(csPtr), destroyed);
           csPtr->lastServerDestroyed = destroyed;
         }
-        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
-        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
-        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         {
@@ -1198,7 +1223,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                       tankGetShells(&MY_TANK(csPtr)) > 0 &&
                       !tankIsDestroyed(&MY_TANK(csPtr))) {
                     tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
-                    tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
+                    tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
               }
@@ -1272,9 +1297,9 @@ void clientApplySnapshot(ClientSim *csPtr,
         /* Sync resources from server — but not reload/shells, which are
          * already set correctly by the reconciliation replay (it accounts
          * for unprocessed fire inputs that the server hasn't seen yet). */
-        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
-        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
-        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetDeathWait(&MY_TANK(csPtr), tanks[i].deathWait);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
@@ -1317,7 +1342,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                 tankGetShells(&MY_TANK(csPtr)) > 0 &&
                 !tankIsDestroyed(&MY_TANK(csPtr))) {
               tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
-              tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
+              tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }
         }
@@ -1470,16 +1495,18 @@ void clientApplySnapshot(ClientSim *csPtr,
        * held: a pill that was in a tank and is not any more, arriving without
        * its square, has been put down somewhere we were never told about. */
       pillsUpdatePosState(&csPtr->sim.pb, (BYTE)i,
-                          pillPosCurrentFromByte(pillSnaps[i].armourInTank),
-                          pillInTankFromByte(pillSnaps[i].armourInTank));
+                          pillPosCurrentFromByte(pillSnaps[i].pillFlags),
+                          pillInTankFromByte(pillSnaps[i].pillFlags));
       /* The square is written as sent — for a pill we cannot see it is the one
        * the server has us holding, which is what the checksum is taken over.
        * The bit says whether the pill is on it now. */
       (*csPtr->sim.pb).item[i].x      = pillSnaps[i].x;
       (*csPtr->sim.pb).item[i].y      = pillSnaps[i].y;
       (*csPtr->sim.pb).item[i].owner  = pillSnaps[i].owner;
-      (*csPtr->sim.pb).item[i].armour = pillArmourFromByte(pillSnaps[i].armourInTank);
-      (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].armourInTank) ? TRUE : FALSE;
+      /* Capped against this client's table, as the event path above is. */
+      (*csPtr->sim.pb).item[i].armour =
+          clientPillArmourToRules(csPtr, pillSnaps[i].armour);
+      (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].pillFlags) ? TRUE : FALSE;
     }
   }
 

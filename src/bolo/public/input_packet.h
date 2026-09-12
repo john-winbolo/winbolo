@@ -110,7 +110,7 @@ typedef struct {
  * them all.  The packer and unpacker must reference these same symbols. */
 #define TANK_PRESENT_OWNER_RES 0x01  /* armour, shells, mines, trees, gunsightLen (5B) */
 #define TANK_PRESENT_RELOAD    0x02  /* reload (1B) */
-#define TANK_PRESENT_DEATHWAIT 0x04  /* deathWait (1B) */
+#define TANK_PRESENT_DEATHWAIT 0x04  /* deathWait (2B) */
 #define TANK_PRESENT_LGM       0x08  /* lgmFrame, lgmMX, lgmMY, lgmPX, lgmPY (5B) */
 #define TANK_PRESENT_TURNRAMP  0x10  /* firstLeft, firstRight (2B) */
 #define TANK_PRESENT_PING      0x20  /* pingMs (2B) */
@@ -128,7 +128,7 @@ typedef struct {
  * and the brain's "dead" read. Both bits go to every recipient, unlike armour,
  * which only the owning player sees — so this byte, not armour, is how a
  * client learns that any tank is destroyed. armour itself is a plain
- * 0..TANK_FULL_ARMOUR value and never carries a death sentinel. */
+ * 0..tank_full_armour value and never carries a death sentinel. */
 #define TANK_STATUS_ON_BOAT    0x01
 #define TANK_STATUS_DEAD       0x10
 #define TANK_STATUS_DESTROYED  0x20
@@ -156,14 +156,14 @@ typedef struct {
     uint8_t  lgmMY;
     uint8_t  lgmPX;
     uint8_t  lgmPY;
-    uint8_t  armour;       /* 0..TANK_FULL_ARMOUR, owning player only; death is in tankStatus */
+    uint8_t  armour;       /* 0..tank_full_armour, owning player only; death is in tankStatus */
     uint8_t  shells;       /* Only meaningful for the owning player */
     uint8_t  mines;        /* Only meaningful for the owning player */
     uint8_t  trees;        /* Only meaningful for the owning player */
     uint8_t  firstLeft;    /* Turn ramp-up counter for left turns (0-10) */
     uint8_t  firstRight;   /* Turn ramp-up counter for right turns (0-10) */
-    uint8_t  gunsightLen;  /* Gunsight range (GUNSIGHT_MIN..GUNSIGHT_MAX), owning player only */
-    uint8_t  deathWait;    /* Ticks remaining until respawn (0 = alive) */
+    uint8_t  gunsightLen;  /* Gunsight range (gunsight_min..gunsight_max), owning player only */
+    uint16_t deathWait;    /* Ticks remaining until respawn (0 = alive) */
     uint8_t  reload;       /* Ticks remaining until can fire again (owning player only) */
     uint16_t pingMs;       /* This player's ping in ms */
     uint8_t  clientFlags;  /* PLAYER_FLAG_* bits — see players.h */
@@ -219,10 +219,11 @@ typedef struct {
 typedef struct {
     uint8_t x, y;
     uint8_t owner;
-    uint8_t armourInTank;
+    uint8_t pillFlags;  /* PILL_IN_TANK, PILL_POS_CURRENT — see pillbox.h */
+    uint8_t armour;
 } PillSnapshot;
 
-#define PILL_SNAPSHOT_WIRE_SIZE 4
+#define PILL_SNAPSHOT_WIRE_SIZE 5
 
 /* Game event (map change, sound, etc.)
  * data[] is 8 bytes — enough for all current event types.
@@ -273,7 +274,7 @@ typedef struct {
 #define EVENT_MAP_CHANGE    7  /* data: [mx, my, newTerrain] */
 #define EVENT_SOUND         8  /* data: [soundId, tier or mx, direction or my, sourcePlayer] — see Sound event payloads below */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */
-#define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, armourInTank] */
+#define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, pillFlags, armour] */
 #define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner] — owner change (reliable) */
 #define EVENT_PLAYER_LEAVE 12  /* data: [playerNum] */
 #define EVENT_ASSISTANT_MSG 13 /* data: [targetPlayer, msgId] — player-specific assistant message */
@@ -456,7 +457,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_MAP_CHANGE:     return 3;
     case EVENT_SOUND:          return 4;
     case EVENT_SERVER_MSG:     return 1;
-    case EVENT_PILL_UPDATE:    return 5;
+    case EVENT_PILL_UPDATE:    return 6;
     case EVENT_BASE_UPDATE:    return 2;
     case EVENT_BASE_STOCK:     return 4;
     case EVENT_PLAYER_LEAVE:   return 1;

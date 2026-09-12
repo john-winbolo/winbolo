@@ -316,8 +316,8 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
         out[count].x = (*sim->sim.pb).item[p].x;
         out[count].y = (*sim->sim.pb).item[p].y;
         out[count].owner = (*sim->sim.pb).item[p].owner;
-        out[count].armourInTank = pillPackArmourInTank((*sim->sim.pb).item[p].armour,
-                                                       (*sim->sim.pb).item[p].inTank);
+        out[count].pillFlags = pillSetInTank(0, (*sim->sim.pb).item[p].inTank);
+        out[count].armour = (*sim->sim.pb).item[p].armour;
         count++;
     }
     return count;
@@ -525,8 +525,8 @@ void serverSimFogPillUpdateEvent(ServerSim *sim, BYTE slot, GameEvent *ev,
         ev->data[4] = pillSetPosCurrent(ev->data[4], true);
         return;
     }
-    /* Owner and armourInTank's own bits are left as they are: they are public
-     * and have to keep arriving for a pill nobody can see. */
+    /* Owner, armour and the flags byte's in-tank bit are left as they are: they
+     * are public and have to keep arriving for a pill nobody can see. */
     ev->data[1] = sim->clientKnownPillX[slot][p];
     ev->data[2] = sim->clientKnownPillY[slot][p];
     ev->data[4] = pillSetPosCurrent(ev->data[4], false);
@@ -1292,7 +1292,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->mines = tankGetMines(&sim->sim.tanks[i]);
             ts->trees = tankGetTrees(&sim->sim.tanks[i]);
             ts->gunsightLen = tankGetGunsightLength(&sim->sim.tanks[i]);
-            ts->deathWait = (uint8_t)tankGetDeathWait(&sim->sim.tanks[i]);
+            ts->deathWait = tankGetDeathWait(&sim->sim.tanks[i]);
             ts->reload = tankGetReloadTime(&sim->sim.tanks[i]);
             {
                 /* The owning client predicts with these, so they ride the
@@ -1357,7 +1357,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (!recipientIsBot) {
             /* Per-recipient base visibility (owner is always real):
              *  - armour is public base condition: real for neutral/own/allied bases;
-             *    an enemy base reports BASE_FULL_ARMOUR while alive (exact value hidden)
+             *    an enemy base reports a full base's armour while alive (exact value
+             *    hidden)
              *    but its true armour once dead/capturable, so the capturable flip shows,
              *    and once the recipient's tank is inside BASE_PREDICT_REVEAL_RANGE so
              *    their client can predict the square becoming drivable rather than
@@ -1374,7 +1375,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
                                 playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
                 if (!basesArmourVisibleToPlayer(&sim->sim, (BYTE)i, clientIdx)) {
-                    basesOut[i].armour = BASE_FULL_ARMOUR;
+                    basesOut[i].armour = (BYTE) sim->sim.rules.base_full_armour;
                 }
                 if (!friendly) {
                     basesOut[i].shells = 0;
@@ -1391,8 +1392,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         for (i = 0; i < hdr->pillCount && i < MAX_PILLS; i++) {
             if (serverSimPillPosVisible(sim, clientIdx, (BYTE)i, viewports,
                                         numViewports)) {
-                pillsOut[i].armourInTank =
-                    pillSetPosCurrent(pillsOut[i].armourInTank, true);
+                pillsOut[i].pillFlags =
+                    pillSetPosCurrent(pillsOut[i].pillFlags, true);
             } else {
                 pillsOut[i].x = sim->clientKnownPillX[clientIdx][i];
                 pillsOut[i].y = sim->clientKnownPillY[clientIdx][i];

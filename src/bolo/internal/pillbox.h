@@ -49,14 +49,16 @@ struct ClientSim;
 
 #define PILLS_MAX_ARMOUR 15
 
-/* Pill armour (0..PILLS_MAX_ARMOUR) and the inTank flag share one wire byte:
- * armour in the low nibble, inTank in bit 4. */
-static inline uint8_t pillPackArmourInTank(uint8_t armour, bool inTank) {
-    assert(armour <= PILLS_MAX_ARMOUR);
-    return (uint8_t)((armour & 0x0F) | (inTank ? 0x10 : 0x00));
+/* A pill's flags byte. Armour travels in a byte of its own; this byte carries
+ * the two flags below and nothing else.
+ *
+ * Bit 4: the pill is inside a tank rather than on the map. */
+#define PILL_IN_TANK 0x10
+static inline uint8_t pillSetInTank(uint8_t b, bool inTank) {
+    return (uint8_t)(inTank ? (b | PILL_IN_TANK)
+                            : (b & (uint8_t)~PILL_IN_TANK));
 }
-static inline uint8_t pillArmourFromByte(uint8_t b) { return (uint8_t)(b & 0x0F); }
-static inline bool    pillInTankFromByte(uint8_t b) { return (b & 0x10) != 0; }
+static inline bool    pillInTankFromByte(uint8_t b) { return (b & PILL_IN_TANK) != 0; }
 
 /* Bit 5 of the same byte: the x/y sent with this pill are its square right
  * now. Clear means the recipient was not told — the square is the last one it
@@ -87,9 +89,6 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
-
-/* Maximum amount of health a pillbox can have */
-#define PILL_MAX_HEALTH 15
 
 /* A pillbox has to be within 9 squares of a base to get angry if it is shot */
 #define PILL_BASE_HIT_LEFT -9
@@ -178,12 +177,20 @@ BYTE pillsGetNumPills(pillboxes *value);
 *PURPOSE:
 *  Sets a specific pill with its item data
 *
+*  Clamps armour and speed to what the sim's rules allow,
+*  so a caller handing it a record from anywhere gets one
+*  the rest of the code can trust. The scenario arms that
+*  write a pill's armour and its speed rely on that clamp
+*  and on the cooldown it arms alongside speed, which is
+*  why this one clamps where basesSetBase does not.
+*
 *ARGUMENTS:
+*  sim     - Pointer to the game sim
 *  value   - Pointer to the pillbox structure
 *  item    - Pointer to a pillbox
 *  pillNum - The pillbox number
 *********************************************************/
-void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum);
+void pillsSetPill(struct GameSim *sim, pillboxes *value, pillbox *item, BYTE pillNum);
 
 /*********************************************************
 *NAME:          pillsAddItem
@@ -799,21 +806,6 @@ BYTE pillsGetNumNeutral(pillboxes *value);
 BYTE pillsGetNumActive(pillboxes *value);
 
 /*********************************************************
-*NAME:          pillsSetPillNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/02/99
-*LAST MODIFIED: 27/07/04
-*PURPOSE:
-* Sets the pills data to buff.
-*
-*ARGUMENTS:
-*  value   - Pointer to the pills structure
-*  buff    - Buffer of data to set pills structure to
-*  dataLen - Length of the data
-*********************************************************/
-void pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen);
-
-/*********************************************************
 *NAME:          pillsGetPillNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99
@@ -1039,8 +1031,12 @@ bool pillsMoveView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible,
 BYTE pillsGetNumberOwnedByPlayer(pillboxes *value, BYTE playerNum);
 
 void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen);
-/* Clamps every pillbox field a map can supply. See basesValidate. */
+/* Clamps the pillbox fields a map cannot be trusted on whatever the rules
+   say — the count and each owner. See basesValidate. */
 void pillsValidate(pillboxes *value);
+/* Clamps every pillbox against the sim's gameplay caps. Called by
+   mapClampToRules once a sim owns the records; see bolo_map.h. */
+void pillsClampToRules(struct GameSim *sim, pillboxes *value);
 
 
 #endif /* PILLBOX_H */

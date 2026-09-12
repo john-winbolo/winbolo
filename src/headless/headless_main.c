@@ -339,6 +339,9 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
     case CTRL_STATS_SEED:            return "CTRL_STATS_SEED";
     case CTRL_VOICE_TALKING:         return "CTRL_VOICE_TALKING";
+    case CTRL_ENTITY_CHANGE:         return "CTRL_ENTITY_CHANGE";
+    case CTRL_ENTITY_SYNC:           return "CTRL_ENTITY_SYNC";
+    case CTRL_SIM_RULES:             return "CTRL_SIM_RULES";
     default:                         return NULL;
   }
 }
@@ -1588,6 +1591,33 @@ static void logChangesFinish(void) {
  *              4=pill_captured 5=pill_lost 6=base_captured 7=base_lost
  */
 
+/* A frame written here is training data, so its entries have to mean the
+ * same thing in every frame of every run. The scalars below normalise a
+ * stock against what full means by reading the rule rather than a
+ * written-out number, which would rescale the frame the moment a scenario
+ * moved one — frames either side of the change on two scales, with nothing
+ * in the file saying which is which, and a model trained across them reading
+ * them as one world. What stops that is this: the run ends rather than write
+ * frames on a scale nothing was trained against, so every divisor below is
+ * the classic value and the observation space holds still.
+ *
+ * Ending the process is the loud answer, and the right one for a tool whose
+ * whole output is a file somebody trains on later: a frame that is merely
+ * marked bad is one a loader can skip reading. Asked on every frame, not
+ * once at startup — a scenario can move a rule mid-round — and it costs one
+ * comparison of a 368-byte table beside the 33KB frame it guards. */
+static void logStateBinaryDieNotClassic(void) {
+  fprintf(stderr,
+          "WinBoloHeadless: this simulation's rules are not the classic "
+          "ones — scenario rule index %d is the first that differs. The "
+          "observation scale is the classic game's, so every frame written "
+          "here would be on a scale nothing was trained against. Refusing "
+          "to run.\n",
+          clientSimRulesFirstDifference(humanSim));
+  fflush(stderr);
+  exit(1);
+}
+
 static void logStateBinary(int tickNum) {
   static bool needMapInit = TRUE;
   BrainInfo bi;
@@ -1597,6 +1627,10 @@ static void logStateBinary(int tickNum) {
 
   if (logFile == NULL) {
     return;
+  }
+
+  if (!clientSimRulesAreClassic(humanSim)) {
+    logStateBinaryDieNotClassic();
   }
 
   brainDataMakeInfo(humanSim, &bi, needMapInit, optAi);
@@ -1707,7 +1741,7 @@ static void logStateBinary(int tickNum) {
         int gx = (int)px - tank_tx + 14;
         int gy = (int)py - tank_ty + 14;
         if (gx < 0 || gx >= 29 || gy < 0 || gy >= 29) continue;
-        float intensity = (float)parmour / 15.0f;
+        float intensity = (float)parmour / (float)bi.rules.pill_max_armour;
         if (powner == 0xFF) {
           spatial[gy][gx][5] = intensity; /* neutral */
         } else if (powner == selfPlayer) {
@@ -1737,14 +1771,14 @@ static void logStateBinary(int tickNum) {
     unsigned armor = dead ? 0 : (unsigned)bi.armour;
     float dir_rad = (float)bi.direction * (2.0f * 3.14159265f / 256.0f);
 
-    scalars[0]  = (float)armor / 40.0f;
-    scalars[1]  = (float)bi.shells / 40.0f;
-    scalars[2]  = (float)bi.mines / 40.0f;
-    scalars[3]  = (float)bi.trees / 40.0f;
+    scalars[0]  = (float)armor / (float)bi.rules.tank_full_armour;
+    scalars[1]  = (float)bi.shells / (float)bi.rules.tank_full_shells;
+    scalars[2]  = (float)bi.mines / (float)bi.rules.tank_full_mines;
+    scalars[3]  = (float)bi.trees / (float)bi.rules.tank_full_trees;
     scalars[4]  = (float)bi.speed / 128.0f;
     scalars[5]  = sinf(dir_rad);
     scalars[6]  = cosf(dir_rad);
-    scalars[7]  = (float)bi.reload / 15.0f;
+    scalars[7]  = (float)bi.reload / (float)bi.rules.tank_reload_ticks;
     scalars[8]  = bi.inboat ? 1.0f : 0.0f;
     scalars[9]  = bi.carriedpills > 0 ? 1.0f : 0.0f;
     scalars[10] = (float)bi.carriedpills / 16.0f;

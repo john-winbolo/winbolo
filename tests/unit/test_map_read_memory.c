@@ -30,6 +30,7 @@
 
 #include "global.h"
 #include "bolo_map.h"
+#include "game_sim.h"
 #include "client_mappreview.h"
 #include "pillbox.h"
 #include "bases.h"
@@ -84,12 +85,14 @@ static bool build_and_write_map(void) {
     }
 
     /* Two pillboxes, two bases, two starts with distinct field values.
-     * The set APIs take a pointer-to-handle (pillboxes *), so pass &. */
+     * The set APIs take a pointer-to-handle (pillboxes *), so pass &.
+     * pillsSetPill reads the pill caps off a sim; there is no game behind
+     * this list, and every value below is inside the classic ones. */
     pillsSetNumPills(&pb, 2);
     pillbox p0 = {0}; p0.x = 40; p0.y = 40; p0.owner = 0xFF; p0.armour = 15; p0.speed = 50;
     pillbox p1 = {0}; p1.x = 80; p1.y = 45; p1.owner = 0xFF; p1.armour = 10; p1.speed = 50;
-    pillsSetPill(&pb, &p0, 1);
-    pillsSetPill(&pb, &p1, 2);
+    pillsSetPill(ut_rules_only_sim(), &pb, &p0, 1);
+    pillsSetPill(ut_rules_only_sim(), &pb, &p1, 2);
 
     basesSetNumBases(&bs, 2);
     base b0 = {0}; b0.x = 50; b0.y = 50; b0.owner = 0xFF; b0.armour = 90; b0.shells = 90; b0.mines = 90;

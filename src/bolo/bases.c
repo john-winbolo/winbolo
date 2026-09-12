@@ -44,7 +44,7 @@
 #include "server_sim.h"
 
 void basesUpdateTimer(GameSim *sim, int playerNumber){
-	sim->baseTimer[playerNumber]=BASE_TICKS_BETWEEN_REFUEL;
+	sim->baseTimer[playerNumber]=sim->rules.base_regen_ticks;
 }
 
 
@@ -160,16 +160,15 @@ void basesSetBase(bases *value, base *item, BYTE baseNum) {
     }
     logAddEvent(log_BaseSetOwner, baseNum, item->owner, TRUE, 0, 0, NULL);
     (((*value)->item[baseNum]).owner) = item->owner;
-    /* Clamp stocks to [0, BASE_FULL_*]. The refuel-from-stash path
-     * tops bases back up at BASE_FULL_* and the tank-give path
-     * decrements, so a runtime base never exceeds 90 — but an
-     * attacker-supplied map can load 255 directly. Drain math is
-     * straightforward subtraction (no wrap), so an out-of-range
-     * value simply takes longer to deplete than any legitimate
-     * stock ever could. */
-    if (item->armour > BASE_FULL_ARMOUR) item->armour = BASE_FULL_ARMOUR;
-    if (item->shells > BASE_FULL_SHELLS) item->shells = BASE_FULL_SHELLS;
-    if (item->mines  > BASE_FULL_MINES)  item->mines  = BASE_FULL_MINES;
+    /* The stocks are stored as handed over. What a base may hold is a
+     * gameplay cap, and this runs on the file-load path, where there is
+     * no sim to ask — basesClampToRules caps the list once one owns it.
+     * Nothing here needs the cap for safety: drain math is straightforward
+     * subtraction with no wrap, so an out-of-range stock simply takes
+     * longer to deplete than any legitimate one could. pillsSetPill beside
+     * it does clamp, because the scenario arms that write a pill's armour
+     * and its speed are written against that clamp; no arm writes a base
+     * through here. */
     (((*value)->item[baseNum]).armour) = item->armour;
     (((*value)->item[baseNum]).shells) = item->shells;
     (((*value)->item[baseNum]).mines) = item->mines;
@@ -417,7 +416,7 @@ baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE vi
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
-     if ((*value)->item[count].armour <= MIN_ARMOUR_CAPTURE) {
+     if ((*value)->item[count].armour <= sim->rules.base_capture_armour) {
         returnValue = baseDead;
       } else if ((*value)->item[count].owner == NEUTRAL) {
         returnValue = baseNeutral;
@@ -460,7 +459,7 @@ baseAlliance basesGetStatusNum(GameSim *sim, BYTE baseNum) {
   /* A base off the map has no status to draw; it reads as neutral, which is
      what the panel shows for a slot the map does not use. */
   if (baseNum < ((*value)->numBases) && (*value)->active[baseNum] != FALSE) {
-    if ((*value)->item[baseNum].armour <= MIN_ARMOUR_CAPTURE) {
+    if ((*value)->item[baseNum].armour <= sim->rules.base_capture_armour) {
       returnValue = baseDead;
     } else if ((*value)->item[baseNum].owner == NEUTRAL) {
       returnValue = baseNeutral;
@@ -535,7 +534,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 					count++;
 				}
 			}
-			sim->baseTimer[secondCounter]=BASE_TICKS_BETWEEN_REFUEL;
+			sim->baseTimer[secondCounter]=sim->rules.base_regen_ticks;
 		  }
 	  }
 
@@ -567,7 +566,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
         basesRefueling(sim, tnk, baseNum);
       } else {
         (*value)->item[baseNum-1].justStopped = FALSE;
-        (*value)->item[baseNum-1].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+        (*value)->item[baseNum-1].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_ARMOUR);
       }
     }
   } else if (tnk != NULL) {
@@ -728,30 +727,32 @@ void basesUpdateStock(GameSim *sim, BYTE baseNum) {
   baseNum--;
   addAmount = 1; /* (BYTE) playersGetNumPlayers(); - 1.09 was but halved rechar time (2*playersGetNumPlayers()); * FIXME: Constant rate */
   if (baseNum < (*value)->numBases && (*value)->active[baseNum] != FALSE) {
-    if ((*value)->item[baseNum].armour < BASE_FULL_ARMOUR) {
+    if ((*value)->item[baseNum].armour < sim->rules.base_full_armour) {
       oldArmour = (*value)->item[baseNum].armour;
       (*value)->item[baseNum].armour += addAmount;
-      if ((*value)->item[baseNum].armour > BASE_FULL_ARMOUR) {
-        (*value)->item[baseNum].armour = BASE_FULL_ARMOUR;
+      if ((*value)->item[baseNum].armour > sim->rules.base_full_armour) {
+        (*value)->item[baseNum].armour = (BYTE) sim->rules.base_full_armour;
       }
-      /* Update the frontend status as required */
-      if (oldArmour == BASE_DEAD && (*value)->item[baseNum].armour > BASE_DEAD) { /* FIXME: Changed to hardcoded value */
+      /* Update the frontend status as required: this tick is where the base
+         came back off the capture threshold, so its icon changes. */
+      if (oldArmour == sim->rules.base_capture_armour &&
+          (*value)->item[baseNum].armour > sim->rules.base_capture_armour) {
         if (isServer == FALSE) {
           frontEndStatusBase(clientSimFromSim(sim), (BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
         }
       }
     }
-    if ((*value)->item[baseNum].shells < BASE_FULL_SHELLS) {
+    if ((*value)->item[baseNum].shells < sim->rules.base_full_shells) {
       (*value)->item[baseNum].shells += addAmount;
-      if ((*value)->item[baseNum].shells > BASE_FULL_SHELLS) {
-        (*value)->item[baseNum].shells = BASE_FULL_SHELLS;
+      if ((*value)->item[baseNum].shells > sim->rules.base_full_shells) {
+        (*value)->item[baseNum].shells = (BYTE) sim->rules.base_full_shells;
       }
     }
 
-    if ((*value)->item[baseNum].mines < BASE_FULL_MINES) {
+    if ((*value)->item[baseNum].mines < sim->rules.base_full_mines) {
       (*value)->item[baseNum].mines += addAmount;
-      if ((*value)->item[baseNum].mines > BASE_FULL_MINES) {
-        (*value)->item[baseNum].mines = BASE_FULL_MINES;
+      if ((*value)->item[baseNum].mines > sim->rules.base_full_mines) {
+        (*value)->item[baseNum].mines = (BYTE) sim->rules.base_full_mines;
       }
     }
     logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
@@ -1215,24 +1216,24 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
       /* A destroyed tank draws nothing from the base. Its armour reads as a
        * real 0 rather than a wrapped value, so the capacity test below no
        * longer rejects it on its own. */
-      if (!tankIsDestroyed(tnk) && armour < TANK_FULL_ARMOUR && ((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
-        (*value)->item[baseNum].armour -= BASE_ARMOUR_GIVE;
-        tankAddArmour(sim, tnk, BASE_ARMOUR_GIVE);
-        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+      if (!tankIsDestroyed(tnk) && armour < sim->rules.tank_full_armour && ((*value)->item[baseNum].armour - sim->rules.base_armour_give) >= sim->rules.base_min_armour) {
+        (*value)->item[baseNum].armour -= sim->rules.base_armour_give;
+        tankAddArmour(sim, tnk, sim->rules.base_armour_give);
+        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_ARMOUR);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
-      } else if (shellsAmount < TANK_FULL_SHELLS && ((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
-        (*value)->item[baseNum].shells -= BASE_SHELLS_GIVE;
-        tankAddShells(sim, tnk, BASE_SHELLS_GIVE);
-        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_SHELL);
+      } else if (shellsAmount < sim->rules.tank_full_shells && ((*value)->item[baseNum].shells - sim->rules.base_shells_give) >= sim->rules.base_min_shells) {
+        (*value)->item[baseNum].shells -= sim->rules.base_shells_give;
+        tankAddShells(sim, tnk, sim->rules.base_shells_give);
+        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_SHELL);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
-      } else if (mines < TANK_FULL_MINES && ((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
-        (*value)->item[baseNum].mines -= BASE_MINES_GIVE;
-        tankAddMines(sim, tnk, BASE_MINES_GIVE);
-        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_MINE);
+      } else if (mines < sim->rules.tank_full_mines && ((*value)->item[baseNum].mines - sim->rules.base_mines_give) >= sim->rules.base_min_mines) {
+        (*value)->item[baseNum].mines -= sim->rules.base_mines_give;
+        tankAddMines(sim, tnk, sim->rules.base_mines_give);
+        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_MINE);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
@@ -1386,9 +1387,15 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
   while (done == FALSE && count < ((*value)->numBases)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].armour > 0) {
       BYTE before = (*value)->item[count].armour;  /* > 0 here */
-      (*value)->item[count].armour -= DAMAGE;
-      if ((*value)->item[count].armour > BASE_FULL_ARMOUR) {
+      /* Ask whether the shell takes more than is left rather than
+         subtracting first and reading the wrap: the wrapped value only
+         looked like "was full" while the cap and the damage were both
+         compile-time, and a rules table can put any pair of numbers here. */
+      if (sim->rules.shell_damage > before) {
         (*value)->item[count].armour = 0;
+      } else {
+        (*value)->item[count].armour =
+            (BYTE) (before - sim->rules.shell_damage);
       }
       if (sim->callbacks.recordDamage) {
         sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_BASE,
@@ -1434,7 +1441,7 @@ bool basesCanHit(GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy) {
     done = FALSE;
     while (done == FALSE && count < ((*value)->numBases)) {
       if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
-        if ((playersIsAllie(&sim->plyrs, ((*value)->item[count].owner), hitBy) == FALSE) && (*value)->item[count].owner != NEUTRAL && (*value)->item[count].armour > BASE_MIN_CAN_HIT) {
+        if ((playersIsAllie(&sim->plyrs, ((*value)->item[count].owner), hitBy) == FALSE) && (*value)->item[count].owner != NEUTRAL && (*value)->item[count].armour > sim->rules.base_hit_armour) {
           returnValue = TRUE;
         }
         done = TRUE;
@@ -1473,7 +1480,7 @@ bool basesCantDrive(GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy) {
     done = FALSE;
     while (done == FALSE && count < ((*value)->numBases)) {
       if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
-        if ((playersIsAllie(&sim->plyrs, ((*value)->item[count].owner), hitBy) == FALSE) && (*value)->item[count].owner != NEUTRAL && (*value)->item[count].armour > MIN_ARMOUR_CAPTURE) {
+        if ((playersIsAllie(&sim->plyrs, ((*value)->item[count].owner), hitBy) == FALSE) && (*value)->item[count].owner != NEUTRAL && (*value)->item[count].armour > sim->rules.base_capture_armour) {
           returnValue = TRUE;
         }
         done = TRUE;
@@ -1514,7 +1521,7 @@ bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
   }
 
   /* A dead enemy base reports its real armour so the capturable flip shows. */
-  if ((*value)->item[baseIdx].armour <= MIN_ARMOUR_CAPTURE) {
+  if ((*value)->item[baseIdx].armour <= sim->rules.base_capture_armour) {
     return TRUE;
   }
 
@@ -1627,60 +1634,20 @@ BYTE basesGetNumNeutral(bases *value) {
 }
 
 /*********************************************************
-*NAME:          basesSetBaseNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 27/2/99
-*PURPOSE:
-* Sets the base data to buff.
-*
-*ARGUMENTS:
-*  value - Pointer to the bases structure
-*  buff  - Buffer of data to set base structure to
-*  len   - Length of the data
-*********************************************************/
-void basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
-  BYTE returnValue = 1;
-  BYTE count = 0;
-  unsigned short us;
-
-  (*value)->numBases = buff[0];
-  while (count < (*value)->numBases) {
-    (*value)->item[count].x = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].y = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].owner = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].armour = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].shells = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].mines = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].refuelTime = buff[returnValue];
-    returnValue++;
-    us = buff[returnValue];
-    us += (buff[returnValue+1] << 8);
-    (*value)->item[count].baseTime = ntohs(us);
-    returnValue += 2;
-    (*value)->item[count].justStopped = buff[returnValue];
-    returnValue++;
-    count++;
-  }
-}
-
-
-/*********************************************************
 *NAME:          basesValidate
 *PURPOSE:
-*  Clamps every base field a map can supply to the range the
-*  rest of the codebase assumes. basesSetBase applies these on
-*  the file-load path; the compressed path memcpys the structs
-*  wholesale and reaches none of them, so a downloaded map can
-*  seat values no legitimate map holds. Idempotent, and pure
-*  clamping: no logging or side effects, so it is safe to call
-*  on a half-built map.
+*  Clamps the base fields a map cannot be trusted on whatever
+*  the rules are: the count, which indexes item[], and each
+*  owner, which indexes the player list. basesSetBase applies
+*  the owner clamp on the file-load path; the compressed path
+*  memcpys the structs wholesale and reaches neither, so a
+*  downloaded map can seat values no legitimate map holds.
+*  Both are properties of the file, so this runs without a
+*  sim and the map editor, the preview and the tile-test tool
+*  get it as the game does; the gameplay caps are
+*  basesClampToRules below. Idempotent, and pure clamping: no
+*  logging or side effects, so it is safe to call on a
+*  half-built map.
 *
 *ARGUMENTS:
 *  value - Pointer to the bases structure
@@ -1701,9 +1668,40 @@ void basesValidate(bases *value) {
     if (item->owner > (MAX_TANKS - 1) && item->owner != NEUTRAL) {
       item->owner = NEUTRAL;
     }
-    if (item->armour > BASE_FULL_ARMOUR) item->armour = BASE_FULL_ARMOUR;
-    if (item->shells > BASE_FULL_SHELLS) item->shells = BASE_FULL_SHELLS;
-    if (item->mines  > BASE_FULL_MINES)  item->mines  = BASE_FULL_MINES;
+  }
+}
+
+/*********************************************************
+*NAME:          basesClampToRules
+*PURPOSE:
+*  Clamps every base's stocks to what this sim lets a base
+*  hold. What a base may carry is a gameplay number, so it
+*  is capped here, once a sim owns the records, rather than
+*  on the load path, which the map editor and the preview
+*  share and which has no sim to ask. Pure clamping, and
+*  idempotent.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the bases structure
+*********************************************************/
+void basesClampToRules(GameSim *sim, bases *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numBases; count++) {
+    base *item = &((*value)->item[count]);
+    if (item->armour > sim->rules.base_full_armour) {
+      item->armour = (BYTE) sim->rules.base_full_armour;
+    }
+    if (item->shells > sim->rules.base_full_shells) {
+      item->shells = (BYTE) sim->rules.base_full_shells;
+    }
+    if (item->mines > sim->rules.base_full_mines) {
+      item->mines = (BYTE) sim->rules.base_full_mines;
+    }
   }
 }
 
@@ -1786,13 +1784,14 @@ BYTE basesGetBaseNetData(bases *value, BYTE *buff) {
 * armour from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveArmour(bases *value, BYTE baseNum) {
-  if (((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
-    (*value)->item[baseNum].armour -= BASE_ARMOUR_GIVE;
-    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+void basesNetGiveArmour(GameSim *sim, bases *value, BYTE baseNum) {
+  if (((*value)->item[baseNum].armour - sim->rules.base_armour_give) >= sim->rules.base_min_armour) {
+    (*value)->item[baseNum].armour -= sim->rules.base_armour_give;
+    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_ARMOUR);
     logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
   }
 }
@@ -1807,13 +1806,14 @@ void basesNetGiveArmour(bases *value, BYTE baseNum) {
 * shells from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveShells(bases *value, BYTE baseNum) {
-  if (((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
-    (*value)->item[baseNum].shells -= BASE_SHELLS_GIVE;
-    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_SHELL);
+void basesNetGiveShells(GameSim *sim, bases *value, BYTE baseNum) {
+  if (((*value)->item[baseNum].shells - sim->rules.base_shells_give) >= sim->rules.base_min_shells) {
+    (*value)->item[baseNum].shells -= sim->rules.base_shells_give;
+    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_SHELL);
     logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
   }
 }
@@ -1828,13 +1828,14 @@ void basesNetGiveShells(bases *value, BYTE baseNum) {
 * mines from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveMines(bases *value, BYTE baseNum) {
-  if (((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
-    (*value)->item[baseNum].mines -= BASE_MINES_GIVE;
-    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_MINE);
+void basesNetGiveMines(GameSim *sim, bases *value, BYTE baseNum) {
+  if (((*value)->item[baseNum].mines - sim->rules.base_mines_give) >= sim->rules.base_min_mines) {
+    (*value)->item[baseNum].mines -= sim->rules.base_mines_give;
+    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_MINE);
     logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
   }
 }
@@ -1912,30 +1913,32 @@ void basesServerRefuel(GameSim *sim, BYTE baseNum, BYTE addAmount) {
   BYTE oldArmour; /* Amount of old armour base had */
 
   if (baseNum < (*value)->numBases && (*value)->active[baseNum] != FALSE) {
-    if ((*value)->item[baseNum].armour < BASE_FULL_ARMOUR) {
+    if ((*value)->item[baseNum].armour < sim->rules.base_full_armour) {
       oldArmour = (*value)->item[baseNum].armour;
       (*value)->item[baseNum].armour += addAmount;
-      if ((*value)->item[baseNum].armour > BASE_FULL_ARMOUR) {
-        (*value)->item[baseNum].armour = BASE_FULL_ARMOUR;
+      if ((*value)->item[baseNum].armour > sim->rules.base_full_armour) {
+        (*value)->item[baseNum].armour = (BYTE) sim->rules.base_full_armour;
       }
-      /* Update the frontend status as required */
-      if (oldArmour == BASE_DEAD && (*value)->item[baseNum].armour > BASE_DEAD) {
+      /* Update the frontend status as required: this tick is where the base
+         came back off the capture threshold, so its icon changes. */
+      if (oldArmour == sim->rules.base_capture_armour &&
+          (*value)->item[baseNum].armour > sim->rules.base_capture_armour) {
         if (isServer == FALSE) {
           frontEndStatusBase(clientSimFromSim(sim), (BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
         }
       }
     }
-    if ((*value)->item[baseNum].shells < BASE_FULL_SHELLS) {
+    if ((*value)->item[baseNum].shells < sim->rules.base_full_shells) {
       (*value)->item[baseNum].shells += addAmount;
-      if ((*value)->item[baseNum].shells > BASE_FULL_SHELLS) {
-        (*value)->item[baseNum].shells = BASE_FULL_SHELLS;
+      if ((*value)->item[baseNum].shells > sim->rules.base_full_shells) {
+        (*value)->item[baseNum].shells = (BYTE) sim->rules.base_full_shells;
       }
     }
 
-    if ((*value)->item[baseNum].mines < BASE_FULL_MINES) {
+    if ((*value)->item[baseNum].mines < sim->rules.base_full_mines) {
       (*value)->item[baseNum].mines += addAmount;
-      if ((*value)->item[baseNum].mines > BASE_FULL_MINES) {
-        (*value)->item[baseNum].mines = BASE_FULL_MINES;
+      if ((*value)->item[baseNum].mines > sim->rules.base_full_mines) {
+        (*value)->item[baseNum].mines = (BYTE) sim->rules.base_full_mines;
       }
     }
   }
@@ -1965,20 +1968,20 @@ void basesSetStock(GameSim *sim, BYTE baseNum, int16_t armour, int16_t shells, i
 
   if (baseNum < (*value)->numBases && (*value)->active[baseNum] != FALSE) {
     if (armour >= 0) {
-      if (armour > BASE_FULL_ARMOUR) {
-        armour = BASE_FULL_ARMOUR;
+      if (armour > sim->rules.base_full_armour) {
+        armour = (int16_t) sim->rules.base_full_armour;
       }
       (*value)->item[baseNum].armour = (BYTE) armour;
     }
     if (shells >= 0) {
-      if (shells > BASE_FULL_SHELLS) {
-        shells = BASE_FULL_SHELLS;
+      if (shells > sim->rules.base_full_shells) {
+        shells = (int16_t) sim->rules.base_full_shells;
       }
       (*value)->item[baseNum].shells = (BYTE) shells;
     }
     if (mines >= 0) {
-      if (mines > BASE_FULL_MINES) {
-        mines = BASE_FULL_MINES;
+      if (mines > sim->rules.base_full_mines) {
+        mines = (int16_t) sim->rules.base_full_mines;
       }
       (*value)->item[baseNum].mines = (BYTE) mines;
     }
@@ -2001,7 +2004,7 @@ void basesSetStock(GameSim *sim, BYTE baseNum, int16_t armour, int16_t shells, i
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-bool baseIsCapturable(bases *value, BYTE xValue, BYTE yValue) {
+bool baseIsCapturable(GameSim *sim, bases *value, BYTE xValue, BYTE yValue) {
   bool returnValue; /* Value to return */
   bool done;        /* Finised looping */
   BYTE count;       /* Looping Variable */  
@@ -2012,7 +2015,8 @@ bool baseIsCapturable(bases *value, BYTE xValue, BYTE yValue) {
   while (done == FALSE && count < ((*value)->numBases)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       done = TRUE;
-      if ((*value)->item[count].owner == NEUTRAL || (*value)->item[count].armour <= MIN_ARMOUR_CAPTURE) {
+      if ((*value)->item[count].owner == NEUTRAL ||
+          (*value)->item[count].armour <= sim->rules.base_capture_armour) {
         returnValue = TRUE;
       }
     }
@@ -2126,8 +2130,9 @@ void basesGetBrainBaseInRect(ClientSim *cs, GameSim *sim, BYTE leftPos, BYTE rig
       }
       if (isAllie == FALSE) {
         /* Fog of war: hostile bases report 1 (alive) or 0 (capturable).
-         * A base is capturable at armour <= MIN_ARMOUR_CAPTURE. */
-        armour = ((*value)->item[count].armour <= MIN_ARMOUR_CAPTURE) ? 0 : 1;
+         * A base is capturable at or below this sim's capture threshold. */
+        armour = ((*value)->item[count].armour <=
+                  sim->rules.base_capture_armour) ? 0 : 1;
       } else {
         armour = (BYTE) ((*value)->item[count].armour / 5);
       }
@@ -2307,47 +2312,46 @@ BYTE basesGetNumberOwnedByPlayer(bases *value, BYTE playerNum) {
 * calculate what to return to average out half ticks
 *
 *ARGUMENTS:
+*  sim          - The game the base belongs to
 *  typeSelector - tells us what type of number to return.
 *********************************************************/
-int basesHalfTickCalulator(int typeSelector) {
-	static double lastShell;
-	static double lastMine;
+int basesHalfTickCalulator(GameSim *sim, int typeSelector) {
 	double tempShell = 0;
 	double tempMine = 0;
 
 	switch(typeSelector)
 	{
-	case BASES_HALFTICK_TYPE_SHELL: 
-	  if(floor(BASE_REFUEL_SHELLS) != BASE_REFUEL_SHELLS){
-	  	if(lastShell == 0){
-			lastShell = BASE_REFUEL_SHELLS-floor(BASE_REFUEL_SHELLS);
-			tempShell = floor(BASE_REFUEL_SHELLS);
+	case BASES_HALFTICK_TYPE_SHELL:
+	  if(floor(sim->rules.base_refuel_shells_ticks) != sim->rules.base_refuel_shells_ticks){
+	  	if(sim->halfTickShell == 0){
+			sim->halfTickShell = sim->rules.base_refuel_shells_ticks-floor(sim->rules.base_refuel_shells_ticks);
+			tempShell = floor(sim->rules.base_refuel_shells_ticks);
 			return (int) tempShell;
 		} else {
-			tempShell = BASE_REFUEL_SHELLS+lastShell;
-			lastShell = 0;
+			tempShell = sim->rules.base_refuel_shells_ticks+sim->halfTickShell;
+			sim->halfTickShell = 0;
 			return (int) floor(tempShell);
 		}
 	  } else {
-	    return BASE_REFUEL_SHELLS;
+	    return sim->rules.base_refuel_shells_ticks;
 	  }
 	  break;
-	case BASES_HALFTICK_TYPE_MINE: 
-	  if(floor(BASE_REFUEL_MINES) != BASE_REFUEL_MINES){
-	  	if(lastMine == 0){
-			lastMine = BASE_REFUEL_MINES-floor(BASE_REFUEL_MINES);
-			return (int) floor(BASE_REFUEL_MINES);
+	case BASES_HALFTICK_TYPE_MINE:
+	  if(floor(sim->rules.base_refuel_mines_ticks) != sim->rules.base_refuel_mines_ticks){
+	  	if(sim->halfTickMine == 0){
+			sim->halfTickMine = sim->rules.base_refuel_mines_ticks-floor(sim->rules.base_refuel_mines_ticks);
+			return (int) floor(sim->rules.base_refuel_mines_ticks);
 		} else {
-			tempMine = BASE_REFUEL_MINES+lastMine;
-			lastMine = 0;
+			tempMine = sim->rules.base_refuel_mines_ticks+sim->halfTickMine;
+			sim->halfTickMine = 0;
 			return (int) floor(tempMine);
 		}
 	  } else {
-	    return BASE_REFUEL_MINES;
+	    return sim->rules.base_refuel_mines_ticks;
 	  }
 	  break;
-	case BASES_HALFTICK_TYPE_ARMOUR: 
-	  return BASE_REFUEL_ARMOUR;
+	case BASES_HALFTICK_TYPE_ARMOUR:
+	  return sim->rules.base_refuel_armour_ticks;
 	  break;
 	default:
 	  return 0;

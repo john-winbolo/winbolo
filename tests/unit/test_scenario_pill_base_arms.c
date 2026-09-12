@@ -50,7 +50,6 @@
 #include "bases.h"                 /* the base list the base arms write */
 #include "mines.h"                 /* minesExistPos — the move arm's square test */
 #include "tank.h"                  /* tankGetMX / tankGetMY */
-#include "util.h"                  /* utilPutNibble — the health record's byte */
 #include "log.h"                   /* log_Pill* / log_Base* and the stream opcodes */
 #include "input_packet.h"          /* EVENT_PILL_CAPTURED, EVENT_BASE_CAPTURED */
 #include "replay_harness.h"
@@ -102,7 +101,7 @@ static void pbPlacePill(ServerSim *sim, BYTE opIndex, BYTE x, BYTE y,
     item.owner = owner;
     item.armour = armour;
     item.inTank = inTank;
-    pillsSetPill(&sim->sim.pb, &item, (BYTE)(opIndex + 1));
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, (BYTE)(opIndex + 1));
 }
 
 /* A square inside the minable area holding nothing but the wanted terrain,
@@ -939,12 +938,13 @@ int run_scenario_pill_base_arm_records(void) {
     UT_ASSERT_MSG(hit.payload[2] == FALSE,
                   "log_PillSetOwner calls a scripted hand-over a migration");
 
-    /* log_PillSetHealth: one packed byte of index and armour. */
-    UT_ASSERT(pbFindLogged(h.path, (uint8_t)log_PillSetHealth,
-                           utilPutNibble(0, 6), &hit));
+    /* log_PillSetHealth: the index, then the armour in a byte of its own. */
+    UT_ASSERT(pbFindLogged(h.path, (uint8_t)log_PillSetHealth, 0, &hit));
     UT_ASSERT_MSG(hit.found, "log_PillSetHealth is not in the recording");
-    UT_ASSERT_MSG(hit.payloadLen == 1, "log_PillSetHealth payload is %d bytes",
+    UT_ASSERT_MSG(hit.payloadLen == 2, "log_PillSetHealth payload is %d bytes",
                   hit.payloadLen);
+    UT_ASSERT_MSG(hit.payload[1] == 6, "log_PillSetHealth names armour %u",
+                  (unsigned)hit.payload[1]);
 
     /* log_PillSetPlace: index, x, y. */
     UT_ASSERT(pbFindLogged(h.path, (uint8_t)log_PillSetPlace, 0, &hit));

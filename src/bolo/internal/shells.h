@@ -75,7 +75,7 @@ typedef enum {
 #define SHELL_START_EXPLODE 8
 
 /* Fudge factor for shootong offset */
-#define SHELL_START_ADD 6
+#define SHELL_START_ADD 5
 
 
 /* Brain Stuff */
@@ -111,8 +111,8 @@ struct shellsObj {
   /* High-precision fixed-point step: speed * cos/sin * 256, stored once at
    * creation so we don't re-round every tick.  xAcc/yAcc accumulate the
    * fractional world-unit remainder between ticks. */
-  int32_t xStep;    /* 24.8 fixed-point X step per tick (SHELL_SPEED * cos * 256) */
-  int32_t yStep;    /* 24.8 fixed-point Y step per tick (SHELL_SPEED * sin * 256) */
+  int32_t xStep;    /* 24.8 fixed-point X step per tick (shell_speed * cos * 256) */
+  int32_t yStep;    /* 24.8 fixed-point Y step per tick (shell_speed * sin * 256) */
   int32_t xAcc;     /* fractional accumulator, range [0, 256) */
   int32_t yAcc;     /* fractional accumulator, range [0, 256) */
 };
@@ -167,28 +167,37 @@ void shellsAddItem(struct GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYP
  * both the live engine (shellsUpdate / shellsAddItem) and the brain's
  * stateless trajectory simulator (brainPathfinderSimulateShot). Must
  * stay bit-identical or the brain's "would my shot hit?" predictions
- * diverge from reality. */
+ * diverge from reality.
+ *
+ * They take the shell numbers rather than reading them, because the
+ * two callers reach them from different places: the engine passes
+ * sim->rules, and the brain passes what the bot manager pushed onto
+ * the pathfinder. A sim argument would shut the brain out. */
 
-/* Apply the SHELL_START_ADD initial offset that shellsAddItem uses
- * before the first tick. Mutates *x, *y in place. xAdd/yAdd are the
- * low-precision integer per-tick step from utilCalcDistance(angle,
- * SHELL_SPEED). */
-void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd);
+/* Apply the initial offset that shellsAddItem uses before the first
+ * tick. Mutates *x, *y in place. xAdd/yAdd are the low-precision
+ * integer per-tick step from utilCalcDistance(angle, shell speed);
+ * startAdd is shell_start_add. */
+void shellApplyStartOffset(WORLD *x, WORLD *y, int xAdd, int yAdd,
+                           int startAdd);
 
 /* Advance one tick of high-precision (24.8 fixed-point) shell
  * motion. Adds (xStep, yStep) into the accumulators, extracts the
  * whole-wu portion, and bumps *x, *y by it. xStep/yStep are the
- * SHELL_SPEED * (sin, -cos) of the angle in 24.8 format from
+ * shell speed * (sin, -cos) of the angle in 24.8 format from
  * utilCalcDistanceHP — constant for the shell's lifetime. */
 void shellAdvance1Tick(WORLD *x, WORLD *y,
                        int32_t *xAcc, int32_t *yAcc,
                        int32_t xStep, int32_t yStep);
 
 /* Compute the shell-life tick budget the same way shellsAddItem
- * stores it on the shell record: SHELL_LIFE * len - SHELL_START_ADD,
+ * stores it on the shell record: 1 + shellLife * len - startAdd,
  * floored at 0. `len` is the value the firing tank passed (sightLen/2
- * for tanks, PILLBOX_FIRE_DISTANCE for pills). */
-int  shellLifeTicks(float len);
+ * for tanks, PILLBOX_FIRE_DISTANCE for pills); shellLife is
+ * shell_life and startAdd is shell_start_add. The result goes into a
+ * BYTE, which is what the shell_life / gunsight_max pair in
+ * simRulesValidate keeps under 256. */
+int  shellLifeTicks(float len, int shellLife, int startAdd);
 
 /* Convert a (origin → target) wu vector to the integer bolo bradian
  * angle (0..255) that a shooter would need to fire along that line.
@@ -199,11 +208,12 @@ TURNTYPE shellAngleFromTarget(WORLD ox, WORLD oy, WORLD tx, WORLD ty);
 
 /* Compute where a shell physically appears when a tank fires from
  * (tank_x, tank_y) at the given angle. Combines utilCalcDistance
- * (low-precision per-tick step) with the SHELL_START_ADD initial
- * offset that shellsAddItem applies — same math as the engine, so
- * the brain knows the exact spawn coordinate before the engine sets
- * it. Writes spawn position into *out_x, *out_y. */
+ * (low-precision per-tick step at shellSpeed) with the startAdd
+ * initial offset that shellsAddItem applies — same math as the
+ * engine, so the brain knows the exact spawn coordinate before the
+ * engine sets it. Writes spawn position into *out_x, *out_y. */
 void shellSpawnPos(WORLD tank_x, WORLD tank_y, TURNTYPE angle,
+                   int shellSpeed, int startAdd,
                    WORLD *out_x, WORLD *out_y);
 
 
@@ -337,25 +347,6 @@ BYTE shellsCheckRoad(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
 *  sentState   - What to set the send state to
 *********************************************************/
 BYTE shellsNetMake(shells *value, BYTE *buff, BYTE noPlayerNum, bool sentState);
-
-/*********************************************************
-*NAME:          shellsNetExtract
-*AUTHOR:        John Morrison
-*CREATION DATE:  6/3/99
-*LAST MODIFIED: 23/9/00
-*PURPOSE:
-* Network shells data have arrived. Add them to our 
-* shells structure here.
-*  
-*ARGUMENTS:
-*  value    - Pointer to shells structure
-*  pb       - Pointer to the pillboxes structure
-*  buff     - Pointer to a buffer to hold the shells 
-*             net data
-*  dataLen  - Length of the data
-*  isServer - TRUE if we are the game server.
-*********************************************************/
-void shellsNetExtract(struct GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BYTE dataLen, bool isServer, tank *tanks);
 
 /*********************************************************
 *NAME:          shellsGetBrainShellsInRect

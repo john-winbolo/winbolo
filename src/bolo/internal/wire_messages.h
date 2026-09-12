@@ -27,7 +27,7 @@
     F(U8, owner) F(U8, armour) F(U8, shells) F(U8, mines)
 
 #define PILL_SNAPSHOT_FIELDS(F) \
-    F(U8, x) F(U8, y) F(U8, owner) F(U8, armourInTank)
+    F(U8, x) F(U8, y) F(U8, owner) F(U8, pillFlags) F(U8, armour)
 
 /* Presence-bitmask message. Field order is WIRE order (follows the packer), not
  * the struct declaration order: the 12-byte core first, then the omit-zero
@@ -43,7 +43,7 @@
     FGROUP(TANK_PRESENT_OWNER_RES, U8, trees)                \
     FGROUP(TANK_PRESENT_OWNER_RES, U8, gunsightLen)          \
     FGROUP(TANK_PRESENT_RELOAD,    U8, reload)               \
-    FGROUP(TANK_PRESENT_DEATHWAIT, U8, deathWait)            \
+    FGROUP(TANK_PRESENT_DEATHWAIT, U16, deathWait)           \
     FGROUP(TANK_PRESENT_LGM, U8, lgmFrame)                   \
     FGROUP(TANK_PRESENT_LGM, U8, lgmMX)                      \
     FGROUP(TANK_PRESENT_LGM, U8, lgmMY)                      \

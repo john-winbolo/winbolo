@@ -28,6 +28,8 @@
  * per-change events carried all of it.
  */
 
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "global.h"
@@ -37,6 +39,7 @@
 #include "bases.h"
 #include "pillbox.h"
 #include "tank.h"
+#include "log.h"            /* LOG_VERSION_V3 — the version the file states */
 #include "replay_harness.h"
 #include "test_harness.h"
 
@@ -126,7 +129,7 @@ int run_replay_roundtrip_world(void) {
     shellsBefore = firstBase.shells;
 
     basesSetBaseOwner(gs, 1, 0, TRUE, TRUE);
-    basesNetGiveShells(&gs->bs, 0);   /* the give path counts bases from 0 */
+    basesNetGiveShells(gs, &gs->bs, 0);   /* the give path counts bases from 0 */
 
     memset(&firstBase, 0, sizeof(firstBase));
     basesGetBase(&gs->bs, &firstBase, 1);
@@ -153,10 +156,10 @@ int run_replay_roundtrip_world(void) {
     /* Tank stocks: four values it never spawns with, and all different from
      * each other, so a replay that filled them in from spawn defaults or
      * left them empty cannot match by luck. */
-    tankSetShells(&gs->tanks[0], 7);
-    tankSetMines(&gs->tanks[0], 11);
+    tankSetShells(gs, &gs->tanks[0], 7);
+    tankSetMines(gs, &gs->tanks[0], 11);
     tankSetArmour(&gs->tanks[0], 23);
-    tankSetTrees(&gs->tanks[0], 5);
+    tankSetTrees(gs, &gs->tanks[0], 5);
 
     /* Carry the changes into the file: events raised between ticks are
      * flushed by the next recorded tick, and the tank's stocks are read by
@@ -164,6 +167,93 @@ int run_replay_roundtrip_world(void) {
     replayHarnessTick(&h, 6);
 
     UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+    UT_ASSERT_MSG(replayHarnessDecode(&h),
+                  "replay did not decode to end-of-log");
+    UT_ASSERT_MSG(replayHarnessCompare(&h), "replayed world differs: %s",
+                  replayHarnessDiff(&h));
+
+    replayHarnessStop(&h);
+    return 0;
+}
+
+/* The pill health record names the pillbox and its armour in a byte each, and
+ * the writer and the viewer have to agree on that length. A reader that takes
+ * one byte where two were written treats the armour as the next record's event
+ * code and reads everything after it off its boundaries, so the damage is not
+ * to the armour but to whatever follows.
+ *
+ * The round therefore changes a pillbox's armour and its square in the one
+ * call, which writes the health record with two more behind it in the same
+ * stream. A length mistake comes back as a pill on the wrong square rather
+ * than as an armour value that happens to match.
+ *
+ * pillsSetPill is the sim's own function for this and writes four records —
+ * owner, health, in-tank, placement — so nothing here is a hand-built log.
+ *
+ * The two-byte record is what LOG_VERSION 3 means, so the case also opens the
+ * file and reads its version byte: a recording that carries this record while
+ * stating version 2 is the ambiguity the version bump exists to remove, and no
+ * reader could size it. The nibble form every earlier version holds is covered
+ * by test_replay_version_compat.c. */
+int run_replay_roundtrip_pill_health(void) {
+    ReplayHarness h;
+    GameSim *gs;
+    pillbox firstPill;
+    BYTE pillX = 0;
+    BYTE pillY = 0;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "pillhealth", "Tester"),
+                  "could not start recording");
+    gs = serverSimGetGameSim(h.sim);
+    UT_ASSERT_MSG(gs != NULL, "no GameSim");
+
+    replayHarnessTick(&h, 4);
+
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1, "fixture map has no pills");
+    UT_ASSERT_MSG(findPlainGrassCell(gs, &pillX, &pillY),
+                  "fixture map has no free grass cell to move a pill onto");
+
+    memset(&firstPill, 0, sizeof(firstPill));
+    pillsGetPill(&gs->pb, &firstPill, 1);
+    UT_ASSERT_MSG(firstPill.armour != 6,
+                  "pill 1 already sits at armour 6, so setting it there would "
+                  "record nothing to read back");
+    UT_ASSERT_MSG(firstPill.x != pillX || firstPill.y != pillY,
+                  "pill 1 is already on the free cell this case moves it to");
+    firstPill.armour = 6;
+    firstPill.x = pillX;
+    firstPill.y = pillY;
+    pillsSetPill(gs, &gs->pb, &firstPill, 1);
+
+    memset(&firstPill, 0, sizeof(firstPill));
+    pillsGetPill(&gs->pb, &firstPill, 1);
+    UT_ASSERT_MSG(firstPill.armour == 6, "pill 1 armour is %d, expected 6",
+                  firstPill.armour);
+    UT_ASSERT_MSG(firstPill.x == pillX && firstPill.y == pillY,
+                  "pill 1 sits at %d,%d, expected %d,%d",
+                  firstPill.x, firstPill.y, pillX, pillY);
+
+    replayHarnessTick(&h, 6);
+
+    UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+
+    /* The file says which shape its health record holds. */
+    {
+        uint8_t *logDat = NULL;
+        size_t   logLen = 0;
+        uint8_t  version;
+        UT_ASSERT_MSG(extractLogDat(h.path, &logDat, &logLen),
+                      "could not read log.dat out of %s", h.path);
+        UT_ASSERT_MSG(logLen > 9, "log.dat is %u bytes", (unsigned) logLen);
+        version = logDat[8];
+        free(logDat);
+        UT_ASSERT_MSG(version == LOG_VERSION_V3,
+                      "the recording states version %u; the two-byte health "
+                      "record is version %u", (unsigned) version,
+                      (unsigned) LOG_VERSION_V3);
+    }
+
     UT_ASSERT_MSG(replayHarnessDecode(&h),
                   "replay did not decode to end-of-log");
     UT_ASSERT_MSG(replayHarnessCompare(&h), "replayed world differs: %s",

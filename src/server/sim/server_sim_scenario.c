@@ -50,6 +50,7 @@
 #include "mines.h"         /* the mine list the map arms add to and clear */
 #include "starts.h"        /* startsGetStart — the teleport arm's start mode */
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
+#include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
@@ -142,13 +143,13 @@ static ScnOpResult scenarioOpTankSetStocks(ServerSim *sim,
     }
 
     shells = scenarioStockTarget(p->mode, p->shells, tankGetShells(t),
-                                 TANK_FULL_SHELLS, &bad);
+                                 sim->sim.rules.tank_full_shells, &bad);
     mines  = scenarioStockTarget(p->mode, p->mines,  tankGetMines(t),
-                                 TANK_FULL_MINES,  &bad);
+                                 sim->sim.rules.tank_full_mines,  &bad);
     armour = scenarioStockTarget(p->mode, p->armour, tankGetArmour(t),
-                                 TANK_FULL_ARMOUR, &bad);
+                                 sim->sim.rules.tank_full_armour, &bad);
     trees  = scenarioStockTarget(p->mode, p->trees,  tankGetTrees(t),
-                                 TANK_FULL_TREES,  &bad);
+                                 sim->sim.rules.tank_full_trees,  &bad);
     if (bad) {
         return SCN_OP_RANGE;
     }
@@ -160,16 +161,16 @@ static ScnOpResult scenarioOpTankSetStocks(ServerSim *sim,
     }
 
     if (shells >= 0) {
-        tankSetShells(t, (BYTE)shells);
+        tankSetShells(&sim->sim, t, (BYTE)shells);
     }
     if (mines >= 0) {
-        tankSetMines(t, (BYTE)mines);
+        tankSetMines(&sim->sim, t, (BYTE)mines);
     }
     if (armour >= 0) {
         tankSetArmour(t, (BYTE)armour);
     }
     if (trees >= 0) {
-        tankSetTrees(t, (BYTE)trees);
+        tankSetTrees(&sim->sim, t, (BYTE)trees);
     }
     return SCN_OP_OK;
 }
@@ -645,14 +646,14 @@ static ScnOpResult scenarioOpLgmSetCarried(ServerSim *sim,
        Asking for more is a mistake worth reporting rather than clamping, the
        same answer the tank's own stock op gives. Both are asked before either
        is written, so a bad pair leaves him as he was. */
-    if (p->trees != SCN_NONE && p->trees > TANK_FULL_TREES) {
+    if (p->trees != SCN_NONE && p->trees > sim->sim.rules.tank_full_trees) {
         return SCN_OP_RANGE;
     }
-    if (p->mines != SCN_NONE && p->mines > TANK_FULL_MINES) {
+    if (p->mines != SCN_NONE && p->mines > sim->sim.rules.tank_full_mines) {
         return SCN_OP_RANGE;
     }
 
-    lgmSetCarried(l,
+    lgmSetCarried(&sim->sim, l,
                   (p->trees == SCN_NONE) ? (*l)->numTrees : p->trees,
                   (p->mines == SCN_NONE) ? (*l)->numMines : p->mines);
     return SCN_OP_OK;
@@ -748,7 +749,7 @@ static ScnOpResult scenarioOpPillSetArmour(ServerSim *sim,
     /* pillsSetPill clamps, because a map file may carry anything. A script is
        told instead: asking for more armour than a pill can hold is a mistake
        worth reporting, the same answer the tank's own stock op gives. */
-    if (p->armour > PILLS_MAX_ARMOUR) {
+    if (p->armour > sim->sim.rules.pill_max_armour) {
         return SCN_OP_RANGE;
     }
     if (item.inTank) {
@@ -756,7 +757,7 @@ static ScnOpResult scenarioOpPillSetArmour(ServerSim *sim,
     }
 
     item.armour = p->armour;
-    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, pillNum);
     return SCN_OP_OK;
 }
 
@@ -774,12 +775,13 @@ static ScnOpResult scenarioOpPillSetSpeed(ServerSim *sim,
     /* The attack interval runs from the fastest a hurt pill fires to the rate
        an untouched one sits at. pillsSetPill clamps into that pair and arms the
        cooldown for anything under the top of it. */
-    if (p->speed < PILLBOX_MAX_FIRERATE || p->speed > PILLBOX_ATTACK_NORMAL) {
+    if (p->speed < sim->sim.rules.pill_attack_min_ticks ||
+        p->speed > sim->sim.rules.pill_attack_ticks) {
         return SCN_OP_RANGE;
     }
 
     item.speed = p->speed;
-    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, pillNum);
     return SCN_OP_OK;
 }
 
@@ -806,7 +808,7 @@ static ScnOpResult scenarioOpPillMove(ServerSim *sim, const ScnOpPillMove *p) {
 
     item.x = p->x;
     item.y = p->y;
-    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, pillNum);
     return SCN_OP_OK;
 }
 
@@ -1293,10 +1295,11 @@ static ScnOpResult scenarioOpEntityAddPill(ServerSim *sim,
     if (!scenarioOwnerIsLegal(p->owner)) {
         return SCN_OP_RANGE;
     }
-    if (p->armour > PILLS_MAX_ARMOUR) {
+    if (p->armour > sim->sim.rules.pill_max_armour) {
         return SCN_OP_RANGE;
     }
-    if (p->speed < PILLBOX_MAX_FIRERATE || p->speed > PILLBOX_ATTACK_NORMAL) {
+    if (p->speed < sim->sim.rules.pill_attack_min_ticks ||
+        p->speed > sim->sim.rules.pill_attack_ticks) {
         return SCN_OP_RANGE;
     }
     if (!scenarioSquareTakesPill(sim, p->x, p->y)) {
@@ -1371,8 +1374,9 @@ static ScnOpResult scenarioOpEntityAddBase(ServerSim *sim,
     }
     /* Checked rather than clamped, for the reason the pill add checks: the
        list stores what it is handed. */
-    if (p->armour > BASE_FULL_ARMOUR || p->shells > BASE_FULL_SHELLS ||
-        p->mines > BASE_FULL_MINES) {
+    if (p->armour > sim->sim.rules.base_full_armour ||
+        p->shells > sim->sim.rules.base_full_shells ||
+        p->mines > sim->sim.rules.base_full_mines) {
         return SCN_OP_RANGE;
     }
     if (!scenarioSquareTakesPill(sim, p->x, p->y)) {
@@ -2165,6 +2169,222 @@ static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* ── Rules ──────────────────────────────────────────────────────────────
+ *
+ * One arm over the table of gameplay numbers the simulation runs on. */
+
+/* Every field in the table is four bytes wide and SCN_RULE_LIST has a line
+ * for each of them, so the struct is exactly as many fields long as the list
+ * is entries. A field added to SimRules without a line in the list, a line
+ * written twice, or a field that is not four bytes, all fail here rather than
+ * leaving an index quietly naming the wrong field. Which field each index
+ * names, and that the list is in the struct's order, is the offsets case in
+ * tests/unit/test_scenario_rule_arms.c. */
+BOLO_STATIC_ASSERT(sizeof(SimRules) == SCN_RULE_COUNT * sizeof(int32_t),
+                   scn_rule_list_covers_sim_rules);
+
+/* One switch arm per rule, generated from the list the index enum is
+ * generated from, so the two cannot name different fields. The assignment
+ * converts the op's double to whatever the field is declared as — an integer
+ * rule takes the whole part of it, a float rule takes the value — and reading
+ * it straight back out says what the field ended up holding, which is what is
+ * checked below and what the record carries. */
+#define SCN_RULE_WRITE_CASE(name)                                            \
+    case SCN_RULE_##name:                                                    \
+        copy.name = p->value;                                                \
+        written   = (double)copy.name;                                       \
+        break;
+
+/* The record: which rule, and the value the field ended up holding. */
+BOLO_STATIC_ASSERT(sizeof(double) == 8, scn_rule_value_is_eight_bytes);
+
+static void scenarioRecordRuleSet(uint16_t rule, double written) {
+    uint64_t bits;
+    char     blob[9];
+    int      i;
+
+    /* The value as the eight bytes of its IEEE-754 double, most significant
+       first. Every rule fits one exactly — an int32_t field's whole range and
+       every value a float field can hold — so the record states what the
+       table holds rather than a scaled approximation of it. The bit pattern
+       is serialised as an integer, so a host's own byte order does not reach
+       the file. */
+    memcpy(&bits, &written, sizeof(bits));
+    blob[0] = 8;
+    for (i = 0; i < 8; i++) {
+        blob[1 + i] = (char)((bits >> (56 - 8 * i)) & 0xFF);
+    }
+    logAddEvent(log_RuleSet, 0, 0, 0, 0, rule, blob);
+}
+
+/* Whether a rule is one CTRL_SIM_RULES carries. A change to a rule only the
+ * server reads publishes nothing: no client holds a value for it, so there
+ * is nothing out there to correct. Written from the event's own field lists,
+ * so a rule that starts being carried starts being republished here with no
+ * second edit. */
+static bool scenarioRuleIsCarried(uint16_t rule) {
+    switch (rule) {
+#define SCN_RULE_CARRIED_CASE(name) case SCN_RULE_##name: return true;
+        CTRL_SIM_RULES_ALL_FIELDS(SCN_RULE_CARRIED_CASE)
+#undef SCN_RULE_CARRIED_CASE
+        default: return false;
+    }
+}
+
+/* Bring the world back inside a table that has just changed. A new table
+ * that lowers a cap leaves the records standing above it — a pill at 15
+ * armour under a new pill_max_armour of 8, a base at 90 shells under a new
+ * base_full_shells of 40 — and the pass that caps them is the one a sim runs
+ * when it takes a map on, which is the same question asked the other way
+ * round. It is called whatever rule changed rather than behind a test of
+ * which rules bear on a cap: it is idempotent, it is sixteen pills and
+ * sixteen bases, and a list of the rules that matter is one more list that
+ * can drift from the clamp it guards.
+ *
+ * The records belong to this handler rather than to the pass. The pass is
+ * shared with the load path, which has its records from elsewhere, so what
+ * the clamp moved is read off either side of it here and stated with the
+ * records those fields already have. A clamp that moved nothing writes
+ * nothing.
+ *
+ * A removed slot is stated like any other. The viewer keeps a tombstone's
+ * record as the list does, so a slot the clamp moved and nothing stated
+ * would be the one place the two lists differ.
+ *
+ * A pill's speed and its cooldown have no record in the stream at all — no
+ * path writes one and the viewer holds no field for either — so the clamp
+ * can move those two and say nothing about them. That is how far the format
+ * reaches rather than something this handler drops. */
+static void scenarioClampWorldToRules(ServerSim *sim) {
+    BYTE    pillArmour[MAX_PILLS];
+    BYTE    baseArmour[MAX_BASES];
+    BYTE    baseShells[MAX_BASES];
+    BYTE    baseMines[MAX_BASES];
+    BYTE    numPills = pillsGetNumPills(&sim->sim.pb);
+    BYTE    numBases = basesGetNumBases(&sim->sim.bs);
+    BYTE    i;
+    pillbox pill;
+    base    item;
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        pillArmour[i] = pill.armour;
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        baseArmour[i] = item.armour;
+        baseShells[i] = item.shells;
+        baseMines[i]  = item.mines;
+    }
+
+    mapClampToRules(&sim->sim);
+
+    /* Both records name their item counting from zero, which is what every
+       other place that writes one passes. */
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        if (pill.armour != pillArmour[i]) {
+            logAddEvent(log_PillSetHealth, i, pill.armour, 0, 0, 0, NULL);
+        }
+    }
+    /* One record carries all three stocks, so a base whose clamp moved any of
+       them is stated once. */
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        if (item.armour != baseArmour[i] || item.shells != baseShells[i] ||
+            item.mines != baseMines[i]) {
+            logAddEvent(log_BaseSetStock, i, item.shells, item.mines,
+                        item.armour, 0, NULL);
+        }
+    }
+}
+
+/* Write one rule. The write lands in a copy of the sim's table, the copy is
+ * checked whole, and only a copy that passes is committed: a refused op
+ * leaves the sim's table byte for byte as it was rather than half-applied.
+ *
+ * A committed change to a rule clients read is published, so their tables
+ * follow the server's within the tick. A change to a server-only rule
+ * publishes nothing.
+ *
+ * The three things a commit is followed by are in the order a reader of
+ * either channel wants them. The rule's own record goes first, so a replay
+ * reads the change before what it stranded rather than after it. The clamp
+ * comes next, which leaves the publish last: the event is the instruction to
+ * every client to run that same clamp, and sending it once this server's own
+ * records are already inside the table means a subscriber that reads the sim
+ * from its callback — which is what the entity publishes above promise it —
+ * never sees a world the event it is holding contradicts.
+ *
+ * No state check. A rule belongs to the simulation rather than to a round,
+ * the way a pill belongs to the map, so a lobby setting its table up and a
+ * round changing a number mid-play are both ordinary. */
+static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
+    SimRules      copy    = sim->sim.rules;
+    double        written = 0.0;
+    SimRulesFault fault;
+    char          why[SIM_RULES_WHY_LEN];
+
+    /* An index past the end of the list names no rule, which is what every
+       other arm answers SCN_OP_NO_SUCH_ITEM for. */
+    if (p->rule >= SCN_RULE_COUNT) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    /* A NaN, and anything past the int32 window, cannot be converted to a
+       field's type at all — that conversion is undefined rather than wrong —
+       so both are refused before the write instead of checked after it.
+       Written as a negated in-range test so a NaN fails it. No row's range
+       comes near either end; every bound a row actually has is stated by the
+       check below and by nothing here. */
+    if (!(p->value >= -2147483648.0 && p->value <= 2147483647.0)) {
+        return SCN_OP_RANGE;
+    }
+
+    switch (p->rule) {
+        SCN_RULE_LIST(SCN_RULE_WRITE_CASE)
+        default:
+            /* Unreachable: the bounds check above has already passed, and
+               the cases come from the list the enum comes from. */
+            return SCN_OP_NO_SUCH_ITEM;
+    }
+
+    fault = simRulesCheck(&copy, why, sizeof(why));
+    if (fault != SIM_RULES_OK) {
+        /* The reason names the row and the bound it missed, which is the only
+           place a script author is told which of the table's numbers it was
+           and what it had to be. */
+        char line[SIM_RULES_WHY_LEN + 32];
+        SDL_snprintf(line, sizeof(line), "rule refused: %s", why);
+        serverSimConsoleMessage(line);
+    }
+    switch (fault) {
+        case SIM_RULES_OK:
+            break;
+        case SIM_RULES_FAULT_PAIR:
+            return SCN_OP_PAIR;
+        case SIM_RULES_FAULT_RANGE:
+        /* No table is not reachable from here — the one checked is on this
+           stack — and there is no result code for it, so it answers as the
+           range refusal it would have to be reported as anyway. */
+        case SIM_RULES_FAULT_NO_TABLE:
+            return SCN_OP_RANGE;
+    }
+
+    sim->sim.rules = copy;
+    scenarioRecordRuleSet(p->rule, written);
+    scenarioClampWorldToRules(sim);
+    if (scenarioRuleIsCarried(p->rule)) {
+        serverSimPublishSimRules(sim);
+    }
+    return SCN_OP_OK;
+}
+
+#undef SCN_RULE_WRITE_CASE
+
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
     /* Loud in a development build, because either of these is a caller bug
@@ -2286,7 +2506,8 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpEndRound(sim, &op->u.endRound);
         case SCN_OP_SET_GAME_TIME:
             return scenarioOpSetGameTime(sim, &op->u.setGameTime);
-        case SCN_OP_SET_RULE:            return SCN_OP_UNSUPPORTED;
+        case SCN_OP_SET_RULE:
+            return scenarioOpSetRule(sim, &op->u.setRule);
     }
 
     /* A value that is not a member of the enum at all. */

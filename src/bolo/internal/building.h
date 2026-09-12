@@ -31,6 +31,8 @@
 
 #include "global.h"
 
+struct GameSim;
+
 /* Empty / Non Empty / Head / Tail Macros */
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -94,11 +96,12 @@ void buildingDestroy(building *bld);
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim   - The game the building belongs to
 *  bld   - Pointer to the buildings object
 *  x     - X co-ord
 *  y     - Y co-ord
 *********************************************************/
-BYTE buildingAddItem(building *bld, BYTE x, BYTE y);
+BYTE buildingAddItem(struct GameSim *sim, building *bld, BYTE x, BYTE y);
 
 /*********************************************************
 *NAME:          buildingDeleteItem

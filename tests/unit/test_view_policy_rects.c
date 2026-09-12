@@ -66,7 +66,7 @@ static void vp_place_tank(GameSim *gs, BYTE slot, BYTE mx, BYTE my) {
 /* Own a live pillbox at a map square. */
 static void vp_place_pill(GameSim *gs, BYTE idx, BYTE owner, BYTE mx, BYTE my) {
     gs->pb->item[idx].owner  = owner;
-    gs->pb->item[idx].armour = PILL_MAX_HEALTH;
+    gs->pb->item[idx].armour = PILLS_MAX_ARMOUR;
     gs->pb->item[idx].inTank = FALSE;
     gs->pb->item[idx].x      = mx;
     gs->pb->item[idx].y      = my;
@@ -453,13 +453,13 @@ int run_view_pill_pos_current(void) {
     UT_ASSERT_MSG(po[0].x == 55 && po[0].y == 55,
                   "the pill in view reports %u,%u, not its real square 55,55",
                   (unsigned)po[0].x, (unsigned)po[0].y);
-    UT_ASSERT_MSG(pillPosCurrentFromByte(po[0].armourInTank),
+    UT_ASSERT_MSG(pillPosCurrentFromByte(po[0].pillFlags),
                   "the pill in view is not marked position-current");
     UT_ASSERT_MSG(po[1].x == 60 && po[1].y == 60,
                   "the pill out of view reports %u,%u, not the square slot 0 "
                   "was last given, 60,60",
                   (unsigned)po[1].x, (unsigned)po[1].y);
-    UT_ASSERT_MSG(!pillPosCurrentFromByte(po[1].armourInTank),
+    UT_ASSERT_MSG(!pillPosCurrentFromByte(po[1].pillFlags),
                   "the pill out of view must not be marked position-current");
 
     /* Everything but the square is public and keeps updating while the pill is
@@ -472,13 +472,13 @@ int run_view_pill_pos_current(void) {
     UT_ASSERT_MSG(po[1].owner == 1,
                   "the unseen pill's owner reports %u, not 1",
                   (unsigned)po[1].owner);
-    UT_ASSERT_MSG(pillArmourFromByte(po[1].armourInTank) == 7,
+    UT_ASSERT_MSG(po[1].armour == 7,
                   "the unseen pill's armour reports %u, not 7",
-                  (unsigned)pillArmourFromByte(po[1].armourInTank));
-    UT_ASSERT_MSG(pillInTankFromByte(po[1].armourInTank),
+                  (unsigned)po[1].armour);
+    UT_ASSERT_MSG(pillInTankFromByte(po[1].pillFlags),
                   "the unseen pill's in-tank flag did not arrive");
     UT_ASSERT_MSG(po[1].x == 60 && po[1].y == 60 &&
-                      !pillPosCurrentFromByte(po[1].armourInTank),
+                      !pillPosCurrentFromByte(po[1].pillFlags),
                   "the unseen pill's square leaked as %u,%u",
                   (unsigned)po[1].x, (unsigned)po[1].y);
 
@@ -513,7 +513,7 @@ int run_view_pill_pos_reveal(void) {
 
     vp_build_snapshot(sim, 0, &hdr, po, ev);
     UT_ASSERT_MSG(po[0].x == 55 && po[0].y == 55 &&
-                      !pillPosCurrentFromByte(po[0].armourInTank),
+                      !pillPosCurrentFromByte(po[0].pillFlags),
                   "a pill that moved unseen reports %u,%u — it should still be "
                   "the withheld 55,55", (unsigned)po[0].x, (unsigned)po[0].y);
 
@@ -531,7 +531,7 @@ int run_view_pill_pos_reveal(void) {
     UT_ASSERT_MSG(po[0].x == 200 && po[0].y == 200,
                   "the pill now in view reports %u,%u, not 200,200",
                   (unsigned)po[0].x, (unsigned)po[0].y);
-    UT_ASSERT_MSG(pillPosCurrentFromByte(po[0].armourInTank),
+    UT_ASSERT_MSG(pillPosCurrentFromByte(po[0].pillFlags),
                   "the pill now in view is not marked position-current");
 
     serverSimDestroy(sim);
@@ -574,7 +574,8 @@ int run_view_pill_update_event_fogged(void) {
     move.data[1] = 55;
     move.data[2] = 55;
     move.data[3] = gs->pb->item[0].owner;
-    move.data[4] = pillPackArmourInTank(9, false);
+    move.data[4] = pillSetInTank(0, false);
+    move.data[5] = 9;
     serverSimAddEvent(sim, &move);
 
     SnapshotHeader hdr;
@@ -602,9 +603,9 @@ int run_view_pill_update_event_fogged(void) {
                   (unsigned)ev[idx].data[1], (unsigned)ev[idx].data[2]);
     UT_ASSERT_MSG(!pillPosCurrentFromByte(ev[idx].data[4]),
                   "the unseeing recipient's event claims a current position");
-    UT_ASSERT_MSG(pillArmourFromByte(ev[idx].data[4]) == 9,
+    UT_ASSERT_MSG(ev[idx].data[5] == 9,
                   "the unseeing recipient's event lost the armour (%u, not 9)",
-                  (unsigned)pillArmourFromByte(ev[idx].data[4]));
+                  (unsigned)ev[idx].data[5]);
     UT_ASSERT_MSG(ev[idx].data[3] == gs->pb->item[0].owner,
                   "the unseeing recipient's event lost the owner");
 
@@ -648,7 +649,7 @@ int run_view_pill_pos_bot_advantage(void) {
 
     vp_build_snapshot(sim, 1, &hdr, po, ev);
     UT_ASSERT_MSG(po[0].x == 55 && po[0].y == 55 &&
-                      !pillPosCurrentFromByte(po[0].armourInTank),
+                      !pillPosCurrentFromByte(po[0].pillFlags),
                   "a plain computer player was shown %u,%u — it should get the "
                   "same fog a human does", (unsigned)po[0].x, (unsigned)po[0].y);
 
@@ -658,7 +659,7 @@ int run_view_pill_pos_bot_advantage(void) {
     UT_ASSERT_MSG(po[0].x == 200 && po[0].y == 200,
                   "an advantage bot was shown %u,%u, not the pill's real square "
                   "200,200", (unsigned)po[0].x, (unsigned)po[0].y);
-    UT_ASSERT_MSG(pillPosCurrentFromByte(po[0].armourInTank),
+    UT_ASSERT_MSG(pillPosCurrentFromByte(po[0].pillFlags),
                   "an advantage bot's pill is not marked position-current");
 
     gs->pb->item[0].x = 20;
@@ -667,7 +668,7 @@ int run_view_pill_pos_bot_advantage(void) {
     serverSimPillShadowTick(sim);
     vp_build_snapshot(sim, 1, &hdr, po, ev);
     UT_ASSERT_MSG(po[0].x == 20 && po[0].y == 220 &&
-                      pillPosCurrentFromByte(po[0].armourInTank),
+                      pillPosCurrentFromByte(po[0].pillFlags),
                   "an aiFull bot was shown %u,%u, not 20,220",
                   (unsigned)po[0].x, (unsigned)po[0].y);
 

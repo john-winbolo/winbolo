@@ -85,7 +85,25 @@ typedef struct {
  *
  * Grouped by the file that originally owned the globals.
  *********************************************************/
+/* The gameplay numbers the viewer draws against. The viewer has no sim —
+   it rebuilds its world from the .wbv stream — so it keeps its own holder
+   rather than reading one. Seeded with the classic values at create; a
+   later change fills it from a manifest in the recording header, and until
+   then the point is that the numbers come from one place instead of five
+   #defines. */
+typedef struct {
+  BYTE tankFullShells;
+  BYTE tankFullMines;
+  BYTE tankFullArmour;
+  BYTE tankFullTrees;
+  BYTE baseFullShells;
+  BYTE baseFullMines;
+  BYTE baseFullArmour;
+} LvRules;
+
 typedef struct LogViewerState {
+  /* The rules this recording is drawn against. */
+  LvRules      rules;
 
   /* --- FROM screen.c globals --- */
   screen       view;

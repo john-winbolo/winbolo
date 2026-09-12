@@ -16,6 +16,8 @@
 #include "test_harness.h"
 
 #include "everard_map.h"
+#include "game_sim.h"
+#include "sim_rules.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
 
@@ -257,6 +259,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_field_clamps_evil",                   run_map_field_clamps_evil                   },
     { "map_field_clamps_passthrough",            run_map_field_clamps_passthrough            },
     { "map_field_clamps_angry_start",            run_map_field_clamps_angry_start            },
+    { "map_field_clamps_no_sim",                 run_map_field_clamps_no_sim                 },
     { "map_reload_rollback",                     run_map_reload_rollback                     },
     { "map_read_memory_matches_file",            run_map_read_memory_matches_file            },
     { "map_read_memory_handbuilt",               run_map_read_memory_handbuilt               },
@@ -434,6 +437,10 @@ static const UnitTestEntry s_tests[] = {
     { "log_roundtrip_tank_stock_record",         run_log_roundtrip_tank_stock_record         },
     { "replay_roundtrip_world",                  run_replay_roundtrip_world                  },
     { "replay_roundtrip_base_migrate",           run_replay_roundtrip_base_migrate           },
+    { "replay_roundtrip_pill_health",            run_replay_roundtrip_pill_health            },
+    { "replay_v2_pill_health_nibble",            run_replay_v2_pill_health_nibble            },
+    { "replay_v1_pill_health_nibble",            run_replay_v1_pill_health_nibble            },
+    { "brainrec_version_rejects_old",            run_brainrec_version_rejects_old            },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_tank_stocks_snapshot_without_tail",    run_lv_tank_stocks_snapshot_without_tail    },
     { "lv_tank_stocks_from_record",              run_lv_tank_stocks_from_record              },
@@ -577,6 +584,8 @@ static const UnitTestEntry s_tests[] = {
     { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "bases_closest_for_player",                run_bases_closest_for_player                },
     { "base_stock_visibility",                   run_base_stock_visibility                   },
+    { "base_half_tick_per_sim_sequence",         run_base_half_tick_per_sim_sequence         },
+    { "base_half_tick_other_sim_does_not_disturb", run_base_half_tick_other_sim_does_not_disturb },
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
     { "base_armour_reveal_in_range",             run_base_armour_reveal_in_range             },
     { "base_death_prediction_replay_tick",       run_base_death_prediction_replay_tick       },
@@ -590,6 +599,8 @@ static const UnitTestEntry s_tests[] = {
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "voice_flags_snapshot_masking",            run_voice_flags_snapshot_masking            },
     { "voice_talking_codec",                     run_voice_talking_codec                     },
+    { "sim_rules_codec_roundtrip",               run_sim_rules_codec_roundtrip               },
+    { "sim_rules_codec_golden",                  run_sim_rules_codec_golden                  },
     { "voice_talking_stops_in_countdown",        run_voice_talking_stops_in_countdown        },
     { "voice_talking_clears_on_leave",           run_voice_talking_clears_on_leave           },
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
@@ -693,6 +704,25 @@ static const UnitTestEntry s_tests[] = {
     { "client_timing",                           run_client_timing                           },
     { "interp_render",                           run_interp_render                           },
     { "interp_respawn_no_death_flash",           run_interp_respawn_no_death_flash           },
+    { "sim_rules_classic_defaults",              run_sim_rules_classic_defaults              },
+    { "sim_rules_validate_ranges",               run_sim_rules_validate_ranges               },
+    { "sim_rules_copies_follow",                 run_sim_rules_copies_follow                 },
+    { "sim_rules_terrain_caps_follow",           run_sim_rules_terrain_caps_follow           },
+    { "sim_rules_river_cap_moves_drowning",      run_sim_rules_river_cap_moves_drowning      },
+    { "sim_rules_base_regen_seed_follows",       run_sim_rules_base_regen_seed_follows       },
+    { "sim_rules_terrain_life_follows",          run_sim_rules_terrain_life_follows          },
+    { "sim_rules_base_empties_without_wrapping", run_sim_rules_base_empties_without_wrapping },
+    { "sim_rules_pill_empties_without_wrapping", run_sim_rules_pill_empties_without_wrapping },
+    { "sim_rules_pairs",                         run_sim_rules_pairs                         },
+    { "sim_rules_capture_threshold_moves",       run_sim_rules_capture_threshold_moves       },
+    { "sim_rules_builder_cost_follows",          run_sim_rules_builder_cost_follows          },
+    { "sim_rules_are_classic",                   run_sim_rules_are_classic                   },
+    { "sim_rules_obs_refuses_non_classic",       run_sim_rules_obs_refuses_non_classic       },
+    { "sim_rules_shell_flight_follows",          run_sim_rules_shell_flight_follows          },
+    { "sim_rules_brain_shot_follows",            run_sim_rules_brain_shot_follows            },
+    { "sim_rules_worldsim_pill_follows",         run_sim_rules_worldsim_pill_follows         },
+    { "sim_rules_boat_speed_follows",            run_sim_rules_boat_speed_follows            },
+    { "sim_rules_obs_reload_follows",            run_sim_rules_obs_reload_follows            },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },
@@ -928,6 +958,18 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_entity_publish", run_scenario_entity_publish },
     { "scenario_entity_add_out_null", run_scenario_entity_add_out_null },
     { "loopback_entity_change",                  run_loopback_entity_change                  },
+    { "pill_armour_scale_classic_cap",           run_pill_armour_scale_classic_cap           },
+    { "pill_armour_scale_raised_cap",            run_pill_armour_scale_raised_cap            },
+    { "pill_armour_scale_client_caps",           run_pill_armour_scale_client_caps           },
+    { "sim_rules_client_check_every_carried_field", run_sim_rules_client_check_every_carried_field },
+    { "sim_rules_client_check_nan_and_inf",      run_sim_rules_client_check_nan_and_inf      },
+    { "sim_rules_client_check_attack_pair",      run_sim_rules_client_check_attack_pair      },
+    { "sim_rules_client_check_server_only_pair", run_sim_rules_client_check_server_only_pair },
+    { "sim_rules_client_check_valid_applies",    run_sim_rules_client_check_valid_applies    },
+    { "loopback_sim_rules_change",               run_loopback_sim_rules_change               },
+    { "loopback_sim_rules_join",                 run_loopback_sim_rules_join                 },
+    { "loopback_sim_rules_reclamp",              run_loopback_sim_rules_reclamp              },
+    { "loopback_sim_rules_agree",                run_loopback_sim_rules_agree                },
     { "scenario_map_set_tile",                   run_scenario_map_set_tile                   },
     { "scenario_map_fill_rect",                  run_scenario_map_fill_rect                  },
     { "scenario_map_fill_paced",                 run_scenario_map_fill_paced                 },
@@ -967,6 +1009,13 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_flow_set_game_time",             run_scenario_flow_set_game_time             },
     { "scenario_flow_set_game_time_refusals",    run_scenario_flow_set_game_time_refusals    },
     { "scenario_flow_arm_records",               run_scenario_flow_arm_records               },
+    { "scenario_rule_index_matches_table",       run_scenario_rule_index_matches_table       },
+    { "scenario_rule_set",                       run_scenario_rule_set                       },
+    { "scenario_rule_set_float",                 run_scenario_rule_set_float                 },
+    { "scenario_rule_refusals",                  run_scenario_rule_refusals                  },
+    { "scenario_rule_arm_records",               run_scenario_rule_arm_records               },
+    { "scenario_rule_clamps_world",              run_scenario_rule_clamps_world              },
+    { "scenario_rule_clamp_records",             run_scenario_rule_clamp_records             },
     { "scenario_policy_choose_start",            run_scenario_policy_choose_start            },
     { "scenario_policy_choose_start_out_of_range",
       run_scenario_policy_choose_start_out_of_range                                          },
@@ -1042,6 +1091,16 @@ static const UnitTestEntry s_tests[] = {
 /* Defined in test_stubs.c — every binary that links ClientSim needs to
  * own this symbol because the engine reads it from menu-aware paths. */
 extern bool isInMenu;
+
+GameSim *ut_rules_only_sim(void) {
+    static GameSim gs;
+    static bool filled = false;
+    if (!filled) {
+        simRulesClassic(&gs.rules);
+        filled = true;
+    }
+    return &gs;
+}
 
 ServerSim *ut_make_running_sim(const char *player_name) {
     BYTE emap[6000] = E_MAP;

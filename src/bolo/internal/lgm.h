@@ -64,8 +64,9 @@ struct GameSim;
 #define LGM_COST_MINE 1
 
 /* Trees the man carries out to repair a pill. Each one is worth
-   PILL_REPAIR_AMOUNT armour, so this many always covers a pill on zero
-   armour. Anything left over comes back in the tank. */
+   pill_repair_amount armour, and simRulesValidate holds the pair so this
+   many always covers a pill on zero armour. Anything left over comes back
+   in the tank. */
 #define LGM_LOAD_PILLREPAIR 4
 
 #define LGM_NO_PILL 37
@@ -318,11 +319,12 @@ void lgmKill(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE owner);
 *  came out of one and unloads back into one.
 *
 *ARGUMENTS:
+*  sim    - The game whose rules the caps come from
 *  lgman  - Pointer to the lgm structure
 *  trees  - Trees he is to carry
 *  mines  - Mines he is to carry
 *********************************************************/
-void lgmSetCarried(lgm *lgman, BYTE trees, BYTE mines);
+void lgmSetCarried(struct GameSim *sim, lgm *lgman, BYTE trees, BYTE mines);
 
 /*********************************************************
 *NAME:          lgmMoveAway

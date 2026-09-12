@@ -78,12 +78,13 @@ void minesExpCreate(minesExp *me);
 *  Adds an item to the minesExp data structure.
 *
 *ARGUMENTS:
+*  sim - The game the mine belongs to
 *  me - Pointer to the mines object
 *  mp - Map Structure
 *  x  - X co-ord
 *  y  - Y co-ord
 *********************************************************/
-void minesExpAddItem(minesExp *me, map *mp, BYTE x, BYTE y);
+void minesExpAddItem(struct GameSim *sim, minesExp *me, map *mp, BYTE x, BYTE y);
 
 /*********************************************************
 *NAME:          minesExpDestroy

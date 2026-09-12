@@ -631,7 +631,7 @@ int run_game_event_channel_client_emits_nothing(void) {
     pill.owner = NEUTRAL;
     pill.armour = PILLS_MAX_ARMOUR;
     pill.speed = PILLBOX_ATTACK_NORMAL;
-    pillsSetPill(&gs->pb, &pill, 1);
+    pillsSetPill(gs, &gs->pb, &pill, 1);
 
     memset(&bse, 0, sizeof(bse));
     bse.x = 61;

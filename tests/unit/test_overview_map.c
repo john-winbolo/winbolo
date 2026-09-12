@@ -2500,7 +2500,7 @@ int run_overview_removed_item_has_no_region(void) {
     p.armour = PILLS_MAX_ARMOUR;
     p.inTank = FALSE;
     pillsSetNumPills(&gs->pb, 1);
-    pillsSetPill(&gs->pb, &p, 1);
+    pillsSetPill(gs, &gs->pb, &p, 1);
 
     base b;
     memset(&b, 0, sizeof(b));

@@ -1458,6 +1458,36 @@ void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, struct ControlEvent *
  *********************************************************/
 bool serverSimFillEntitySyncEvent(ServerSim *sim, struct ControlEvent *evt);
 
+/*********************************************************
+ *NAME:          serverSimFillSimRulesEvent
+ *PURPOSE:
+ *  Populate a CTRL_SIM_RULES from the gameplay numbers this
+ *  sim is running on — every rule a client reads, and none
+ *  of the ones only the server does.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose table is being stated
+ *  evt - Event to fill
+ *********************************************************/
+void serverSimFillSimRulesEvent(const ServerSim *sim, struct ControlEvent *evt);
+
+/*********************************************************
+ *NAME:          serverSimPublishSimRules
+ *PURPOSE:
+ *  Publish the table this sim is running on to every
+ *  subscriber. Called at the end of each of the two
+ *  authoritative round starts — serverSimStartGame and
+ *  serverSimStartGameInPlace, one of which every start path
+ *  runs — so every round states its table exactly once
+ *  however it was started. Called again whenever a rule the
+ *  event carries changes mid-round; a joining client is given
+ *  the same event by the sync replay instead.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose table is being stated
+ *********************************************************/
+void serverSimPublishSimRules(ServerSim *sim);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);

@@ -120,6 +120,12 @@ struct BrainWorldSim {
   int           tank_shoot_interval; /* ticks between our shots (default 8) */
   int           shell_damage;        /* armor per hit (default 5) */
 
+  /* Pill numbers the rules name, seeded from the classic table at create */
+  int           pill_range;            /* WU a pill fires within */
+  int           pill_attack_ticks;     /* calm fire interval */
+  int           pill_attack_min_ticks; /* interval at full anger */
+  int           pill_cooldown_ticks;   /* ticks an anger chain runs for */
+
   /* Cooperative abort flag (SDL_AtomicInt *). Polled at the per-tick
    * checkpoint in brainWorldSimRun. NULL disables polling. void * so
    * this header doesn't pull in SDL3 — the .c file casts on read. */

@@ -115,6 +115,34 @@ int run_snapshot_compaction(void) {
         if (roundtrip(&ts, &size) != 0) return 1;
     }
 
+    /* (c2) A wait past a byte. The group is two bytes big-endian, so 1000 comes
+     * back whole instead of wrapping to 232. The expected bytes are written out
+     * here rather than read back through the packer: with the death-wait group
+     * the only one present, they are the two that follow the 12-byte core. */
+    {
+        TankSnapshot ts, got;
+        uint8_t buf[64];
+        int packed, consumed;
+        memset(&ts, 0, sizeof(ts));
+        ts.playerNum = 6;
+        ts.tankStatus = 0x10;   /* isDead */
+        ts.deathWait = 1000;
+        packed = packTankSnapshot(buf, &ts);
+        UT_ASSERT_MSG(packed == 14,
+                      "core plus the death-wait group was %d bytes, want 14",
+                      packed);
+        UT_ASSERT_MSG(buf[12] == 0x03 && buf[13] == 0xE8,
+                      "the wait went on the wire as %02X %02X, want 03 E8",
+                      (unsigned)buf[12], (unsigned)buf[13]);
+        memset(&got, 0, sizeof(got));
+        consumed = unpackTankSnapshot(buf, (size_t)packed, &got);
+        UT_ASSERT_MSG(consumed == packed,
+                      "consumed %d of %d bytes", consumed, packed);
+        UT_ASSERT_MSG(got.deathWait == 1000,
+                      "the wait came back as %u, not 1000",
+                      (unsigned)got.deathWait);
+    }
+
     /* (d) LGM-out tank: the LGM group set, plus a turn-ramp value. */
     {
         TankSnapshot ts;
