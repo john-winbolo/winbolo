@@ -4595,6 +4595,8 @@ set(_unit_test_names
     ping_pie_slices
     ping_edge_sides
     ping_edge_corner
+    ping_edge_size_from_distance
+    ping_edge_name_anchor
     ping_rect_inset
     ping_event_wire
     ping_sound_fallback
@@ -4605,8 +4607,11 @@ set(_unit_test_names
     ping_dispatch_map_range_bound
     ping_dispatch_rejects_bad_kind
     ping_dispatch_rate_limit
+    ping_dispatch_spam_30s_window
     ping_dispatch_new_round_clears_rate_limit
     ping_reaches_team_only
+    ping_mute_relay_skip
+    ping_mute_client_mirror_cleared_on_leave
     ping_network
     lang_name_table
     screencalc_river_road_counts_as_water

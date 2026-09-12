@@ -779,6 +779,8 @@ static const UnitTestEntry s_tests[] = {
                                                  run_ping_dispatch_new_round_clears_rate_limit },
     { "ping_reaches_team_only",                  run_ping_reaches_team_only                  },
     { "ping_mute_relay_skip",                    run_ping_mute_relay_skip                    },
+    { "ping_mute_client_mirror_cleared_on_leave",
+                                                 run_ping_mute_client_mirror_cleared_on_leave },
     { "ping_network",                            run_ping_network                            },
     { "lang_name_table",                         run_lang_name_table                         },
     { "screencalc_river_road_counts_as_water",   run_screencalc_river_road_counts_as_water   },

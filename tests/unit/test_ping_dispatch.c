@@ -17,6 +17,11 @@
  * Delivery is checked separately: serverSimPingReachesClient is the single
  * predicate both copies of the filter call (the per-client snapshot build and
  * the UDP drain), so pinning it pins both.
+ *
+ * The mute has a client half too — the bit the players panel draws from — and
+ * the last test here is that one, because it only means anything against the
+ * server sweep the test above it pins: both sides have to forget a departing
+ * slot's mute or a recycled slot lies about who is muted.
  */
 
 #include <stdint.h>
@@ -29,6 +34,10 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* sim->tick, the rate-limit state, the reach predicate */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled, serverSimSetTeam */
+#include "client_sim.h"            /* the client half of the mute mirror */
+#include "client_sim_internal.h"   /* the render-limiter ring behind that mute */
+#include "client_sim_control.h"    /* clientSimApplyControl */
+#include "control_event.h"         /* CTRL_PLAYER_LEAVE */
 #include "game_sim.h"
 #include "players.h"
 #include "threads.h"
@@ -591,5 +600,83 @@ int run_ping_mute_relay_skip(void) {
                   "an out-of-range ping-mute target must be rejected");
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* The client's own copy of the mute (cs->pingMutedByMe, read by the players
+ * panel through clientSimIsPingMuted) has to be swept when a slot is released
+ * exactly as the server sweeps pingMuteMask above. Slots are recycled, and a
+ * mute belongs to the player who was in the slot: a bit left set would draw
+ * the next occupant as "pings hidden" while the server — which cleared its
+ * half on the leave — delivered their pings anyway, and the first click on
+ * them would go out as a no-op unmute. CTRL_PLAYER_LEAVE is where the client
+ * learns the slot is free (reliable, unlike the snapshot's EVENT_PLAYER_LEAVE),
+ * so it is where the forgetting happens. */
+int run_ping_mute_client_mirror_cleared_on_leave(void) {
+    ClientSim *cs = clientSimAlloc();
+    ControlEvent evt;
+    int i;
+
+    UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 0);
+
+    /* Slot 3's pings are muted here, and slot 4's are not. */
+    clientSimSetPingMuted(cs, 3, true);
+    UT_ASSERT_MSG(clientSimIsPingMuted(cs, 3),
+                  "the client-side mute bit did not set");
+
+    /* Fill slot 3's render-limiter ring too: a slot vacated by a spammer must
+     * not start its next occupant off already over the cap. */
+    for (i = 0; i < PING_SPAM_MAX_30S; i++) {
+        cs->pingRenderMs[3][i] = 1000u + (uint32_t)i;
+    }
+    cs->pingRenderIdx[3] = 2;
+
+    /* Slot 3 leaves. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_PLAYER_LEAVE;
+    evt.u.playerLeave.playerNum = 3;
+    evt.u.playerLeave.quiet = 1;   /* no newswire or lobby line wanted here */
+    clientSimApplyControl(cs, &evt);
+
+    UT_ASSERT_MSG(!clientSimIsPingMuted(cs, 3),
+                  "a released slot kept its ping mute: the next occupant would "
+                  "show as muted while their pings were delivered");
+    for (i = 0; i < PING_SPAM_MAX_30S; i++) {
+        UT_ASSERT_MSG(cs->pingRenderMs[3][i] == 0,
+                      "a released slot kept its render-limiter timestamps");
+    }
+    UT_ASSERT_MSG(cs->pingRenderIdx[3] == 0,
+                  "a released slot kept its render-limiter cursor");
+
+    /* Nothing else moved: the leave forgets one slot, not the table. */
+    clientSimSetPingMuted(cs, 4, true);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_PLAYER_LEAVE;
+    evt.u.playerLeave.playerNum = 3;
+    evt.u.playerLeave.quiet = 1;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimIsPingMuted(cs, 4),
+                  "one slot leaving cleared another slot's mute");
+
+    /* Self is skipped before the arm runs (a player cannot mute itself, so
+     * there is nothing to clear), and an out-of-range slot is rejected at the
+     * trust boundary — neither must touch the mask or crash. */
+    clientSimSetPingMuted(cs, 4, true);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_PLAYER_LEAVE;
+    evt.u.playerLeave.playerNum = 0;   /* == myPlayerNum */
+    evt.u.playerLeave.quiet = 1;
+    clientSimApplyControl(cs, &evt);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_PLAYER_LEAVE;
+    evt.u.playerLeave.playerNum = MAX_TANKS;
+    evt.u.playerLeave.quiet = 1;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimIsPingMuted(cs, 4),
+                  "a self or out-of-range leave disturbed the mask");
+
+    clientSimDestroy(cs);   /* frees cs itself */
     return 0;
 }
