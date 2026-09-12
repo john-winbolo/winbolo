@@ -1702,6 +1702,11 @@ static FILE *statsTalkersFp;
  * the other — so a file grows with talking rather than with wall-clock, and a
  * quiet game leaves almost nothing.
  *
+ * Written only when --voice-record was given, like the capture-chain
+ * recorder. The counters cost nobody anything, but these files hold what the
+ * other players said, and a build handed out for a diagnosis must not record
+ * them unless the person running it asked for that.
+ *
  * Two things this must survive that the capture-chain recorder does not: the
  * run ends when somebody closes the window however they like, and the person
  * running it is not the person who wants the file. So the RIFF lengths are
@@ -1805,7 +1810,7 @@ static bool voiceStatsWavOpen(VoiceStatsWav *w, const char *name) {
 
 static void voiceStatsWavWrite(VoiceStatsWav *w, const char *path,
                                const int16_t *pcm) {
-    if (w->full) {
+    if (w->full || voiceDebugOutDir() == NULL) {
         return;
     }
     if (w->fp == NULL && !voiceStatsWavOpen(w, path)) {
@@ -1830,8 +1835,8 @@ static void voiceStatsWavWrite(VoiceStatsWav *w, const char *path,
 static void voiceStatsRecordSent(const uint8_t *packet, int len) {
     int16_t pcm[VOICE_FRAME_SAMPLES];
 
-    if (packet == NULL || len <= 0) {
-        return;
+    if (packet == NULL || len <= 0 || voiceDebugOutDir() == NULL) {
+        return;   /* nothing asked for the file; skip the decode as well */
     }
     if (wavSentDecoder == NULL) {
         wavSentDecoder = voiceDecoderCreate();
