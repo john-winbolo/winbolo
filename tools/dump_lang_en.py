@@ -55,7 +55,14 @@ def parse_lang_h(path):
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    define_re = re.compile(r"^\s*#define\s+([A-Z][A-Z0-9_]*)\s+(\d+)\s*$")
+    # A trailing comment is allowed after the value. lang.h carries several
+    # (e.g. STR_DLGGAMESETUP_RADIO4 2099 /* was 1987: collided ... */), and
+    # anchoring to end-of-line silently treated those IDs as NAMELESS: the
+    # symbol vanished from lang_names.inc and K_LANG_NAME_TABLE_SIZE dropped,
+    # while the round-trip check stayed green because both generated files
+    # agreed with each other.
+    define_re = re.compile(
+        r"^\s*#define\s+([A-Z][A-Z0-9_]*)\s+(\d+)\s*(?:/\*.*?\*/|//.*)?\s*$")
     comment_re = re.compile(r"^\s*/\*\s*(.+?)\s*\*/\s*$")
 
     id_to_name = {}

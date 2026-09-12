@@ -639,6 +639,42 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
+            /* A scenario can CREATE a pill mid-round (game.add_pill), so this
+             * event can name an index past the count our map gave us — this is
+             * the carrier that delivers a new pill, on the tick it is made.
+             * Adopt the index: the fields below fill the record, and until
+             * numPills covers it the pill may as well not exist, because
+             * drawing, collision, the pickup probe and the brains all iterate
+             * to numPills. Zero what we adopt first — reload, coolDown and
+             * justSeen are not on the wire. */
+            if (idx >= pillsGetNumPills(&csPtr->sim.pb)) {
+              BYTE k;
+              /* Only item[idx] is filled by the writes below, so every index
+               * BETWEEN the old count and idx is a gap we were never sent. A
+               * zeroed record is NOT inert: x=0, y=0, inTank=FALSE and a
+               * confirmed position make pillsExistPos(0,0) true, so the map
+               * corner goes solid for movement, shells and the builder, a dead
+               * pill owned by slot 0 is drawn there, and pillsGetBrainPillsInRect
+               * hands it to every brain allied with slot 0 regardless of view
+               * rect. Park each gap in the "off the map" state instead — in-tank
+               * with no carrier, which every world, draw and brain path skips —
+               * and let the next full sync fill in the real record.
+               *
+               * Gaps are reachable because EVENT_PILL_UPDATE is best-effort: a
+               * created pill goes in-tank immediately and its snapshot never
+               * changes again, so no second event for that index is ever
+               * generated. Lose that one datagram and the NEXT created pill is
+               * the first the client hears of, one index further on. */
+              for (k = pillsGetNumPills(&csPtr->sim.pb); k <= idx; k++) {
+                memset(&(*csPtr->sim.pb).item[k], 0,
+                       sizeof((*csPtr->sim.pb).item[k]));
+                if (k != idx) {
+                  (*csPtr->sim.pb).item[k].owner  = NEUTRAL;
+                  (*csPtr->sim.pb).item[k].inTank = TRUE;
+                }
+              }
+              pillsSetNumPills(&csPtr->sim.pb, (BYTE)(idx + 1));
+            }
             /* Before the fields below, so the in-tank flag this reads is the
              * one we held: a pill that was in a tank and is not any more,
              * arriving without its square, has been put down somewhere we were
@@ -1417,6 +1453,24 @@ void clientApplySnapshot(ClientSim *csPtr,
 
   /* Apply pill snapshots */
   if (pillSnaps != NULL && csPtr->sim.pb != NULL) {
+    /* The map this client loaded fixes how many pills it believes in, but a
+     * scenario can CREATE one mid-round (game.add_pill), so the server's count
+     * runs ahead of ours. Take it: every field the wire carries for the new
+     * record arrives in this same block, and until numPills covers the index
+     * the pill may as well not exist — drawing, collision, the pickup probe
+     * and the brains all iterate to numPills. Zero what we adopt first, since
+     * reload/coolDown/justSeen are not on the wire and whatever this array
+     * happened to be holding at that index is not theirs. */
+    BYTE knownPills = pillsGetNumPills(&csPtr->sim.pb);
+    if (pillCount > knownPills) {
+      int newCount = pillCount < MAX_PILLS ? pillCount : MAX_PILLS;
+      int k;
+      for (k = knownPills; k < newCount; k++) {
+        memset(&(*csPtr->sim.pb).item[k], 0,
+               sizeof((*csPtr->sim.pb).item[k]));
+      }
+      pillsSetNumPills(&csPtr->sim.pb, (BYTE)newCount);
+    }
     for (i = 0; i < pillCount && i < MAX_PILLS; i++) {
       /* Before the fields below, so the in-tank flag this reads is the one we
        * held: a pill that was in a tank and is not any more, arriving without

@@ -1341,7 +1341,7 @@ static const LangEntry langTable[] = {
     {1331, "Name (override)"},
     {1332, "Reroll"},
     {1333, "Pick a fresh random name from the team's pool."},
-    {1334, "Bot Code"},
+    {1334, "Codebase"},
     {1335, "(none)"},
     {1336, "Difficulty"},
     {1337, "Easy"},

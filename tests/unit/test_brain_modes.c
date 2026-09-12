@@ -196,11 +196,21 @@ int run_brain_modes_malformed_lines_skipped(void) {
         "default = nosuchlevel\n") == 0);      /* unknown -> last level    */
 
     UT_ASSERT(brainListLoadModes(MODES_BRAIN_DIR, &m));
-    /* "empty" declared no levels and "bad key" is not a legal key, so both
-     * are gone and the survivors are contiguous. */
-    UT_ASSERT_MSG(m.modeCount == 2, "got %d modes, expected 2", m.modeCount);
+    /* "bad key" is not a legal section key, so it is gone and the survivors
+     * are contiguous. "empty" STAYS, which is a change: a mode may declare no
+     * levels at all, and that says the brain has one way of playing and no
+     * difficulty to pick (see brain_list.h). Dropping it, as this used to,
+     * would make "no difficulty" impossible to express. */
+    UT_ASSERT_MSG(m.modeCount == 3, "got %d modes, expected 3", m.modeCount);
     UT_ASSERT(strcmp(m.modes[0].key, "default") == 0);
-    UT_ASSERT(strcmp(m.modes[1].key, "terse") == 0);
+    UT_ASSERT(strcmp(m.modes[1].key, "empty") == 0);
+    UT_ASSERT(strcmp(m.modes[2].key, "terse") == 0);
+
+    /* The no-levels mode really carries none, and its default index is a
+     * harmless 0 that nothing reads. */
+    UT_ASSERT_MSG(m.modes[1].levelCount == 0,
+                  "the no-levels mode kept %d levels", m.modes[1].levelCount);
+    UT_ASSERT(m.modes[1].defaultLevel == 0);
 
     /* Only the three well-formed level entries survived, in file order.
      * "toolongkeyisrejected" is 20 characters, past the 15 a key may be. */
@@ -214,11 +224,11 @@ int run_brain_modes_malformed_lines_skipped(void) {
                   "label kept the comment: '%s'", m.modes[0].label);
 
     /* A section with no label line renders as its key rather than blank. */
-    UT_ASSERT(strcmp(m.modes[1].label, "terse") == 0);
+    UT_ASSERT(strcmp(m.modes[2].label, "terse") == 0);
     /* An unknown default key falls back to the last (hardest) level. */
-    UT_ASSERT_MSG(m.modes[1].defaultLevel == 1,
+    UT_ASSERT_MSG(m.modes[2].defaultLevel == 1,
                   "unknown default resolved to %d, expected the last level",
-                  m.modes[1].defaultLevel);
+                  m.modes[2].defaultLevel);
 
     modes_cleanup();
     return 0;

@@ -236,6 +236,7 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.settings)    { SDL_DestroyTexture(s_icons.settings);    s_icons.settings    = nullptr; }
         if (s_icons.botCpuGreen) { SDL_DestroyTexture(s_icons.botCpuGreen); s_icons.botCpuGreen = nullptr; }
         if (s_icons.botCpuRed)   { SDL_DestroyTexture(s_icons.botCpuRed);   s_icons.botCpuRed   = nullptr; }
+        if (s_icons.botCpuGrey)  { SDL_DestroyTexture(s_icons.botCpuGrey);  s_icons.botCpuGrey  = nullptr; }
         if (s_icons.locked)      { SDL_DestroyTexture(s_icons.locked);      s_icons.locked      = nullptr; }
         if (s_icons.skull)       { SDL_DestroyTexture(s_icons.skull);       s_icons.skull       = nullptr; }
         if (s_icons.picture)     { SDL_DestroyTexture(s_icons.picture);     s_icons.picture     = nullptr; }
@@ -270,6 +271,7 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         { &s_icons.settings, "data/ui/settings.svg" },
         { &s_icons.botCpuGreen, "data/ui/bot-cpu-green.svg" },
         { &s_icons.botCpuRed,   "data/ui/bot-cpu-red.svg" },
+        { &s_icons.botCpuGrey,  "data/ui/bot-cpu-grey.svg" },
     };
 
     for (int i = 0; i < (int)(sizeof(icons) / sizeof(icons[0])); i++) {

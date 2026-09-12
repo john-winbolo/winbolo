@@ -159,6 +159,11 @@ typedef struct LobbyIconCache {
     SDL_Texture  *settings;
     SDL_Texture  *botCpuGreen;
     SDL_Texture  *botCpuRed;
+    /* The same chip with every colour taken to grey — the "off" chip in the
+     * player list's difficulty tag, where a lit chip is botCpuRed. A real
+     * greyscale asset rather than the red one drawn faded, so an off chip
+     * keeps the art's full contrast instead of washing out against the pill. */
+    SDL_Texture  *botCpuGrey;
     SDL_Texture  *locked;
     SDL_Texture  *skull;
     SDL_Texture  *picture;

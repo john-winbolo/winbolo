@@ -414,10 +414,10 @@ static bool brainModesKeyOk(char *k) {
  * place means "no modes.txt" and "[default] easy/medium/hard, default hard"
  * are literally the same thing to every caller. */
 static void brainModesSynthesizeDefault(BrainModes *out) {
-    static const struct { const char *key, *label; } kLevels[3] = {
-        { "easy",   "Easy"   },
-        { "medium", "Medium" },
-        { "hard",   "Hard"   },
+    static const struct { const char *key, *label; int chips; } kLevels[3] = {
+        { "easy",   "Easy",   1 },
+        { "medium", "Medium", 2 },
+        { "hard",   "Hard",   3 },
     };
     memset(out, 0, sizeof(*out));
     out->modeCount = 1;
@@ -428,6 +428,7 @@ static void brainModesSynthesizeDefault(BrainModes *out) {
     for (int i = 0; i < 3; i++) {
         SDL_strlcpy(m->levels[i].key,   kLevels[i].key,   sizeof(m->levels[i].key));
         SDL_strlcpy(m->levels[i].label, kLevels[i].label, sizeof(m->levels[i].label));
+        m->levels[i].chips = kLevels[i].chips;
     }
     m->defaultLevel = 2;   /* hard — what a new bot has always started at */
 }
@@ -445,13 +446,47 @@ static void brainModesParseLevels(BrainMode *m, char *value) {
         char *colon = strchr(entry, ':');
         if (colon) {
             *colon = '\0';
-            char *key   = brainModesTrim(entry);
-            char *label = brainModesTrim(colon + 1);
-            if (brainModesKeyOk(key) && label[0] != '\0' &&
+            char *key  = brainModesTrim(entry);
+            char *rest = colon + 1;
+            /* The chip count is an OPTIONAL third field: "key:Label:N", where
+             * N is 1, 2 or 3 — how many of the lobby's three difficulty chips
+             * the level lights.
+             *
+             * Absent: the level takes its POSITION on the scale, so the first
+             * kept level is 1, the second 2, and the third and any after it 3.
+             * That is what every modes.txt written before chips existed means
+             * anyway, so those keep working untouched — including third-party
+             * brains, which is the trap that bit us once before when a change
+             * here assumed every brain would be updated with it.
+             *
+             * Present but not 1, 2 or 3: the level is DROPPED. A brain that
+             * declares something is taken at its word, and a value the lobby
+             * cannot draw is an error worth losing the level over. */
+            char *colon2 = strchr(rest, ':');
+            int   chips  = 0;
+            bool  chipsDeclared = false;
+            if (colon2) {
+                *colon2 = '\0';
+                chipsDeclared = true;
+                char *chipTxt = brainModesTrim(colon2 + 1);
+                if (chipTxt[0] >= '1' && chipTxt[0] <= '3' && chipTxt[1] == '\0') {
+                    chips = chipTxt[0] - '0';
+                }
+            }
+            char *label = brainModesTrim(rest);
+            if (!chipsDeclared) {
+                /* Counted over the levels KEPT so far, so a malformed entry
+                 * earlier in the line does not leave a gap in the scale. */
+                int pos = m->levelCount + 1;
+                chips = (pos > 3) ? 3 : pos;
+            }
+            if (chips >= 1 && chips <= 3 &&
+                brainModesKeyOk(key) && label[0] != '\0' &&
                 m->levelCount < BRAIN_LEVELS_MAX) {
                 BrainLevel *lv = &m->levels[m->levelCount++];
                 SDL_strlcpy(lv->key,   key,   sizeof(lv->key));
                 SDL_strlcpy(lv->label, label, sizeof(lv->label));
+                lv->chips = chips;
             }
         }
         if (!comma) break;
@@ -552,19 +587,29 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
         line = next;
     }
 
-    /* Drop modes that declared no usable level, resolve each survivor's
-     * default, and compact the list so indices stay contiguous. */
+    /* Resolve each mode's default level. A mode with NO levels is kept, not
+     * dropped: a brain is allowed to say it has one way of playing and no
+     * difficulty at all (Andrew: "allow bots to also just not give any
+     * difficulty levels and then we don't need the 3-chips control"). The
+     * lobby then shows no difficulty tag and no difficulty dropdown for it.
+     *
+     * The cost of allowing this: a `levels` line whose every entry is
+     * malformed also lands on zero levels, and now reads as "no difficulty"
+     * instead of sending the brain back to the synthesized default. A brain
+     * author who meant to declare levels sees them silently absent rather
+     * than replaced. That is the trade for making "no levels" expressible. */
     BrainModes kept;
     memset(&kept, 0, sizeof(kept));
     for (int i = 0; i < parsed.modeCount; i++) {
-        if (parsed.modes[i].levelCount <= 0) continue;
         BrainMode *m = &kept.modes[kept.modeCount++];
         *m = parsed.modes[i];
         int d = brainModeFindLevel(m, defaultKeys[i]);
         /* No (or an unknown) default key falls back to the LAST level,
          * which is the hardest by convention and matches the pre-manifest
-         * "new bots start on Hard" rule. */
-        m->defaultLevel = (d >= 0) ? d : (m->levelCount - 1);
+         * "new bots start on Hard" rule. With no levels at all there is
+         * nothing to point at, so the index is 0 and nothing reads it. */
+        m->defaultLevel = (d >= 0) ? d
+                        : (m->levelCount > 0 ? m->levelCount - 1 : 0);
     }
     if (kept.modeCount <= 0) return false;   /* out keeps the fallback */
     *out = kept;
