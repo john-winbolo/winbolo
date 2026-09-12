@@ -1505,6 +1505,14 @@ STR_MENU_CLASSIC_MODE_TIP=The server has classic mode on, so this view is turned
 STR_DLGLOBBY_ALLIES_TREES_CB=See allies in trees
 STR_DLGLOBBY_ALLIES_TREES_TIP=Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off.
 
+# Map overview live block, and what blocks sight inside it
+STR_DLGLOBBY_OVERVIEW_WINDOW=Overview window
+STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Which block of squares the Map Overview keeps live around\nyour own tank. Expanded is everything the classic view can\nscroll to; Classic narrows it to the window that view is\nshowing. Classic mode sets it to Classic and holds it there.\nThe server sends the same map data either way.
+STR_DLGLOBBY_LINE_OF_SIGHT_CB=Line of sight
+STR_DLGLOBBY_LINE_OF_SIGHT_TIP=Buildings and stands of trees stop you seeing further into\nthe live block. Off is the classic rule, and classic mode\nforces it off. The server sends the same map data either\nway, so this is a convenience rule, not a guarantee about a\nmodified client.
+STR_DLGLOBBY_WINDOW_EXPANDED=Expanded
+STR_DLGLOBBY_WINDOW_CLASSIC=Classic
+
 # Settings > Display & Sound > Full Screen
 STR_DLGSETTINGS_FULLSCREEN=Full Screen
 STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire transparency
