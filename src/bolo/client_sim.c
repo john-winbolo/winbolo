@@ -275,6 +275,13 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.callbacks.baseOwnerChanged = NULL;
   cs->sim.callbacks.pillOwnerChanged = NULL;
   cs->sim.callbacks.lgmDied = NULL;
+  cs->sim.callbacks.tankSpawned = NULL;
+  cs->sim.callbacks.lgmLanded = NULL;
+  cs->sim.callbacks.pillPlaced = NULL;
+  cs->sim.callbacks.pillKilled = NULL;
+  cs->sim.callbacks.built = NULL;
+  cs->sim.callbacks.mineLaid = NULL;
+  cs->sim.callbacks.mineExploded = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;

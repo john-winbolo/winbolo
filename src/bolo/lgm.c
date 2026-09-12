@@ -1130,6 +1130,10 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       (*lgman)->numTrees = LGM_GATHER_TREE;
       sim->callbacks.soundDist(sim->callbacks.ctx, farmingTreeNear, bmx, bmy);
       if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_FARM, bmx, bmy);
+      if (isServer && sim->callbacks.built) {
+        sim->callbacks.built(sim->callbacks.ctx, (*lgman)->playerNum,
+                             (*lgman)->action, bmx, bmy);
+      }
     }
     if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     break;
@@ -1145,6 +1149,10 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
 
       lgmCheckRemove(sim, terrain, bmx, bmy);
+      if (isServer && sim->callbacks.built) {
+        sim->callbacks.built(sim->callbacks.ctx, (*lgman)->playerNum,
+                             (*lgman)->action, bmx, bmy);
+      }
       if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     }
     break;
@@ -1152,6 +1160,12 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     if (terrain != BUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA && isPill == FALSE && isBase == FALSE) {
       if (isMine != TRUE) {
         mapSetPos(sim, mp, bmx, bmy, BUILDING, TRUE, FALSE);
+        /* Only this branch builds anything — the other one sets off the mine
+           that was under the square and leaves it a crater. */
+        if (isServer && sim->callbacks.built) {
+          sim->callbacks.built(sim->callbacks.ctx, (*lgman)->playerNum,
+                               (*lgman)->action, bmx, bmy);
+        }
       } else {
         minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
       }
@@ -1165,6 +1179,10 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     if (terrain == RIVER) {
       mapSetPos(sim, mp, bmx, bmy, BOAT, TRUE, FALSE);
       (*lgman)->numTrees = 0;
+      if (isServer && sim->callbacks.built) {
+        sim->callbacks.built(sim->callbacks.ctx, (*lgman)->playerNum,
+                             (*lgman)->action, bmx, bmy);
+      }
       if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     }
     break;
@@ -1177,6 +1195,9 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         minesAddItem(&sim->mns, bmx, bmy);
         minesSetOwner(&sim->mns, bmx, bmy, (*lgman)->playerNum);
         if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_MINE, bmx, bmy);
+        if (isServer && sim->callbacks.mineLaid) {
+          sim->callbacks.mineLaid(sim->callbacks.ctx, (*lgman)->playerNum, bmx, bmy);
+        }
         (*lgman)->numMines = 0;
         if (sim->isServer && sim->hiddenMines) {
           sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, (*lgman)->playerNum);
@@ -1195,6 +1216,10 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         /* Keep whatever the repair didn't need — it rides back to the tank */
         (*lgman)->numTrees = pillsRepairPos(sim, pb, bmx, bmy, (*lgman)->numTrees);
         sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
+        if (isServer && sim->callbacks.built) {
+          sim->callbacks.built(sim->callbacks.ctx, (*lgman)->playerNum,
+                               (*lgman)->action, bmx, bmy);
+        }
       }
     } else {
       if (isPill == FALSE && isBase == FALSE && minesExistPos(&sim->mns, &sim->mp, bmx, bmy) == FALSE && terrain != BUILDING && terrain != HALFBUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA) {
@@ -1216,6 +1241,13 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
           sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
           if (isServer == FALSE) {
             frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
+          }
+          /* numPills is the pillbox number, counted from one, and is about to
+             be cleared; the event carries the 0-based item[] slot. */
+          if (isServer && sim->callbacks.pillPlaced &&
+              (*lgman)->numPills > 0) {
+            sim->callbacks.pillPlaced(sim->callbacks.ctx, (*lgman)->playerNum,
+                                      (BYTE)((*lgman)->numPills - 1), bmx, bmy);
           }
           (*lgman)->numPills = LGM_NO_PILL;
           if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_BUILD, bmx, bmy);
@@ -1662,6 +1694,13 @@ void lgmParchutingIn(GameSim *sim, lgm *lgman) {
   if (((*lgman)->x - (*lgman)->destX) >= -16 && ((*lgman)->x - (*lgman)->destX) <=16 && ((*lgman)->y - (*lgman)->destY) >= -16 && ((*lgman)->y - (*lgman)->destY) <=16) {
     /* Arrived at drop off spot. Begin trek back to tank */
     if (isServer == TRUE) {
+      /* The square he actually reached, read here before anything moves him
+         again. */
+      if (sim->callbacks.lgmLanded) {
+        sim->callbacks.lgmLanded(sim->callbacks.ctx, (*lgman)->playerNum,
+                                 (BYTE)((*lgman)->x >> M_W_SHIFT_SIZE),
+                                 (BYTE)((*lgman)->y >> M_W_SHIFT_SIZE));
+      }
     }
 
     (*lgman)->isDead = FALSE;

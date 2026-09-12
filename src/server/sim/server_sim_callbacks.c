@@ -337,6 +337,19 @@ void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind,
 void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                                  BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
+    /* The pickup is also published. pillIndex reaches this callback counted
+       from one — tankTakePill's argument is the pillbox number, not the array
+       position — while every index on an event is the 0-based item[] slot, so
+       the event subtracts one. The record below keeps the number it has
+       always kept; moving it would rewrite what old recordings mean. */
+    if (pillIndex > 0) {
+        GameEvent ev;
+        ev.type = EVENT_PILL_PICKED_UP;
+        memset(ev.data, 0, sizeof(ev.data));
+        ev.data[0] = picker;
+        ev.data[1] = (BYTE)(pillIndex - 1);
+        serverSimAddEvent(sim, &ev);
+    }
     if (sim->state != serverStateRunning) return;
     AttrPickupRecord r;
     r.type = ATTR_REC_PICKUP; r.tick = sim->tick;
@@ -406,6 +419,96 @@ void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
     ev.data[1] = killer;
     ev.data[2] = mapX;
     ev.data[3] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* The facts that had no event at all before. Each casts ctx once and builds
+ * the event its gameEventDataSize row describes; nothing here reads the sim
+ * beyond the queue, because the call site has already worked the values out. */
+
+void serverSimCbTankSpawned(void *ctx, BYTE player, BYTE mapX, BYTE mapY,
+                            bool respawn) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_TANK_SPAWNED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = mapX;
+    ev.data[2] = mapY;
+    ev.data[3] = respawn ? 1 : 0;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_LGM_LANDED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = mapX;
+    ev.data[2] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
+                           BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_PILL_PLACED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = index;
+    ev.data[2] = mapX;
+    ev.data[3] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbPillKilled(void *ctx, BYTE index, BYTE attacker) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_PILL_KILLED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = index;
+    ev.data[1] = attacker;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                      BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_BUILT;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = action;
+    ev.data[2] = mapX;
+    ev.data[3] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* The one event that must not be serialized. It goes on the tick's queue like
+ * any other, so the host's subscriber and the god-view recording both see it;
+ * gameEventIsLocal is what keeps it out of every client's snapshot and off the
+ * UDP drain. */
+void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_MINE_PLACED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = mapX;
+    ev.data[2] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_MINE_EXPLODED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = mapX;
+    ev.data[1] = mapY;
+    ev.data[2] = layer;
     serverSimAddEvent(sim, &ev);
 }
 

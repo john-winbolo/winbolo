@@ -710,6 +710,11 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
       if ((*value)->item[count].armour == 0) {
         returnValue = TRUE;
+        /* The entry test above required armour > 0, so reaching zero here is
+           always this blow's doing. count is the 0-based item[] slot. */
+        if (sim->isServer && sim->callbacks.pillKilled) {
+          sim->callbacks.pillKilled(sim->callbacks.ctx, count, owner);
+        }
         if (isServer == FALSE) {
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }
@@ -1436,6 +1441,12 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
         (*value)->item[count].armour = 1;
       }
       if ((*value)->item[count].armour == 0) {
+        /* Only when this blow is what emptied it — an explosion landing on a
+           pill already dead kills nothing. Nobody is named for splash, so the
+           attacker is NEUTRAL, as the death question above is asked. */
+        if (before > 0 && sim->isServer && sim->callbacks.pillKilled) {
+          sim->callbacks.pillKilled(sim->callbacks.ctx, count, NEUTRAL);
+        }
         if (sim->isServer == FALSE) {
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }

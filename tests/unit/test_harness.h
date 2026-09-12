@@ -2079,6 +2079,22 @@ int run_game_event_channel_capture_wire_bytes(void);
 int run_game_event_channel_neutralised_no_client_line(void);
 int run_game_event_channel_capture_attribution(void);
 
+/* The eight facts that had no event at all (test_game_events_new.c): a tank
+ * spawning and respawning, a builder landing, a pill placed, picked up and
+ * killed, a building job finished from each arm, a mine laid by a builder and
+ * by a tank, and a mine going up carrying who laid it. Plus the one that must
+ * never be serialized: a hidden mine reaches the host and the god-view
+ * recording build and no client's snapshot. */
+int run_game_events_tank_spawned(void);
+int run_game_events_lgm_landed(void);
+int run_game_events_pill_placed(void);
+int run_game_events_pill_picked_up(void);
+int run_game_events_pill_killed(void);
+int run_game_events_built(void);
+int run_game_events_mine_laid(void);
+int run_game_events_mine_exploded(void);
+int run_game_events_mine_placed_is_local(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

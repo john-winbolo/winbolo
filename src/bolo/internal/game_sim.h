@@ -142,6 +142,34 @@ typedef struct GameSimCallbacks {
                              BYTE newOwner, BYTE captureClass,
                              BYTE mapX, BYTE mapY);
     void (*lgmDied)(void *ctx, BYTE victim, BYTE killer, BYTE mapX, BYTE mapY);
+    /* The rest of the facts the sim core settles and the server publishes.
+     * Same shape and same rule as the three above: NULL on the client, fired
+     * inside the isServer test at each site, and every index is the 0-based
+     * item[] slot.
+     *
+     * tankSpawned: `player`'s tank is on the map at mapX/mapY. respawn is
+     * false for the tank a round or a join creates and true for one coming
+     * back from a death.
+     * lgmLanded: `player`'s builder finished the flight back and is standing
+     * at mapX/mapY — the square he actually reached, not the one he left.
+     * pillPlaced: `player`'s builder put a carried pill down as pill `index`.
+     * pillKilled: pill `index` lost its last armour. attacker is the slot
+     * credited, or NEUTRAL where the blow names nobody.
+     * built: `player`'s builder finished a job. action is the builder's own
+     * request code, the number BuilderJob uses.
+     * mineLaid: `player` put a mine on mapX/mapY. The event this becomes
+     * never reaches a client — it would give away hidden mines.
+     * mineExploded: the mine on mapX/mapY went up. layer is the slot that
+     * laid it, or NEUTRAL, read before the mine is taken off the field. */
+    void (*tankSpawned)(void *ctx, BYTE player, BYTE mapX, BYTE mapY,
+                        bool respawn);
+    void (*lgmLanded)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
+    void (*pillPlaced)(void *ctx, BYTE player, BYTE index, BYTE mapX,
+                       BYTE mapY);
+    void (*pillKilled)(void *ctx, BYTE index, BYTE attacker);
+    void (*built)(void *ctx, BYTE player, BYTE action, BYTE mapX, BYTE mapY);
+    void (*mineLaid)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
+    void (*mineExploded)(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
     /* Policy queries — the members that return an answer rather than
      * announcing something. Each asks the host a decision the sim would
      * otherwise make alone; the server's implementation is the only place

@@ -239,7 +239,7 @@ typedef struct {
 
 /* Event types */
 #define EVENT_SHELL_FIRED   1
-#define EVENT_MINE_PLACED   2
+#define EVENT_MINE_PLACED   2  /* data: [player, mx, my] — local-only, see gameEventIsLocal */
 #define EVENT_EXPLOSION     3  /* data: [mx, my, px, py] */
 #define EVENT_PILL_CAPTURED 4  /* data: [newOwner, prevOwner, index, quiet] */
 #define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner, index, quiet] */
@@ -276,6 +276,24 @@ typedef struct {
 #define EVENT_TK_EXPLOSION   18 /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator] — tank fireball spawn */
 #define EVENT_BASE_STOCK   19  /* data: [baseIndex, armour, shells, mines] — best-effort, culled to recipient's closest base */
 #define EVENT_PING         20  /* data: [senderPlayer, kind, xHi, xLo, yHi, yLo] — map ping, world coords, team-only */
+#define EVENT_TANK_SPAWNED   21 /* data: [player, mx, my, respawn] — respawn 0 for a first spawn */
+#define EVENT_LGM_LANDED     22 /* data: [player, mx, my] — builder finished his flight back */
+#define EVENT_PILL_PLACED    23 /* data: [player, index, mx, my] — a carried pill put down */
+#define EVENT_PILL_PICKED_UP 24 /* data: [player, index] — a dead pill scooped into a tank */
+#define EVENT_PILL_KILLED    25 /* data: [index, attacker] — attacker NEUTRAL when nobody is named */
+#define EVENT_BUILT          26 /* data: [player, action, mx, my] — see BUILT action below */
+#define EVENT_MINE_EXPLODED  27 /* data: [mx, my, layer] — layer NEUTRAL when the mine had no owner */
+
+/* EVENT_BUILT's action byte is the builder's own request code, which is the
+ * same number BuilderJob uses in server_sim.h — the two are already pinned
+ * together by a static assert in server_sim_accessors.c, so this event needs
+ * no third spelling of the list. Placing a pill is EVENT_PILL_PLACED rather
+ * than a build, so action 3 here always means a repair. Laying a mine is
+ * EVENT_MINE_PLACED, so action 4 never appears on this event. */
+
+/* Pill and base indices on every event above are 0-based item[] slots, the
+ * base every scenario op and policy uses. pillsGetPillNum and basesGetBaseNum
+ * return a number counted from one; those are not what goes on an event. */
 
 /* PING_KIND_* — which smart ping was sent. On the wire (EVENT_PING data[1],
  * CmdPing.kind and the replay's log_Ping), so the values are fixed. The
@@ -342,7 +360,20 @@ static inline bool gameEventIsReliable(uint8_t type) {
     case EVENT_MINE_VISIBLE:  /* gameplay-critical reveal */
     case EVENT_BASE_UPDATE:   /* base owner (colour) change must arrive */
     case EVENT_PING:          /* one-shot player signal; a dropped ping is gone */
+    case EVENT_TANK_SPAWNED:  /* one-shot, one per spawn; who is back matters */
+    case EVENT_LGM_LANDED:    /* one-shot, one per builder flight */
+    case EVENT_PILL_PLACED:   /* one-shot: a new objective on the map */
+    case EVENT_PILL_PICKED_UP:/* one-shot: a pill left the map */
+    case EVENT_PILL_KILLED:   /* one-shot: a pill stopped firing */
         return true;
+    /* EVENT_BUILT is best-effort on purpose. A builder laying road fires one
+     * per square for as long as it works, which is the firehose the split
+     * above exists to keep off the reliable window, and the square itself
+     * already arrives on the reliable EVENT_MAP_CHANGE — a dropped one costs
+     * the attribution, not the map. EVENT_MINE_EXPLODED is best-effort for the
+     * same reason: a mine field goes up in one burst, and the crater rides
+     * EVENT_MAP_CHANGE. EVENT_MINE_PLACED never reaches a client at all
+     * (gameEventIsLocal), so its answer here is never asked on the wire. */
     /* EVENT_PILL_UPDATE and EVENT_BASE_STOCK are best-effort: they fire
      * continuously as pill armour/reload and base stock change under combat (a
      * per-shot/per-refuel firehose), so they cannot sit on the reliable window.
@@ -352,6 +383,19 @@ static inline bool gameEventIsReliable(uint8_t type) {
     default:
         return false;
     }
+}
+
+/* True if this game event is for the host and the recording only and must
+ * never be serialized to a client. EVENT_MINE_PLACED names the square a mine
+ * went into, which is exactly what hidden mines exist to withhold: sending it
+ * would hand every recipient a map of the minefield. The host hears it through
+ * the in-process subscriber channel, which is not the wire, and the god-view
+ * recording build keeps it; every per-client build and the UDP drain drop it.
+ *
+ * A local-only event still needs a gameEventDataSize row: the recording packs
+ * it, and the brain event table is sized from the same function. */
+static inline bool gameEventIsLocal(uint8_t type) {
+    return type == EVENT_MINE_PLACED;
 }
 
 /* Assistant message IDs for EVENT_ASSISTANT_MSG */
@@ -389,6 +433,14 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_MINE_VISIBLE:   return 3;
     case EVENT_TK_EXPLOSION:   return 8;
     case EVENT_PING:           return 6;
+    case EVENT_MINE_PLACED:    return 3;
+    case EVENT_TANK_SPAWNED:   return 4;
+    case EVENT_LGM_LANDED:     return 3;
+    case EVENT_PILL_PLACED:    return 4;
+    case EVENT_PILL_PICKED_UP: return 2;
+    case EVENT_PILL_KILLED:    return 2;
+    case EVENT_BUILT:          return 4;
+    case EVENT_MINE_EXPLODED:  return 3;
     default:                   return GAME_EVENT_MAX_DATA;
     }
 }

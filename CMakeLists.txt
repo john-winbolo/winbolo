@@ -3363,6 +3363,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the captures and builder death that reach it from GameSim callbacks
     # rather than from an event built in shared code, byte for byte as before.
     tests/unit/test_game_event_channel.c
+    # The eight facts that had no game event: the spawn, the landing, the
+    # pill placed, picked up and killed, the finished build, the mine laid
+    # and the mine exploded — and the one of them that never leaves the host.
+    tests/unit/test_game_events_new.c
     # The init table a bot is created with: one table per brain VM, an
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
@@ -4827,6 +4831,15 @@ set(_unit_test_names
     game_event_channel_capture_wire_bytes
     game_event_channel_neutralised_no_client_line
     game_event_channel_capture_attribution
+    game_events_tank_spawned
+    game_events_lgm_landed
+    game_events_pill_placed
+    game_events_pill_picked_up
+    game_events_pill_killed
+    game_events_built
+    game_events_mine_laid
+    game_events_mine_exploded
+    game_events_mine_placed_is_local
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

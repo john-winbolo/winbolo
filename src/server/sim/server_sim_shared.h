@@ -68,6 +68,17 @@ void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
                                  BYTE mapX, BYTE mapY);
 void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
                         BYTE mapX, BYTE mapY);
+/* The facts that had no event before. Same file, same shape. */
+void serverSimCbTankSpawned(void *ctx, BYTE player, BYTE mapX, BYTE mapY,
+                            bool respawn);
+void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
+void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
+                           BYTE mapY);
+void serverSimCbPillKilled(void *ctx, BYTE index, BYTE attacker);
+void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                      BYTE mapY);
+void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
+void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
 

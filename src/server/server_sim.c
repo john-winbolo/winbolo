@@ -335,6 +335,13 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.baseOwnerChanged = serverSimCbBaseOwnerChanged;
     sim->sim.callbacks.pillOwnerChanged = serverSimCbPillOwnerChanged;
     sim->sim.callbacks.lgmDied = serverSimCbLgmDied;
+    sim->sim.callbacks.tankSpawned = serverSimCbTankSpawned;
+    sim->sim.callbacks.lgmLanded = serverSimCbLgmLanded;
+    sim->sim.callbacks.pillPlaced = serverSimCbPillPlaced;
+    sim->sim.callbacks.pillKilled = serverSimCbPillKilled;
+    sim->sim.callbacks.built = serverSimCbBuilt;
+    sim->sim.callbacks.mineLaid = serverSimCbMineLaid;
+    sim->sim.callbacks.mineExploded = serverSimCbMineExploded;
     /* The policy queries. Registered on the server alone: a ClientSim leaves
      * them NULL, which is what keeps shared code on the classic branch
      * there. */

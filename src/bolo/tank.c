@@ -484,6 +484,14 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->angle = dir;
   sim->callbacks.centerTank(sim->callbacks.ctx);
   sim->inStartFind = FALSE;
+
+  /* One report for every path that makes a tank — the round start, a join and
+     a scripted spawn all land here. A tank coming back from a death does not:
+     that reuses the object and is reported from tankDeath's server arm. */
+  if (sim->isServer && sim->callbacks.tankSpawned) {
+    sim->callbacks.tankSpawned(sim->callbacks.ctx,
+                               gameSimGetTankPlayer(sim, value), x, y, false);
+  }
 }
 
 /*********************************************************
@@ -1618,6 +1626,11 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->waterCount = 0;
     if (sim->isTutorial && sim->tutorialStartIdx == 1) {
       sim->tutorialRespawn1Pending = TRUE;
+    }
+    /* The square is the start just chosen, not the one the tank died on. */
+    if (sim->callbacks.tankSpawned) {
+      sim->callbacks.tankSpawned(sim->callbacks.ctx,
+                                 gameSimGetTankPlayer(sim, value), x, y, true);
     }
   }
 }
@@ -2839,6 +2852,9 @@ void tankLayMine(GameSim *sim, tank *value) {
       }
       if (isServer && sim->hiddenMines) {
         sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
+      }
+      if (isServer && sim->callbacks.mineLaid) {
+        sim->callbacks.mineLaid(sim->callbacks.ctx, pn, bmx, bmy);
       }
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       if (!(*value)->destroyed) {

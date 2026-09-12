@@ -1462,6 +1462,14 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         for (i = 0; i < sim->eventCount && outCount < maxEvents; i++) {
             uint8_t evType = sim->events[i].type;
             if (!soundEventIsSound(evType)) {
+                /* A local-only event is for the host and the recording. The
+                 * god-view build (noCull) is the recording, and keeps it;
+                 * every per-client build — the wire one and the in-process
+                 * one alike — drops it, because a bot reading its snapshot is
+                 * as much a player as a remote human is. */
+                if (gameEventIsLocal(evType) && !noCull) {
+                    continue;
+                }
                 /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
                  * LGM mines go only to the placer and their allies */
                 if (evType == EVENT_MINE_VISIBLE) {
