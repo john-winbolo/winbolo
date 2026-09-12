@@ -612,9 +612,10 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
       }
     }
 
-    /* Check all pillboxes (alive, not in a tank) */
+    /* Check all pillboxes (on the map, alive, not in a tank) */
     for (pillCount = 0; pillCount < numPills; pillCount++) {
-      if (sim->pb->item[pillCount].inTank == TRUE || sim->pb->item[pillCount].armour == 0) {
+      if (sim->pb->active[pillCount] == FALSE ||
+          sim->pb->item[pillCount].inTank == TRUE || sim->pb->item[pillCount].armour == 0) {
         continue;
       }
       dist = startsMapDistance(sx, sy, sim->pb->item[pillCount].x, sim->pb->item[pillCount].y);
@@ -658,7 +659,17 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
    * win just because of iteration order. */
   if (friendlyChoice >= 0) chosen = friendlyChoice;
   else if (fallbackChoice >= 0) chosen = fallbackChoice;
-  else chosen = 0;
+  else {
+    /* No start passed the square test. Fall back to the first start still on
+       the map rather than to slot 0, which may have been removed. */
+    chosen = 0;
+    for (count = 0; count < numStarts; count++) {
+      if ((*value)->active[count] != FALSE) {
+        chosen = count;
+        break;
+      }
+    }
+  }
 
   /* Phase 3: scatter search around chosen position */
   startsScatterFind(sim, (*value)->item[chosen].x, (*value)->item[chosen].y, x, y, playerNum);
@@ -699,6 +710,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   BYTE tankCount;
   int dist;
   int neutralCount;
+  int liveBases;
   bool neutralPreferred;
   bool hasOwnBase;
   bool hasNeutralBase;
@@ -721,15 +733,20 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
   BYTE baseOwner;
   BYTE bt;
 
-  /* Count neutral bases to decide if neutral is preferred */
+  /* Count neutral bases to decide if neutral is preferred. Both the count and
+     the share it is measured against are of bases on the map. */
   neutralCount = 0;
+  liveBases = 0;
   for (baseCount = 0; baseCount < numBases; baseCount++) {
-    if (sim->bs->active[baseCount] != FALSE &&
-        sim->bs->item[baseCount].owner == NEUTRAL) {
+    if (sim->bs->active[baseCount] == FALSE) {
+      continue;
+    }
+    liveBases++;
+    if (sim->bs->item[baseCount].owner == NEUTRAL) {
       neutralCount++;
     }
   }
-  neutralPreferred = (numBases > 0 && (neutralCount * 100 / numBases) > START_NEUTRAL_THRESHOLD_PCT);
+  neutralPreferred = (liveBases > 0 && (neutralCount * 100 / liveBases) > START_NEUTRAL_THRESHOLD_PCT);
 
   for (count = 0; count < numStarts; count++) {
     if ((*value)->active[count] == FALSE) {
@@ -764,7 +781,8 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
     }
 
     for (pillCount = 0; pillCount < numPills; pillCount++) {
-      if (sim->pb->item[pillCount].inTank == TRUE || sim->pb->item[pillCount].armour == 0) {
+      if (sim->pb->active[pillCount] == FALSE ||
+          sim->pb->item[pillCount].inTank == TRUE || sim->pb->item[pillCount].armour == 0) {
         continue;
       }
       dist = startsMapDistance(sx, sy, sim->pb->item[pillCount].x, sim->pb->item[pillCount].y);
@@ -781,7 +799,8 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
     hasOwnBase = FALSE;
     hasNeutralBase = FALSE;
     for (baseCount = 0; baseCount < numBases; baseCount++) {
-      if (sim->bs->item[baseCount].armour <= MIN_ARMOUR_CAPTURE) {
+      if (sim->bs->active[baseCount] == FALSE ||
+          sim->bs->item[baseCount].armour <= MIN_ARMOUR_CAPTURE) {
         continue;
       }
       dist = startsMapDistance(sx, sy, sim->bs->item[baseCount].x, sim->bs->item[baseCount].y);
@@ -825,7 +844,15 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
    * are pooled and treated equally. Otherwise own is preferred. */
   WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] player %d: neutralPref=%d own=%d neutral=%d safe=%d fallback=%d (neutralBases=%d/%d)",
           playerNum, neutralPreferred, numOwn, numNeutral, numSafe, numFallback, neutralCount, numBases);
+  /* With no candidate at all, the first start still on the map rather than
+     slot 0, which may have been removed. */
   idx = 0;
+  for (count = 0; count < numStarts; count++) {
+    if ((*value)->active[count] != FALSE) {
+      idx = count;
+      break;
+    }
+  }
   if (neutralPreferred && (numOwn > 0 || numNeutral > 0)) {
     BYTE pool[MAX_STARTS * 2];
     BYTE poolSize = 0;
@@ -870,7 +897,8 @@ static bool startsHasHostileNearAtStart(GameSim *sim, starts *value, BYTE startI
   BYTE owner;
 
   for (i = 0; i < numPills; i++) {
-    if (sim->pb->item[i].inTank == TRUE || sim->pb->item[i].armour == 0) {
+    if (sim->pb->active[i] == FALSE ||
+        sim->pb->item[i].inTank == TRUE || sim->pb->item[i].armour == 0) {
       continue;
     }
     dist = startsMapDistance(sx, sy, sim->pb->item[i].x, sim->pb->item[i].y);
@@ -881,6 +909,7 @@ static bool startsHasHostileNearAtStart(GameSim *sim, starts *value, BYTE startI
     }
   }
   for (i = 0; i < numBases; i++) {
+    if (sim->bs->active[i] == FALSE) continue;
     if (sim->bs->item[i].armour <= MIN_ARMOUR_CAPTURE) continue;
     dist = startsMapDistance(sx, sy, sim->bs->item[i].x, sim->bs->item[i].y);
     if (dist > START_BASE_RANGE) continue;
@@ -1203,6 +1232,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
     sumX = 0; sumY = 0; cnt = 0;
     for (b = 0; b < numBases; b++) {
       BYTE owner = sim->bs->item[b].owner;
+      if (sim->bs->active[b] == FALSE) continue;
       if (sim->bs->item[b].armour <= MIN_ARMOUR_CAPTURE) continue;
       if (owner == NEUTRAL) continue;
       for (p = 0; p < groups[g].size; p++) {
@@ -2256,4 +2286,27 @@ void startsMoveAll(starts *value, int moveX, int moveY) {
     (*value)->item[count].y = (BYTE) ((*value)->item[count].y + moveY);
     count++;
   }
+}
+
+/*********************************************************
+*NAME:          startsGetNumActive
+*PURPOSE:
+*  Returns how many starts are on the map: the slots under
+*  the count whose live flag is set.
+*
+*ARGUMENTS:
+*  value - Pointer to the starts structure
+*********************************************************/
+BYTE startsGetNumActive(starts *value) {
+  BYTE count;
+  BYTE live = 0;
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numStarts && count < MAX_STARTS; count++) {
+    if ((*value)->active[count] != FALSE) {
+      live++;
+    }
+  }
+  return live;
 }

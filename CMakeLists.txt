@@ -4331,6 +4331,8 @@ set(_unit_test_names
     starts_batch_teams_cluster_and_separate
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
+    starts_open_ideal_removed_pill_ignored
+    starts_open_removed_start_never_chosen
     start_side_mask_sectors
     start_side_mask_degenerate_bbox
     start_side_eligible_closed_mask
@@ -4778,6 +4780,7 @@ set(_unit_test_names
     scenario_pill_base_arm_records
     scenario_entity_add_pill
     scenario_entity_remove_pill
+    scenario_removed_item_is_no_item
     scenario_entity_add_base
     scenario_entity_remove_base
     scenario_entity_add_start

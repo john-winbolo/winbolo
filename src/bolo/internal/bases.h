@@ -720,6 +720,18 @@ BYTE basesGetOwnerPos(bases *value, BYTE xValue, BYTE yValue);
 BYTE basesGetNumNeutral(bases *value);
 
 /*********************************************************
+*NAME:          basesGetNumActive
+*PURPOSE:
+*  Returns how many bases are on the map: the slots under
+*  the count whose live flag is set. The count itself is
+*  the slot count and keeps a removed base's number.
+*
+*ARGUMENTS:
+*  value - Pointer to the bases structure
+*********************************************************/
+BYTE basesGetNumActive(bases *value);
+
+/*********************************************************
 *NAME:          basesSetBaseNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/2/99

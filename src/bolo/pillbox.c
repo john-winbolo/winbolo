@@ -465,7 +465,9 @@ pillAlliance pillsGetAllianceNum(GameSim *sim, pillboxes *value, BYTE pillNum) {
   returnValue = pillNeutral;
   pillNum--;
   if ((*value) != NULL) {
-    if ((pillNum) <= ((*value)->numPills)) {
+    /* A pillbox off the map has no alliance to draw; it reads as neutral,
+       which is what the panel shows for a slot the map does not use. */
+    if ((pillNum) < ((*value)->numPills) && (*value)->active[pillNum] != FALSE) {
       if ((*value)->item[pillNum].armour == 0 && (*value)->item[pillNum].inTank == FALSE) {
         returnValue = pillDead;
       } else if ((*value)->item[pillNum].owner == sim->viewPlayer) {
@@ -2394,4 +2396,27 @@ BYTE pillsGetNumberOwnedByPlayer(pillboxes *value, BYTE playerNum) {
   }
 
   return returnValue;
+}
+
+/*********************************************************
+*NAME:          pillsGetNumActive
+*PURPOSE:
+*  Returns how many pillboxes are on the map: the slots
+*  under the count whose live flag is set.
+*
+*ARGUMENTS:
+*  value - Pointer to the pillbox structure
+*********************************************************/
+BYTE pillsGetNumActive(pillboxes *value) {
+  BYTE count;
+  BYTE live = 0;
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numPills && count < MAX_PILLS; count++) {
+    if ((*value)->active[count] != FALSE) {
+      live++;
+    }
+  }
+  return live;
 }

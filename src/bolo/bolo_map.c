@@ -1096,9 +1096,12 @@ bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss) 
   BYTE numStarts;     /* Number of starts on the map */
 
   returnValue = TRUE;
-  numPills = pillsGetNumPills(pb);
-  numBases = basesGetNumBases(bs);
-  numStarts = startsGetNumStarts(ss);
+  /* The file holds what is on the map. A slot a removal has emptied is sim
+     state, not map data, so the header counts the live items and the writers
+     below skip the rest; a map saved mid-scenario reloads without them. */
+  numPills = pillsGetNumActive(pb);
+  numBases = basesGetNumActive(bs);
+  numStarts = startsGetNumActive(ss);
 
   fp = fopen(fileName,"wb");
   if (fp == NULL) {
@@ -1189,7 +1192,13 @@ bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total) {
   
   returnValue = TRUE;
   count = 1;
-  while (count <= total && returnValue == TRUE) {
+  (void)total;
+  /* Every slot, writing the live ones: the header already says how many. */
+  while (count <= pillsGetNumPills(pb) && returnValue == TRUE) {
+    if (pillsIsActive(pb, count) == FALSE) {
+      count++;
+      continue;
+    }
     pillsGetPill(pb, &item, count);
     /* Write each pill out */
     ret = fputc(item.x, fp);
@@ -1248,7 +1257,12 @@ bool mapWriteBases(FILE *fp, bases *bs, BYTE total) {
 
   returnValue = TRUE;
   count = 1;
-  while (count <= total && returnValue == TRUE) {
+  (void)total;
+  while (count <= basesGetNumBases(bs) && returnValue == TRUE) {
+    if (basesIsActive(bs, count) == FALSE) {
+      count++;
+      continue;
+    }
     basesGetBase(bs, &item, count);
     /* Write each base out */
     ret = fputc(item.x, fp);
@@ -1313,8 +1327,12 @@ bool mapWriteStarts(FILE *fp, starts *ss, BYTE total) {
 
   returnValue = TRUE;
   count = 1;
-  
-  while (count <= total && returnValue == TRUE) {
+  (void)total;
+  while (count <= startsGetNumStarts(ss) && returnValue == TRUE) {
+    if (startsIsActive(ss, count) == FALSE) {
+      count++;
+      continue;
+    }
     startsGetStartStruct(ss, &item, count);
     /* Write each start out */
     ret = fputc(item.x, fp);

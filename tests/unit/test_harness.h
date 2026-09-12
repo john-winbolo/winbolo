@@ -737,6 +737,8 @@ int run_starts_batch_solo_random_seed(void);
 int run_starts_batch_teams_cluster_and_separate(void);
 int run_starts_batch_team_anchor_jitter_varies(void);
 int run_starts_open_ideal_friendly_pill_eligible(void);
+int run_starts_open_ideal_removed_pill_ignored(void);
+int run_starts_open_removed_start_never_chosen(void);
 
 /* Start side classification (test_start_sides.c). The integer sector test
  * in start_sides.h that puts a start on N/E/S/W (two bits for a diagonal,
@@ -1982,6 +1984,7 @@ int run_scenario_pill_base_arm_records(void);
  * goes out as a CTRL_ENTITY_CHANGE. */
 int run_scenario_entity_add_pill(void);
 int run_scenario_entity_remove_pill(void);
+int run_scenario_removed_item_is_no_item(void);
 int run_scenario_entity_add_base(void);
 int run_scenario_entity_remove_base(void);
 int run_scenario_entity_add_start(void);

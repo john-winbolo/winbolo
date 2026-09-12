@@ -108,6 +108,18 @@ void startsSetNumStarts(starts *value, BYTE numStarts);
 BYTE startsGetNumStarts(starts *value);
 
 /*********************************************************
+*NAME:          startsGetNumActive
+*PURPOSE:
+*  Returns how many starts are on the map: the slots under
+*  the count whose live flag is set. The count itself is
+*  the slot count and keeps a removed start's number.
+*
+*ARGUMENTS:
+*  value - Pointer to the starts structure
+*********************************************************/
+BYTE startsGetNumActive(starts *value);
+
+/*********************************************************
 *NAME:          startsSetStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98

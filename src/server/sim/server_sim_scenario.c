@@ -353,6 +353,10 @@ static ScnOpResult scenarioOpTankGivePill(ServerSim *sim,
         return SCN_OP_NO_SUCH_ITEM;
     }
     pillNum = (BYTE)(p->pill + 1);   /* the pill list counts from 1 */
+    /* A removed pillbox is off the map; there is nothing to pick up. */
+    if (pillsIsActive(&sim->sim.pb, pillNum) == FALSE) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
     memset(&item, 0, sizeof(item));
     pillsGetPill(&sim->sim.pb, &item, pillNum);
     if (item.inTank) {
@@ -657,6 +661,11 @@ static ScnOpResult scenarioPillFor(ServerSim *sim, BYTE pill, BYTE *outNum,
         return SCN_OP_NO_SUCH_ITEM;
     }
     *outNum = (BYTE)(pill + 1);
+    /* A slot a removal has emptied is not an item: the number is in range
+       but there is nothing on the map behind it. */
+    if (pillsIsActive(&sim->sim.pb, *outNum) == FALSE) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
     memset(out, 0, sizeof(*out));
     pillsGetPill(&sim->sim.pb, out, *outNum);
     return SCN_OP_OK;
@@ -797,7 +806,8 @@ static ScnOpResult scenarioOpPillMove(ServerSim *sim, const ScnOpPillMove *p) {
  * re-deals the map without stripping what it deals. */
 static ScnOpResult scenarioOpBaseSetOwner(ServerSim *sim,
                                           const ScnOpBaseSetOwner *p) {
-    if (p->base >= basesGetNumBases(&sim->sim.bs)) {
+    if (p->base >= basesGetNumBases(&sim->sim.bs) ||
+        basesIsActive(&sim->sim.bs, (BYTE)(p->base + 1)) == FALSE) {
         return SCN_OP_NO_SUCH_ITEM;
     }
     if (!scenarioOwnerIsLegal(p->owner)) {
@@ -814,7 +824,8 @@ static ScnOpResult scenarioOpBaseSetOwner(ServerSim *sim,
 /* Write what a base is holding. */
 static ScnOpResult scenarioOpBaseSetStock(ServerSim *sim,
                                           const ScnOpBaseSetStock *p) {
-    if (p->base >= basesGetNumBases(&sim->sim.bs)) {
+    if (p->base >= basesGetNumBases(&sim->sim.bs) ||
+        basesIsActive(&sim->sim.bs, (BYTE)(p->base + 1)) == FALSE) {
         return SCN_OP_NO_SUCH_ITEM;
     }
     /* -1 is the payload's "leave this one alone"; any other negative is a

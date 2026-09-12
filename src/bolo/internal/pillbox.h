@@ -787,6 +787,18 @@ void pillsBaseHit(struct GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE 
 BYTE pillsGetNumNeutral(pillboxes *value);
 
 /*********************************************************
+*NAME:          pillsGetNumActive
+*PURPOSE:
+*  Returns how many pillboxes are on the map: the slots
+*  under the count whose live flag is set. The count itself
+*  is the slot count and keeps a removed pillbox's number.
+*
+*ARGUMENTS:
+*  value - Pointer to the pillbox structure
+*********************************************************/
+BYTE pillsGetNumActive(pillboxes *value);
+
+/*********************************************************
 *NAME:          pillsSetPillNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99

@@ -782,3 +782,133 @@ int run_scenario_entity_add_out_null(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* ── A removed item is not an item ───────────────────────────────── */
+
+/* Every arm that takes a pill or base index answers SCN_OP_NO_SUCH_ITEM for
+ * a slot a removal has emptied, not only for one past the count; the reads
+ * that draw and report items answer as for a slot the map does not use; and
+ * a map saved with a removal writes only what is on the map. */
+int run_scenario_removed_item_is_no_item(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    GameSim *gs;
+    ScenarioOp op;
+    BYTE pills, bases;
+    BYTE shells = 9, mines = 9, armour = 9;
+
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    pills = pillsGetNumPills(&gs->pb);
+    bases = basesGetNumBases(&gs->bs);
+    UT_ASSERT(pills >= 2 && bases >= 2);
+
+    eaRemoveOp(&op, SCN_OP_ENTITY_REMOVE_PILL, 0);
+    UT_ASSERT(eaApply(sim, &op, NULL) == SCN_OP_OK);
+    eaRemoveOp(&op, SCN_OP_ENTITY_REMOVE_BASE, 0);
+    UT_ASSERT(eaApply(sim, &op, NULL) == SCN_OP_OK);
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_PILL_SET_OWNER;
+    op.u.pillSetOwner.pill = 0;
+    op.u.pillSetOwner.owner = 0;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_NO_SUCH_ITEM,
+                  "set-owner accepted a removed pillbox");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_PILL_SET_ARMOUR;
+    op.u.pillSetArmour.pill = 0;
+    op.u.pillSetArmour.armour = 5;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_NO_SUCH_ITEM,
+                  "set-armour accepted a removed pillbox");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_PILL_SET_SPEED;
+    op.u.pillSetSpeed.pill = 0;
+    op.u.pillSetSpeed.speed = 50;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_NO_SUCH_ITEM,
+                  "set-speed accepted a removed pillbox");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_PILL_MOVE;
+    op.u.pillMove.pill = 0;
+    UT_ASSERT_MSG(eaFindLand(sim, &op.u.pillMove.x, &op.u.pillMove.y),
+                  "setup: the map has no free land square");
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_NO_SUCH_ITEM,
+                  "move accepted a removed pillbox");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_TANK_GIVE_PILL;
+    op.u.tankGivePill.slot = 0;
+    op.u.tankGivePill.pill = 0;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_NO_SUCH_ITEM,
+                  "give-pill handed out a removed pillbox");
+    UT_ASSERT_MSG(pillsIsActive(&gs->pb, 1) == FALSE,
+                  "a refused arm put the pillbox back on the map");
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_BASE_SET_OWNER;
+    op.u.baseSetOwner.base = 0;
+    op.u.baseSetOwner.owner = 0;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_NO_SUCH_ITEM,
+                  "base set-owner accepted a removed base");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_BASE_SET_STOCK;
+    op.u.baseSetStock.base = 0;
+    op.u.baseSetStock.armour = 10;
+    op.u.baseSetStock.shells = 10;
+    op.u.baseSetStock.mines = 10;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_NO_SUCH_ITEM,
+                  "base set-stock accepted a removed base");
+
+    /* The live neighbours still take the same arms. */
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_PILL_SET_ARMOUR;
+    op.u.pillSetArmour.pill = 1;
+    op.u.pillSetArmour.armour = 5;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_OK,
+                  "set-armour refused the pillbox beside the removed one");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_BASE_SET_OWNER;
+    op.u.baseSetOwner.base = 1;
+    op.u.baseSetOwner.owner = NEUTRAL;
+    UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_OK,
+                  "base set-owner refused the base beside the removed one");
+
+    /* The reads that draw and report an item answer as for an empty slot. */
+    UT_ASSERT_MSG(pillsGetAllianceNum(gs, &gs->pb, 1) == pillNeutral,
+                  "the status panel still has a colour for a removed pillbox");
+    UT_ASSERT_MSG(basesGetStatusNum(gs, 1) == baseNeutral,
+                  "the status panel still has a colour for a removed base");
+    basesGetStats(&gs->bs, 1, &shells, &mines, &armour);
+    UT_ASSERT_MSG(shells == 0 && mines == 0 && armour == 0,
+                  "a removed base still reports stock %u/%u/%u",
+                  (unsigned)shells, (unsigned)mines, (unsigned)armour);
+    UT_ASSERT_MSG(pillsGetNumActive(&gs->pb) == (BYTE)(pills - 1) &&
+                  basesGetNumActive(&gs->bs) == (BYTE)(bases - 1),
+                  "the live counts are %u and %u after one removal each",
+                  (unsigned)pillsGetNumActive(&gs->pb),
+                  (unsigned)basesGetNumActive(&gs->bs));
+
+    /* A map saved now holds the items on the map, not the slots. The header
+       is the eight-byte magic, the version, then the three counts. */
+    {
+        const char *path = "test_scenario_removed_item_save.map";
+        FILE *fp;
+        unsigned char hdr[12];
+        UT_ASSERT_MSG(mapWrite((char *)path, &gs->mp, &gs->pb, &gs->bs, &gs->ss),
+                      "mapWrite failed");
+        fp = fopen(path, "rb");
+        UT_ASSERT_MSG(fp != NULL, "the saved map could not be reopened");
+        UT_ASSERT(fread(hdr, 1, sizeof(hdr), fp) == sizeof(hdr));
+        fclose(fp);
+        remove(path);
+        UT_ASSERT_MSG(hdr[9] == (unsigned char)(pills - 1),
+                      "the saved map counts %u pillboxes, wanted %u",
+                      (unsigned)hdr[9], (unsigned)(pills - 1));
+        UT_ASSERT_MSG(hdr[10] == (unsigned char)(bases - 1),
+                      "the saved map counts %u bases, wanted %u",
+                      (unsigned)hdr[10], (unsigned)(bases - 1));
+        UT_ASSERT_MSG(hdr[11] == startsGetNumActive(&gs->ss),
+                      "the saved map counts %u starts, wanted %u",
+                      (unsigned)hdr[11], (unsigned)startsGetNumActive(&gs->ss));
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}

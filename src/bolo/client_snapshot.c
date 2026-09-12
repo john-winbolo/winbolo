@@ -1604,6 +1604,16 @@ void clientApplyEntityChange(ClientSim *cs, const struct ControlEvent *evt) {
     return;
   }
 
+  /* The status panels are pushed, not polled: nothing else repaints the
+   * entry for an item that has just left or arrived, so it is done here. A
+   * removed item reads as neutral, which is how a slot the map does not use
+   * is drawn. */
+  if (evt->u.entityChange.kind == ENTITY_KIND_PILL) {
+    frontEndStatusPillbox(cs, num, pillsGetAllianceNum(&cs->sim, &cs->sim.pb, num));
+  } else if (evt->u.entityChange.kind == ENTITY_KIND_BASE) {
+    frontEndStatusBase(cs, num, basesGetStatusNum(&cs->sim, num));
+  }
+
   /* A pill or base appearing or leaving changes what the screen draws over
    * its square, the same way a revealed mine does. */
   clientSimRecalc(cs);

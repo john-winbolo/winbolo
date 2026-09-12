@@ -457,7 +457,9 @@ baseAlliance basesGetStatusNum(GameSim *sim, BYTE baseNum) {
 
   baseNum--;
   returnValue = baseNeutral;
-  if (baseNum <= ((*value)->numBases)) {
+  /* A base off the map has no status to draw; it reads as neutral, which is
+     what the panel shows for a slot the map does not use. */
+  if (baseNum < ((*value)->numBases) && (*value)->active[baseNum] != FALSE) {
     if ((*value)->item[baseNum].armour <= MIN_ARMOUR_CAPTURE) {
       returnValue = baseDead;
     } else if ((*value)->item[baseNum].owner == NEUTRAL) {
@@ -1345,7 +1347,10 @@ BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tank
 *  armour  - Pointer to hold the armour amount
 *********************************************************/
 void basesGetStats(bases *value, BYTE baseNum, BYTE *shellsAmount, BYTE *mines, BYTE *armour) {
-  if (baseNum <= (*value)->numBases) {
+  /* A number in range names a slot; a slot off the map holds no stock a
+     reader should see. */
+  if (baseNum > 0 && baseNum <= (*value)->numBases &&
+      (*value)->active[baseNum - 1] != FALSE) {
     baseNum--;
     *shellsAmount = (*value)->item[baseNum].shells;
     *mines = (*value)->item[baseNum].mines;
@@ -1497,7 +1502,7 @@ bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
   int baseX, baseY, gapX, gapY;
   WORLD tankX, tankY;
 
-  if (baseIdx >= (*value)->numBases) {
+  if (baseIdx >= (*value)->numBases || (*value)->active[baseIdx] == FALSE) {
     return FALSE;
   }
 
@@ -2348,4 +2353,27 @@ int basesHalfTickCalulator(int typeSelector) {
 	  return 0;
 	  break;
 	}
+}
+
+/*********************************************************
+*NAME:          basesGetNumActive
+*PURPOSE:
+*  Returns how many bases are on the map: the slots under
+*  the count whose live flag is set.
+*
+*ARGUMENTS:
+*  value - Pointer to the bases structure
+*********************************************************/
+BYTE basesGetNumActive(bases *value) {
+  BYTE count;
+  BYTE live = 0;
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numBases && count < MAX_BASES; count++) {
+    if ((*value)->active[count] != FALSE) {
+      live++;
+    }
+  }
+  return live;
 }
