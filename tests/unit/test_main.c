@@ -438,6 +438,7 @@ static const UnitTestEntry s_tests[] = {
     { "replay_roundtrip_world",                  run_replay_roundtrip_world                  },
     { "replay_roundtrip_base_migrate",           run_replay_roundtrip_base_migrate           },
     { "replay_roundtrip_pill_health",            run_replay_roundtrip_pill_health            },
+    { "brainrec_version_rejects_old",            run_brainrec_version_rejects_old            },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_tank_stocks_snapshot_without_tail",    run_lv_tank_stocks_snapshot_without_tail    },
     { "lv_tank_stocks_from_record",              run_lv_tank_stocks_from_record              },

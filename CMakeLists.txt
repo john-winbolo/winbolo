@@ -3522,6 +3522,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/replay_harness.c
     tests/unit/replay_harness_decode.c
     tests/unit/test_replay_roundtrip.c
+    # The brain recorder's own version check.
+    tests/unit/test_brainrec_version.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -4272,6 +4274,7 @@ set(_unit_test_names
     replay_roundtrip_world
     replay_roundtrip_base_migrate
     replay_roundtrip_pill_health
+    brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record

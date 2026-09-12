@@ -861,6 +861,12 @@ int run_replay_roundtrip_base_migrate(void);
  * than as an armour that happens to match. */
 int run_replay_roundtrip_pill_health(void);
 
+/* The brain recorder's own version (test_brainrec_version.c): a session file
+ * written by an older build states a version this build cannot read, because
+ * the frames are raw snapshot structs and the structs changed size. The check
+ * every reader shares has to refuse it rather than walk it. */
+int run_brainrec_version_rejects_old(void);
+
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /
  * lv_specRecordPump. Covers the four bytes on the end of a player block, a
