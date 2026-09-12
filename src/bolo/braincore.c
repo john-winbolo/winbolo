@@ -50,6 +50,8 @@
 #include "util.h"
 #include "braincore.h"
 #include "brain_pathfinder.h"
+#include "tank.h"  /* the movement rates and tankModPct, so the stop
+                    * predictor and the engine cannot drift apart */
 
 /* C-side pill_grid from the gh_threat brain module (same link unit). */
 extern float *naThreatGetPillGrid(lua_State *L);
@@ -91,6 +93,24 @@ static int l_get_terrain_upvalue(lua_State *L) {
     lua_pushinteger(L, (*worldPtrPtr)[y * 256 + x]);
   }
   return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-brain init table                                                */
+/* ------------------------------------------------------------------ */
+
+void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
+  int n = (init != NULL) ? (int)init->count : 0;
+  int i;
+
+  if (n > SCN_TABLE_MAX) n = SCN_TABLE_MAX;
+  lua_createtable(L, 0, n);
+  for (i = 0; i < n; i++) {
+    if (init->kv[i].key[0] == '\0') continue;
+    lua_pushstring(L, init->kv[i].value);
+    lua_setfield(L, -2, init->kv[i].key);
+  }
+  lua_setglobal(L, "BRAIN_INIT");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1785,13 +1805,14 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
  * mirroring the engine's exact decel + residual-move model (tank.c tankAccel
  * + tankMoveUnified) so the brain can decide whether a stop here lands it in
  * firing range of a pill:
- *   - brake = 0.25/tick (TANK_SLOWKEY_RATE); an extra 0.25/tick
- *     (TANK_TERRAIN_DECEL_RATE) applies WHILE speed > terrain_cap (terrain
- *     only drags speed down to its cap, never below). Auto-slowdown is the
- *     same 0.25 and does NOT stack with the brake key, so a brake-to-stop is
- *     a flat 0.25 ramp on uniform terrain.
+ *   - brake = TANK_SLOWKEY_RATE per tick; a further TANK_TERRAIN_DECEL_RATE
+ *     applies WHILE speed > terrain_cap (terrain only drags speed down to its
+ *     cap, never below). Auto-slowdown is the same rate and does NOT stack
+ *     with the brake key, so a brake-to-stop is a flat ramp on uniform
+ *     terrain. Both rates take this tank's acceleration modifier, so a
+ *     modified bot predicts against the rate it will actually brake at.
  *   - each tick (decel first, then move): residual += floor(speed); when
- *     residual >= TANK_MIN_MOVE_SPEED (6) advance `residual` wu along
+ *     residual >= TANK_MIN_MOVE_SPEED advance `residual` wu along
  *     utilGet16Dir(angle) (16-dir quantized) via utilCalcDistance, reset.
  * residualSpeed is assumed 0 at entry (the brain can't observe it → the stop
  * can be up to one sub-move, <6 wu, short of reality). terrain_cap defaults to
@@ -1799,9 +1820,17 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
  * constant for the short stop — a mid-stop speed-boundary crossing isn't
  * modeled. */
 static int l_cpf_predict_stop(lua_State *L) {
-  const double BRAKE_RATE   = 0.25;  /* TANK_SLOWKEY_RATE */
-  const double TERRAIN_RATE = 0.25;  /* TANK_TERRAIN_DECEL_RATE */
-  const int    MIN_MOVE     = 6;     /* TANK_MIN_MOVE_SPEED */
+  /* Both rates take this tank's acceleration modifier, as tankAccel and the
+   * auto-slow do; the bot manager pushed it in before the think. The minimum
+   * move is sub-move granularity and stays absolute, as it does in tank.c.
+   * The terrain cap arrives as an argument, so no speed modifier is needed
+   * here. */
+  BrainPathfinder **ppfRates = (BrainPathfinder **)lua_touserdata(L, lua_upvalueindex(1));
+  BrainPathfinder *pfRates = (ppfRates && *ppfRates) ? *ppfRates : NULL;
+  const int accelPct = tankModPct(pfRates ? pfRates->accel_pct : 0);
+  const double BRAKE_RATE   = TANK_SLOWKEY_RATE * accelPct / 100;
+  const double TERRAIN_RATE = TANK_TERRAIN_DECEL_RATE * accelPct / 100;
+  const int    MIN_MOVE     = TANK_MIN_MOVE_SPEED;
 
   WORLD x  = (WORLD)luaL_checkinteger(L, 1);
   WORLD y  = (WORLD)luaL_checkinteger(L, 2);

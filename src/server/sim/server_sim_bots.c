@@ -100,9 +100,10 @@ void serverSimSetBotPreThinkHook(ServerSim *sim,
 
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
-                        aiType ai, gameType game, bool hiddenMines) {
+                        aiType ai, gameType game, bool hiddenMines,
+                        BYTE team, const ScnTable *init) {
     return botManagerAddBot(sim, playerNum, brainPath, brainName,
-                            ai, game, hiddenMines);
+                            ai, game, hiddenMines, team, init);
 }
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {

@@ -397,6 +397,14 @@ int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
  * (local) transport single-player uses, which never carries voice. */
 bool clientSimNetHasVoiceTransport(const ClientSim *cs);
 
+/* What became of the voice frames this client queued: framed onto the wire,
+ * dropped by a full ring, or left behind by a frame with no budget for them.
+ * All three are losses the protocol itself cannot show. Any out pointer may
+ * be NULL; a client with no UDP transport reports zeroes. */
+void clientSimNetGetVoiceChannelStats(ClientSim *cs, uint32_t *outSent,
+                                      uint32_t *outRingDropped,
+                                      uint32_t *outBudgetSkipped);
+
 /* === Net stats === */
 uint16_t clientSimGetNetPing(const ClientSim *cs);
 void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,

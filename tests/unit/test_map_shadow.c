@@ -1387,7 +1387,7 @@ int run_pill_shadow_fullsync_move_matches(void) {
     int i;
 
     memset(&scratch, 0, sizeof(scratch));
-    scratch.numPills = hdr.pillCount;
+    pillsSetNumPills(&scratchPb, (BYTE)hdr.pillCount);
     for (i = 0; i < hdr.pillCount && i < MAX_PILLS; i++) {
         scratch.item[i].x      = po[i].x;
         scratch.item[i].y      = po[i].y;
@@ -1519,7 +1519,7 @@ int run_pill_shadow_withheld_crc_matches(void) {
     int i;
 
     memset(&scratch, 0, sizeof(scratch));
-    scratch.numPills = hdr.pillCount;
+    pillsSetNumPills(&scratchPb, (BYTE)hdr.pillCount);
     for (i = 0; i < hdr.pillCount && i < MAX_PILLS; i++) {
         scratch.item[i].x      = po[i].x;
         scratch.item[i].y      = po[i].y;

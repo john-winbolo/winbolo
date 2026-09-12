@@ -227,6 +227,9 @@ void efree(Generic object);
 #define LAST_DEATH_BY_DEEPSEA 1
 #define LAST_DEATH_BY_SHELL 2
 #define LAST_DEATH_BY_MINES 0		/* changed this from 3 to 0 on feb 10, 2009 -- jhood */
+/* A script killed the tank outright. Its own value rather than reusing
+   MINES, which is 0 and so also reads as "never set". */
+#define LAST_DEATH_BY_SCRIPT 3
 
 /* Change the static bitmap displayed every 10 ticks */
 #define STATIC_CHANGE_TICKS 10

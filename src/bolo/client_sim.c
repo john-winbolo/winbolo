@@ -254,6 +254,7 @@ bool clientSimCreate(ClientSim *cs) {
    * single-player tankCreate runs, so leave them all unset. */
   for (int i = 0; i < MAX_TANKS; i++) {
     cs->sim.pendingStartIdx[i] = MAX_STARTS;
+    cs->sim.scenarioStartIdx[i] = MAX_STARTS;
   }
 
   /* Initialize GameSim identity and callbacks */
@@ -272,6 +273,16 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.callbacks.recordDamage = NULL;
   cs->sim.callbacks.recordPlayerAction = NULL;
   cs->sim.callbacks.recordPillPickup = NULL;
+  cs->sim.callbacks.baseOwnerChanged = NULL;
+  cs->sim.callbacks.pillOwnerChanged = NULL;
+  cs->sim.callbacks.lgmDied = NULL;
+  cs->sim.callbacks.tankSpawned = NULL;
+  cs->sim.callbacks.lgmLanded = NULL;
+  cs->sim.callbacks.pillPlaced = NULL;
+  cs->sim.callbacks.pillKilled = NULL;
+  cs->sim.callbacks.built = NULL;
+  cs->sim.callbacks.mineLaid = NULL;
+  cs->sim.callbacks.mineExploded = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;
@@ -306,7 +317,7 @@ bool clientSimCreate(ClientSim *cs) {
   {
     int i;
     for (i = 0; i < MAX_TANKS; i++) {
-      cs->sim.baseTimer[i] = 30000;
+      cs->sim.baseTimer[i] = BASE_TIMER_OFF;
     }
     cs->sim.baseTimer[cs->myPlayerNum] = BASE_TICKS_BETWEEN_REFUEL;
   }
@@ -599,7 +610,7 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
     }
     clientSimAddPredictedShellAt(cs, preX, preY, preAngle, &MY_TANK(cs), pkt->tick);
     /* Update predicted tank state to match what the server will do */
-    tankSetReload(&MY_TANK(cs), TANK_RELOAD_TIME);
+    tankSetReload(&MY_TANK(cs), tankReloadTicks(&cs->sim, MY_TANK(cs)));
     tankSetShells(&MY_TANK(cs), tankGetShells(&MY_TANK(cs)) - 1);
   }
 
@@ -1590,7 +1601,9 @@ bool clientSimSetPlayerName(ClientSim *csPtr, char *value) {
   bool returnValue;              /* Value to return */
 
   utilStripNameReplace(value);
-  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE);
+  /* The local player's own rename request. The server's broadcast of it is
+     where the announce policy gets its say; this is the typist's own copy. */
+  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE, TRUE);
   if (returnValue == TRUE) {
     if (clientSimGetNetType(csPtr) != netSingle) {
       clientSimSendChangePlayerName(csPtr, clientSimGetMyPlayerNum(csPtr), value);
@@ -3383,18 +3396,25 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->pillViewX  = clientSimGetPillViewX(cs);
   s->pillViewY  = clientSimGetPillViewY(cs);
 
-  /* Every pill and base at its square. The number is the one the classic
-   * view draws — pillsGetViewPillNum / basesGetBaseNum at that square, less
-   * one — so two pills the sim reports on one square number as the classic
-   * view numbers them. Which squares show a number is decided at draw time
-   * from the memory copy above: the tile there, and whether it is live. */
+  /* Every pill and base on the map at its square. The number is the one the
+   * classic view draws — pillsGetViewPillNum / basesGetBaseNum at that
+   * square, less one — so two pills the sim reports on one square number as
+   * the classic view numbers them. Which squares show a number is decided at
+   * draw time from the memory copy above: the tile there, and whether it is
+   * live. An item a removal has taken off the map is left out here: its slot
+   * still holds a record, but no lookup by square would find it, and the
+   * number that lookup gives is nothing a label can draw. */
   {
     GameSim *gs = clientSimGetGameSim(cs);
     BYTE n = pillsGetNumPills(&gs->pb);
     BYTE i;
     for (i = 1; i <= n && s->itemLabelCount < MAX_PILLS + MAX_BASES; i++) {
       pillbox item;
-      OverviewItemLabel *l = &s->itemLabels[s->itemLabelCount++];
+      OverviewItemLabel *l;
+      if (pillsIsActive(&gs->pb, i) == FALSE) {
+        continue;
+      }
+      l = &s->itemLabels[s->itemLabelCount++];
       memset(&item, 0, sizeof(item));
       pillsGetPill(&gs->pb, &item, i);
       l->mapX   = item.x;
@@ -3406,7 +3426,11 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
     n = basesGetNumBases(&gs->bs);
     for (i = 1; i <= n && s->itemLabelCount < MAX_PILLS + MAX_BASES; i++) {
       base item;
-      OverviewItemLabel *l = &s->itemLabels[s->itemLabelCount++];
+      OverviewItemLabel *l;
+      if (basesIsActive(&gs->bs, i) == FALSE) {
+        continue;
+      }
+      l = &s->itemLabels[s->itemLabelCount++];
       memset(&item, 0, sizeof(item));
       basesGetBase(&gs->bs, &item, i);
       l->mapX   = item.x;

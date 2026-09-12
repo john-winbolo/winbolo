@@ -1,0 +1,10 @@
+map: Builder Yard
+ticks: 332
+terrain fnv1a: fd88ec80
+pills: 2
+pill 1: x=126 y=125 owner=0 armour=8
+pill 2: x=125 y=125 owner=0 armour=15
+bases: 0
+starts: 1
+start 1: x=116 y=126 dir=0
+tank 0: shells=40 mines=40 armour=40 trees=36

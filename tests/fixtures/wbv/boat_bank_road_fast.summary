@@ -1,0 +1,8 @@
+map: Boat Bank
+ticks: 300
+terrain fnv1a: 4ae49ddb
+pills: 0
+bases: 0
+starts: 1
+start 1: x=120 y=130 dir=0
+tank 0: shells=40 mines=40 armour=40 trees=40

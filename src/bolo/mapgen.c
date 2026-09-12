@@ -3728,6 +3728,13 @@ void mapGenRun(struct mapObj *mp, struct basesObj *bs,
 
     /* Orient all starts toward nearest land */
     mapGenPointStartsToLand(mp, ss);
+
+    /* Every item a generated map produces is live. The generators append to
+     * the arrays field by field rather than going through the list calls, so
+     * mark the whole of each count here. */
+    for (int i = 0; i < bs->numBases;  i++) bs->active[i] = TRUE;
+    for (int i = 0; i < pb->numPills;  i++) pb->active[i] = TRUE;
+    for (int i = 0; i < ss->numStarts; i++) ss->active[i] = TRUE;
 }
 
 MapGenConfig mapGenDefaultConfig(int genType) {

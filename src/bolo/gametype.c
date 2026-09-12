@@ -98,7 +98,17 @@ void gameTypeGetItems(GameSim *sim, gameType *gmeType, BYTE *shellsAmount, BYTE 
     *trees = TANK_FULL_TREES;
     break;
   case gameTournament:
-    numBases = basesGetNumBases(&sim->bs);
+    /* Live bases only: a removed base is not on the map, so counting its slot
+       would dilute the neutral share the shell allowance is drawn from. */
+    numBases = 0;
+    {
+      BYTE bi;
+      for (bi = 0; bi < basesGetNumBases(&sim->bs); bi++) {
+        if (basesIsActive(&sim->bs, (BYTE)(bi + 1))) {
+          numBases++;
+        }
+      }
+    }
     if (numBases == 0) {
       numBases = 1;
     }

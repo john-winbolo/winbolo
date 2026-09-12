@@ -42,6 +42,12 @@
 *    --fast            Enable fast local mode (no wall-clock gating)
 *    --map FILE        Path to .map file (required with --fast)
 *    --stdin           Read input from stdin (one JSON line per game tick)
+*    --log-changes FILE  One JSON line per game tick whose state differs
+*                      from the last line written (tick 0 and the final
+*                      tick always)
+*    --log-terrain     Add a "terrain" field to --log-changes naming every
+*                      map square whose terrain moved since the last line
+*    --record FILE     Record the run to a .wbv replay
 *********************************************************/
 
 #ifdef _MSC_VER
@@ -59,6 +65,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -77,6 +84,7 @@
 #include "brain.h"
 #include "client_net.h"
 #include "gui_message.h"
+#include "log.h"
 #include "server_sim.h"
 #include "../bolo/internal/server_sim_lifecycle.h"
 #include "../server/server_lifecycle.h"
@@ -120,6 +128,9 @@ static int optTicks = 0; /* 0 = unlimited */
 static char optPassword[256] = "";
 static char optLogState[512] = "";
 static char optLogEvents[512] = "";
+static char optLogChanges[512] = "";
+static bool optLogTerrain = FALSE;
+static char optRecord[512] = "";
 static char optCmdStdin[512] = "";
 static bool optQuiet = FALSE;
 static bool optFast = FALSE;
@@ -862,6 +873,50 @@ static uint32_t overviewTileHash(const OverviewMap *om) {
   return h;
 }
 
+/* Release what brainDataMakeInfo allocated. The loggers only read the info,
+ * so this is the free half of brainDataExtractInfo without the apply. */
+static void brainInfoFree(BrainInfo *bi) {
+  free(bi->allies);
+  free(bi->base);
+  free(bi->pillview);
+  free(bi->viewdata);
+  free(bi->events);
+  if (bi->message != NULL) {
+    free(bi->message->receivers);
+    free(bi->message->message);
+    free(bi->message);
+  }
+}
+
+/* The event records the state logs derive from one GameEvent, as JSON
+ * object fragments from the local player's point of view. Up to two per
+ * event: a tank-killed event names both the killer and the victim, and a
+ * hit is dealt or received. Returns how many fragments were put in out. */
+static int verboseEventJson(const GameEvent *e, BYTE self, const char *out[2]) {
+  int n = 0;
+  switch (e->type) {
+  case EVENT_TANK_KILLED:
+    if (e->data[0] == self) out[n++] = "{\"type\":\"kill\",\"target\":\"enemy\"}";
+    if (e->data[1] == self) out[n++] = "{\"type\":\"death\"}";
+    break;
+  case EVENT_SOUND_TANK_HIT:
+    if (e->data[3] != self) out[n++] = "{\"type\":\"hit_dealt\"}";
+    if (e->data[3] == self) out[n++] = "{\"type\":\"hit_received\"}";
+    break;
+  case EVENT_PILL_CAPTURED:
+    if (e->data[0] == self) out[n++] = "{\"type\":\"pill_captured\"}";
+    if (e->data[1] == self) out[n++] = "{\"type\":\"pill_lost\"}";
+    break;
+  case EVENT_BASE_CAPTURED:
+    if (e->data[0] == self) out[n++] = "{\"type\":\"base_captured\"}";
+    if (e->data[1] == self) out[n++] = "{\"type\":\"base_lost\"}";
+    break;
+  default:
+    break;
+  }
+  return n;
+}
+
 static void logStateVerbose(int tickNum) {
   static bool needMapInit = TRUE;
   FILE *f;
@@ -1093,58 +1148,13 @@ static void logStateVerbose(int tickNum) {
   {
     int first = 1;
     for (i = 0; i < bi.num_events; i++) {
-      GameEvent *e = &bi.events[i];
-      switch (e->type) {
-      case EVENT_TANK_KILLED:
-        if (e->data[0] == selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"kill\",\"target\":\"enemy\"}");
-          first = 0;
-        }
-        if (e->data[1] == selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"death\"}");
-          first = 0;
-        }
-        break;
-      case EVENT_SOUND_TANK_HIT:
-        if (e->data[3] != selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"hit_dealt\"}");
-          first = 0;
-        }
-        if (e->data[3] == selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"hit_received\"}");
-          first = 0;
-        }
-        break;
-      case EVENT_PILL_CAPTURED:
-        if (e->data[0] == selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"pill_captured\"}");
-          first = 0;
-        }
-        if (e->data[1] == selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"pill_lost\"}");
-          first = 0;
-        }
-        break;
-      case EVENT_BASE_CAPTURED:
-        if (e->data[0] == selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"base_captured\"}");
-          first = 0;
-        }
-        if (e->data[1] == selfPlayer) {
-          if (!first) fprintf(f, ",");
-          fprintf(f, "{\"type\":\"base_lost\"}");
-          first = 0;
-        }
-        break;
-      default:
-        break;
+      const char *frag[2];
+      int n = verboseEventJson(&bi.events[i], selfPlayer, frag);
+      int k;
+      for (k = 0; k < n; k++) {
+        if (!first) fprintf(f, ",");
+        fputs(frag[k], f);
+        first = 0;
       }
     }
   }
@@ -1165,17 +1175,393 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, "}\n");
   fflush(f);
 
-  /* Cleanup BrainInfo allocations (subset of brainDataExtractInfo —
-   * we only need to free, not apply outputs) */
-  free(bi.allies);
-  if (bi.base != NULL) free(bi.base);
-  free(bi.pillview);
-  free(bi.viewdata);
-  if (bi.events != NULL) free(bi.events);
-  if (bi.message != NULL) {
-    free(bi.message->receivers);
-    free(bi.message->message);
-    free(bi.message);
+  brainInfoFree(&bi);
+}
+
+/* ------------------------------------------------------------------ */
+/* Change-only state logging                                           */
+/* ------------------------------------------------------------------ */
+/*
+ * --log-changes writes one JSON object per game tick on which the state it
+ * describes differs from the last object written, and always writes tick 0
+ * and the final tick. Each tick the object is built in memory and compared
+ * as text, minus its leading tick field, with the last one written.
+ *
+ * The tank and man come from BrainInfo (the client mirror the brains read)
+ * and the ClientSim's stock reader, as logStateVerbose's tank block does;
+ * pills, bases, the map counts and the events are read from the fast
+ * server sim. Fields, in order:
+ *   tick
+ *   tank      tx ty x y dir speed on_boat dead armor shells mines trees
+ *             reload pills_carried
+ *   man       status (in_tank | dead | out) mx my
+ *   pillboxes [tx ty owner armor in_tank speed] in map order
+ *   bases     [tx ty owner armor shells mines] in map order
+ *   counts    forest (FOREST squares, mined ones included) mines (live)
+ *   terrain   [tx ty from to] per map square whose terrain moved since the
+ *             last record was built, in map order. Only with --log-terrain,
+ *             and only on a record that has one: a record written without
+ *             the flag, or with it on a tick where no square moved, carries
+ *             no terrain field at all
+ *   events    the same records logStateVerbose derives, rendered from the
+ *             server's own per-frame event buffer rather than the client's
+ *             copy: brainDataMakeInfo drains that copy, so on a tick where
+ *             a brain has thought it has nothing left for a logger
+ * A pill's reload counter is left out on purpose: it moves every tick a
+ * pill is reloading, which would put a line in the log for each of them.
+ */
+
+typedef struct {
+  char  *data;
+  size_t len;
+  size_t cap;
+} TextBuf;
+
+static void textBufReset(TextBuf *b) {
+  b->len = 0;
+  if (b->data != NULL) {
+    b->data[0] = '\0';
+  }
+}
+
+static void textBufFree(TextBuf *b) {
+  free(b->data);
+  b->data = NULL;
+  b->len = 0;
+  b->cap = 0;
+}
+
+static void textBufPrintf(TextBuf *b, const char *fmt, ...) {
+  va_list ap;
+  int n;
+  for (;;) {
+    size_t room = b->cap - b->len;
+    size_t need;
+    size_t ncap;
+    char *grown;
+    va_start(ap, fmt);
+    n = vsnprintf(b->data != NULL ? b->data + b->len : NULL, room, fmt, ap);
+    va_end(ap);
+    if (n < 0) {
+      return;
+    }
+    if ((size_t)n < room) {
+      b->len += (size_t)n;
+      return;
+    }
+    need = b->len + (size_t)n + 1;
+    ncap = b->cap != 0 ? b->cap * 2 : 4096;
+    while (ncap < need) {
+      ncap *= 2;
+    }
+    grown = (char *)realloc(b->data, ncap);
+    if (grown == NULL) {
+      return;
+    }
+    b->data = grown;
+    b->cap = ncap;
+  }
+}
+
+static FILE   *logChangesFile = NULL;
+static bool    logChangesToStdout = FALSE;
+static TextBuf logChangesCur;                /* body built for the current tick */
+static TextBuf logChangesPrev;               /* body of the last record written */
+static bool    logChangesHavePrev = FALSE;
+static int     logChangesCurTick = -1;       /* tick logChangesCur describes */
+static bool    logChangesCurWritten = FALSE;
+
+static void logChangesOpen(const char *path) {
+  if (path[0] == '\0') {
+    return;
+  }
+  if (strcmp(path, "-") == 0) {
+    logChangesToStdout = TRUE;
+    logChangesFile = stdout;
+  } else {
+    logChangesFile = fopen(path, "w");
+    if (logChangesFile == NULL) {
+      fprintf(stderr, "Error: cannot open changes log file '%s'\n", path);
+    }
+  }
+}
+
+static void logChangesClose(void) {
+  if (logChangesFile != NULL && !logChangesToStdout) {
+    fclose(logChangesFile);
+  }
+  logChangesFile = NULL;
+  textBufFree(&logChangesCur);
+  textBufFree(&logChangesPrev);
+  logChangesHavePrev = FALSE;
+  logChangesCurTick = -1;
+  logChangesCurWritten = FALSE;
+}
+
+/* Game events the server produced since the last record was built. The
+ * sim keeps one frame's events in a buffer it clears at the top of every
+ * serverSimTick, and the fast loop runs a server frame on its keys pass
+ * as well as its game pass, so the buffer is copied out after each pass;
+ * reading it at record time alone would miss the keys pass's frame. Two
+ * frames' worth is the most one record can span. */
+#define LOG_CHANGES_MAX_EVENTS (2 * MAX_SNAPSHOT_EVENTS)
+static GameEvent logChangesEvents[LOG_CHANGES_MAX_EVENTS];
+static int       logChangesEventCount = 0;
+
+static void logChangesCollectEvents(void) {
+  const GameEvent *ev;
+  int n;
+  int i;
+  if (logChangesFile == NULL || fastServerSim == NULL) {
+    return;
+  }
+  ev = serverSimGetEvents(fastServerSim);
+  n = serverSimGetEventCount(fastServerSim);
+  for (i = 0; i < n && logChangesEventCount < LOG_CHANGES_MAX_EVENTS; i++) {
+    logChangesEvents[logChangesEventCount++] = ev[i];
+  }
+}
+
+static const char *manStatusStr(BYTE status) {
+  if (status == 0) return "in_tank";
+  if (status == 1) return "dead";
+  return "out";
+}
+
+/* Map squares whose terrain moved since the last record was built, for
+ * --log-terrain. The builder's whole output is terrain — road laid, a
+ * building raised, a tree cut — and no other field in the record moves when
+ * one of those lands, so a scenario that drives the builder over grass
+ * would otherwise show the stock cost and the man walking and nothing of
+ * the result.
+ *
+ * The list is carried in the record only when the flag is set and only when
+ * it has something in it, so the goldens captured before the flag existed
+ * are byte for byte what they were. Squares are reported in map order, and
+ * the comparison is against the map as the last build read it, which is
+ * every game tick: the field appears on the tick the square moved and is
+ * gone the next, as events already are. */
+#define LOG_CHANGES_MAX_TERRAIN 64
+typedef struct {
+  BYTE x;
+  BYTE y;
+  BYTE from;
+  BYTE to;
+} LogTerrainChange;
+static BYTE             logTerrainPrev[256 * 256];
+static bool             logTerrainHavePrev = FALSE;
+static LogTerrainChange logTerrainChanges[LOG_CHANGES_MAX_TERRAIN];
+static int              logTerrainCount = 0;
+static int              logTerrainUnlisted = 0;
+
+static const char *terrainName(BYTE terrain) {
+  switch (terrain) {
+    case BUILDING:     return "BUILDING";
+    case RIVER:        return "RIVER";
+    case SWAMP:        return "SWAMP";
+    case CRATER:       return "CRATER";
+    case ROAD:         return "ROAD";
+    case FOREST:       return "FOREST";
+    case RUBBLE:       return "RUBBLE";
+    case GRASS:        return "GRASS";
+    case HALFBUILDING: return "HALFBUILDING";
+    case BOAT:         return "BOAT";
+    case MINE_SWAMP:   return "MINE_SWAMP";
+    case MINE_CRATER:  return "MINE_CRATER";
+    case MINE_ROAD:    return "MINE_ROAD";
+    case MINE_FOREST:  return "MINE_FOREST";
+    case MINE_RUBBLE:  return "MINE_RUBBLE";
+    case MINE_GRASS:   return "MINE_GRASS";
+    case DEEP_SEA:     return "DEEP_SEA";
+    default:           return "UNKNOWN";
+  }
+}
+
+/* Build the record body (everything after the tick field) into b. */
+static void logChangesBuild(TextBuf *b) {
+  static bool needMapInit = TRUE;
+  BrainInfo bi;
+  BYTE selfPlayer;
+  PlayerBitMap alliesBits;
+  BYTE shells, mines, armour, trees;
+  int i;
+
+  brainDataMakeInfo(humanSim, &bi, needMapInit, optAi);
+  needMapInit = FALSE;
+  selfPlayer = (BYTE)bi.player_number;
+  alliesBits = bi.allies ? *(bi.allies) : 0;
+  clientSimGetTankStats(humanSim, &shells, &mines, &armour, &trees);
+
+  textBufPrintf(b, "\"tank\":{\"tx\":%d,\"ty\":%d,\"x\":%.2f,\"y\":%.2f"
+                   ",\"dir\":%u,\"speed\":%u,\"on_boat\":%s,\"dead\":%s"
+                   ",\"armor\":%u,\"shells\":%u,\"mines\":%u,\"trees\":%u"
+                   ",\"reload\":%u,\"pills_carried\":%u}",
+                bi.tankx >> 8, bi.tanky >> 8,
+                (double)bi.tankx / 256.0, (double)bi.tanky / 256.0,
+                (unsigned)bi.direction, (unsigned)bi.speed,
+                bi.inboat ? "true" : "false",
+                bi.destroyed != 0 ? "true" : "false",
+                (unsigned)armour, (unsigned)shells, (unsigned)mines, (unsigned)trees,
+                (unsigned)bi.reload, (unsigned)bi.carriedpills);
+
+  textBufPrintf(b, ",\"man\":{\"status\":\"%s\",\"mx\":%d,\"my\":%d}",
+                manStatusStr(bi.man_status), bi.man_x >> 8, bi.man_y >> 8);
+
+  textBufPrintf(b, ",\"pillboxes\":[");
+  if (fastServerSim != NULL) {
+    BYTE np = serverSimGetPillCount(fastServerSim);
+    BYTE pi;
+    for (pi = 1; pi <= np; pi++) {
+      BYTE px, py, powner, parmour, pspeed;
+      bool pinTank;
+      if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
+      if (!serverSimGetPillSpeed(fastServerSim, pi, &pspeed)) continue;
+      textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
+                       ",\"in_tank\":%s,\"speed\":%u}",
+                    pi > 1 ? "," : "",
+                    (unsigned)px, (unsigned)py,
+                    verboseOwnerStr(powner, selfPlayer, alliesBits),
+                    (unsigned)parmour, pinTank ? "true" : "false",
+                    (unsigned)pspeed);
+    }
+  }
+  textBufPrintf(b, "]");
+
+  textBufPrintf(b, ",\"bases\":[");
+  if (fastServerSim != NULL) {
+    BYTE nb = serverSimGetBaseCount(fastServerSim);
+    BYTE bsi;
+    for (bsi = 1; bsi <= nb; bsi++) {
+      BYTE bx, by, bowner;
+      BYTE bshells, bmines, barmour;
+      if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, &bowner)) continue;
+      serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
+      textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u"
+                       ",\"shells\":%u,\"mines\":%u}",
+                    bsi > 1 ? "," : "",
+                    (unsigned)bx, (unsigned)by,
+                    verboseOwnerStr(bowner, selfPlayer, alliesBits),
+                    (unsigned)barmour, (unsigned)bshells, (unsigned)bmines);
+    }
+  }
+  textBufPrintf(b, "]");
+
+  /* Whole-map counts. mapGetPos reports the border as deep sea, so the
+   * mined-edge convention of mapIsMine does not reach this count. The same
+   * pass collects the squares --log-terrain reports, so the map is read
+   * once either way. */
+  {
+    int forest = 0;
+    int liveMines = 0;
+    logTerrainCount = 0;
+    logTerrainUnlisted = 0;
+    if (fastServerSim != NULL) {
+      int x, y;
+      for (y = 0; y < 256; y++) {
+        for (x = 0; x < 256; x++) {
+          BYTE t = serverSimGetMapTerrain(fastServerSim, (BYTE)x, (BYTE)y);
+          if (t == FOREST || t == MINE_FOREST) forest++;
+          if (t >= MINE_START && t <= MINE_END) liveMines++;
+          if (optLogTerrain) {
+            size_t idx = (size_t)y * 256 + (size_t)x;
+            if (logTerrainHavePrev && logTerrainPrev[idx] != t) {
+              if (logTerrainCount < LOG_CHANGES_MAX_TERRAIN) {
+                logTerrainChanges[logTerrainCount].x = (BYTE)x;
+                logTerrainChanges[logTerrainCount].y = (BYTE)y;
+                logTerrainChanges[logTerrainCount].from = logTerrainPrev[idx];
+                logTerrainChanges[logTerrainCount].to = t;
+                logTerrainCount++;
+              } else {
+                logTerrainUnlisted++;
+              }
+            }
+            logTerrainPrev[idx] = t;
+          }
+        }
+      }
+      if (optLogTerrain) {
+        logTerrainHavePrev = TRUE;
+      }
+    }
+    textBufPrintf(b, ",\"counts\":{\"forest\":%d,\"mines\":%d}", forest, liveMines);
+  }
+
+  if (logTerrainCount > 0 || logTerrainUnlisted > 0) {
+    int k;
+    textBufPrintf(b, ",\"terrain\":[");
+    for (k = 0; k < logTerrainCount; k++) {
+      textBufPrintf(b, "%s{\"tx\":%u,\"ty\":%u,\"from\":\"%s\",\"to\":\"%s\"}",
+                    k > 0 ? "," : "",
+                    (unsigned)logTerrainChanges[k].x,
+                    (unsigned)logTerrainChanges[k].y,
+                    terrainName(logTerrainChanges[k].from),
+                    terrainName(logTerrainChanges[k].to));
+    }
+    if (logTerrainUnlisted > 0) {
+      textBufPrintf(b, "%s{\"unlisted\":%d}", logTerrainCount > 0 ? "," : "",
+                    logTerrainUnlisted);
+    }
+    textBufPrintf(b, "]");
+  }
+
+  textBufPrintf(b, ",\"events\":[");
+  {
+    int first = 1;
+    for (i = 0; i < logChangesEventCount; i++) {
+      const char *frag[2];
+      int n = verboseEventJson(&logChangesEvents[i], selfPlayer, frag);
+      int k;
+      for (k = 0; k < n; k++) {
+        textBufPrintf(b, "%s%s", first ? "" : ",", frag[k]);
+        first = 0;
+      }
+    }
+    logChangesEventCount = 0;
+  }
+  textBufPrintf(b, "]");
+
+  brainInfoFree(&bi);
+}
+
+static void logChangesWrite(void) {
+  TextBuf swap;
+  fprintf(logChangesFile, "{\"tick\":%d,%s}\n", logChangesCurTick,
+          logChangesCur.data != NULL ? logChangesCur.data : "");
+  fflush(logChangesFile);
+  /* The written body becomes the comparison point; the old one is reused
+   * as next tick's build buffer. */
+  swap = logChangesPrev;
+  logChangesPrev = logChangesCur;
+  logChangesCur = swap;
+  logChangesHavePrev = TRUE;
+  logChangesCurWritten = TRUE;
+}
+
+static void logChangesTick(int tickNum) {
+  bool changed;
+  if (logChangesFile == NULL) {
+    return;
+  }
+  textBufReset(&logChangesCur);
+  logChangesBuild(&logChangesCur);
+  logChangesCurTick = tickNum;
+  logChangesCurWritten = FALSE;
+  changed = !logChangesHavePrev ||
+            logChangesCur.len != logChangesPrev.len ||
+            memcmp(logChangesCur.data, logChangesPrev.data, logChangesCur.len) != 0;
+  if (tickNum == 0 || changed) {
+    logChangesWrite();
+  }
+}
+
+/* Called once the loop has ended: the final tick is written even when it
+ * repeats the last record. */
+static void logChangesFinish(void) {
+  if (logChangesFile == NULL) {
+    return;
+  }
+  if (logChangesCurTick >= 0 && !logChangesCurWritten) {
+    logChangesWrite();
   }
 }
 
@@ -1397,17 +1783,7 @@ static void logStateBinary(int tickNum) {
 
   fflush(logFile);
 
-  /* Cleanup BrainInfo allocations */
-  free(bi.allies);
-  if (bi.base != NULL) free(bi.base);
-  free(bi.pillview);
-  free(bi.viewdata);
-  if (bi.events != NULL) free(bi.events);
-  if (bi.message != NULL) {
-    free(bi.message->receivers);
-    free(bi.message->message);
-    free(bi.message);
-  }
+  brainInfoFree(&bi);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1534,6 +1910,11 @@ static void printUsage(const char *prog) {
     "  --fast            Run locally as fast as possible (no wall-clock gating)\n"
     "  --map FILE        Path to .map file (required with --fast)\n"
     "  --stdin           Read input from stdin (one JSON line per game tick)\n"
+    "  --log-changes FILE  One JSON line per game tick whose state differs from\n"
+    "                    the last line written; tick 0 and the final tick are\n"
+    "                    always written (- for stdout)\n"
+    "  --record FILE     Record the run to a .wbv replay, started before the\n"
+    "                    first game tick and closed at exit\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always (default), key, decay, off\n"
@@ -1601,6 +1982,12 @@ static bool parseArgs(int argc, char **argv) {
       strncpy(optLogState, argv[++i], sizeof(optLogState) - 1);
     } else if (strcmp(argv[i], "--log-events") == 0 && i + 1 < argc) {
       strncpy(optLogEvents, argv[++i], sizeof(optLogEvents) - 1);
+    } else if (strcmp(argv[i], "--log-changes") == 0 && i + 1 < argc) {
+      strncpy(optLogChanges, argv[++i], sizeof(optLogChanges) - 1);
+    } else if (strcmp(argv[i], "--log-terrain") == 0) {
+      optLogTerrain = TRUE;
+    } else if (strcmp(argv[i], "--record") == 0 && i + 1 < argc) {
+      strncpy(optRecord, argv[++i], sizeof(optRecord) - 1);
     } else if (strcmp(argv[i], "--cmd-stdin") == 0 && i + 1 < argc) {
       strncpy(optCmdStdin, argv[++i], sizeof(optCmdStdin) - 1);
     } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
@@ -1627,7 +2014,7 @@ static bool parseArgs(int argc, char **argv) {
     } else if (strcmp(argv[i], "--gametype") == 0 && i + 1 < argc) {
       i++;
       if (strcmp(argv[i], "strict") == 0) optGameType = gameStrictTournament;
-      else if (strcmp(argv[i], "tournament") == 0) optGameType = optGameType;
+      else if (strcmp(argv[i], "tournament") == 0) optGameType = gameTournament;
       else if (strcmp(argv[i], "open") == 0) optGameType = gameOpen;
       else {
         fprintf(stderr, "Error: unknown game type '%s' (use: strict, tournament, open)\n", argv[i]);
@@ -1682,6 +2069,16 @@ static bool parseArgs(int argc, char **argv) {
     }
     if (optPort == 0) {
       fprintf(stderr, "Error: --port is required\n");
+      printUsage(argv[0]);
+      return FALSE;
+    }
+    if (optLogChanges[0] != '\0') {
+      fprintf(stderr, "Error: --log-changes is only valid with --fast\n");
+      printUsage(argv[0]);
+      return FALSE;
+    }
+    if (optRecord[0] != '\0') {
+      fprintf(stderr, "Error: --record is only valid with --fast\n");
       printUsage(argv[0]);
       return FALSE;
     }
@@ -1825,6 +2222,8 @@ static void fastModeTeardownGame(void) {
 
 static int runFastMode(void) {
   int tickCount = 0;
+  int rc = 0;
+  bool recording = FALSE;   /* --record writer is open */
   bool justKeys = FALSE;
   bool brainRunning;
   uint32_t simTickCounter = 0;
@@ -1929,13 +2328,34 @@ static int runFastMode(void) {
     }
   }
 
-  /* Open state log */
+  /* Open state logs. A changes log that cannot be opened ends the run: a
+   * scenario that asked for it must not run without it. */
   logStateOpen(optLogState);
+  logChangesOpen(optLogChanges);
+  if (optLogChanges[0] != '\0' && logChangesFile == NULL) {
+    rc = 1;
+    goto cleanup;
+  }
+
+  /* Start the replay writer before the first game tick. logCreate and
+   * logDestroy belong to serverSimCreate and serverSimDestroy; from here
+   * every running-state game tick writes itself through serverSimTick, and
+   * logStop after the loop closes the file. */
+  if (optRecord[0] != '\0') {
+    logSetLobbyMode(FALSE);
+    if (logStart(optRecord, fastServerSim, 0, MAX_TANKS, FALSE) != TRUE) {
+      fprintf(stderr, "Error: cannot start recording '%s'\n", optRecord);
+      rc = 1;
+      goto cleanup;
+    }
+    recording = TRUE;
+  }
 
   /* Emit initial state (tick 0) so a controller can read it before sending input */
   if (logFile != NULL) {
     logStateTick(0);
   }
+  logChangesTick(0);
 
   /* Stdin state: last-read buttons persist across keys tick */
   uint8_t stdinButtons = 0;
@@ -1959,6 +2379,7 @@ static int runFastMode(void) {
       clientSimKeysTick(humanSim, &pkt);
       clientSimNetSendInput(humanSim, &pkt);
       clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
+      logChangesCollectEvents();
       simTickCounter++;
       justKeys = FALSE;
     } else {
@@ -1991,6 +2412,7 @@ static int runFastMode(void) {
           if (logFile != NULL) {
             logStateTick(0);
           }
+          logChangesTick(0);
           continue;
         }
         stdinButtons = pkt.buttons;
@@ -2000,6 +2422,7 @@ static int runFastMode(void) {
       clientSimGameTick(humanSim, &pkt, brainRunning);
       clientSimNetSendInput(humanSim, &pkt);
       clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
+      logChangesCollectEvents();
       clientSimDisplayTick(humanSim, brainRunning);
       simTickCounter++;
       tickCount++;
@@ -2012,6 +2435,7 @@ static int runFastMode(void) {
 
       /* Log state */
       logStateTick(tickCount);
+      logChangesTick(tickCount);
     }
 
     /* Scripted command stream — dispatch any pending ops whose tick
@@ -2039,12 +2463,20 @@ static int runFastMode(void) {
     }
   }
 
-  /* Cleanup */
+  /* The final tick's record, whether or not it changed. */
+  logChangesFinish();
+
+cleanup:
   if (!optQuiet) {
     fprintf(stderr, "Shutting down after %d ticks.\n", tickCount);
   }
 
+  if (recording) {
+    logStop();   /* writes the terminator and closes the .wbv */
+    recording = FALSE;
+  }
   logStateClose();
+  logChangesClose();
   brainsHandlerShutdown();
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -2063,7 +2495,7 @@ static int runFastMode(void) {
   cmdStdinClose(cmdStream);
   cmdStream = NULL;
 
-  return 0;
+  return rc;
 }
 
 /* ------------------------------------------------------------------ */

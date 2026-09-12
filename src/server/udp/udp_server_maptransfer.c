@@ -39,11 +39,12 @@
 #include "game_sim.h"        /* GameSim — serverSimGetGameSim(sim)->plyrs */
 #include "server_sim.h"      /* ServerSim, serverSimGetHostSlot,
                               * serverSimIsPlayerConnected, serverSimGetOpenHost,
-                              * serverSimGetGameSim */
+                              * serverSimGetGameSim, serverSimFillEntitySyncEvent */
 #include "server_sim_lifecycle.h" /* serverSimReloadCompressedInMemory,
                                    * serverSimGetMapDirRoot */
 #include "upload_policy.h"   /* UPLOAD_POLICY_PERSIST */
-#include "control_event.h"   /* ControlEvent, CTRL_CHANNEL_RESET */
+#include "control_event.h"   /* ControlEvent, CTRL_CHANNEL_RESET,
+                              * CTRL_ENTITY_SYNC */
 #include "transport_control_codec.h" /* ControlEncodeBodyFn, ENCODE_OK,
                                       * transportControlCodecBodyEncoder */
 #include "channel_mux.h"     /* ChannelMux, ChannelState, channelSend,
@@ -153,8 +154,17 @@ static void serverBeginMapTransferIfReady(int slot) {
  * segment of the armed transfer (ackedSeq >= xferEndSeq) the same gates the old
  * chunk-ack path drove re-fire: a join download flips downloadComplete (snapshot
  * send + map-event flush lift); a resync clears resyncInProgress/resyncGen (the
- * held map events flush and the client's installedMapGen gate takes over). */
-static void serverCompleteMapTransferIfAcked(int slot) {
+ * held map events flush and the client's installedMapGen gate takes over).
+ *
+ * This is also where the client is told which items are on the map. The blob
+ * carries a pillbox, base or start but not whether it has since been taken off
+ * the map, so installing one puts every item it carries back on the map — and
+ * a mask that arrived before the install would be wiped by it. The bulk ack
+ * read here is the proof the install has happened: the peer acks its in-order
+ * receive cursor, which advances only as it drains each segment, and draining
+ * the last one is what runs the install. So a mask sent from here is behind
+ * the install on the client, whatever the two channels do with it afterwards. */
+static void serverCompleteMapTransferIfAcked(ServerSim *sim, int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
     ChannelState *bulk = &udpServer.channelMux[slot].ch[CHANNEL_BULK];
 
@@ -170,14 +180,23 @@ static void serverCompleteMapTransferIfAcked(int slot) {
     }
     dl->xferKind = MAP_XFER_NONE;
     dl->xferBegun = false;
+
+    /* Unicast, not published: only this slot has just installed a blob, and
+     * the fill says nothing while every item is on the map. */
+    {
+        ControlEvent evt;
+        if (serverSimFillEntitySyncEvent(sim, &evt)) {
+            udpClientDeliverControl(&udpServer.clients[slot], &evt);
+        }
+    }
 }
 
 /* Per-tick service: begin an armed transfer when the channel is idle, then
  * fire completion when the peer has acked it through. Safe to call every tick
  * for any connected slot; a no-op when nothing is armed. */
-void serverServiceMapTransfer(int slot) {
+void serverServiceMapTransfer(ServerSim *sim, int slot) {
     serverBeginMapTransferIfReady(slot);
-    serverCompleteMapTransferIfAcked(slot);
+    serverCompleteMapTransferIfAcked(sim, slot);
 }
 
 /* Initialize map download tracking for a client and arm a join download on the

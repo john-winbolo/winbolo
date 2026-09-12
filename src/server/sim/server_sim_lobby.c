@@ -28,6 +28,7 @@
 #include <SDL3/SDL.h>
 
 #include "server_sim_internal.h"
+#include "server_sim_shared.h"      /* serverSimAnnounce — the rename publish below asks the policy */
 #include "server_sim_lifecycle.h"   /* ServerInstanceConfig, the settings mutators, serverSimGetTeamMetaMut / serverSimGetBotConfigMut */
 #include "server_sim_join.h"        /* serverSimRepickAllLobbyStarts — the start re-pick when a team's side changes */
 #include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
@@ -168,6 +169,9 @@ void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
         evt.type = CTRL_PLAYER_NAME;
         evt.u.playerName.playerNum = slot;
         snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", name);
+        evt.u.playerName.quiet =
+            serverSimAnnounce(sim, ANNOUNCE_KIND_NAME_CHANGED, slot, slot)
+                ? 0 : 1;
         serverSimPublishControl(sim, &evt);
     }
 }

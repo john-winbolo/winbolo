@@ -30,6 +30,8 @@
 #include "gametype.h"          /* gameType enum + brings global.h */
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
+#include "types.h"             /* TankModifiers — carried in TankInfo */
+#include "scenario_table.h"    /* ScnTable — a bot's init table */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
 #include "client_command.h"    /* ClientCommand / CmdResult — serverSimApplyCommand */
 #include "attribution_track.h" /* AttrSlotIdentity — track accessors below */
@@ -89,6 +91,12 @@ typedef int SubscriberHandle;
  * is the primary one. */
 typedef struct {
     void (*deliver)(void *ctx, const struct ControlEvent *evt);
+    /* The second channel. A subscriber that wants the tick's game events as
+     * well as the control stream sets this with
+     * serverSimSetSubscriberEventDeliver after it has registered. NULL — which
+     * is what registration leaves, and what every subscriber that asks for
+     * nothing more keeps — means control events alone. */
+    void (*deliverEvent)(void *ctx, const GameEvent *evt);
     void *ctx;
     uint16_t generation;   /* matches subscriberGen[slot] when active */
 } ControlSubscriber;
@@ -488,10 +496,20 @@ void serverSimSetBotPreThinkHook(ServerSim *sim, void (*hook)(int playerNum));
 /* Create a fully-initialised bot: lobby slot, brain, ClientSim,
  * transport, map data. Forwards to bot_manager.c. Distinct from
  * serverSimAddBot, which only registers the lobby slot — the
- * full constructor calls serverSimAddBot internally. */
+ * full constructor calls serverSimAddBot internally.
+ *
+ * team is the slot's team, 0 for none. It travels in the bot config so
+ * the add writes it before it picks the slot's lobby start from it; a
+ * caller that sets the team afterwards has already missed that pick.
+ *
+ * init is this bot's configuration, reaching its brain as the
+ * BRAIN_INIT Lua table; it is copied, and NULL means no pairs. Each
+ * bot carries its own, so a caller creating several in a row hands
+ * each one a different table without ordering mattering. */
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
-                        aiType ai, gameType game, bool hiddenMines);
+                        aiType ai, gameType game, bool hiddenMines,
+                        BYTE team, const ScnTable *init);
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum);
 void serverSimDestroyBots(ServerSim *sim);
@@ -876,6 +894,19 @@ BYTE serverSimGetNumPlayers(ServerSim *sim);
 BYTE serverSimGetNumHumans(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimGetNumFielded
+ *PURPOSE:
+ *  Returns how many players are on the field — seats that
+ *  are playing the round rather than sitting it out. This
+ *  is the count "how many players are there" wants, not
+ *  the length of the roster: a seat can hold a place in
+ *  the lobby without being on the field. Every connected
+ *  seat is on the field today, so this matches
+ *  serverSimGetNumPlayers.
+ *********************************************************/
+BYTE serverSimGetNumFielded(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimRefreshWbnLobbyInfo
  *PURPOSE:
  *  Rebuilds the WinBolo.net lobby snapshot from current sim
@@ -1200,6 +1231,24 @@ SubscriberHandle serverSimRegisterSubscriber(
     void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetSubscriberEventDeliver
+ *PURPOSE:
+ *  Gives the subscriber registered under `h` the game-event
+ *  channel as well. The callback is handed every GameEvent
+ *  serverSimAddEvent raises, whole, the way the deliver
+ *  callback is handed every ControlEvent. NULL takes the
+ *  channel away again. Returns FALSE if the handle names no
+ *  live subscriber.
+ *
+ *  Kept apart from registration so a subscriber that wants
+ *  control events alone says nothing and is unaffected.
+ *********************************************************/
+bool serverSimSetSubscriberEventDeliver(
+    ServerSim *sim,
+    SubscriberHandle h,
+    void (*deliverEvent)(void *, const GameEvent *));
+
+/*********************************************************
  *NAME:          serverSimReplayLobbyChat
  *PURPOSE:
  *  Re-deliver the current-session lobby-chat catch-up
@@ -1393,6 +1442,22 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *ev
 void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 
+/*********************************************************
+ *NAME:          serverSimFillEntitySyncEvent
+ *PURPOSE:
+ *  Populate a CTRL_ENTITY_SYNC from the live pill, base and
+ *  start lists: bit i of a mask is set when index i holds an
+ *  item that is on the map.
+ *
+ *  Returns false, leaving *evt untouched, when every index of
+ *  every list is on the map. Installing a compressed map
+ *  marks exactly that, so a caller sending this to a client
+ *  that has just installed one would be saying what the
+ *  install already said; every caller therefore skips the
+ *  send on false.
+ *********************************************************/
+bool serverSimFillEntitySyncEvent(ServerSim *sim, struct ControlEvent *evt);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);
@@ -1468,6 +1533,28 @@ const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
 bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
 uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
 bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
+
+/* The lobby's view of one seat, in one call: who holds it, which team
+ * they are on, and whether they are playing right now. This is what
+ * team-keyed placement and "how big is the other side" read. */
+typedef struct ServerSimRosterSlot {
+    bool    connected;  /* Someone holds this seat. Always true on a
+                           successful read — the call refuses an empty
+                           seat — and is here because it is part of the
+                           seat picture callers marshal. */
+    bool    is_bot;
+    uint8_t team;       /* 1-16; 0 = unassigned */
+    char    name[PLAYER_NAME_LEN]; /* NUL-terminated player name */
+    bool    ready;      /* Has said it is ready to start */
+    bool    fielded;    /* Playing the round rather than sitting it out.
+                           Every connected seat plays today, so this is
+                           true whenever the call succeeds. */
+    bool    alive;      /* Has a tank in the world and is not in death-wait */
+} ServerSimRosterSlot;
+
+/* Populate *out for seat i. Returns false (without touching *out) if
+ * i >= MAX_TANKS or the seat is empty. */
+bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out);
 
 /* Array-pointer accessors (return pointer to backing storage). */
 char *const     *serverSimGetMapDirFiles(const ServerSim *sim);
@@ -1762,12 +1849,79 @@ BYTE         serverSimGetStartCount(const ServerSim *sim);
 bool         serverSimGetPill(ServerSim *sim, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
                               bool *inTank);
+/* A pill's firing interval alongside serverSimGetPill: the ticks between
+ * shots, which halve towards PILLBOX_MAX_FIRERATE as the pill is hit and
+ * climb back as it calms. Reader for binaries that own a ServerSim
+ * directly. The pill's reload and coolDown counters are deliberately not
+ * exposed: pillsGetPill does not copy them, and both move every half-step,
+ * so they suit a recording rather than a change-only log. */
+bool         serverSimGetPillSpeed(ServerSim *sim, BYTE i, BYTE *speed);
 bool         serverSimGetBase(ServerSim *sim, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner);
 bool         serverSimGetBaseStats(ServerSim *sim, BYTE i,
                                    BYTE *shells, BYTE *mines, BYTE *armour);
 bool         serverSimGetStart(ServerSim *sim, BYTE i,
                                BYTE *x, BYTE *y, BYTE *dir);
+
+/* One pill in one call — what serverSimGetPill and serverSimGetPillSpeed
+ * return between them, in a struct. Both of those stay for their callers. */
+typedef struct ServerSimPillInfo {
+    BYTE x;
+    BYTE y;
+    BYTE owner;    /* a player slot, or NEUTRAL */
+    BYTE armour;   /* 0-15; 0 = dead on the ground */
+    BYTE speed;    /* ticks between shots */
+    bool in_tank;  /* being carried rather than sitting on a square */
+    bool active;   /* This index holds a live pill. A removed pill leaves its
+                      index in place so the indices above it keep their
+                      numbers, so this is what tells a live pill from a
+                      removed one at an index that is still in range. */
+} ServerSimPillInfo;
+
+/* Populate *out for pill i (1-based, as serverSimGetPill). Returns false
+ * (without touching *out) if i is 0 or past the pill count. */
+bool serverSimGetPillInfo(ServerSim *sim, BYTE i, ServerSimPillInfo *out);
+
+/* One base in one call — what serverSimGetBase and serverSimGetBaseStats
+ * return between them, in a struct. Both of those stay for their callers. */
+typedef struct ServerSimBaseInfo {
+    BYTE x;
+    BYTE y;
+    BYTE owner;    /* a player slot, or NEUTRAL */
+    BYTE armour;
+    BYTE shells;
+    BYTE mines;
+    bool active;   /* This index holds a live base — as ServerSimPillInfo. */
+} ServerSimBaseInfo;
+
+/* Populate *out for base i (1-based, as serverSimGetBase). Returns false
+ * (without touching *out) if i is 0 or past the base count. */
+bool serverSimGetBaseInfo(ServerSim *sim, BYTE i, ServerSimBaseInfo *out);
+
+/* One start in one call, alongside serverSimGetStart, which stays for its
+ * callers. */
+typedef struct ServerSimStartInfo {
+    BYTE x;
+    BYTE y;
+    BYTE dir;     /* 0-15, as serverSimGetStart reports it */
+    bool active;  /* This index holds a live start — as ServerSimPillInfo. */
+} ServerSimStartInfo;
+
+/* Populate *out for start i (1-based, as serverSimGetStart). Returns false
+ * (without touching *out) if i is 0 or past the start count. */
+bool serverSimGetStartInfo(ServerSim *sim, BYTE i, ServerSimStartInfo *out);
+
+/* Bytes in the terrain array serverSimGetMapTerrainBuffer copies out. */
+#define SERVER_SIM_TERRAIN_BYTES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
+
+/* Copy the whole terrain array out in one call, for a caller that scans
+ * every square at setup instead of making 65,536 serverSimGetMapTerrain
+ * calls. The layout is row-major: out[(y * 256) + x] is the square at
+ * (x, y), so one row of the map is 256 contiguous bytes. Each byte is
+ * what serverSimGetMapTerrain returns for that square, border squares
+ * included — they read DEEP_SEA from both. Returns false and copies
+ * nothing when cap is under SERVER_SIM_TERRAIN_BYTES. */
+bool serverSimGetMapTerrainBuffer(const ServerSim *sim, BYTE *out, size_t cap);
 
 /* --- Live-sim render-state readers ---
  * Copy-out snapshots of moving objects (tanks, shells, explosions,
@@ -1810,13 +1964,24 @@ typedef struct TankInfo {
     bool  has_tank;  /* false if connected but no live tank object yet */
     int   kills;
     int   deaths;
+    BYTE  map_x;     /* Map square the tank is standing on */
+    BYTE  map_y;
+    BYTE  dir256;    /* The same facing as dir, at its full 0-255 resolution.
+                        dir is this quantised to the 16 drawn frames. */
+    BYTE  shells;
+    BYTE  mines;
+    BYTE  armour;
+    BYTE  trees;
+    BYTE  pills;     /* How many pills the tank is carrying */
+    bool  is_bot;
+    TankModifiers mods; /* Per-tank percentages; a zeroed set is classic */
 } TankInfo;
 
 /* Populate *out for connected player slot i. Returns false (without
  * touching *out) if i >= MAX_TANKS or the slot is not connected. When
  * connected but the tank object is absent (countdown / death-wait),
- * has_tank = false, alive = false, and the position/score fields are 0;
- * name is always filled. */
+ * has_tank = false, alive = false, and the position, stock, score and
+ * modifier fields are 0; name and is_bot are always filled. */
 bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out);
 
 /* Tank alliance from selfPlayer's perspective. Independent of
@@ -1825,6 +1990,50 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out);
 tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
                                          BYTE selfPlayer,
                                          BYTE tankNum);
+
+/* Where a tank's builder is in its round trip. */
+typedef enum {
+    builderStateInTank      = 0, /* riding in the tank */
+    builderStateGoing       = 1, /* walking out to the square it was sent to */
+    builderStateReturning   = 2, /* walking back to the tank */
+    builderStateParachuting = 3, /* killed, dropping back in to a tank that
+                                    is still standing */
+    builderStateDead        = 4  /* killed with no standing tank to drop to */
+} BuilderState;
+
+/* A job a builder can be given. The values are the codes the engine's own
+ * request path takes, pinned to them by static assert in
+ * server_sim_accessors.c, so one of these can be both read back off a
+ * builder and handed to a builder order. */
+typedef enum {
+    builderJobTrees    = 0,  /* harvest trees */
+    builderJobRoad     = 1,  /* build road */
+    builderJobBuilding = 2,  /* build or repair a wall */
+    builderJobPill     = 3,  /* place a carried pill, or repair one */
+    builderJobMine     = 4,  /* lay a mine */
+    builderJobBoat     = 5,  /* build a boat */
+    builderJobNone     = 6   /* nothing in progress */
+} BuilderJob;
+
+/* A tank's builder, as the tank read gives the tank. */
+typedef struct ServerSimBuilderInfo {
+    BuilderState state;
+    /* Where the builder is. The engine tracks this while he is out of the
+     * tank; in builderStateInTank he is wherever his tank is and these
+     * read 0, so check the state before using them. */
+    WORLD        world_x;
+    WORLD        world_y;
+    BYTE         map_x;   /* Map square the builder is standing on */
+    BYTE         map_y;
+    BuilderJob   job;     /* The job in progress, or builderJobNone */
+    BYTE         trees;   /* Trees the builder is carrying */
+    BYTE         mines;   /* Mines the builder is carrying */
+} ServerSimBuilderInfo;
+
+/* Populate *out for connected player slot i. Returns false (without
+ * touching *out) if i >= MAX_TANKS, the slot is not connected, or the
+ * slot has no builder object yet (countdown / between rounds). */
+bool serverSimGetBuilderInfo(ServerSim *sim, BYTE i, ServerSimBuilderInfo *out);
 
 typedef struct ShellRender {
     WORLD    x;

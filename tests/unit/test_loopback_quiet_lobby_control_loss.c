@@ -64,6 +64,7 @@ static void publish_one(LoopbackHarness *h) {
     evt.type = CTRL_SERVER_TEXT;
     SDL_strlcpy(evt.u.serverText.text, "quiet-lobby probe",
                 sizeof(evt.u.serverText.text));
+    evt.u.serverText.destPlayer = 0xFF;  /* every client, not slot 0 alone */
     threadsWaitForMutex();
     serverSimPublishControl(h->sim, &evt);
     threadsReleaseMutex();

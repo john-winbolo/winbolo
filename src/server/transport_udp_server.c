@@ -725,6 +725,11 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
             uint8_t evType = serverSimGetEvents(sim)[i].type;
             if (!soundEventIsSound(evType)) {
+                /* A local-only event never goes out on a socket. Nothing here
+                 * is a recording path, so the test needs no exception. */
+                if (gameEventIsLocal(evType)) {
+                    continue;
+                }
                 /* Per-recipient working copy so a non-closest dead base's stock
                  * event can be reshaped (armour-only) without mutating the
                  * shared event; forceReliable promotes that copy to the
@@ -863,7 +868,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
          * loop stops as soon as a frame comes back empty). */
         if (serverSimGetState(sim) != serverStateRunning) {
             int frames;
-            serverServiceMapTransfer(i);
+            serverServiceMapTransfer(sim, i);
             bulkSenderPump(&udpServer.bulkSend[i], &udpServer.channelMux[i]);
             channelTick(&udpServer.channelMux[i], udpServer.tickCount,
                         udpServer.clients[i].pingMs);

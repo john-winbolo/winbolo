@@ -204,7 +204,8 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     BYTE numPb = pillsGetNumPills(&gs->pb);
     BYTE carried = 0;
     for (BYTE pi = 0; pi < numPb; pi++) {
-      if ((*gs->pb).item[pi].inTank && (*gs->pb).item[pi].owner == selfPlayer) {
+      if (pillsIsActive(&gs->pb, (BYTE)(pi + 1)) &&
+          (*gs->pb).item[pi].inTank && (*gs->pb).item[pi].owner == selfPlayer) {
         carried++;
       }
     }

@@ -226,11 +226,30 @@ void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
     fillAndPublishPlayerJoin(sim, playerNum);
 }
 
-int serverSimFindFreeSlot(const ServerSim *sim) {
+int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
     int  i;
     BYTE limit;
     if (sim == NULL) return -1;
-    limit = (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
+    /* Both caps count people. The operator's -maxplayers and a scenario's
+       max_players are how many humans a round is meant for; a scenario may
+       hold the round to fewer than the operator configured and never widens
+       it, so both bind and the tighter one wins. A bot seats anywhere below
+       MAX_TANKS whichever way it arrives — a host's Add Bot, a scripted
+       spawn, a lobby add — so a six-human map keeps its ten bot seats. */
+    limit = (BYTE)MAX_TANKS;
+    if (!forBot && sim->maxPlayers > 0) {
+        limit = sim->maxPlayers;
+    }
+    if (!forBot && sim->scenarioPolicy != NULL &&
+        sim->scenarioPolicy->maxPlayers != NULL) {
+        int cap;
+        serverSimScenarioPolicyEnter(sim);
+        cap = sim->scenarioPolicy->maxPlayers(sim->scenarioPolicy->ctx);
+        serverSimScenarioPolicyLeave(sim);
+        if (cap > 0 && cap < (int)limit) {
+            limit = (BYTE)cap;
+        }
+    }
     for (i = 0; i < limit; i++) {
         if (!sim->playerConnected[i] && !botManagerIsBot(sim, (BYTE)i)) {
             return i;
@@ -264,7 +283,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
         return LOCAL_JOIN_GAME_LOCKED;
     }
 
-    slot = serverSimFindFreeSlot(sim);
+    slot = serverSimFindFreeSlot(sim, false);
     if (slot < 0) {
         return LOCAL_JOIN_SLOT_FULL;
     }
@@ -337,6 +356,12 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 
     sim->playerConnected[playerNum] = FALSE;
+    /* Stop this slot's base restock cycle. serverSimAddPlayer arms it with
+     * basesUpdateTimer on a mid-game join and basesUpdate treats every timer
+     * that is not the off sentinel as a live cycle, each one restocking every
+     * base on the map. Left armed, a player who leaves goes on speeding the
+     * bases up for everyone still playing. */
+    basesRemoveTimer(&sim->sim, (int)playerNum);
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
         sim->sim.tanks[playerNum] = NULL;
@@ -452,7 +477,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                         break;
                     }
                 }
-                basesSetBaseOwner(&sim->sim, i, newOwner, TRUE);
+                basesSetBaseOwner(&sim->sim, i, newOwner, TRUE, TRUE);
             }
         }
     }
@@ -471,6 +496,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         memset(&allyLeaveEvt, 0, sizeof(allyLeaveEvt));
         allyLeaveEvt.type = CTRL_ALLIANCE_LEAVE;
         allyLeaveEvt.u.allianceLeave.playerNum = playerNum;
+        /* Nobody asked for this one — it falls out of the departure — so it
+           is put to the policy with no actor. */
+        allyLeaveEvt.u.allianceLeave.quiet =
+            serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, playerNum, NEUTRAL)
+                ? 0 : 1;
         serverSimPublishControl(sim, &allyLeaveEvt);
     }
 
@@ -678,6 +708,9 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
     evt.type = CTRL_ALLIANCE_ACCEPT;
     evt.u.allianceAccept.acceptedBy = accepter;
     evt.u.allianceAccept.newMember  = newMember;
+    evt.u.allianceAccept.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, newMember, accepter)
+            ? 0 : 1;
     serverSimPublishControl(sim, &evt);
     /* WBN tracker + replay-log side effects live here so every input
      * source (UDP wire, local transport, headless cmd-stdin) fires
@@ -700,6 +733,9 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_LEAVE;
     evt.u.allianceLeave.playerNum = playerNum;
+    evt.u.allianceLeave.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, playerNum, playerNum)
+            ? 0 : 1;
     serverSimPublishControl(sim, &evt);
     /* WBN + replay-log side effects — see serverSimAcceptAlliance. */
     winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
@@ -718,11 +754,17 @@ void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
     gs = serverSimGetGameSim(sim);
     strncpy(nameBuf, name, sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE);
+    /* announce is moot with no ClientSim — the server has no newswire — so
+       this passes TRUE and the quiet byte below carries the real answer. */
+    playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE,
+                         TRUE);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_PLAYER_NAME;
     evt.u.playerName.playerNum = playerNum;
     snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+    evt.u.playerName.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_NAME_CHANGED, playerNum, playerNum)
+            ? 0 : 1;
     serverSimPublishControl(sim, &evt);
 }
 
@@ -834,8 +876,10 @@ bool serverSimReleaseIneligibleStart(ServerSim *sim, BYTE slot) {
     r = sim->lobbyPlayers[slot].startIdx;
     if (r == 0xFF) return false;
     numStarts = startsGetNumStarts(&sim->sim.ss);
-    /* An index off the start list can never be eligible, so it goes too. */
+    /* An index off the start list, or one whose start has been removed, can
+       never be eligible, so it goes too. */
     if (r >= 1 && r <= numStarts &&
+        startsIsActive(&sim->sim.ss, r) &&
         startSideEligible(serverSimLobbyStartSideMask(sim, r),
                           lobbySlotSide(sim, slot),
                           serverSimLobbyClosedMaskFor(sim, slot))) {

@@ -49,7 +49,7 @@ void basesUpdateTimer(GameSim *sim, int playerNumber){
 
 
 void basesRemoveTimer(GameSim *sim, int playerNumber){
-	sim->baseTimer[playerNumber]=30000; // the 30000 is a arbitrary large number
+	sim->baseTimer[playerNumber]=BASE_TIMER_OFF;
 }
 /*********************************************************
 *NAME:         basesCreate 
@@ -106,8 +106,15 @@ void basesDestroy(bases *value) {
 *  numBases - The number of bases  
 *********************************************************/
 void basesSetNumBases(bases *value, BYTE numBases) {
+  BYTE count; /* Looping variable */
+
   if (numBases <= MAX_BASES) {
     (*value)->numBases = numBases;
+    /* Every base a map brings in is live. Removal happens after the list is
+       loaded, so the count and the live set agree here. */
+    for (count = 0; count < numBases; count++) {
+      (*value)->active[count] = TRUE;
+    }
   }
 }
 
@@ -199,6 +206,163 @@ void basesGetBase(bases *value, base *item, BYTE baseNum) {
 }
 
 /*********************************************************
+*NAME:          basesAddItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Puts a base into the list and returns its number in
+*  outBaseNum. The lowest removed slot is reused; when
+*  every slot in the count is live the list is extended and
+*  the count raised. Returns FALSE with outBaseNum
+*  untouched when all MAX_BASES bases are live.
+*
+*ARGUMENTS:
+*  value      - Pointer to the bases structure
+*  item       - The base to store
+*  outBaseNum - Receives the base number, 1 based
+*********************************************************/
+bool basesAddItem(bases *value, const base *item, BYTE *outBaseNum) {
+  BYTE count; /* Looping variable */
+
+  for (count = 0; count < (*value)->numBases; count++) {
+    if ((*value)->active[count] == FALSE) {
+      (*value)->item[count] = *item;
+      (*value)->active[count] = TRUE;
+      *outBaseNum = (BYTE) (count + 1);
+      return TRUE;
+    }
+  }
+  if ((*value)->numBases >= MAX_BASES) {
+    return FALSE;
+  }
+  count = (*value)->numBases;
+  (*value)->item[count] = *item;
+  (*value)->active[count] = TRUE;
+  (*value)->numBases++;
+  *outBaseNum = (BYTE) (count + 1);
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          basesInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a base at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  bases this list has not been told about. Returns FALSE
+*  for number 0 or a number past MAX_BASES.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  item    - The base to store
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesInstallItem(bases *value, const base *item, BYTE baseNum) {
+  BYTE slot;  /* The array index the number names */
+  BYTE count; /* Looping variable */
+
+  if (baseNum == 0 || baseNum > MAX_BASES) {
+    return FALSE;
+  }
+  slot = (BYTE) (baseNum - 1);
+  for (count = (*value)->numBases; count < slot; count++) {
+    (*value)->active[count] = FALSE;
+  }
+  if (baseNum > (*value)->numBases) {
+    (*value)->numBases = baseNum;
+  }
+  (*value)->item[slot] = *item;
+  (*value)->active[slot] = TRUE;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          basesRemoveItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Clears a base's live flag. The slot, the count and every
+*  base number above it are left alone, so the numbers the
+*  wire and the recordings use keep meaning the same base.
+*  Returns FALSE for a number out of range or one already
+*  removed.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesRemoveItem(bases *value, BYTE baseNum) {
+  if (baseNum == 0 || baseNum > (*value)->numBases) {
+    return FALSE;
+  }
+  baseNum--;
+  if ((*value)->active[baseNum] == FALSE) {
+    return FALSE;
+  }
+  (*value)->active[baseNum] = FALSE;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          basesIsActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Returns whether a base number names a base that is on the
+*  map. A removed base keeps its slot and its number, so a
+*  number in range is not on its own enough. A number out of
+*  range returns FALSE.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesIsActive(bases *value, BYTE baseNum) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (baseNum == 0 || baseNum > (*value)->numBases) {
+    return FALSE;
+  }
+  return ((*value)->active[baseNum - 1] != FALSE);
+}
+
+/*********************************************************
+*NAME:          basesSetActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Puts a base on the map or takes it off it, leaving its
+*  record alone either way. The flag is all that moves, so a
+*  base put back is the one the slot already held. Returns
+*  FALSE for a number out of range.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool basesSetActive(bases *value, BYTE baseNum, bool onMap) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (baseNum == 0 || baseNum > (*value)->numBases) {
+    return FALSE;
+  }
+  (*value)->active[baseNum - 1] = onMap ? TRUE : FALSE;
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          basesExistPos
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
@@ -218,7 +382,7 @@ bool basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
   returnValue = FALSE;
   count = 0;
   while (returnValue == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       returnValue = TRUE;
     }
     count++;
@@ -252,7 +416,7 @@ baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE vi
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
      if ((*value)->item[count].armour <= MIN_ARMOUR_CAPTURE) {
         returnValue = baseDead;
       } else if ((*value)->item[count].owner == NEUTRAL) {
@@ -293,7 +457,9 @@ baseAlliance basesGetStatusNum(GameSim *sim, BYTE baseNum) {
 
   baseNum--;
   returnValue = baseNeutral;
-  if (baseNum <= ((*value)->numBases)) {
+  /* A base off the map has no status to draw; it reads as neutral, which is
+     what the panel shows for a slot the map does not use. */
+  if (baseNum < ((*value)->numBases) && (*value)->active[baseNum] != FALSE) {
     if ((*value)->item[baseNum].armour <= MIN_ARMOUR_CAPTURE) {
       returnValue = baseDead;
     } else if ((*value)->item[baseNum].owner == NEUTRAL) {
@@ -355,7 +521,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 
   while (secondCounter < MAX_TANKS)
   {
-	  if(sim->baseTimer[secondCounter] != 30000)
+	  if(sim->baseTimer[secondCounter] != BASE_TIMER_OFF)
 	  {
 		  sim->baseTimer[secondCounter]--;
 		  if(sim->baseTimer[secondCounter]<=0)
@@ -378,9 +544,9 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 
   count = 0;
 
-  while (count < (*value)->numBases) 
+  while (count < (*value)->numBases)
   {
-	  if ((*value)->item[count].refuelTime > 0) {
+	  if ((*value)->active[count] != FALSE && (*value)->item[count].refuelTime > 0) {
 	      (*value)->item[count].refuelTime--;
 	  }
 	  count++;
@@ -561,7 +727,7 @@ void basesUpdateStock(GameSim *sim, BYTE baseNum) {
 
   baseNum--;
   addAmount = 1; /* (BYTE) playersGetNumPlayers(); - 1.09 was but halved rechar time (2*playersGetNumPlayers()); * FIXME: Constant rate */
-  if (baseNum < (*value)->numBases) {
+  if (baseNum < (*value)->numBases && (*value)->active[baseNum] != FALSE) {
     if ((*value)->item[baseNum].armour < BASE_FULL_ARMOUR) {
       oldArmour = (*value)->item[baseNum].armour;
       (*value)->item[baseNum].armour += addAmount;
@@ -620,7 +786,7 @@ bool basesAmOwner(GameSim *sim, BYTE owner, BYTE xValue, BYTE yValue) {
   /* FIXME: This is redundent. */
   self = owner;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       if ((*value)->item[count].owner == self || (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, self) == TRUE)) {
         returnValue = TRUE;
       }
@@ -640,56 +806,57 @@ bool basesAmOwner(GameSim *sim, BYTE owner, BYTE xValue, BYTE yValue) {
 *LAST MODIFIED: 04/04/02
 *PURPOSE:
 * Sets the base to be owned by paremeter passed.
-* Returns the previous owner. If it was not neutral we
-* assume then it was "stolen" and subsequently remove
-* all its possessions. If migrate is set to TRUE then
-* it has migrated from a alliance when a player left 
-* and we shouldn't make a message
+* Returns the previous owner. A base taken off another
+* player is "stolen" and loses everything it was holding,
+* unless keepStock says to hand it over as it stands.
+* If migrate is set to TRUE then it has migrated from a
+* alliance when a player left and we shouldn't make a
+* message.
 *
 *ARGUMENTS:
-*  value   - Pointer to the bases structure
-*  baseNum - Base number to set
-*  owner   - Who owns it
-*  migrate - TRUE if it has migrated from an alliance
+*  value     - Pointer to the bases structure
+*  baseNum   - Base number to set
+*  owner     - Who owns it
+*  migrate   - TRUE if it has migrated from an alliance
+*  keepStock - TRUE to leave the base's stock alone
 *********************************************************/
-BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
+BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYTE keepStock) {
   bases *value = &sim->bs;
   bool isServer = sim->isServer;
   BYTE returnValue;         /* Value to return */
 
   returnValue = FALSE;
-  if (baseNum > 0 && baseNum <= (*value)->numBases) {
+  if (baseNum > 0 && baseNum <= (*value)->numBases &&
+      (*value)->active[baseNum - 1] != FALSE) {
     baseNum--;
     returnValue = (*value)->item[baseNum].owner;
-    if (migrate == TRUE) {
-      (*value)->item[baseNum].owner = owner;
-    } else if (owner == NEUTRAL) {
-      (*value)->item[baseNum].owner = owner;
-    } else if ((*value)->item[baseNum].owner != owner) {
-      if (returnValue != NEUTRAL) {
-        (*value)->item[baseNum].armour = 0;
-        (*value)->item[baseNum].shells = 0;
-        (*value)->item[baseNum].mines = 0;
-        (*value)->item[baseNum].baseTime = 0;
-      }
-      (*value)->item[baseNum].owner = owner;
+    /* Taking a base off another player empties it. Neutralising one, or
+       handing it to the player who already holds it, takes nothing; nor does
+       a caller that asked to keep the stock. */
+    if (keepStock == FALSE && owner != NEUTRAL && returnValue != NEUTRAL &&
+        returnValue != owner) {
+      (*value)->item[baseNum].armour = 0;
+      (*value)->item[baseNum].shells = 0;
+      (*value)->item[baseNum].mines = 0;
+      (*value)->item[baseNum].baseTime = 0;
     }
+    (*value)->item[baseNum].owner = owner;
     logAddEvent(log_BaseSetOwner, baseNum, owner, migrate, 0, 0, NULL);
 
-    /* Emit event so networked clients receive the capture message */
-    if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
-      GameEvent ev;
-      ev.type = EVENT_BASE_CAPTURED;
-      memset(ev.data, 0, sizeof(ev.data));
-      ev.data[0] = owner;
-      ev.data[1] = returnValue;
-      ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
-                 : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
-                 :                                                           CAPTURE_CLASS_ALLY;
-      ev.data[3] = baseNum;
-      ev.data[4] = (*value)->item[baseNum].x;
-      ev.data[5] = (*value)->item[baseNum].y;
-      serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
+    /* Report the change, which is what networked clients get the message from.
+       A base going neutral is reported the same way, with owner as the new
+       owner; the client draws no newswire line for that one. */
+    if (migrate == FALSE && sim->isServer) {
+      if (sim->callbacks.baseOwnerChanged) {
+        BYTE captureClass;
+        captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                     : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                     :                                                           CAPTURE_CLASS_ALLY;
+        sim->callbacks.baseOwnerChanged(sim->callbacks.ctx, baseNum,
+                                        returnValue, owner, captureClass,
+                                        (*value)->item[baseNum].x,
+                                        (*value)->item[baseNum].y);
+      }
     }
 
     /* WinBolo.net Stuff */
@@ -734,7 +901,7 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       returnValue = (*value)->item[count].owner;
       if (migrate == TRUE) {
         (*value)->item[count].owner = owner;
@@ -751,20 +918,19 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         }
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
-        /* Emit event so clients receive the capture message */
-        if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
-          GameEvent ev;
-          ev.type = EVENT_BASE_CAPTURED;
-          memset(ev.data, 0, sizeof(ev.data));
-          ev.data[0] = owner;
-          ev.data[1] = returnValue;
-          ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
-                     : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
-                     :                                                           CAPTURE_CLASS_ALLY;
-          ev.data[3] = count;
-          ev.data[4] = (*value)->item[count].x;
-          ev.data[5] = (*value)->item[count].y;
-          serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
+        /* Report the change, which is what clients get the message from. A
+           base going neutral is reported the same way. */
+        if (migrate == FALSE && sim->isServer) {
+          if (sim->callbacks.baseOwnerChanged) {
+            BYTE captureClass;
+            captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                         : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                         :                                                           CAPTURE_CLASS_ALLY;
+            sim->callbacks.baseOwnerChanged(sim->callbacks.ctx, count,
+                                            returnValue, owner, captureClass,
+                                            (*value)->item[count].x,
+                                            (*value)->item[count].y);
+          }
         }
         done = TRUE;
         /* WinBolo.net Stuff */
@@ -808,7 +974,7 @@ BYTE basesGetBaseNum(bases *value, BYTE xValue, BYTE yValue) {
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       returnValue = count;
       done = TRUE;
     }
@@ -837,7 +1003,7 @@ bool basesCanView(GameSim *sim, bases *value, BYTE baseIdx, BYTE viewPlayer) {
 
   returnValue = FALSE;
   if (baseIdx < (*value)->numBases) {
-    if (((*value)->item[baseIdx].owner) != NEUTRAL && (playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[baseIdx].owner) == TRUE)) {
+    if ((*value)->active[baseIdx] != FALSE && ((*value)->item[baseIdx].owner) != NEUTRAL && (playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[baseIdx].owner) == TRUE)) {
       returnValue = TRUE;
     }
   }
@@ -1040,6 +1206,9 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
 
   baseNum--;
 
+  if ((*value)->active[baseNum] == FALSE) {
+    return;
+  }
   if ((*value)->item[baseNum].refuelTime == 0) {
     tankGetStats(tnk, &shellsAmount, &mines, &armour, &trees);
     if (playersIsAllie(&sim->plyrs, (*value)->item[baseNum].owner, gameSimGetTankPlayer(sim, tnk))) {
@@ -1132,7 +1301,7 @@ BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tank
 
   while (count < (*value)->numBases) {
     /* Check for neutral or allied */
-    if ((*value)->item[count].owner == NEUTRAL || (playersIsAllie(&sim->plyrs, self, (*value)->item[count].owner) == TRUE)) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].owner == NEUTRAL || (playersIsAllie(&sim->plyrs, self, (*value)->item[count].owner) == TRUE))) {
       x = (*value)->item[count].x;
       y = (*value)->item[count].y;
       x <<= 8;
@@ -1178,7 +1347,10 @@ BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tank
 *  armour  - Pointer to hold the armour amount
 *********************************************************/
 void basesGetStats(bases *value, BYTE baseNum, BYTE *shellsAmount, BYTE *mines, BYTE *armour) {
-  if (baseNum <= (*value)->numBases) {
+  /* A number in range names a slot; a slot off the map holds no stock a
+     reader should see. */
+  if (baseNum > 0 && baseNum <= (*value)->numBases &&
+      (*value)->active[baseNum - 1] != FALSE) {
     baseNum--;
     *shellsAmount = (*value)->item[baseNum].shells;
     *mines = (*value)->item[baseNum].mines;
@@ -1212,7 +1384,7 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].armour > 0) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].armour > 0) {
       BYTE before = (*value)->item[count].armour;  /* > 0 here */
       (*value)->item[count].armour -= DAMAGE;
       if ((*value)->item[count].armour > BASE_FULL_ARMOUR) {
@@ -1261,7 +1433,7 @@ bool basesCanHit(GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy) {
     count = 0;
     done = FALSE;
     while (done == FALSE && count < ((*value)->numBases)) {
-      if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+      if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
         if ((playersIsAllie(&sim->plyrs, ((*value)->item[count].owner), hitBy) == FALSE) && (*value)->item[count].owner != NEUTRAL && (*value)->item[count].armour > BASE_MIN_CAN_HIT) {
           returnValue = TRUE;
         }
@@ -1300,7 +1472,7 @@ bool basesCantDrive(GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy) {
     count = 0;
     done = FALSE;
     while (done == FALSE && count < ((*value)->numBases)) {
-      if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+      if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
         if ((playersIsAllie(&sim->plyrs, ((*value)->item[count].owner), hitBy) == FALSE) && (*value)->item[count].owner != NEUTRAL && (*value)->item[count].armour > MIN_ARMOUR_CAPTURE) {
           returnValue = TRUE;
         }
@@ -1330,7 +1502,7 @@ bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
   int baseX, baseY, gapX, gapY;
   WORLD tankX, tankY;
 
-  if (baseIdx >= (*value)->numBases) {
+  if (baseIdx >= (*value)->numBases || (*value)->active[baseIdx] == FALSE) {
     return FALSE;
   }
 
@@ -1386,7 +1558,10 @@ BYTE basesGetBaseOwner(bases *value, BYTE baseNum) {
   BYTE returnValue;         /* Value to return */
 
   returnValue = BASE_NOT_FOUND;
-  if (baseNum > 0 && baseNum <= (*value)->numBases) {
+  /* A removed base answers the same as one off the end of the list: there is
+     no such base, so it has no owner. */
+  if (baseNum > 0 && baseNum <= (*value)->numBases &&
+      (*value)->active[baseNum - 1] != FALSE) {
     baseNum--;
     returnValue = (*value)->item[baseNum].owner;
   }
@@ -1416,7 +1591,7 @@ BYTE basesGetOwnerPos(bases *value, BYTE xValue, BYTE yValue) {
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       returnValue = (*value)->item[count].owner;
       done = TRUE;
     }
@@ -1443,7 +1618,7 @@ BYTE basesGetNumNeutral(bases *value) {
   
   returnValue = 0;
   for (count=0;count<(*value)->numBases;count++) {
-    if ((*value)->item[count].owner == NEUTRAL) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].owner == NEUTRAL) {
       returnValue++;
     }
   }
@@ -1540,6 +1715,13 @@ void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen) {
   if ((*value)->numBases > MAX_BASES) {
     (*value)->numBases = MAX_BASES;
   }
+  /* The live flags sit past the wire format, so the copy above leaves them
+     describing whatever list was here before. A blob is a map, and every base
+     a map carries is on it: mark the count live and the slots above it
+     removed. */
+  memset((*value)->active, TRUE, (*value)->numBases);
+  memset((*value)->active + (*value)->numBases, FALSE,
+         (size_t)(MAX_BASES - (*value)->numBases));
 }
 
 /*********************************************************
@@ -1675,7 +1857,7 @@ void basesSetNeutralOwner(GameSim *sim, BYTE owner) {
 
   count = 0;
   while (count < ((*value)->numBases)) {
-    if (((*value)->item[count].owner) == owner) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].owner) == owner) {
       (*value)->item[count].owner = NEUTRAL;
       logAddEvent(log_BaseSetOwner, count, NEUTRAL, FALSE, 0, 0, NULL);
     }
@@ -1703,7 +1885,7 @@ void basesMigrate(GameSim *sim, BYTE oldOwner, BYTE newOwner) {
 
   count = 0;
   while (count < ((*value)->numBases)) {
-    if (((*value)->item[count].owner) == oldOwner) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].owner) == oldOwner) {
       (*value)->item[count].owner = newOwner;
       logAddEvent(log_BaseSetOwner, count, newOwner, TRUE, 0, 0, NULL);
     }
@@ -1729,7 +1911,7 @@ void basesServerRefuel(GameSim *sim, BYTE baseNum, BYTE addAmount) {
   bool isServer = sim->isServer;
   BYTE oldArmour; /* Amount of old armour base had */
 
-  if (baseNum < (*value)->numBases) {
+  if (baseNum < (*value)->numBases && (*value)->active[baseNum] != FALSE) {
     if ((*value)->item[baseNum].armour < BASE_FULL_ARMOUR) {
       oldArmour = (*value)->item[baseNum].armour;
       (*value)->item[baseNum].armour += addAmount;
@@ -1760,6 +1942,52 @@ void basesServerRefuel(GameSim *sim, BYTE baseNum, BYTE addAmount) {
 }
 
 /*********************************************************
+*NAME:          basesSetStock
+*PURPOSE:
+*  Writes what a base is holding. Where basesServerRefuel
+*  above adds to each stock, this one says what each is to
+*  be, capped at its full amount, and -1 leaves that stock
+*  where it was.
+*
+*  No frontend status call: the one caller is the scenario
+*  funnel, which runs on the server, and the new stock
+*  reaches a client as the periodic update's does.
+*
+*ARGUMENTS:
+*  sim     - Pointer to the game sim
+*  baseNum - The base to write, counting from zero
+*  armour  - Armour to hold, or -1 to leave it alone
+*  shells  - Shells to hold, or -1 to leave it alone
+*  mines   - Mines to hold, or -1 to leave it alone
+*********************************************************/
+void basesSetStock(GameSim *sim, BYTE baseNum, int16_t armour, int16_t shells, int16_t mines) {
+  bases *value = &sim->bs;
+
+  if (baseNum < (*value)->numBases && (*value)->active[baseNum] != FALSE) {
+    if (armour >= 0) {
+      if (armour > BASE_FULL_ARMOUR) {
+        armour = BASE_FULL_ARMOUR;
+      }
+      (*value)->item[baseNum].armour = (BYTE) armour;
+    }
+    if (shells >= 0) {
+      if (shells > BASE_FULL_SHELLS) {
+        shells = BASE_FULL_SHELLS;
+      }
+      (*value)->item[baseNum].shells = (BYTE) shells;
+    }
+    if (mines >= 0) {
+      if (mines > BASE_FULL_MINES) {
+        mines = BASE_FULL_MINES;
+      }
+      (*value)->item[baseNum].mines = (BYTE) mines;
+    }
+    /* The same record the periodic stock update writes, in the same order. */
+    logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
+  }
+}
+
+/*********************************************************
 *NAME:          baseIsCapturable
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
@@ -1782,7 +2010,7 @@ bool baseIsCapturable(bases *value, BYTE xValue, BYTE yValue) {
   done = FALSE;
   count = 0;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       done = TRUE;
       if ((*value)->item[count].owner == NEUTRAL || (*value)->item[count].armour <= MIN_ARMOUR_CAPTURE) {
         returnValue = TRUE;
@@ -1881,7 +2109,7 @@ void basesGetBrainBaseInRect(ClientSim *cs, GameSim *sim, BYTE leftPos, BYTE rig
     if ((*value)->item[count].owner != NEUTRAL) {
       isAllie = playersIsAllie(&sim->plyrs, playerNum, (*value)->item[count].owner);
     }
-    if ((((*value)->item[count].x) >= leftPos && ((*value)->item[count].x) <= rightPos && ((*value)->item[count].y) >= topPos && ((*value)->item[count].y) <= bottomPos) || isAllie == TRUE) {
+    if ((*value)->active[count] != FALSE && ((((*value)->item[count].x) >= leftPos && ((*value)->item[count].x) <= rightPos && ((*value)->item[count].y) >= topPos && ((*value)->item[count].y) <= bottomPos) || isAllie == TRUE)) {
       /* In the rectangle */
       wx = (*value)->item[count].x;
       wx <<= TANK_SHIFT_MAPSIZE;
@@ -1935,6 +2163,10 @@ void basesGetMaxs(bases *value, int *leftPos, int *rightPos, int *topPos, int *b
 
   count = 0;
   while (count < ((*value)->numBases)) {
+    if ((*value)->active[count] == FALSE) {
+      count++;
+      continue;
+    }
     if ((*value)->item[count].x < *leftPos) {
       *leftPos = (*value)->item[count].x;
     }
@@ -1996,7 +2228,7 @@ PlayerBitMap basesGetOwnerBitMask(bases *value, BYTE owner) {
   count = 0;
   returnValue = 0;
   while (count < (*value)->numBases) {
-    if ((*value)->item[count].owner == owner) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].owner == owner) {
       returnValue |= 1 << count;
     }
     count++;
@@ -2025,6 +2257,10 @@ void basesClearMines(GameSim *sim) {
 
   count = 0;
   while (count < ((*value)->numBases)) {
+    if ((*value)->active[count] == FALSE) {
+      count++;
+      continue;
+    }
     terrain = mapGetPos(mp, (*value)->item[count].x, (*value)->item[count].y);
     if (terrain >= MINE_START && terrain <= MINE_END) {
       mapSetPos(sim, mp, (*value)->item[count].x, (*value)->item[count].y, (BYTE) (terrain - MINE_SUBTRACT), FALSE, TRUE);
@@ -2053,7 +2289,7 @@ BYTE basesGetNumberOwnedByPlayer(bases *value, BYTE playerNum) {
   returnValue = 0;
 
   while (count < (*value)->numBases) {
-    if ((*value)->item[count].owner == playerNum) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].owner == playerNum) {
       returnValue++;
     }
     count++;
@@ -2117,4 +2353,27 @@ int basesHalfTickCalulator(int typeSelector) {
 	  return 0;
 	  break;
 	}
+}
+
+/*********************************************************
+*NAME:          basesGetNumActive
+*PURPOSE:
+*  Returns how many bases are on the map: the slots under
+*  the count whose live flag is set.
+*
+*ARGUMENTS:
+*  value - Pointer to the bases structure
+*********************************************************/
+BYTE basesGetNumActive(bases *value) {
+  BYTE count;
+  BYTE live = 0;
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numBases && count < MAX_BASES; count++) {
+    if ((*value)->active[count] != FALSE) {
+      live++;
+    }
+  }
+  return live;
 }

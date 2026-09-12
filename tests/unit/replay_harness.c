@@ -75,6 +75,7 @@ static void replayCaptureSim(ServerSim *sim, ReplayWorld *w) {
         w->pills[count - 1].y = item.y;
         w->pills[count - 1].owner = item.owner;
         w->pills[count - 1].armour = item.armour;
+        w->pills[count - 1].active = pillsIsActive(&gs->pb, count) == TRUE;
     }
 
     total = basesGetNumBases(&gs->bs);
@@ -90,6 +91,7 @@ static void replayCaptureSim(ServerSim *sim, ReplayWorld *w) {
         w->bases[count - 1].armour = item.armour;
         w->bases[count - 1].shells = item.shells;
         w->bases[count - 1].mines = item.mines;
+        w->bases[count - 1].active = basesIsActive(&gs->bs, count) == TRUE;
     }
 
     total = startsGetNumStarts(&gs->ss);
@@ -102,6 +104,7 @@ static void replayCaptureSim(ServerSim *sim, ReplayWorld *w) {
         w->starts[count - 1].x = item.x;
         w->starts[count - 1].y = item.y;
         w->starts[count - 1].dir = item.dir;
+        w->starts[count - 1].active = startsIsActive(&gs->ss, count) == TRUE;
     }
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -115,8 +118,8 @@ static void replayCaptureSim(ServerSim *sim, ReplayWorld *w) {
     }
 }
 
-bool replayHarnessStartRecording(ReplayHarness *h, const char *tag,
-                                 const char *playerName) {
+bool replayHarnessPrepare(ReplayHarness *h, const char *tag,
+                          const char *playerName) {
     if (h == NULL) {
         return false;
     }
@@ -126,10 +129,13 @@ bool replayHarnessStartRecording(ReplayHarness *h, const char *tag,
     remove(h->path);
 
     h->sim = ut_make_running_sim(playerName != NULL ? playerName : "Tester");
-    if (h->sim == NULL) {
+    return h->sim != NULL;
+}
+
+bool replayHarnessBeginRecording(ReplayHarness *h) {
+    if (h == NULL || h->sim == NULL || h->recording) {
         return false;
     }
-
     logCreate();
     /* Lobby mode drops every world event and writes an empty-world
      * snapshot. It is process state an earlier test may have left on, so
@@ -149,6 +155,14 @@ bool replayHarnessStartRecording(ReplayHarness *h, const char *tag,
     return true;
 }
 
+bool replayHarnessStartRecording(ReplayHarness *h, const char *tag,
+                                 const char *playerName) {
+    if (!replayHarnessPrepare(h, tag, playerName)) {
+        return false;
+    }
+    return replayHarnessBeginRecording(h);
+}
+
 void replayHarnessTick(ReplayHarness *h, int simTicks) {
     int i;
     if (h == NULL || h->sim == NULL) {
@@ -157,6 +171,13 @@ void replayHarnessTick(ReplayHarness *h, int simTicks) {
     for (i = 0; i < simTicks; i++) {
         serverSimTick(h->sim);
     }
+}
+
+void replayHarnessSnapshot(ReplayHarness *h) {
+    if (h == NULL || h->sim == NULL || !h->recording) {
+        return;
+    }
+    logWriteSnapshot(h->sim, TRUE);
 }
 
 bool replayHarnessStopRecording(ReplayHarness *h) {
@@ -220,6 +241,13 @@ bool replayHarnessCompare(ReplayHarness *h) {
     for (i = 0; i < a->numPills; i++) {
         const ReplayPill *pa = &a->pills[i];
         const ReplayPill *pb = &b->pills[i];
+        if (pa->active != pb->active) {
+            snprintf(h->diff, sizeof(h->diff),
+                     "pill %d on the map: sim %s, replay %s",
+                     i + 1, pa->active ? "yes" : "no",
+                     pb->active ? "yes" : "no");
+            return false;
+        }
         if (pa->x != pb->x || pa->y != pb->y) {
             snprintf(h->diff, sizeof(h->diff),
                      "pill %d cell: sim (%d,%d), replay (%d,%d)",
@@ -248,6 +276,13 @@ bool replayHarnessCompare(ReplayHarness *h) {
     for (i = 0; i < a->numBases; i++) {
         const ReplayBase *ba = &a->bases[i];
         const ReplayBase *bb = &b->bases[i];
+        if (ba->active != bb->active) {
+            snprintf(h->diff, sizeof(h->diff),
+                     "base %d on the map: sim %s, replay %s",
+                     i + 1, ba->active ? "yes" : "no",
+                     bb->active ? "yes" : "no");
+            return false;
+        }
         if (ba->x != bb->x || ba->y != bb->y) {
             snprintf(h->diff, sizeof(h->diff),
                      "base %d cell: sim (%d,%d), replay (%d,%d)",
@@ -279,6 +314,13 @@ bool replayHarnessCompare(ReplayHarness *h) {
     for (i = 0; i < a->numStarts; i++) {
         const ReplayStart *sa = &a->starts[i];
         const ReplayStart *sb = &b->starts[i];
+        if (sa->active != sb->active) {
+            snprintf(h->diff, sizeof(h->diff),
+                     "start %d on the map: sim %s, replay %s",
+                     i + 1, sa->active ? "yes" : "no",
+                     sb->active ? "yes" : "no");
+            return false;
+        }
         if (sa->x != sb->x || sa->y != sb->y || sa->dir != sb->dir) {
             snprintf(h->diff, sizeof(h->diff),
                      "start %d: sim (%d,%d) dir %d, replay (%d,%d) dir %d",

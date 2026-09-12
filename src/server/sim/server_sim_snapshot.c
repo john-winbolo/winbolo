@@ -123,6 +123,7 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
     int my = ev->data[2];
     uint8_t tier = SOUND_TIER_NEAR;
     uint8_t dir = SOUND_DIR_CENTRE;
+    bool everywhere = (mx == 0xFF && my == 0xFF);
     bool inRange;
     int ax, ay, dist;
 
@@ -140,10 +141,19 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
         return;
     }
 
-    /* Worked out for every sound, including the tank hit below that skips
-     * the range cull, so the winner always has a tier and a bearing. */
-    inRange = soundTierAndDirection(listenerMX, listenerMY, mx, my,
-                                    &tier, &dir);
+    /* 0xFF, 0xFF is a sound with no square: it is in range at every listener,
+     * near and centred, and at distance 0 so it always takes its dedup slot.
+     * A scenario publishes one when the sound belongs to the round rather than
+     * to a place on the map. Measured normally it would sit far off the
+     * map's south-east corner and every listener would cull it. */
+    if (everywhere) {
+        inRange = true;
+    } else {
+        /* Worked out for every sound, including the tank hit below that skips
+         * the range cull, so the winner always has a tier and a bearing. */
+        inRange = soundTierAndDirection(listenerMX, listenerMY, mx, my,
+                                        &tier, &dir);
+    }
 
     /* A tank hit reaches the player hit at any range: they play hitTankSelf
      * at full volume. Everything else stops at SDIST_NONE. */
@@ -161,10 +171,16 @@ void soundPickOffer(SoundPick *pick, const GameEvent *ev, BYTE recipient,
         return;
     }
 
-    /* Closest instance of each sound id wins, measured on the real squares. */
-    ax = (mx > listenerMX) ? (mx - listenerMX) : (listenerMX - mx);
-    ay = (my > listenerMY) ? (my - listenerMY) : (listenerMY - my);
-    dist = ax + ay;
+    /* Closest instance of each sound id wins, measured on the real squares.
+     * A sound with no square counts as distance 0, so it wins its slot against
+     * any positioned instance of the same id in the same tick. */
+    if (everywhere) {
+        dist = 0;
+    } else {
+        ax = (mx > listenerMX) ? (mx - listenerMX) : (listenerMX - mx);
+        ay = (my > listenerMY) ? (my - listenerMY) : (listenerMY - my);
+        dist = ax + ay;
+    }
     if (pick->has[soundId] && dist >= pick->dist[soundId]) return;
 
     /* Shaped into the pick's own copy: the sim's event array is shared by
@@ -657,6 +673,7 @@ static bool viewCategorySweeps(const ServerSim *sim, ViewCategory cat) {
  * and serverSimValidateViewTargets can hand them an unchecked value. */
 static bool viewPillQualifies(ServerSim *sim, BYTE clientIdx, BYTE p) {
     if (sim->sim.pb == NULL || p >= pillsGetNumPills(&sim->sim.pb)) return false;
+    if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) return false;
     if (!playersIsAllie(&sim->sim.plyrs, (*sim->sim.pb).item[p].owner,
                         clientIdx)) return false;
     if ((*sim->sim.pb).item[p].armour == 0) return false;
@@ -667,6 +684,7 @@ static bool viewPillQualifies(ServerSim *sim, BYTE clientIdx, BYTE p) {
 static bool viewBaseQualifies(ServerSim *sim, BYTE clientIdx, BYTE b) {
     BYTE owner;
     if (sim->sim.bs == NULL || b >= basesGetNumBases(&sim->sim.bs)) return false;
+    if (basesIsActive(&sim->sim.bs, (BYTE)(b + 1)) == FALSE) return false;
     owner = (*sim->sim.bs).item[b].owner;
     if (owner == NEUTRAL) return false;
     return playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
@@ -999,6 +1017,7 @@ void serverSimUpdateViewDecay(ServerSim *sim) {
             BYTE np = pillsGetNumPills(&sim->sim.pb);
             BYTE p;
             for (p = 0; p < np; p++) {
+                if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) continue;
                 if (viewNearSquare(mx, my, (*sim->sim.pb).item[p].x,
                                    (*sim->sim.pb).item[p].y)) {
                     sim->pillNearTick[c][p] = stamp;
@@ -1009,6 +1028,7 @@ void serverSimUpdateViewDecay(ServerSim *sim) {
             BYTE nb = basesGetNumBases(&sim->sim.bs);
             BYTE b;
             for (b = 0; b < nb; b++) {
+                if (basesIsActive(&sim->sim.bs, (BYTE)(b + 1)) == FALSE) continue;
                 if (viewNearSquare(mx, my, (*sim->sim.bs).item[b].x,
                                    (*sim->sim.bs).item[b].y)) {
                     sim->baseNearTick[c][b] = stamp;
@@ -1274,6 +1294,19 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->gunsightLen = tankGetGunsightLength(&sim->sim.tanks[i]);
             ts->deathWait = (uint8_t)tankGetDeathWait(&sim->sim.tanks[i]);
             ts->reload = tankGetReloadTime(&sim->sim.tanks[i]);
+            {
+                /* The owning client predicts with these, so they ride the
+                 * same owner-only path the resources do. All zero on an
+                 * unmodified tank, which keeps the group off the wire. */
+                TankModifiers mods;
+                tankGetModifiers(sim->sim.tanks[i], &mods);
+                ts->modSpeed = mods.speed;
+                ts->modAccel = mods.accel;
+                ts->modTurn = mods.turn;
+                ts->modReload = mods.reload;
+                ts->modDealt = mods.dealt;
+                ts->modTaken = mods.taken;
+            }
         } else {
             ts->armour = 0;
             ts->shells = 0;
@@ -1282,6 +1315,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->gunsightLen = 0;
             ts->deathWait = 0;
             ts->reload = 0;
+            ts->modSpeed = 0;
+            ts->modAccel = 0;
+            ts->modTurn = 0;
+            ts->modReload = 0;
+            ts->modDealt = 0;
+            ts->modTaken = 0;
         }
 
         /* Tree-hidden tank, man still on screen: the entry is here for the man
@@ -1423,6 +1462,14 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         for (i = 0; i < sim->eventCount && outCount < maxEvents; i++) {
             uint8_t evType = sim->events[i].type;
             if (!soundEventIsSound(evType)) {
+                /* A local-only event is for the host and the recording. The
+                 * god-view build (noCull) is the recording, and keeps it;
+                 * every per-client build — the wire one and the in-process
+                 * one alike — drops it, because a bot reading its snapshot is
+                 * as much a player as a remote human is. */
+                if (gameEventIsLocal(evType) && !noCull) {
+                    continue;
+                }
                 /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
                  * LGM mines go only to the placer and their allies */
                 if (evType == EVENT_MINE_VISIBLE) {

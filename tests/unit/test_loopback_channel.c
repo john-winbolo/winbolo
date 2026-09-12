@@ -58,6 +58,16 @@
  *      the slot for removal.  Every square lands, the hold buffer empties, and
  *      no resync is involved — the changes arrive over the channel.
  *
+ *   9b. A scenario's fill across the wire.  One fill-rect op covering 300
+ *      squares, issued from the scenario hook the sim runs each frame.  The
+ *      funnel applies a tick's budget and carries the rest, so the change
+ *      leaves the server over two frames; every square must reach the client
+ *      over CHANNEL_MAP, with no resync and no slot flagged for removal.
+ *      The rectangle has to sit inside the client's viewports: terrain it
+ *      cannot see is culled at the drain and never queued, so a rectangle
+ *      chosen anywhere else would produce map events the server is right to
+ *      drop and prove nothing about the pacing.
+ *
  *  10. Map ack from the wire.  An InputPacket still carries a map-event ack
  *      field from the snapshot-tail era; the server's hold-buffer cursor is
  *      owned by its own drain now, so a client claiming an ack past the
@@ -81,6 +91,8 @@
 #include "transport_udp.h"         /* test-only channel hooks, spliceGameEventsBeforeTail */
 #include "transport_udp_internal.h" /* packU32 / packGameEvent (map-channel payload) */
 #include "server_sim.h"            /* serverSimAddEvent (overflow case) */
+#include "server_sim_internal.h"   /* serverSimBuildViewports / inAnyViewport — the map-event cull's own predicate */
+#include "server_sim_scenario.h"   /* the op funnel and the per-tick hook the fill case drives */
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -1011,6 +1023,213 @@ static int run_map_channel_pacing(void) {
     return 0;
 }
 
+/* Case 9b: a scenario's fill reaches a remote client whole. The op covers more
+ * squares than one tick's tile budget, so the funnel paints what it can, keeps
+ * the rest and answers SCN_OP_QUEUED; the sim drains the remainder on the next
+ * frame. Both slices go out as ordinary map events, so what this case holds is
+ * that the pacing inside the sim and the pacing on the map channel compose:
+ * every square lands on the client, over the channel rather than through a
+ * fresh copy of the map, and the burst is never treated as fatal.
+ *
+ * The op is issued from the scenario hook, which is where a scenario's writes
+ * come from and the only place inside the frame where the map-change callback
+ * is installed. */
+#define SCN_FILL_W        20
+#define SCN_FILL_H        15
+#define SCN_FILL_N        (SCN_FILL_W * SCN_FILL_H)
+#define SCN_FILL_DELIVER_MAX 3000  /* bounded convergence for the whole fill */
+
+typedef struct {
+    ServerSim *sim;
+    uint8_t    x0, y0, x1, y1;
+    int        calls;
+    int        result;
+} ScnFillHook;
+
+static void scn_fill_hook(void *ctx) {
+    ScnFillHook *hk = (ScnFillHook *)ctx;
+    ScenarioOp op;
+    hk->calls++;
+    if (hk->calls != 1) return;
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_MAP_FILL_RECT;
+    op.u.mapFillRect.x0 = hk->x0;
+    op.u.mapFillRect.y0 = hk->y0;
+    op.u.mapFillRect.x1 = hk->x1;
+    op.u.mapFillRect.y1 = hk->y1;
+    op.u.mapFillRect.terrain = CRATER;
+    hk->result = (int)serverSimApplyScenarioOp(hk->sim, &op, NULL);
+}
+
+/* The top-left of a rectangle the fill will change every square of, and that
+ * the client will be sent every square of.
+ *
+ * The second half is the one that is easy to miss. A wire client is sent only
+ * the terrain changes inside its viewports; a change outside them is not
+ * queued and is not written into the server's copy of that client's map
+ * either, so it is not a desync and no resync ever repairs it — the square
+ * simply never arrives. A rectangle picked off the far side of the map
+ * therefore produces map events that are all correctly dropped. So every
+ * square is tested against inAnyViewport, the same predicate
+ * transportUdpServerDrainEvents culls on, rather than against a distance this
+ * test would have to keep in step with the viewport constants.
+ *
+ * The rest is as before: no square already holding the target terrain, and
+ * none a pill or a base owns and writes back. Terrain is read off the client's
+ * copy, which is the map both ends agree on at this point. */
+static bool scn_find_fill_rect(LoopbackHarness *h, uint8_t target,
+                               uint8_t *ox, uint8_t *oy) {
+    ViewportRect vps[MAX_VIEWPORTS];
+    int nvp;
+    int x, y, dx, dy;
+    BYTE slot = clientSimGetMyPlayerNum(h->cs);
+
+    if (slot >= MAX_TANKS) return false;
+    nvp = serverSimBuildViewports(h->sim, slot, vps, MAX_VIEWPORTS);
+    if (nvp <= 0) return false;
+
+    for (y = MAP_MINE_EDGE_TOP + 1; y + SCN_FILL_H <= MAP_MINE_EDGE_BOTTOM; y++) {
+        for (x = MAP_MINE_EDGE_LEFT + 1; x + SCN_FILL_W <= MAP_MINE_EDGE_RIGHT; x++) {
+            bool clear = true;
+            for (dy = 0; dy < SCN_FILL_H && clear; dy++) {
+                for (dx = 0; dx < SCN_FILL_W && clear; dx++) {
+                    uint8_t cx = (uint8_t)(x + dx);
+                    uint8_t cy = (uint8_t)(y + dy);
+                    if (clientSimGetMapTerrain(h->cs, cx, cy) == target ||
+                        clientSimPillExistsAt(h->cs, cx, cy) ||
+                        clientSimBaseExistsAt(h->cs, cx, cy) ||
+                        !inAnyViewport(vps, nvp, (int)cx, (int)cy)) {
+                        clear = false;
+                    }
+                }
+            }
+            if (clear) {
+                *ox = (uint8_t)x;
+                *oy = (uint8_t)y;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static int run_scenario_fill_over_the_wire(void) {
+    LoopbackHarness h;
+    ScnFillHook hk;
+    uint32_t inputTick = 1;
+    Transport *ct;
+    int slot;
+    uint8_t rx = 0, ry = 0;
+    uint32_t resync0 = 0, resync1 = 0;
+    int i, dx, dy;
+    int landed = 0;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "ScnFill", /*lobbyMode*/ false,
+                                       /*impairSpec*/ "loss=5,burst=2",
+                                       /*seed*/ 0x5CF111u),
+                  "harness start (scenario fill) failed");
+
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX,
+                                 pred_server_download_complete, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("server never completed the join download within %d pumps",
+                CONNECT_MAX);
+    }
+
+    ct   = &h.cs->transport;
+    slot = (int)clientSimGetMyPlayerNum(h.cs);
+    transportUdpClientTestMapState(ct, NULL, &resync0);
+
+    if (!scn_find_fill_rect(&h, CRATER, &rx, &ry)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("could not find a %dx%d rectangle inside slot %d's viewports "
+                "that the fill would change every square of", SCN_FILL_W,
+                SCN_FILL_H, slot);
+    }
+    if (transportUdpServerTestPendingRemove(slot)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("slot %d already flagged for removal before the fill", slot);
+    }
+
+    /* One op, more squares than a tick's budget, issued the way a scenario
+       issues one. */
+    memset(&hk, 0, sizeof(hk));
+    hk.sim = h.sim;
+    hk.x0 = rx;
+    hk.y0 = ry;
+    hk.x1 = (uint8_t)(rx + SCN_FILL_W - 1);
+    hk.y1 = (uint8_t)(ry + SCN_FILL_H - 1);
+    hk.result = -1;
+    serverSimSetScenarioTick(h.sim, scn_fill_hook, &hk);
+
+    for (i = 1; i <= SCN_FILL_DELIVER_MAX && landed < SCN_FILL_N; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+        if (transportUdpServerTestPendingRemove(slot)) {
+            serverSimSetScenarioTick(h.sim, NULL, NULL);
+            loopbackHarnessStop(&h);
+            UT_FAIL("slot %d flagged for removal on a scenario fill after %d "
+                    "pump(s) — the burst was treated as fatal instead of "
+                    "being paced", slot, i);
+        }
+        landed = 0;
+        for (dy = 0; dy < SCN_FILL_H; dy++) {
+            for (dx = 0; dx < SCN_FILL_W; dx++) {
+                if (clientSimGetMapTerrain(h.cs, (uint8_t)(rx + dx),
+                                           (uint8_t)(ry + dy)) == CRATER) {
+                    landed++;
+                }
+            }
+        }
+    }
+    serverSimSetScenarioTick(h.sim, NULL, NULL);
+
+    fprintf(stderr, "  scenario fill: %d/%d squares after %d pump(s) (cap %d), "
+                    "held=%u\n",
+            landed, SCN_FILL_N, i, SCN_FILL_DELIVER_MAX,
+            (unsigned)transportUdpServerTestMapQueueOutstanding(slot));
+
+    if (hk.calls == 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the scenario hook never ran, so no op was issued");
+    }
+    if (hk.result != (int)SCN_OP_QUEUED) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a %d-square fill answered %d, wanted SCN_OP_QUEUED",
+                SCN_FILL_N, hk.result);
+    }
+    if (landed != SCN_FILL_N) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("only %d of %d filled squares reached the client within %d "
+                "pumps", landed, SCN_FILL_N, SCN_FILL_DELIVER_MAX);
+    }
+    if (transportUdpServerTestMapQueueOutstanding(slot) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("hold buffer still owes %u event(s) after the fill landed",
+                (unsigned)transportUdpServerTestMapQueueOutstanding(slot));
+    }
+
+    /* Over the channel, not through a fresh copy of the map. */
+    transportUdpClientTestMapState(ct, NULL, &resync1);
+    if (resync1 != resync0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the fill forced a map resync (count %u -> %u) instead of "
+                "arriving over the channel",
+                (unsigned)resync0, (unsigned)resync1);
+    }
+    if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client dropped while the fill was being paced");
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 /* Case 10: the map-event ack an InputPacket carries cannot move the server's
  * hold-buffer cursor. The field is left over from when map events rode the
  * snapshot tail; they ride CHANNEL_MAP now, with the channel's own acks, and
@@ -1140,6 +1359,8 @@ int run_loopback_channel(void) {
     rc = run_straggler_gate();
     if (rc != 0) return rc;
     rc = run_map_channel_pacing();
+    if (rc != 0) return rc;
+    rc = run_scenario_fill_over_the_wire();
     if (rc != 0) return rc;
     return run_map_ack_from_wire_ignored();
 }
