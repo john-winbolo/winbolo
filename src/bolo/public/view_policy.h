@@ -67,8 +67,8 @@ typedef enum {
 /* ---------------------------------------------------------------------
  * The rules a stock server runs.
  *
- * Three different questions in this codebase are all answered with a
- * set of ViewPolicy values, and the three answers are not the same set.
+ * Two different questions in this codebase are both answered with a
+ * set of ViewPolicy values, and the two answers are not the same set.
  * Only the first one is named here:
  *
  *   A. What a server nobody has configured actually runs: pill Key,
@@ -83,11 +83,7 @@ typedef enum {
  *      and what every server did before the fields existed), so they
  *      must NOT follow A when A changes.
  *
- *   C. The permissive starting point overviewViewInputsDefaults hands
- *      a caller that fills the rest in itself: pill Always, base Off,
- *      ally Always. A plumbing convenience, not a server rule.
- *
- * B and C merely resemble A. Writing A's values at a B site is how a
+ * B merely resembles A. Writing A's values at a B site is how a
  * shipped bug got in, which is why these are named STOCK and not
  * DEFAULT: at a wire fallback the question is "what did a sender that
  * said nothing mean", and no macro here answers that question.
@@ -96,8 +92,9 @@ typedef enum {
  * an unconfigured server runs: serverSimInit, the client's pre-lobby
  * seed in clientSimCreate, the gameFrontView* globals and their INI
  * fallbacks, the dedicated server's -pillview / -baseview / -allyview
- * and -overviewwindow fallbacks, the headless option table, and the
- * browser's "differs from stock" tag.
+ * and -overviewwindow fallbacks, the headless option table, the
+ * browser's "differs from stock" tag, and overviewViewInputsDefaults in
+ * overview_map.c.
  *
  * DO NOT use these at:
  *   - infoPacketReadViewPolicies and infoPacketReadViewPolicies2 in
@@ -108,7 +105,6 @@ typedef enum {
  *     view accessors. Also meaning B, and server_sim.h documents them
  *     as "what a reader assumes of a sender that named no policy, not
  *     what a sim starts on".
- *   - overviewViewInputsDefaults in overview_map.c. Meaning C.
  *   - serverSimSetClassicMode, which states classic mode's own set. It
  *     coincides with A today; it is not the same statement.
  *

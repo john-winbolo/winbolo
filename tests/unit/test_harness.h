@@ -1284,13 +1284,16 @@ int run_overview_decay_mirror(void);
 int run_overview_decay_view_exit(void);
 
 /* Overview regions under the view policies (test_overview_view_policy.c): the
- * rules a server ships with produce the region set the overview has always
- * had; always sweeps a category, key grants only what the player is watching
- * and off grants nothing, each kind in its own block size and in the order the
- * farewell stamp replays; and a decay window runs from full brightness through
- * the fade to nothing, with an item the player could never watch earning
- * nothing from having been driven past. */
+ * rules a server ships with produce the player's own screen and nothing else,
+ * where pills and allied tanks on always produce the region list the overview
+ * drew before any of this was settable; always sweeps a category, key grants
+ * only what the player is watching and off grants nothing, each kind in its
+ * own block size and in the order the farewell stamp replays; and a decay
+ * window runs from full brightness through the fade to nothing, with an item
+ * the player could never watch earning nothing from having been driven
+ * past. */
 int run_overview_policy_baseline(void);
+int run_overview_policy_pills_and_allies(void);
 int run_overview_policy_categories(void);
 int run_overview_policy_decay(void);
 

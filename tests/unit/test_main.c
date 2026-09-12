@@ -645,6 +645,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_decay_mirror",                   run_overview_decay_mirror                   },
     { "overview_decay_view_exit",                run_overview_decay_view_exit                },
     { "overview_policy_baseline",                run_overview_policy_baseline                },
+    { "overview_policy_pills_and_allies",        run_overview_policy_pills_and_allies        },
     { "overview_policy_categories",              run_overview_policy_categories              },
     { "overview_policy_decay",                   run_overview_policy_decay                   },
     { "overview_loopback",                       run_overview_loopback                       },

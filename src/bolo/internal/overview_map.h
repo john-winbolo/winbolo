@@ -89,12 +89,15 @@ typedef struct OverviewViewInputs {
     int16_t         viewSubX, viewSubY; /* sub-square part of the view position */
 } OverviewViewInputs;
 
-/* The rules a server ships with: pillboxes always, bases off, allied tanks
- * always. No clocks, no item view, no viewable allies — so what comes out is
- * the tank block and the pillboxes the player can view through, which is the
- * region set the overview has always had. The visibility fields zero with it,
- * which reads as Expanded with line of sight off and no classic view to place
- * a block from. */
+/* The rules a server ships with, the VIEW_POLICY_STOCK_* set: pillboxes on
+ * key, bases off, allied tanks off. No clocks, no item view, no viewable
+ * allies go with them — and key with nothing being watched grants nothing, so
+ * what comes out of a build on these inputs is the tank block on its own. A
+ * caller that wants items in the set names the policy that puts them there.
+ *
+ * The visibility fields zero with the rest, which reads as Expanded with line
+ * of sight off and no classic view to place a block from. Sight off is stock;
+ * the expanded window is not, and overview_map.c says why it is left there. */
 void overviewViewInputsDefaults(OverviewViewInputs *in);
 
 /* Whether one proximity clock is still inside its category's window, and how

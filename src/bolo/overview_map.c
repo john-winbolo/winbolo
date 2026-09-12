@@ -389,18 +389,27 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath) {
   return deathWait > 0 && deathWait <= overviewDeathBlackoutStart(lastDeath);
 }
 
-/* A permissive starting point for a caller that fills the rest in
- * itself — meaning C in view_policy.h. Not what a stock server runs
- * (the VIEW_POLICY_STOCK_* set) and not a wire fallback either. */
+/* The rules a stock server runs — the VIEW_POLICY_STOCK_* set, meaning A in
+ * view_policy.h — plus the tank view, for a caller that fills the rest in
+ * itself. Not a wire fallback: a reader working out what a sender that named
+ * no rules meant must not come here.
+ *
+ * window and lineOfSight are deliberately left on the memset zero, which reads
+ * as the expanded window with sight off. Sight off is the stock value; the
+ * window is not, stock being OVERVIEW_WINDOW_STOCK (Classic). Classic changes
+ * the tank block from the 29x29 envelope to the 15x15 placed from the classic
+ * view, which would move every caller that does not set the window itself, so
+ * the window stays on the wire default until that is worth doing as a change
+ * of its own. */
 void overviewViewInputsDefaults(OverviewViewInputs *in) {
   if (in == NULL) {
     return;
   }
 
   memset(in, 0, sizeof(*in));
-  in->policy[viewCategoryPill] = viewPolicyAlways;
-  in->policy[viewCategoryBase] = viewPolicyOff;
-  in->policy[viewCategoryAlly] = viewPolicyAlways;
+  in->policy[viewCategoryPill] = VIEW_POLICY_STOCK_PILL;
+  in->policy[viewCategoryBase] = VIEW_POLICY_STOCK_BASE;
+  in->policy[viewCategoryAlly] = VIEW_POLICY_STOCK_ALLY;
   in->viewKind = VIEW_KIND_TANK;
 }
 

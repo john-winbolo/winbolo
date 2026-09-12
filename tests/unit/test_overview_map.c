@@ -142,11 +142,15 @@ int run_overview_regions(void) {
     OverviewRect tank; /* The block the caller hands the build */
     int n;
 
-    /* The rules a server ships with, which is what every case here is about:
-     * pillboxes always, bases off, allied tanks always with nobody viewable.
+    /* What a pillbox contributes to the region list is the subject here, so
+     * the pill category is named rather than inherited: the fixture hands out
+     * the stock rules, under which pills are on key and only the one the
+     * player is watching earns a block, and every case below claims no view.
+     * Bases and allied tanks stay off, which is where the fixture leaves them.
      * test_overview_view_policy.c is where the other policies are pinned. */
     OverviewViewInputs in;
     overviewViewInputsDefaults(&in);
+    in.policy[viewCategoryPill] = viewPolicyAlways;
 
     /* Tank alone, well clear of every edge: one 29x29 rect on it. */
     tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
@@ -428,6 +432,10 @@ int run_overview_regions(void) {
              * which is what leaves the square a tile to hold on to. */
             overviewMapReset(om);
             overviewViewInputsDefaults(&fog);
+            /* The pill needs a block of its own for any of this to say
+             * anything, and the fixture's stock rules put pills on key, under
+             * which a player watching nothing gets none. */
+            fog.policy[viewCategoryPill] = viewPolicyAlways;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
             UT_ASSERT_MSG(om->hiddenActive == FALSE,
                           "the map hid squares with the toggle off");
@@ -559,6 +567,9 @@ int run_overview_regions(void) {
                 mapSetPos(gs, &gs->mp, 106, 100, GRASS, TRUE, TRUE);
                 overviewMapReset(om);
                 overviewViewInputsDefaults(&fog);
+                /* The pill's block has to outlive the tank's below, so the
+                 * pill category is named here too rather than left on key. */
+                fog.policy[viewCategoryPill] = viewPolicyAlways;
                 overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
                 hiddenTile = om->tile[106][100];
                 seenTile = om->tile[102][100];
@@ -2500,8 +2511,12 @@ int run_overview_removed_item_has_no_region(void) {
     basesSetNumBases(&gs->bs, 1);
     basesSetBase(&gs->bs, &b, 1);
 
+    /* Both categories are named: the fixture's stock rules have pills on key
+     * and bases off, and this case is about a live item earning a region and
+     * a removed one not, with nothing being watched. */
     OverviewViewInputs in;
     overviewViewInputsDefaults(&in);
+    in.policy[viewCategoryPill] = viewPolicyAlways;
     in.policy[viewCategoryBase] = viewPolicyAlways;
 
     OverviewRect out[OVERVIEW_MAX_REGIONS + 1];

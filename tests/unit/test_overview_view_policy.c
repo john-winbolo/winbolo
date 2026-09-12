@@ -15,8 +15,11 @@
  * then pills, bases and allied tanks each in ascending index.
  *
  * The first case is the one that has to keep holding: with the rules a server
- * ships with, and nobody allied, what comes out is exactly what the overview
- * has always drawn.
+ * ships with — pillboxes on key, bases and allied tanks off — what comes out
+ * is the player's own screen and nothing besides, however much of the world
+ * they would be entitled to under a looser set. The case after it walks the
+ * same world with pills and allied tanks on always, which is the set that
+ * produces the region list the overview drew before any of this was settable.
  *
  * Every case drives ut_make_running_sim and pokes the GameSim directly (the
  * unittests profile permits T2-internal access), replacing everything the map
@@ -148,12 +151,71 @@ static int vpBuild(GameSim *gs, const OverviewViewInputs *in,
                                    OVERVIEW_MAX_REGIONS);
 }
 
-/* 1. The rules a server ships with produce the region set the overview has
- *    always had: the tank's block and the pillboxes the player can view
- *    through, nothing else, every one of them fully live. Bases are off, and
- *    allied tanks earn a block only once there is a live ally to watch — which
- *    is the whole of what the shipped configuration adds. */
+/* 1. The rules a server ships with produce the player's own screen and
+ *    nothing else. Pillboxes are on key, and a player watching nothing is
+ *    watching no pillbox; bases and allied tanks are off outright. Neither an
+ *    allied pill nor a live ally moves that, because the shipped rules hand
+ *    out no block for either. What each policy does grant is
+ *    run_overview_policy_categories, and the same world with pills and allies
+ *    on always is run_overview_policy_pills_and_allies. */
 int run_overview_policy_baseline(void) {
+    GameSim *gs = NULL;
+    ServerSim *sim = vpMakeWorld(&gs);
+    UT_ASSERT_MSG(sim != NULL, "vpMakeWorld returned NULL");
+
+    OverviewViewInputs in;
+    OverviewRect out[OVERVIEW_MAX_REGIONS];
+    int n;
+
+    /* The fixture hands out the stock set, and the stock set is these three
+     * values — the tie and the values are separate claims, so a change to
+     * either has to be made deliberately. */
+    overviewViewInputsDefaults(&in);
+    UT_ASSERT_MSG(in.policy[viewCategoryPill] == VIEW_POLICY_STOCK_PILL &&
+                      in.policy[viewCategoryBase] == VIEW_POLICY_STOCK_BASE &&
+                      in.policy[viewCategoryAlly] == VIEW_POLICY_STOCK_ALLY,
+                  "the overview fixture does not hand out the stock rules; "
+                  "got %d, %d, %d",
+                  (int)in.policy[viewCategoryPill],
+                  (int)in.policy[viewCategoryBase],
+                  (int)in.policy[viewCategoryAlly]);
+    UT_ASSERT_MSG(VIEW_POLICY_STOCK_PILL == viewPolicyKey &&
+                      VIEW_POLICY_STOCK_BASE == viewPolicyOff &&
+                      VIEW_POLICY_STOCK_ALLY == viewPolicyOff,
+                  "the shipped rules are pill key, base off, ally off; got "
+                  "%d, %d, %d",
+                  (int)VIEW_POLICY_STOCK_PILL, (int)VIEW_POLICY_STOCK_BASE,
+                  (int)VIEW_POLICY_STOCK_ALLY);
+
+    n = vpBuild(gs, &in, out);
+    UT_ASSERT_MSG(n == 1,
+                  "the shipped rules over a world of viewable pills, allied "
+                  "bases and allied tanks gave %d regions, expected the tank "
+                  "block on its own", n);
+    ASSERT_BLOCK(out[0], VP_TANK_MX, VP_TANK_MY, OVERVIEW_TANK_HALF, 255,
+                 "the tank block");
+
+    /* Live allies are what the ally rule needs before it can grant anything,
+     * and the shipped rule still grants nothing once they are there. */
+    in.allyViewable = (PlayerBitMap)((1u << 1) | (1u << 2) | (1u << 3));
+    n = vpBuild(gs, &in, out);
+    UT_ASSERT_MSG(n == 1, "two live allies under the shipped rules gave %d "
+                  "regions, expected the tank block on its own", n);
+    ASSERT_BLOCK(out[0], VP_TANK_MX, VP_TANK_MY, OVERVIEW_TANK_HALF, 255,
+                 "the tank block");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 1b. Pills and allied tanks on always, bases off — the permissive set the
+ *     overview fixture used to hand out, kept as a case of its own because it
+ *     is the one place the ally rule is watched turning on: a category on
+ *     always still grants nothing for an allied tank until there is a record
+ *     of one being alive, and it grants both of them the moment there is.
+ *     Bases stay off throughout, so the three categories are seen to be
+ *     independent of one another. */
+int run_overview_policy_pills_and_allies(void) {
     GameSim *gs = NULL;
     ServerSim *sim = vpMakeWorld(&gs);
     UT_ASSERT_MSG(sim != NULL, "vpMakeWorld returned NULL");
@@ -164,19 +226,13 @@ int run_overview_policy_baseline(void) {
     int i;
 
     overviewViewInputsDefaults(&in);
-    UT_ASSERT_MSG(in.policy[viewCategoryPill] == viewPolicyAlways &&
-                      in.policy[viewCategoryBase] == viewPolicyOff &&
-                      in.policy[viewCategoryAlly] == viewPolicyAlways,
-                  "the shipped rules are pill always, base off, ally always; "
-                  "got %d, %d, %d",
-                  (int)in.policy[viewCategoryPill],
-                  (int)in.policy[viewCategoryBase],
-                  (int)in.policy[viewCategoryAlly]);
+    in.policy[viewCategoryPill] = viewPolicyAlways;
+    in.policy[viewCategoryAlly] = viewPolicyAlways;
 
     n = vpBuild(gs, &in, out);
     UT_ASSERT_MSG(n == 3,
-                  "the shipped rules over a world of allied bases and live "
-                  "allies gave %d regions, expected the tank and two pills", n);
+                  "pills and allies on always with nobody alive gave %d "
+                  "regions, expected the tank and two pills", n);
     ASSERT_BLOCK(out[0], VP_TANK_MX, VP_TANK_MY, OVERVIEW_TANK_HALF, 255,
                  "the tank block");
     ASSERT_BLOCK(out[1], 200, 50, OVERVIEW_PILL_HALF, 255, "our pill's block");
@@ -220,7 +276,9 @@ int run_overview_policy_categories(void) {
      * ascending index. The enemy pill, the enemy base and the enemy tank are
      * not the player's to watch and are absent throughout. */
     overviewViewInputsDefaults(&in);
+    in.policy[viewCategoryPill] = viewPolicyAlways;
     in.policy[viewCategoryBase] = viewPolicyAlways;
+    in.policy[viewCategoryAlly] = viewPolicyAlways;
     in.allyViewable = (PlayerBitMap)((1u << 1) | (1u << 2) | (1u << 3));
 
     n = vpBuild(gs, &in, out);

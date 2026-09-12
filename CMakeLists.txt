@@ -4443,6 +4443,7 @@ set(_unit_test_names
     overview_decay_mirror
     overview_decay_view_exit
     overview_policy_baseline
+    overview_policy_pills_and_allies
     overview_policy_categories
     overview_policy_decay
     overview_loopback
