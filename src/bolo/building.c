@@ -28,6 +28,7 @@
 
 #include "global.h"
 #include "building.h"
+#include "game_sim.h"
 
 /*********************************************************
 *NAME:          buildingCreate
@@ -76,11 +77,12 @@ void buildingDestroy(building *bld) {
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim   - The game the building belongs to
 *  bld   - Pointer to the buildings object
 *  x     - X co-ord
 *  y     - Y co-ord
 *********************************************************/
-BYTE buildingAddItem(building *bld, BYTE x, BYTE y) {
+BYTE buildingAddItem(GameSim *sim, building *bld, BYTE x, BYTE y) {
   BYTE returnValue; /* Value to return */
   bool found;       /* Is the item found */
   int count;        /* Looping Variable */
@@ -112,7 +114,7 @@ BYTE buildingAddItem(building *bld, BYTE x, BYTE y) {
     New (q);
     q->x = x;
     q->y = y;
-    q->life = BUILDING_LIFE;
+    q->life = (BYTE) sim->rules.building_life;
     q->next = *bld;
     *bld = q;
   }

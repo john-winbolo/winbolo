@@ -35,6 +35,8 @@
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
+#include "input_packet.h"   /* PING_SPAM_MAX_5S / PING_SPAM_MAX_30S — ping anti-spam caps */
+#include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -57,10 +59,22 @@
 #define RETURN_REASON_SURRENDER   2
 #define RETURN_REASON_BASE_WIN    3
 #define RETURN_REASON_ABANDONED   4
+/* A scenario op ended the round: it brings its own lobby line and credits
+ * nobody, so the base sweep neither speaks for it nor wins for it. */
+#define RETURN_REASON_SCENARIO    5
 
 /* roundLogStartTick before the round's first log entry has been written. Not a
  * plausible tick, so it doubles as the "not latched yet" flag. */
 #define ROUND_LOG_START_UNSET     0xFFFFFFFFu
+
+/* One roster change waiting its turn. A spawn carries the whole payload
+ * because the seat, the brain and the init table are all read when it
+ * lands rather than when it was asked for; a removal needs only the slot. */
+typedef struct {
+    bool                isSpawn;
+    ScnOpRosterSpawnBot spawn;        /* read when isSpawn */
+    BYTE                removeSlot;   /* read when it is not */
+} ScnRosterQueueEntry;
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -169,7 +183,7 @@ struct ServerSim {
                                       * 0 is empty (or unowned), the next
                                       * incoming player is promoted to host.
                                       * Consumed by the join handler. */
-    uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+    uint32_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
     /* WBN lobby_update batching: lobby/setting/map changes mark the
      * snapshot dirty; it is flushed on the periodic WBN tick at most
      * every WBN_LOBBY_UPDATE_INTERVAL seconds, and force-sent before
@@ -201,6 +215,13 @@ struct ServerSim {
     bool     alliesInTrees;        /* allied tanks standing in trees are sent
                                     * to their allies instead of being
                                     * withheld; off is the classic
+                                    * behaviour. */
+    uint8_t  overviewWindow;       /* OverviewWindow — which block of squares
+                                    * the map overview keeps live round the
+                                    * player's own tank. Expanded (0) is
+                                    * today's behaviour. */
+    uint8_t  lineOfSight;          /* LineOfSightMode — what blocks sight
+                                    * inside that block. Off (0) is today's
                                     * behaviour. */
     ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
                                     * startup, read by the advertisement
@@ -254,11 +275,13 @@ struct ServerSim {
         bool     openHost;
         bool     autoLockOnGameStart;
         bool     ranked;
-        uint16_t serverLocks;
+        uint32_t serverLocks;
         ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         bool       classicMode;
         bool       alliesInTrees;
+        uint8_t    overviewWindow;
+        uint8_t    lineOfSight;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running
@@ -470,26 +493,32 @@ struct ServerSim {
     uint8_t      viewKind[MAX_TANKS];     /* 0=tank, 1=pill, 2=base, 3=ally */
     uint8_t      viewTarget[MAX_TANKS];
 
-    /* Smart-ping rate limit (CMD_PING). One ping per PING_RATE_MIN_GAP_TICKS
-     * stops a held key machine-gunning the team's view; the burst rule on top
-     * of it caps a determined spammer at PING_RATE_BURST inside
-     * PING_RATE_WINDOW_TICKS. Ticks are 20ms, so this reads as 300ms apart and
-     * 6 per 5 seconds. */
-#define PING_RATE_MIN_GAP_TICKS   15
-#define PING_RATE_BURST            6
-#define PING_RATE_WINDOW_TICKS   250
+    /* Smart-ping anti-spam limit (CMD_PING). A minimum gap stops a held key
+     * machine-gunning the team's view; on top of it two nested sliding windows
+     * cap a determined spammer at PING_SPAM_MAX_5S pings per 5 seconds AND
+     * PING_SPAM_MAX_30S per 30 seconds (the caps and the window durations are
+     * shared with the client render backstop — see input_packet.h). Ticks are
+     * 20ms (50/s), so the min gap reads as 300ms and the windows as 5s / 30s. */
+#define PING_RATE_MIN_GAP_TICKS     15
+    /* Sim ticks per second — reuse the engine's own constant (game_sim.h,
+     * 1000/20 = 50) so the window sizes cannot drift from the real tick rate. */
+#define PING_SPAM_WINDOW_5S_TICKS   (PING_SPAM_WINDOW_5S_SECONDS  * GAME_NUMGAMETICKS_SEC)
+#define PING_SPAM_WINDOW_30S_TICKS  (PING_SPAM_WINDOW_30S_SECONDS * GAME_NUMGAMETICKS_SEC)
+    /* One ring entry per accepted ping, so the 30s cap (the larger) fixes the
+     * ring size; the 5s cap is a count over the recent tail of the same ring. */
+#define PING_SPAM_RING              PING_SPAM_MAX_30S
 
-    /* Smart-ping rate limit, per slot. Both hold the accepted tick PLUS ONE,
-     * so 0 means "no ping yet": tick 0 is a real tick — the first one of a
-     * round — and storing it raw would read as never having pinged and let
-     * the second ping of the game through on the same tick as the first.
-     * pingBurstTicks is a ring of the last PING_RATE_BURST accepted ticks,
-     * oldest overwritten first, so the burst rule is "the
-     * PING_RATE_BURST-th ping back must be older than PING_RATE_WINDOW_TICKS".
-     * Ticks, not wall clock: a paused or slow server slows the allowance with
-     * everything else. */
+    /* Smart-ping limit state, per slot. Every stored tick holds the accepted
+     * tick PLUS ONE, so 0 means "no ping yet": tick 0 is a real tick — the
+     * first one of a round — and storing it raw would read as never having
+     * pinged and let the second ping of the game through on the same tick as
+     * the first. pingBurstTicks is a ring of the last PING_SPAM_RING accepted
+     * ticks, oldest overwritten first; a new ping is refused when the ring
+     * already holds PING_SPAM_MAX_5S entries inside the 5s window or
+     * PING_SPAM_MAX_30S inside the 30s window. Ticks, not wall clock: a paused
+     * or slow server slows the allowance with everything else. */
     uint32_t     pingLastTick[MAX_TANKS];
-    uint32_t     pingBurstTicks[MAX_TANKS][PING_RATE_BURST];
+    uint32_t     pingBurstTicks[MAX_TANKS][PING_SPAM_RING];
     uint8_t      pingBurstIdx[MAX_TANKS];
 
     /* Pings accepted since the last frame's event drain, one slot per sender
@@ -517,6 +546,16 @@ struct ServerSim {
      * serverSimSetSoundSquares; never reachable from the wire. Cleared when
      * the slot is joined or freed. */
     bool         soundSquares[MAX_TANKS];
+
+    /* Per-recipient smart-ping mute. Bit N of pingMuteMask[r] set = recipient
+     * r has muted player N's pings; serverSimPingReachesClient consults it so a
+     * muted sender's EVENT_PING never reaches r (its own copy is unaffected —
+     * a player cannot mute itself). Set through serverSimSetPingMute from the
+     * CMD_PLAYER_PING_MUTE dispatch arm; independent of the transport's
+     * voiceMuteMask, which gates voice and chat. Session-scoped: cleared, both
+     * a leaver's own row and every other row's bit for the leaver, when a slot
+     * is released (server_sim_players.c). */
+    PlayerBitMap pingMuteMask[MAX_TANKS];
 
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
@@ -616,7 +655,61 @@ struct ServerSim {
     ControlSubscriber subscribers[SUBSCRIBER_SLOT_COUNT];
     uint16_t          subscriberGen[SUBSCRIBER_SLOT_COUNT];
     int               numSubscribers;
-    bool              publishing;
+    int               numEventSubscribers; /* slots with a deliverEvent set */
+    bool              publishing;          /* inside serverSimPublishControl's deliver loop */
+    bool              publishingEvent;     /* inside serverSimAddEvent's deliver loop */
+
+    /* Scenario attachment. scenario is the host's own state and the only
+     * scenario data on any engine struct; everything else here is what
+     * the sim needs to call back into it.
+     *
+     * inScenarioPolicy counts the policy calls in progress. A policy
+     * callback is a question asked mid-operation and must answer without
+     * changing anything, so the op funnel's prelude refuses an op while
+     * the count is above zero. A depth rather than a flag so a question
+     * asked inside another does not open the funnel when it returns.
+     *
+     * startInProgress is set for the duration of both start functions.
+     * A start publishes while the state is still lobby, and a subscriber
+     * that edits the roster from that publish re-enters
+     * serverSimLobbyCheckAllReady with every player still ready — which
+     * would start a second game on top of the one being set up. The
+     * detector returns at its first line while this is set. */
+    void                  *scenario;
+    const ScenarioPolicy  *scenarioPolicy;
+    uint8_t                inScenarioPolicy;
+    bool                   startInProgress;
+    void                 (*scenarioTick)(void *ctx);
+    void                  *scenarioTickCtx;
+
+    /* What is left of a fill-rect that did not fit in one tick, and how
+     * much of this tick's tile budget has been spent on one. The
+     * rectangle is walked row by row, so what the next tick needs is the
+     * column the rows start at, the two the walk ends on, and the square
+     * it stopped at — the top row is behind the cursor by then and is
+     * not kept. The op and serverSimScenarioDrainFill share the one
+     * budget, so a fill started by a hook and a remainder drained after
+     * it cannot together change more squares in a frame than the map
+     * event buffer holds. Only fill queues, so there is one of these
+     * rather than a list: a fill arriving while another is outstanding
+     * is refused rather than replacing it. */
+    bool                   scenarioFillPending;
+    BYTE                   scenarioFillX0;
+    BYTE                   scenarioFillX1, scenarioFillY1;
+    BYTE                   scenarioFillTerrain;
+    BYTE                   scenarioFillX, scenarioFillY;
+    uint16_t               scenarioFillSpent;
+
+    /* Roster changes a scenario has asked for and the sim has not made
+     * yet. Adding a bot builds a Lua VM and a ClientSim and removing one
+     * tears them down, which is more than a frame should do on demand, so
+     * both queue here and serverSimScenarioDrainRoster makes one of them a
+     * tick. Spawns and removals share the one queue so they land in the
+     * order they were asked for: a spawn into the seat a removal is about
+     * to free must not overtake it. A ring, so a drain costs no shuffle. */
+    ScnRosterQueueEntry    scenarioRoster[SCN_ROSTER_QUEUE_MAX];
+    uint8_t                scenarioRosterHead;   /* the next one to drain */
+    uint8_t                scenarioRosterCount;
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
@@ -636,6 +729,47 @@ struct ServerSim {
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
+
+/* Bracket every call through sim->scenarioPolicy with these. They set and
+ * clear inScenarioPolicy, which the op funnel's prelude reads: a policy
+ * callback answers a question and must not write back through the funnel
+ * while the engine is mid-operation. Declared here rather than on the
+ * scenario surface because the call sites are the sim's own, not the
+ * scenario's. */
+void serverSimScenarioPolicyEnter(ServerSim *sim);
+void serverSimScenarioPolicyLeave(ServerSim *sim);
+
+/* Carry a queued fill-rect forward by whatever is left of this tick's
+ * tile budget, then hand the budget back for the next tick. serverSimTick
+ * calls it once a frame beside the scenario hook, after it, so a fill the
+ * hook has just started and the remainder of an older one are paced out of
+ * the same budget. Declared here rather than on the scenario surface: the
+ * caller is the sim's own tick, not a scenario. */
+void serverSimScenarioDrainFill(ServerSim *sim);
+
+/* Forget an outstanding fill and hand its budget back. The rectangle names
+ * squares on the map the fill was issued against, so once a different map is
+ * installed under it — or the round it belongs to is over — those squares are
+ * other ground and finishing the fill would paint terrain nobody asked for.
+ * Called at the round boundaries in server_sim_round.c. Here rather than on
+ * the scenario surface for the same reason as the drain, and beside it so the
+ * one function knows every field the funnel keeps. */
+void serverSimScenarioResetFill(ServerSim *sim);
+
+/* Make one queued roster change. serverSimTick calls it once a running
+ * frame, beside the fill drain: a spawn builds a Lua VM and a ClientSim
+ * and a removal tears them down, so one a tick is the rate a script gets
+ * whatever it asks for. The world is re-checked as the change lands — a
+ * seat taken or freed since it was queued drops that entry rather than
+ * stalling the ones behind it. Declared here rather than on the scenario
+ * surface: the caller is the sim's own tick, not a scenario. */
+void serverSimScenarioDrainRoster(ServerSim *sim);
+
+/* Forget every queued roster change. The seats a queue names belong to the
+ * round it was filled in, so a round that ends takes its queue with it
+ * rather than spawning into the next one. Called at the game starts in
+ * server_sim_round.c, beside the fill reset. */
+void serverSimScenarioResetRoster(ServerSim *sim);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

@@ -360,13 +360,17 @@ int main(int argc, char *argv[]) {
    * kept only the first non-empty token ("+connect") and dropped the address,
    * so a cold-launch join silently fell through to the main menu. Detect the
    * pair here and convert it to a winbolo:// URL — the form gameFrontStart
-   * already routes to the UDP join dialog. */
+   * already routes to the UDP join dialog. Consume the address and keep
+   * going rather than leaving the loop: the switches below are ordinary
+   * command-line flags and have to be read whichever side of +connect they
+   * are written on. */
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "+connect") == 0 && i + 1 < argc) {
       snprintf(connectArg, sizeof(connectArg), "winbolo://%s", argv[i + 1]);
       cmdLine = connectArg;
       joinedViaSteam = TRUE;
-      break;
+      i++;
+      continue;
     }
     /* Brains run in the restricted Lua sandbox by default; this flag opens the
      * full standard library for users who trust the brain they're loading.
@@ -2163,7 +2167,10 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
-  sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
+  BYTE fullShells, fullMines, fullArmour, fullTrees;
+  clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
+  sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
+                         fullShells, fullMines, fullArmour, fullTrees);
   dwSysFrame += (SDL_GetTicks() - tick);
 }
 
@@ -2233,7 +2240,10 @@ void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
   DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
-  sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
+  BYTE fullShells, fullMines, fullArmour;
+  clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
+  sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
+                         fullShells, fullMines, fullArmour, FALSE);
   dwSysFrame += (SDL_GetTicks() - tick);
 }
 

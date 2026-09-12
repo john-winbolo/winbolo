@@ -74,6 +74,7 @@ add_library(bolo_static STATIC
     position_history.c
     round_stats_derive.c
     rubble.c
+    scenario_table.c
     screenbrainmap.c
     screenbullet.c
     screencalc.c
@@ -82,6 +83,8 @@ add_library(bolo_static STATIC
     scroll.c
     scroll_item_list.c
     shells.c
+    sight.c
+    sim_rules.c
     sounddist.c
     spectator_ring.c
     spectator_replay.c

@@ -27,10 +27,10 @@
     F(U8, owner) F(U8, armour) F(U8, shells) F(U8, mines)
 
 #define PILL_SNAPSHOT_FIELDS(F) \
-    F(U8, x) F(U8, y) F(U8, owner) F(U8, armourInTank)
+    F(U8, x) F(U8, y) F(U8, owner) F(U8, pillFlags) F(U8, armour)
 
 /* Presence-bitmask message. Field order is WIRE order (follows the packer), not
- * the struct declaration order: the 11-byte core first, then the omit-zero
+ * the struct declaration order: the 12-byte core first, then the omit-zero
  * groups keyed on their TANK_PRESENT_* bit. */
 #define TANK_SNAPSHOT_FIELDS(F, FMASK, FGROUP)               \
     F(U8, playerNum)                                         \
@@ -43,7 +43,7 @@
     FGROUP(TANK_PRESENT_OWNER_RES, U8, trees)                \
     FGROUP(TANK_PRESENT_OWNER_RES, U8, gunsightLen)          \
     FGROUP(TANK_PRESENT_RELOAD,    U8, reload)               \
-    FGROUP(TANK_PRESENT_DEATHWAIT, U8, deathWait)            \
+    FGROUP(TANK_PRESENT_DEATHWAIT, U16, deathWait)           \
     FGROUP(TANK_PRESENT_LGM, U8, lgmFrame)                   \
     FGROUP(TANK_PRESENT_LGM, U8, lgmMX)                      \
     FGROUP(TANK_PRESENT_LGM, U8, lgmMY)                      \
@@ -53,6 +53,12 @@
     FGROUP(TANK_PRESENT_TURNRAMP, U8, firstRight)            \
     FGROUP(TANK_PRESENT_PING,  U16, pingMs)                  \
     FGROUP(TANK_PRESENT_FLAGS, U8, clientFlags)              \
-    FGROUP(TANK_PRESENT_HIDDEN, U8, hiddenFlags)
+    FGROUP(TANK_PRESENT_HIDDEN, U8, hiddenFlags)             \
+    FGROUP(TANK_PRESENT_MODS, U8, modSpeed)                  \
+    FGROUP(TANK_PRESENT_MODS, U8, modAccel)                  \
+    FGROUP(TANK_PRESENT_MODS, U8, modTurn)                   \
+    FGROUP(TANK_PRESENT_MODS, U8, modReload)                 \
+    FGROUP(TANK_PRESENT_MODS, U8, modDealt)                  \
+    FGROUP(TANK_PRESENT_MODS, U8, modTaken)
 
 #endif /* WINBOLO_WIRE_MESSAGES_H */

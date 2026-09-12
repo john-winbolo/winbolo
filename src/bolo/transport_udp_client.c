@@ -1037,7 +1037,9 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
-    case CTRL_NEWSWIRE_MUTE:    return "NEWSWIRE_MUTE";
+    case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
+    case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
+    case CTRL_SIM_RULES:        return "SIM_RULES";
     default:                    return "<unknown>";
     }
 }
@@ -1201,7 +1203,7 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
                      evt->u.playerJoin.name);
         } else if (evt->type == CTRL_LOBBY_SETTINGS) {
             snprintf(extra, sizeof(extra),
-                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%04x]",
+                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%08x]",
                      evt->u.lobbySettings.mapName,
                      (int)evt->u.lobbySettings.lobbyGameType,
                      (int)evt->u.lobbySettings.lobbyHiddenMines,
@@ -2645,9 +2647,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
                 clientSimApplyControl(c->clientSim, &evt);
                 /* Lobby-chat join message is transport-side UI, gated on
-                 * not-self so the joiner doesn't announce themselves. */
+                 * not-self so the joiner doesn't announce themselves, and on
+                 * the announce policy's quiet byte the same way the in-process
+                 * arm in client_sim_control.c is. */
                 if (evt.u.playerJoin.playerNum != c->playerNum &&
-                    c->clientSim->inLobby) {
+                    c->clientSim->inLobby && evt.u.playerJoin.quiet == 0) {
                     char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
                     snprintf(joinMsg, sizeof(joinMsg), "%s has joined.",
                              evt.u.playerJoin.name);
@@ -2664,21 +2668,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * rendering at the wire boundary — display is the transport's
          * job, same precedent as the chat-rendering migration. */
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        ControlEvent evt;
+        bool decoded = false;
+        memset(&evt, 0, sizeof(evt));
         if (dec != NULL) {
-            ControlEvent evt;
             if (dec(buf + PACKET_HEADER_SIZE,
                     (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                decoded = true;
                 clientSimApplyControl(c->clientSim, &evt);
             }
         }
-        if (len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) {
-            uint8_t pNum = buf[PACKET_HEADER_SIZE];
-            char pName[PACKET_MAX_PLAYER_NAME];
-            memcpy(pName, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
-            pName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+        /* The chat line comes off the decoded event so it can read the
+         * announce policy's quiet byte; a packet the codec refused draws no
+         * line, as it applied no departure either. */
+        if (decoded && evt.u.playerLeave.quiet == 0) {
+            uint8_t pNum = evt.u.playerLeave.playerNum;
             if (pNum != c->playerNum && c->clientSim->inLobby) {
                 char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
-                snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", pName);
+                snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.",
+                         evt.u.playerLeave.name);
                 clientSimAppendLobbyChat(c->clientSim, "***", leaveMsg);
             }
         }
@@ -4517,6 +4525,21 @@ void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
      * input-packet trailer while playing, a standalone frame otherwise. */
     channelSendBestEffort(&c->channelMux, CHANNEL_VOICE, seg,
                           (uint16_t)segLen);
+}
+
+void transportUdpClientGetVoiceChannelStats(Transport *t, uint32_t *outSent,
+                                            uint32_t *outRingDropped,
+                                            uint32_t *outBudgetSkipped) {
+    TransportUdpClientCtx *c;
+
+    if (t == NULL || t->ctx == NULL) {
+        channelGetBestEffortStats(NULL, CHANNEL_VOICE, outSent, outRingDropped,
+                                  outBudgetSkipped);
+        return;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    channelGetBestEffortStats(&c->channelMux, CHANNEL_VOICE, outSent,
+                              outRingDropped, outBudgetSkipped);
 }
 
 int transportUdpClientReceiveVoice(Transport *t, uint8_t *fromPlayer,

@@ -79,6 +79,8 @@ extern bool  lv_gameViewIsHudAlive(BYTE slot);
 extern uint16_t lv_gameViewGetKills(BYTE slot);
 extern uint16_t lv_gameViewGetDeaths(BYTE slot);
 extern void  lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
+extern void  lv_gameViewGetTankFulls(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
+extern void  lv_gameViewGetBaseFulls(BYTE *shells, BYTE *mines, BYTE *armour);
 
 extern SDL_Window   *lv_drawGetSDLWindow(void);
 extern SDL_Renderer *lv_drawGetSDLRenderer(void);
@@ -99,8 +101,10 @@ extern tankAlliance lv_playersScreenAllience(BYTE playerNum);
 extern BYTE         lv_basesGetNumBases(bases *value);
 extern baseAlliance lv_basesGetAlliancePos(bases *value, BYTE x, BYTE y);
 extern void         lv_basesGetBase(bases *value, base *item, BYTE baseNum);
+extern bool         lv_basesIsActive(bases *value, BYTE baseNum);
 extern BYTE         lv_pillsGetNumPills(pillboxes *value);
 extern pillAlliance lv_pillsGetAllianceNum(pillboxes *value, BYTE pillNum);
+extern bool         lv_pillsIsActive(pillboxes *value, BYTE pillNum);
 
 extern int          lv_imgui_events_get_count(void);
 extern const char  *lv_imgui_events_get_text(int i);
@@ -774,7 +778,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   }
 
   /* Step 3 — tiles. */
-  mapViewDrawTiles(&ctx, view, mines,
+  mapViewDrawTiles(&ctx, view, mines, NULL,
                    originX, originY, tileW, tileH,
                    edgeX, edgeY);
 
@@ -826,6 +830,12 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     sdl3DrawSetBasesStatusClear();
     for (BYTE i = 1; i <= total; i++) {
       base item;
+      /* A base the recording has taken off the map keeps its number so the
+         numbers above it go on naming the same base; its panel slot stays
+         as the clear above left it. */
+      if (lv_basesIsActive(bs, i) == FALSE) {
+        continue;
+      }
       lv_basesGetBase(bs, &item, i);
       baseAlliance ba = lv_basesGetAlliancePos(bs, item.x, item.y);
       sdl3DrawStatusBase(i, ba, /* labels */ false);
@@ -838,6 +848,11 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     BYTE total = lv_pillsGetNumPills(pb);
     sdl3DrawSetPillsStatusClear();
     for (BYTE i = 1; i <= total; i++) {
+      /* Same as the bases above: a removed pillbox keeps its number and
+         draws nothing. */
+      if (lv_pillsIsActive(pb, i) == FALSE) {
+        continue;
+      }
       pillAlliance pa = lv_pillsGetAllianceNum(pb, i);
       sdl3DrawStatusPillbox(i, pa, /* labels */ false);
     }
@@ -862,8 +877,14 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     if (lv_gameViewIsHudAlive(camera)) {
       lv_gameViewGetInventory(camera, &shells, &mines, &armour, &trees);
     }
-    sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
-    sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0, FALSE);
+    BYTE fullShells, fullMines, fullArmour, fullTrees;
+    lv_gameViewGetTankFulls(&fullShells, &fullMines, &fullArmour, &fullTrees);
+    sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
+                           fullShells, fullMines, fullArmour, fullTrees);
+    BYTE baseFullShells, baseFullMines, baseFullArmour;
+    lv_gameViewGetBaseFulls(&baseFullShells, &baseFullMines, &baseFullArmour);
+    sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0,
+                           baseFullShells, baseFullMines, baseFullArmour, FALSE);
   }
 
   /* Step 11b — man-status circle. Mirrors live game's screen.c:4042-4051:

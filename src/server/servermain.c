@@ -631,9 +631,11 @@ void printArgs() {
   fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
-  fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees.\n");
-  fprintf(stderr, "                Locking pillview, baseview, allyview or alliesintrees\n");
-  fprintf(stderr, "                also locks classicmode, which writes those values.\n");
+  fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees,\n");
+  fprintf(stderr, "                overviewwindow, lineofsight.\n");
+  fprintf(stderr, "                Locking pillview, baseview, allyview, alliesintrees,\n");
+  fprintf(stderr, "                overviewwindow or lineofsight also locks classicmode,\n");
+  fprintf(stderr, "                which writes those values.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
@@ -642,9 +644,9 @@ void printArgs() {
   fprintf(stderr, "-specdelay <S> - Spectator view delay in seconds (default 90, 0 = live).\n");
 
   fprintf(stderr, "\nVisibility (what players see of pills, bases and allied tanks):\n");
-  fprintf(stderr, "-pillview <M> - Pillbox visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-pillview <M> - Pillbox visibility: always, key (default), decay, off\n");
   fprintf(stderr, "-baseview <M> - Base visibility: always, key, decay, off (default off)\n");
-  fprintf(stderr, "-allyview <M> - Allied tank visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-allyview <M> - Allied tank visibility: always, key, decay, off (default off)\n");
   fprintf(stderr, "-pillviewdecay <S> - Seconds a pill stays visible under \"decay\"\n");
   fprintf(stderr, "                (5-600, default 30)\n");
   fprintf(stderr, "-baseviewdecay <S> - Same for bases (5-600, default 30)\n");
@@ -655,9 +657,13 @@ void printArgs() {
   fprintf(stderr, "-alliesintrees- Allied tanks standing in trees are sent to their allies\n");
   fprintf(stderr, "                instead of being withheld (fog of war still applies).\n");
   fprintf(stderr, "                Off by default, and off under -classicmode.\n");
+  fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded, classic (default)\n");
+  fprintf(stderr, "-lineofsight  - Buildings and stands of trees block sight inside the live\n");
+  fprintf(stderr, "                block. Off by default, and off under -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
   fprintf(stderr, "                allyview off, overriding those three switches, turns\n");
-  fprintf(stderr, "                allies in trees off, and stops the lobby changing them.\n");
+  fprintf(stderr, "                allies in trees off, sets the overview window to classic\n");
+  fprintf(stderr, "                with line of sight off, and stops the lobby changing them.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -688,7 +694,8 @@ void printArgs() {
   fprintf(stderr, "                plays the same way for now.\n");
   fprintf(stderr, "-bot-init <spec> - Per-bot brain paths by player id: 'range=path[arg],...'\n");
   fprintf(stderr, "                where range is 'a-b' or 'n' and the optional [arg] becomes\n");
-  fprintf(stderr, "                that bot's BRAIN_INIT_ARG Lua global. Ids not listed use\n");
+  fprintf(stderr, "                that bot's BRAIN_INIT Lua table: ';'-separated key=value\n");
+  fprintf(stderr, "                pairs, a bare word being the value '1'. Ids not listed use\n");
   fprintf(stderr, "                -brain. E.g. -bot-init 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n");
   fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
   fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
@@ -1261,6 +1268,22 @@ static void serverSnapshotTick(ServerSim *sim) {
   serverEmitFinalJson(sim, optSnapJson, "snapshot", TRUE);
 }
 
+/* The lower-case word -pillview / -baseview / -allyview accept for a
+ * policy. Only used to tell the operator what an unrecognised word fell
+ * back to, so the message names the same value the parse below does
+ * rather than a second copy of it. */
+static const char *viewPolicyArgWord(ViewPolicy policy) {
+  return (policy == viewPolicyAlways) ? "always"
+       : (policy == viewPolicyKey)    ? "key"
+       : (policy == viewPolicyDecay)  ? "decay"
+                                      : "off";
+}
+
+/* Same for -overviewwindow. */
+static const char *overviewWindowArgWord(OverviewWindow window) {
+  return (window == overviewWindowClassic) ? "classic" : "expanded";
+}
+
 int main(int argc, char **argv) {
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   {
@@ -1682,7 +1705,7 @@ int main(int argc, char **argv) {
    * Valid names: gametype, ai, mines, timelimit, autolock, password,
    * ranked, openhost, map. Unknown names emit a warning and are
    * skipped (forward-compat for future locks). */
-  uint16_t serverLocks = 0;
+  uint32_t serverLocks = 0;
   {
     int argNum = findArg(argc, argv, "lock");
     if (argNum != ARG_NOT_FOUND) {
@@ -1719,24 +1742,27 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "allyview") == 0)  serverLocks |= LOBBY_LOCK_ALLY_VIEW;
         else if (strcmp(lo, "classicmode") == 0) serverLocks |= LOBBY_LOCK_CLASSIC_MODE;
         else if (strcmp(lo, "alliesintrees") == 0) serverLocks |= LOBBY_LOCK_ALLIES_IN_TREES;
+        else if (strcmp(lo, "overviewwindow") == 0) serverLocks |= LOBBY_LOCK_OVERVIEW_WINDOW;
+        else if (strcmp(lo, "lineofsight") == 0) serverLocks |= LOBBY_LOCK_LINE_OF_SIGHT;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
                   "openhost, map, pillview, baseview, allyview, "
-                  "classicmode, alliesintrees)\n", lo);
+                  "classicmode, alliesintrees, overviewwindow, "
+                  "lineofsight)\n", lo);
         }
       }
       /* Locking any visibility setting locks classicmode too, because
        * turning classic mode on writes those same values. The sim does
        * this for us; say so here so the operator isn't surprised by a
        * locked checkbox they never named. */
-      uint16_t implied = serverSimAddImpliedLocks(serverLocks);
+      uint32_t implied = serverSimAddImpliedLocks(serverLocks);
       if (implied != serverLocks) {
         fprintf(stderr,
                 "Note: -lock of pillview / baseview / allyview / "
-                "alliesintrees also locks classicmode, which writes "
-                "those values.\n");
+                "alliesintrees / overviewwindow / lineofsight also "
+                "locks classicmode, which writes those values.\n");
         serverLocks = implied;
       }
     }
@@ -1754,14 +1780,14 @@ int main(int argc, char **argv) {
       const char  *modeArg;
       const char  *decayArg;
       ViewCategory cat;
-      ViewPolicy   def;
+      ViewPolicy   stock;     /* meaning A in view_policy.h */
     } viewArgs[] = {
-      { "pillview", "pillviewdecay", viewCategoryPill, viewPolicyAlways },
-      { "baseview", "baseviewdecay", viewCategoryBase, viewPolicyOff    },
-      { "allyview", "allyviewdecay", viewCategoryAlly, viewPolicyAlways },
+      { "pillview", "pillviewdecay", viewCategoryPill, VIEW_POLICY_STOCK_PILL },
+      { "baseview", "baseviewdecay", viewCategoryBase, VIEW_POLICY_STOCK_BASE },
+      { "allyview", "allyviewdecay", viewCategoryAlly, VIEW_POLICY_STOCK_ALLY },
     };
     for (int vi = 0; vi < (int)(sizeof(viewArgs) / sizeof(viewArgs[0])); vi++) {
-      ViewPolicy policy = viewArgs[vi].def;
+      ViewPolicy policy = viewArgs[vi].stock;
       int secs = VIEW_DECAY_DEFAULT_SECS;
       int modeNum = findArg(argc, argv, viewArgs[vi].modeArg);
       if (modeNum != ARG_NOT_FOUND) {
@@ -1780,8 +1806,8 @@ int main(int argc, char **argv) {
         } else {
           fprintf(stderr, "Unknown -%s '%s'; using %s\n",
                   viewArgs[vi].modeArg, modeStr,
-                  viewArgs[vi].def == viewPolicyOff ? "off" : "always");
-          policy = viewArgs[vi].def;
+                  viewPolicyArgWord(viewArgs[vi].stock));
+          policy = viewArgs[vi].stock;
         }
       }
       int decayNum = findArg(argc, argv, viewArgs[vi].decayArg);
@@ -1808,6 +1834,38 @@ int main(int argc, char **argv) {
    * default is off. */
   if (argExist(argc, argv, "alliesintrees") == TRUE) {
     serverSimSetAlliesInTrees(serverSim, true);
+  }
+
+  /* -overviewwindow <M>: which block of squares the map overview keeps
+   * live. An unrecognised word warns and falls back to the stock
+   * window, the same as the three view switches. */
+  {
+    OverviewWindow window = OVERVIEW_WINDOW_STOCK;
+    int windowNum = findArg(argc, argv, "overviewwindow");
+    if (windowNum != ARG_NOT_FOUND) {
+      char modeStr[32];
+      strncpy(modeStr, (char *)argv[windowNum], sizeof(modeStr) - 1);
+      modeStr[sizeof(modeStr) - 1] = '\0';
+      strlower(modeStr);
+      if (strcmp(modeStr, "expanded") == 0) {
+        window = overviewWindowExpanded;
+      } else if (strcmp(modeStr, "classic") == 0) {
+        window = overviewWindowClassic;
+      } else {
+        fprintf(stderr, "Unknown -overviewwindow '%s'; using %s\n", modeStr,
+                overviewWindowArgWord(OVERVIEW_WINDOW_STOCK));
+        window = OVERVIEW_WINDOW_STOCK;
+      }
+    }
+    serverSimSetOverviewWindow(serverSim, (uint8_t)window);
+  }
+
+  /* -lineofsight: buildings and stands of trees block sight inside the
+   * live block. Applied before -classicmode so classic mode wins when
+   * both are on the same command line. Only set when the flag is
+   * present — the sim default is off. */
+  if (argExist(argc, argv, "lineofsight") == TRUE) {
+    serverSimSetLineOfSight(serverSim, (uint8_t)lineOfSightBuildingsAndTrees);
   }
 
   /* -classicmode: the classic Bolo view. Applied after the three view
@@ -2441,12 +2499,12 @@ int main(int argc, char **argv) {
         }
       }
       /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
-       * id defaults to the shared brainPath with no arg; the spec overrides the
-       * ids it names. Shared parser/semantics with BrainTest. */
+       * id defaults to the shared brainPath with an empty init table; the spec
+       * overrides the ids it names. Shared parser/semantics with BrainTest. */
       BotInitSlot botInit[MAX_TANKS];
       for (i = 0; i < MAX_TANKS; i++) {
         snprintf(botInit[i].path, sizeof(botInit[i].path), "%s", brainPath);
-        botInit[i].arg[0] = '\0';
+        scnTableClear(&botInit[i].init);
         botInit[i].covered = 0;
       }
       if (argExist(argc, argv, "bot-init") == TRUE) {
@@ -2495,20 +2553,25 @@ int main(int argc, char **argv) {
         bolo_rand_restore(&rngBeforeNaming);
       }
       for (i = 0; i < numBots; i++) {
-        /* Stage this bot's BRAIN_INIT_ARG (consumed by the create below) and
-         * use its resolved brain path. The name was pre-picked into botNames[i]
-         * above (under a bolo_rand save/restore so it stays off the sim PRNG). */
-        luaBrainsSetNextInitArg(botInit[i].arg);
+        /* This bot's init table and resolved brain path go down the create
+         * call, so each bot gets its own. The name was pre-picked into
+         * botNames[i] above (under a bolo_rand save/restore so it stays off
+         * the sim PRNG). */
         if (botInit[i].covered) {
+          char initText[256];
+          scnTableFormat(&botInit[i].init, initText, sizeof(initText));
           fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
-                  botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
+                  initText[0] ? " init=" : "", initText);
         }
         /* Mode and difficulty have to be in the slot's config BEFORE the
          * brain is created: botManagerAddBot reads them from there to build
          * the mode= / difficulty= tokens it appends to the staged arg. */
         serverSimSetBotConfig(serverSim, (BYTE)i, botMode, botDifficulty,
                               0 /* personality: normal */, NULL);
-        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game, hiddenMines)) {
+        /* No team in the add: -allybots and -teams place these bots through
+         * serverSimSetTeamBatch below, once the whole set is in. */
+        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game,
+                              hiddenMines, 0, &botInit[i].init)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round

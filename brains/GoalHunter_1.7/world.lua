@@ -438,18 +438,17 @@ function M.process_events(world, info, state)
       -- Informational; EVENT_BASE_UPDATE follows with full state.
 
     elseif ev.type == EVENT_PILL_UPDATE and d then
-      -- data: [pillIndex, x, y, owner, armourInTank] — only FIVE fields (see
-      -- input_packet.h). The 5th is a PACKED byte (pillbox.h): armour = low
-      -- nibble (b & 0x0F), inTank = bit 0x10. This previously read d[5] as raw
-      -- health and d[7] (which doesn't exist) as inTank, so a CARRIED pill came
-      -- back as health=16+ / in_tank=false and was misclassified as a deployed
-      -- "back" pill instead of a utility reserve. Decode the byte correctly.
+      -- data: [pillIndex, x, y, owner, pillFlags, armour] — six fields (see
+      -- input_packet.h). d[5] is the flags byte (pillbox.h): inTank is bit
+      -- 0x10, and bit 0x20 says the square in d[2]/d[3] is where the pill is
+      -- now rather than the last one we were given. d[6] is the armour, in a
+      -- byte of its own.
       local idx = d[1]
       if idx then
-        local packed     = d[5] or 0
-        local new_health = bit.band(packed, 0x0F)
+        local flags      = d[5] or 0
+        local new_health = d[6] or 0
         local owner_val  = d[4] or 0xFF
-        local in_tank    = (bit.band(packed, 0x10)) ~= 0
+        local in_tank    = (bit.band(flags, 0x10)) ~= 0
         -- Alliance-aware: the event carries the real owner player number AND
         -- the in_tank flag, so an ally's deployed pill becomes shared "friendly"
         -- while an ally's carried pill becomes "allied". owner_player is cached

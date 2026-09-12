@@ -46,6 +46,72 @@
  * is defined. */
 extern bool lobbyClientMayEdit(ServerSim *sim, int clientIdx);
 
+/* How many connected slots other than exceptSlot are on this team. There is
+ * no accessor for this — the nearest walk is the reservation pick in
+ * server_sim_players.c, which counts teammates for a different purpose — so
+ * the two team arms below share this one. Pass MAX_TANKS to exclude nobody.
+ * Bots count: a seat with a bot on it holds the team as much as a person's
+ * does. */
+static int lobbyTeamMemberCount(const ServerSim *sim, BYTE team,
+                                BYTE exceptSlot) {
+    int count = 0;
+    BYTE i;
+
+    if (team == 0 || team >= MAX_TANKS) {
+        return 0;
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == exceptSlot) continue;
+        if (!sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].teamNumber == team) count++;
+    }
+    return count;
+}
+
+/* Whether this slot may be put on this team. The policy is asked about
+ * extra teams — teams beyond the ones that exist — so it is asked only when
+ * the write is what brings the team into existence. Three writes create
+ * nothing and go through unasked:
+ *
+ *   - team 0, which is no team at all but where a slot goes to be
+ *     unassigned, and a number past the end, which both arms turn down on
+ *     their own;
+ *   - a re-send of the team the slot already holds, which moves nothing;
+ *   - a move onto a team another connected slot is already on.
+ *
+ * The moving slot is left out of the count because it is the one being
+ * placed: the question is whether the team it is going to exists without
+ * it. So the sole member of a team moving off it and onto an empty one is
+ * asked, even though the number of teams in play does not rise — the team
+ * it lands on is one the scenario did not lay out, which is what the
+ * pointer is there to refuse.
+ *
+ * With no policy, or one with no opinion, the answer is yes and both arms
+ * behave exactly as they did. The roster is not walked in that case. */
+static bool scenarioAllowsExtraTeams(ServerSim *sim, BYTE slot, BYTE team) {
+    const LobbyPlayer *lp;
+    bool allow;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->allowExtraTeams == NULL) {
+        return TRUE;
+    }
+    if (team == 0 || team >= MAX_TANKS) {
+        return TRUE;
+    }
+    lp = serverSimGetLobbyPlayer(sim, slot);
+    if (lp != NULL && lp->teamNumber == team) {
+        return TRUE;
+    }
+    if (lobbyTeamMemberCount(sim, team, slot) > 0) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->allowExtraTeams(sim->scenarioPolicy->ctx);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 /* The START_SIDE_* choice of a slot's team; a slot on team 0 has no side. */
 static BYTE lobbySlotStartSide(const ServerSim *sim, BYTE slot) {
     const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
@@ -81,6 +147,14 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             !lobbyClientMayEdit(sim, senderSlot)) {
             return CMD_REJECT_NOT_HOST;
         }
+        /* A scenario that has laid out its teams can refuse the lobby a new
+           one. Nothing has been written yet, so the move is turned down
+           outright and the sender hears it, the way this arm answers every
+           other refusal. */
+        if (!scenarioAllowsExtraTeams(sim, cmd->u.teamSet.slot,
+                                      cmd->u.teamSet.team)) {
+            return CMD_REJECT_INVALID;
+        }
         serverSimSetTeam(sim, cmd->u.teamSet.slot, cmd->u.teamSet.team);
         logAddEvent(log_TeamSet,
                     cmd->u.teamSet.slot, cmd->u.teamSet.team,
@@ -102,7 +176,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         if (idx != 0xFF && idx != START_CLAIM_TEAM_SIDE &&
-            (idx < 1 || idx > numStarts)) {
+            (idx < 1 || idx > numStarts ||
+             startsIsActive(&sim->sim.ss, idx) == FALSE)) {
             return CMD_REJECT_INVALID;
         }
         bool isHost = lobbyClientMayEdit(sim, senderSlot);
@@ -278,8 +353,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
         const CmdLobbySetting *p = &cmd->u.lobbySetting;
         if (p->valueLen > 32) return CMD_REJECT_INVALID;
-        uint16_t lockBit = serverSimGetSettingLockBit(p->settingType);
-        if (lockBit == 0xFFFFu) {
+        uint32_t lockBit = serverSimGetSettingLockBit(p->settingType);
+        if (lockBit == 0xFFFFFFFFu) {
             /* Unknown setting — silent forward-compat drop. */
             return CMD_OK;
         }
@@ -363,6 +438,19 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
          * Broadcasting it would tell the muted player they were muted. */
         return CMD_OK;
     }
+    case CMD_PLAYER_PING_MUTE: {
+        const CmdPlayerPingMute *p = &cmd->u.playerPingMute;
+        if (p->targetPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Muting yourself is meaningless — you always see your own ping. */
+        if ((int)p->targetPlayer == senderSlot) return CMD_REJECT_INVALID;
+        /* Sim-level state (unlike the voice mute, which lives in the UDP
+         * transport): serverSimPingReachesClient is a sim predicate and reads
+         * this mask, so the mask has to live where it can. No transport stub
+         * needed as a result. Private to the muting client, so no event. */
+        serverSimSetPingMute(sim, (BYTE)senderSlot, p->targetPlayer,
+                             p->muted != 0);
+        return CMD_OK;
+    }
     case CMD_VOICE_STATE: {
         const CmdVoiceState *p = &cmd->u.voiceState;
         GameSim *gs = serverSimGetGameSim(sim);
@@ -407,11 +495,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         switch (kind) {
         case VIEW_KIND_PILL:
             inRange = (sim->sim.pb != NULL &&
-                       target < pillsGetNumPills(&sim->sim.pb));
+                       target < pillsGetNumPills(&sim->sim.pb) &&
+                       pillsIsActive(&sim->sim.pb, (BYTE)(target + 1)));
             break;
         case VIEW_KIND_BASE:
             inRange = (sim->sim.bs != NULL &&
-                       target < basesGetNumBases(&sim->sim.bs));
+                       target < basesGetNumBases(&sim->sim.bs) &&
+                       basesIsActive(&sim->sim.bs, (BYTE)(target + 1)));
             break;
         case VIEW_KIND_ALLY:
             inRange = (target < MAX_TANKS && target != (uint8_t)senderSlot);
@@ -640,33 +730,41 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                 return CMD_REJECT_INVALID;
             }
         }
-        /* Slot pick goes through serverSimFindFreeSlot, which honors the
-         * effective player cap (operator -maxplayers), rather than
-         * scanning all MAX_TANKS: an unbounded scan let lobby bots fill
-         * seats past the cap the operator set. */
-        int freeSlot = serverSimFindFreeSlot(sim);
+        BYTE slot;
+        /* The one seat rule a bot has, shared with the scenario's spawn and
+           lobby-add arms: the first free seat below MAX_TANKS, outside the
+           human caps. */
+        int freeSlot = serverSimFindFreeSlot(sim, true);
         if (freeSlot < 0) {
-            fprintf(stderr, "ADD_BOT reject INVALID: no free slot under the "
-                    "player cap (%d)\n", (int)serverSimGetMaxPlayers(sim));
+            fprintf(stderr, "ADD_BOT reject INVALID: no free slot (all %d slots in use)\n", MAX_TANKS);
             return CMD_REJECT_INVALID;
         }
-        BYTE slot = (BYTE)freeSlot;
+        slot = (BYTE)freeSlot;
         char botName[64];
         if (haveName) {
             SDL_strlcpy(botName, validatedName, sizeof(botName));
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
+        /* A lobby Add Bot carries no configuration: NULL init, so the
+         * brain sees an empty BRAIN_INIT. The team stays out of the add
+         * and is written below, which is where this arm has always put
+         * it. */
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
-                              serverSimGetGameSim(sim)->hiddenMines)) {
+                              serverSimGetGameSim(sim)->hiddenMines, 0, NULL)) {
             fprintf(stderr, "ADD_BOT reject INVALID: botManagerAddBot failed (slot=%d name='%s' brain='%s')\n",
                     (int)slot, botName, serverSimGetBotBrainPath(sim));
             return CMD_REJECT_INVALID;
         }
         transportUdpServerSetBotName(slot, botName);
-        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS) {
+        /* The same question the team-set arm asks. The bot is already seated
+           by here, so unlike that arm the refusal cannot be a return code:
+           it is the team write, and the bot lands unassigned where the
+           roster shows it. */
+        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS &&
+            scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
             serverSimSetTeam(sim, slot, p->teamNumber);
         }
         /* The new bot's brain mode and difficulty (serverSimResolveNewBotConfig):
@@ -903,7 +1001,6 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         const CmdPing *p = &cmd->u.ping;
         BYTE slot = (BYTE)senderSlot;
         uint32_t now = sim->tick;
-        uint32_t oldest;
         if (serverSimGetState(sim) != serverStateRunning) {
             return CMD_REJECT_BAD_STATE;
         }
@@ -921,22 +1018,35 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             (p->worldY >> M_W_SHIFT_SIZE) >= MAP_ARRAY_SIZE) {
             return CMD_REJECT_INVALID;
         }
-        /* Rate limit: a minimum gap, and a burst cap on top of it. Both are
-         * measured in sim ticks, which only advance while the game runs — the
-         * only state this arm accepts. Both stores hold tick+1 so that 0 can
-         * mean "never", because tick 0 is itself a real tick. */
+        /* Rate limit: a minimum gap, and two nested sliding windows on top of
+         * it. All measured in sim ticks, which only advance while the game
+         * runs — the only state this arm accepts. Every store holds tick+1 so
+         * that 0 can mean "never", because tick 0 is itself a real tick. */
         if (sim->pingLastTick[slot] != 0 &&
             now + 1 - sim->pingLastTick[slot] < PING_RATE_MIN_GAP_TICKS) {
             return CMD_REJECT_COOLDOWN;
         }
-        oldest = sim->pingBurstTicks[slot][sim->pingBurstIdx[slot]];
-        if (oldest != 0 && now + 1 - oldest < PING_RATE_WINDOW_TICKS) {
-            return CMD_REJECT_COOLDOWN;
+        /* Count accepted pings still inside each window. The ring is small
+         * (PING_SPAM_RING == the 30s cap), so a linear pass per ping is cheap.
+         * A ping is refused when the ring already holds PING_SPAM_MAX_5S inside
+         * the 5s window, or PING_SPAM_MAX_30S inside the 30s window. */
+        {
+            int count5 = 0, count30 = 0, j;
+            for (j = 0; j < PING_SPAM_RING; j++) {
+                uint32_t stamp = sim->pingBurstTicks[slot][j];
+                uint32_t age;
+                if (stamp == 0) continue;
+                age = now + 1 - stamp;
+                if (age < PING_SPAM_WINDOW_30S_TICKS) count30++;
+                if (age < PING_SPAM_WINDOW_5S_TICKS)  count5++;
+            }
+            if (count5 >= PING_SPAM_MAX_5S)  return CMD_REJECT_COOLDOWN;
+            if (count30 >= PING_SPAM_MAX_30S) return CMD_REJECT_COOLDOWN;
         }
         sim->pingLastTick[slot] = now + 1;
         sim->pingBurstTicks[slot][sim->pingBurstIdx[slot]] = now + 1;
         sim->pingBurstIdx[slot] =
-            (uint8_t)((sim->pingBurstIdx[slot] + 1) % PING_RATE_BURST);
+            (uint8_t)((sim->pingBurstIdx[slot] + 1) % PING_SPAM_RING);
 
         {
             GameEvent ev;

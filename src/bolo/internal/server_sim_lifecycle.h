@@ -77,7 +77,7 @@ void serverSimSetOpenHost(ServerSim *sim, bool v);
  * settings. Publish-only: unlike serverSimSetOpenHost it does NOT
  * auto-unready players. */
 void serverSimSetHostSlot(ServerSim *sim, BYTE slot);
-void serverSimSetServerLocks(ServerSim *sim, uint16_t locks);
+void serverSimSetServerLocks(ServerSim *sim, uint32_t locks);
 void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
 void serverSimSetBotAiType(ServerSim *sim, aiType ai);
 void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v);

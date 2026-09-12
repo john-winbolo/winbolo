@@ -57,8 +57,18 @@
 /* How much audio each remote talker's output stream is kept topped up to.
  * The audio device drains it at real time, so this is the depth playback is
  * refilled to whenever it is looked at - deep enough that a late call still
- * finds audio to play, shallow enough not to add audible delay of its own. */
-#define VOICE_PLAYBACK_TARGET_FRAMES 2
+ * finds audio to play, shallow enough not to add audible delay of its own.
+ *
+ * The refill happens on the render loop, so the depth is really "how long a
+ * frame may take before the device runs dry": at two frames a stall past
+ * 40 ms left it with nothing to play, which is a hiccup the player hears and
+ * which no amount of network or codec work can help. Four costs 40 ms of
+ * delay and covers twice the stall. It is not a measured optimum — how long
+ * a machine stalls depends on that machine and on whatever else it is doing
+ * — it is a better default, and it is what the canceller below is told: the
+ * reference is handed the live queue depth, so a deeper queue adjusts its
+ * alignment rather than hiding from it. */
+#define VOICE_PLAYBACK_TARGET_FRAMES 4
 
 /* Frames queued per talker per call.  A caller that has been stalled long
  * enough for a talker to bank more than this leaves the excess in the jitter
@@ -508,8 +518,14 @@ bool voiceInit(void) {
 *ARGUMENTS:
 *  (none)
 *********************************************************/
+#if defined(WB_VOICEDEBUG)
+/* Defined with the rest of the diagnostic writers further down. */
+static void voiceStatsClose(void);
+#endif
+
 void voiceCleanup(void) {
 #if defined(WB_VOICEDEBUG)
+    voiceStatsClose();
     /* Closed here so a clean exit patches the WAV lengths. */
     voiceDebugStop();
 #endif
@@ -1641,6 +1657,310 @@ float voiceGetPlayerLevel(int player) {
 *ARGUMENTS:
 *  cs - the connected client
 *********************************************************/
+/* ── Voice diagnostics ───────────────────────────────────────────────
+ *
+ * Built only under WB_VOICEDEBUG, beside the capture-chain recorder. The
+ * counters these files report — the channel layer's best-effort drops and the
+ * server's per-slot refusals — are compiled in always and cost an increment;
+ * what is held back is the writing, because a shipping client must not put
+ * every conversation on the player's disk in the directory it was launched
+ * from. A build handed out for a diagnosis carries it and needs no switch
+ * from the person running it.
+ */
+#if defined(WB_VOICEDEBUG)
+
+/*
+ *
+ * Two CSVs in the working directory, written for the length of every run:
+ * voicestats-client.csv for what this client captured, encoded and queued,
+ * and voicestats-talkers.csv for what it played back from each talker.
+ *
+ * A voice fault is reported afterwards by someone who could not see it while
+ * it was happening. Between the encoder and the wire a frame can be dropped
+ * by a full best-effort ring or left behind by a frame with no budget for it,
+ * and neither shows up anywhere: the counters exist, nothing reads them.
+ * These files are what a run leaves behind so the next report has numbers
+ * against it. Flushed per row, so a client that is killed still leaves them. */
+#define VOICE_STAT_INC(x) ((x)++)
+
+static uint32_t statsCaptured;    /* whole frames off the capture device  */
+static uint32_t statsMicOpen;     /* of those, with the microphone open   */
+static uint32_t statsSending;     /* of those, while transmitting         */
+static uint32_t statsEncoded;     /* frames the encoder produced          */
+static uint32_t statsQueued;      /* frames handed to the transport       */
+static uint32_t statsTooLarge;    /* frames dropped for exceeding a segment */
+static FILE *statsClientFp;
+static FILE *statsTalkersFp;
+
+/* The audio beside the counters: voice-sent.wav is this client's own frames
+ * encoded and decoded back, voice-heard-<player>.wav is what came out of each
+ * talker's jitter buffer. Between them they are what the far end sounded like,
+ * which no counter can answer and which is the whole reason a listener is in
+ * the room at all.
+ *
+ * Only frames that actually moved are written — sent on one side, played on
+ * the other — so a file grows with talking rather than with wall-clock, and a
+ * quiet game leaves almost nothing.
+ *
+ * Written only when --voice-record was given, like the capture-chain
+ * recorder. The counters cost nobody anything, but these files hold what the
+ * other players said, and a build handed out for a diagnosis must not record
+ * them unless the person running it asked for that.
+ *
+ * Two things this must survive that the capture-chain recorder does not: the
+ * run ends when somebody closes the window however they like, and the person
+ * running it is not the person who wants the file. So the RIFF lengths are
+ * rewritten as it goes rather than at close, leaving a playable file at every
+ * moment, and each file stops at a size nobody has to think about before
+ * handing it over. */
+#define VOICE_STATS_PATH_MAX   512
+#define VOICE_WAV_HEADER_BYTES 44
+
+/* Put the file where --voice-record was pointed, so one run leaves one folder
+ * to collect. Without that switch the recorder never started and the working
+ * directory is all there is to go on. */
+static void voiceStatsPath(char *out, size_t outLen, const char *name) {
+    const char *dir = voiceDebugOutDir();
+
+    if (dir != NULL) {
+        snprintf(out, outLen, "%s/%s", dir, name);
+    } else {
+        snprintf(out, outLen, "%s", name);
+    }
+}
+
+/* 45 minutes of audio per file, which is far more speech than a game holds
+ * and still bounds what somebody is asked to send. */
+#define VOICE_WAV_MAX_SAMPLES  (45u * 60u * VOICE_SAMPLE_RATE)
+
+typedef struct {
+    FILE    *fp;
+    uint32_t samples;
+    bool     full;      /* hit the cap; header stays right, writing stops */
+} VoiceStatsWav;
+
+static VoiceStatsWav wavSent;
+static VoiceStatsWav wavHeard[MAX_TANKS];
+static VoiceDecoder *wavSentDecoder;
+
+static void putLe16At(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)(v & 0xFF);
+    p[1] = (uint8_t)((v >> 8) & 0xFF);
+}
+
+static void putLe32At(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v & 0xFF);
+    p[1] = (uint8_t)((v >> 8) & 0xFF);
+    p[2] = (uint8_t)((v >> 16) & 0xFF);
+    p[3] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+/* Rewrite the two length fields to match what has been written, then leave
+ * the handle at the end again. Called after every frame: a 44 byte seek and
+ * rewrite against a buffered stream costs nothing beside an Opus decode, and
+ * it is what makes a file killed mid-run still open. */
+static void voiceStatsWavSync(VoiceStatsWav *w) {
+    uint8_t field[4];
+    uint32_t dataBytes = w->samples * (uint32_t)sizeof(int16_t);
+
+    if (fseek(w->fp, 4, SEEK_SET) == 0) {
+        putLe32At(field, (VOICE_WAV_HEADER_BYTES - 8u) + dataBytes);
+        fwrite(field, 1, sizeof(field), w->fp);
+    }
+    if (fseek(w->fp, 40, SEEK_SET) == 0) {
+        putLe32At(field, dataBytes);
+        fwrite(field, 1, sizeof(field), w->fp);
+    }
+    fseek(w->fp, 0, SEEK_END);
+    fflush(w->fp);
+}
+
+static bool voiceStatsWavOpen(VoiceStatsWav *w, const char *name) {
+    uint8_t hdr[VOICE_WAV_HEADER_BYTES];
+    char path[VOICE_STATS_PATH_MAX];
+
+    voiceStatsPath(path, sizeof(path), name);
+    w->fp = fopen(path, "w+b");
+    w->samples = 0;
+    w->full = false;
+    if (w->fp == NULL) {
+        return false;
+    }
+    memset(hdr, 0, sizeof(hdr));
+    memcpy(hdr, "RIFF", 4);
+    putLe32At(hdr + 4, VOICE_WAV_HEADER_BYTES - 8u);
+    memcpy(hdr + 8, "WAVE", 4);
+    memcpy(hdr + 12, "fmt ", 4);
+    putLe32At(hdr + 16, 16);
+    putLe16At(hdr + 20, 1);                       /* PCM              */
+    putLe16At(hdr + 22, 1);                       /* mono             */
+    putLe32At(hdr + 24, VOICE_SAMPLE_RATE);
+    putLe32At(hdr + 28, VOICE_SAMPLE_RATE * 2u);  /* bytes per second */
+    putLe16At(hdr + 32, 2);                       /* bytes per frame  */
+    putLe16At(hdr + 34, 16);                      /* bits per sample  */
+    memcpy(hdr + 36, "data", 4);
+    putLe32At(hdr + 40, 0);
+    if (fwrite(hdr, 1, sizeof(hdr), w->fp) != sizeof(hdr)) {
+        fclose(w->fp);
+        w->fp = NULL;
+        return false;
+    }
+    return true;
+}
+
+static void voiceStatsWavWrite(VoiceStatsWav *w, const char *path,
+                               const int16_t *pcm) {
+    if (w->full || voiceDebugOutDir() == NULL) {
+        return;
+    }
+    if (w->fp == NULL && !voiceStatsWavOpen(w, path)) {
+        w->full = true;   /* will not open; stop trying rather than warn a
+                           * player about a file they did not ask for */
+        return;
+    }
+    if (fwrite(pcm, sizeof(int16_t), VOICE_FRAME_SAMPLES, w->fp) !=
+        VOICE_FRAME_SAMPLES) {
+        w->full = true;
+        return;
+    }
+    w->samples += VOICE_FRAME_SAMPLES;
+    voiceStatsWavSync(w);
+    if (w->samples >= VOICE_WAV_MAX_SAMPLES) {
+        w->full = true;
+    }
+}
+
+/* One frame this client just put on the wire, decoded back so the file holds
+ * what a listener's decoder would produce rather than Opus bytes. */
+static void voiceStatsRecordSent(const uint8_t *packet, int len) {
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+
+    if (packet == NULL || len <= 0 || voiceDebugOutDir() == NULL) {
+        return;   /* nothing asked for the file; skip the decode as well */
+    }
+    if (wavSentDecoder == NULL) {
+        wavSentDecoder = voiceDecoderCreate();
+        if (wavSentDecoder == NULL) {
+            return;
+        }
+    }
+    if (voiceDecoderDecode(wavSentDecoder, packet, len, pcm) < 0) {
+        return;
+    }
+    voiceStatsWavWrite(&wavSent, "voice-sent.wav", pcm);
+}
+
+/* A clean exit closes what it opened. The files are already valid without
+ * this — every frame rewrites the lengths — so it tidies rather than saves. */
+static void voiceStatsClose(void) {
+    int i;
+
+    if (wavSent.fp != NULL) {
+        fclose(wavSent.fp);
+        wavSent.fp = NULL;
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (wavHeard[i].fp != NULL) {
+            fclose(wavHeard[i].fp);
+            wavHeard[i].fp = NULL;
+        }
+    }
+    if (wavSentDecoder != NULL) {
+        voiceDecoderDestroy(wavSentDecoder);
+        wavSentDecoder = NULL;
+    }
+    if (statsClientFp != NULL) {
+        fclose(statsClientFp);
+        statsClientFp = NULL;
+    }
+    if (statsTalkersFp != NULL) {
+        fclose(statsTalkersFp);
+        statsTalkersFp = NULL;
+    }
+}
+
+/* One frame this client just played from a talker. */
+static void voiceStatsRecordHeard(int player, const int16_t *pcm) {
+    char path[64];
+
+    if (player < 0 || player >= MAX_TANKS) {
+        return;
+    }
+    snprintf(path, sizeof(path), "voice-heard-%d.wav", player);
+    voiceStatsWavWrite(&wavHeard[player], path, pcm);
+}
+
+/* Open one of the two files on first use and write its header. A file that
+ * will not open is reported once and left alone: a diagnostic must not take
+ * the client down with it. */
+static FILE *voiceStatsFile(FILE **slot, const char *name,
+                            const char *header) {
+    if (*slot == NULL) {
+        char path[VOICE_STATS_PATH_MAX];
+
+        voiceStatsPath(path, sizeof(path), name);
+        *slot = fopen(path, "w");
+        if (*slot == NULL) {
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                fprintf(stderr, "Voice stats: cannot write %s\n", name);
+                fflush(stderr);
+            }
+            return NULL;
+        }
+        fputs(header, *slot);
+    }
+    return *slot;
+}
+
+static bool voiceStatsTalkersDue(uint32_t nowMs) {
+    static uint32_t nextMs = 0;
+    if (nowMs < nextMs) {
+        return false;
+    }
+    nextMs = nowMs + 1000;
+    return true;
+}
+
+/* The send side, once a second. Cumulative, so two rows a minute apart
+ * answer "is it still happening" as well as a rate would. */
+static void voiceStatsWriteClient(struct ClientSim *cs) {
+    static uint32_t nextMs = 0;
+    uint32_t nowMs = voiceBackendNowMs();
+    uint32_t sent = 0, ringDropped = 0, budgetSkipped = 0;
+    FILE *fp;
+
+    if (nowMs < nextMs) {
+        return;
+    }
+    nextMs = nowMs + 1000;
+
+    fp = voiceStatsFile(&statsClientFp, "voicestats-client.csv",
+                        "ms,carriesVoice,selfMuted,captured,micOpen,sending,"
+                        "encoded,queued,tooLarge,wireSent,ringDropped,"
+                        "budgetSkipped\n");
+    if (fp == NULL) {
+        return;
+    }
+    clientSimNetGetVoiceChannelStats(cs, &sent, &ringDropped, &budgetSkipped);
+    fprintf(fp, "%u,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", nowMs,
+            connectionCarriesVoice ? 1 : 0, selfMuteRequested ? 1 : 0,
+            statsCaptured, statsMicOpen, statsSending, statsEncoded,
+            statsQueued, statsTooLarge, sent, ringDropped, budgetSkipped);
+    fflush(fp);
+}
+
+#else  /* !WB_VOICEDEBUG — the writing compiles out, the call sites stay put */
+
+#define VOICE_STAT_INC(x)            ((void)0)
+#define voiceStatsRecordSent(p, n)   ((void)0)
+#define voiceStatsRecordHeard(i, p)  ((void)0)
+#define voiceStatsWriteClient(cs)    ((void)0)
+#define voiceStatsClose()            ((void)0)
+
+#endif /* WB_VOICEDEBUG */
+
 static void voicePlayRemote(struct ClientSim *cs) {
     uint8_t packet[VOICE_MAX_PACKET];
     int16_t pcm[VOICE_FRAME_SAMPLES];
@@ -1696,9 +2016,11 @@ static void voicePlayRemote(struct ClientSim *cs) {
             if (!voiceSpeakerPop(speakers[i], pcm, popNowMs)) {
                 break;
             }
+            /* Before the output volume, so the file holds the decoded audio
+             * rather than this listener's volume setting — someone recording
+             * with their speakers down still hands over a usable file. */
+            voiceStatsRecordHeard(i, pcm);
 #if defined(WB_VOICEDEBUG)
-            /* Taken before the output volume, so the file holds the decoded
-             * audio rather than this listener's volume setting. */
             voiceDebugTap(VOICE_TAP_REMOTE, i, pcm);
 #endif
             applyOutputVolume(pcm, i);
@@ -1720,6 +2042,32 @@ static void voicePlayRemote(struct ClientSim *cs) {
     }
 
 #if defined(WB_VOICEDEBUG)
+    /* One row per active talker per second, beside the send-side file. What
+     * a listener stopped hearing is the other half of the question the send
+     * side asks. */
+    {
+        uint32_t nowMs = voiceBackendNowMs();
+        VoiceSpeakerStats stats;
+
+        if (voiceStatsTalkersDue(nowMs)) {
+            FILE *fp = voiceStatsFile(&statsTalkersFp, "voicestats-talkers.csv",
+                                      "ms,player,played,concealed,lateDropped,"
+                                      "evicted,queued\n");
+            if (fp != NULL) {
+                for (i = 0; i < MAX_TANKS; i++) {
+                    if (speakers[i] == NULL) {
+                        continue;
+                    }
+                    voiceSpeakerGetStats(speakers[i], &stats);
+                    fprintf(fp, "%u,%d,%u,%u,%u,%u,%d\n", nowMs, i,
+                            stats.played, stats.concealed, stats.lateDropped,
+                            stats.evicted, voiceBackendSpeakerQueuedFrames(i));
+                }
+                fflush(fp);
+            }
+        }
+    }
+
     /* The talker table is private to this file, so the recorder says when a
      * row is due and the walk happens here. */
     {
@@ -1904,6 +2252,11 @@ void voiceTick(struct ClientSim *cs) {
         return;
     }
 
+    /* Above every early return below. A client that has stopped wanting the
+     * microphone — the state a player describes as nobody being able to hear
+     * them — is exactly the one whose row has to keep appearing. */
+    voiceStatsWriteClient(cs);
+
     /* Before anything is played: a device that has just gone takes its
      * streams with it, and a talker's frames belong on the one that is open
      * now rather than on the one that went away. */
@@ -2004,6 +2357,7 @@ void voiceTick(struct ClientSim *cs) {
         if (got != VOICE_FRAME_SAMPLES) {
             break;
         }
+        VOICE_STAT_INC(statsCaptured);
 
 #if defined(WB_VOICEDEBUG)
         voiceDebugTap(VOICE_TAP_RAW, 0, pcm);
@@ -2082,6 +2436,8 @@ void voiceTick(struct ClientSim *cs) {
         }
 
         sending = voiceIsTransmitting();
+        if (gateOpen) VOICE_STAT_INC(statsMicOpen);
+        if (sending) VOICE_STAT_INC(statsSending);
 
         /* Transmission has just stopped, so tell the listeners the utterance
          * ended.  Without it they have nothing to separate a pause from a
@@ -2131,6 +2487,7 @@ void voiceTick(struct ClientSim *cs) {
 
         /* One encode feeds both consumers. */
         encodedLen = voiceEncoderEncode(encoder, pcm, packet, (int)sizeof(packet));
+        if (encodedLen > 0) VOICE_STAT_INC(statsEncoded);
         if (encodedLen <= 0) {
 #if defined(WB_VOICEDEBUG)
             /* Recorded before the frame is dropped: a frame that would not
@@ -2151,6 +2508,7 @@ void voiceTick(struct ClientSim *cs) {
             if (encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES) {
                 /* Too big for one segment.  Sending a piece of it would
                  * decode to noise, so drop the frame. */
+                VOICE_STAT_INC(statsTooLarge);
                 if (!warnedFrameTooLarge) {
                     fprintf(stderr,
                             "Voice error: %d byte frame exceeds the %d byte "
@@ -2161,6 +2519,8 @@ void voiceTick(struct ClientSim *cs) {
                 }
             } else {
                 clientSimNetSendVoice(cs, packet, encodedLen, 0);
+                VOICE_STAT_INC(statsQueued);
+                voiceStatsRecordSent(packet, encodedLen);
             }
         }
 

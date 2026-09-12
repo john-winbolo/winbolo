@@ -195,10 +195,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     memset(sim, 0, sizeof(ServerSim));
 
+    /* The classic gameplay numbers. A zeroed table would make every rule 0, so
+     * this runs before anything can read one. */
+    simRulesClassic(&sim->sim.rules);
+
     /* Sentinel value for "no batch start assigned" — memset gives 0, but 0
      * is a valid start index, so initialise explicitly. */
     for (count = 0; count < MAX_TANKS; count++) {
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
+        sim->sim.scenarioStartIdx[count] = MAX_STARTS;
     }
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below
@@ -293,15 +298,23 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->savedAllowNewPlayers = TRUE;
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
-    /* Visibility rules. Pills and allied tanks stay always-visible (the
-     * historical behaviour); bases start off. memset would give every
-     * category viewPolicyAlways and a zero decay, so set all three. */
-    sim->viewPolicy[viewCategoryPill] = viewPolicyAlways;
-    sim->viewPolicy[viewCategoryBase] = viewPolicyOff;
-    sim->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+    /* Visibility rules. A server nobody has configured runs the classic
+     * set: a pillbox shows only while the player is watching it, and
+     * bases and allied tanks show not at all. memset would give every
+     * category viewPolicyAlways and a zero decay, so set all three.
+     * This is the authority for meaning A in view_policy.h. */
+    sim->viewPolicy[viewCategoryPill] = VIEW_POLICY_STOCK_PILL;
+    sim->viewPolicy[viewCategoryBase] = VIEW_POLICY_STOCK_BASE;
+    sim->viewPolicy[viewCategoryAlly] = VIEW_POLICY_STOCK_ALLY;
     for (count = 0; count < VIEW_CATEGORY_COUNT; count++) {
         sim->viewDecaySecs[count] = VIEW_DECAY_DEFAULT_SECS;
     }
+    /* The map overview keeps the narrow window live, with nothing
+     * blocking sight inside it. Both are written out rather than left to
+     * the memset: LINE_OF_SIGHT_STOCK happens to be zero today, and a
+     * later change to it must not quietly stop applying here. */
+    sim->overviewWindow = (uint8_t)OVERVIEW_WINDOW_STOCK;
+    sim->lineOfSight    = (uint8_t)LINE_OF_SIGHT_STOCK;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
@@ -340,6 +353,28 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
+    /* The captures and the builder loss. Registered on the server alone, for
+     * the same reason the records above are: the event queue is here. */
+    sim->sim.callbacks.baseOwnerChanged = serverSimCbBaseOwnerChanged;
+    sim->sim.callbacks.pillOwnerChanged = serverSimCbPillOwnerChanged;
+    sim->sim.callbacks.lgmDied = serverSimCbLgmDied;
+    sim->sim.callbacks.tankSpawned = serverSimCbTankSpawned;
+    sim->sim.callbacks.lgmLanded = serverSimCbLgmLanded;
+    sim->sim.callbacks.pillPlaced = serverSimCbPillPlaced;
+    sim->sim.callbacks.pillKilled = serverSimCbPillKilled;
+    sim->sim.callbacks.built = serverSimCbBuilt;
+    sim->sim.callbacks.mineLaid = serverSimCbMineLaid;
+    sim->sim.callbacks.mineExploded = serverSimCbMineExploded;
+    /* The policy queries. Registered on the server alone: a ClientSim leaves
+     * them NULL, which is what keeps shared code on the classic branch
+     * there. */
+    sim->sim.callbacks.chooseStart = serverSimCbChooseStart;
+    sim->sim.callbacks.spawnLoadout = serverSimCbSpawnLoadout;
+    sim->sim.callbacks.canRespawn = serverSimCbCanRespawn;
+    sim->sim.callbacks.damageScale = serverSimCbDamageScale;
+    sim->sim.callbacks.canBuild = serverSimCbCanBuild;
+    sim->sim.callbacks.canCapture = serverSimCbCanCapture;
+    sim->sim.callbacks.canDie = serverSimCbCanDie;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -381,9 +416,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     {
         int i;
         for (i = 0; i < MAX_TANKS; i++) {
-            sim->sim.baseTimer[i] = 30000;
+            sim->sim.baseTimer[i] = BASE_TIMER_OFF;
         }
-        sim->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
+        sim->sim.baseTimer[0] = sim->sim.rules.base_regen_ticks;
     }
 
     /* Bind every slot's copy of the terrain to the map just created. The
@@ -418,6 +453,8 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         serverSimDestroy(sim);
         return NULL;
     }
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
 
     /* Hash the canonical BMAPBOLO file so WBN can match it on register. */
     serverSimCacheMapMd5FromFile(sim, mapFileName);
@@ -473,6 +510,8 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
         serverSimDestroy(sim);
         return NULL;
     }
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
 
     if (mapName != NULL && mapName[0] != '\0') {
         strncpy(sim->mapName, mapName, MAP_STR_SIZE - 1);
@@ -542,7 +581,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
         BYTE i;
         for (i = 0; i < sim->sim.pb->numPills; i++) {
             pillbox tmp = sim->sim.pb->item[i];
-            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+            pillsSetPill(&sim->sim, &sim->sim.pb, &tmp, (BYTE)(i + 1));
         }
         for (i = 0; i < sim->sim.bs->numBases; i++) {
             base tmp = sim->sim.bs->item[i];
@@ -553,6 +592,9 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
             startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
         }
     }
+    /* The generated map is this sim's too: cap what it put in the lists
+       against the rules, as a loaded one is capped. */
+    mapClampToRules(&sim->sim);
 
     basesClearMines(&sim->sim);
 

@@ -105,30 +105,30 @@ int run_lgm_request_valid(void) {
 
     /* A road order on forest is the game's substitution to a tree harvest,
      * so it is still a request that can go ahead. */
-    tankSetTrees(tnk, 0);
+    tankSetTrees(&sim->sim, tnk, 0);
     UT_ASSERT_MSG(lrv_ask(sim, LGM_ROAD_REQUEST, fx, fy),
                   "road order on forest (%u,%u) should be valid as a harvest",
                   fx, fy);
 
     /* Walls turn on the wood the tank is carrying. */
-    tankSetTrees(tnk, 0);
+    tankSetTrees(&sim->sim, tnk, 0);
     UT_ASSERT_MSG(!lrv_ask(sim, LGM_BUILDING_REQUEST, gx, gy),
                   "wall with no wood should be invalid");
-    tankSetTrees(tnk, LGM_COST_BUILDING);
+    tankSetTrees(&sim->sim, tnk, LGM_COST_BUILDING);
     UT_ASSERT_MSG(lrv_ask(sim, LGM_BUILDING_REQUEST, gx, gy),
                   "wall on grass (%u,%u) with wood should be valid", gx, gy);
 
     /* Mines turn on the mines the tank is carrying. */
-    tankSetMines(tnk, 0);
+    tankSetMines(&sim->sim, tnk, 0);
     UT_ASSERT_MSG(!lrv_ask(sim, LGM_MINE_REQUEST, gx, gy),
                   "mine order with no mines should be invalid");
-    tankSetMines(tnk, LGM_COST_MINE);
+    tankSetMines(&sim->sim, tnk, LGM_COST_MINE);
     UT_ASSERT_MSG(lrv_ask(sim, LGM_MINE_REQUEST, gx, gy),
                   "mine order on grass (%u,%u) with mines should be valid",
                   gx, gy);
 
     /* Nothing can be built on the tank's own square. */
-    tankSetTrees(tnk, LGM_COST_BUILDING * 4);
+    tankSetTrees(&sim->sim, tnk, LGM_COST_BUILDING * 4);
     {
         BYTE tx = tankGetMX(tnk);
         BYTE ty = tankGetMY(tnk);
@@ -190,8 +190,8 @@ int run_lgm_request_quiet(void) {
 
     /* Asking about an order the tank can afford must not spend the stores —
      * the answer has to stay the same however many times it is asked. */
-    tankSetTrees(tnk, LGM_COST_BUILDING);
-    tankSetMines(tnk, LGM_COST_MINE);
+    tankSetTrees(&sim->sim, tnk, LGM_COST_BUILDING);
+    tankSetMines(&sim->sim, tnk, LGM_COST_MINE);
     UT_ASSERT_MSG(lrv_ask(sim, LGM_BUILDING_REQUEST, gx, gy),
                   "wall with exactly enough wood should be valid");
     UT_ASSERT_MSG(tankGetTrees(tnk) == LGM_COST_BUILDING,

@@ -180,7 +180,7 @@ typedef struct {
     WORLD y;
     float fx;            /* float position accumulator — authoritative position */
     float fy;
-    float vx;            /* float velocity per tick (SHELL_SPEED * cos/sin) */
+    float vx;            /* float velocity per tick (shell_speed * cos/sin) */
     float vy;
     TURNTYPE angle;
     uint8_t length;
@@ -199,7 +199,7 @@ typedef struct {
 typedef struct {
     float fx;            /* float position accumulator (world units) */
     float fy;
-    float vx;            /* per-game-tick velocity (SHELL_SPEED * cos/sin) */
+    float vx;            /* per-game-tick velocity (shell_speed * cos/sin) */
     float vy;
     uint8_t angle;       /* snapshot angle (bradians 0-255), for render frame */
     uint8_t owner;
@@ -338,11 +338,13 @@ void clientSimReconcilePredictedShells(ClientSim *cs, uint32_t lastProcessedInpu
  * (20ms each), the unit the projection velocity steps in. Pure helper. */
 int  clientShellProjectAgeTicks(uint16_t pingMs);
 
-/* Pure projection: derive the per-tick velocity from angle+SHELL_SPEED and the
- * anchored float position snap + velocity*ageTicks. Unit-testable without a
- * ClientSim. */
+/* Pure projection: derive the per-tick velocity from angle+shellSpeed and the
+ * anchored float position snap + velocity*ageTicks. Takes the speed rather
+ * than reading a constant, so it stays unit-testable without a ClientSim
+ * while still following the sim's shell_speed. */
 void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
-                        int ageTicks, float *outFx, float *outFy,
+                        int ageTicks, int shellSpeed,
+                        float *outFx, float *outFy,
                         float *outVx, float *outVy);
 
 /* (Re)build the projected-shell array from the current serverShellSnaps,
@@ -775,6 +777,13 @@ const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
 int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
                       ClientPing *out, int maxOut);
 
+/* Reflect and persist (within the session) this client's per-player smart-ping
+ * mute — the state the players-menu toggle shows. Setting it only records the
+ * toggle; the caller sends CMD_PLAYER_PING_MUTE separately, and the server is
+ * the authority that actually stops delivering the muted player's pings. */
+void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted);
+bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player);
+
 /* The overview's fog memory: the tile every square carried the last time the
  * player could see it, plus the regions they can see right now. Maintained
  * every display tick. NULL when cs is NULL. */
@@ -793,6 +802,9 @@ ScrollState   *clientSimGetScroll(ClientSim *cs);
 InterpContext *clientSimGetInterpCtx(ClientSim *cs);
 screen        *clientSimGetView(ClientSim *cs);
 screenMines   *clientSimGetMineView(ClientSim *cs);
+/* The squares of the back buffer the player cannot see into. All false while
+ * buildings do not block sight. */
+screenHidden  *clientSimGetHiddenView(ClientSim *cs);
 
 /* Bundled viewport accessor — for bolo-internal callers (viewport.c,
  * screen.c, etc.) that want to operate on the whole ViewPort substruct
@@ -933,17 +945,20 @@ bool        clientSimGetLobbyAllowNewPlayers(const ClientSim *cs);
  * this the button would be visible but every click would be dropped
  * by the server's wbnRunning guard. Mirrored via CTRL_LOBBY_SETTINGS. */
 bool        clientSimGetLobbyWbnAvailable(const ClientSim *cs);
-uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
+uint32_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
 
 /* Server visibility rules (pillboxes / bases / allied tanks) as last
- * broadcast in the lobby-settings event. Raw mirror: both read back 0
- * (viewPolicyAlways / 0 seconds) until the first event arrives, and a
- * payload that predates the fields leaves them at 0 too. Out-of-range
- * categories read back the same zeros. */
+ * broadcast in the lobby-settings event. Raw mirror. Until the first event
+ * arrives the policies read back the set an unconfigured server starts on
+ * (Key for pillboxes, off for bases and allied tanks, matching serverSimInit)
+ * and the decays read back 0 seconds; a payload that predates the fields
+ * carries viewPolicyAlways and a zero decay for every category and is
+ * mirrored as it stands. Out-of-range categories read back viewPolicyAlways
+ * and 0. */
 ViewPolicy  clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat);
 uint16_t    clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat);
 
@@ -957,6 +972,17 @@ bool        clientSimGetClassicMode(const ClientSim *cs);
  * event arrives, and a payload that predates the field leaves it false
  * too — which matches the classic behaviour the option turns off. */
 bool        clientSimGetAlliesInTrees(const ClientSim *cs);
+
+/* What the server last asked the map overview for in the lobby-settings
+ * event: which block of squares it keeps live around the player's own tank
+ * (OverviewWindow), and what stops the player seeing inside that block
+ * (LineOfSightMode). The client honours both rather than choosing for
+ * itself, but the server keeps sending the same map data either way, so a
+ * modified client can ignore them and see what an honest one cannot. Both
+ * read back Expanded and off until the first event arrives, and a payload
+ * that predates the fields leaves them there too. */
+uint8_t     clientSimGetOverviewWindow(const ClientSim *cs);
+uint8_t     clientSimGetLineOfSight(const ClientSim *cs);
 
 /* What the server does with the voice its clients send it, as last broadcast
  * in the lobby-settings event. serverVoiceOff means voice sent from here is
@@ -1143,7 +1169,13 @@ void         clientSimStepView(ClientSim *cs, int horz, int vert);
 void         clientSimSyncViewState(ClientSim *cs);
 void         clientSimResetViewStateReport(ClientSim *cs);
 void         clientSimRecalc(ClientSim *cs);
-void         clientSimUpdateView(ClientSim *cs, updateType value);
+/* Refill the back buffer. sight is the mask of squares the player cannot see
+ * into, worked out by the caller and NULL for a view nothing blocks sight in;
+ * struct ViewSight is declared in the viewport's own header, so a caller that
+ * has no use for it never needs the definition. */
+struct ViewSight;
+void         clientSimUpdateView(ClientSim *cs, updateType value,
+                                 const struct ViewSight *sight);
 void         clientSimPanX(ClientSim *cs, int dxTiles);
 void         clientSimPanY(ClientSim *cs, int dyTiles);
 bool         clientSimTankIsDead(ClientSim *cs);
@@ -1156,6 +1188,25 @@ void         clientSimSetAutoScrollOverride(ClientSim *cs, bool value);
    int so GUI callers needn't include the internal scroll header. Process-global. */
 int          clientSimGetScrollMechanism(void);
 void         clientSimSetScrollMechanism(int mech);
+
+/* Whether the overview window in force (clientSimGetOverviewWindow) places the
+   block of live squares from the classic view, as against centring it on the
+   tank. It is the one thing a GUI caller has to know about the two windows
+   apart from their names: with the block on the classic view the scroll keys
+   are what drags it, so they go back to the classic scroll, and with the block
+   on the tank they move nothing and the map overview pans its own camera with
+   them instead. False for a NULL sim. */
+bool         clientSimOverviewWindowFollowsView(const ClientSim *cs);
+
+/* The centre of the block of live squares round the player's own tank, in map
+   squares and including the sub-square part, for a camera that has to follow
+   the block rather than the tank. That is the classic view's own centre, under
+   the window placed from that view. False — leaving the outputs alone — under
+   the window whose block is centred on the tank, where the tank position is
+   what to follow, and whenever there is no live tank view to read that centre
+   from. */
+bool         clientSimGetOverviewWindowCentreF(const ClientSim *cs, float *outX,
+                                               float *outY);
 
 /* My-tank helpers for clients that need the local tank's current map
  * tile (e.g. gamepad build cursor).  Return false when the local tank
@@ -1252,6 +1303,12 @@ BYTE    overviewSnapshotViewTarget(const OverviewSnapshot *s);
 /* The square an item view watches — clientSimGetPillViewX / Y at fill time. */
 void    overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
                                        int *mapY);
+/* The centre of the live block as clientSimGetOverviewWindowCentreF reported
+   it, at sub-square precision: false, with nothing written, where it declined
+   — the window that centres its block on the tank, and no live view to read a
+   centre from. A camera that follows the block falls back to the tank there. */
+bool    overviewSnapshotWindowCentre(const OverviewSnapshot *s, float *mapX,
+                                     float *mapY);
 /* Every pill and base at its square, with the number the classic view puts
    on it: the first the sim lists at that square, counted from 0. */
 int                      overviewSnapshotItemLabelCount(const OverviewSnapshot *s);
@@ -1322,6 +1379,30 @@ bool         clientSimGetStart(ClientSim *cs, BYTE i,
 
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+/* What a full tank holds on this sim: the four caps the stats above are
+   drawn against. A scenario can change any of them, so a bar that divides
+   by a literal 40 draws the wrong length the moment one does. This is the
+   frontend's only route to the rules — src/gui/ cannot see the sim. */
+void         clientSimGetTankFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+
+/* Whether this sim is running the classic game's numbers, every rule of
+   them, and which rule is the first that is not.
+   clientSimRulesFirstDifference answers with the index the scenario surface
+   names a rule by, or -1 when the whole table is classic.
+
+   Asked by code whose own numbers describe the classic game and which has
+   nothing sensible to do on a sim running anything else — the observation
+   writers, whose normalisation is a fixed scale a model was trained
+   against. This is their only route to the question: the table itself is
+   internal, and a caller outside src/bolo/ can reach the brain's view of it,
+   which carries part of the table and would call a sim classic on the
+   strength of the part it can see. */
+bool         clientSimRulesAreClassic(ClientSim *cs);
+int          clientSimRulesFirstDifference(ClientSim *cs);
+/* What a full base holds on this sim: the three caps the base status bars
+   are drawn against, reached the same way and for the same reason as the
+   tank's caps above. */
+void         clientSimGetBaseFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
 
 /*********************************************************

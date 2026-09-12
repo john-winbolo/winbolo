@@ -40,6 +40,7 @@
 #include "global.h"
 #include "brain.h"  /* For BrainInfo, aiType */
 #include "brain_lua_glue.h"  /* BrainPathfinder, BrainWorldSim, brainCore*, mlBrain* */
+#include "scenario_table.h"  /* ScnTable — a bot's init table */
 #include "brain_overlay.h"
 
 /* Forward declarations */
@@ -339,11 +340,17 @@ typedef struct {
 *  The instance is bound to the given ClientSim.
 *  Caller must hold any necessary locks.
 *  Returns true on success.
+*
+*  init is this bot's configuration, read into the
+*  BRAIN_INIT Lua global before the brain script runs. It
+*  belongs to this VM alone, so bots created one after
+*  another each see their own pairs. NULL means no pairs,
+*  and BRAIN_INIT is then an empty table.
 *********************************************************/
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
-                            int player_num);
+                            int player_num, const ScnTable *init);
 
 /*********************************************************
 *NAME:          luaBrainsSetRunScript
@@ -490,11 +497,16 @@ void luaBrainsSetNextStartEngineTick(unsigned int tick);
  * this one size, so a token that fits one fits the other. */
 #define BRAIN_INIT_ARG_MAX 128
 
-/* One resolved bot from a -bot-init spec. Indexed by player id. */
+/* One resolved bot from a -bot-init spec. Indexed by player id. The [..]
+ * suffix is kept twice on purpose: `init` is the parsed BRAIN_INIT table a
+ * scenario-aware host reads, `arg` is the same text unparsed, which is what
+ * the GoalHunter brains read as BRAIN_INIT_ARG and what bot_manager appends
+ * its mode= / difficulty= tokens to. */
 typedef struct {
-  char path[512];                  /* brain/init.lua path for this bot   */
-  char arg[BRAIN_INIT_ARG_MAX];    /* BRAIN_INIT_ARG text, or "" if none */
-  int  covered;                    /* 1 if a -bot-init entry named this id */
+  char     path[512];              /* brain/init.lua path for this bot   */
+  char     arg[BRAIN_INIT_ARG_MAX];/* BRAIN_INIT_ARG text, or "" if none */
+  ScnTable init;                   /* BRAIN_INIT pairs, empty if none    */
+  int      covered;                /* 1 if a -bot-init entry named this id */
 } BotInitSlot;
 
 /*********************************************************
@@ -508,14 +520,18 @@ typedef struct {
 *
 *  where <id-range> is "a-b" (inclusive) or a single "n",
 *  <path> is a literal brain/init.lua path, and the optional
-*  bracketed [<arg>] becomes that bot's BRAIN_INIT_ARG. E.g.
+*  bracketed [<arg>] becomes that bot's init table, through
+*  scnTableFromArgText: ';'-separated "key=value" pairs, a
+*  bare token being the value "1". E.g.
 *
 *     0-3=brains/GoalHunter_1.7/init.lua,4-5=brains/Foo/init.lua[llm]
 *
 *  The caller pre-fills `slots` for every id with the default
-*  brain path and an empty arg; this overwrites only the ids
+*  brain path and an empty table; this overwrites only the ids
 *  named in the spec and sets their `covered` flag. Commas
-*  separate entries, so paths must not contain commas.
+*  separate entries, so paths must not contain commas — which
+*  is why an [<arg>] with several pairs separates them with
+*  ';' (e.g. [ammoless;deprive=100]).
 *
 *  Returns true on a well-formed spec; on a malformed entry it
 *  logs to stderr and returns false (leaving slots partially

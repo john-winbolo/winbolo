@@ -377,6 +377,12 @@ every kind without its own file plays yours. Ship `ping_attack.wav` alone and
 only the Attack ping changes, with the rest still on the game's default. Each
 of the seven takes `_0` through `_9` variants like any other sound.
 
+Mix ping files to the level you want them heard at: the game plays them as
+authored, with no ping-specific gain, so a skin's ping is exactly as loud as its
+file. The two the game ships peak at about half scale, which keeps a ping under
+the shells and explosions it is heard against; a file mastered to full scale
+will shout over the fight.
+
 A file that will not decode, or an empty one, counts as no file: that kind falls
 back rather than pinging silently. The log line below says how many kinds ended
 up on the default.

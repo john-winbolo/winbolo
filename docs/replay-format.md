@@ -32,7 +32,7 @@ by the first `LOG_EVENT_SNAPSHOT` record.
 | Field | Size | Notes                                                           |
 |---|---|-----------------------------------------------------------------|
 | Magic | 8 | Literal `WBOLOMOV`                                              |
-| Version | 1 | `0`, `1`, or `2` (current)                                      |
+| Version | 1 | `0`, `1`, `2`, or `3` (current)                                 |
 | Map name | 1 + N | Length byte + UTF-8 name                                        |
 | Game type | 1 | From `gameTypeGet()`                                            |
 | Allow hidden mines | 1 | Boolean                                                         |
@@ -61,8 +61,8 @@ opcode (`src/bolo/public/log.h`):
 
 ## Events
 
-Events live inside `LOG_EVENT` / `LOG_EVENT_LONG` blocks. In the current
-format (V2) each event is framed as:
+Events live inside `LOG_EVENT` / `LOG_EVENT_LONG` blocks. From V2 on each
+event is framed as:
 
 ```
 [type:u8][payload_len:u16 big-endian][payload:payload_len bytes]
@@ -86,12 +86,20 @@ Selected event types (see the `logitem` enum for the complete list):
 | 21 | `log_ChangeName` | player + Pascal name |
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |
-| 27–30 | `log_Pill*` | pillbox owner / health / placement / in-tank |
+| 27 | `log_PillSetOwner` | pillbox owner |
+| 28 | `log_PillSetHealth` | Version-dependent. V3: pillbox index, then its armour — one byte each. V2 and earlier: one byte holding the index in the high nibble and the armour in the low. A reader must take the length from the file's version byte; reading two bytes from a V2 file eats the next event's type code |
+| 29–30 | `log_PillSetPlace`, `log_PillSetInTank` | pillbox placement / in-tank |
 | 31 | `log_SaveMap` | the host saved the map mid-game |
 | 32–33 | `log_LostMan`, `log_KillPlayer` | man lost / player killed |
 | 53 | `log_GameSettings` | Pascal-form blob of every lobby setting (below) |
 | 54 | `log_Ping` | Smart ping: sender, kind, world x/y (below) |
 | 55 | `log_TankSetStock` | Tank stocks: player, shells, mines, armour, trees (below) |
+| 56 | `log_TankSetModifiers` | Per-tank modifiers: `player:u8`, then a Pascal blob of six bytes: speed, acceleration, turn, reload, damage dealt, damage taken, each a percent with 0 meaning classic. A reader consumes the blob by its length byte and applies it only when the length is 6 |
+| 57 | `log_EntityChange` | One pillbox, base or start joined the map or left it (below) |
+| 58 | `log_EntityMasks` | Which pillboxes, bases and starts are on the map (below) |
+| 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
+| 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `ticks:i32` big-endian |
+| 61 | `log_RuleSet` | One simulation rule a scenario changed (below) |
 
 ### `log_GameSettings` payload
 
@@ -108,15 +116,28 @@ and skips the rest by the framed length.
 | 5–6 | Ally view decay | Big-endian seconds; same condition |
 | 7 | Game type | `gameType` — 1 open, 2 tournament, 3 strict |
 | 8 | AI policy | `aiType` — 0 `aiNone`, 1 `aiYes`, 2 `aiYesAdvantage`, 3 `aiFull` |
-| 9 | Flags | bit0 hidden mines, bit1 time limit on, bit2 auto-lock on game start, bit3 ranked, bit4 password set, bit5 allow new players |
+| 9 | Flags | bit0 hidden mines, bit1 time limit on, bit2 auto-lock on game start, bit3 ranked, bit4 password set, bit5 allow new players, bit6 overview window is classic, bit7 line of sight is not off |
 | 10–11 | Time minutes | Big-endian; meaningless when the time-limit bit is clear |
-| 12–13 | Lobby locks | Big-endian `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`) — which settings the host was allowed to change |
+| 12–13 | Lobby locks | Big-endian — the **low 16 bits** of the `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`), which settings the host was allowed to change |
 
 Bit 4 of the flags says only that a password is set; the password itself is
-never recorded. The event is written by `src/server/server_dedicated_log.c` when
-the lobby opens, when the round starts, and when a lobby edit changes any of
-these values, so a recording seeked to the middle needs the earlier events to
-know the current settings.
+never recorded.
+
+The flags byte is **full**. Bits 6 and 7 are one bit each because the overview
+window and the line-of-sight mode have two values apiece today
+(`OverviewWindow` and `LineOfSightMode` in `src/bolo/public/view_policy.h`); a
+third value in either setting, or any new flag, needs the blob to grow rather
+than another bit in this byte.
+
+The lock mask is a **16-bit truncation**: `sim->serverLocks` is a `uint32_t` and
+the blob writes only its low two bytes. `LOBBY_LOCK_LINE_OF_SIGHT` (`1u << 15`)
+is the last bit that fits. Whoever defines lock 17 must grow the blob at the same
+time, or that lock will silently read as clear in every recording.
+
+The event is written by `src/server/server_dedicated_log.c` when the lobby opens,
+when the round starts, and when a lobby edit changes any of these values, so a
+recording seeked to the middle needs the earlier events to know the current
+settings.
 
 ### `log_Ping` payload
 
@@ -157,6 +178,111 @@ last record written for that tank — so a tank whose stocks are unchanged costs
 nothing, and there is at most one record per tank per tick. A recording written
 before this event existed carries none; the reader then has only what the
 snapshot player blocks give it.
+
+### `log_EntityChange` payload
+
+The map's pillbox, base and start lists are mutable mid-round. Three header
+bytes and then the item's map record as a Pascal form — a 1-byte length
+followed by that many binary bytes, which may contain `0x00`:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Kind | 0 pillbox, 1 base, 2 start (`ENTITY_KIND_*`, `src/bolo/public/control_event.h`) |
+| 1 | Index | The item's number in its list, counting from 0 |
+| 2 | On the map | 1 the item has joined the map, 0 it has left it |
+| 3 | Record length | 6 for a pillbox or a base, 3 for a start |
+| 4.. | Record | The item's map data, below |
+
+The record for a pillbox is x, y, owner, armour, speed, in-tank; for a base
+x, y, owner, armour, shells, mines; for a start x, y, direction. A pillbox's
+reload, cool-down and just-seen and a base's refuel time, base time and
+just-stopped are the server's per-tick working state and are not in the
+record — nothing rebuilds them from a recording.
+
+A removal is a tombstone: the item's number and the list's count stay, so
+every number above the removed one goes on meaning the same item, and the
+record the removal carries is the one the item had as it went — enough for a
+script or a reader to put it back. An add names the number the server's list
+chose, which is the lowest removed slot or, failing that, one past the end;
+the count rises to cover a number past it and the slots the gap opens up are
+off the map.
+
+The snapshot's pill, base and start blocks carry a count and a record each
+and have nowhere to say which of them are on the map, so a reader keeps its
+own flags across a snapshot: a number it already had keeps the flag these
+records gave it, a number the blob has grown past the old count arrives on
+the map, and a number the blob no longer reaches is off it. The flags a
+snapshot cannot state come from the `log_EntityMasks` record after it. The
+same event travels live as `CTRL_ENTITY_CHANGE`, carrying the identical
+record.
+
+### `log_EntityMasks` payload
+
+Which indices are on the map. Six bytes, no Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0–1 | Pillbox mask | Big-endian; bit i set means pillbox index i, counting from 0, is on the map |
+| 2–3 | Base mask | Big-endian; same meaning for bases |
+| 4–5 | Start mask | Big-endian; same meaning for starts |
+
+Each list holds at most 16 items, so 16 bits covers every index a list can
+name. A bit at or above a list's own count names no item and is ignored.
+These are the same three masks `CTRL_ENTITY_SYNC` carries to a live client,
+and the writer builds both from one function.
+
+Written immediately after every snapshot, including the one a recording opens
+with, as a one-event `LOG_EVENT` block. A snapshot restates every record and
+every count but has nowhere to put the live flags, so without this a reader
+starting at a snapshot — a fresh open, or a scrub back to one — would put
+every item back on the map and keep it there. The record applies the flags and
+nothing else: the counts and the records are the ones the snapshot installed,
+and an index taken off the map keeps its record, so an index put back holds
+the item it always held.
+
+It is **not** written when every index within every count is on the map. That
+is what loading a map produces and what a reader's own load assumes, so a
+round that never takes an item off the map carries none of these records and
+its bytes are unchanged.
+
+### `log_RuleSet` payload
+
+One number in the simulation's rules table — the per-simulation table of
+gameplay values in `src/bolo/internal/sim_rules.h` — after a scenario changed
+it. Two header bytes, then the value as a Pascal form: a 1-byte length
+followed by that many binary bytes, which may contain `0x00`:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0–1 | Rule | Big-endian; the field's index in the table, counting from 0 in the order `SimRules` declares its fields (`ScnRuleIndex`, `src/bolo/scenario_api/scenario_defs.h`) |
+| 2 | Value length | Always 8 |
+| 3–10 | Value | Big-endian IEEE-754 binary64 of the value the field ended up holding |
+
+The value is written as a double rather than as a scaled integer because the
+table holds both kinds of field: most are `int32_t` and sixteen are `float`,
+and one fixed width has to carry either. A double is exact for an `int32_t`
+field across its whole range and for every value a `float` field can hold, so
+the record states the number the rule actually took rather than a rounded
+copy of it. The eight bytes are the double's bit pattern serialised most
+significant first, so a host's own byte order does not reach the file.
+
+The rules control event on the wire (`CTRL_SIM_RULES`) makes the same choice
+for the same reason, in four bytes rather than eight: a float rule travels as
+its own IEEE-754 bit pattern, most significant byte first, not as a
+fixed-point scaling of it. Scaling a float rule would round it — an
+acceleration allowed down to 0.01 comes back as 0.0117 at a ×256 scale, which
+is not the number the server is simulating with.
+
+The record carries the value **after** the write, not the value the scenario
+asked for: a script that asks an integer rule for `3.7` leaves the field
+holding `3`, and `3` is what a reader sees. A rule the scenario asked for and
+was refused writes no record at all, because a refused change leaves the
+table exactly as it was.
+
+Written by the scenario funnel's set-rule arm
+(`src/server/sim/server_sim_scenario.c`). The viewer consumes the record to
+keep its place in the stream and does not yet show it; showing a rule needs
+the recording's rules manifest, which states the table a round opened with.
 
 ## Snapshot body
 
@@ -221,18 +347,27 @@ no stocks reads as zero rather than as a guess.
 |---|---|
 | V0 (`0`) | Player-join events carry raw IP octets. Body XOR-encrypted. |
 | V1 (`1`) | Join events carry country code + account flags (WBN / Steam / bot) instead of IP. Body XOR-encrypted. |
-| V2 (`2`, current) | Plaintext; events gain the `[type][u16 len][payload]` framing. Payload shapes unchanged from V1. |
+| V2 (`2`) | Plaintext; events gain the `[type][u16 len][payload]` framing. Payload shapes unchanged from V1. |
+| V3 (`3`, current) | `log_PillSetHealth` carries the pillbox index and its armour in a byte each, where V2 and earlier packed the pair into one byte's nibbles. Every other payload, and the framing, unchanged from V2. |
+
+V3 exists because that one record changed shape without changing its name: a
+reader that takes two bytes from a V2 file reads the next event's type code as
+the armour and loses the stream from there, and nothing in a V2 file says which
+shape it holds. So the version byte says it instead, and a reader sizes the
+record by the version the file states rather than by the writer it was built
+alongside. The widening it follows is the pillbox armour's own: armour moved out
+of a shared nibble and can now hold more than 15.
 
 In V0/V1 the event stream is XOR-encrypted: the key starts at
 `gmeCreateTime & 0xFF` and, after each event block, advances to the type code of
-the last event processed. Snapshot opcodes and bodies are never XOR'd. V2 uses
-no encryption (`blockKey = 0`). The Log Viewer reads all three versions.
+the last event processed. Snapshot opcodes and bodies are never XOR'd. V2 and V3
+use no encryption (`blockKey = 0`). The Log Viewer reads all four versions.
 
 ## Playback sequence
 
 1. Open the ZIP, locate `log.dat`, begin DEFLATE decompression.
 2. Read and verify the `WBOLOMOV` magic, then the version byte.
-3. Read the header fields; seed the XOR key (0 for V2).
+3. Read the header fields; seed the XOR key (0 for V2 and V3).
 4. Read the first `LOG_EVENT_SNAPSHOT` and reconstruct the initial world.
 5. Loop on opcodes — `LOG_QUIT` stops; `LOG_NOEVENTS` / `LOG_NOEVENTS_LONG`
    advance ticks; `LOG_EVENT` / `LOG_EVENT_LONG` parse and apply events;

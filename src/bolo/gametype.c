@@ -90,15 +90,25 @@ void gameTypeGetItems(GameSim *sim, gameType *gmeType, BYTE *shellsAmount, BYTE 
   double percent; /* Percent of free bases */
   BYTE numBases;  /* Number of bases on the map */
 
-  *armour = TANK_FULL_ARMOUR;
+  *armour = (BYTE) sim->rules.tank_full_armour;
   switch (*gmeType) {
   case gameOpen:
-    *shellsAmount = TANK_FULL_SHELLS;
-    *mines = TANK_FULL_MINES;
-    *trees = TANK_FULL_TREES;
+    *shellsAmount = (BYTE) sim->rules.tank_full_shells;
+    *mines = (BYTE) sim->rules.tank_full_mines;
+    *trees = (BYTE) sim->rules.tank_full_trees;
     break;
   case gameTournament:
-    numBases = basesGetNumBases(&sim->bs);
+    /* Live bases only: a removed base is not on the map, so counting its slot
+       would dilute the neutral share the shell allowance is drawn from. */
+    numBases = 0;
+    {
+      BYTE bi;
+      for (bi = 0; bi < basesGetNumBases(&sim->bs); bi++) {
+        if (basesIsActive(&sim->bs, (BYTE)(bi + 1))) {
+          numBases++;
+        }
+      }
+    }
     if (numBases == 0) {
       numBases = 1;
     }

@@ -101,6 +101,12 @@ bool voiceDebugStart(const char *dir);
 void voiceDebugStop(void);
 bool voiceDebugIsRecording(void);
 
+/* The directory --voice-record named, or NULL when the recorder was never
+ * started. The stats writers share it so one run leaves one folder to
+ * collect rather than scattering half its output into the working
+ * directory. */
+const char *voiceDebugOutDir(void);
+
 /* player is ignored except for VOICE_TAP_REMOTE, where it selects the file.
  * pcm is VOICE_FRAME_SAMPLES mono S16. */
 void voiceDebugTap(VoiceTap tap, int player, const int16_t *pcm);

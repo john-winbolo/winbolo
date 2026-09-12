@@ -42,6 +42,7 @@
 #include "screenlgm.h"
 #include "frontend.h"
 #include "interpolation.h"
+#include "sight.h"         /* sightBuildMask — which squares the tank can see */
 #include "util.h"
 
 /* Returns TRUE iff the proposed view origin (newXOff, newYOff) leaves
@@ -136,6 +137,126 @@ static void manScrollLog(const char *dir, ClientSim *cs) {
   gManScrollEntries++;
 }
 
+/* What the view can see from the square it is looking out of, over the whole
+ * back buffer, in the form the view substitutes from. Returns NULL - and
+ * builds nothing - while nothing blocks sight, while there is nowhere to look
+ * from, or with no memory of what was seen to fall back on; the view then
+ * draws every square exactly as it has always drawn it.
+ *
+ * An item view looks out of the pillbox, base or allied tank it is watching
+ * rather than out of the tank: the window it draws is that item's, and a wall
+ * in front of the tank says nothing about what the item can see. The map
+ * overview masks each of its blocks the same way, so the two pictures of the
+ * same watched item agree.
+ *
+ * out and vis belong to the caller and have to outlive the returned pointer.
+ * vis is filled as all seen first, so a block sightBuildMask refuses reads as
+ * nothing hidden rather than as everything hidden. */
+static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
+                                               BYTE *vis) {
+  BYTE mx; /* The square the view is looked out of */
+  BYTE my;
+
+  if (clientSimGetLineOfSight(csPtr) == (uint8_t)lineOfSightOff) {
+    return NULL;
+  }
+  if (clientSimIsInItemView(csPtr) == TRUE) {
+    mx = clientSimGetPillViewX(csPtr);
+    my = clientSimGetPillViewY(csPtr);
+  } else if (clientSimGetMyTankMapPos(csPtr, &mx, &my) == FALSE) {
+    return NULL;
+  }
+  memset(out, 0, sizeof(*out));
+  out->memory = clientSimGetOverviewMap(csPtr);
+  if (out->memory == NULL) {
+    return NULL;
+  }
+  out->block.left = (int)clientSimGetXOffset(csPtr);
+  out->block.top = (int)clientSimGetYOffset(csPtr);
+  out->block.right = out->block.left + MAIN_BACK_BUFFER_SIZE_X - 1;
+  out->block.bottom = out->block.top + MAIN_BACK_BUFFER_SIZE_Y - 1;
+  memset(vis, 1, SIGHT_MASK_BYTES);
+  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, &out->block, vis);
+  out->vis = vis;
+  return out;
+}
+
+/* Whether a back-buffer square is one the player cannot see into. A square off
+ * the buffer reads as seen, so nothing is dropped for a square that is not on
+ * screen anyway. */
+static bool clientRenderSquareHidden(const screenHidden *hidden, BYTE x,
+                                     BYTE y) {
+  if (hidden == NULL || *hidden == NULL) {
+    return FALSE;
+  }
+  if (x >= MAIN_BACK_BUFFER_SIZE_X || y >= MAIN_BACK_BUFFER_SIZE_Y) {
+    return FALSE;
+  }
+  return (*hidden)->hiddenItem[x][y];
+}
+
+/* Drops every tank standing on a square out of sight, the local player's own
+ * excepted: it stands on a square it can always see, and its reticle must not
+ * blink out if that ever stops being true. The list is an array with a count,
+ * so the ones kept are moved down over the ones dropped. */
+static void clientRenderDropHiddenTanks(screenTanks *tks,
+                                        const screenHidden *hidden,
+                                        BYTE myPlayerNum) {
+  BYTE kept; /* How many have been written back so far */
+  BYTE i;    /* Looping variable */
+
+  kept = 0;
+  for (i = 0; i < tks->numTanksScreen; i++) {
+    if (tks->pos[i].playerNum != myPlayerNum &&
+        clientRenderSquareHidden(hidden, tks->pos[i].mx, tks->pos[i].my) ==
+            TRUE) {
+      continue;
+    }
+    if (kept != i) {
+      tks->pos[kept] = tks->pos[i];
+    }
+    kept++;
+  }
+  tks->numTanksScreen = kept;
+}
+
+/* The same for the men, which are a linked list: each one dropped is unlinked
+ * and freed the way the list's own destroy frees it. */
+static void clientRenderDropHiddenLgms(screenLgm *lgms,
+                                       const screenHidden *hidden) {
+  screenLgm *link; /* Where the entry being looked at is linked from */
+  screenLgm q;     /* That entry */
+
+  link = lgms;
+  while (NonEmpty(*link)) {
+    q = *link;
+    if (clientRenderSquareHidden(hidden, q->mx, q->my) == TRUE) {
+      *link = q->next;
+      Dispose(q);
+    } else {
+      link = &q->next;
+    }
+  }
+}
+
+/* And the shells, on the same kind of list. */
+static void clientRenderDropHiddenShells(screenBullets *sBullets,
+                                         const screenHidden *hidden) {
+  screenBullets *link; /* Where the entry being looked at is linked from */
+  screenBullets q;     /* That entry */
+
+  link = sBullets;
+  while (NonEmpty(*link)) {
+    q = *link;
+    if (clientRenderSquareHidden(hidden, q->mx, q->my) == TRUE) {
+      *link = q->next;
+      Dispose(q);
+    } else {
+      link = &q->next;
+    }
+  }
+}
+
 /*********************************************************
 *NAME:          clientRenderFrame
 *AUTHOR:        John Morrison
@@ -181,8 +302,12 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     return;
   }
   if (clientSimIsNeedScreenReCalc(csPtr) == TRUE) {
+    ViewSight sight;                  /* What the tank can see from where it is */
+    BYTE sightMask[SIGHT_MASK_BYTES]; /* One byte a square of the back buffer */
+
     clientSimSetNeedScreenReCalc(csPtr, FALSE);
-    clientSimUpdateView(csPtr, (updateType) 0);
+    clientSimUpdateView(csPtr, (updateType) 0,
+                        clientRenderBuildSight(csPtr, &sight, sightMask));
   }
 
   b = TRUE;
@@ -304,7 +429,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
       WORLD gsrx, gsry;
       float gsra;
       clientSimGetRenderedTankPos(csPtr, &gsrx, &gsry, &gsra);
-      tankGetGunsightAt(&MY_TANK(csPtr), gsrx, gsry, gsra, &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
+      tankGetGunsightAt(clientSimGetGameSim(csPtr), &MY_TANK(csPtr), gsrx, gsry, gsra, &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
       gs.mapX = gsX;
 
       if (gs.mapX >= clientSimGetXOffset(csPtr) && gs.mapX < (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1) && gs.mapY >= clientSimGetYOffset(csPtr) && gs.mapY < (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y -1 )) {
@@ -324,6 +449,16 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
                             (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1),
                             clientSimGetXOffset(csPtr),
                             clientSimGetYOffset(csPtr));
+    /* Nothing moving is drawn on a square the player cannot see into. The view
+     * fill above decided which squares those are; with sight off none of them
+     * is, and the three lists go through untouched. */
+    if (clientSimGetLineOfSight(csPtr) != (uint8_t)lineOfSightOff) {
+      const screenHidden *hidden = clientSimGetHiddenView(csPtr);
+      clientRenderDropHiddenTanks(&scnTnk, hidden,
+                                  clientSimGetMyPlayerNum(csPtr));
+      clientRenderDropHiddenLgms(&lgms, hidden);
+      clientRenderDropHiddenShells(&sBullets, hidden);
+    }
     explosionsCalcScreenBullets(&clientSimGetGameSim(csPtr)->expl, &sBullets, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
     tkExplosionCalcScreenBullets(&clientSimGetGameSim(csPtr)->tankExplosions, &sBullets, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
     frontEndDrawMainScreen(csPtr, clientSimGetView(csPtr), clientSimGetMineView(csPtr), &scnTnk, &gs, &sBullets, &lgms, clientSimGetGmeStartDelay(csPtr), clientSimIsInItemView(csPtr), 0, 0);

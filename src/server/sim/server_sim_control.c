@@ -50,12 +50,33 @@ bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
     if (sim == NULL) return false;
     if (recipient >= MAX_TANKS || sender >= MAX_TANKS) return false;
     if (recipient == sender) return true;
+    /* The recipient has muted this sender's pings. Checked after the own-copy
+     * short-circuit above, so a player always sees their own ping even while
+     * others have muted them, and before the team/ally rules below so a muted
+     * teammate is dropped exactly as a muted voice/chat line is. A player
+     * cannot mute itself (the dispatch arm rejects it), so this never fires on
+     * recipient == sender in any case. */
+    if ((sim->pingMuteMask[recipient] & ((PlayerBitMap)1u << sender)) != 0) {
+        return false;
+    }
     if (playersIsAllie(&sim->sim.plyrs, recipient, sender)) return true;
     sLp = serverSimGetLobbyPlayer(sim, sender);
     rLp = serverSimGetLobbyPlayer(sim, recipient);
     if (sLp == NULL || rLp == NULL) return false;
     if (sLp->teamNumber == 0) return false;
     return sLp->teamNumber == rLp->teamNumber;
+}
+
+void serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,
+                          bool muted) {
+    if (sim == NULL || muterSlot >= MAX_TANKS || targetPlayer >= MAX_TANKS) {
+        return;
+    }
+    if (muted) {
+        sim->pingMuteMask[muterSlot] |= (PlayerBitMap)1u << targetPlayer;
+    } else {
+        sim->pingMuteMask[muterSlot] &= ~((PlayerBitMap)1u << targetPlayer);
+    }
 }
 
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
@@ -82,9 +103,12 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
             r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
             r.target = (event->type == EVENT_PILL_CAPTURED)
                            ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
-            r.targetIndex = d[3];   /* pill/base array index (server-internal, past wire size) */
-            r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
-            r.mapX = d[4]; r.mapY = d[5];   /* pill/base map cell, stashed at emit */
+            r.targetIndex = d[2];   /* 0-based pill/base array index; on the wire */
+            r.newOwner = d[0]; r.prevOwner = d[1];
+            /* d[3] is the quiet byte. The class and the square are past the
+               wire size, stashed at emit for this funnel alone. */
+            r.captureClass = d[4];
+            r.mapX = d[5]; r.mapY = d[6];
             serverSimTrackAppend(sim, &r, sizeof r);
             roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
                                   &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
@@ -94,7 +118,8 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
             AttrLgmRecord r;
             r.type = ATTR_REC_LGM; r.tick = sim->tick;
             r.victim = d[0]; r.killer = d[1];
-            r.mapX = d[2]; r.mapY = d[3];   /* LGM map cell, stashed at emit */
+            /* d[2] is the quiet byte; the cell sits behind it. */
+            r.mapX = d[3]; r.mapY = d[4];   /* LGM map cell, stashed at emit */
             serverSimTrackAppend(sim, &r, sizeof r);
             roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
                                   &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
@@ -106,6 +131,42 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     if (sim->eventCount < MAX_SNAPSHOT_EVENTS) {
         sim->events[sim->eventCount] = *event;
         sim->eventCount++;
+    }
+
+    /* The in-process game-event channel, the counterpart of the control
+     * fan-out in serverSimPublishControl. A subscriber hears the event
+     * whether or not the frame buffer had room for it above: the buffer is
+     * what the snapshot stream sends to a remote client, and a full one is a
+     * wire-side drop rather than a fact that did not happen.
+     *
+     * Nothing to do for the common case of a sim with no such subscriber, so
+     * that case returns before the slot scan: this runs for every sound,
+     * shell and per-tick update the engine raises.
+     *
+     * Walked off a snapshot of the active list, as the control fan-out is, so
+     * a callback that registers or unregisters cannot corrupt the walk. And
+     * guarded as the control fan-out is: this runs inside shared-code
+     * mutation with the state half-written, so a subscriber that raises an
+     * event or publishes a control event from here is a design error, and
+     * the assert says so in Debug. A subscriber that wants to act on an event
+     * queues it and acts later, which is what the scenario host does. */
+    if (sim->numEventSubscribers > 0) {
+        ControlSubscriber snapshot[SUBSCRIBER_SLOT_COUNT];
+        int snapCount = 0;
+        int i;
+
+        assert(!sim->publishingEvent);
+        for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+            if (sim->subscribers[i].deliver != NULL &&
+                sim->subscribers[i].deliverEvent != NULL) {
+                snapshot[snapCount++] = sim->subscribers[i];
+            }
+        }
+        sim->publishingEvent = true;
+        for (i = 0; i < snapCount; i++) {
+            snapshot[i].deliverEvent(snapshot[i].ctx, event);
+        }
+        sim->publishingEvent = false;
     }
 }
 
@@ -227,6 +288,8 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
     evt->u.lobbySettings.lobbyAlliesInTrees = sim->alliesInTrees;
     evt->u.lobbySettings.voiceMode = sim->voiceMode;
+    evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
+    evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -278,6 +341,12 @@ void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         }
     }
     evt->u.playerJoin.numAllies = numAllies;
+    /* Asked here rather than at the publishes, because both of them — the
+       live announce in server_sim_players.c and the sync replay below — go
+       through this filler, and a wave of bots a script silenced must stay
+       silent for a client that joins in the middle of it. */
+    evt->u.playerJoin.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_JOINED, i, i) ? 0 : 1;
 }
 
 void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -289,6 +358,8 @@ void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
     evt->u.playerLeave.country[0] = sim->sim.plyrs->item[i].location[0];
     evt->u.playerLeave.country[1] = sim->sim.plyrs->item[i].location[1];
     evt->u.playerLeave.country[2] = '\0';
+    evt->u.playerLeave.quiet =
+        serverSimAnnounce(sim, ANNOUNCE_KIND_LEFT, i, i) ? 0 : 1;
 }
 
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, ControlEvent *evt) {
@@ -388,6 +459,71 @@ void serverSimFillMapSkipStateEvent(const ServerSim *sim,
     }
 }
 
+/* Fill a CTRL_ENTITY_SYNC event from the live pill, base and start lists:
+ * bit i of a mask is set when index i holds an item that is on the map.
+ * Returns false with *evt untouched when every index of every list is on
+ * the map — installing a compressed map marks exactly that, so there would
+ * be nothing in the event a recipient did not already have. */
+bool serverSimFillEntitySyncEvent(ServerSim *sim, ControlEvent *evt) {
+    uint16_t pills  = 0;
+    uint16_t bases  = 0;
+    uint16_t starts = 0;
+    uint16_t allPills, allBases, allStarts;
+    BYTE nPills, nBases, nStarts;
+    BYTE i;
+
+    if (sim == NULL || evt == NULL) return false;
+
+    nPills  = sim->sim.pb != NULL ? pillsGetNumPills(&sim->sim.pb)   : 0;
+    nBases  = sim->sim.bs != NULL ? basesGetNumBases(&sim->sim.bs)   : 0;
+    nStarts = sim->sim.ss != NULL ? startsGetNumStarts(&sim->sim.ss) : 0;
+
+    for (i = 1; i <= nPills; i++) {
+        if (pillsIsActive(&sim->sim.pb, i)) pills |= (uint16_t)(1u << (i - 1));
+    }
+    for (i = 1; i <= nBases; i++) {
+        if (basesIsActive(&sim->sim.bs, i)) bases |= (uint16_t)(1u << (i - 1));
+    }
+    for (i = 1; i <= nStarts; i++) {
+        if (startsIsActive(&sim->sim.ss, i)) starts |= (uint16_t)(1u << (i - 1));
+    }
+
+    /* Every index within a count set — what the install produces. */
+    allPills  = (uint16_t)((1u << nPills)  - 1u);
+    allBases  = (uint16_t)((1u << nBases)  - 1u);
+    allStarts = (uint16_t)((1u << nStarts) - 1u);
+    if (pills == allPills && bases == allBases && starts == allStarts) {
+        return false;
+    }
+
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_ENTITY_SYNC;
+    evt->u.entitySync.pills  = pills;
+    evt->u.entitySync.bases  = bases;
+    evt->u.entitySync.starts = starts;
+    return true;
+}
+
+/* Fill a CTRL_SIM_RULES from the table this sim is running on. One
+ * assignment per carried rule, generated from the same lists the codec is
+ * written from, so a rule that travels on the wire cannot be one this
+ * forgets to read out of the table. */
+void serverSimFillSimRulesEvent(const ServerSim *sim, ControlEvent *evt) {
+    if (sim == NULL || evt == NULL) return;
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SIM_RULES;
+#define SIM_RULES_FILL_FIELD(name) evt->u.simRules.name = sim->sim.rules.name;
+    CTRL_SIM_RULES_ALL_FIELDS(SIM_RULES_FILL_FIELD)
+#undef SIM_RULES_FILL_FIELD
+}
+
+void serverSimPublishSimRules(ServerSim *sim) {
+    ControlEvent evt;
+    if (sim == NULL) return;
+    serverSimFillSimRulesEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
 /* Wrapper used to enforce the documented sync ordering:
  *   a CTRL_GAME_PHASE_* event first; CTRL_PLAYER_JOIN events last
  *   (a regression that reorders sync would silently mis-initialize a
@@ -468,6 +604,14 @@ static void serverSimSyncSubscriber(
 
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
+    deliver(ctx, &evt);
+
+    /* The gameplay numbers this sim is running on. A joiner's own table
+     * starts classic, and the round it is joining may not be on the classic
+     * one — a scenario can have changed a rule before it arrived. Replayed
+     * here so it starts the round reading what the server simulates with
+     * rather than finding out at the first rule change after it joined. */
+    serverSimFillSimRulesEvent(sim, &evt);
     deliver(ctx, &evt);
 
     /* BrainList (~900 bytes) is only used by the lobby AiConfig combobox.
@@ -578,6 +722,19 @@ static void serverSimSyncSubscriber(
     if (sim->lobbyEnabled && sim->state == serverStateLobby
         && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
         serverSimFillMapSkipStateEvent(sim, &evt);
+        deliver(ctx, &evt);
+    }
+
+    /* Which items are on the map. An in-process subscriber installs the
+     * compressed map before it registers, so this replay lands on top of
+     * that install and its holes stick. A wire client's map arrives later,
+     * on the bulk channel, and its install would wipe these holes — the
+     * copy that settles it there is the one the transfer-completion send
+     * makes. Nothing is emitted while every item is on the map, which is
+     * every round that runs no entity op. Placed ahead of the player-join
+     * roster: the ordering check refuses a non-join event after the first
+     * join. */
+    if (serverSimFillEntitySyncEvent(sim, &evt)) {
         deliver(ctx, &evt);
     }
 
@@ -778,12 +935,48 @@ SubscriberHandle serverSimRegisterSubscriber(
      * invokes serverSimRegisterSubscriber. */
     serverSimSyncSubscriber(sim, deliver, ctx);
 
-    sim->subscribers[slot].deliver    = deliver;
-    sim->subscribers[slot].ctx        = ctx;
-    sim->subscribers[slot].generation = sim->subscriberGen[slot];
+    sim->subscribers[slot].deliver      = deliver;
+    /* Control events only until the caller asks for the second channel. */
+    sim->subscribers[slot].deliverEvent = NULL;
+    sim->subscribers[slot].ctx          = ctx;
+    sim->subscribers[slot].generation   = sim->subscriberGen[slot];
     sim->numSubscribers++;
 
     return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
+}
+
+bool serverSimSetSubscriberEventDeliver(
+    ServerSim *sim,
+    SubscriberHandle h,
+    void (*deliverEvent)(void *, const GameEvent *)) {
+    int slot;
+    uint16_t gen;
+
+    if (sim == NULL || h == SUBSCRIBER_HANDLE_INVALID) {
+        return false;
+    }
+    slot = SUBSCRIBER_HANDLE_SLOT(h);
+    gen  = SUBSCRIBER_HANDLE_GEN(h);
+    if (slot < 0 || slot >= SUBSCRIBER_SLOT_COUNT) {
+        return false;
+    }
+    /* The same slot-and-generation test unregister makes, so a handle left
+     * over from a subscriber that has gone writes nothing to the slot that
+     * replaced it. */
+    if (sim->subscribers[slot].deliver == NULL ||
+        sim->subscribers[slot].generation != gen) {
+        return false;
+    }
+    /* Keep the count of slots with a channel, so serverSimAddEvent can skip
+       its scan when nobody is listening. */
+    if (sim->subscribers[slot].deliverEvent == NULL && deliverEvent != NULL) {
+        sim->numEventSubscribers++;
+    } else if (sim->subscribers[slot].deliverEvent != NULL &&
+               deliverEvent == NULL && sim->numEventSubscribers > 0) {
+        sim->numEventSubscribers--;
+    }
+    sim->subscribers[slot].deliverEvent = deliverEvent;
+    return true;
 }
 
 static void serverSimDeliverToClientSim(void *ctx, const struct ControlEvent *evt) {
@@ -850,9 +1043,14 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
         sim->subscribers[slot].generation != gen) {
         return;
     }
-    sim->subscribers[slot].deliver    = NULL;
-    sim->subscribers[slot].ctx        = NULL;
-    sim->subscribers[slot].generation = 0;
+    if (sim->subscribers[slot].deliverEvent != NULL &&
+        sim->numEventSubscribers > 0) {
+        sim->numEventSubscribers--;
+    }
+    sim->subscribers[slot].deliver      = NULL;
+    sim->subscribers[slot].deliverEvent = NULL;
+    sim->subscribers[slot].ctx          = NULL;
+    sim->subscribers[slot].generation   = 0;
     if (sim->numSubscribers > 0) {
         sim->numSubscribers--;
     }
@@ -879,8 +1077,10 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
     }
 
     /* Reentrancy guard: a deliver callback that triggers another publish
-     * is a design error. */
+     * is a design error, on either channel — a game-event subscriber that
+     * publishes a control event from its deliver is the same mistake. */
     assert(!sim->publishing);
+    assert(!sim->publishingEvent);
 
     /* Server is not a subscriber: double-mutating sim itself would corrupt
      * already-applied state. */
@@ -916,7 +1116,7 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
                      evt->u.playerJoin.name);
         } else if (evt->type == CTRL_LOBBY_SETTINGS) {
             snprintf(extra, sizeof(extra),
-                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%04x]",
+                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%08x]",
                      evt->u.lobbySettings.mapName,
                      (int)evt->u.lobbySettings.lobbyGameType,
                      (int)evt->u.lobbySettings.lobbyHiddenMines,

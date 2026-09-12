@@ -1514,19 +1514,19 @@
 #define STR_DLGLOBBY_BOTCFG_CURRENTLY       1847
 
 /* Middle bot difficulty (wire value 1; Easy / Hard reuse 1337 / 1339). */
-#define STR_DLGLOBBY_BOTCFG_MEDIUM          2154
+#define STR_DLGLOBBY_BOTCFG_MEDIUM          2164
 
 /* Bot difficulty blurbs: tagline (leading token coloured) + description. */
-#define STR_BOT_DIFF_TAG_EASY               2155
-#define STR_BOT_DIFF_TAG_MEDIUM             2156
-#define STR_BOT_DIFF_TAG_HARD               2157
-#define STR_BOT_DIFF_DESC_EASY              2158
-#define STR_BOT_DIFF_DESC_MEDIUM            2159
-#define STR_BOT_DIFF_DESC_HARD              2160
+#define STR_BOT_DIFF_TAG_EASY               2165
+#define STR_BOT_DIFF_TAG_MEDIUM             2166
+#define STR_BOT_DIFF_TAG_HARD               2167
+#define STR_BOT_DIFF_DESC_EASY              2168
+#define STR_BOT_DIFF_DESC_MEDIUM            2169
+#define STR_BOT_DIFF_DESC_HARD              2170
 
 /* Bot AiConfig: the Mode dropdown's label. The mode NAMES themselves are
  * data (brains/<brain>/modes.txt), not strings, so this is the only one. */
-#define STR_DLGLOBBY_BOTCFG_MODE            2161
+#define STR_DLGLOBBY_BOTCFG_MODE            2171
 
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
@@ -1593,6 +1593,13 @@
 #define STR_MENU_CLASSIC_MODE_TIP           2010
 #define STR_DLGLOBBY_ALLIES_TREES_CB        2011
 #define STR_DLGLOBBY_ALLIES_TREES_TIP       2012
+/* Map overview live block, and what blocks sight inside it */
+#define STR_DLGLOBBY_OVERVIEW_WINDOW        2154
+#define STR_DLGLOBBY_OVERVIEW_WINDOW_TIP    2155
+#define STR_DLGLOBBY_LINE_OF_SIGHT_CB       2156
+#define STR_DLGLOBBY_LINE_OF_SIGHT_TIP      2157
+#define STR_DLGLOBBY_WINDOW_EXPANDED        2158
+#define STR_DLGLOBBY_WINDOW_CLASSIC         2159
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014
@@ -1753,6 +1760,11 @@
 #define STR_PLAYER_TIP_VOICE_SELF               2049
 #define STR_PLAYER_TIP_VOICE_SELF_NOMIC         2050
 #define STR_PLAYER_TIP_VOICE_SELF_MUTED         2051
+
+/* Players panel — per-player smart-ping mute toggle (independent of the
+   voice/chat mute above) */
+#define STR_PLAYER_TIP_PING_SHOWN               2162
+#define STR_PLAYER_TIP_PING_MUTED               2163
 
 /* Players panel — per-player playback volume slider */
 #define STR_PLAYER_TIP_VOICE_VOLUME             2090

@@ -37,9 +37,6 @@
 struct GameSim;
 struct ClientSim;
 
-/* The time between base get new units of armour/shells/mines */
-#define BASE_ADD_TIME  1670 /* Old time was 3340 in 1.09 */
-
 /* Defines how much the bases can hold */
 #define BASE_FULL_ARMOUR 90
 #define BASE_FULL_SHELLS 90
@@ -48,8 +45,15 @@ struct ClientSim;
 #define BASE_NOT_FOUND 254
 
 #define BASE_TICKS_BETWEEN_REFUEL 1000
-/* A base is dead if it has 9 armour */
-#define BASE_DEAD 9
+
+/* baseTimer[i] when slot i has no live restock cycle. basesUpdate counts
+ * every OTHER value as a live one, and each live cycle restocks every base
+ * on the map — so the bases' refuel rate is simply how many slots are armed,
+ * and a slot left armed for a player who is gone keeps speeding them up.
+ * Any value basesUpdate will not reach by counting down works; this is the
+ * arbitrary large number the original code used, now named so the "is this
+ * slot armed?" test reads as one. */
+#define BASE_TIMER_OFF 30000
 
 /* Base will soak shots until it has this much armor */
 #define BASE_MIN_CAN_HIT 4
@@ -81,7 +85,8 @@ struct ClientSim;
 
 /* Range within which a player is sent an enemy base's true armour instead of
    BASE_FULL_ARMOUR. Their client needs it to work out for itself when its own
-   shell drops the base to MIN_ARMOUR_CAPTURE and the square becomes drivable;
+   shell drops the base to the capture threshold and the square becomes
+   drivable;
    without it the square stays solid on the client until the death event lands
    a round trip later, and a tank driving in fights its own prediction the
    whole way. Wide enough to cover shell flight plus a round trip at road
@@ -166,12 +171,111 @@ BYTE basesGetNumBases(bases *value);
 *PURPOSE:
 *  Sets a specific base with its item data
 *
+*  Clamps the owner, which is a property of the file, but
+*  not the stocks, which are a property of the sim and are
+*  capped by mapClampToRules once one owns the records.
+*  pillsSetPill beside it does clamp, because the scenario
+*  arms that write a pill's armour and speed go through it.
+*
 *ARGUMENTS:
 *  value   - Pointer to the bases structure
 *  item    - Pointer to a base item 
 *  baseNum - The base number
 *********************************************************/
 void basesSetBase(bases *value, base *item, BYTE bsaeNum);
+
+/*********************************************************
+*NAME:          basesAddItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Puts a base into the list and returns its number in
+*  outBaseNum. The lowest removed slot is reused; when
+*  every slot in the count is live the list is extended and
+*  the count raised. Returns FALSE with outBaseNum
+*  untouched when all MAX_BASES bases are live.
+*
+*ARGUMENTS:
+*  value      - Pointer to the bases structure
+*  item       - The base to store
+*  outBaseNum - Receives the base number, 1 based
+*********************************************************/
+bool basesAddItem(bases *value, const base *item, BYTE *outBaseNum);
+
+/*********************************************************
+*NAME:          basesInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a base at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  bases this list has not been told about. Returns FALSE
+*  for number 0 or a number past MAX_BASES.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  item    - The base to store
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesInstallItem(bases *value, const base *item, BYTE baseNum);
+
+/*********************************************************
+*NAME:          basesRemoveItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Clears a base's live flag. The slot, the count and every
+*  base number above it are left alone, so the numbers the
+*  wire and the recordings use keep meaning the same base.
+*  Returns FALSE for a number out of range or one already
+*  removed.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesRemoveItem(bases *value, BYTE baseNum);
+
+/*********************************************************
+*NAME:          basesIsActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Returns whether a base number names a base that is on the
+*  map. A removed base keeps its slot and its number, so a
+*  number in range is not on its own enough. A number out of
+*  range returns FALSE.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool basesIsActive(bases *value, BYTE baseNum);
+
+/*********************************************************
+*NAME:          basesSetActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Puts a base on the map or takes it off it, leaving its
+*  record alone either way. The flag is all that moves, so a
+*  base put back is the one the slot already held. Returns
+*  FALSE for a number out of range.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool basesSetActive(bases *value, BYTE baseNum, bool onMap);
 
 /*********************************************************
 *NAME:          basesGetBase
@@ -324,19 +428,26 @@ bool basesAmOwner(struct GameSim *sim, BYTE owner, BYTE xValue, BYTE yValue);
 *LAST MODIFIED: 2/11/99
 *PURPOSE:
 * Sets the base to be owned by paremeter passed.
-* Returns the previous owner. If it was not neutral we
-* assume then it was "stolen" and subsequently remove
-* all its possessions. If migrate is set to TRUE then
-* it has migrated from a alliance when a player left 
-* and we shouldn't make a message
+* Returns the previous owner. A base taken off another
+* player is "stolen" and loses everything it was holding,
+* unless keepStock says to hand it over as it stands.
+* If migrate is set to TRUE then it has migrated from a
+* alliance when a player left and we shouldn't make a
+* message.
+*
+* The two flags are separate because a hand-over may want
+* either half on its own: an alliance migration is quiet
+* and keeps the stock, while a scripted hand-over can
+* announce the capture and still keep it.
 *
 *ARGUMENTS:
-*  value   - Pointer to the bases structure
-*  baseNum - Base number to set
-*  owner   - Who owns it
-*  migrate - TRUE if it has migrated from an alliance
+*  value     - Pointer to the bases structure
+*  baseNum   - Base number to set
+*  owner     - Who owns it
+*  migrate   - TRUE if it has migrated from an alliance
+*  keepStock - TRUE to leave the base's stock alone
 *********************************************************/
-BYTE basesSetBaseOwner(struct GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate);
+BYTE basesSetBaseOwner(struct GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYTE keepStock);
 
 /*********************************************************
 *NAME:          basesSetOwner
@@ -561,7 +672,7 @@ bool basesCantDrive(struct GameSim *sim, BYTE xValue, BYTE yValue, BYTE hitBy);
 *  player, rather than the BASE_FULL_ARMOUR stand-in the
 *  per-recipient cull substitutes for a live enemy base.
 *  True for a neutral/own/allied base, for one already at or
-*  below MIN_ARMOUR_CAPTURE (the capturable flip is public),
+*  below the capture threshold (the capturable flip is public),
 *  and for an enemy base within BASE_PREDICT_REVEAL_RANGE of
 *  the player's tank, which is what lets their client predict
 *  the square becoming drivable.
@@ -620,19 +731,16 @@ BYTE basesGetOwnerPos(bases *value, BYTE xValue, BYTE yValue);
 BYTE basesGetNumNeutral(bases *value);
 
 /*********************************************************
-*NAME:          basesSetBaseNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 27/2/99
+*NAME:          basesGetNumActive
 *PURPOSE:
-* Sets the base data to buff.
+*  Returns how many bases are on the map: the slots under
+*  the count whose live flag is set. The count itself is
+*  the slot count and keeps a removed base's number.
 *
 *ARGUMENTS:
 *  value - Pointer to the bases structure
-*  buff  - Buffer of data to set base structure to
-*  len   - Length of the data
 *********************************************************/
-void basesSetBaseNetData(bases *value, BYTE *buff, int len);
+BYTE basesGetNumActive(bases *value);
 
 /*********************************************************
 *NAME:          basesSetBaseNetData
@@ -659,10 +767,11 @@ BYTE basesGetBaseNetData(bases *value, BYTE *buff);
 * armour from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveArmour(bases *bs, BYTE baseNum);
+void basesNetGiveArmour(struct GameSim *sim, bases *bs, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesNetGiveShells
@@ -674,10 +783,11 @@ void basesNetGiveArmour(bases *bs, BYTE baseNum);
 * shells from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveShells(bases *value, BYTE baseNum);
+void basesNetGiveShells(struct GameSim *sim, bases *value, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesNetGiveMines
@@ -689,10 +799,11 @@ void basesNetGiveShells(bases *value, BYTE baseNum);
 * mines from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveMines(bases *value, BYTE baseNum);
+void basesNetGiveMines(struct GameSim *sim, bases *value, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesSetNeutralOwner
@@ -740,6 +851,28 @@ void basesMigrate(struct GameSim *sim, BYTE oldOwner, BYTE newOwner);
 void basesServerRefuel(struct GameSim *sim, BYTE baseNum, BYTE addAmount);
 
 /*********************************************************
+*NAME:          basesSetStock
+*PURPOSE:
+*  Writes what a base is holding. Where basesServerRefuel
+*  adds to each stock, this one says what each is to be,
+*  capped at its full amount, and -1 leaves that stock
+*  where it was. Records the same log_BaseSetStock the
+*  periodic update writes, so a replay follows the change.
+*
+*  baseNum counts from zero, as basesServerRefuel beside
+*  it does.
+*
+*ARGUMENTS:
+*  sim     - Pointer to the game sim
+*  baseNum - The base to write, counting from zero
+*  armour  - Armour to hold, or -1 to leave it alone
+*  shells  - Shells to hold, or -1 to leave it alone
+*  mines   - Mines to hold, or -1 to leave it alone
+*********************************************************/
+void basesSetStock(struct GameSim *sim, BYTE baseNum, int16_t armour,
+                   int16_t shells, int16_t mines);
+
+/*********************************************************
 *NAME:          baseIsCapturable
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
@@ -749,11 +882,12 @@ void basesServerRefuel(struct GameSim *sim, BYTE baseNum, BYTE addAmount);
 *  location. Returns FALSE if it doesn't exist at location
 *
 *ARGUMENTS:
+*  sim    - Pointer to the game sim
 *  value  - Pointer to the bases structure
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-bool baseIsCapturable(bases *value, BYTE xValue, BYTE yValue);
+bool baseIsCapturable(struct GameSim *sim, bases *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
 *NAME:          basesGetBrainBaseItem
@@ -880,15 +1014,20 @@ BYTE basesGetNumberOwnedByPlayer(bases *value, BYTE playerNum);
 * calculate what to return to average out half ticks
 *
 *ARGUMENTS:
+*  sim          - The game the base belongs to
 *  typeSelector - tells us what type of number to return.
 *********************************************************/
-int basesHalfTickCalulator(int typeSelector);
+int basesHalfTickCalulator(struct GameSim *sim, int typeSelector);
 
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen);
-/* Clamps every base field a map can supply to the range the rest of the
- * codebase assumes. The compressed load path memcpys structs wholesale and
- * reaches none of basesSetBase's clamps, so it must call this afterwards. */
+/* Clamps the base fields a map cannot be trusted on whatever the rules say —
+ * the count and each owner. The compressed load path memcpys structs
+ * wholesale and reaches neither this nor basesSetBase's owner clamp, so it
+ * must call this afterwards. */
 void basesValidate(bases *value);
+/* Clamps every base's stocks against the sim's gameplay caps. Called by
+ * mapClampToRules once a sim owns the records; see bolo_map.h. */
+void basesClampToRules(struct GameSim *sim, bases *value);
 
 
 #endif /* BASES_H */

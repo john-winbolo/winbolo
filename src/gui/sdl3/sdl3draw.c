@@ -3001,7 +3001,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* Draw map tiles via mapview */
       MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale,
                            (float)gZoomFactor, gSpritesTex, gSpriteAtlas };
-      mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
+      mapViewDrawTiles(&mvCtx, value, mineView, clientSimGetHiddenView(cs),
+                       originX, originY, tileW, tileH, edgeX, edgeY);
 
       /* Smart pings, on the ground: after the terrain and before every
          sprite pass, so the tanks, shells and builders a ping points at stay

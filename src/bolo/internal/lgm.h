@@ -48,6 +48,13 @@ struct GameSim;
 #define LGM_STATE_GOING 1
 #define LGM_STATE_RETURN 2
 
+/* Why a build request would be turned down, as lgmRequestRefusal reports it.
+   Only two answers because only two things are ever wrong: the square will
+   not take the job, or the tank cannot pay for it. */
+#define LGM_REFUSE_NONE 0
+#define LGM_REFUSE_SQUARE 1
+#define LGM_REFUSE_STOCK 2
+
 #define LGM_COST_ROAD 2
 #define LGM_COST_BUILDING 2
 #define LGM_COST_REPAIRBUILDING 1
@@ -57,8 +64,9 @@ struct GameSim;
 #define LGM_COST_MINE 1
 
 /* Trees the man carries out to repair a pill. Each one is worth
-   PILL_REPAIR_AMOUNT armour, so this many always covers a pill on zero
-   armour. Anything left over comes back in the tank. */
+   pill_repair_amount armour, and simRulesValidate holds the pair so this
+   many always covers a pill on zero armour. Anything left over comes back
+   in the tank. */
 #define LGM_LOAD_PILLREPAIR 4
 
 #define LGM_NO_PILL 37
@@ -246,6 +254,77 @@ void lgmNewPrimaryRequest(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX,
 *  action - What the request is (LGM_*_REQUEST)
 *********************************************************/
 bool lgmRequestIsValid(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action);
+
+/*********************************************************
+*NAME:          lgmRequestRefusal
+*PURPOSE:
+*  Why a build request would be turned down right now, or
+*  LGM_REFUSE_NONE when it would be accepted. The same dry
+*  run lgmRequestIsValid makes — that call is this one with
+*  the reason thrown away — for a caller that has to tell a
+*  square that will not take the job from a tank that cannot
+*  pay for it.
+*
+*ARGUMENTS:
+*  lgman  - Pointer to the lgm structure
+*  tnk    - Pointer to the tank structure
+*  mapX   - X Co-ordinate of the request
+*  mapY   - Y Co-ordinate of the request
+*  action - What the request is (LGM_*_REQUEST)
+*********************************************************/
+BYTE lgmRequestRefusal(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action);
+
+/*********************************************************
+*NAME:          lgmRecall
+*PURPOSE:
+*  Turns the man round wherever he is and drops whatever
+*  order was waiting behind the one in hand, so lgmReturn
+*  walks him back to the tank from the next tick. The same
+*  turn lgmMoveAway makes when it finds the way blocked.
+*  The caller decides whether the man is out to be recalled.
+*
+*ARGUMENTS:
+*  sim    - The game the man belongs to
+*  lgman  - Pointer to the lgm structure
+*********************************************************/
+void lgmRecall(struct GameSim *sim, lgm *lgman);
+
+/*********************************************************
+*NAME:          lgmKill
+*PURPOSE:
+*  Kills the man where he stands: plays the dying sound,
+*  drops the pillbox he was carrying on the nearest square
+*  that will hold one, marks him dead in the helicopter
+*  frame, points him at the tank and starts him flying in
+*  from a random start. Records the loss, reports it to
+*  WinBolo.net, credits owner with the kill when owner is a
+*  player, and publishes the newswire event. The caller
+*  decides whether the man dies; this is what dying does.
+*
+*ARGUMENTS:
+*  sim    - The game the man belongs to
+*  lgman  - Pointer to the lgm structure
+*  tnk    - Pointer to the man's tank, or NULL when he has
+*           none left to fly back to
+*  owner  - Slot credited with the kill, NEUTRAL for a death
+*           nobody caused
+*********************************************************/
+void lgmKill(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE owner);
+
+/*********************************************************
+*NAME:          lgmSetCarried
+*PURPOSE:
+*  Writes what the man is carrying out to his job, capped at
+*  the amounts a tank can hold, since everything he carries
+*  came out of one and unloads back into one.
+*
+*ARGUMENTS:
+*  sim    - The game whose rules the caps come from
+*  lgman  - Pointer to the lgm structure
+*  trees  - Trees he is to carry
+*  mines  - Mines he is to carry
+*********************************************************/
+void lgmSetCarried(struct GameSim *sim, lgm *lgman, BYTE trees, BYTE mines);
 
 /*********************************************************
 *NAME:          lgmMoveAway

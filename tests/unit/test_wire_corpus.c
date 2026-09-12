@@ -7,7 +7,12 @@
  * of vectors:
  *
  *   - committed golden fixtures in tests/fixtures/wire/<label>.hex (captured
- *     from a real loopback session by test_wire_corpus_capture), and
+ *     from a real loopback session by test_wire_corpus_capture; the second
+ *     tank_snapshot vector is hand-composed instead, because no loopback
+ *     session has yet emitted a tank inside its respawn wait and the
+ *     presence-mask group for that wait would otherwise go uncovered here.
+ *     test_wire_corpus_capture rewrites the whole file, so a re-capture drops
+ *     it), and
  *   - programmatic boundary vectors (every field 0, then every field at its
  *     type maximum), so coverage does not depend on which messages a session
  *     happened to emit.
@@ -151,13 +156,13 @@ MSG_CHECK_FN(check_pill, PillSnapshot, packPillSnapshot, unpackPillSnapshot,
 
 /* ---- TankSnapshot: differential check against a pre-migration oracle -------
  *
- * packTankRef / unpackTankRef are the hand-rolled presence-bitmask codec copied
- * verbatim from transport_udp_common.c as it stood before the masked codec
- * replaced it (the corpus tap removed). They are the reference the generated
- * packTankSnapshot / unpackTankSnapshot must match byte-for-byte and
- * struct-for-struct. */
+ * packTankRef / unpackTankRef are the hand-rolled presence-bitmask codec taken
+ * from transport_udp_common.c as it stood before the masked codec replaced it
+ * (the corpus tap removed), and hand-maintained since against the field list.
+ * They are the reference the generated packTankSnapshot / unpackTankSnapshot
+ * must match byte-for-byte and struct-for-struct. */
 static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
-    uint8_t mask = 0;
+    uint16_t mask = 0;
     int pos;
 
     buf[0] = s->playerNum;
@@ -177,14 +182,18 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
     if (s->pingMs)      mask |= TANK_PRESENT_PING;
     if (s->clientFlags) mask |= TANK_PRESENT_FLAGS;
     if (s->hiddenFlags) mask |= TANK_PRESENT_HIDDEN;
+    if (s->modSpeed || s->modAccel || s->modTurn ||
+        s->modReload || s->modDealt || s->modTaken) {
+        mask |= TANK_PRESENT_MODS;
+    }
 
-    buf[1] = mask;
-    packU16(buf + 2, s->worldX);
-    packU16(buf + 4, s->worldY);
-    packU16(buf + 6, s->angle);
-    packU16(buf + 8, s->speed);
-    buf[10] = s->tankStatus;
-    pos = 11;
+    packU16(buf + 1, mask);
+    packU16(buf + 3, s->worldX);
+    packU16(buf + 5, s->worldY);
+    packU16(buf + 7, s->angle);
+    packU16(buf + 9, s->speed);
+    buf[11] = s->tankStatus;
+    pos = 12;
 
     if (mask & TANK_PRESENT_OWNER_RES) {
         buf[pos++] = s->armour;
@@ -194,7 +203,10 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
         buf[pos++] = s->gunsightLen;
     }
     if (mask & TANK_PRESENT_RELOAD)    buf[pos++] = s->reload;
-    if (mask & TANK_PRESENT_DEATHWAIT) buf[pos++] = s->deathWait;
+    if (mask & TANK_PRESENT_DEATHWAIT) {
+        packU16(buf + pos, s->deathWait);
+        pos += 2;
+    }
     if (mask & TANK_PRESENT_LGM) {
         buf[pos++] = s->lgmFrame;
         buf[pos++] = s->lgmMX;
@@ -212,11 +224,19 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
     }
     if (mask & TANK_PRESENT_FLAGS)  buf[pos++] = s->clientFlags;
     if (mask & TANK_PRESENT_HIDDEN) buf[pos++] = s->hiddenFlags;
+    if (mask & TANK_PRESENT_MODS) {
+        buf[pos++] = s->modSpeed;
+        buf[pos++] = s->modAccel;
+        buf[pos++] = s->modTurn;
+        buf[pos++] = s->modReload;
+        buf[pos++] = s->modDealt;
+        buf[pos++] = s->modTaken;
+    }
     return pos;
 }
 
 static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
-    uint8_t mask;
+    uint16_t mask;
     size_t pos;
 
     memset(s, 0, sizeof(*s));
@@ -226,14 +246,14 @@ static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
         return 1;
     }
 
-    if (avail < 11) return 0;
-    mask = buf[1];
-    s->worldX = unpackU16(buf + 2);
-    s->worldY = unpackU16(buf + 4);
-    s->angle = unpackU16(buf + 6);
-    s->speed = unpackU16(buf + 8);
-    s->tankStatus = buf[10];
-    pos = 11;
+    if (avail < 12) return 0;
+    mask = unpackU16(buf + 1);
+    s->worldX = unpackU16(buf + 3);
+    s->worldY = unpackU16(buf + 5);
+    s->angle = unpackU16(buf + 7);
+    s->speed = unpackU16(buf + 9);
+    s->tankStatus = buf[11];
+    pos = 12;
 
     if (mask & TANK_PRESENT_OWNER_RES) {
         if (avail < pos + 5) return 0;
@@ -248,8 +268,9 @@ static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
         s->reload = buf[pos++];
     }
     if (mask & TANK_PRESENT_DEATHWAIT) {
-        if (avail < pos + 1) return 0;
-        s->deathWait = buf[pos++];
+        if (avail < pos + 2) return 0;
+        s->deathWait = unpackU16(buf + pos);
+        pos += 2;
     }
     if (mask & TANK_PRESENT_LGM) {
         if (avail < pos + 5) return 0;
@@ -277,6 +298,15 @@ static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
         if (avail < pos + 1) return 0;
         s->hiddenFlags = buf[pos++];
     }
+    if (mask & TANK_PRESENT_MODS) {
+        if (avail < pos + 6) return 0;
+        s->modSpeed = buf[pos++];
+        s->modAccel = buf[pos++];
+        s->modTurn = buf[pos++];
+        s->modReload = buf[pos++];
+        s->modDealt = buf[pos++];
+        s->modTaken = buf[pos++];
+    }
     return (int)pos;
 }
 
@@ -299,13 +329,15 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->armour = 0x31; s->shells = 0x32; s->mines = 0x33;
         s->trees = 0x34;  s->gunsightLen = 0x35;
         s->reload = 0x41;
-        s->deathWait = 0x51;
+        s->deathWait = 0x5152;   /* past a byte: the group carries two */
         s->lgmFrame = 0x61; s->lgmMX = 0x62; s->lgmMY = 0x63;
         s->lgmPX = 0x64;    s->lgmPY = 0x65;
         s->firstLeft = 0x71; s->firstRight = 0x72;
         s->pingMs = 0x8081;
         s->clientFlags = 0x91;
         s->hiddenFlags = 0xA1;
+        s->modSpeed = 0xB1; s->modAccel = 0xB2; s->modTurn = 0xB3;
+        s->modReload = 0xB4; s->modDealt = 0xB5; s->modTaken = 0xB6;
     } else {
         s->playerNum = 0x7F;
         s->worldX = 0xFFFF; s->worldY = 0xFFFF;
@@ -314,13 +346,15 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->armour = 0xFF; s->shells = 0xFF; s->mines = 0xFF;
         s->trees = 0xFF;  s->gunsightLen = 0xFF;
         s->reload = 0xFF;
-        s->deathWait = 0xFF;
+        s->deathWait = 0xFFFF;
         s->lgmFrame = 0xFF; s->lgmMX = 0xFF; s->lgmMY = 0xFF;
         s->lgmPX = 0xFF;    s->lgmPY = 0xFF;
         s->firstLeft = 0xFF; s->firstRight = 0xFF;
         s->pingMs = 0xFFFF;
         s->clientFlags = 0xFF;
         s->hiddenFlags = 0xFF;
+        s->modSpeed = 0xFF; s->modAccel = 0xFF; s->modTurn = 0xFF;
+        s->modReload = 0xFF; s->modDealt = 0xFF; s->modTaken = 0xFF;
     }
 }
 
@@ -353,11 +387,11 @@ static int check_tank(void) {
                       "tank_snapshot golden pack != fixture");
     }
 
-    /* (exhaustive group combos) all 256 group subsets, two value patterns. */
+    /* (exhaustive group combos) all 512 group subsets, two value patterns. */
     for (pass = 0; pass < 2; pass++) {
         TankSnapshot filled;
         fillTank(&filled, pass);
-        for (combo = 0; combo < 256; combo++) {
+        for (combo = 0; combo < 512; combo++) {
             TankSnapshot s, sg, sr;
             uint8_t g[WC_BYTES], r[WC_BYTES];
             int ng, nr, ug, ur;

@@ -132,6 +132,11 @@ struct BrainWorldSim {
   int           tank_shoot_interval; /* ticks between our shots (default 8) */
   int           shell_damage;        /* armor per hit (default 5) */
 
+  /* Pill numbers the rules name, seeded from the classic table at create */
+  int           pill_range;            /* WU a pill fires within */
+  int           pill_attack_ticks;     /* calm fire interval */
+  int           pill_attack_min_ticks; /* interval at full anger */
+  int           pill_cooldown_ticks;   /* ticks an anger chain runs for */
   /* Ticks the tank stands still on the destination tile once it reaches the
    * end of its path. N gives exactly N parked ticks, counting the arrival
    * tick itself (the tank is already standing there when that tick's pills

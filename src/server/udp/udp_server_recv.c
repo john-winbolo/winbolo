@@ -289,3 +289,18 @@ void transportUdpServerDrainRecvQueue(ServerSim *sim) {
 bool transportUdpServerHasRecvThread(void) {
     return recvThread != NULL;
 }
+
+/* Datagrams the recv thread has queued that the next drain will consume.
+ * Reads the same two atomics the drain does, so it is safe to call from
+ * another thread and costs nothing but two loads.
+ *
+ * For the loopback tests: they pump the client and the server in lockstep
+ * and need the thread to have delivered before the server tick runs, and
+ * asking is the only way to know it has. */
+int transportUdpServerRecvQueuePending(void) {
+    int head = SDL_GetAtomicInt(&recvQueueHead);
+    int tail = SDL_GetAtomicInt(&recvQueueTail);
+    int n = head - tail;
+    if (n < 0) n += RECV_QUEUE_SIZE;
+    return n;
+}

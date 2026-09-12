@@ -386,7 +386,7 @@ void transportUdpServerSend(ServerSim *sim) {
         /* Begin an armed map transfer when the bulk channel is idle and fire
          * completion once the peer has acked it through (drives both the join
          * download and a live resync). */
-        serverServiceMapTransfer(i);
+        serverServiceMapTransfer(sim, i);
 
         if (!udpServer.mapDownload[i].downloadComplete) {
             /* Still downloading the map: stream it on CHANNEL_BULK. Snapshots

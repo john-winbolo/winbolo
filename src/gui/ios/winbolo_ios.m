@@ -757,12 +757,18 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
     (void)cs;
-    sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
+    BYTE fullShells, fullMines, fullArmour, fullTrees;
+    clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
+    sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
+                           fullShells, fullMines, fullArmour, fullTrees);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
     (void)cs;
-    sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
+    BYTE fullShells, fullMines, fullArmour;
+    clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
+    sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
+                           fullShells, fullMines, fullArmour, FALSE);
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {

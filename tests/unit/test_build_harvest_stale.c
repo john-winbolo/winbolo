@@ -275,7 +275,7 @@ int run_build_harvest_busy_queues(void) {
 
     /* No wood, and the man sent to fetch some. The tree order rides the game
      * tick (even parity); the odd one is a keys tick and would not act. */
-    tankSetTrees(&sim->sim.tanks[BH_SLOT], 0);
+    tankSetTrees(&sim->sim, &sim->sim.tanks[BH_SLOT], 0);
     bh_feed(sim, next,     0, 0, 0, 0);
     bh_feed(sim, next + 1, 0, 1 /*BsTrees wire*/, fx, fy);
     serverSimTick(sim);

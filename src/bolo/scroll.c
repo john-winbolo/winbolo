@@ -37,6 +37,7 @@
 #include "pillbox.h"
 #include "bases.h"
 #include "game_sim.h"
+#include "facing_table.h" /* kForwardX / kForwardY */
 
 /* Autoscroll tuning. */
 #define AUTOSCROLL_CONCERN_RADIUS     8  /* tiles around tank counted as "near me";
@@ -106,17 +107,6 @@ void scrollSetSubTilePrecision(bool on) { g_scrollSubTilePrecision = on; }
  * tiles, 2 aligned -> the 4-tile cap. */
 #define V1THREATS_LATERAL_GAIN        2
 
-/* Facing unit vectors (sin/cos × 256), 16-step BRADIANS index.
- * Used for the forward-bias term and the parked-rear hemisphere test. */
-static const int kForwardX[16] = {
-     0,   98,  181,  237,  256,  237,  181,   98,
-     0,  -98, -181, -237, -256, -237, -181,  -98
-};
-static const int kForwardY[16] = {
-  -256, -237, -181,  -98,    0,   98,  181,  237,
-   256,  237,  181,   98,    0,  -98, -181, -237
-};
-
 /* Debug file logging. Off for shipping builds — flip to 1 to re-enable
  * the autoscroll.log trace. When 0 no file is opened or written. */
 #define WB_DEBUG_FILE_LOG 0
@@ -164,6 +154,7 @@ static bool isThreatTank(GameSim *sim, BYTE viewPlayer, int i, int *outX, int *o
 
 static bool isThreatPill(GameSim *sim, BYTE viewPlayer, int pillNum, pillbox *outPill) {
   pillsGetPill(&sim->pb, outPill, pillNum);
+  if (pillsIsActive(&sim->pb, (BYTE)pillNum) == FALSE) return FALSE;
   if (outPill->armour == 0) return FALSE;
   if (outPill->owner == NEUTRAL) return TRUE;        /* shoots everyone */
   if (outPill->owner == viewPlayer) return FALSE;

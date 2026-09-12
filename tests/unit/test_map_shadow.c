@@ -45,9 +45,9 @@
  * square it is not being told.
  *
  * A slot only records the square of a pill inside one of its rects, so the
- * cases that want the record to follow the live list hand the pill to slot 0
- * and ally the other slots to it: an allied live pill grants a screen around
- * itself under the default pill policy, so it is shown wherever it goes.
+ * cases that want the record to follow the live list hand the pill to slot 0,
+ * ally the other slots to it and put pills on viewPolicyAlways: an allied live
+ * pill then grants a screen around itself, so it is shown wherever it goes.
  *
  * Every case drives ut_make_running_sim and pokes the GameSim directly (the
  * unittests profile permits T2-internal access).
@@ -1007,16 +1007,20 @@ static bool ms_find_plain_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
     return false;
 }
 
-/* Hand pill p to slot 0, alive and out of a tank. Under the default pill policy
- * an allied live pill grants a screen around itself, so slot 0 — and anyone
- * allied to it — is shown that pill's square wherever it is moved. That is what
- * a case wants when it is pinning the record against the live list rather than
- * against what is withheld. */
+/* Hand pill p to slot 0, alive and out of a tank, and put the pill category on
+ * viewPolicyAlways, under which an allied live pill grants a screen around
+ * itself — so slot 0, and anyone allied to it, is shown that pill's square
+ * wherever it is moved. That is what a case wants when it is pinning the record
+ * against the live list rather than against what is withheld. The policy is set
+ * here rather than inherited: a sim comes up with pills on viewPolicyKey, which
+ * grants a screen only around the pill the slot is watching. */
 static void ms_pill_owned_by_slot0(ServerSim *sim, BYTE p) {
     GameSim *gs = serverSimGetGameSim(sim);
     (*gs->pb).item[p].owner  = 0;
-    (*gs->pb).item[p].armour = PILL_MAX_HEALTH;
+    (*gs->pb).item[p].armour = PILLS_MAX_ARMOUR;
     (*gs->pb).item[p].inTank = FALSE;
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
 }
 
 /* The map square a slot's tank stands on. */
@@ -1387,13 +1391,13 @@ int run_pill_shadow_fullsync_move_matches(void) {
     int i;
 
     memset(&scratch, 0, sizeof(scratch));
-    scratch.numPills = hdr.pillCount;
+    pillsSetNumPills(&scratchPb, (BYTE)hdr.pillCount);
     for (i = 0; i < hdr.pillCount && i < MAX_PILLS; i++) {
         scratch.item[i].x      = po[i].x;
         scratch.item[i].y      = po[i].y;
         scratch.item[i].owner  = po[i].owner;
-        scratch.item[i].armour = pillArmourFromByte(po[i].armourInTank);
-        scratch.item[i].inTank = pillInTankFromByte(po[i].armourInTank) ? TRUE : FALSE;
+        scratch.item[i].armour = po[i].armour;
+        scratch.item[i].inTank = pillInTankFromByte(po[i].pillFlags) ? TRUE : FALSE;
     }
     for (i = 0; i < hdr.reliableEventCount; i++) {
         BYTE idx;
@@ -1403,7 +1407,7 @@ int run_pill_shadow_fullsync_move_matches(void) {
         scratch.item[idx].x      = ev[i].data[1];
         scratch.item[idx].y      = ev[i].data[2];
         scratch.item[idx].owner  = ev[i].data[3];
-        scratch.item[idx].armour = pillArmourFromByte(ev[i].data[4]);
+        scratch.item[idx].armour = ev[i].data[5];
         scratch.item[idx].inTank = pillInTankFromByte(ev[i].data[4]) ? TRUE : FALSE;
     }
 
@@ -1506,7 +1510,7 @@ int run_pill_shadow_withheld_crc_matches(void) {
                   "the build stamped no checksum — it was not a full sync");
     UT_ASSERT_MSG(hdr.pillCount > 0, "the full sync carried no pill entries");
     UT_ASSERT_MSG(po[0].x == keptX && po[0].y == keptY &&
-                      !pillPosCurrentFromByte(po[0].armourInTank),
+                      !pillPosCurrentFromByte(po[0].pillFlags),
                   "the pill block reports %u,%u for a pill slot 0 cannot see, "
                   "not the withheld %u,%u", (unsigned)po[0].x,
                   (unsigned)po[0].y, (unsigned)keptX, (unsigned)keptY);
@@ -1519,13 +1523,13 @@ int run_pill_shadow_withheld_crc_matches(void) {
     int i;
 
     memset(&scratch, 0, sizeof(scratch));
-    scratch.numPills = hdr.pillCount;
+    pillsSetNumPills(&scratchPb, (BYTE)hdr.pillCount);
     for (i = 0; i < hdr.pillCount && i < MAX_PILLS; i++) {
         scratch.item[i].x      = po[i].x;
         scratch.item[i].y      = po[i].y;
         scratch.item[i].owner  = po[i].owner;
-        scratch.item[i].armour = pillArmourFromByte(po[i].armourInTank);
-        scratch.item[i].inTank = pillInTankFromByte(po[i].armourInTank) ? TRUE : FALSE;
+        scratch.item[i].armour = po[i].armour;
+        scratch.item[i].inTank = pillInTankFromByte(po[i].pillFlags) ? TRUE : FALSE;
     }
     for (i = 0; i < hdr.reliableEventCount; i++) {
         BYTE idx;
@@ -1544,7 +1548,7 @@ int run_pill_shadow_withheld_crc_matches(void) {
         scratch.item[idx].x      = ev[i].data[1];
         scratch.item[idx].y      = ev[i].data[2];
         scratch.item[idx].owner  = ev[i].data[3];
-        scratch.item[idx].armour = pillArmourFromByte(ev[i].data[4]);
+        scratch.item[idx].armour = ev[i].data[5];
         scratch.item[idx].inTank = pillInTankFromByte(ev[i].data[4]) ? TRUE : FALSE;
     }
     UT_ASSERT_MSG(sawPillEvent,

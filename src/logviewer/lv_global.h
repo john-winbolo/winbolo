@@ -201,17 +201,11 @@ void lv_efree(Generic object);
 /* 0xFF is neutral */
 #define NEUTRAL 0xFF
 
-/* Everytime something gets hit armour is decreased by this amount */
-#define DAMAGE 5
-
-/* Mine explosion damage (mirrors bolo/tank.h MINE_DAMAGE) */
-#define MINE_DAMAGE 10
-
-/* Tank inventory caps (mirror bolo/gametype.h) */
-#define TANK_FULL_ARMOUR 40
-#define TANK_FULL_SHELLS 40
-#define TANK_FULL_MINES  40
-#define TANK_FULL_TREES  40
+/* The mine damage and the four tank caps used to be mirrored here. They
+   live on LogViewerState.rules now (logviewer.h), so the viewer has one
+   holder for them rather than a copy per header. The shell damage was
+   mirrored here too and nothing read it, so it is gone rather than
+   moved — the holder gains it when the viewer has a reader for it. */
 
 #define M_W_SHIFT_SIZE 8
 

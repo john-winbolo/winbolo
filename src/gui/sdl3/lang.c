@@ -1352,21 +1352,21 @@ static const LangEntry langTable[] = {
     {1342, "Defensive"},
     {1343, "Sniper"},
     {1344, "Done"},
-    {2154, "Medium"},
+    {2164, "Medium"},
 
     /* Bot difficulty — tagline then description, per difficulty. The
        leading "Easy." / "Medium." / "Hard." token is coloured by the
        lobby, so keep it first and keep the full stop. */
-    {2155, "Easy. Captures pillboxes and bases, coordinates with allied bots, and plays in a steady, predictable way."},
-    {2156, "Medium. Captures pillboxes and bases with its allied bots and presses an attack when it is already ahead."},
-    {2157, "Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together."},
-    {2158, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they avoid chasing the same target, though it plays cautiously and steers clear of big risks. Its steady, easy-to-read behaviour makes it a gentler challenge. Best for newer players, or anyone who wants a more relaxed game."},
-    {2159, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they can strike a target together. It will join a group attack and press an advantage, but it picks its fights, keeps itself fuelled, and gives ground when the odds turn against it. Best for players who know the game and want a real opponent rather than a relentless one."},
-    {2160, "This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent."},
+    {2165, "Easy. Captures pillboxes and bases, coordinates with allied bots, and plays in a steady, predictable way."},
+    {2166, "Medium. Captures pillboxes and bases with its allied bots and presses an attack when it is already ahead."},
+    {2167, "Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together."},
+    {2168, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they avoid chasing the same target, though it plays cautiously and steers clear of big risks. Its steady, easy-to-read behaviour makes it a gentler challenge. Best for newer players, or anyone who wants a more relaxed game."},
+    {2169, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they can strike a target together. It will join a group attack and press an advantage, but it picks its fights, keeps itself fuelled, and gives ground when the odds turn against it. Best for players who know the game and want a real opponent rather than a relentless one."},
+    {2170, "This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent."},
 
     /* Bot AiConfig: the Mode dropdown's label. The mode names themselves
        come from the brain's own modes.txt, so they are data, not strings. */
-    {2161, "Mode"},
+    {2171, "Mode"},
     /* Balance from WBN */
     {1345, "Balance from WBN"},
     {1346, "Balance teams from WBN"},
@@ -1426,6 +1426,12 @@ static const LangEntry langTable[] = {
     {2010, "The server has classic mode on, so this view is turned off."},
     {2011, "See allies in trees"},
     {2012, "Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off."},
+    {2154, "Overview window"},
+    {2155, "Which block of squares the Map Overview keeps live around\nyour own tank. Expanded is everything the classic view can\nscroll to; Classic narrows it to the window that view is\nshowing. Classic mode sets it to Classic and holds it there.\nThe server sends the same map data either way."},
+    {2156, "Line of sight"},
+    {2157, "Buildings and stands of trees stop you seeing further into\nthe live block. Off is the classic rule, and classic mode\nforces it off. The server sends the same map data either\nway, so this is a convenience rule, not a guarantee about a\nmodified client."},
+    {2158, "Expanded"},
+    {2159, "Classic"},
     /* Settings > Display & Sound > Full Screen */
     {2013, "Full Screen"},
     {2014, "Newswire transparency"},
@@ -2061,6 +2067,10 @@ static const LangEntry langTable[] = {
 
     /* Players panel — per-player playback volume slider */
     {2090, "How loud this player is played here"},
+
+    /* Players panel — per-player smart-ping mute toggle */
+    {2162, "Pings shown — click to hide this player's pings"},
+    {2163, "Pings hidden — click to show this player's pings"},
 
     /* Lobby — the local player's voice sub-row */
     {2095, "Your microphone and voice settings"},

@@ -86,7 +86,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
         BYTE i;
         for (i = 0; i < sim->sim.pb->numPills; i++) {
             pillbox tmp = sim->sim.pb->item[i];
-            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+            pillsSetPill(&sim->sim, &sim->sim.pb, &tmp, (BYTE)(i + 1));
         }
         for (i = 0; i < sim->sim.bs->numBases; i++) {
             base tmp = sim->sim.bs->item[i];
@@ -97,6 +97,9 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
             startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
         }
     }
+    /* The generated map is this sim's too: cap what it put in the lists
+       against the rules, as a loaded one is capped. */
+    mapClampToRules(&sim->sim);
 
     basesClearMines(&sim->sim);
 
@@ -388,7 +391,7 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
         BYTE i;
         for (i = 0; i < sim->sim.pb->numPills; i++) {
             pillbox tmp = sim->sim.pb->item[i];
-            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+            pillsSetPill(&sim->sim, &sim->sim.pb, &tmp, (BYTE)(i + 1));
         }
         for (i = 0; i < sim->sim.bs->numBases; i++) {
             base tmp = sim->sim.bs->item[i];
@@ -399,6 +402,9 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
             startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
         }
     }
+    /* The generated map is this sim's too: cap what it put in the lists
+       against the rules, as a loaded one is capped. */
+    mapClampToRules(&sim->sim);
     basesClearMines(&sim->sim);
 
     len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
@@ -494,11 +500,17 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
                                         &sim->sim.bs, &sim->sim.ss,
                                         sim->cachedMapData,
                                         sim->cachedMapDataLen);
+            /* The rolled-back map is this sim's too: cap it as the
+               successful load below is capped. */
+            mapClampToRules(&sim->sim);
         }
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
             "serverSimReloadMap: mapRead failed for '%s'", mapFileName);
         return FALSE;
     }
+
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
 
     /* Hash the canonical BMAPBOLO file so WBN can match it. This is the
      * path the lobby map chooser uses (CMD_LOBBY_SET_MAP). */
@@ -665,6 +677,10 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
             len);
         return FALSE;
     }
+    /* The map is this sim's now: cap what it brought against the rules.
+       Both arms above load into the same structures, so one call covers
+       the .map file route and the compressed one. */
+    mapClampToRules(&sim->sim);
 
     basesClearMines(&sim->sim);
 
@@ -713,6 +729,10 @@ bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
     {
         GameSim *gs = clientSimGetGameSim(cs);
         ok = mapLoadCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss, buf, len);
+        /* The map is that sim's now: cap what it brought against its rules. */
+        if (ok) {
+            mapClampToRules(gs);
+        }
     }
     free(buf);
     return ok;
@@ -792,6 +812,8 @@ bool serverSimRevertPreview(ServerSim *sim) {
             "serverSimRevertPreview: mapLoadCompressedMap failed");
         return FALSE;
     }
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
     basesClearMines(&sim->sim);
 
     /* Reverted to the previous map from its compressed bytes — we no
@@ -1067,6 +1089,11 @@ static void serverSimApplyMapChange(ServerSim *sim) {
      * Without this a slot's copy would still hold the previous map and the
      * checksum in its snapshot header would not match what it was sent. */
     serverSimShadowSeedAll(sim);
+    /* A fill still owing squares was aimed at the map that has just gone, so
+       it goes with it. This is the reload, the map-list pick, an uploaded map
+       and the random regenerate: none of them reaches serverSimResetGameWorld,
+       where the round starts drop theirs. */
+    serverSimScenarioResetFill(sim);
 
     /* A reservation from the previous map can index past the new map's
      * start list, or sit on a side the slot's team may not use now the
@@ -1088,7 +1115,8 @@ static void serverSimApplyMapChange(ServerSim *sim) {
             if (!sim->playerConnected[k]) continue;
             if (sim->lobbyPlayers[k].startIdx == 0xFF) continue;
             if (sim->lobbyPlayers[k].startIdx < 1 ||
-                sim->lobbyPlayers[k].startIdx > numStarts) {
+                sim->lobbyPlayers[k].startIdx > numStarts ||
+                startsIsActive(&sim->sim.ss, sim->lobbyPlayers[k].startIdx) == FALSE) {
                 sim->lobbyPlayers[k].startIdx = 0xFF;
             }
         }

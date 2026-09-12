@@ -116,6 +116,7 @@ void publishServerMessage(ServerSim *sim, const char *message) {
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;
     SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    evt.u.serverText.destPlayer = 0xFF;   /* every slot; 0 would be slot 0 alone */
     /* In-process subscribers display via client_sim_control.c's
      * CTRL_SERVER_TEXT handler (newswire / lobby chat); UDP clients
      * receive the codec-encoded PACKET_CHAT_BROADCAST(fromPlayer=0xFE)
@@ -123,18 +124,19 @@ void publishServerMessage(ServerSim *sim, const char *message) {
     serverSimPublishControl(sim, &evt);
 }
 
-/* Like publishServerMessage but delivered ONLY to members of teamId (1-16).
+/* Like publishServerMessage but delivered ONLY to members of teamId (1-15).
  * destTeam rides the ControlEvent and is filtered per-recipient in
  * udpClientDeliverControl + the in-process CTRL_SERVER_TEXT handler — used to
  * keep surrender-vote notices private to the surrendering team. */
-static void publishServerMessageToTeam(ServerSim *sim, const char *message,
-                                       BYTE teamId) {
+void publishServerMessageToTeam(ServerSim *sim, const char *message,
+                                BYTE teamId) {
     ControlEvent evt;
     if (!sim || !message) return;
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;
     SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
     evt.u.serverText.destTeam = teamId;
+    evt.u.serverText.destPlayer = 0xFF;   /* the team, not one slot within it */
     serverSimPublishControl(sim, &evt);
 }
 
@@ -387,7 +389,12 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
                             ? sim->teams[gv->teamId].name : "?";
         snprintf(buf, sizeof(buf),
                  "*** Team %s has surrendered. ***", tname);
-        publishServerMessage(sim, buf);
+        /* The one kind of newswire fact the server writes as text. There is
+           no quiet byte to stamp and no event to hold: a line the policy
+           turns down is simply not sent. The surrender itself goes ahead. */
+        if (serverSimAnnounce(sim, ANNOUNCE_KIND_VOTE, gv->teamId, NEUTRAL)) {
+            publishServerMessage(sim, buf);
+        }
 
         /* A surrender ends the round immediately — no chained
          * back-to-lobby vote. Record the team that gave up so the
@@ -594,7 +601,10 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
             /* Surrender invalidation: team count must remain == 2. */
             if (gv->kind == GAME_VOTE_KIND_SURRENDER &&
                 serverSimCountActiveTeams(sim) != 2) {
-                publishServerMessageToTeam(sim, "Surrender vote cancelled — team count changed.", gv->teamId);
+                if (serverSimAnnounce(sim, ANNOUNCE_KIND_VOTE, gv->teamId,
+                                      NEUTRAL)) {
+                    publishServerMessageToTeam(sim, "Surrender vote cancelled — team count changed.", gv->teamId);
+                }
                 gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
                 continue;
             }
@@ -602,7 +612,9 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
             /* If the surrendering team or the voter pool has emptied
              * entirely (everyone disconnected), the vote is moot. */
             if (popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId)) == 0) {
-                if (gv->kind == GAME_VOTE_KIND_SURRENDER) {
+                if (gv->kind == GAME_VOTE_KIND_SURRENDER &&
+                    serverSimAnnounce(sim, ANNOUNCE_KIND_VOTE, gv->teamId,
+                                      NEUTRAL)) {
                     publishServerMessageToTeam(sim,
                         "Surrender vote cancelled — surrendering team is empty.", gv->teamId);
                 }

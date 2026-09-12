@@ -32,7 +32,8 @@
                               * BOLOPACKET_REQUEST_SIZE, BOLOPACKET_REQUEST_TYPEPOS,
                               * HIDDEN_MINES, ALL_MINES_VISIBLE, the INFO_FLAG_*
                               * bits, infoPacketPackVoiceMode,
-                              * infoPacketPackViewPolicies */
+                              * infoPacketPackViewPolicies,
+                              * infoPacketPackViewPolicies2 */
 #include "global.h"          /* BYTE, MAX_TANKS and the terrain ids the
                               * resync name table covers */
 #include "util.h"            /* utilCtoPString */
@@ -160,6 +161,9 @@ void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
         serverSimGetViewPolicy(sim, viewCategoryAlly),
         serverSimGetClassicMode(sim),
         serverSimGetAlliesInTrees(sim));
+    pkt->view_policies2 = infoPacketPackViewPolicies2(
+        serverSimGetOverviewWindow(sim),
+        serverSimGetLineOfSight(sim));
 }
 
 /* Handle an old-protocol info request (server browser compatibility).

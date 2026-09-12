@@ -74,7 +74,9 @@ const char *mpDiagCtrlName(int type) {
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     case CTRL_VIEW_TARGET:      return "VIEW_TARGET";
     case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
-    case CTRL_NEWSWIRE_MUTE:    return "NEWSWIRE_MUTE";
+    case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
+    case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
+    case CTRL_SIM_RULES:        return "SIM_RULES";
     default:                    return "<unknown>";
     }
 }
@@ -183,6 +185,18 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
             mpDiagLog("[srv] deliver FILTER slot=%d type=SERVER_TEXT "
                       "reason=not-on-team destTeam=%d clientPlayerNum=%d",
                       idx, (int)evt->u.serverText.destTeam, (int)client->playerNum);
+            return;
+        }
+    }
+    if (evt->type == CTRL_SERVER_TEXT &&
+        evt->u.serverText.destPlayer != 0xFF) {
+        /* Player-scoped server text (a scenario talking to one player): only
+         * the addressed slot receives it. */
+        if (client->playerNum != evt->u.serverText.destPlayer) {
+            mpDiagLog("[srv] deliver FILTER slot=%d type=SERVER_TEXT "
+                      "reason=not-addressed destPlayer=%d clientPlayerNum=%d",
+                      idx, (int)evt->u.serverText.destPlayer,
+                      (int)client->playerNum);
             return;
         }
     }

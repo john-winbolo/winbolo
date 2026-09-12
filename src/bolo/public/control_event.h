@@ -155,18 +155,52 @@ typedef enum {
      * with its own mute list — a muted player sends nothing that reaches
      * you, so this is the only way to show that they are talking. */
     CTRL_VOICE_TALKING,
-    /* CTRL_NEWSWIRE_MUTE — server-owned "stop showing event newswire
-     * lines" switch, broadcast to every client and replayed to a late
-     * joiner. While it is set, clients drop the ENGINE-GENERATED
-     * newswire (player quit, base and pill captures, builder lost,
-     * name handover, ...) and the server drops its own "X has joined."
-     * / "X has left." broadcasts. Deliberately-sent server text
-     * (game.message -> CTRL_SERVER_TEXT) and player chat are NOT
-     * affected, so a host's own banner text still arrives. Set by the
-     * server around a burst of engine churn it does not want narrated
-     * (serverSimSetNewswireMute). Cleared at every round reset so it
-     * can never stick. */
-    CTRL_NEWSWIRE_MUTE,
+    /* CTRL_ENTITY_CHANGE — one pillbox, base or start has joined the map
+     * or left it. The map's item lists are fixed at map load for a normal
+     * round; a scenario can change them mid-round, and this is how a client
+     * hears about it on the tick it happens. Removal keeps the item's slot
+     * and its index, so every index above a removal goes on naming the same
+     * item, and the record the event carries is the item's map data only.
+     * Broadcast: which items are on the map is public, the way the map is. */
+    CTRL_ENTITY_CHANGE,
+    /* CTRL_ENTITY_SYNC — which pillboxes, bases and starts are on the map
+     * right now, as one bit per index. A client builds its three item lists
+     * from the compressed map blob, and the blob carries the items but not
+     * which of them are still on the map, so installing one marks every item
+     * up to the count as on the map. That is right for a map as it loads and
+     * wrong for a client that arrives after a removal, which is what this
+     * corrects: the server sends it once the client has the blob, and the
+     * client clears the live flag of every index the mask does not name. The
+     * counts stay the blob's — a mask says which of those slots hold an item,
+     * never how many slots there are.
+     *
+     * Sent to one recipient rather than published: it answers a map the
+     * recipient has just taken a copy of, so the send sites are the ones that
+     * hand a copy over — the subscriber sync replay and the completion of a
+     * client's bulk map transfer. The masks read the same for everyone, so
+     * the body carries no per-recipient state; a change after this event
+     * travels as a CTRL_ENTITY_CHANGE to everyone at once. */
+    CTRL_ENTITY_SYNC,
+    /* CTRL_SIM_RULES — the gameplay numbers the simulation is running on,
+     * for every rule a client reads. A server and its clients clamp the
+     * same pill and base records, predict the same tank movement and fire
+     * the same shells, so they have to be reading the same table; a client
+     * left on the classic one quietly disagrees with the server about how
+     * far a tank slides, how much a shell takes off a base and what a
+     * pillbox's armour caps at.
+     *
+     * Carries only the rules a client reads. The rest of the table — the
+     * builder's costs, the base refuel and give amounts, the terrain
+     * lifetimes and the tree weights — is read by server code alone and
+     * stays on the server. Broadcast: the numbers are the same for
+     * everybody and none of them is private.
+     *
+     * Published at every round start — from the two authoritative start
+     * functions themselves, so no start path can forget to state its
+     * table — again whenever a scenario changes a rule the event carries,
+     * and replayed into a joining client's sync so it arrives with the
+     * table the round is already using. */
+    CTRL_SIM_RULES,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -182,6 +216,100 @@ typedef enum {
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
 
+/* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
+ * ride the wire, so they are written out rather than left to the order
+ * of the members. */
+typedef enum {
+    ENTITY_KIND_PILL  = 0,
+    ENTITY_KIND_BASE  = 1,
+    ENTITY_KIND_START = 2
+} EntityKind;
+
+/* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
+ *
+ * A rule is here because code a ClientSim reaches reads it: the movement
+ * and gunsight code the client predicts with, the shell numbers it fires
+ * predicted shells on, the base thresholds it draws and tests captures
+ * against, the caps its own clamp pass applies to the pill and base
+ * records a map hands it, and the rules view a bot's brain is given every
+ * tick. A rule only the server reads is not here — sending it would be
+ * bytes no client could use.
+ *
+ * The widths are each rule's own range, from the checks in sim_rules.c:
+ * a row bounded 0..255 travels as one byte and a row bounded by another
+ * row travels as wide as that bound allows. Two of them lean on a pair
+ * rather than on their own row: pill_attack_min_ticks cannot exceed
+ * pill_attack_ticks and base_capture_armour cannot exceed
+ * base_full_armour, both of which are bounded at 255, so both fit a byte.
+ *
+ * The float rules travel as their four raw bytes. A fixed-point scale
+ * would round them: tank_accel_rate is allowed down to 0.01, and at ×256
+ * that is 2.56, which rounds to 3 and arrives as 0.0117 — a client
+ * predicting with a number the server is not simulating with, which is
+ * the disagreement this event exists to end.
+ *
+ * One list per width, each in the order SimRules declares its fields. The
+ * variant's members, the encoder, the decoder, the server's fill and the
+ * client's apply are all written from these lists, so a rule cannot be
+ * encoded and not decoded, or sent and not applied. */
+#define CTRL_SIM_RULES_U8_FIELDS(F)                                          \
+    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)              \
+    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)               \
+    F(shell_damage) F(mine_damage) F(just_fired_ticks)                       \
+    F(gunsight_min) F(gunsight_max) F(tank_min_move)                         \
+    F(speed_road) F(speed_grass) F(speed_forest) F(speed_river)              \
+    F(speed_swamp) F(speed_crater) F(speed_rubble) F(speed_boat)             \
+    F(speed_deep_sea) F(speed_refuel_base)                                   \
+    F(shell_life) F(shell_speed)                                             \
+    F(pill_max_armour) F(pill_attack_ticks) F(pill_attack_min_ticks)         \
+    F(pill_cooldown_ticks)                                                   \
+    F(base_full_armour) F(base_full_shells) F(base_full_mines)               \
+    F(base_capture_armour) F(base_hit_armour)
+
+#define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
+    F(tank_death_ticks)
+
+#define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
+    F(shell_start_add) F(base_regen_ticks) F(tree_grow_initial_ticks)
+
+#define CTRL_SIM_RULES_F32_FIELDS(F)                                         \
+    F(tank_accel_rate) F(tank_decel_rate) F(tank_brake_rate)                 \
+    F(tank_autoslow_rate)                                                    \
+    F(turn_road) F(turn_grass) F(turn_forest) F(turn_river) F(turn_swamp)    \
+    F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
+    F(turn_refuel_base)
+
+/* Every carried rule, whatever its width, for the callers that do not care
+ * how wide one goes — the check for whether a changed rule is one this
+ * event carries, and the round-trip case that walks them all. */
+#define CTRL_SIM_RULES_ALL_FIELDS(F)                                         \
+    CTRL_SIM_RULES_U8_FIELDS(F)                                              \
+    CTRL_SIM_RULES_U16_FIELDS(F)                                             \
+    CTRL_SIM_RULES_U32_FIELDS(F)                                             \
+    CTRL_SIM_RULES_F32_FIELDS(F)
+
+/* The member each list entry becomes. Integer rules keep the int32_t
+ * SimRules declares them as whatever width they travel in, so reading one
+ * back out needs no cast. */
+#define CTRL_SIM_RULES_INT_MEMBER(name) int32_t name;
+#define CTRL_SIM_RULES_FLT_MEMBER(name) float   name;
+
+/* Body size, so the encoder and the decoder agree on it by construction
+ * rather than by counting: one byte, two, four and four per entry. */
+#define CTRL_SIM_RULES_COUNT_ONE(name) + 1
+#define CTRL_SIM_RULES_BODY_LEN                                              \
+    ((size_t)((0 CTRL_SIM_RULES_U8_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 1 +   \
+              (0 CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 2 +  \
+              (0 CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4 +  \
+              (0 CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_COUNT_ONE)) * 4))
+
+/* `quiet` on the five variants that carry one is the announce policy's
+ * answer, stamped by the server where it built the event: 0 to announce the
+ * fact, 1 to hold the line back. It rides the wire like any other field, and
+ * the client's line-emitting site reads it before writing a line. Nothing
+ * else about the event changes — the roster update, the alliance bitmap and
+ * the rename all still apply. With no scenario policy registered it is
+ * always 0. */
 typedef struct ControlEvent {
     ControlEventType type;
     union {
@@ -195,11 +323,13 @@ typedef struct ControlEvent {
         struct {
             BYTE acceptedBy;
             BYTE newMember;
+            BYTE quiet;
         } allianceAccept;
 
         /* CTRL_ALLIANCE_LEAVE — alliance leave, not player leave */
         struct {
             BYTE playerNum;
+            BYTE quiet;
         } allianceLeave;
 
         /* CTRL_ALLIANCE_RESET — full alliance matrix snapshot.
@@ -221,6 +351,7 @@ typedef struct ControlEvent {
             uint8_t clientFlags;
             BYTE  numAllies;
             BYTE  allies[MAX_TANKS];
+            BYTE  quiet;
         } playerJoin;
 
         /* CTRL_PLAYER_LEAVE — server announces a player has disconnected.
@@ -229,12 +360,14 @@ typedef struct ControlEvent {
             BYTE playerNum;
             char name[PACKET_MAX_PLAYER_NAME];
             char country[3];            /* 2 chars + NUL */
+            BYTE quiet;
         } playerLeave;
 
         /* CTRL_PLAYER_NAME */
         struct {
             BYTE playerNum;
             char name[PACKET_MAX_PLAYER_NAME];
+            BYTE quiet;
         } playerName;
 
         /* CTRL_LOBBY_SLOT */
@@ -283,7 +416,7 @@ typedef struct ControlEvent {
             bool     lobbyWbnAvailable;  /* host's winbolonetIsRunning() —
                                           * gates WBN-only UI (Balance
                                           * from WBN) on remote clients */
-            uint16_t lobbyServerLocks;
+            uint32_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
             uint8_t  hostSlot;   /* current lobby host's player slot */
             /* Visibility rules, indexed by ViewCategory. */
@@ -296,6 +429,8 @@ typedef struct ControlEvent {
                                          * its clients send it. serverVoiceOff
                                          * means a client here has nowhere to
                                          * send voice, so it captures none. */
+            uint8_t  lobbyOverviewWindow;  /* OverviewWindow */
+            uint8_t  lobbyLineOfSight;     /* LineOfSightMode */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -403,9 +538,17 @@ typedef struct ControlEvent {
          * subscribers (SP / host) see the same lines. */
         struct {
             char    text[PACKET_MAX_CHAT_MESSAGE + 1];
-            uint8_t destTeam;  /* 0 = everyone; 1-16 = deliver only to that team.
+            uint8_t destTeam;  /* 0 = everyone; 1-15 = deliver only to that team
+                                  (teams run 1..MAX_TANKS-1, see ServerSim.teams[]).
                                   Server-side recipient filter (udpClientDeliver +
                                   the in-process handler); not sent on the wire. */
+            uint8_t destPlayer; /* 0xFF = everyone; otherwise deliver only to that
+                                   slot. Server-side recipient filter like destTeam,
+                                   and not sent on the wire either. 0 is a real
+                                   slot, so a memset-zeroed event would unicast to
+                                   slot 0: every producer of this variant — the
+                                   sim-side publishers and the body decoder that
+                                   rebuilds it — must set 0xFF explicitly. */
         } serverText;
 
         /* CTRL_GAME_VOTE_STATE — mirrors PACKET_GAME_VOTE_STATE. */
@@ -517,11 +660,69 @@ typedef struct ControlEvent {
             PlayerBitMap talking;
         } voiceTalking;
 
-        /* CTRL_NEWSWIRE_MUTE — 1 = engine newswire suppressed, 0 = normal.
-         * One byte on the wire; the server only publishes it on a change. */
+        /* CTRL_ENTITY_CHANGE — the item, where it sits in its list, and
+         * whether it is now on the map or off it.
+         *
+         * index is 0-based, the way the snapshots, the game events and the
+         * brain API number an item; the pillbox, bases and starts modules
+         * take the number one higher, and the boundary converts.
+         *
+         * The record is the item's map data and nothing more. A pillbox's
+         * reload, coolDown and justSeen and a base's refuelTime, baseTime
+         * and justStopped are the server's per-tick working state: no
+         * client rebuilds them from an event, and they would be stale by
+         * the time the event arrived. On a removal the record is the item
+         * as it stood, so a script that puts it back has it to hand. */
         struct {
-            BYTE muted;
-        } newswireMute;
+            uint8_t kind;    /* EntityKind */
+            uint8_t index;   /* 0-based */
+            uint8_t added;   /* 1 on the map, 0 removed */
+            union {
+                struct {
+                    uint8_t x, y;
+                    uint8_t owner;
+                    uint8_t armour;
+                    uint8_t speed;
+                    uint8_t inTank;
+                } pill;
+                struct {
+                    uint8_t x, y;
+                    uint8_t owner;
+                    uint8_t armour;
+                    uint8_t shells;
+                    uint8_t mines;
+                } base;
+                struct {
+                    uint8_t x, y;
+                    uint8_t dir;
+                } start;
+            } rec;
+        } entityChange;
+
+        /* CTRL_ENTITY_SYNC — one bit per 0-based index in each list: bit i
+         * set means index i holds an item that is on the map, clear means
+         * the index is in range but its item has been taken off. Each list
+         * holds at most 16 items (MAX_PILLS, MAX_BASES and MAX_STARTS are
+         * all 16), so 16 bits covers every index a list can name. Bits at
+         * or above a list's own count name no item and are ignored. */
+        struct {
+            uint16_t pills;
+            uint16_t bases;
+            uint16_t starts;
+        } entitySync;
+
+        /* CTRL_SIM_RULES — one member per rule the event carries, named
+         * exactly as SimRules names it, so the server fill and the client
+         * apply are plain assignments and a reader can find the field the
+         * value came from. Declared in four width groups because that is
+         * the order they sit in on the wire, and the widths follow each
+         * rule's own range: nothing is sent wider than it can be. */
+        struct {
+            CTRL_SIM_RULES_U8_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_U16_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
+            CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
+        } simRules;
     } u;
 } ControlEvent;
 

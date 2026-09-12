@@ -58,12 +58,13 @@
  * over-cap log never enters memory. */
 #define ROUND_LOG_MAX_BYTES (4u * 1024u * 1024u)
 
-/* ServerLocks bitmask — sent in extended PACKET_LOBBY_STATE. Set by
- * bolod CLI flags (--lock-game-type etc); never changes after server
- * startup. Hosts cannot modify locks; clients render matching settings
- * disabled with a lock badge. Surfaced publicly so servermain.c (which
- * parses the CLI flags) and the GUI lobby (which renders the disabled
- * state) can both reach these without including internal/netpacks.h. */
+/* ServerLocks bitmask — 32 bits wide, sent in extended
+ * PACKET_LOBBY_STATE. Set by bolod CLI flags (--lock-game-type etc);
+ * never changes after server startup. Hosts cannot modify locks;
+ * clients render matching settings disabled with a lock badge.
+ * Surfaced publicly so servermain.c (which parses the CLI flags) and
+ * the GUI lobby (which renders the disabled state) can both reach
+ * these without including internal/netpacks.h. */
 #define LOBBY_LOCK_GAME_TYPE         (1u << 0)
 #define LOBBY_LOCK_AI_POLICY         (1u << 1)
 #define LOBBY_LOCK_MINES             (1u << 2)
@@ -78,6 +79,8 @@
 #define LOBBY_LOCK_ALLY_VIEW         (1u << 11)
 #define LOBBY_LOCK_CLASSIC_MODE      (1u << 12)
 #define LOBBY_LOCK_ALLIES_IN_TREES   (1u << 13)
+#define LOBBY_LOCK_OVERVIEW_WINDOW   (1u << 14)
+#define LOBBY_LOCK_LINE_OF_SIGHT     (1u << 15)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -113,13 +116,22 @@ typedef enum {
                                  * ally view to off, and refuses an
                                  * edit to any of those three while it
                                  * stays on. */
-    LST_ALLIES_IN_TREES   = 12  /* 1 byte bool. When true an allied
+    LST_ALLIES_IN_TREES   = 12, /* 1 byte bool. When true an allied
                                  * tank standing in trees is sent to
                                  * its allies instead of being
                                  * withheld. Off is the classic
                                  * behaviour, and classic mode forces
                                  * it off and refuses an edit while it
                                  * stays on. */
+    LST_OVERVIEW_WINDOW   = 13, /* 1 byte OverviewWindow. Which block of
+                                 * squares the map overview keeps live
+                                 * round the player's own tank. Classic
+                                 * mode forces the narrow window and
+                                 * refuses an edit while it stays on. */
+    LST_LINE_OF_SIGHT     = 14  /* 1 byte LineOfSightMode. What stops the
+                                 * player seeing inside that block.
+                                 * Classic mode forces it off and refuses
+                                 * an edit while it stays on. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

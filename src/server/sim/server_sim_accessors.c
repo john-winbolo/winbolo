@@ -286,6 +286,41 @@ bool serverSimIsMapSkipVote(const ServerSim *sim, BYTE n) {
     return sim->mapSkipVotes[n];
 }
 
+bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
+    tank *t;
+    if (sim == NULL || out == NULL || i >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, i)) return false;
+
+    memset(out, 0, sizeof(*out));
+    out->connected = true;
+    out->is_bot    = sim->lobbyPlayers[i].isBot;
+    out->team      = sim->lobbyPlayers[i].teamNumber;
+    /* isServer=TRUE: read the server-side player table directly. */
+    playersGetPlayerName(&sim->sim.plyrs, i, out->name, sizeof(out->name),
+                         TRUE);
+    out->name[sizeof(out->name) - 1] = '\0';
+    out->ready = sim->lobbyPlayers[i].ready;
+    /* Holding a seat is playing the round. */
+    out->fielded = true;
+    t = &sim->sim.tanks[i];
+    out->alive = (*t != NULL && tankGetDeathWait(t) == 0);
+    return true;
+}
+
+BYTE serverSimGetNumFielded(ServerSim *sim) {
+    BYTE count;
+    BYTE num = 0;
+    if (sim == NULL) return 0;
+    /* Seats playing the round. Holding a seat is playing it, so this walks
+       the same flag serverSimGetNumPlayers does. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (sim->playerConnected[count]) {
+            num++;
+        }
+    }
+    return num;
+}
+
 char *const *serverSimGetMapDirFiles(const ServerSim *sim) {
     return sim->mapDirFiles;
 }
@@ -393,6 +428,38 @@ bool serverSimGetPill(ServerSim *sim, BYTE i,
     return true;
 }
 
+/* Reader for binaries that own a ServerSim directly. Only speed: pillsGetPill
+   copies six fields and reload and coolDown are not among them, so reading
+   them here read whatever was on the stack. */
+bool serverSimGetPillSpeed(ServerSim *sim, BYTE i, BYTE *speed) {
+    pillbox p;
+    BYTE n = pillsGetNumPills(&sim->sim.pb);
+    if (i == 0 || i > n) return false;
+    pillsGetPill(&sim->sim.pb, &p, i);
+    if (speed) *speed = p.speed;
+    return true;
+}
+
+bool serverSimGetPillInfo(ServerSim *sim, BYTE i, ServerSimPillInfo *out) {
+    pillbox p;
+    BYTE n;
+    if (sim == NULL || out == NULL) return false;
+    n = pillsGetNumPills(&sim->sim.pb);
+    if (i == 0 || i > n) return false;
+    memset(&p, 0, sizeof(p));
+    pillsGetPill(&sim->sim.pb, &p, i);
+
+    memset(out, 0, sizeof(*out));
+    out->x       = p.x;
+    out->y       = p.y;
+    out->owner   = p.owner;
+    out->armour  = p.armour;
+    out->speed   = p.speed;
+    out->in_tank = p.inTank;
+    out->active  = pillsIsActive(&sim->sim.pb, i);
+    return true;
+}
+
 bool serverSimGetBase(ServerSim *sim, BYTE i,
                       BYTE *x, BYTE *y, BYTE *owner) {
     base b;
@@ -413,6 +480,28 @@ bool serverSimGetBaseStats(ServerSim *sim, BYTE i,
     return true;
 }
 
+bool serverSimGetBaseInfo(ServerSim *sim, BYTE i, ServerSimBaseInfo *out) {
+    base b;
+    BYTE n;
+    if (sim == NULL || out == NULL) return false;
+    n = basesGetNumBases(&sim->sim.bs);
+    if (i == 0 || i > n) return false;
+    /* basesGetBase fills the six fields read below and leaves the rest of
+       the struct alone, so start from a cleared one. */
+    memset(&b, 0, sizeof(b));
+    basesGetBase(&sim->sim.bs, &b, i);
+
+    memset(out, 0, sizeof(*out));
+    out->x      = b.x;
+    out->y      = b.y;
+    out->owner  = b.owner;
+    out->armour = b.armour;
+    out->shells = b.shells;
+    out->mines  = b.mines;
+    out->active = basesIsActive(&sim->sim.bs, i);
+    return true;
+}
+
 bool serverSimGetStart(ServerSim *sim, BYTE i,
                        BYTE *x, BYTE *y, BYTE *dir) {
     start s;
@@ -422,6 +511,44 @@ bool serverSimGetStart(ServerSim *sim, BYTE i,
     if (x)   *x   = s.x;
     if (y)   *y   = s.y;
     if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    return true;
+}
+
+bool serverSimGetStartInfo(ServerSim *sim, BYTE i, ServerSimStartInfo *out) {
+    start s;
+    BYTE n;
+    if (sim == NULL || out == NULL) return false;
+    n = startsGetNumStarts(&sim->sim.ss);
+    if (i == 0 || i > n) return false;
+    /* startsGetStartStruct fills the fields read below and leaves the rest of
+       the struct alone, so start from a cleared one. */
+    memset(&s, 0, sizeof(s));
+    startsGetStartStruct(&sim->sim.ss, &s, i);
+
+    memset(out, 0, sizeof(*out));
+    out->x      = s.x;
+    out->y      = s.y;
+    out->dir    = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    out->active = startsIsActive(&sim->sim.ss, i);
+    return true;
+}
+
+bool serverSimGetMapTerrainBuffer(const ServerSim *sim, BYTE *out, size_t cap) {
+    map *mp;
+    int x;
+    int y;
+    if (sim == NULL || out == NULL) return false;
+    if (cap < (size_t)SERVER_SIM_TERRAIN_BYTES) return false;
+
+    /* One byte per square through mapGetPos, so the buffer and
+       serverSimGetMapTerrain agree on the border squares mapGetPos reports
+       as deep sea. Row-major: the row for y is 256 contiguous bytes. */
+    mp = &((ServerSim *)sim)->sim.mp;
+    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+        for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+            out[(y * MAP_ARRAY_SIZE) + x] = mapGetPos(mp, (BYTE)x, (BYTE)y);
+        }
+    }
     return true;
 }
 
@@ -449,6 +576,8 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     playersGetPlayerName(&sim->sim.plyrs, i, out->name, sizeof(out->name),
                          TRUE);
     out->name[sizeof(out->name) - 1] = '\0';
+    /* Identity, not tank state: filled whether or not a tank exists. */
+    out->is_bot = sim->lobbyPlayers[i].isBot;
 
     t = &sim->sim.tanks[i];
     if (*t == NULL) {
@@ -459,9 +588,15 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     }
     out->has_tank = true;
     tankGetWorld(t, &out->world_x, &out->world_y);
+    out->map_x   = tankGetMX(t);
+    out->map_y   = tankGetMY(t);
     out->dir     = tankGetDir(t);
+    out->dir256  = tankGet256Dir(t);
     out->on_boat = tankIsOnBoat(t);
     out->alive   = (tankGetDeathWait(t) == 0);
+    tankGetStats(t, &out->shells, &out->mines, &out->armour, &out->trees);
+    out->pills   = tankGetNumCarriedPills(t);
+    tankGetModifiers(*t, &out->mods);
     tankGetKillsDeaths(t, &out->kills, &out->deaths);
     return true;
 }
@@ -488,6 +623,64 @@ tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
                                          BYTE selfPlayer,
                                          BYTE tankNum) {
     return playersScreenAllience(&sim->sim.plyrs, selfPlayer, tankNum);
+}
+
+/* BuilderJob is handed to the engine's request path as-is, so each member
+   has to keep the value of the request code it stands for. */
+BOLO_STATIC_ASSERT((int)builderJobTrees    == LGM_TREE_REQUEST,
+                   builder_job_trees_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobRoad     == LGM_ROAD_REQUEST,
+                   builder_job_road_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobBuilding == LGM_BUILDING_REQUEST,
+                   builder_job_building_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobPill     == LGM_PILL_REQUEST,
+                   builder_job_pill_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobMine     == LGM_MINE_REQUEST,
+                   builder_job_mine_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobBoat     == LGM_BOAT_REQUEST,
+                   builder_job_boat_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobNone     == LGM_IDLE,
+                   builder_job_none_matches_idle);
+
+bool serverSimGetBuilderInfo(ServerSim *sim, BYTE i, ServerSimBuilderInfo *out) {
+    lgm *l;
+    tank *t;
+    if (sim == NULL || out == NULL || i >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, i)) return false;
+    l = &sim->sim.lgmen[i];
+    if (*l == NULL) return false;
+
+    memset(out, 0, sizeof(*out));
+    t = &sim->sim.tanks[i];
+    if ((*l)->inTank) {
+        out->state = builderStateInTank;
+    } else if ((*l)->isDead) {
+        /* isDead covers the whole span from being killed to landing again:
+           the man is on his way back down while his tank is still standing,
+           and has nowhere to land once it is not. Same split obs_builder.c
+           reports to a brain. */
+        out->state = (*t != NULL && !tankIsDestroyed(t))
+                         ? builderStateParachuting
+                         : builderStateDead;
+    } else if ((*l)->state == LGM_STATE_GOING) {
+        out->state = builderStateGoing;
+    } else {
+        /* Out of the tank and not walking to a job: walking back to it. */
+        out->state = builderStateReturning;
+    }
+    out->world_x = lgmGetWX(l);
+    out->world_y = lgmGetWY(l);
+    out->map_x   = lgmGetMX(l);
+    out->map_y   = lgmGetMY(l);
+    /* The asserts above pin every member to the request code it stands
+       for, so the action carries straight across; anything outside that
+       range is no job at all. */
+    out->job     = ((*l)->action <= LGM_IDLE)
+                       ? (BuilderJob)(*l)->action
+                       : builderJobNone;
+    out->trees   = (*l)->numTrees;
+    out->mines   = (*l)->numMines;
+    return true;
 }
 
 int serverSimGetShellSnapshot(ServerSim *sim, ShellRender out[], int cap) {
@@ -582,11 +775,11 @@ void serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v) {
     if (sim) sim->firstJoinerBecomesHost = v;
 }
 
-uint16_t serverSimGetServerLocks(const ServerSim *sim) {
+uint32_t serverSimGetServerLocks(const ServerSim *sim) {
     return sim ? sim->serverLocks : 0;
 }
 
-uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
+uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
     switch (lstSettingType) {
         case LST_GAME_TYPE:         return LOBBY_LOCK_GAME_TYPE;
         case LST_HIDDEN_MINES:      return LOBBY_LOCK_MINES;
@@ -600,31 +793,35 @@ uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
         case LST_CLASSIC_MODE:      return LOBBY_LOCK_CLASSIC_MODE;
         case LST_ALLIES_IN_TREES:   return LOBBY_LOCK_ALLIES_IN_TREES;
-        default:                    return 0xFFFFu;  /* unknown setting */
+        case LST_OVERVIEW_WINDOW:   return LOBBY_LOCK_OVERVIEW_WINDOW;
+        case LST_LINE_OF_SIGHT:     return LOBBY_LOCK_LINE_OF_SIGHT;
+        default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
 
 bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
     if (sim == NULL) return false;
-    uint16_t bit = serverSimGetSettingLockBit(lstSettingType);
-    if (bit == 0u || bit == 0xFFFFu) return false;
+    uint32_t bit = serverSimGetSettingLockBit(lstSettingType);
+    if (bit == 0u || bit == 0xFFFFFFFFu) return false;
     return (sim->serverLocks & bit) != 0u;
 }
 
-uint16_t serverSimAddImpliedLocks(uint16_t locks) {
-    /* Turning classic mode on writes the three view policies and allies
-     * in trees (serverSimSetClassicMode), so leaving the checkbox
-     * editable while any of those four is locked would let a host change
-     * a locked value with one tick — and the value does not come back,
-     * because turning classic mode off leaves all four where classic
-     * mode put them. Locking any of the four locks classic mode too.
+uint32_t serverSimAddImpliedLocks(uint32_t locks) {
+    /* Turning classic mode on writes the three view policies, allies in
+     * trees, the overview window and line of sight
+     * (serverSimSetClassicMode), so leaving the checkbox editable while
+     * any of those six is locked would let a host change a locked value
+     * with one tick — and the value does not come back, because turning
+     * classic mode off leaves all six where classic mode put them.
+     * Locking any of the six locks classic mode too.
      *
      * Deliberately decided from the mask alone rather than from the
      * current values: the mask is fixed at startup, so the host sees a
      * checkbox that is either always available or always locked, rather
      * than one that appears and disappears as other settings move. */
     if (locks & (LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
-                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES)) {
+                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES |
+                 LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT)) {
         locks |= LOBBY_LOCK_CLASSIC_MODE;
     }
     return locks;
@@ -645,6 +842,10 @@ void serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
     sim->viewDecaySecs[cat] = decaySecs;
 }
 
+/* The NULL-sim and out-of-range answers here, and in the two window /
+ * sight getters below, are meaning B in view_policy.h: what a reader
+ * assumes of a sender that named no policy, not what a sim starts on.
+ * They must not become the VIEW_POLICY_STOCK_* set. */
 ViewPolicy serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat) {
     if (sim == NULL) return viewPolicyAlways;
     if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return viewPolicyAlways;
@@ -658,7 +859,12 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
         /* Write the three classic values straight through the view-policy
          * setter, so the command-line switch and the lobby setting both
          * get the same result. Each category keeps its own decay seconds
-         * so the host's value survives a trip through classic mode. */
+         * so the host's value survives a trip through classic mode.
+         *
+         * These are classic mode's own set, spelled out on purpose. They
+         * match the VIEW_POLICY_STOCK_* set today, but they are a
+         * different statement — moving what a stock server runs must not
+         * silently redefine what classic mode means. */
         serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyKey,
                                sim->viewDecaySecs[viewCategoryPill]);
         serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff,
@@ -667,6 +873,10 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryAlly]);
         /* Classic mode hides allies in trees, so it owns this value too. */
         serverSimSetAlliesInTrees(sim, false);
+        /* Classic mode is the classic overview too: the narrow window,
+         * with nothing blocking sight inside it. */
+        serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowClassic);
+        serverSimSetLineOfSight(sim, (uint8_t)lineOfSightOff);
     }
 }
 
@@ -681,6 +891,26 @@ void serverSimSetAlliesInTrees(ServerSim *sim, bool on) {
 
 bool serverSimGetAlliesInTrees(const ServerSim *sim) {
     return sim ? sim->alliesInTrees : false;
+}
+
+void serverSimSetOverviewWindow(ServerSim *sim, uint8_t window) {
+    if (sim == NULL) return;
+    if (window >= (uint8_t)OVERVIEW_WINDOW_COUNT) return;
+    sim->overviewWindow = window;
+}
+
+uint8_t serverSimGetOverviewWindow(const ServerSim *sim) {
+    return sim ? sim->overviewWindow : (uint8_t)overviewWindowExpanded;
+}
+
+void serverSimSetLineOfSight(ServerSim *sim, uint8_t mode) {
+    if (sim == NULL) return;
+    if (mode >= (uint8_t)LINE_OF_SIGHT_COUNT) return;
+    sim->lineOfSight = mode;
+}
+
+uint8_t serverSimGetLineOfSight(const ServerSim *sim) {
+    return sim ? sim->lineOfSight : (uint8_t)lineOfSightOff;
 }
 
 void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {
@@ -752,7 +982,7 @@ void serverSimSetState(ServerSim *sim, ServerState s) {
     if (sim) sim->state = s;
 }
 
-void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
+void serverSimSetServerLocks(ServerSim *sim, uint32_t locks) {
     if (sim) sim->serverLocks = serverSimAddImpliedLocks(locks);
 }
 

@@ -75,7 +75,8 @@
 /* ---- Presence-bitmask messages -------------------------------------------
  * A masked message's field list takes three callbacks:
  *   F(type, name)            core field, always present
- *   FMASK()                  the single presence-mask byte (marks its wire slot)
+ *   FMASK()                  the two-byte presence mask (marks its wire slot),
+ *                            carried big-endian like every other U16 field
  *   FGROUP(bit, type, name)  omit-zero field; its group `bit` is set in the mask
  *                            iff any field carrying that bit is non-zero.
  * Three passes walk the one list: mask-compute, pack, unpack. */
@@ -85,21 +86,22 @@
 
 #define WIRE_MP_F(type, name) \
     WIRE_PACK_##type(buf, pos, s->name); pos += WIRE_SIZE_##type;
-#define WIRE_MP_FMASK()  buf[pos] = mask; pos += 1;
+#define WIRE_MP_FMASK()  WIRE_PACK_U16(buf, pos, mask); pos += 2;
 #define WIRE_MP_FGROUP(bit, type, name) \
     if (mask & (bit)) { WIRE_PACK_##type(buf, pos, s->name); pos += WIRE_SIZE_##type; }
 
 #define WIRE_MU_F(type, name) \
     if (avail < pos + WIRE_SIZE_##type) return 0; \
     s->name = WIRE_UNPACK_##type(buf, pos); pos += WIRE_SIZE_##type;
-#define WIRE_MU_FMASK()  if (avail < pos + 1) return 0; mask = buf[pos]; pos += 1;
+#define WIRE_MU_FMASK()  if (avail < pos + 2) return 0; \
+    mask = WIRE_UNPACK_U16(buf, pos); pos += 2;
 #define WIRE_MU_FGROUP(bit, type, name) \
     if (mask & (bit)) { \
         if (avail < pos + WIRE_SIZE_##type) return 0; \
         s->name = WIRE_UNPACK_##type(buf, pos); pos += WIRE_SIZE_##type; }
 
 #define WIRE_MS_F(type, name)            + WIRE_SIZE_##type
-#define WIRE_MS_FMASK()                  + 1
+#define WIRE_MS_FMASK()                  + 2
 #define WIRE_MS_FGROUP(bit, type, name)  + WIRE_SIZE_##type
 #define WIRE_MASKED_SIZE_OF(FIELDS) \
     (0 FIELDS(WIRE_MS_F, WIRE_MS_FMASK, WIRE_MS_FGROUP))
@@ -108,14 +110,14 @@
  * short-circuit; unpack zeroes the struct first so omitted groups decode to 0. */
 #define DEFINE_WIRE_CODEC_MASKED(Name, label, stubField, stubFlag, FIELDS)   \
     int pack##Name(uint8_t *buf, const Name *s) {                            \
-        size_t pos = 0; uint8_t mask = 0;                                    \
+        size_t pos = 0; uint16_t mask = 0;                                   \
         if ((s->stubField) & (stubFlag)) {                                   \
             buf[0] = (uint8_t)(s->stubField); return 1; }                    \
         FIELDS(WIRE_MC_F, WIRE_MC_FMASK, WIRE_MC_FGROUP)                      \
         FIELDS(WIRE_MP_F, WIRE_MP_FMASK, WIRE_MP_FGROUP)                      \
         WIRE_CORPUS_TAP(label, buf, pos); return (int)pos; }                 \
     int unpack##Name(const uint8_t *buf, size_t avail, Name *s) {            \
-        size_t pos = 0; uint8_t mask = 0;                                    \
+        size_t pos = 0; uint16_t mask = 0;                                   \
         memset(s, 0, sizeof(*s));                                            \
         if (avail < 1) return 0;                                             \
         if ((buf[0]) & (stubFlag)) { s->stubField = buf[0]; return 1; }      \

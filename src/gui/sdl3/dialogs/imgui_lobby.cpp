@@ -1424,6 +1424,31 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * the teams take whatever extra room there is). */
             float mapPanelW = ImMax((MAP_PREVIEW_SIZE + 20) * s,
                                     availW * 0.30f);
+
+            /* The gutter has to clear the panels' touch padding on BOTH sides.
+             *
+             * Above 1.05x, dialogApplyScaling gives the lobby
+             * TouchExtraPadding = 8 -- skipped on Deck, which keeps desktop
+             * click feel. ImGui grows every child window's hit rect by that
+             * padding when it picks the hovered window, so ##PlayerPanel
+             * claimed this gap's left 8 pixels and ##MapPanel its right 8:
+             * a flat 8 pixel gutter had none left for itself, and
+             * FindHoveredWindowEx walks newest-first so the map panel won.
+             * That is why the divider read as absent in full screen -- no
+             * line, no resize cursor, no drag -- while windowed (a flat 1x, so
+             * no touch padding) the same 8 pixels have always worked.
+             *
+             * The hovered window is decided in NewFrame from the style as it
+             * stands then, so the padding cannot be pushed away around the two
+             * BeginChild calls: width is the only lever. Carrying 2x the
+             * padding leaves a reachable strip of exactly 8*s -- the windowed
+             * target, scaled with everything around it -- and the line below
+             * is drawn down the middle of that strip. Read from the style
+             * rather than assumed, so Deck (padding 0, plain 8*s), desktop
+             * full screen, tablet and mobile each come out right. */
+            const float kTouchPad  = ImGui::GetStyle().TouchExtraPadding.x;
+            const float kSplitterW = 8.0f * s + 2.0f * kTouchPad;
+
             /* Between rounds the right column holds the recap instead of the
              * preview, and a replay reel wants far more width than a map
              * thumbnail — but the players/chat column still has to be worth
@@ -1436,7 +1461,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             if (lobbyShowLastRound) {
                 float recapW = ImMax((MAP_PREVIEW_SIZE + 20) * s,
                                      availW * kRecapPanelFrac);
-                float roomW  = availW - 8.0f - kRecapLeftMinW * s;
+                float roomW  = availW - kSplitterW - kRecapLeftMinW * s;
                 if (recapW > roomW) recapW = roomW;
                 if (recapW > mapPanelW) mapPanelW = recapW;
             }
@@ -1455,7 +1480,6 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * The offset is re-synced to the clamped result each frame, so
              * dragging past a floor doesn't build up slack the user has to
              * drag back out before the split moves again. */
-            const float kSplitterW     = 8.0f;
             const float kSplitLeftMinW = 180.0f;
             const float kSplitMapMinW  = 220.0f;
             if (!s_lobbySplitOffsetInit) {
@@ -1828,7 +1852,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y + leftFillH),
                     ImGui::GetColorU32(splitActive ? ImGuiCol_SeparatorActive
                                                    : ImGuiCol_SeparatorHovered),
-                    2.0f);
+                    ImMax(2.0f, 2.0f * s));
             }
             if (splitActive) {
                 /* Mouse delta is real pixels; the offset is logical. Moves

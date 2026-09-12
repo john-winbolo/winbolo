@@ -232,11 +232,13 @@ bool playersSetSelf(ClientSim *csParam, GameSim *sim, players *plrs, BYTE player
 * sccueeds then it makes the appropriate anouncement
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum  - The player number to set
 * playerName - The player name to set
+* announce   - FALSE writes no newswire line (the announce policy's answer
+*              for this rename, or TRUE from a caller that has none)
 *********************************************************/
-bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, char *playerName, bool isServer) {
+bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, char *playerName, bool isServer, bool announce) {
   bool returnValue;           /* Value to return */
   char temp[FILENAME_MAX];
 
@@ -249,7 +251,7 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
        * it during lobby renames (host edits a bot's name, players
        * tweaking their own name pre-game) — otherwise the messages
        * queue and flush all at once when the game starts. */
-      if (csParam != NULL && !clientSimIsInLobby(csParam)) {
+      if (announce && csParam != NULL && !clientSimIsInLobby(csParam)) {
         MessageArgs args;
         memset(&args, 0, sizeof(args));
         /* New name (playerName) and old name (otherName) refer to the

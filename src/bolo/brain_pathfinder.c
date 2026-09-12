@@ -46,6 +46,7 @@
 #include "brain_pathfinder.h"
 #include "util.h"
 #include "lgm.h"
+#include "sim_rules.h"
 #include "tank.h"
 #include "shells.h"
 #include "pillbox.h"
@@ -399,8 +400,26 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->estimate_samples = 60.0f;
   pf->danger_scale = 1.0f;
 
+  /* The classic rules, until a think pushes this sim's own. Taken from the
+     defaults table rather than from the constants, so there is one place the
+     classic numbers are written down. Read again for the terrain speeds
+     below. */
+  SimRules classic;
+  simRulesClassic(&classic);
+  pf->brake_rate = classic.tank_brake_rate;
+  pf->terrain_decel_rate = classic.tank_decel_rate;
+  pf->min_move = classic.tank_min_move;
+  pf->shell_life = classic.shell_life;
+  pf->shell_speed = classic.shell_speed;
+  pf->shell_start_add = classic.shell_start_add;
+  pf->gunsight_max = classic.gunsight_max;
+
   /* Resource drain config */
-  pf->water_drain_rate = 6.0f;     /* ~85 ticks/tile at speed 3, drain every 15 = ~5.7 */
+  /* A tuned A* cost, not a copy of tank_water_ticks: ~85 ticks/tile at
+   * speed 3 with a drain every 15 ticks is ~5.7, rounded up. It does not
+   * follow the rule — recomputing it from one is a change to how the
+   * pathfinder scores water, not a conversion. */
+  pf->water_drain_rate = 6.0f;
   pf->shell_loss_cost = 3.0f;      /* A* cost per shell lost to water */
   pf->mine_loss_cost = 2.0f;       /* A* cost per mine lost to water */
   pf->armour_drain_rate = 0.02f;   /* armour lost per danger-exposure unit */
@@ -448,19 +467,22 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->terrain_cost_boat_table[14] = 9999.0f;
   pf->terrain_cost_boat_table[15] = 9999.0f;
 
-  /* Default terrain speeds (matching constants.lua TERRAIN_SPEED) */
-  pf->terrain_speed_table[0]  = 0.0f;   /* building */
-  pf->terrain_speed_table[1]  = 3.0f;   /* river */
-  pf->terrain_speed_table[2]  = 3.0f;   /* swamp */
-  pf->terrain_speed_table[3]  = 3.0f;   /* crater */
-  pf->terrain_speed_table[4]  = 16.0f;  /* road */
-  pf->terrain_speed_table[5]  = 6.0f;   /* forest */
-  pf->terrain_speed_table[6]  = 3.0f;   /* rubble */
-  pf->terrain_speed_table[7]  = 12.0f;  /* grass */
-  pf->terrain_speed_table[8]  = 0.0f;   /* halfbuild */
-  pf->terrain_speed_table[9]  = 16.0f;  /* boat */
-  pf->terrain_speed_table[10] = 3.0f;   /* deepsea */
-  pf->terrain_speed_table[11] = 16.0f;  /* refbase */
+  /* Default terrain speeds. The ten a rule names come from the classic
+     table read above; the rest are the brain's own reading of a square the
+     engine has no cap for. A brain that pushes its own table through
+     cpf_set_terrain_speed overwrites every slot. */
+  pf->terrain_speed_table[0]  = 0.0f;                            /* building */
+  pf->terrain_speed_table[1]  = (float) classic.speed_river;
+  pf->terrain_speed_table[2]  = (float) classic.speed_swamp;
+  pf->terrain_speed_table[3]  = (float) classic.speed_crater;
+  pf->terrain_speed_table[4]  = (float) classic.speed_road;
+  pf->terrain_speed_table[5]  = (float) classic.speed_forest;
+  pf->terrain_speed_table[6]  = (float) classic.speed_rubble;
+  pf->terrain_speed_table[7]  = (float) classic.speed_grass;
+  pf->terrain_speed_table[8]  = 0.0f;                            /* halfbuild */
+  pf->terrain_speed_table[9]  = (float) classic.speed_boat;
+  pf->terrain_speed_table[10] = (float) classic.speed_deep_sea;
+  pf->terrain_speed_table[11] = (float) classic.speed_refuel_base;
   pf->terrain_speed_table[12] = 16.0f;  /* pillbox (dead = grass-like) */
   pf->terrain_speed_table[13] = 3.0f;   /* unknown */
   pf->terrain_speed_table[14] = 0.0f;
@@ -576,6 +598,28 @@ void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map) {
 
 void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag) {
   if (pf) pf->abort_flag = flag;
+}
+
+void brainPathfinderSetAccelPct(BrainPathfinder *pf, uint8_t pct) {
+  if (pf) pf->accel_pct = pct;
+}
+
+void brainPathfinderSetMoveRules(BrainPathfinder *pf, float brakeRate,
+                                 float terrainDecelRate, int32_t minMove) {
+  if (pf == NULL) return;
+  pf->brake_rate = brakeRate;
+  pf->terrain_decel_rate = terrainDecelRate;
+  pf->min_move = minMove;
+}
+
+void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
+                                  int32_t shellSpeed, int32_t shellStartAdd,
+                                  int32_t gunsightMax) {
+  if (pf == NULL) return;
+  pf->shell_life = shellLife;
+  pf->shell_speed = shellSpeed;
+  pf->shell_start_add = shellStartAdd;
+  pf->gunsight_max = gunsightMax;
 }
 
 /* One-line check used by the inner search loops. NULL flag → never
@@ -1227,20 +1271,20 @@ static float compute_cost(BrainPathfinder *pf, int nx, int ny,
   }
 
   /* Danger scaling by terrain speed.
-   * In a boat on water, we move at full speed (like road), so danger
-   * exposure time is much lower than the base terrain speed suggests. */
+   * In a boat on water, we move at the boat's speed, so danger exposure
+   * time is much lower than the base terrain speed suggests. */
   danger = (float)pf->danger_grid[midx] + (float)pf->danger_offset_grid[midx];
   if (danger < 0.0f) danger = 0.0f;
   speed = pf->terrain_speed_table[type];
   if (onBoat && is_water_tile(type)) {
-    speed = 16.0f; /* boat speed matches road speed */
+    speed = pf->terrain_speed_table[TT_BOAT];
   }
   overlay = (float)pf->overlay_grid[midx];
 
   cost = base + danger * pf->danger_scale * (16.0f / fmaxf(speed, 0.1f)) + overlay;
 
   /* Water resource drain: on foot in river, tank loses shells and mines.
-   * Game mechanic: every TANK_WATER_TIME (15) ticks at speed <= 3,
+   * Game mechanic: every tank_water_ticks (15 classic) ticks at speed <= 3,
    * lose 1 shell + 1 mine.  At speed 3, ~85 ticks per tile = ~6 drains.
    * In a boat there is no drain. */
   if (!onBoat && type == TT_RIVER && pf->water_drain_rate > 0.0f) {
@@ -2261,7 +2305,8 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
   for (int t = 0; t < 16; t++) {
     float spd_foot = pf->terrain_speed_table[t];
     inv_speed_foot[t] = 16.0f / fmaxf(spd_foot, 0.1f);
-    float spd_boat = is_water_tile(t) ? 16.0f : spd_foot;
+    float spd_boat = is_water_tile(t) ? pf->terrain_speed_table[TT_BOAT]
+                                      : spd_foot;
     inv_speed_boat[t] = 16.0f / fmaxf(spd_boat, 0.1f);
   }
   float turn_lut[8][8];
@@ -2593,7 +2638,7 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
   for (int t = 0; t < 16; t++) {
     float spd = pf->terrain_speed_table[t];
     inv_speed_foot[t] = 16.0f / fmaxf(spd, 0.1f);
-    float spd_b = is_water_tile(t) ? 16.0f : spd;
+    float spd_b = is_water_tile(t) ? pf->terrain_speed_table[TT_BOAT] : spd;
     inv_speed_boat[t] = 16.0f / fmaxf(spd_b, 0.1f);
   }
 
@@ -3447,7 +3492,7 @@ float brainPathfinderEstimateCost(BrainPathfinder *pf,
       float cost;
 
       if (onBoat && is_water_tile(type)) {
-        speed = 16.0f; /* boat speed matches road speed */
+        speed = pf->terrain_speed_table[TT_BOAT];
       }
 
       if (base >= WALL_THRESHOLD) {
@@ -3896,9 +3941,9 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
     curBoat = next_boat_state(curBoat, type);
 
     /* Get speed from terrain speed table.
-     * In a boat on water, use full boat speed (16). */
+     * In a boat on water, move at the boat's speed. */
     if (curBoat && is_water_tile(type)) {
-      fspeed = 16.0f;
+      fspeed = pf->terrain_speed_table[TT_BOAT];
     } else {
       fspeed = pf->terrain_speed_table[type];
     }
@@ -3940,7 +3985,8 @@ int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,
  * out for the configured shell life. Bit-identical to the engine's
  * shellsAddItem + per-tick shellsUpdate when called with the same
  * angle, sight_len, and origin the engine sees. */
-static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
+static int simulate_shot_walk(const BrainPathfinder *pf,
+                               WORLD origin_wx, WORLD origin_wy,
                                TURNTYPE angle,
                                int shooter_type, int sight_len,
                                BrainShotTile *out_tiles, int max_tiles) {
@@ -3955,20 +4001,23 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
     len_units = PILLBOX_FIRE_DISTANCE;
   } else {
-    int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
+    int sl = (sight_len > 0) ? sight_len : (int) pf->gunsight_max;
     len_units = sl / 2.0f;
   }
 
   /* Spawn position + lifetime budget come from shells.c so the
-   * simulator can never drift from the engine's actual shell. */
+   * simulator can never drift from the engine's actual shell. The
+   * numbers they run on come off the pathfinder, pushed this think. */
   WORLD x, y;
-  shellSpawnPos(origin_wx, origin_wy, angle, &x, &y);
+  shellSpawnPos(origin_wx, origin_wy, angle, (int) pf->shell_speed,
+                (int) pf->shell_start_add, &x, &y);
 
-  int ticks = shellLifeTicks(len_units);
+  int ticks = shellLifeTicks(len_units, (int) pf->shell_life,
+                             (int) pf->shell_start_add);
 
   /* High-precision per-tick step (24.8 fixed point), same as shellsUpdate. */
   int32_t xStep = 0, yStep = 0;
-  utilCalcDistanceHP(&xStep, &yStep, angle, SHELL_SPEED);
+  utilCalcDistanceHP(&xStep, &yStep, angle, pf->shell_speed);
   int32_t xAcc = 0, yAcc = 0;
 
   int count = 0;
@@ -4033,7 +4082,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
  * tankIsTankHit in tank.c) at every sub-tick position. When a tank is
  * hit, a hit_type=BRAIN_SHOT_HIT_TANK entry is emitted and the walk
  * stops (shell consumed). Owner tank is excluded from hit checks. */
-static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
+static int simulate_shot_walk_tanks(const BrainPathfinder *pf,
+                                     WORLD origin_wx, WORLD origin_wy,
                                      TURNTYPE angle,
                                      int shooter_type, int sight_len,
                                      const BrainShotTankPos *tanks, int num_tanks,
@@ -4045,16 +4095,18 @@ static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
     len_units = (int)PILLBOX_FIRE_DISTANCE;
   } else {
-    int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
+    int sl = (sight_len > 0) ? sight_len : (int) pf->gunsight_max;
     len_units = sl / 2;
   }
 
   WORLD x, y;
-  shellSpawnPos(origin_wx, origin_wy, angle, &x, &y);
-  int ticks = shellLifeTicks(len_units);
+  shellSpawnPos(origin_wx, origin_wy, angle, (int) pf->shell_speed,
+                (int) pf->shell_start_add, &x, &y);
+  int ticks = shellLifeTicks((float) len_units, (int) pf->shell_life,
+                             (int) pf->shell_start_add);
 
   int32_t xStep = 0, yStep = 0;
-  utilCalcDistanceHP(&xStep, &yStep, angle, SHELL_SPEED);
+  utilCalcDistanceHP(&xStep, &yStep, angle, pf->shell_speed);
   int32_t xAcc = 0, yAcc = 0;
 
   int count = 0;
@@ -4131,49 +4183,52 @@ static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
  * lroundf to avoid the truncation-by-1-brad bug; even so, the round
  * trip atan2 → integer is approximate, so use the *Angle variant
  * when bit-exact engine match matters. */
-int brainPathfinderSimulateShot(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShot(const BrainPathfinder *pf,
+                                 WORLD origin_wx, WORLD origin_wy,
                                  WORLD target_wx, WORLD target_wy,
                                  int shooter_type, int sight_len,
                                  BrainShotTile *out_tiles, int max_tiles) {
-  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   if (origin_wx == target_wx && origin_wy == target_wy) return 0;
   /* Angle conversion lives in shells.c so both engine and brain use
    * the same int rounding. */
   TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
                                         target_wx, target_wy);
-  return simulate_shot_walk(origin_wx, origin_wy, angle,
+  return simulate_shot_walk(pf, origin_wx, origin_wy, angle,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
 }
 
 /* Public entry: take the firing angle directly. Bit-exact match to a
  * real shell when called with the engine's tank.direction. */
-int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShotAngle(const BrainPathfinder *pf,
+                                     WORLD origin_wx, WORLD origin_wy,
                                      float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles) {
-  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   /* Wrap to [0, 256) keeping the fractional part — utilCalcDistance
    * uses a 256-entry sin/cos table internally but interpolates at
    * the call site for sub-brad accuracy. */
   float a = fmodf(fmodf(angle, 256.0f) + 256.0f, 256.0f);
-  return simulate_shot_walk(origin_wx, origin_wy, (TURNTYPE)a,
+  return simulate_shot_walk(pf, origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
 }
 
 /* Public entry: shot simulation with tank hitbox checking. */
-int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+int brainPathfinderSimulateShotWithTanks(const BrainPathfinder *pf,
+                                          WORLD origin_wx, WORLD origin_wy,
                                           WORLD target_wx, WORLD target_wy,
                                           int shooter_type, int sight_len,
                                           const BrainShotTankPos *tanks, int num_tanks,
                                           uint8_t owner_player,
                                           BrainShotTile *out_tiles, int max_tiles) {
-  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (pf == NULL || out_tiles == NULL || max_tiles <= 0) return 0;
   if (origin_wx == target_wx && origin_wy == target_wy) return 0;
   TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
                                         target_wx, target_wy);
-  return simulate_shot_walk_tanks(origin_wx, origin_wy, angle,
+  return simulate_shot_walk_tanks(pf, origin_wx, origin_wy, angle,
                                   shooter_type, sight_len,
                                   tanks, num_tanks, owner_player,
                                   out_tiles, max_tiles);

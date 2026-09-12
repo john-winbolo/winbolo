@@ -129,9 +129,17 @@ static bool keyDown(int sc) {
    somewhere they never scrolled it to. The item views are unaffected: they
    take the keys before either map sees them, and stepping between items is
    still what they do there. The gamepad stick is unaffected too — it drives
-   the build cursor as well, and neither of those has moved. */
-static bool overviewOwnsScrollKeys(void) {
-  return sdl3DrawIsOverviewInWindow();
+   the build cursor as well, and neither of those has moved.
+
+   Only under an overview window whose live block is centred on the tank, where
+   the classic view can sit anywhere without changing the picture. A window
+   placed from that view is the other way about: dragging the hidden
+   view off the tank is exactly what the player wants the keys to do, so they
+   go back to the classic scroll, latching the manual override until autoscroll
+   takes the block back. */
+static bool overviewOwnsScrollKeys(ClientSim *cs) {
+  return sdl3DrawIsOverviewInWindow() &&
+         !clientSimOverviewWindowFollowsView(cs);
 }
 
 /*********************************************************
@@ -417,7 +425,7 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
      through the legacy step-scroll path instead, so feeding them here too
      would double-scroll.  The gamepad stick below is analog and always
      uses this smooth path regardless of the preference. */
-  if (smoothScrollingEnabled && !overviewOwnsScrollKeys()) {
+  if (smoothScrollingEnabled && !overviewOwnsScrollKeys(cs)) {
     if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
     if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
     if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
@@ -829,7 +837,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
        smoothScrollingEnabled; when that is off, the scroll keys fall
        through to the legacy step-scroll below. */
     smoothScrollTick(cs, setKeys);
-    if (!smoothScrollingEnabled && !overviewOwnsScrollKeys()) {
+    if (!smoothScrollingEnabled && !overviewOwnsScrollKeys(cs)) {
       scrollKeyCount++;
       if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
         scrollKeyCount = 0;
@@ -897,7 +905,7 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
      smoothScrollingEnabled; when off, the scroll keys fall through to the
      legacy step-scroll below. */
   smoothScrollTick(cs, setKeys);
-  if (smoothScrollingEnabled || overviewOwnsScrollKeys()) {
+  if (smoothScrollingEnabled || overviewOwnsScrollKeys(cs)) {
     return;
   }
 

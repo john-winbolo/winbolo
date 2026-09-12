@@ -66,12 +66,13 @@ void minesExpCreate(minesExp *me) {
 *  Adds an item to the minesExp data structure.
 *
 *ARGUMENTS:
+*  sim - The game the mine belongs to
 *  me - Pointer to the mines object
 *  mp - Map Structure
 *  x  - X co-ord
 *  y  - Y co-ord
 *********************************************************/
-void minesExpAddItem(minesExp *me, map *mp, BYTE x, BYTE y) {
+void minesExpAddItem(GameSim *sim, minesExp *me, map *mp, BYTE x, BYTE y) {
   minesExp q;
   minesExp inc;
   bool found;       /* Is the item found */
@@ -91,7 +92,7 @@ void minesExpAddItem(minesExp *me, map *mp, BYTE x, BYTE y) {
     New(q);
     q->x = x;
     q->y = y;
-    q->time = MINES_EXPLOSION_WAIT;
+    q->time = (BYTE) sim->rules.mine_fuse_ticks;
     q->next = *me;
     q->prev = NULL;
     if (NonEmpty(*me)) {
@@ -257,6 +258,10 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
     }
     explosionsAddItem(&sim->expl, mx, my, 0, 0, EXPLOSION_START);
     if (sim->callbacks.explosion) sim->callbacks.explosion(sim->callbacks.ctx, mx, my, 0, 0);
+    /* mineLayer was read above, before minesRemoveItem cleared the owner. */
+    if (sim->isServer && sim->callbacks.mineExploded) {
+      sim->callbacks.mineExploded(sim->callbacks.ctx, mx, my, mineLayer);
+    }
     floodAddItem(&sim->ff, mx, my);
     /* Remove Items from grass/swamp/rubble data stuctures */
     switch (pos-MINE_SUBTRACT) {
@@ -289,16 +294,16 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
 
     /* Add items if craters */
     if (leftPos == TRUE) {
-      minesExpAddItem(me, mp, (BYTE) (mx-1), my);
+      minesExpAddItem(sim, me, mp, (BYTE) (mx-1), my);
     }
     if (rightPos == TRUE) {
-      minesExpAddItem(me, mp, (BYTE) (mx+1), my);
+      minesExpAddItem(sim, me, mp, (BYTE) (mx+1), my);
     }
     if (abovePos == TRUE) {
-      minesExpAddItem(me, mp, mx, (BYTE) (my-1));
+      minesExpAddItem(sim, me, mp, mx, (BYTE) (my-1));
     }
     if (belowPos == TRUE) {
-      minesExpAddItem(me, mp, mx, (BYTE) (my+1));
+      minesExpAddItem(sim, me, mp, mx, (BYTE) (my+1));
     }
     if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
   }

@@ -17,6 +17,7 @@
 #include "types.h"       /* MAP_ARRAY_SIZE, map */
 #include "game_sim.h"    /* GameSim internals: ->mp->mapItem */
 #include "players.h"     /* players / struct playersObj: per-player alliance bitmap */
+#include "pillbox.h"     /* pillSetInTank — the pill flags byte */
 
 #define BRAINREC_MAP_TILES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
@@ -498,8 +499,8 @@ void brainRecordTick(ServerSim *sim) {
             ps2.x     = gs->pb->item[i].x;
             ps2.y     = gs->pb->item[i].y;
             ps2.owner = gs->pb->item[i].owner;
-            ps2.armourInTank = (uint8_t)((gs->pb->item[i].armour & 0x0F)
-                                         | (gs->pb->item[i].inTank ? 0x10 : 0));
+            ps2.pillFlags = pillSetInTank(0, gs->pb->item[i].inTank);
+            ps2.armour    = gs->pb->item[i].armour;
             wr_buf(&ps2, sizeof ps2);
         }
     }

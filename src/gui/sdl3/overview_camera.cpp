@@ -486,5 +486,5 @@ bool overviewEntityIsVisible(const OverviewMap *om, int mapX, int mapY) {
         return false;
     }
     if (!om) return false;
-    return (om->flags[mapX][mapY] & OVERVIEW_F_LIVE) != 0;
+    return (om->flags[mapX][mapY] & OVERVIEW_F_SIGHT) != 0;
 }

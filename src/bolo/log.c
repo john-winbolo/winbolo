@@ -40,6 +40,7 @@
 #include "netpacks.h"
 #include "zip.h"
 #include "server_sim.h"
+#include "control_event.h"  /* ControlEvent — serverSimFillEntitySyncEvent's out-parameter */
 #include "attribution_track.h"
 #include "log_internal.h"
 #include "../winbolonet/winbolonet_core.h"
@@ -122,6 +123,8 @@ static bool logitemMutatesWorld(logitem itemNum) {
     case log_PlayerDied:
     case log_PlayerRejoin:
     case log_TankSetStock:
+    case log_TankSetModifiers:
+    case log_EntityChange:
       return TRUE;
     default:
       return FALSE;
@@ -590,8 +593,16 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt3;
     break;
   case log_PillSetHealth:
+    /* The index and the armour in a byte each: armour outgrew a nibble.
+       This is what LOG_VERSION 3 says about a file — up to version 2 the
+       pair shared one byte, so a reader has to take the version's word
+       for the length rather than this writer's. */
+    out[off++] = log_PillSetHealth;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
   case log_PillSetInTank:
-    out[off++] = itemNum;
+    out[off++] = log_PillSetInTank;
     out[off++] = opt1;
     break;
   case log_SoundBuild:
@@ -766,6 +777,80 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
        message. Mirrors log_MessageAll so the on-disk shape is locked now. */
     out[off++] = log_SpectatorChat;
     out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_TankSetModifiers:
+    /* player + a length-prefixed blob of the six modifier bytes. The six do
+       not fit the four opt bytes and the short, so they travel as a binary
+       pascal blob the way log_GameSettings carries its settings. */
+    out[off++] = log_TankSetModifiers;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_EntityChange:
+    /* kind + index + on-the-map flag + a length-prefixed copy of the item's
+       map record. The record is six bytes for a pillbox or a base and three
+       for a start, so it travels as a binary pascal blob rather than padded
+       to one size; the leading length byte decides how much is copied, the
+       way log_GameSettings carries its settings. */
+    out[off++] = log_EntityChange;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_EntityMasks:
+    /* Three 16-bit masks, big-endian, one per list: bit i set means index i,
+       counting from zero, holds an item that is on the map. Six bytes, which
+       is exactly the four opt bytes and the short, so there is no pascal blob
+       here. Same three masks CTRL_ENTITY_SYNC carries to a live client. */
+    out[off++] = log_EntityMasks;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
+    break;
+  case log_ServerText:
+    /* The destination the line was published with, then the line: destTeam
+       (0 = everyone), destPlayer (0xFF = everyone), pascal text. Both bytes
+       are recorded because the viewer has no other way to know a line went to
+       one team or one player rather than to the whole game. */
+    out[off++] = log_ServerText;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_GameTimeSet:
+    /* The round's game time after the change, as a big-endian int32 of ticks
+       across the four opt bytes. The settings blob states the length once at
+       the head of a round and never restates it, so this is the only thing
+       that tells a replay the round's clock moved. */
+    out[off++] = log_GameTimeSet;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
+  case log_RuleSet:
+    /* Which rule changed, as a big-endian u16 index into the simulation's
+       rules table, then the value the field ended up holding as a
+       length-prefixed blob of eight bytes. The value travels as a blob
+       because it does not fit the four opt bytes, the way
+       log_TankSetModifiers carries its six; its layout is in
+       docs/replay-format.md. */
+    out[off++] = log_RuleSet;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
     wordsLen = (unsigned short)((BYTE)words[0]) + 1;
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
@@ -1031,6 +1116,73 @@ int logSerializeSnapshotBody(ServerSim *ssim, BYTE *out, int cap) {
 }
 
 /*********************************************************
+*NAME:          logWriteEntityMasks
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Writes the log_EntityMasks record that belongs after a snapshot, as a
+* LOG_EVENT block holding that one event. The snapshot body carries a count
+* and a record for every pillbox, base and start but has nowhere to say which
+* of them are on the map — the live flags sit past each list's wire region —
+* so a reader that started at this snapshot would put every item back. The
+* masks are what CTRL_ENTITY_SYNC tells a live client for the same reason,
+* and serverSimFillEntitySyncEvent builds them here too, so the rule cannot
+* drift between the two.
+*
+* That function reports false when every index within every count is on the
+* map, which is what loading a map produces and what a reader's own load
+* assumes, so nothing is written and a round that never takes an item off the
+* map records not one extra byte.
+*
+* Written with writeData rather than queued through logAddEvent: the opening
+* snapshot is written from logStart before logIsRunning is set, and
+* logAddEvent drops everything until then. Writing the bytes here also keeps
+* the record out of logLobbyMode's reach, which matters because the snapshot
+* this follows is the one a round opens with.
+*
+*ARGUMENTS:
+* ssim - ServerSim (contains GameSim plus server-specific fields)
+*********************************************************/
+static bool logWriteEntityMasks(ServerSim *ssim) {
+  ControlEvent evt;
+  BYTE block[2];
+  BYTE event[264];
+  int eventLen;
+
+  if (ssim == NULL) {
+    return TRUE;
+  }
+  if (!serverSimFillEntitySyncEvent(ssim, &evt)) {
+    return TRUE;
+  }
+
+  eventLen = logSerializeEvent(log_EntityMasks,
+                               (BYTE)((evt.u.entitySync.pills >> 8) & 0xFF),
+                               (BYTE)(evt.u.entitySync.pills & 0xFF),
+                               (BYTE)((evt.u.entitySync.bases >> 8) & 0xFF),
+                               (BYTE)(evt.u.entitySync.bases & 0xFF),
+                               evt.u.entitySync.starts, NULL, event);
+  if (eventLen <= 0) {
+    return TRUE;
+  }
+
+  /* One event in this block, framed the way logWriteEvents frames a queued
+     one. */
+  block[0] = LOG_EVENT;
+  block[1] = 1;
+  if (writeData(block, 2, logOldKey) != Z_OK) {
+    return FALSE;
+  }
+  if (writeData(event, eventLen, logOldKey) != Z_OK) {
+    return FALSE;
+  }
+  /* The key rotation a queued event would have left behind. Inert on a v2
+     stream, which is plaintext, and kept so the two paths agree. */
+  logKey = log_EntityMasks;
+  logOldKey = logKey;
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          logWriteSnapshot
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/07/04
@@ -1097,6 +1249,13 @@ bool logWriteSnapshot(ServerSim *ssim, bool check) {
     }
   }
   logOldKey = logKey;
+
+  /* The part of the world the body has no room for: which items are on the
+     map. Written after it, so a reader that starts here has the records from
+     the snapshot and the flags from this. */
+  if (returnValue == TRUE) {
+    returnValue = logWriteEntityMasks(ssim);
+  }
 
   return returnValue;
 }

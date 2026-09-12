@@ -3220,6 +3220,27 @@ set(_baseline_fast
     centralize_events_alliance_fast
     centralize_events_name_change_fast
     centralize_events_map_skip_fast
+    road_spit_shell_open
+    road_spit_shell_strict
+    road_spit_shell_tournament
+    road_spit_mine_open
+    road_spit_drown_open
+    boat_bank_road_slow
+    boat_bank_road_fast
+    boat_bank_grass_slow
+    boat_bank_grass_fast
+    builder_yard_farm
+    builder_yard_road
+    builder_yard_building
+    builder_yard_mine
+    builder_yard_pill_place
+    builder_yard_pill_repair
+    base_yard_capture
+    base_yard_refuel
+    base_yard_steal
+    pill_yard_capture
+    pill_yard_anger
+    grass_flat_growth
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)
@@ -3239,6 +3260,7 @@ set(_baseline_udp_50008
     centralize_events_chat_unicast_3client_udp
     centralize_events_chat_alliance_3client_udp
 )
+set(_baseline_udp_50009 watch_road_capture_2client_udp)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}
@@ -3251,7 +3273,7 @@ foreach(_name IN LISTS _baseline_fast)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
-foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
+foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008 50009)
     foreach(_name IN LISTS _baseline_udp_${_port})
         add_test(NAME baseline.${_name}
                  COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
@@ -3318,11 +3340,94 @@ set(WINBOLO_UNITTESTS_SOURCES
     # stays public through both.
     tests/unit/test_vote_surrender_privacy.c
     tests/unit/test_round_stats.c
+    tests/unit/test_mine_kill_event.c
     tests/unit/test_lv_stats_time.c
     tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_vote_nolobby_disabled.c
     tests/unit/test_lobby_set_team_clamps.c
+    # The scenario write door: the op funnel's prelude, the policy and
+    # tick registrations beside it, and the flag that keeps the all-ready
+    # detector out of a start already under way.
+    tests/unit/test_scenario_funnel.c
+    # The scenario read surface: the roster, pill, base, start, tank and
+    # builder accessors, the whole-map terrain copy and the fielded count.
+    tests/unit/test_scenario_reads.c
+    # The tank ops: the six arms, the refusals each one answers with, and the
+    # records they leave through the functions a player's own action reaches.
+    tests/unit/test_scenario_tank_arms.c
+    # The builder ops: the five arms, the refusals each one answers with, the
+    # wood a dispatched order costs, and the loss a scripted death records.
+    tests/unit/test_scenario_builder_arms.c
+    # The pill and base ops: the six arms, the refusals each one answers with,
+    # an empty slot as an owner, the drain a hand-over makes and the flag that
+    # keeps the stock, and the records the five changes leave in a recording.
+    tests/unit/test_scenario_pill_base_arms.c
+    tests/unit/test_scenario_entity_arms.c
+    # The map ops: the four arms, the refusals each one answers with, deep sea
+    # as a terrain a script may write, one publish per square a fill changes,
+    # the budget that carries an oversized fill over two ticks, the answer a
+    # fill with no budget left gets, and the round start and lobby map swap
+    # that drop a remainder rather than painting the map that replaced it.
+    tests/unit/test_scenario_map_arms.c
+    # The roster ops: the six arms, the refusals each one answers with, the
+    # queue that paces a spawn and a removal one to a tick, and the init
+    # table a spawned bot's brain is created with.
+    tests/unit/test_scenario_roster_arms.c
+    # The comms ops: the five arms, the refusals each one answers with, who
+    # sees a line held to a team or to one player, the sound that reaches a
+    # listener wherever they stand, and the records the three lines leave in a
+    # recording. Plus the two cases that keep the destination honest: the body
+    # decoder addresses a rebuilt line to every recipient, and the in-process
+    # filter reads 0xFF as everyone at a client that is not slot 0.
+    tests/unit/test_scenario_comms_arms.c
+    # The flow ops: a scripted end to the round — its state, its reason, the
+    # line it leaves the returning lobby and the WinBolo.net crediting it does
+    # not do — and the game-time change, the four lengths it refuses, and the
+    # new length on the sim, at a subscriber and in a recording.
+    tests/unit/test_scenario_flow_arms.c
+    # The rules op: the index list against the table it indexes, a rule
+    # written and read back, a rate the op's double carries and an int32
+    # could not, the value outside a row and the value that breaks a pair
+    # with the table each of them leaves untouched, and the record a write
+    # puts in a recording — its bytes on disk and both of the viewer's
+    # readers over them.
+    tests/unit/test_scenario_rule_arms.c
+    # The six lifecycle and lobby policy pointers: the start a tank is given,
+    # the base sweep, the team write in both lobby arms that make one, the
+    # player cap, the loadout at all three places one is handed out, and the
+    # death wait — each at its own call site under a policy answering the
+    # opposite of classic, and once more with nothing registered.
+    tests/unit/test_scenario_policy_lifecycle.c
+    # The four combat policy pointers: the damage helper all three damage
+    # paths go through, the build request, the pill and base captures, and the
+    # five death sites — each under a policy answering the opposite of
+    # classic, with the two kill ops shown to reach the death bodies without
+    # asking, and once more with nothing registered.
+    tests/unit/test_scenario_policy_combat.c
+    # The in-process game-event channel: the second subscriber callback, and
+    # the captures and builder death that reach it from GameSim callbacks
+    # rather than from an event built in shared code, byte for byte as before.
+    tests/unit/test_game_event_channel.c
+    # The eight facts that had no game event: the spawn, the landing, the
+    # pill placed, picked up and killed, the finished build, the mine laid
+    # and the mine exploded — and the one of them that never leaves the host.
+    tests/unit/test_game_events_new.c
+    # The announce policy: the quiet byte on every fact that carries one,
+    # the client line sites that read it, the vote line the server holds
+    # back, and the same over a real loopback client.
+    tests/unit/test_scenario_announce.c
+    # The init table a bot is created with: one table per brain VM, an
+    # empty one when the creator passed none, and the -bot-init [arg]
+    # text that fills one.
+    tests/unit/test_bot_init_table.c
+    # The per-tank modifier set: the op that writes it, the snapshot group
+    # under the ninth presence bit, and when the values are cleared.
+    tests/unit/test_tank_modifiers.c
+    # The sites that read a modifier: the movement rates, the turn rate, the
+    # reload helper, the damage helper, the boat-exit speed and the brain's
+    # stop predictor.
+    tests/unit/test_tank_modifier_sites.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
@@ -3333,6 +3438,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_settings.c
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
+    tests/unit/test_fog_settings.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
@@ -3390,11 +3496,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_maprotate_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
+    tests/unit/test_base_refuel_timers.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_pill_repair_load.c
+    tests/unit/test_entity_lifecycle.c
+    tests/unit/test_entity_event.c
+    tests/unit/test_entity_sync.c
+    tests/unit/test_entity_record.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -3409,12 +3520,17 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_base_half_tick.c
     tests/unit/test_base_death_prediction.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_talking_set.c
+    # The rules event's body codec: every carried rule round-trips field by
+    # field, rates a fixed-point scale could not carry survive, and the
+    # body's bytes are pinned against a layout written out by hand.
+    tests/unit/test_sim_rules_codec.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_sound_delivery.c
     tests/unit/test_view_policy_rects.c
@@ -3431,6 +3547,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_sight.c
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
@@ -3439,6 +3556,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_sim_rules.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -3456,6 +3574,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/replay_harness.c
     tests/unit/replay_harness_decode.c
     tests/unit/test_replay_roundtrip.c
+    # Recordings older than the reader that opens them.
+    tests/unit/test_replay_version_compat.c
+    # The brain recorder's own version check.
+    tests/unit/test_brainrec_version.c
     # Loopback transport tests: real UDP client + server over localhost,
     # sharing the loopback_harness fixture.
     tests/unit/loopback_harness.c
@@ -3470,6 +3592,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
+    tests/unit/test_loopback_entity_change.c
+    # The rules table over the wire: a mid-round change reaching a connected
+    # client, a joiner arriving on the changed table, a server-only rule
+    # publishing nothing, and a new table clamping what the client holds.
+    tests/unit/test_loopback_sim_rules.c
+    # The client's own check of the rules table before it keeps one.
+    tests/unit/test_sim_rules_client_check.c
+    # The sixteen pillbox pictures against a pill armour cap above 15.
+    tests/unit/test_pill_armour_scale.c
     tests/unit/test_loopback_map_cull.c
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
@@ -3490,6 +3621,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # mDNS discovery: unicast-loopback round-trip through the real advertiser
     # builder + browser parse path (no multicast socket).
     tests/unit/test_mdns_discovery.c
+    tests/unit/test_mdns_view_txt.c
     # Wire-codec corpus: the tap sink, the fast differential test (reads
     # committed fixtures), and the on-demand capture generator (uses the
     # loopback harness above).
@@ -3741,6 +3873,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
+    # Recorded headless runs: each committed <name>.wbv is decoded through
+    # the viewer and its summary compared with <name>.summary; the same
+    # file holds the on-demand capture that rewrites those summaries.
+    tests/unit/test_wbv_fixture_summaries.c
     tests/unit/test_attribution_reader.c
     # Calibration anchor walk: synthetic v2 logs prove the highlight
     # clip-time fit resolves base cells from the log's own snapshots
@@ -3756,6 +3892,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # (with and without the stock bytes) and a log_TankSetStock record, through
     # lv_specSeedLoad / lv_specRecordPump.
     tests/unit/test_lv_tank_stocks.c
+    # The viewer reading a recording it cannot trust: item counts past the
+    # arrays, an entity removal past the array, a server line to a slot past
+    # the roster, a modifiers blob of the wrong length.
+    tests/unit/test_lv_hostile_records.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4043,6 +4183,9 @@ set(_unit_test_names
     round_stats_mine_owner_api
     round_stats_mine_damage
     round_stats_leaver_clears_mines
+    mine_kill_publishes_event
+    mine_kill_on_boat_publishes_event
+    mine_kill_own_mine_names_self
     awards_basic_winners
     awards_tiebreak
     awards_omission
@@ -4106,12 +4249,18 @@ set(_unit_test_names
     classic_mode_lobby_reset
     allies_in_trees_defaults
     allies_in_trees_classic_mode
+    fog_settings_defaults
+    fog_settings_classic_mode_preset
+    fog_settings_lock_implied
+    fog_settings_lobby_edits
+    fog_settings_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
     upload_cap_enforced
     map_field_clamps_evil
     map_field_clamps_passthrough
     map_field_clamps_angry_start
+    map_field_clamps_no_sim
     map_reload_rollback
     map_read_memory_matches_file
     map_read_memory_handbuilt
@@ -4230,9 +4379,17 @@ set(_unit_test_names
     log_roundtrip_tank_stock_record
     replay_roundtrip_world
     replay_roundtrip_base_migrate
+    replay_roundtrip_pill_health
+    replay_v2_pill_health_nibble
+    replay_v1_pill_health_nibble
+    brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
+    lv_hostile_item_counts
+    lv_hostile_entity_remove_index
+    lv_hostile_server_text_slot
+    lv_hostile_modifiers_length
     wbv_reader_v1
     wbv_reader_v2
     attribution_reader_roundtrip
@@ -4273,6 +4430,37 @@ set(_unit_test_names
     pill_repair_tops_up_from_arrival_armour
     pill_repair_short_load_spends_what_it_has
     pill_repair_full_load_covers_a_dead_pill
+    entity_removed_pill_is_gone_from_gameplay
+    entity_removed_base_is_gone_from_gameplay
+    entity_removed_start_is_never_chosen
+    entity_tournament_removed_start_is_never_chosen
+    entity_tournament_neutral_share_counts_live_bases
+    entity_add_reuses_lowest_removed_slot
+    entity_add_refused_when_full
+    entity_remove_refuses_already_removed
+    entity_remove_keeps_indices_above
+    entity_blob_load_marks_every_item_live
+    entity_event_codec_roundtrip
+    entity_event_client_adds_at_fresh_index
+    entity_event_client_add_reuses_removed_slot
+    entity_event_client_remove_keeps_the_slot
+    entity_event_client_add_lands_on_the_server_index
+    entity_event_removed_index_sends_no_delta
+    entity_event_wire_corpus_fixture
+    entity_event_client_refuses_out_of_range_index
+    entity_sync_codec_roundtrip
+    entity_sync_client_clears_the_holes
+    entity_sync_client_restores_the_live
+    entity_sync_mask_above_the_count_ignored
+    entity_sync_loopback_join
+    entity_sync_wire_corpus_fixture
+    entity_record_round_trip_per_kind
+    entity_record_viewer_across_a_snapshot
+    entity_record_removed_and_restored_pill_replays
+    entity_record_brain_rect_skips_a_removed_pill
+    entity_record_lobby_add_republishes_counts
+    entity_record_lobby_removal_replays
+    entity_record_seek_lands_on_the_right_liveness
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
@@ -4285,6 +4473,8 @@ set(_unit_test_names
     starts_batch_teams_cluster_and_separate
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
+    starts_open_ideal_removed_pill_ignored
+    starts_open_removed_start_never_chosen
     start_side_mask_sectors
     start_side_mask_degenerate_bbox
     start_side_eligible_closed_mask
@@ -4315,6 +4505,8 @@ set(_unit_test_names
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
+    base_half_tick_per_sim_sequence
+    base_half_tick_other_sim_does_not_disturb
     base_armour_fog_of_war
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
@@ -4328,6 +4520,8 @@ set(_unit_test_names
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
+    sim_rules_codec_roundtrip
+    sim_rules_codec_golden
     voice_talking_stops_in_countdown
     voice_talking_clears_on_leave
     fx_viewport_cull
@@ -4383,6 +4577,7 @@ set(_unit_test_names
     overview_decay_mirror
     overview_decay_view_exit
     overview_policy_baseline
+    overview_policy_pills_and_allies
     overview_policy_categories
     overview_policy_decay
     overview_loopback
@@ -4390,14 +4585,17 @@ set(_unit_test_names
     overview_scroll
     overview_fog
     overview_hud_layout
+    sight
     overview_dead_tank
     overview_entities
+    overview_removed_item_has_no_region
     overview_gunsight
     tank_pos_dead
     overview_snapshot_mirror
     overview_snapshot_isolation
     overview_snapshot_filter
     overview_snapshot_generation
+    overview_snapshot_removed_item_has_no_label
     mapview_sprite_classic
     mapview_sprite_ladder
     mapview_sprite_shell_tip
@@ -4422,6 +4620,25 @@ set(_unit_test_names
     lgm_request_quiet
     jitter_buffer_grow
     shell_projection
+    sim_rules_classic_defaults
+    sim_rules_validate_ranges
+    sim_rules_copies_follow
+    sim_rules_terrain_caps_follow
+    sim_rules_river_cap_moves_drowning
+    sim_rules_base_regen_seed_follows
+    sim_rules_terrain_life_follows
+    sim_rules_base_empties_without_wrapping
+    sim_rules_pill_empties_without_wrapping
+    sim_rules_pairs
+    sim_rules_capture_threshold_moves
+    sim_rules_builder_cost_follows
+    sim_rules_are_classic
+    sim_rules_obs_refuses_non_classic
+    sim_rules_shell_flight_follows
+    sim_rules_brain_shot_follows
+    sim_rules_worldsim_pill_follows
+    sim_rules_boat_speed_follows
+    sim_rules_obs_reload_follows
     screen_bullets_build
     ping_smoother
     client_timing
@@ -4541,6 +4758,8 @@ set(_unit_test_names
     ping_pie_slices
     ping_edge_sides
     ping_edge_corner
+    ping_edge_size_from_distance
+    ping_edge_name_anchor
     ping_rect_inset
     ping_event_wire
     ping_sound_fallback
@@ -4551,14 +4770,19 @@ set(_unit_test_names
     ping_dispatch_map_range_bound
     ping_dispatch_rejects_bad_kind
     ping_dispatch_rate_limit
+    ping_dispatch_spam_30s_window
     ping_dispatch_new_round_clears_rate_limit
     ping_reaches_team_only
+    ping_mute_relay_skip
+    ping_mute_client_mirror_cleared_on_leave
+    ping_sender_name_empty_for_unused_slot
     ping_network
     lang_name_table
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
     mdns_discovery
+    mdns_view_txt_roundtrip
     client_type_matches_platform
     client_type_name_round_trips
     map_load_clamps_base_fields
@@ -4614,6 +4838,8 @@ set(_unit_test_names
     claim_resolve_free_ignores_holder_flag
     claim_resolve_unverified_preempts
     claim_resolve_verified_keeps_temp
+    base_timer_cleared_on_leave
+    base_timer_not_inherited_next_round
     autolock_locks_on_start_inplace
     autolock_locks_on_start_wire
     autolock_join_blocked_after_start
@@ -4673,6 +4899,179 @@ set(_unit_test_names
     console_kick_host_without_newline
     console_read_reports_eof
     console_read_timeout_then_eof
+    wbv_fixture_summaries
+    tank_mod_speed_caps_on_road
+    tank_mod_speed_river_still_moves
+    tank_mod_accel_doubles_ticks_to_cap
+    tank_mod_accel_doubles_ticks_to_brake
+    tank_mod_accel_halves_autoslow
+    tank_mod_turn_halves_circle_ticks
+    tank_mod_reload_fires_twice_as_often
+    tank_mod_dealt_kills_in_half_the_hits
+    tank_mod_taken_takes_more_hits
+    tank_mod_mine_damage_scales_with_layer
+    tank_mod_neutral_owner_deals_classic
+    tank_mod_boat_exit_at_half_speed
+    tank_mod_pill_leads_half_speed_boat
+    tank_mod_predicted_stop_matches_engine
+    tank_modifiers_op_writes_set
+    tank_modifiers_op_refusals
+    tank_modifiers_wire_roundtrip
+    tank_modifiers_survive_death
+    tank_modifiers_cleared_at_create
+    scenario_op_unknown_type_unsupported
+    scenario_op_every_type_unsupported
+    scenario_policy_register_replace_clear
+    scenario_op_refused_in_policy
+    scenario_op_refused_in_nested_policy
+    scenario_op_refused_during_start
+    scenario_tick_called_both_branches
+    scenario_start_flag_set_during_start
+    scenario_start_guard_blocks_reentry
+    scenario_start_flag_cleared_after_start
+    scenario_read_roster_slot
+    scenario_read_pill_info
+    scenario_read_base_info
+    scenario_read_start_info
+    scenario_read_tank_info
+    scenario_read_builder_info
+    scenario_read_terrain_buffer
+    scenario_read_num_fielded
+    scenario_tank_set_stocks
+    scenario_tank_kill
+    scenario_tank_teleport
+    scenario_tank_set_boat
+    scenario_tank_give_pill
+    scenario_tank_drop_pill
+    scenario_tank_arm_records
+    scenario_lgm_dispatch
+    scenario_lgm_recall
+    scenario_lgm_kill
+    scenario_lgm_parachute
+    scenario_lgm_set_carried
+    scenario_lgm_kill_record
+    scenario_pill_set_owner
+    scenario_pill_set_armour
+    scenario_pill_set_speed
+    scenario_pill_move
+    scenario_base_set_owner
+    scenario_base_owner_keep_stock
+    scenario_base_set_stock
+    scenario_pill_base_arm_records
+    scenario_entity_add_pill
+    scenario_entity_remove_pill
+    scenario_removed_item_is_no_item
+    scenario_entity_add_base
+    scenario_entity_remove_base
+    scenario_entity_add_start
+    scenario_entity_remove_start
+    scenario_entity_publish
+    scenario_entity_add_out_null
+    loopback_entity_change
+    pill_armour_scale_classic_cap
+    pill_armour_scale_raised_cap
+    pill_armour_scale_client_caps
+    sim_rules_client_check_every_carried_field
+    sim_rules_client_check_nan_and_inf
+    sim_rules_client_check_attack_pair
+    sim_rules_client_check_server_only_pair
+    sim_rules_client_check_valid_applies
+    loopback_sim_rules_change
+    loopback_sim_rules_join
+    loopback_sim_rules_reclamp
+    loopback_sim_rules_agree
+    scenario_map_set_tile
+    scenario_map_fill_rect
+    scenario_map_fill_paced
+    scenario_map_fill_no_budget_refused
+    scenario_map_fill_dropped_at_round_start
+    scenario_map_fill_dropped_at_map_swap
+    scenario_map_fill_respects_event_buffer
+    scenario_map_place_mine
+    scenario_map_remove_mine
+    scenario_map_arm_records
+    scenario_roster_spawn_refusals
+    scenario_roster_spawn_lands
+    scenario_roster_spawn_paced
+    scenario_roster_team_during_add
+    scenario_roster_remove_bot
+    scenario_roster_set_team
+    scenario_lobby_add_bot
+    scenario_lobby_remove_bot
+    scenario_lobby_set_team
+    scenario_roster_bots_seat_past_the_human_cap
+    scenario_roster_spawn_named_start
+    scenario_comms_msg_all
+    scenario_comms_msg_team
+    scenario_comms_msg_player
+    scenario_comms_sound
+    scenario_comms_log
+    scenario_comms_arm_records
+    scenario_comms_decoder_dest_player
+    scenario_comms_apply_non_zero_slot
+    scenario_flow_end_round
+    scenario_flow_end_round_resolve
+    scenario_flow_end_round_refusals
+    scenario_flow_set_game_time
+    scenario_flow_set_game_time_refusals
+    scenario_flow_arm_records
+    scenario_rule_index_matches_table
+    scenario_rule_set
+    scenario_rule_set_float
+    scenario_rule_refusals
+    scenario_rule_arm_records
+    scenario_rule_clamps_world
+    scenario_rule_clamp_records
+    scenario_policy_choose_start
+    scenario_policy_choose_start_out_of_range
+    scenario_policy_allow_base_win
+    scenario_policy_allow_extra_teams
+    scenario_policy_team_set_extra_teams
+    scenario_policy_max_players
+    scenario_policy_spawn_loadout
+    scenario_policy_can_respawn
+    scenario_policy_null_is_classic
+    scenario_policy_hostile_answers
+    scenario_policy_named_start_outranks_choose_start
+    scenario_policy_damage_scale
+    scenario_policy_invulnerable_tank
+    scenario_policy_protected_builder
+    scenario_policy_protected_pill
+    scenario_policy_can_build
+    scenario_policy_can_capture
+    scenario_policy_kill_ops_ignore_can_die
+    scenario_policy_combat_null_is_classic
+    game_event_channel_base_captured
+    game_event_channel_pill_captured
+    game_event_channel_lgm_lost
+    game_event_channel_control_only_subscriber
+    game_event_channel_client_emits_nothing
+    game_event_channel_neutralised
+    game_event_channel_capture_index_base
+    game_event_channel_capture_wire_bytes
+    game_event_channel_neutralised_no_client_line
+    game_event_channel_capture_attribution
+    game_event_channel_subscriber_count
+    game_events_tank_spawned
+    game_events_lgm_landed
+    game_events_pill_placed
+    game_events_pill_picked_up
+    game_events_pill_killed
+    game_events_built
+    game_events_mine_laid
+    game_events_mine_exploded
+    game_events_mine_placed_is_local
+    scenario_announce_null_policy_is_classic
+    scenario_announce_policy_asked_per_kind
+    scenario_announce_quiet_stamped_on_every_fact
+    scenario_announce_client_lines_read_the_byte
+    scenario_announce_wire_bytes
+    scenario_announce_pill_line_written_once
+    scenario_announce_vote_line_held
+    scenario_announce_loopback_quiet_draws_no_line
+    bot_init_table_two_bots_keep_own
+    bot_init_table_empty_when_none
+    bot_init_arg_text_to_table
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -4682,6 +5081,9 @@ set(_unit_test_names
 # wbv_v2_capture is omitted for the same reason: it (re)writes the committed
 # spectator_v2.wbv fixture and is invoked on demand via
 # `WinBoloUnitTests --test wbv_v2_capture`; CTest only runs wbv_reader_v1/v2.
+# wbv_summary_capture is omitted for the same reason: it (re)writes the
+# committed tests/fixtures/wbv/*.summary files that wbv_fixture_summaries
+# compares against, via `WinBoloUnitTests --test wbv_summary_capture`.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
@@ -4689,6 +5091,24 @@ foreach(_name IN LISTS _unit_test_names)
                          TIMEOUT 60
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
+
+# ---- Include-rule check: the scenario surface is invisible to a frontend --
+# src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner
+# and unittests alone, so a gui translation unit that includes the funnel
+# header must not compile. The target below is exactly that translation
+# unit, built under the gui profile and kept out of the ordinary build; the
+# test builds it and expects the build to fail. If the include rule is ever
+# loosened, the build succeeds and the test goes red.
+add_library(scenario_api_hidden_from_gui STATIC EXCLUDE_FROM_ALL
+    tests/include_rules/scenario_api_under_gui.c)
+bolo_apply_include_rules(scenario_api_hidden_from_gui gui)
+
+add_test(NAME include_rules.scenario_api_hidden_from_gui
+         COMMAND ${CMAKE_COMMAND} --build . --target scenario_api_hidden_from_gui
+         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(include_rules.scenario_api_hidden_from_gui PROPERTIES
+                     TIMEOUT 120
+                     WILL_FAIL TRUE)
 
 if(WB_NETDEBUG)
     foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss netdebug_error_offset_clamped)

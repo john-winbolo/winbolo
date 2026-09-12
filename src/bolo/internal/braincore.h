@@ -33,6 +33,7 @@
 
 #include "global.h"
 #include "brain.h"
+#include "scenario_table.h"   /* ScnTable — the brain's init table */
 #include "brain_pathfinder.h"
 #include "brain_worldsim.h"
 #include "brain_overlay.h"
@@ -46,6 +47,22 @@
  *  that, since each caller needs its own world pointer.
  *********************************************************/
 void brainCoreRegisterConstants(lua_State *L);
+
+/*********************************************************
+ *NAME:          brainCoreSetInitTable
+ *PURPOSE:
+ *  Sets the BRAIN_INIT Lua global from the pairs of the
+ *  bot's init table: a table of string values, keyed by
+ *  the table's keys. BRAIN_INIT is always a table — an
+ *  empty one when init is NULL or holds no pairs — so a
+ *  brain can read BRAIN_INIT.key without a type check.
+ *
+ *  Called once per brain VM, before the brain script runs,
+ *  with the table its creator passed. Nothing is shared
+ *  between VMs: two bots created in either order each see
+ *  their own pairs.
+ *********************************************************/
+void brainCoreSetInitTable(lua_State *L, const ScnTable *init);
 
 /*********************************************************
  *NAME:          brainCoreRegisterGetTerrain

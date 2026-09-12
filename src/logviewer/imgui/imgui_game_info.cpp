@@ -71,6 +71,15 @@ enum {
     viewPolicyOff = 3
 };
 
+/* Which block of squares the map overview keeps live round the player's
+ * own tank. Matches OverviewWindow in src/bolo/public/view_policy.h,
+ * spelled out here for the same reason as the policies above. Line of
+ * sight needs no mirror: the payload carries it as one bit. */
+enum {
+    overviewWindowExpanded = 0,
+    overviewWindowClassic = 1
+};
+
 /* Bytes a log_GameSettings payload needs before it carries every field the
  * panel reads. The layout is append-only, so a longer payload is a newer
  * writer and the trailing bytes are ignored. */
@@ -89,6 +98,11 @@ static int  s_view_policy[3] = {0, 0, 0};
 static int  s_view_decay[3] = {0, 0, 0};
 static bool s_classic_mode = false;
 static bool s_allies_in_trees = false;
+/* A log with no settings record, or one written before these two bits
+ * existed, has both clear — which is the expanded window with nothing
+ * blocking sight, what the game did before the settings existed. */
+static int  s_overview_window = overviewWindowExpanded;
+static bool s_line_of_sight = false;
 static bool s_ranked = false;
 /* Recorded and decoded, but lobby administrivia the panel does not draw. */
 static bool s_auto_lock = false;
@@ -272,6 +286,9 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
     s_ranked = (payload[9] & 0x08) != 0;
     s_password_set = (payload[9] & 0x10) != 0;
     s_allow_new_players = (payload[9] & 0x20) != 0;
+    s_overview_window = (payload[9] & 0x40) ? overviewWindowClassic
+                                            : overviewWindowExpanded;
+    s_line_of_sight   = (payload[9] & 0x80) != 0;
 
     /* Time limit — recorded as whole minutes behind an enabled bit, where
      * the header carries ticks. The minutes are meaningless with the bit
@@ -476,6 +493,12 @@ void lv_imgui_game_info_window(void) {
                         langGetText(s_classic_mode ? STR_YES : STR_NO));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
                         langGetText(s_allies_in_trees ? STR_YES : STR_NO));
+            ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW),
+                        langGetText(s_overview_window == overviewWindowClassic
+                                        ? STR_DLGLOBBY_WINDOW_CLASSIC
+                                        : STR_DLGLOBBY_WINDOW_EXPANDED));
+            ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),
+                        langGetText(s_line_of_sight ? STR_YES : STR_NO));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_RANKED),
                         langGetText(s_ranked ? STR_YES : STR_NO));
         }

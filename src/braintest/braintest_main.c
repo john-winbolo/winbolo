@@ -717,7 +717,9 @@ static void recordingReconstructMap(RecordingBuffer *rb, int targetFrame) {
 /* ================================================================== */
 /* Session loading: read a winbolods brainrec.btr (gzipped) into the   */
 /* recording buffer so the existing playback/scrub machinery replays   */
-/* it. See src/bolo/brain_record.{c,h} for the on-disk format (v4).    */
+/* it. See src/bolo/brain_record.c and src/bolo/public/brain_record.h  */
+/* for the on-disk format, and BRAINREC_VERSION for the one version    */
+/* this build reads.                                                   */
 /* ================================================================== */
 
 static uint8_t  bt_gz_u8 (gzFile g){ uint8_t v=0;  gzread(g,&v,1); return v; }
@@ -734,8 +736,17 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
     if (!g) return false;
     BrainRecHeader hdr;
     if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
-        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
-        || hdr.version != BRAINREC_VERSION) { gzclose(g); return false; }
+        || !brainRecMagicMatches(&hdr)) { gzclose(g); return false; }
+    if (!brainRecVersionMatches(&hdr)) {
+        /* Say which version it is rather than reading it: the frame bodies
+           are raw snapshot structs and an older file's are a different size,
+           so there is nothing to salvage by trying. */
+        fprintf(stderr, "%s: brainrec version %u, this build reads %u only — "
+                        "record the session again\n",
+                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION);
+        gzclose(g);
+        return false;
+    }
     if (mapNameOut) { memcpy(mapNameOut, hdr.mapName, 64); mapNameOut[63] = '\0'; }
     uint32_t llen = bt_gz_u32(g);
     if (llen) gzseek(g, llen, SEEK_CUR);
@@ -949,8 +960,16 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
     if (!g) return -1;
     BrainRecHeader hdr;
     if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
-        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
-        || hdr.version != BRAINREC_VERSION) { gzclose(g); return -1; }
+        || !brainRecMagicMatches(&hdr)) { gzclose(g); return -1; }
+    if (!brainRecVersionMatches(&hdr)) {
+        /* Same refusal as the peek above, and for the same reason: an older
+           file's frames are raw structs of a size this build cannot walk. */
+        fprintf(stderr, "%s: brainrec version %u, this build reads %u only — "
+                        "record the session again\n",
+                path, (unsigned)hdr.version, (unsigned)BRAINREC_VERSION);
+        gzclose(g);
+        return -1;
+    }
 
     /* Legend: recorded viz_idx -> category name, remapped to BrainTest's own
      * registry index by name. PER SLOT: every brain self-assigns its indices
@@ -1068,8 +1087,8 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
             f->snapPills[i].x      = ps.x;
             f->snapPills[i].y      = ps.y;
             f->snapPills[i].owner  = ps.owner;
-            f->snapPills[i].armour = (uint8_t)(ps.armourInTank & 0x0F);
-            f->snapPills[i].inTank = (uint8_t)((ps.armourInTank >> 4) & 0x01);
+            f->snapPills[i].armour = ps.armour;
+            f->snapPills[i].inTank = (uint8_t)(pillInTankFromByte(ps.pillFlags) ? 1 : 0);
             f->snapPills[i].speed  = 0;
         }
 
@@ -2378,7 +2397,8 @@ static void printUsage(const char *prog) {
         "Options:\n"
         "  -brain PATH      Brain script directory (default: brains/GoalHunter)\n"
         "  -bot-init SPEC   Per-bot brain paths by id: 'range=path[arg],...' where range\n"
-        "                   is 'a-b' or 'n' and optional [arg] sets that bot's BRAIN_INIT_ARG.\n"
+        "                   is 'a-b' or 'n' and optional [arg] sets that bot's BRAIN_INIT\n"
+        "                   table: ';'-separated key=value pairs, a bare word being '1'.\n"
         "                   Ids not listed use -brain. E.g. 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
         "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
@@ -4915,6 +4935,14 @@ static void shotSimRunCallback(int oWX, int oWY, int tWX, int tWY,
                                 int shooter, bool useTankAngle,
                                 float tankAngle, void *ud) {
     BrainTestApp *app = (BrainTestApp *)ud;
+    /* The shell rules ride the pathfinder, so the panel asks the followed
+     * bot's — the one the server pushed this sim's rules onto, and the one
+     * whose prediction the panel is showing. With no bot followed, the debug
+     * pathfinder stands in on the classic seed. */
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
+    if (pf == NULL) {
+        pf = app->debugPF;
+    }
     app->shotOriginWX    = oWX;
     app->shotOriginWY    = oWY;
     app->shotTargetWX    = tWX;
@@ -4922,12 +4950,12 @@ static void shotSimRunCallback(int oWX, int oWY, int tWX, int tWY,
     app->shotShooterType = shooter;
     if (useTankAngle) {
         app->shotTileCount = brainPathfinderSimulateShotAngle(
-            (WORLD)oWX, (WORLD)oWY, tankAngle,
+            pf, (WORLD)oWX, (WORLD)oWY, tankAngle,
             shooter, 0, app->shotTiles,
             (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
     } else {
         app->shotTileCount = brainPathfinderSimulateShot(
-            (WORLD)oWX, (WORLD)oWY, (WORLD)tWX, (WORLD)tWY,
+            pf, (WORLD)oWX, (WORLD)oWY, (WORLD)tWX, (WORLD)tWY,
             shooter, 0, app->shotTiles,
             (int)(sizeof(app->shotTiles) / sizeof(app->shotTiles[0])));
     }
@@ -6202,12 +6230,13 @@ int main(int argc, char *argv[]) {
             if (us && us[1] >= '0' && us[1] <= '9') *us = '\0';
         }
         /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
-         * id defaults to the resolved brainPath with no arg; the spec overrides
-         * the ids it names. Shared parser/semantics with winbolods. */
+         * id defaults to the resolved brainPath with an empty init table; the
+         * spec overrides the ids it names. Shared parser/semantics with
+         * winbolods. */
         BotInitSlot botInit[MAX_TANKS];
         for (int i = 0; i < MAX_TANKS; i++) {
             SDL_snprintf(botInit[i].path, sizeof(botInit[i].path), "%s", brainPath);
-            botInit[i].arg[0] = '\0';
+            scnTableClear(&botInit[i].init);
             botInit[i].covered = 0;
         }
         if (optBotInit[0] &&
@@ -6222,15 +6251,19 @@ int main(int argc, char *argv[]) {
             g_currentInitBot = i;
             SDL_snprintf(g_currentInitBrainName,
                          sizeof(g_currentInitBrainName), "%s", brainName);
-            /* Stage this bot's BRAIN_INIT_ARG (consumed by the create) and use
-             * its resolved brain path. */
-            luaBrainsSetNextInitArg(botInit[i].arg);
-            if (botInit[i].covered)
+            /* This bot's init table and resolved brain path go down the
+             * create call, so each bot gets its own. */
+            if (botInit[i].covered) {
+                char initText[256];
+                scnTableFormat(&botInit[i].init, initText, sizeof(initText));
                 fprintf(stderr, "  Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
-                        botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
+                        initText[0] ? " init=" : "", initText);
+            }
             SDL_PumpEvents(); /* keep window responsive during brain.open() */
+            /* No team in the add: -teams places these bots through
+             * serverSimSetTeamBatch below, once the whole set is in. */
             bool ok = serverSimCreateBot(app.sim, (BYTE)i, botInit[i].path, name,
-                                       optAI, optGame, false);
+                                       optAI, optGame, false, 0, &botInit[i].init);
             SDL_PumpEvents();
             g_currentInitBot = -1;
             g_currentInitBrainName[0] = '\0';

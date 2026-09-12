@@ -70,6 +70,11 @@ struct basesObj {
    * are not clobbered by basesSetBaseCompressData's memcpy. */
   BYTE _wirePad[3];
   baseStealDebounceSlot stealDebounce[BASE_STEAL_TABLE_SIZE];
+  /* Which base numbers name a base that is on the map. 1 is a live base, 0 a
+   * removed slot whose index is kept, so the numbers above a removal go on
+   * meaning the same base. It sits past the wire region because the blob is
+   * the map, and an item removed during a round is the sim's own state. */
+  BYTE active[MAX_BASES];
 };
 
 #define MAP_ARRAY_SIZE 256 /* maps are 256x256 units square */
@@ -115,6 +120,11 @@ struct pillsObj {
    * — the value pillsCreate's memset and every map install leave — is the
    * confirmed state, so the server's own list is never affected. */
   BYTE posStale[MAX_PILLS];
+  /* Which pill numbers name a pill that is on the map. 1 is a live pill, 0 a
+   * removed slot whose index is kept, so the numbers above a removal go on
+   * meaning the same pill. It sits past the wire region because the blob is
+   * the map, and an item removed during a round is the sim's own state. */
+  BYTE active[MAX_PILLS];
 };
 
 /* 25B = 25x8 = 200b needed to be allocated */
@@ -151,6 +161,13 @@ typedef struct {
 } vectorBodyObj;
 */
 
+/* Per-tank movement and combat percentages. 0 means classic, so a
+ * zeroed struct is the unmodified tank; every other value is a percent
+ * of the classic figure. */
+typedef struct {
+    uint8_t speed, accel, turn, reload, dealt, taken; /* percent; 0 = classic */
+} TankModifiers;
+
 typedef struct tankObj *tank;
 
 
@@ -166,7 +183,7 @@ typedef enum {
 struct tankObj {
   WORLD x;            /* World Co-ordinates */
   WORLD y;
-  BYTE armour;        /* Amount of armour in tank, 0..TANK_FULL_ARMOUR. Never wraps. */
+  BYTE armour;        /* Amount of armour in tank, 0..tank_full_armour. Never wraps. */
   bool destroyed;     /* TRUE once the tank has been destroyed. Set where damage
                        * exceeds the armour remaining, cleared on respawn. Ask
                        * tankIsDestroyed() rather than comparing armour: a live
@@ -185,13 +202,13 @@ struct tankObj {
   BYTE sightLen;      /* Length of the gunsight measured in map units */
   int32_t numKills;   /* Number of kills the tank has had — was int, fixed to 32-bit */
   int32_t numDeaths;  /* Number of deaths the tank has had — was int, fixed to 32-bit */
-  BYTE deathWait;     /* How long it is going to be on the screen till it refreshes */
+  uint16_t deathWait; /* How long it is going to be on the screen till it refreshes */
   BYTE waterCount;    /* Count for bubbles */
   bool obstructed;    /* Used by brains. Did the tank hit anything */
   bool newTank;       /* Is this a new tank or not (ie just died */
   bool autoSlowdown;  /* Do we use autoslowdown or not */
   bool autoHideGunsight;  /* Auto show/hide of gunsight enabled/disabled */
-  BYTE justFired;         /* Tick countdown — set to JUST_FIRED_TICKS on shell fire, decremented each tankUpdate. Non-zero means "recently fired" and bypasses tree-hide for pillbox targeting. */
+  BYTE justFired;         /* Tick countdown — set to just_fired_ticks on shell fire, decremented each tankUpdate. Non-zero means "recently fired" and bypasses tree-hide for pillbox targeting. */
   BYTE tankHitCount;  /* Number of times a tank has been hit to determine if they are cheating */
   WORLD x_prev;       /* World Coordinates at last tick */
   WORLD y_prev;
@@ -224,6 +241,7 @@ struct tankObj {
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
   BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */
+  TankModifiers mods;       /* Per-tank percentages; zeroed at create and kept across a respawn */
 };
 
 #pragma pack(pop)
@@ -266,6 +284,12 @@ typedef struct startsObj *starts;
 struct startsObj {
   start item[MAX_STARTS];
   BYTE numStarts;
+  /* Wire format ends here at SIZEOF_STARTS (49 bytes). Past it: which start
+   * numbers name a start that is on the map. 1 is a live start, 0 a removed
+   * slot whose index is kept, so the numbers above a removal go on meaning
+   * the same start. It sits past the wire region because the blob is the
+   * map, and an item removed during a round is the sim's own state. */
+  BYTE active[MAX_STARTS];
 };
 
 #pragma pack(pop)
@@ -289,5 +313,10 @@ BOLO_STATIC_ASSERT(offsetof(struct basesObj, stealDebounce) == SIZEOF_BASES,
 BOLO_STATIC_ASSERT(offsetof(struct pillsObj, posStale) == SIZEOF_PILLS,
                    pills_pos_stale_after_wire_format);
 BOLO_STATIC_ASSERT(sizeof(start) == 3,   start_must_be_3_bytes);
+/* Same rule for startsObj: the live flags sit strictly past the SIZEOF_STARTS
+ * bytes startsSetStartCompressData copies in. start holds only BYTE, so
+ * item[] and numStarts pack to exactly 49. */
+BOLO_STATIC_ASSERT(offsetof(struct startsObj, active) == SIZEOF_STARTS,
+                   starts_active_after_wire_format);
 
 #endif

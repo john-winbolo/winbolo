@@ -383,6 +383,13 @@ int transportUdpClientReceiveVoice(Transport *t, uint8_t *fromPlayer,
                                    uint8_t *seq, uint8_t *flags,
                                    uint8_t *out, int outCap);
 
+/* What became of the voice this connection queued: segments framed onto the
+ * wire, segments the ring dropped to make room, and segments a frame had no
+ * budget left to carry. Any out pointer may be NULL. */
+void transportUdpClientGetVoiceChannelStats(Transport *t, uint32_t *outSent,
+                                            uint32_t *outRingDropped,
+                                            uint32_t *outBudgetSkipped);
+
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
@@ -564,6 +571,11 @@ void transportUdpServerDrainPendingRemovals(struct ServerSim *sim);
 
 /* Returns true if a dedicated recv thread is running. */
 bool transportUdpServerHasRecvThread(void);
+
+/* Datagrams the recv thread has queued that the next drain will consume.
+ * Zero means the thread has nothing waiting — either none arrived or it
+ * has not been scheduled yet, which the caller cannot tell apart. */
+int transportUdpServerRecvQueuePending(void);
 
 /* Drain sim events into per-client reliable queues.
  * Call after each serverSimTick() so events aren't lost when

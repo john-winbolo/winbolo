@@ -63,6 +63,19 @@
 #                  runtime peer like any other. Short of that the scope narrows rather
 #                  than ends: every T2 include a new T1 accessor
 #                  makes unnecessary should go.
+#   scenario_host - the scenario runtime library. Sees public/ plus the
+#                  scenario surface in src/bolo/scenario_api/, and nothing
+#                  else: no internal/, no flat src/bolo/. The write funnel
+#                  and the policy vtable are server-authoritative entry
+#                  points, so they sit outside public/ where no frontend
+#                  can reach them; the scenario is the one caller that
+#                  applies its intent to the sim directly instead of
+#                  sending a command. The profile exists so that a binding
+#                  that reaches for an internal function fails to build
+#                  rather than compiling against sim layout the script
+#                  layer must not depend on. sim_owner sees the same
+#                  directory to implement the funnel and unittests to
+#                  drive it without Lua.
 #   gui          - the desktop game GUI and any platform-specific GUI binary.
 #                  Sees public/ only. Reaching into bolo internals from a
 #                  GUI translation unit is the asymmetric-runtime bug class
@@ -75,11 +88,13 @@
 # gui and runtime_only targets see only public/; the five privileged
 # profiles (sim_owner / mapeditor / braintest / gym / unittests) see the
 # full tree because they either own the sim or have a documented scoped
-# exception.
+# exception. scenario_host sits between the two: public/ plus the
+# scenario surface, and nothing under internal/.
 
-set(BOLO_PUBLIC_DIR   "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/public")
-set(BOLO_INTERNAL_DIR "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/internal")
-set(BOLO_FLAT_DIR     "${CMAKE_CURRENT_LIST_DIR}/../src/bolo")
+set(BOLO_PUBLIC_DIR       "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/public")
+set(BOLO_INTERNAL_DIR     "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/internal")
+set(BOLO_FLAT_DIR         "${CMAKE_CURRENT_LIST_DIR}/../src/bolo")
+set(BOLO_SCENARIO_API_DIR "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/scenario_api")
 
 function(bolo_apply_include_rules target profile)
     if(profile STREQUAL "sim_owner"
@@ -90,7 +105,12 @@ function(bolo_apply_include_rules target profile)
         target_include_directories(${target} PRIVATE
             ${BOLO_PUBLIC_DIR}
             ${BOLO_INTERNAL_DIR}
-            ${BOLO_FLAT_DIR})
+            ${BOLO_FLAT_DIR}
+            ${BOLO_SCENARIO_API_DIR})
+    elseif(profile STREQUAL "scenario_host")
+        target_include_directories(${target} PRIVATE
+            ${BOLO_PUBLIC_DIR}
+            ${BOLO_SCENARIO_API_DIR})
     elseif(profile STREQUAL "gui" OR profile STREQUAL "runtime_only")
         target_include_directories(${target} PRIVATE
             ${BOLO_PUBLIC_DIR})
@@ -120,6 +140,6 @@ function(bolo_grant_internal_source_access target)
             DIRECTORY ${CMAKE_SOURCE_DIR}
             TARGET_DIRECTORY ${target}
             PROPERTIES INCLUDE_DIRECTORIES
-            "${BOLO_PUBLIC_DIR};${BOLO_INTERNAL_DIR};${BOLO_FLAT_DIR}")
+            "${BOLO_PUBLIC_DIR};${BOLO_INTERNAL_DIR};${BOLO_FLAT_DIR};${BOLO_SCENARIO_API_DIR}")
     endforeach()
 endfunction()

@@ -73,6 +73,10 @@
  * ControlEventType already discriminates request/accept/leave). */
 #define ALLIANCE_UPDATE_PAYLOAD 3
 #define ALLIANCE_BODY_PAYLOAD   2
+/* ACCEPT and LEAVE carry one byte more: the announce policy's quiet answer,
+ * appended after the pair so neither existing field moves. A REQUEST is not a
+ * newswire fact and keeps the two-byte body. */
+#define ALLIANCE_QUIET_BODY_PAYLOAD 3
 /* CTRL_ALLIANCE_RESET — full matrix carried as MAX_TANKS×uint16_t bigendian
  * (per-player ally bitmap). Discriminator byte ALLIANCE_EVENT_RESET prefixes
  * the wire-packet payload; the body-only flavor (reliable carrier) drops
@@ -117,10 +121,11 @@ static EncodeResult encodeAllianceAcceptBody(const ControlEvent *evt,
                                              uint8_t *buf, size_t bufCap,
                                              size_t *outLen) {
     (void)recipient;
-    if (bufCap < ALLIANCE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    if (bufCap < ALLIANCE_QUIET_BODY_PAYLOAD) return ENCODE_OVERFLOW;
     buf[0] = evt->u.allianceAccept.acceptedBy;
     buf[1] = evt->u.allianceAccept.newMember;
-    *outLen = ALLIANCE_BODY_PAYLOAD;
+    buf[2] = evt->u.allianceAccept.quiet;
+    *outLen = ALLIANCE_QUIET_BODY_PAYLOAD;
     return ENCODE_OK;
 }
 
@@ -128,7 +133,7 @@ static EncodeResult encodeAllianceAccept(const ControlEvent *evt,
                                          const struct UdpServerClient *recipient,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
+    const size_t needed = PACKET_HEADER_SIZE + 1 + ALLIANCE_QUIET_BODY_PAYLOAD;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
     buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_ACCEPT;
@@ -148,10 +153,11 @@ static EncodeResult encodeAllianceLeaveBody(const ControlEvent *evt,
                                             uint8_t *buf, size_t bufCap,
                                             size_t *outLen) {
     (void)recipient;
-    if (bufCap < ALLIANCE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    if (bufCap < ALLIANCE_QUIET_BODY_PAYLOAD) return ENCODE_OVERFLOW;
     buf[0] = evt->u.allianceLeave.playerNum;
     buf[1] = 0; /* unused for leave — preserved for wire compat */
-    *outLen = ALLIANCE_BODY_PAYLOAD;
+    buf[2] = evt->u.allianceLeave.quiet;
+    *outLen = ALLIANCE_QUIET_BODY_PAYLOAD;
     return ENCODE_OK;
 }
 
@@ -159,7 +165,7 @@ static EncodeResult encodeAllianceLeave(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
+    const size_t needed = PACKET_HEADER_SIZE + 1 + ALLIANCE_QUIET_BODY_PAYLOAD;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
     buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_LEAVE;
@@ -208,9 +214,11 @@ static EncodeResult encodeAllianceReset(const ControlEvent *evt,
 /* PACKET_PLAYER_JOINED wire format:
  *   [header 8] [pNum 1] [name PACKET_MAX_PLAYER_NAME] [cc 2]
  *   [clientType 1] [clientFlags 1] [numAllies 1] [ally 1 × numAllies]
+ *   [quiet 1]
  * The trailing numAllies/allies pair is an additive change from the
  * pre-codec wire format — receiving clients now have the join's full
- * alliance bitmap on the wire from the join event itself. */
+ * alliance bitmap on the wire from the join event itself. quiet sits after
+ * the variable-length ally list, which numAllies already sizes. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
@@ -220,7 +228,7 @@ static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
     (void)recipient;
     BYTE numAllies = evt->u.playerJoin.numAllies;
     if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
-    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + 1 + 1 + numAllies;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + 1 + 1 + numAllies + 1;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.playerJoin.playerNum;
@@ -239,6 +247,7 @@ static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
         memcpy(buf + pos, evt->u.playerJoin.allies, numAllies);
         pos += numAllies;
     }
+    buf[pos++] = evt->u.playerJoin.quiet;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -260,7 +269,7 @@ static EncodeResult encodePlayerJoin(const ControlEvent *evt,
 
 /* PACKET_PLAYER_LEFT wire format:
  *   [header 8] [playerNum 1] [name PACKET_MAX_PLAYER_NAME (NUL-padded)]
- *   [cc 2] */
+ *   [cc 2] [quiet 1] */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
@@ -268,7 +277,7 @@ static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
     (void)recipient;
-    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.playerLeave.playerNum;
@@ -280,6 +289,7 @@ static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
     pos += PACKET_MAX_PLAYER_NAME;
     buf[pos++] = (uint8_t)evt->u.playerLeave.country[0];
     buf[pos++] = (uint8_t)evt->u.playerLeave.country[1];
+    buf[pos++] = evt->u.playerLeave.quiet;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -300,7 +310,11 @@ static EncodeResult encodePlayerLeave(const ControlEvent *evt,
 }
 
 /* PACKET_NAME_CHANGE wire format:
- *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME (NUL-padded)] */
+ *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME (NUL-padded)]
+ *   [quiet 1]
+ * The client-to-server rename command is a different encoder
+ * (transport_command_codec.c) and carries no quiet byte: a request is not a
+ * fact, and the answer is stamped on the broadcast the server sends back. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodePlayerNameBody(const ControlEvent *evt,
@@ -308,7 +322,7 @@ static EncodeResult encodePlayerNameBody(const ControlEvent *evt,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
     (void)recipient;
-    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 1;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     buf[0] = evt->u.playerName.playerNum;
     memset(buf + 1, 0, PACKET_MAX_PLAYER_NAME);
@@ -316,6 +330,7 @@ static EncodeResult encodePlayerNameBody(const ControlEvent *evt,
         size_t nameLen = strnlen(evt->u.playerName.name, PACKET_MAX_PLAYER_NAME - 1);
         if (nameLen > 0) memcpy(buf + 1, evt->u.playerName.name, nameLen);
     }
+    buf[1 + PACKET_MAX_PLAYER_NAME] = evt->u.playerName.quiet;
     *outLen = needed;
     return ENCODE_OK;
 }
@@ -466,27 +481,28 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
  *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [hasLobby 1]
- *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
+ *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 4 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
  *   [lobbyStartDelay 4 BE] [hostSlot 1]
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
- *   [classicMode 1] [alliesInTrees 1]
+ *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
+ *   [overviewWindow 1] [lineOfSight 1]
  *
  * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
  * optionally and leaves zero-init defaults in place when the sender
  * omits them, which keeps old/new codec pairs interoperable.
- * serverLocks is packed big-endian to match every other multi-byte
- * field in the codec (packU16/packU32). */
+ * serverLocks is packed big-endian with packU32, matching every other
+ * multi-byte field in the codec. */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
-    (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
+    (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
  * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
- * + alliesInTrees(1) + voiceMode(1). */
+ * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -516,8 +532,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.hasLobby ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyOpenHost ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAutoLockOnGameStart ? 1 : 0;
-    packU16(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
-    pos += 2;
+    packU32(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
+    pos += 4;
     buf[pos++] = evt->u.lobbySettings.lobbyRanked ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAllowNewPlayers ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyWbnAvailable ? 1 : 0;
@@ -535,6 +551,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyClassicMode ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAlliesInTrees ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.voiceMode;
+    buf[pos++] = evt->u.lobbySettings.lobbyOverviewWindow;
+    buf[pos++] = evt->u.lobbySettings.lobbyLineOfSight;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -1180,6 +1198,234 @@ static bool decodeVoiceTalkingBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_ENTITY_CHANGE body wire format (fixed length):
+ *   [kind 1] [index 1] [added 1] [record 6]
+ * The record region is the same six bytes whatever the kind, so the body is
+ * one size and the decoder rejects anything else outright. A pillbox spends
+ * all six (x, y, owner, armour, speed, inTank), a base all six (x, y, owner,
+ * armour, shells, mines), a start the first three (x, y, dir) with the rest
+ * zero. Delivered body-only on CHANNEL_CONTROL; there is no full-packet
+ * wrapper or PACKET_* type for this event. */
+#define ENTITY_CHANGE_BODY_LEN 9
+#define ENTITY_CHANGE_REC_OFF  3
+
+/* recipient: safe — ignored. Which items are on the map is public. */
+static EncodeResult encodeEntityChangeBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    uint8_t *rec;
+    (void)recipient;
+    if (bufCap < ENTITY_CHANGE_BODY_LEN) return ENCODE_OVERFLOW;
+    rec = buf + ENTITY_CHANGE_REC_OFF;
+    buf[0] = evt->u.entityChange.kind;
+    buf[1] = evt->u.entityChange.index;
+    buf[2] = evt->u.entityChange.added ? 1u : 0u;
+    memset(rec, 0, ENTITY_CHANGE_BODY_LEN - ENTITY_CHANGE_REC_OFF);
+    switch (evt->u.entityChange.kind) {
+    case ENTITY_KIND_PILL:
+        rec[0] = evt->u.entityChange.rec.pill.x;
+        rec[1] = evt->u.entityChange.rec.pill.y;
+        rec[2] = evt->u.entityChange.rec.pill.owner;
+        rec[3] = evt->u.entityChange.rec.pill.armour;
+        rec[4] = evt->u.entityChange.rec.pill.speed;
+        rec[5] = evt->u.entityChange.rec.pill.inTank ? 1u : 0u;
+        break;
+    case ENTITY_KIND_BASE:
+        rec[0] = evt->u.entityChange.rec.base.x;
+        rec[1] = evt->u.entityChange.rec.base.y;
+        rec[2] = evt->u.entityChange.rec.base.owner;
+        rec[3] = evt->u.entityChange.rec.base.armour;
+        rec[4] = evt->u.entityChange.rec.base.shells;
+        rec[5] = evt->u.entityChange.rec.base.mines;
+        break;
+    case ENTITY_KIND_START:
+        rec[0] = evt->u.entityChange.rec.start.x;
+        rec[1] = evt->u.entityChange.rec.start.y;
+        rec[2] = evt->u.entityChange.rec.start.dir;
+        break;
+    default:
+        /* No record to place. Sending the header alone would decode as a
+         * kind this codec does know and name an item in the wrong list, so
+         * there is nothing here to deliver. */
+        return ENCODE_SKIP;
+    }
+    *outLen = ENTITY_CHANGE_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeEntityChangeBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    const uint8_t *rec;
+    if (len != ENTITY_CHANGE_BODY_LEN) return false;
+    rec = buf + ENTITY_CHANGE_REC_OFF;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ENTITY_CHANGE;
+    outEvt->u.entityChange.kind  = buf[0];
+    outEvt->u.entityChange.index = buf[1];
+    outEvt->u.entityChange.added = buf[2] ? 1u : 0u;
+    switch (buf[0]) {
+    case ENTITY_KIND_PILL:
+        outEvt->u.entityChange.rec.pill.x      = rec[0];
+        outEvt->u.entityChange.rec.pill.y      = rec[1];
+        outEvt->u.entityChange.rec.pill.owner  = rec[2];
+        outEvt->u.entityChange.rec.pill.armour = rec[3];
+        outEvt->u.entityChange.rec.pill.speed  = rec[4];
+        outEvt->u.entityChange.rec.pill.inTank = rec[5] ? 1u : 0u;
+        break;
+    case ENTITY_KIND_BASE:
+        outEvt->u.entityChange.rec.base.x      = rec[0];
+        outEvt->u.entityChange.rec.base.y      = rec[1];
+        outEvt->u.entityChange.rec.base.owner  = rec[2];
+        outEvt->u.entityChange.rec.base.armour = rec[3];
+        outEvt->u.entityChange.rec.base.shells = rec[4];
+        outEvt->u.entityChange.rec.base.mines  = rec[5];
+        break;
+    case ENTITY_KIND_START:
+        outEvt->u.entityChange.rec.start.x   = rec[0];
+        outEvt->u.entityChange.rec.start.y   = rec[1];
+        outEvt->u.entityChange.rec.start.dir = rec[2];
+        break;
+    default:
+        /* A kind with no list behind it: refuse rather than hand the
+         * dispatcher an item it would have to guess the home of. */
+        return false;
+    }
+    return true;
+}
+
+/* CTRL_ENTITY_SYNC body wire format (fixed length):
+ *   [pills 2 BE] [bases 2 BE] [starts 2 BE]
+ * One mask per list, bit i standing for index i, 0 based. Every list holds
+ * at most 16 items, so the whole of one fits a u16 and the body is one size
+ * whatever the lists hold; the decoder rejects any other length outright.
+ * Delivered body-only on CHANNEL_CONTROL, as CTRL_ENTITY_CHANGE is: there is
+ * no full-packet wrapper or PACKET_* type for this event. */
+#define ENTITY_SYNC_BODY_LEN 6
+
+/* recipient: safe — ignored. Which items are on the map is public. */
+static EncodeResult encodeEntitySyncBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < ENTITY_SYNC_BODY_LEN) return ENCODE_OVERFLOW;
+    packU16(buf,     evt->u.entitySync.pills);
+    packU16(buf + 2, evt->u.entitySync.bases);
+    packU16(buf + 4, evt->u.entitySync.starts);
+    *outLen = ENTITY_SYNC_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (len != ENTITY_SYNC_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ENTITY_SYNC;
+    outEvt->u.entitySync.pills  = unpackU16(buf);
+    outEvt->u.entitySync.bases  = unpackU16(buf + 2);
+    outEvt->u.entitySync.starts = unpackU16(buf + 4);
+    return true;
+}
+
+/* CTRL_SIM_RULES body wire format (fixed length):
+ *   [one byte per CTRL_SIM_RULES_U8_FIELDS entry, in list order]
+ *   [two bytes big-endian per U16 entry]
+ *   [four bytes big-endian per U32 entry]
+ *   [four bytes per F32 entry — the float's own bit pattern, most
+ *    significant byte first]
+ *
+ * Every rule the event carries is written and every one is read back: both
+ * halves are generated from the lists in control_event.h, so a rule the
+ * encoder writes cannot be one the decoder forgets to set. A decoder that
+ * skipped a field would leave it zero on every wire client, which is worse
+ * than a stale value — a zero reload interval or a zero armour cap is not a
+ * table the game can run on.
+ *
+ * Fixed length, so the decoder rejects any other size outright rather than
+ * reading a truncated table. Delivered body-only on CHANNEL_CONTROL, as
+ * CTRL_ENTITY_SYNC is: there is no full-packet wrapper or PACKET_* type. */
+
+/* The float rules ride as their bit pattern, so the four bytes are exact
+ * whatever the value is. Serialised through a uint32_t and packU32 rather
+ * than memcpy'd wholesale, so the host's own byte order never reaches the
+ * wire. */
+BOLO_STATIC_ASSERT(sizeof(float) == 4, ctrl_sim_rules_float_is_four_bytes);
+
+static void packF32(uint8_t *buf, float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    packU32(buf, bits);
+}
+
+static float unpackF32(const uint8_t *buf) {
+    uint32_t bits = unpackU32(buf);
+    float    value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+/* recipient: safe — ignored. The table reads the same for every client. */
+static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t pos = 0;
+    (void)recipient;
+    if (bufCap < CTRL_SIM_RULES_BODY_LEN) return ENCODE_OVERFLOW;
+
+#define SIM_RULES_PACK_U8(name)                                              \
+    buf[pos++] = (uint8_t)evt->u.simRules.name;
+#define SIM_RULES_PACK_U16(name)                                             \
+    packU16(buf + pos, (uint16_t)evt->u.simRules.name); pos += 2;
+#define SIM_RULES_PACK_U32(name)                                             \
+    packU32(buf + pos, (uint32_t)evt->u.simRules.name); pos += 4;
+#define SIM_RULES_PACK_F32(name)                                             \
+    packF32(buf + pos, evt->u.simRules.name); pos += 4;
+
+    CTRL_SIM_RULES_U8_FIELDS(SIM_RULES_PACK_U8)
+    CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_PACK_U16)
+    CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_PACK_U32)
+    CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_PACK_F32)
+
+#undef SIM_RULES_PACK_U8
+#undef SIM_RULES_PACK_U16
+#undef SIM_RULES_PACK_U32
+#undef SIM_RULES_PACK_F32
+
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
+    size_t pos = 0;
+    if (len != CTRL_SIM_RULES_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SIM_RULES;
+
+#define SIM_RULES_UNPACK_U8(name)                                            \
+    outEvt->u.simRules.name = (int32_t)buf[pos++];
+#define SIM_RULES_UNPACK_U16(name)                                           \
+    outEvt->u.simRules.name = (int32_t)unpackU16(buf + pos); pos += 2;
+#define SIM_RULES_UNPACK_U32(name)                                           \
+    outEvt->u.simRules.name = (int32_t)unpackU32(buf + pos); pos += 4;
+#define SIM_RULES_UNPACK_F32(name)                                           \
+    outEvt->u.simRules.name = unpackF32(buf + pos); pos += 4;
+
+    CTRL_SIM_RULES_U8_FIELDS(SIM_RULES_UNPACK_U8)
+    CTRL_SIM_RULES_U16_FIELDS(SIM_RULES_UNPACK_U16)
+    CTRL_SIM_RULES_U32_FIELDS(SIM_RULES_UNPACK_U32)
+    CTRL_SIM_RULES_F32_FIELDS(SIM_RULES_UNPACK_F32)
+
+#undef SIM_RULES_UNPACK_U8
+#undef SIM_RULES_UNPACK_U16
+#undef SIM_RULES_UNPACK_U32
+#undef SIM_RULES_UNPACK_F32
+
+    return true;
+}
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -1518,6 +1764,10 @@ static bool decodeServerTextBody(const uint8_t *buf, size_t bodyLen,
     if (bodyLen < 2) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SERVER_TEXT;
+    outEvt->u.serverText.destPlayer = 0xFF;  /* every recipient: udpClientDeliverControl
+                                                already applied the destination filter
+                                                server-side, so an event that arrives
+                                                here is addressed to this client. */
     size_t textLen = bodyLen - 2;
     if (textLen >= sizeof(outEvt->u.serverText.text)) {
         textLen = sizeof(outEvt->u.serverText.text) - 1;
@@ -1762,20 +2012,22 @@ static bool decodeAllianceRequestBody(const uint8_t *buf, size_t len,
 
 static bool decodeAllianceAcceptBody(const uint8_t *buf, size_t len,
                                      ControlEvent *outEvt) {
-    if (len < ALLIANCE_BODY_PAYLOAD) return false;
+    if (len < ALLIANCE_QUIET_BODY_PAYLOAD) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_ALLIANCE_ACCEPT;
     outEvt->u.allianceAccept.acceptedBy = buf[0];
     outEvt->u.allianceAccept.newMember  = buf[1];
+    outEvt->u.allianceAccept.quiet      = buf[2];
     return true;
 }
 
 static bool decodeAllianceLeaveBody(const uint8_t *buf, size_t len,
                                     ControlEvent *outEvt) {
-    if (len < ALLIANCE_BODY_PAYLOAD) return false;
+    if (len < ALLIANCE_QUIET_BODY_PAYLOAD) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_ALLIANCE_LEAVE;
     outEvt->u.allianceLeave.playerNum = buf[0];
+    outEvt->u.allianceLeave.quiet     = buf[2];
     return true;
 }
 
@@ -1827,30 +2079,33 @@ static bool decodePlayerJoinBody(const uint8_t *buf, size_t len,
     {
         BYTE numAllies = buf[pos++];
         if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
-        if (pos + numAllies > len) return false;
+        if (pos + numAllies + 1 > len) return false;
         outEvt->u.playerJoin.numAllies = numAllies;
         if (numAllies > 0) {
             memcpy(outEvt->u.playerJoin.allies, buf + pos, numAllies);
         }
+        pos += numAllies;
+        outEvt->u.playerJoin.quiet = buf[pos];
     }
     return true;
 }
 
 static bool decodePlayerNameBody(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
-    if (len < (size_t)(1 + PACKET_MAX_PLAYER_NAME)) return false;
+    if (len < (size_t)(1 + PACKET_MAX_PLAYER_NAME + 1)) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_PLAYER_NAME;
     outEvt->u.playerName.playerNum = buf[0];
     memcpy(outEvt->u.playerName.name, buf + 1, PACKET_MAX_PLAYER_NAME);
     outEvt->u.playerName.name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    outEvt->u.playerName.quiet = buf[1 + PACKET_MAX_PLAYER_NAME];
     return true;
 }
 
 static bool decodePlayerLeaveBody(const uint8_t *buf, size_t len,
                                   ControlEvent *outEvt) {
     /* Layout matches encodePlayerLeaveBody's wire format. */
-    const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2;
+    const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1;
     if (len < fixedLen) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_PLAYER_LEAVE;
@@ -1862,6 +2117,7 @@ static bool decodePlayerLeaveBody(const uint8_t *buf, size_t len,
     outEvt->u.playerLeave.country[0] = (char)buf[pos++];
     outEvt->u.playerLeave.country[1] = (char)buf[pos++];
     outEvt->u.playerLeave.country[2] = '\0';
+    outEvt->u.playerLeave.quiet = buf[pos];
     return true;
 }
 
@@ -1971,8 +2227,8 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     outEvt->u.lobbySettings.hasLobby         = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyOpenHost            = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyAutoLockOnGameStart = buf[pos++] ? true : false;
-    outEvt->u.lobbySettings.lobbyServerLocks         = unpackU16(buf + pos);
-    pos += 2;
+    outEvt->u.lobbySettings.lobbyServerLocks         = unpackU32(buf + pos);
+    pos += 4;
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyRanked = buf[pos++] ? true : false;
     }
@@ -2023,6 +2279,14 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
             outEvt->u.lobbySettings.voiceMode = serverVoiceOn;
             break;
         }
+    }
+    /* Both bytes are stored raw. The range check happens once, where the
+     * client acts on them in clientSimApplyControl. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyOverviewWindow = buf[pos++];
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyLineOfSight = buf[pos++];
     }
     return true;
 }
@@ -2422,7 +2686,9 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_VIEW_TARGET]           = encodeViewTargetBody,
     [CTRL_STATS_SEED]            = encodeStatsSeedBody,
     [CTRL_VOICE_TALKING]         = encodeVoiceTalkingBody,
-    [CTRL_NEWSWIRE_MUTE]         = encodeNewswireMuteBody,
+    [CTRL_ENTITY_CHANGE]         = encodeEntityChangeBody,
+    [CTRL_ENTITY_SYNC]           = encodeEntitySyncBody,
+    [CTRL_SIM_RULES]             = encodeSimRulesBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2465,7 +2731,9 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_VIEW_TARGET]           = decodeViewTargetBody,
     [CTRL_STATS_SEED]            = decodeStatsSeedBody,
     [CTRL_VOICE_TALKING]         = decodeVoiceTalkingBody,
-    [CTRL_NEWSWIRE_MUTE]         = decodeNewswireMuteBody,
+    [CTRL_ENTITY_CHANGE]         = decodeEntityChangeBody,
+    [CTRL_ENTITY_SYNC]           = decodeEntitySyncBody,
+    [CTRL_SIM_RULES]             = decodeSimRulesBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

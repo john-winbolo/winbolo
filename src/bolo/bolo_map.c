@@ -45,6 +45,7 @@
 #include "sounddist.h"
 #include "floodfill.h"
 #include "log.h"
+#include "util.h"
 #include "../common/wb_log.h"
 #include "screenbrainmap.h"
 #include "bolo_map_validate.h"
@@ -206,6 +207,13 @@ static bool mrError(MapReader *r) {
 *  into the pill structure. Returns if the 
 *  operation was successful or not
 *
+*  Stores each record as it is read. Clamping armour and the
+*  attack interval needs the sim's rules and this path has no
+*  sim — the map editor, the preview and the tile-test tool
+*  load maps through here. mapClampToRules caps the list once
+*  a sim owns it; pillsValidate covers the count and the
+*  owners, which are the file's own business.
+*
 *ARGUMENTS:
 *  fp    - Pointer to the file being read from
 *  value - Pointer to the pillbox structure
@@ -228,7 +236,29 @@ static bool mapReadPills(MapReader *fp, pillboxes *value) {
       returnValue = FALSE;
     } else {
       readInto.justSeen = FALSE;
-      pillsSetPill(value,&readInto,(BYTE) count);
+      if (readInto.owner > (MAX_TANKS - 1) && readInto.owner != NEUTRAL) {
+        readInto.owner = NEUTRAL;
+      }
+      if (count <= (int)(*value)->numPills) {
+        pillbox *slot = &((*value)->item[count - 1]);
+        /* The five fields the record carries, plus the two the loop sets.
+           reload is left where it is, as the setter this replaced left it:
+           it is the slot's, not the file's. coolDown starts at zero and
+           pillsClampToRules arms it if the pill loaded angry, which it can
+           only work out once a sim says what angry is. */
+        slot->x        = readInto.x;
+        slot->y        = readInto.y;
+        slot->owner    = readInto.owner;
+        slot->armour   = readInto.armour;
+        slot->speed    = readInto.speed;
+        slot->inTank   = readInto.inTank;
+        slot->justSeen = readInto.justSeen;
+        slot->coolDown = 0;
+        logAddEvent(log_PillSetOwner, (BYTE) (count - 1), readInto.owner, TRUE, 0, 0, NULL);
+        logAddEvent(log_PillSetHealth, (BYTE) (count - 1), readInto.armour, 0, 0, 0, NULL);
+        logAddEvent(log_PillSetInTank, utilPutNibble((BYTE) (count - 1), FALSE), 0, 0, 0, 0, NULL);
+        logAddEvent(log_PillSetPlace, (BYTE) (count - 1), readInto.x, readInto.y, 0, 0, NULL);
+      }
     }
     count++;
   }
@@ -557,6 +587,7 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     BYTE numBases = basesGetNumBases(bs);
     BYTE bi;
     for (bi = 0; bi < numBases; bi++) {
+      if (basesIsActive(bs, (BYTE)(bi + 1)) == FALSE) continue;
       (*value)->mapItem[(*bs)->item[bi].x][(*bs)->item[bi].y] = ROAD;
     }
   }
@@ -566,7 +597,9 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
-      BYTE t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
+      BYTE t;
+      if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
       }
@@ -665,18 +698,20 @@ BYTE mapGetSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xValue
   BYTE terrain;     /* The current Terrain */
   bool done;        /* Are we done ? */
 
-  returnValue = MAP_SPEED_TDEEPSEA;
+  returnValue = (BYTE) sim->rules.speed_deep_sea;
   done = FALSE;
   if ((pillsExistPos(pb,xValue,yValue)) == TRUE) {
     /* Check for PB */
     if (pillsDeadPos(pb, xValue, yValue) == FALSE) {
+      /* A live pillbox is impassable because tankBuildingCollision tests the
+         terrain, not because its speed is zero, so it keeps its constant. */
       returnValue = MAP_SPEED_TPILLBOX;
       done = TRUE;
     }
   } else if ((basesExistPos(bs,xValue,yValue)) == TRUE) {
     /* Check for owned base */
     if (basesCantDrive(sim, xValue, yValue, playerNum) == FALSE) {
-      returnValue = MAP_MANSPEED_TREFBASE;
+      returnValue = (BYTE) sim->rules.speed_refuel_base;
     } else {
       returnValue = 0;
     }
@@ -689,41 +724,43 @@ BYTE mapGetSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xValue
     }
     /* On boat: use boat speed for all terrain (handles LeavingBoat on land) */
     if (onBoat == TRUE) {
-      returnValue = MAP_SPEED_TBOAT;
+      returnValue = (BYTE) sim->rules.speed_boat;
     } else
     switch (terrain) {
     case DEEP_SEA:
-      returnValue = MAP_SPEED_TDEEPSEA;
+      returnValue = (BYTE) sim->rules.speed_deep_sea;
       break;
     case BUILDING:
+      /* Building and half-building keep their constants for the same reason
+         a live pillbox does: the collision test is what stops a tank. */
       returnValue = MAP_SPEED_TBUILDING;
       break;
     case RIVER:
-      returnValue = MAP_SPEED_TRIVER;
+      returnValue = (BYTE) sim->rules.speed_river;
       break;
     case SWAMP:
-      returnValue = MAP_SPEED_TSWAMP;
+      returnValue = (BYTE) sim->rules.speed_swamp;
       break;
     case CRATER:
-      returnValue = MAP_SPEED_TCRATER;
+      returnValue = (BYTE) sim->rules.speed_crater;
       break;
     case ROAD:
-      returnValue = MAP_SPEED_TROAD;
+      returnValue = (BYTE) sim->rules.speed_road;
       break;
     case FOREST:
-      returnValue = MAP_SPEED_TFOREST;
+      returnValue = (BYTE) sim->rules.speed_forest;
       break;
     case RUBBLE:
-      returnValue = MAP_SPEED_TRUBBLE;
+      returnValue = (BYTE) sim->rules.speed_rubble;
       break;
     case GRASS:
-      returnValue = MAP_SPEED_TGRASS;
+      returnValue = (BYTE) sim->rules.speed_grass;
       break;
     case HALFBUILDING:
       returnValue = MAP_SPEED_THALFBUILDING;
       break;
     case BOAT:
-      returnValue = MAP_SPEED_TBOAT;
+      returnValue = (BYTE) sim->rules.speed_boat;
       break;
     default:
       /* Fall through */
@@ -838,18 +875,19 @@ TURNTYPE mapGetTurnRate(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE
   BYTE terrain;         /* The current Terrain */
   bool done;            /* Are we done ? */
 
-  returnValue = MAP_TURN_TDEEPSEA;
+  returnValue = (TURNTYPE) sim->rules.turn_deep_sea;
   done = FALSE;
   if ((pillsExistPos(pb,xValue,yValue)) == TRUE) {
     /* Check for PB */
     if ((pillsDeadPos(pb,xValue, yValue)) == FALSE) {
+      /* No rule, for the same reason the speed above has none. */
       returnValue = MAP_TURN_TPILLBOX;
       done = TRUE;
     }
   } else if ((basesExistPos(bs,xValue,yValue)) == TRUE) {
     /* Check for owned base */
     if (basesCantDrive(sim, xValue, yValue, playerNum) == FALSE) {
-      returnValue = MAP_TURN_TREFBASE;
+      returnValue = (TURNTYPE) sim->rules.turn_refuel_base;
     } else {
       returnValue = 0;
     }
@@ -862,43 +900,43 @@ TURNTYPE mapGetTurnRate(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE
     }
     switch (terrain) {
     case DEEP_SEA:
-      returnValue = MAP_TURN_TDEEPSEA;
+      returnValue = (TURNTYPE) sim->rules.turn_deep_sea;
       if (onBoat == TRUE) {
-        returnValue = MAP_TURN_TBOAT;
+        returnValue = (TURNTYPE) sim->rules.turn_boat;
       }
       break;
     case BUILDING:
       returnValue = MAP_TURN_TBUILDING;
       break;
     case RIVER:
-      returnValue = MAP_TURN_TRIVER;
+      returnValue = (TURNTYPE) sim->rules.turn_river;
       if (onBoat == TRUE) {
-        returnValue = MAP_TURN_TBOAT;
+        returnValue = (TURNTYPE) sim->rules.turn_boat;
       }
       break;
     case SWAMP:
-      returnValue = MAP_TURN_TSWAMP;
+      returnValue = (TURNTYPE) sim->rules.turn_swamp;
       break;
     case CRATER:
-      returnValue = MAP_TURN_TCRATER;
+      returnValue = (TURNTYPE) sim->rules.turn_crater;
       break;
     case ROAD:
-      returnValue = MAP_TURN_TROAD;
+      returnValue = (TURNTYPE) sim->rules.turn_road;
       break;
     case FOREST:
-      returnValue = MAP_TURN_TFOREST;
+      returnValue = (TURNTYPE) sim->rules.turn_forest;
       break;
     case RUBBLE:
-      returnValue = MAP_TURN_TRUBBLE;
+      returnValue = (TURNTYPE) sim->rules.turn_rubble;
       break;
     case GRASS:
-      returnValue = MAP_TURN_TGRASS;
+      returnValue = (TURNTYPE) sim->rules.turn_grass;
       break;
     case HALFBUILDING:
       returnValue = MAP_TURN_THALFBUILDING;
       break;
     case BOAT:
-      returnValue = MAP_TURN_TBOAT;
+      returnValue = (TURNTYPE) sim->rules.turn_boat;
       break;
     }
   }
@@ -1094,9 +1132,12 @@ bool mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss) 
   BYTE numStarts;     /* Number of starts on the map */
 
   returnValue = TRUE;
-  numPills = pillsGetNumPills(pb);
-  numBases = basesGetNumBases(bs);
-  numStarts = startsGetNumStarts(ss);
+  /* The file holds what is on the map. A slot a removal has emptied is sim
+     state, not map data, so the header counts the live items and the writers
+     below skip the rest; a map saved mid-scenario reloads without them. */
+  numPills = pillsGetNumActive(pb);
+  numBases = basesGetNumActive(bs);
+  numStarts = startsGetNumActive(ss);
 
   fp = fopen(fileName,"wb");
   if (fp == NULL) {
@@ -1187,7 +1228,13 @@ bool mapWritePills(FILE *fp, pillboxes *pb, BYTE total) {
   
   returnValue = TRUE;
   count = 1;
-  while (count <= total && returnValue == TRUE) {
+  (void)total;
+  /* Every slot, writing the live ones: the header already says how many. */
+  while (count <= pillsGetNumPills(pb) && returnValue == TRUE) {
+    if (pillsIsActive(pb, count) == FALSE) {
+      count++;
+      continue;
+    }
     pillsGetPill(pb, &item, count);
     /* Write each pill out */
     ret = fputc(item.x, fp);
@@ -1246,7 +1293,12 @@ bool mapWriteBases(FILE *fp, bases *bs, BYTE total) {
 
   returnValue = TRUE;
   count = 1;
-  while (count <= total && returnValue == TRUE) {
+  (void)total;
+  while (count <= basesGetNumBases(bs) && returnValue == TRUE) {
+    if (basesIsActive(bs, count) == FALSE) {
+      count++;
+      continue;
+    }
     basesGetBase(bs, &item, count);
     /* Write each base out */
     ret = fputc(item.x, fp);
@@ -1311,8 +1363,12 @@ bool mapWriteStarts(FILE *fp, starts *ss, BYTE total) {
 
   returnValue = TRUE;
   count = 1;
-  
-  while (count <= total && returnValue == TRUE) {
+  (void)total;
+  while (count <= startsGetNumStarts(ss) && returnValue == TRUE) {
+    if (startsIsActive(ss, count) == FALSE) {
+      count++;
+      continue;
+    }
     startsGetStartStruct(ss, &item, count);
     /* Write each start out */
     ret = fputc(item.x, fp);
@@ -1604,7 +1660,11 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
    * the file-load path have run. Everything downstream — the terrain fixups
    * below included — reads these values, and a map arrives from whatever
    * server the player joined. Clamp here, once, so the rest of the codebase
-   * can trust the fields rather than each consumer having to re-check. */
+   * can trust the fields rather than each consumer having to re-check.
+   *
+   * What a pill or a base may hold is not settled here: that is the sim's to
+   * say, and this loader has none — the map editor and the preview call it
+   * too. A caller that owns a sim calls mapClampToRules afterwards. */
   basesValidate(bs);
   pillsValidate(pb);
   startsValidate(ss);
@@ -1621,6 +1681,7 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     BYTE numBases = basesGetNumBases(bs);
     BYTE bi;
     for (bi = 0; bi < numBases; bi++) {
+      if (basesIsActive(bs, (BYTE)(bi + 1)) == FALSE) continue;
       (*value)->mapItem[(*bs)->item[bi].x][(*bs)->item[bi].y] = ROAD;
     }
   }
@@ -1630,7 +1691,9 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
-      BYTE t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
+      BYTE t;
+      if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
       }
@@ -1797,6 +1860,7 @@ uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb) {
     BYTE numBases = basesGetNumBases(bs);
     BYTE bi;
     for (bi = 0; bi < numBases; bi++) {
+      if (basesIsActive(bs, (BYTE)(bi + 1)) == FALSE) continue;
       masked[(size_t)(*bs)->item[bi].x * MAP_ARRAY_SIZE + (*bs)->item[bi].y] = ROAD;
     }
   }
@@ -1804,8 +1868,11 @@ uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
-      size_t idx = (size_t)(*pb)->item[pi].x * MAP_ARRAY_SIZE + (*pb)->item[pi].y;
-      BYTE t = masked[idx];
+      size_t idx;
+      BYTE t;
+      if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      idx = (size_t)(*pb)->item[pi].x * MAP_ARRAY_SIZE + (*pb)->item[pi].y;
+      t = masked[idx];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         masked[idx] = ROAD;
       }
@@ -1815,6 +1882,33 @@ uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb) {
   crc = (uint16_t)CRCCalc(masked, (int)n);
   free(masked);
   return crc;
+}
+
+/*********************************************************
+*NAME:          mapClampToRules
+*PURPOSE:
+*  Clamps the pills and bases a map just put into this sim
+*  against the gameplay caps the sim runs on. mapRead and
+*  mapLoadCompressedMap settle what the file may say — the
+*  counts and the owners — and leave the caps alone, because
+*  both are shared with the map editor, the preview and the
+*  server's scratch validation, none of which has a sim. A
+*  caller that does have one calls this straight after the
+*  load, so the records the game goes on to read are inside
+*  what this sim allows.
+*
+*  Idempotent, so a caller that loads twice may call it
+*  twice.
+*
+*ARGUMENTS:
+*  sim - The sim that has just taken the map on
+*********************************************************/
+void mapClampToRules(GameSim *sim) {
+  if (sim == NULL) {
+    return;
+  }
+  pillsClampToRules(sim, &sim->pb);
+  basesClampToRules(sim, &sim->bs);
 }
 
 bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize) {

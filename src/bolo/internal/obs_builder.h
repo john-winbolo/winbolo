@@ -19,8 +19,9 @@
  *  Builds WinBoloObs (V3) from BrainInfo for in-game ML
  *  brain inference.
  *
- *  obsBuildFromBrainInfo: single-view (tank view rect)
- *  obsBuildMultiView:     multi-view (tank + owned pills)
+ *  obsBuildMultiView is the one way in: the tank's own view
+ *  rect, plus the rect around each pillbox it or an ally
+ *  owns, gathered into one observation.
  *********************************************************/
 
 #ifndef OBS_BUILDER_H
@@ -36,19 +37,6 @@ extern "C" {
 struct ClientSim;
 
 /*********************************************************
- *NAME:          obsBuildFromBrainInfo
- *PURPOSE:
- *  Builds a complete V3 WinBoloObs from BrainInfo alone.
- *  Entity list is built from BrainInfo visible objects.
- *  Single-view (tank view rect) only.
- *
- *ARGUMENTS:
- *  bi  - Populated BrainInfo from brainDataMakeInfo
- *  obs - Output observation (zeroed and filled)
- *********************************************************/
-void obsBuildFromBrainInfo(const BrainInfo *bi, WinBoloObs *obs);
-
-/*********************************************************
  *NAME:          obsBuildMultiView
  *PURPOSE:
  *  Builds a V3 WinBoloObs with multi-view entity gathering.
@@ -61,12 +49,24 @@ void obsBuildFromBrainInfo(const BrainInfo *bi, WinBoloObs *obs);
  *  This brings obs_builder to parity with the gym's
  *  multi-view gathering (gymBuildObs in winbolo_gym.c).
  *
+ *  The entries that normalise against what full means divide
+ *  by written-out numbers describing the classic game, so
+ *  this refuses to build on a sim whose rules are not the
+ *  classic ones: false, with obs left zeroed and a line in
+ *  the log naming the first rule that differs. A caller that
+ *  gets false has no observation and should not act on one.
+ *  See the scale note at the top of obs_builder.c.
+ *
  *ARGUMENTS:
  *  cs     - ClientSim pointer (for rect-gathering functions)
  *  tankBi - Populated tank-view BrainInfo
  *  obs    - Output observation (zeroed and filled)
+ *
+ *RETURNS:
+ *  true when the observation was built, false when the sim's
+ *  rules are not classic and there was nothing to build on
  *********************************************************/
-void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs *obs);
+bool obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs *obs);
 
 #ifdef __cplusplus
 }

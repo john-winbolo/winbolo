@@ -56,8 +56,8 @@
 #include "explosions.h"
 #include "screenbullet.h"
 #include "frontend.h"
+#include "ping_sounds.h"
 #include "../gui/lang.h"
-#include "../gui/ping_sounds.h"
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"
@@ -76,6 +76,7 @@
 #include "players.h"
 #include "screenbrainmap.h"
 #include "client_snapshot.h"
+#include "control_event.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
@@ -280,6 +281,24 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
   }
 }
 
+/* One pillbox's armour, capped to what this client's table says a pillbox
+ * can hold. The two places a pill's armour arrives — the per-pill event and
+ * the snapshot's pill array — both write the server's byte straight into the
+ * record, and the sim's own load paths cap it (pillsSetPill, and the
+ * re-clamp a new rules table runs), so these have to as well or a record
+ * lands above the cap and stays there until something else touches it. */
+static BYTE clientPillArmourToRules(const ClientSim *csPtr, BYTE armour) {
+  int32_t cap = csPtr->sim.rules.pill_max_armour;
+
+  if (cap < 0) {
+    return 0;
+  }
+  if ((int32_t)armour > cap) {
+    return (BYTE)cap;
+  }
+  return armour;
+}
+
 /* Bounds-checked live-scoreboard row. Slot bytes arrive off the wire and
  * an owner field can legitimately hold NEUTRAL, so nothing indexes
  * liveStats without passing through here. */
@@ -298,7 +317,7 @@ static ClientPlayerStats *liveStatsSlot(ClientSim *csPtr, BYTE slot) {
 *
 *  The stamp survives only while both hold: the server has not
 *  yet processed the stamped tick, and one more hit would still
-*  drop the armour to MIN_ARMOUR_CAPTURE. Armour from before the
+*  drop the armour to base_capture_armour. Armour from before the
 *  hit therefore leaves a live prediction alone (a full sync or
 *  a stock update for an earlier shell used to wipe it, and the
 *  shell that armed it was gone, so nothing put it back); armour
@@ -330,8 +349,9 @@ void clientBaseArmourArrived(ClientSim *csPtr, BYTE idx, BYTE armour,
   }
   stamp = csPtr->sim.basePredictedDeadTick[idx];
   hit = csPtr->sim.basePredictedHitTick[idx];
-  oneHitKills = armour > MIN_ARMOUR_CAPTURE &&
-                (int)armour - DAMAGE <= MIN_ARMOUR_CAPTURE;
+  oneHitKills = armour > csPtr->sim.rules.base_capture_armour &&
+                (int)armour - csPtr->sim.rules.shell_damage <=
+                    csPtr->sim.rules.base_capture_armour;
 
   if (!oneHitKills) {
     /* Dead already (the real rule makes it drivable), or high enough that
@@ -401,7 +421,8 @@ static void clientApplyBaseStock(ClientSim *csPtr, const GameEvent *ev) {
    * high-RTT catch-up onto the now-passable tile glides rather than
    * snapping. Restricted to a base within one tile of the local tank
    * so it stays a special case, not a global clamp raise. */
-  if (oldArmour > MIN_ARMOUR_CAPTURE && newArmour <= MIN_ARMOUR_CAPTURE &&
+  if (oldArmour > csPtr->sim.rules.base_capture_armour &&
+      newArmour <= csPtr->sim.rules.base_capture_armour &&
       MY_TANK(csPtr) != NULL) {
     int tankMX = tankGetMX(&MY_TANK(csPtr));
     int tankMY = tankGetMY(&MY_TANK(csPtr));
@@ -551,13 +572,26 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         break;
       }
       case EVENT_BASE_CAPTURED:
-        /* data: [newOwner, previousOwner] */
+        /* data: [newOwner, previousOwner, index, quiet] */
+        /* A base going neutral is published as the same event with no new
+         * owner. Nothing here is about losing a base — the line, the
+         * scoreboard credit, the Steam stat and the first-capture latch all
+         * belong to whoever took it — so the client leaves a neutralisation
+         * alone, as it did when the server did not publish one at all. The
+         * owner itself arrives on EVENT_BASE_UPDATE and the periodic sync. */
+        if (events[i].data[0] == NEUTRAL) {
+          break;
+        }
         /* Live scoreboard: counted for every slot. */
         {
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
           if (ownerRow != NULL) ownerRow->baseCaptures++;
         }
-        if (isHuman) {
+        /* data[3] is the announce policy's answer. A quiet capture never
+         * enters the debounce queue at all, so there is nothing left there
+         * to pop on a later tick; a line already pending from an earlier,
+         * announced capture is that capture's line and still comes out. */
+        if (isHuman && events[i].data[3] == 0) {
           basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
                                      events[i].data[0], events[i].data[1]);
         }
@@ -584,13 +618,23 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         csPtr->hasAnyBaseCaptured = true;
         break;
       case EVENT_PILL_CAPTURED:
-        /* data: [newOwner, previousOwner] */
+        /* data: [newOwner, previousOwner, index, quiet] */
+        /* A pillbox going neutral is left alone for the same reason the base
+         * above is: every line and counter here belongs to whoever took it.
+         * The owner arrives on EVENT_PILL_UPDATE and the periodic sync. */
+        if (events[i].data[0] == NEUTRAL) {
+          break;
+        }
         /* Live scoreboard: counted for every slot. */
         {
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
           if (ownerRow != NULL) ownerRow->pillCaptures++;
         }
-        if (isHuman) {
+        /* data[3] is the announce policy's answer; the scoreboard, the Steam
+         * stat and the achievement latch below are not lines and run either
+         * way. This is now the only site that writes a pill-capture line —
+         * pillsSetPillOwner writes none. */
+        if (isHuman && events[i].data[3] == 0) {
           BYTE newOwner = events[i].data[0];
           BYTE prevOwner = events[i].data[1];
           bool suppressAllied = (prevOwner != NEUTRAL &&
@@ -635,7 +679,7 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         csPtr->hasAnyPillCaptured = true;
         break;
       case EVENT_PILL_UPDATE:
-        /* data: [pillIndex, x, y, owner, armourInTank] */
+        /* data: [pillIndex, x, y, owner, pillFlags, armour] */
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
@@ -688,7 +732,12 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
             (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
             (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
             (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
-            (*csPtr->sim.pb).item[idx].armour = pillArmourFromByte(events[i].data[4]);
+            /* Capped as the sim's own load path caps it. The byte is what a
+               server said, and this client's table says what a pillbox can
+               hold; an armour above the cap would outlive the re-clamp a new
+               table runs and draw against a scale it is off the end of. */
+            (*csPtr->sim.pb).item[idx].armour =
+                clientPillArmourToRules(csPtr, events[i].data[5]);
             (*csPtr->sim.pb).item[idx].inTank = pillInTankFromByte(events[i].data[4]) ? TRUE : FALSE;
           }
         }
@@ -732,7 +781,7 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         break;
       case EVENT_LGM_LOST:
-        /* data: [victim, killer] — builder killed, broadcast newswire */
+        /* data: [victim, killer, quiet] — builder killed, broadcast newswire */
         /* Live scoreboard: counted for every slot. Killing your own LGM
          * credits no lgmKills, matching the Steam branch below. */
         {
@@ -743,7 +792,8 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
             if (killerRow != NULL) killerRow->lgmKills++;
           }
         }
-        if (isHuman) {
+        /* data[2] is the announce policy's answer. */
+        if (isHuman && events[i].data[2] == 0) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
           playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
@@ -841,13 +891,49 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
       case EVENT_PING: {
         /* data: [sender, kind, xHi, xLo, yHi, yLo] — a teammate's smart
            ping. The server has already decided this client is entitled to
-           see it, including the sender's own copy, so there is nothing to
-           filter here. Held in a ring the GUI overlay draws from; bots get
-           it through the brain event buffer above and act on it themselves. */
+           see it (including the sender's own copy) and rate-limited the
+           sender, so the only thing left to do here is a render backstop:
+           cap how many of one sender's pings this client will actually draw,
+           using the same 5s/30s windows as the server limiter, so a peer or
+           server flooding pings cannot bury the view. Held in a ring the GUI
+           overlay draws from; bots get it through the brain event buffer above
+           and act on it themselves. */
+        uint8_t  sender = events[i].data[0];
         uint8_t  kind = events[i].data[1];
         uint16_t px = (uint16_t)((events[i].data[2] << 8) | events[i].data[3]);
         uint16_t py = (uint16_t)((events[i].data[4] << 8) | events[i].data[5]);
-        clientSimAddPing(csPtr, events[i].data[0], kind, px, py, SDL_GetTicks());
+        uint32_t nowMs = SDL_GetTicks();
+        /* The local player's own pings are exempt: it must always see its own,
+           and the server already capped how many it could have sent. */
+        if (sender < MAX_TANKS && sender != playerNum) {
+          int c5 = 0, c30 = 0, j;
+          /* Deliberately looser than the server: the server enforces the real
+             cap in sim ticks, and this backstop only catches a flooding peer
+             or server. It counts in wall-clock ms, so each window is shortened
+             by PING_SPAM_CLIENT_SLACK_MS — otherwise jitter on a ping the
+             server accepted at a window edge could make the client drop a
+             server-approved ping, which the sender would never see go missing.
+             See input_packet.h. */
+          uint32_t w5  = (uint32_t)PING_SPAM_WINDOW_5S_SECONDS  * 1000u
+                         - PING_SPAM_CLIENT_SLACK_MS;
+          uint32_t w30 = (uint32_t)PING_SPAM_WINDOW_30S_SECONDS * 1000u
+                         - PING_SPAM_CLIENT_SLACK_MS;
+          for (j = 0; j < PING_SPAM_MAX_30S; j++) {
+            uint32_t st = csPtr->pingRenderMs[sender][j];
+            uint32_t age;
+            if (st == 0 || nowMs < st) continue;
+            age = nowMs - st;
+            if (age < w30) c30++;
+            if (age < w5)  c5++;
+          }
+          if (c5 >= PING_SPAM_MAX_5S || c30 >= PING_SPAM_MAX_30S) {
+            break;  /* drop: no marker, no sound, no newswire line */
+          }
+          csPtr->pingRenderMs[sender][csPtr->pingRenderIdx[sender]] = nowMs;
+          csPtr->pingRenderIdx[sender] =
+              (uint8_t)((csPtr->pingRenderIdx[sender] + 1) % PING_SPAM_MAX_30S);
+        }
+        clientSimAddPing(csPtr, sender, kind, px, py, nowMs);
         if (isHuman) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
@@ -1036,11 +1122,21 @@ void clientApplySnapshot(ClientSim *csPtr,
           tankSetDestroyed(&MY_TANK(csPtr), destroyed);
           csPtr->lastServerDestroyed = destroyed;
         }
-        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
-        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
-        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+        {
+          TankModifiers mods;
+          mods.speed = tanks[i].modSpeed;
+          mods.accel = tanks[i].modAccel;
+          mods.turn = tanks[i].modTurn;
+          mods.reload = tanks[i].modReload;
+          mods.dealt = tanks[i].modDealt;
+          mods.taken = tanks[i].modTaken;
+          tankSetModifiers(MY_TANK(csPtr), &mods);
+        }
         csPtr->clientState.hasPredictedTank = TRUE;
         /* The tank just teleported onto the map from the server's chosen
          * start — a teleport snaps, so clear any stale render offset. */
@@ -1162,8 +1258,8 @@ void clientApplySnapshot(ClientSim *csPtr,
                       tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                       tankGetShells(&MY_TANK(csPtr)) > 0 &&
                       !tankIsDestroyed(&MY_TANK(csPtr))) {
-                    tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
-                    tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
+                    tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
+                    tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
               }
@@ -1237,12 +1333,25 @@ void clientApplySnapshot(ClientSim *csPtr,
         /* Sync resources from server — but not reload/shells, which are
          * already set correctly by the reconciliation replay (it accounts
          * for unprocessed fire inputs that the server hasn't seen yet). */
-        tankSetShells(&MY_TANK(csPtr), tanks[i].shells);
-        tankSetMines(&MY_TANK(csPtr), tanks[i].mines);
-        tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
+        tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
+        tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
+        tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetDeathWait(&MY_TANK(csPtr), tanks[i].deathWait);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+        {
+          /* Every own-tank snapshot past the first lands here, whether or not
+             the position check above snapped and replayed, so this and the
+             first-snapshot write cover the whole stream. */
+          TankModifiers mods;
+          mods.speed = tanks[i].modSpeed;
+          mods.accel = tanks[i].modAccel;
+          mods.turn = tanks[i].modTurn;
+          mods.reload = tanks[i].modReload;
+          mods.dealt = tanks[i].modDealt;
+          mods.taken = tanks[i].modTaken;
+          tankSetModifiers(MY_TANK(csPtr), &mods);
+        }
         /* Sync boat state from server — prediction skips the boat state
          * machine (isPredicting guard in tankUpdate), so the client's
          * onBoat flag can go stale if no position mismatch triggers
@@ -1268,8 +1377,8 @@ void clientApplySnapshot(ClientSim *csPtr,
                 tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                 tankGetShells(&MY_TANK(csPtr)) > 0 &&
                 !tankIsDestroyed(&MY_TANK(csPtr))) {
-              tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
-              tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
+              tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
+              tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }
         }
@@ -1440,16 +1549,18 @@ void clientApplySnapshot(ClientSim *csPtr,
        * held: a pill that was in a tank and is not any more, arriving without
        * its square, has been put down somewhere we were never told about. */
       pillsUpdatePosState(&csPtr->sim.pb, (BYTE)i,
-                          pillPosCurrentFromByte(pillSnaps[i].armourInTank),
-                          pillInTankFromByte(pillSnaps[i].armourInTank));
+                          pillPosCurrentFromByte(pillSnaps[i].pillFlags),
+                          pillInTankFromByte(pillSnaps[i].pillFlags));
       /* The square is written as sent — for a pill we cannot see it is the one
        * the server has us holding, which is what the checksum is taken over.
        * The bit says whether the pill is on it now. */
       (*csPtr->sim.pb).item[i].x      = pillSnaps[i].x;
       (*csPtr->sim.pb).item[i].y      = pillSnaps[i].y;
       (*csPtr->sim.pb).item[i].owner  = pillSnaps[i].owner;
-      (*csPtr->sim.pb).item[i].armour = pillArmourFromByte(pillSnaps[i].armourInTank);
-      (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].armourInTank) ? TRUE : FALSE;
+      /* Capped against this client's table, as the event path above is. */
+      (*csPtr->sim.pb).item[i].armour =
+          clientPillArmourToRules(csPtr, pillSnaps[i].armour);
+      (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].pillFlags) ? TRUE : FALSE;
     }
   }
 
@@ -1518,6 +1629,178 @@ void clientApplySnapshot(ClientSim *csPtr,
   if (!isHuman) {
     clientSnapshotRenderInterp(csPtr, arrivalMs, 0.0f, /*discrete=*/true);
   }
+}
+
+/*********************************************************
+*NAME:          clientApplyEntityChange
+*PURPOSE:
+*  Applies a CTRL_ENTITY_CHANGE to this client's own pill,
+*  base or start list. An add writes the record at the
+*  number the event names and marks that slot live; a remove
+*  clears the live flag and keeps the slot, so the count and
+*  every index above the removed one go on naming the same
+*  item.
+*
+*  The wire index is 0 based and the three list modules
+*  number from 1, so the number is one higher throughout.
+*
+*ARGUMENTS:
+*  cs  - Pointer to the ClientSim
+*  evt - The control event to apply
+*********************************************************/
+void clientApplyEntityChange(ClientSim *cs, const struct ControlEvent *evt) {
+  BYTE num;        /* the item's number in its list */
+  bool ok = FALSE;
+
+  if (cs == NULL || evt == NULL) {
+    return;
+  }
+  num = (BYTE)(evt->u.entityChange.index + 1);
+
+  /* The number comes from the server, which is the only place item numbers
+   * are decided, so an add writes the slot it names rather than choosing
+   * one: the install functions take a number where the add functions report
+   * one. A number past this list's count raises the count and leaves the
+   * gap removed — the server only sends a number it has filled, so a gap is
+   * the items this client has not been told about, not items it has. */
+  switch (evt->u.entityChange.kind) {
+  case ENTITY_KIND_PILL:
+    if (cs->sim.pb == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      pillbox item;
+      memset(&item, 0, sizeof(item));
+      item.x      = evt->u.entityChange.rec.pill.x;
+      item.y      = evt->u.entityChange.rec.pill.y;
+      item.owner  = evt->u.entityChange.rec.pill.owner;
+      item.armour = evt->u.entityChange.rec.pill.armour;
+      item.speed  = evt->u.entityChange.rec.pill.speed;
+      item.inTank = evt->u.entityChange.rec.pill.inTank ? TRUE : FALSE;
+      ok = pillsInstallItem(&cs->sim.pb, &item, num);
+    } else {
+      ok = pillsRemoveItem(&cs->sim.pb, num);
+    }
+    break;
+
+  case ENTITY_KIND_BASE:
+    if (cs->sim.bs == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      base item;
+      memset(&item, 0, sizeof(item));
+      item.x      = evt->u.entityChange.rec.base.x;
+      item.y      = evt->u.entityChange.rec.base.y;
+      item.owner  = evt->u.entityChange.rec.base.owner;
+      item.armour = evt->u.entityChange.rec.base.armour;
+      item.shells = evt->u.entityChange.rec.base.shells;
+      item.mines  = evt->u.entityChange.rec.base.mines;
+      ok = basesInstallItem(&cs->sim.bs, &item, num);
+    } else {
+      ok = basesRemoveItem(&cs->sim.bs, num);
+    }
+    break;
+
+  case ENTITY_KIND_START:
+    if (cs->sim.ss == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      start item;
+      memset(&item, 0, sizeof(item));
+      item.x   = evt->u.entityChange.rec.start.x;
+      item.y   = evt->u.entityChange.rec.start.y;
+      item.dir = evt->u.entityChange.rec.start.dir;
+      ok = startsInstallItem(&cs->sim.ss, &item, num);
+    } else {
+      ok = startsRemoveItem(&cs->sim.ss, num);
+    }
+    break;
+
+  default:
+    break;
+  }
+
+  if (!ok) {
+    WB_LOG_WARN(WB_LOG_CAT_CLIENT,
+                "entity change not applied: kind=%u index=%u added=%u",
+                (unsigned)evt->u.entityChange.kind,
+                (unsigned)evt->u.entityChange.index,
+                (unsigned)evt->u.entityChange.added);
+    return;
+  }
+
+  /* The status panels are pushed, not polled: nothing else repaints the
+   * entry for an item that has just left or arrived, so it is done here. A
+   * removed item reads as neutral, which is how a slot the map does not use
+   * is drawn. */
+  if (evt->u.entityChange.kind == ENTITY_KIND_PILL) {
+    frontEndStatusPillbox(cs, num, pillsGetAllianceNum(&cs->sim, &cs->sim.pb, num));
+  } else if (evt->u.entityChange.kind == ENTITY_KIND_BASE) {
+    frontEndStatusBase(cs, num, basesGetStatusNum(&cs->sim, num));
+  }
+
+  /* A pill or base appearing or leaving changes what the screen draws over
+   * its square, the same way a revealed mine does. */
+  clientSimRecalc(cs);
+}
+
+/*********************************************************
+*NAME:          clientApplyEntitySync
+*PURPOSE:
+*  Applies a CTRL_ENTITY_SYNC to this client's own pill,
+*  base and start lists. Bit i of a mask stands for index i:
+*  set puts the item at that index on the map, clear takes
+*  it off. Only the live flags move — the counts are the
+*  ones the compressed map installed, and a bit at or above
+*  a list's count names no item and is ignored.
+*
+*  The records are left alone too. Every index a mask can
+*  reach is one the install wrote, and taking an item off
+*  the map keeps its record, so an index put back on the map
+*  holds the item it always held.
+*
+*  The wire index is 0 based and the three list modules
+*  number from 1, so the number is one higher throughout.
+*
+*ARGUMENTS:
+*  cs  - Pointer to the ClientSim
+*  evt - The control event to apply
+*********************************************************/
+void clientApplyEntitySync(ClientSim *cs, const struct ControlEvent *evt) {
+  BYTE num;   /* the item's number in its list */
+  BYTE count; /* how many numbers that list has  */
+
+  if (cs == NULL || evt == NULL) {
+    return;
+  }
+
+  if (cs->sim.pb != NULL) {
+    count = pillsGetNumPills(&cs->sim.pb);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.pills & (1u << (num - 1))) != 0;
+      pillsSetActive(&cs->sim.pb, num, onMap);
+    }
+  }
+  if (cs->sim.bs != NULL) {
+    count = basesGetNumBases(&cs->sim.bs);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.bases & (1u << (num - 1))) != 0;
+      basesSetActive(&cs->sim.bs, num, onMap);
+    }
+  }
+  if (cs->sim.ss != NULL) {
+    count = startsGetNumStarts(&cs->sim.ss);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.starts & (1u << (num - 1))) != 0;
+      startsSetActive(&cs->sim.ss, num, onMap);
+    }
+  }
+
+  /* A pill or base leaving changes what the screen draws over its square,
+   * the same way one leaving on a CTRL_ENTITY_CHANGE does. */
+  clientSimRecalc(cs);
 }
 
 /*********************************************************

@@ -293,9 +293,17 @@ bool mlBrainTick(MLBrainInstance *inst, struct ClientSim *cs, BrainInfo *info) {
     memset(inst->sounds, 0, sizeof(inst->sounds));
     memset(inst->sound_mask, 0, sizeof(inst->sound_mask));
 
-    /* Build multi-view observation from BrainInfo + ClientSim */
+    /* Build multi-view observation from BrainInfo + ClientSim. The builder
+       refuses on a sim whose rules are not the classic ones: the observation
+       scale is the classic game's and a model cannot read anything else. No
+       observation means no inference — and the caller has already cleared
+       the hold and tap keys for this tick, so the tank coasts to a stop with
+       nothing held rather than carrying last tick's keys on. The builder has
+       already said why in the log. */
     WinBoloObs obs;
-    obsBuildMultiView(cs, info, &obs);
+    if (!obsBuildMultiView(cs, info, &obs)) {
+        return false;
+    }
 
     /* Terrain: interleave terrain + mines into [29][29][2] */
     for (int r = 0; r < SPATIAL_H; r++) {

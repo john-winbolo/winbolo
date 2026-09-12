@@ -419,8 +419,26 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
         ok = mapLoadCompressedMap(&gs->mp, &gs->pb,
                                   &gs->bs, &gs->ss,
                                   buf, len);
+        /* The map is this sim's now: cap what it brought against the rules. */
+        if (ok) {
+            mapClampToRules(gs);
+        }
     }
     free(buf);
+
+    /* The blob carries every pillbox, base and start the map has and not
+     * which of them are still on it, so the load above puts them all back on
+     * the map. Correct that straight away, while the load is still on this
+     * call stack and nothing can have read the lists: the bot takes its map
+     * directly rather than over a channel, so there is no transfer whose
+     * completion could carry the masks. The fill says nothing when every
+     * item is on the map, which is every round that runs no entity op. */
+    if (ok) {
+        ControlEvent evt;
+        if (serverSimFillEntitySyncEvent(sim, &evt)) {
+            clientSimApplyControl(bot->cs, &evt);
+        }
+    }
     return ok;
 }
 
@@ -782,7 +800,7 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, bot->ai,
                                 sim->botMgr.defaultDebugMode,
-                                (int)bot->playerNum)) {
+                                (int)bot->playerNum, &bot->initTable)) {
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                 "botManager: failed to reload brain '%s' for bot %d",
                 brainPath, (int)bot->playerNum);
@@ -828,7 +846,8 @@ bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
 
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
-                      aiType ai, gameType game, bool hiddenMines) {
+                      aiType ai, gameType game, bool hiddenMines,
+                      BYTE team, const ScnTable *init) {
     BotContext *bot;
 
     if (sim == NULL || playerNum >= MAX_TANKS) {
@@ -847,15 +866,26 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     if (brainPath != NULL) {
         SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
     }
+    /* Take our own copy of the caller's init table (the memset above
+     * already left an empty one), so the brain below and any later
+     * reload read this bot's configuration and no one else's. */
+    if (init != NULL) {
+        bot->initTable = *init;
+    }
 
     {
+        /* The team goes in with the rest of the config rather than being
+         * written onto the slot afterwards: serverSimAddBot writes it and
+         * then picks the slot's start from it, clustering the new bot near
+         * its team's reservations. A team set after that call has already
+         * missed the pick. */
         ServerSimBotConfig cfg = {
             .brainPath   = bot->brainPath,
             .brainName   = brainName,
             .ai          = ai,
             .gameType    = game,
             .hiddenMines = hiddenMines,
-            .teamNumber  = 0,
+            .teamNumber  = team,
         };
         if (!serverSimAddBot(sim, playerNum, &cfg)) {
             return false;
@@ -950,7 +980,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     botManagerStageInitArg(sim, playerNum, brainPath);
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, ai, sim->botMgr.defaultDebugMode,
-                                playerNum)) {
+                                playerNum, &bot->initTable)) {
         WB_LOG_WARN(WB_LOG_CAT_SIM, "botManager: failed to create brain for bot %d", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -1047,6 +1077,29 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
         screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
     }
     botUpdateBrainMap(bot, sim);
+
+    /* Hand the pathfinder this tank's acceleration modifier and this sim's
+     * rules before the think, so cpf_predict_stop brakes at the rate the
+     * engine will and the shot simulator flies the shell the engine will
+     * fire, rather than the classic ones. Read from the ServerSim, which is
+     * immutable during the brain phase. */
+    if (bot->brain.pathfinder != NULL) {
+        TankModifiers mods;
+        memset(&mods, 0, sizeof(mods));
+        if (bot->playerNum < MAX_TANKS && gs->tanks[bot->playerNum] != NULL) {
+            tankGetModifiers(gs->tanks[bot->playerNum], &mods);
+        }
+        brainPathfinderSetAccelPct(bot->brain.pathfinder, mods.accel);
+        brainPathfinderSetMoveRules(bot->brain.pathfinder,
+                                    gs->rules.tank_brake_rate,
+                                    gs->rules.tank_decel_rate,
+                                    gs->rules.tank_min_move);
+        brainPathfinderSetShellRules(bot->brain.pathfinder,
+                                     gs->rules.shell_life,
+                                     gs->rules.shell_speed,
+                                     gs->rules.shell_start_add,
+                                     gs->rules.gunsight_max);
+    }
 
     /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.
      * We now still run the think so the brain can reset its own state for a
@@ -1372,6 +1425,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             evt.type = CTRL_SERVER_TEXT;
             SDL_strlcpy(evt.u.serverText.text, msg,
                         sizeof(evt.u.serverText.text));
+            evt.u.serverText.destPlayer = 0xFF;  /* everyone, not slot 0 */
             serverSimPublishControl(sim, &evt);
 
             WB_LOG_WARN(WB_LOG_CAT_LUA,

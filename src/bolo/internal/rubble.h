@@ -31,6 +31,8 @@
 
 #include "global.h"
 
+struct GameSim;
+
 /* Empty / Non Empty / Head / Tail Macros */
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -94,11 +96,12 @@ void rubbleDestroy(rubble *rbl);
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim - The game the rubble belongs to
 *  rbl - Pointer to the rubbble object
 *  x   - X co-ord
 *  y   - Y co-ord
 *********************************************************/
-BYTE rubbleAddItem(rubble *rbl, BYTE x, BYTE y);
+BYTE rubbleAddItem(struct GameSim *sim, rubble *rbl, BYTE x, BYTE y);
 
 /*********************************************************
 *NAME:          rubbleDeleteItem

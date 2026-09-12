@@ -252,6 +252,50 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   tankGetStats(&MY_TANK(csPtr), &(value->shells), &(value->mines), &(value->armour), &(value->trees));
   value->destroyed = tankIsDestroyed(&MY_TANK(csPtr)) ? TRUE : FALSE;
 
+  /* The rules view: the gameplay numbers this sim is running on, copied
+     once per tick so a brain reads the same values the engine acts on
+     rather than the classic ones it used to be able to assume. */
+  value->rules.tank_reload_ticks  = gs->rules.tank_reload_ticks;
+  value->rules.tank_full_shells   = gs->rules.tank_full_shells;
+  value->rules.tank_full_mines    = gs->rules.tank_full_mines;
+  value->rules.tank_full_trees    = gs->rules.tank_full_trees;
+  value->rules.tank_full_armour   = gs->rules.tank_full_armour;
+  value->rules.tank_death_ticks   = gs->rules.tank_death_ticks;
+  value->rules.tank_water_ticks   = gs->rules.tank_water_ticks;
+  value->rules.mine_damage        = gs->rules.mine_damage;
+  value->rules.just_fired_ticks   = gs->rules.just_fired_ticks;
+  value->rules.tank_min_move      = gs->rules.tank_min_move;
+  value->rules.tank_accel_rate    = gs->rules.tank_accel_rate;
+  value->rules.tank_decel_rate    = gs->rules.tank_decel_rate;
+  value->rules.tank_brake_rate    = gs->rules.tank_brake_rate;
+  value->rules.tank_autoslow_rate = gs->rules.tank_autoslow_rate;
+  value->rules.speed_road         = gs->rules.speed_road;
+  value->rules.speed_grass        = gs->rules.speed_grass;
+  value->rules.speed_forest       = gs->rules.speed_forest;
+  value->rules.speed_river        = gs->rules.speed_river;
+  value->rules.speed_swamp        = gs->rules.speed_swamp;
+  value->rules.speed_crater       = gs->rules.speed_crater;
+  value->rules.speed_rubble       = gs->rules.speed_rubble;
+  value->rules.speed_boat         = gs->rules.speed_boat;
+  value->rules.speed_deep_sea     = gs->rules.speed_deep_sea;
+  value->rules.speed_refuel_base  = gs->rules.speed_refuel_base;
+  value->rules.turn_road          = gs->rules.turn_road;
+  value->rules.turn_grass         = gs->rules.turn_grass;
+  value->rules.turn_forest        = gs->rules.turn_forest;
+  value->rules.turn_river         = gs->rules.turn_river;
+  value->rules.turn_swamp         = gs->rules.turn_swamp;
+  value->rules.turn_crater        = gs->rules.turn_crater;
+  value->rules.turn_rubble        = gs->rules.turn_rubble;
+  value->rules.turn_boat          = gs->rules.turn_boat;
+  value->rules.turn_deep_sea      = gs->rules.turn_deep_sea;
+  value->rules.turn_refuel_base   = gs->rules.turn_refuel_base;
+  value->rules.pill_max_armour       = gs->rules.pill_max_armour;
+  value->rules.pill_attack_ticks     = gs->rules.pill_attack_ticks;
+  value->rules.pill_attack_min_ticks = gs->rules.pill_attack_min_ticks;
+  value->rules.base_full_armour      = gs->rules.base_full_armour;
+  value->rules.base_full_shells      = gs->rules.base_full_shells;
+  value->rules.base_full_mines       = gs->rules.base_full_mines;
+
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */
   {
@@ -259,7 +303,8 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     BYTE numPb = pillsGetNumPills(&gs->pb);
     BYTE carried = 0;
     for (BYTE pi = 0; pi < numPb; pi++) {
-      if ((*gs->pb).item[pi].inTank && (*gs->pb).item[pi].owner == selfPlayer) {
+      if (pillsIsActive(&gs->pb, (BYTE)(pi + 1)) &&
+          (*gs->pb).item[pi].inTank && (*gs->pb).item[pi].owner == selfPlayer) {
         carried++;
       }
     }

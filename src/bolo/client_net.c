@@ -440,6 +440,16 @@ void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendPlayerPingMute(ClientSim *cs, BYTE targetPlayer,
+                                    bool muted) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (targetPlayer >= MAX_TANKS) return;
+  ClientCommand cmd = { .type = CMD_PLAYER_PING_MUTE };
+  cmd.u.playerPingMute.targetPlayer = targetPlayer;
+  cmd.u.playerPingMute.muted        = muted ? 1 : 0;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendVoiceState(ClientSim *cs, bool hasMic, bool selfMuted) {
   if (cs == NULL || !cs->hasTransport) return;
   ClientCommand cmd = { .type = CMD_VOICE_STATE };
@@ -924,6 +934,19 @@ int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
 
 bool clientSimNetHasVoiceTransport(const ClientSim *cs) {
   return cs != NULL && cs->hasTransport && cs->isUdpTransport;
+}
+
+void clientSimNetGetVoiceChannelStats(ClientSim *cs, uint32_t *outSent,
+                                      uint32_t *outRingDropped,
+                                      uint32_t *outBudgetSkipped) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    if (outSent != NULL) *outSent = 0;
+    if (outRingDropped != NULL) *outRingDropped = 0;
+    if (outBudgetSkipped != NULL) *outBudgetSkipped = 0;
+    return;
+  }
+  transportUdpClientGetVoiceChannelStats(&cs->transport, outSent,
+                                         outRingDropped, outBudgetSkipped);
 }
 
 /* === Net stats === */

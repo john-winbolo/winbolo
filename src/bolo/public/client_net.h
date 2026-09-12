@@ -120,6 +120,10 @@ void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);
 /* Mute or unmute one player for this client: the server stops forwarding
  * that player's voice and chat. Session-scoped. */
 void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted);
+/* Mute or unmute one player's smart pings for this client, independent of the
+ * voice/chat mute above: the server stops delivering that player's EVENT_PING
+ * to this client. Session-scoped. */
+void clientSimNetSendPlayerPingMute(ClientSim *cs, BYTE targetPlayer, bool muted);
 /* Report this client's own mic status. hasMic is voice enabled with an input
  * device open; selfMuted is having one but not transmitting. The server keeps
  * it in the sender's clientFlags and shows it to the players who could hear
@@ -396,6 +400,14 @@ int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
  * transport is attached. False with no transport and for the in-process
  * (local) transport single-player uses, which never carries voice. */
 bool clientSimNetHasVoiceTransport(const ClientSim *cs);
+
+/* What became of the voice frames this client queued: framed onto the wire,
+ * dropped by a full ring, or left behind by a frame with no budget for them.
+ * All three are losses the protocol itself cannot show. Any out pointer may
+ * be NULL; a client with no UDP transport reports zeroes. */
+void clientSimNetGetVoiceChannelStats(ClientSim *cs, uint32_t *outSent,
+                                      uint32_t *outRingDropped,
+                                      uint32_t *outBudgetSkipped);
 
 /* === Net stats === */
 uint16_t clientSimGetNetPing(const ClientSim *cs);

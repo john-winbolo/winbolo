@@ -90,7 +90,7 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
     float rang;
     BYTE rmx, rmy;
     clientSimGetRenderedTankPos(csPtr, &rwx, &rwy, &rang);
-    tankGetGunsightAt(&MY_TANK(csPtr), rwx, rwy, rang, &tmx, &tmy, &pmx, &pmy);
+    tankGetGunsightAt(clientSimGetGameSim(csPtr), &MY_TANK(csPtr), rwx, rwy, rang, &tmx, &tmy, &pmx, &pmy);
     /* Same shift math as tankGetScreenMX/MY. */
     rmx = (BYTE)(((WORLD)(rwx - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);
     rmy = (BYTE)(((WORLD)(rwy - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);

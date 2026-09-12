@@ -16,8 +16,11 @@ typedef enum {
     LOCAL_JOIN_INVALID_INPUT,
 } LocalJoinResult;
 
-/* Lowest free slot in [0, sim->maxPlayers); -1 if full. Skips bot slots. */
-int  serverSimFindFreeSlot(const ServerSim *sim);
+/* Lowest free slot in [0, sim->maxPlayers); -1 if full. Skips bot slots.
+ * forBot says who the seat is for, because the two answers differ: a
+ * scenario's player cap refuses a person past it and lets a bot sit above
+ * it, and this is the only place the seat's kind is known. */
+int  serverSimFindFreeSlot(ServerSim *sim, bool forBot);
 
 /* Four step-internals. None of these publish CTRL_PLAYER_JOIN by themselves —
  * a single publish lives in fillAndPublishPlayerJoin once all four fields

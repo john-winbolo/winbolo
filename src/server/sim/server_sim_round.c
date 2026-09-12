@@ -83,6 +83,8 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         }
         sim->classicMode         = sim->originalLobbySettings.classicMode;
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
+        sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
+        sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who
@@ -313,6 +315,7 @@ bool serverSimSaveMap(ServerSim *sim, char *fileName) {
 BYTE serverSimWinningOwner(ServerSim *sim) {
     BYTE count;
     BYTE max;
+    BYTE live = 0;
     BYTE first = NEUTRAL;
     BYTE current;
 
@@ -321,28 +324,53 @@ BYTE serverSimWinningOwner(ServerSim *sim) {
         return NEUTRAL;
     }
 
+    /* A removed base is not on the map, so it neither blocks the win nor
+       counts toward it; the first live base sets the owner to match. */
     for (count = 1; count <= max; count++) {
         BYTE shellsAmt, minesAmt, armourAmt;
+        if (basesIsActive(&sim->sim.bs, count) == FALSE) {
+            continue;
+        }
         current = basesGetBaseOwner(&sim->sim.bs, count);
         basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+        if (current == NEUTRAL ||
+            armourAmt <= sim->sim.rules.base_capture_armour) {
             return NEUTRAL;
         }
-        if (count == 1) {
+        if (live == 0) {
             first = current;
         } else if (!playersIsAllie(&sim->sim.plyrs, current, first)) {
             return NEUTRAL;
         }
+        live++;
     }
 
+    if (live == 0) {
+        return NEUTRAL;
+    }
     return first;
 }
 
 bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
     BYTE count;
-    BYTE first = serverSimWinningOwner(sim);
+    BYTE first;
     char name[256];
 
+    /* A scenario may take the base sweep out of the round's endings, and
+       only the sweep: every other way a round ends is untouched. Asked
+       before the board is read, so a scenario that has turned the sweep off
+       pays nothing for it. */
+    if (sim->scenarioPolicy != NULL && sim->scenarioPolicy->allowBaseWin != NULL) {
+        bool allow;
+        serverSimScenarioPolicyEnter(sim);
+        allow = sim->scenarioPolicy->allowBaseWin(sim->scenarioPolicy->ctx);
+        serverSimScenarioPolicyLeave(sim);
+        if (allow == FALSE) {
+            return FALSE;
+        }
+    }
+
+    first = serverSimWinningOwner(sim);
     if (first == NEUTRAL) {
         return FALSE;
     }
@@ -459,8 +487,8 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.timeLimit       = serverSimGetTimeLimit(sim) ? true : false;
     info.timeMinutes     = serverSimGetTimeMinutes(sim);
     info.lobbyLocks      = sim->serverLocks;
-    info.numBases        = basesGetNumBases(&sim->sim.bs);
-    info.numPills        = pillsGetNumPills(&sim->sim.pb);
+    info.numBases        = basesGetNumActive(&sim->sim.bs);
+    info.numPills        = pillsGetNumActive(&sim->sim.pb);
     info.freeBases       = serverSimGetNumNeutralBases(sim);
     info.freePills       = serverSimGetNumNeutralPills(sim);
     info.numHumans       = serverSimGetNumHumans(sim);
@@ -470,6 +498,8 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.allyView        = (BYTE)sim->viewPolicy[viewCategoryAlly];
     info.classicMode     = sim->classicMode;
     info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
+    info.overviewWindow  = serverSimGetOverviewWindow(sim);
+    info.lineOfSight     = serverSimGetLineOfSight(sim);
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
     info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);
@@ -766,6 +796,12 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     BYTE numHumans = 0;
     BYTE i;
 
+    /* A start publishes while the state is still lobby and every player
+     * is still marked ready, so anything that edits the roster from one
+     * of those publishes lands back here and would start a second game
+     * on top of the one being set up. */
+    if (sim->startInProgress) return;
+
     if (sim->state != serverStateLobby) return;
     /* A start is already running (state flips to Running only at its
      * end): roster edits inside it must not recursively start a second
@@ -873,6 +909,8 @@ void serverSimResetGameWorld(ServerSim *sim) {
     if (sim->cachedMapData != NULL) {
         mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss,
                              sim->cachedMapData, sim->cachedMapDataLen);
+        /* The map is this sim's now: cap what it brought against the rules. */
+        mapClampToRules(&sim->sim);
     }
 
     /* 4. Clear mines from under bases */
@@ -892,8 +930,18 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->sim.lagCompTicks = 0;
     memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
-    /* 6. Clear events */
+    /* 6. Clear events. The map event count too: a running frame clears it at
+       its top but a round that ended with the buffer full would otherwise
+       carry the count into the lobby, where the fill drain reads it as a
+       bound and would write nothing for as long as the lobby lasted. */
     sim->eventCount = 0;
+    sim->mapEventCount = 0;
+    /* And any fill a scenario still had squares owing on. Its rectangle was
+       aimed at the map that has just been replaced above, so carrying it on
+       would paint the reloaded one. The roster changes it had queued name
+       seats in the round that is ending, so they go the same way. */
+    serverSimScenarioResetFill(sim);
+    serverSimScenarioResetRoster(sim);
     /* Drop any ping accepted but not yet buffered, so it can't leak a stale
      * marker into the next round's first running tick — and the rate limiter
      * with it, because sim->tick is rewound to 0 below and last round's tick
@@ -1044,8 +1092,18 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
     }
     if (numConnected == 0) return;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
-        sim->sim.baseTimer[i] = (BASE_TICKS_BETWEEN_REFUEL * (orderIdx + 1)) / numConnected;
+        if (!sim->playerConnected[i]) {
+            /* Disarm a slot nobody is in, rather than leaving whatever the
+             * last round put there. basesUpdate treats every timer that is
+             * not the off sentinel as a live restock cycle, so a slot armed
+             * for a player who has since left goes on restocking every base
+             * for the rest of the server's life. Skipping these was how a
+             * server that once held eight players kept refuelling at eight
+             * players' rate for a two-player game. */
+            basesRemoveTimer(&sim->sim, (int)i);
+            continue;
+        }
+        sim->sim.baseTimer[i] = (sim->sim.rules.base_regen_ticks * (orderIdx + 1)) / numConnected;
         orderIdx++;
     }
 }
@@ -1118,7 +1176,9 @@ void serverSimReassignStarts(ServerSim *sim) {
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
-    sim->startInProgress = TRUE;
+    /* Held for the whole start so the all-ready detector refuses to run
+     * while the roster and the state are being rebuilt. */
+    sim->startInProgress = true;
 
     /* Fresh round — the last-human-left return-to-lobby check arms only
      * once a human is seen this round. */
@@ -1137,6 +1197,12 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * snapshot's own arrays, not these queues, so flushing loses nothing. */
     sim->eventCount = 0;
     sim->mapEventCount = 0;
+    /* A fill queued by a lobby hook is lobby work too, and this path does not
+       reload the map, so nothing else would drop it: without this the squares
+       it still owes land partway into the round that is starting. The
+       full-reset path clears this in serverSimResetGameWorld. */
+    serverSimScenarioResetFill(sim);
+    serverSimScenarioResetRoster(sim);
     serverSimResetPingState(sim);
 
     /* Drop the lobby-chat catch-up buffer: this is an authoritative game start
@@ -1210,6 +1276,14 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         phaseEvt.type = CTRL_GAME_PHASE_RUNNING;
         serverSimPublishControl(sim, &phaseEvt);
     }
+
+    /* And the table the round is starting on, beside the phase. The twin of
+     * the publish at the end of serverSimStartGame: this path does not run
+     * that function, so it states the table itself. Between the two of them
+     * every start path states it exactly once. */
+    serverSimPublishSimRules(sim);
+
+    sim->startInProgress = false;
 }
 
 void serverSimStartGame(ServerSim *sim) {
@@ -1221,6 +1295,10 @@ void serverSimStartGame(ServerSim *sim) {
        identity (name, country, clientType, clientFlags) is preserved across
        the reset by serverSimResetGameWorld, so it no longer needs saving. */
     bool savedConnected[MAX_TANKS];
+
+    /* Held for the whole start, as in serverSimStartGameInPlace. */
+    sim->startInProgress = true;
+
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
     }
@@ -1279,6 +1357,11 @@ void serverSimStartGame(ServerSim *sim) {
             memset(&leaveEvt, 0, sizeof(leaveEvt));
             leaveEvt.type = CTRL_ALLIANCE_LEAVE;
             leaveEvt.u.allianceLeave.playerNum = i;
+            /* The round reset clears every alliance; no player asked for it,
+               so the policy is asked with no actor. */
+            leaveEvt.u.allianceLeave.quiet =
+                serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, i, NEUTRAL)
+                    ? 0 : 1;
             serverSimPublishControl(sim, &leaveEvt);
         }
     }
@@ -1312,6 +1395,19 @@ void serverSimStartGame(ServerSim *sim) {
     sim->startInProgress = FALSE;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
+
+    /* The table the round is starting on, stated here rather than by each
+     * caller. This and serverSimStartGameInPlace are the two authoritative
+     * starts — every start path in the server runs one of them and neither
+     * runs the other — so a publish in each is a publish exactly once per
+     * round however the round was started: the countdown expiring, a lobby
+     * skipped at boot, an empty server resetting, a map rotation, the
+     * console's start command or the headless fast path. The callers used to
+     * do it, and only two of them did, which left the rest of those paths
+     * starting a round nobody was told the numbers for. */
+    serverSimPublishSimRules(sim);
+
+    sim->startInProgress = false;
 
     /* A snapshot will be written on the first running tick
      * (tick 0 % FULL_SYNC_INTERVAL == 0). */
@@ -1387,6 +1483,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         return FALSE;
     }
 
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
+
     /* Hash the canonical BMAPBOLO file so WBN can match it. */
     serverSimCacheMapMd5FromFile(sim, mapFileName);
 
@@ -1394,8 +1493,10 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
     /* A different map is installed — restart every slot's copy of the terrain
      * from it, so a lobby client's snapshot checksum is taken against the map
-     * the lobby now holds. */
+     * the lobby now holds. A fill still owing squares was aimed at the map
+     * that has just gone, so it goes with it. */
     serverSimShadowSeedAll(sim);
+    serverSimScenarioResetFill(sim);
 
     /* Update cached map data */
     len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
@@ -1588,6 +1689,13 @@ void serverSimResolveGameOver(ServerSim *sim) {
         /* Everyone left — nobody won, so no lobby line and no WBN
          * crediting. */
         sim->pendingWinMessage[0] = '\0';
+        break;
+
+    case RETURN_REASON_SCENARIO:
+        /* A scenario op ended the round and wrote the returning lobby's line
+         * as it did. The message stands exactly as the op left it, and
+         * nobody is credited: the round ended because a script said so,
+         * whatever the map looked like at the end. */
         break;
 
     case RETURN_REASON_BASE_WIN:

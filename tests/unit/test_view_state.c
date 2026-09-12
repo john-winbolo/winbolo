@@ -64,7 +64,7 @@ static void vs_place_tank(GameSim *gs, BYTE slot, BYTE mx, BYTE my) {
 /* Own a live pillbox at a map square. */
 static void vs_place_pill(GameSim *gs, BYTE idx, BYTE owner, BYTE mx, BYTE my) {
     gs->pb->item[idx].owner  = owner;
-    gs->pb->item[idx].armour = PILL_MAX_HEALTH;
+    gs->pb->item[idx].armour = PILLS_MAX_ARMOUR;
     gs->pb->item[idx].inTank = FALSE;
     gs->pb->item[idx].x      = mx;
     gs->pb->item[idx].y      = my;

@@ -1397,7 +1397,8 @@ function Brain.think(info)
   -- Tokens:
   --   "ammoless"/"noammo" -> force never-refuel ON (deterministic; overrides
   --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
-  --   "normal"            -> force never-refuel OFF (a plain captain)
+  --   "normal"            -> force never-refuel OFF (a plain captain); read
+  --                          last, so it wins if both are passed
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
   --   "suicider"          -> FORCE the pill_suicider role on for this bot,

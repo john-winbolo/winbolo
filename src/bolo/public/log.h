@@ -46,9 +46,19 @@
 
 /* Log header and version information. Version 2 drops the XOR
  * obfuscation (plaintext stream) and frames each event record as
- * [type][u16 big-endian payload length][payload]. */
+ * [type][u16 big-endian payload length][payload]. Version 3 keeps that
+ * framing and gives log_PillSetHealth two payload bytes — the pillbox
+ * index and its armour — where every earlier version packed the pair
+ * into one byte's nibbles.
+ *
+ * The same ladder is mirrored in src/logviewer/lv_log.h, which is what
+ * reads the files; keep the two in step. */
 #define LOG_HEADER "WBOLOMOV"
-#define LOG_VERSION 2
+#define LOG_VERSION_V0 0
+#define LOG_VERSION_V1 1
+#define LOG_VERSION_V2 2
+#define LOG_VERSION_V3 3
+#define LOG_VERSION LOG_VERSION_V3
 
 /* Memory buffer for writing events */
 #define LOG_MEMORY_BUFFER_SIZE (64 *1024)
@@ -109,7 +119,13 @@ log_SpectatorLeft,   // opt1=spectator slot, then name pstr (names the leaver ac
 log_SpectatorChat,   // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
 log_GameSettings,    // pascal-string blob of every lobby setting (layout in docs/replay-format.md)
 log_Ping,            // opt1=sender, opt2=kind, then worldX/worldY as two big-endian u16 (layout in docs/replay-format.md)
-log_TankSetStock     // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
+log_TankSetStock,    // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
+log_TankSetModifiers,// opt1=player, then a 6-byte pascal blob: speed, accel, turn, reload, dealt, taken
+log_EntityChange,    // opt1=kind (ENTITY_KIND_*), opt2=index (0 based), opt3=on the map, then the item's record as a pascal blob (layout in docs/replay-format.md)
+log_EntityMasks,     // which indices are on the map, as three big-endian u16: pills in opt1/opt2, bases in opt3/opt4, starts in short1. Written after every snapshot (layout in docs/replay-format.md)
+log_ServerText,      // a server line a scenario wrote: opt1=destTeam (0 = everyone), opt2=destPlayer (0xFF = everyone), then the text as a pascal string
+log_GameTimeSet,     // the round's game time after a scenario changed it, as a big-endian int32 of ticks across opt1..opt4
+log_RuleSet          // one simulation rule a scenario changed: short1=rule index, then the value the field ended up holding as an 8-byte pascal blob (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {

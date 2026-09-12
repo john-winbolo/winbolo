@@ -21,6 +21,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>        /* memcmp — the header check below */
 
 #include "server_sim.h"    /* ServerSim, BrainGoalInfo */
 #include "input_packet.h"  /* TankSnapshot / ShellSnapshot / BaseSnapshot / PillSnapshot */
@@ -34,7 +35,7 @@ extern "C" {
  * version whenever the frame layout below changes; the loader checks it. */
 #define BRAINREC_MAGIC        "WBNREC1"
 #define BRAINREC_MAGIC_LEN    8
-#define BRAINREC_VERSION      5u     /* v5: + per-frame per-player alliance bitmaps */
+#define BRAINREC_VERSION      6u     /* v6: + wider death wait, pill armour byte */
 #define BRAINREC_FRAME_MAGIC  0xB07EC0DEu
 #define BRAINREC_FILENAME     "brainrec.btr"
 
@@ -69,6 +70,24 @@ typedef struct {
     char     mapName[64];                /* NUL-padded map name */
     uint32_t reserved[4];
 } BrainRecHeader;
+
+/* The two things a reader has to ask of a header it just read, kept here so
+ * every reader asks them the same way.
+ *
+ * A frame body is a run of raw snapshot structs, so a file written by a
+ * different version cannot be read at all — not misread in one field, but
+ * out of step from the first frame on, because the structs themselves are a
+ * different size. A v5 file is exactly that: its TankSnapshot carries an
+ * 8-bit death wait and its PillSnapshot packs armour into the flags byte.
+ * There is no conversion to attempt, so a reader refuses and says so. */
+static inline bool brainRecMagicMatches(const BrainRecHeader *hdr) {
+    return hdr != NULL &&
+           memcmp(hdr->magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) == 0;
+}
+
+static inline bool brainRecVersionMatches(const BrainRecHeader *hdr) {
+    return hdr != NULL && hdr->version == BRAINREC_VERSION;
+}
 
 /* Compact goal-candidate row (mirror of BrainGoalInfo.candidates[] element,
  * declared here so the loader doesn't depend on the anonymous struct type). */

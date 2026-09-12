@@ -28,6 +28,7 @@
 
 #include "global.h"
 #include "rubble.h"
+#include "game_sim.h"
 
 /*********************************************************
 *NAME:          rubbleCreate
@@ -76,11 +77,12 @@ void rubbleDestroy(rubble *rbl) {
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim - The game the rubble belongs to
 *  rbl - Pointer to the rubbble object
 *  x   - X co-ord
 *  y   - Y co-ord
 *********************************************************/
-BYTE rubbleAddItem(rubble *rbl, BYTE x, BYTE y) {
+BYTE rubbleAddItem(GameSim *sim, rubble *rbl, BYTE x, BYTE y) {
   BYTE returnValue; /* Value to return */
   bool found;       /* Is the item found */
   int count;        /* Looping Variable */
@@ -112,7 +114,7 @@ BYTE rubbleAddItem(rubble *rbl, BYTE x, BYTE y) {
     New (q);
     q->x = x;
     q->y = y;
-    q->life = RUBBLE_LIFE;
+    q->life = (BYTE) sim->rules.rubble_life;
     q->next = *rbl;
     *rbl = q;
   }

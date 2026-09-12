@@ -199,7 +199,9 @@
 
 /* 3x - 80y - 9 Between Items From bottom of icons to top 13 8 from left */  
 
-#define BAR_TANK_MULTIPLY 2 /* Times item amounts by 2 for 80 pixel high bars */
+/* Pixels a full bar occupies. The scale is this over the tank's cap for
+   that item, so a bar still fills at full however high full is. */
+#define BAR_TANK_FULL_PIXELS 80
 #define STATUS_TANK_BARS_TOP 155 // was 105 but it cut off part of the tombstone
 #define STATUS_TANK_BARS_HEIGHT 85 // was 135 but it cut off part of the tombstone
 #define STATUS_TANK_BARS_WIDTH 3
@@ -210,7 +212,9 @@
 #define STATUS_TANK_ARMOUR (2 * (STATUS_TANK_BARS_WIDTH + STATUS_TANK_BARS_GAP))
 #define STATUS_TANK_TREES (3 * (STATUS_TANK_BARS_WIDTH + STATUS_TANK_BARS_GAP))
 
-#define BAR_BASE_MULTIPLY (2.0/3.0) /* Times item amounts by 2/3 for 54 pixel wide bars */
+/* Pixels a full bar occupies. The scale is this over the base's cap for that
+   item, so a bar still fills at full however high full is. */
+#define BAR_BASE_FULL_PIXELS 60
 #define STATUS_BASE_BARS_TOP 230
 #define STATUS_BASE_BARS_HEIGHT 3
 #define STATUS_BASE_BARS_LEFT 350

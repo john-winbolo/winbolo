@@ -31,6 +31,8 @@
 
 #include "global.h"
 
+struct GameSim;
+
 /* Empty / Non Empty / Head / Tail Macros */
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -97,11 +99,12 @@ void grassDestroy(grass *grs);
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim   - The game the grass belongs to
 *  grs   - Pointer to the grass object
 *  x     - X co-ord
 *  y     - Y co-ord
 *********************************************************/
-BYTE grassAddItem(grass *grs, BYTE x, BYTE y);
+BYTE grassAddItem(struct GameSim *sim, grass *grs, BYTE x, BYTE y);
 
 /*********************************************************
 *NAME:          grassDeleteItem

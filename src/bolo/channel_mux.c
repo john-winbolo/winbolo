@@ -182,6 +182,20 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {
     return true;
 }
 
+void channelGetBestEffortStats(const ChannelMux *m, uint8_t ch,
+                               uint32_t *outSent, uint32_t *outRingDropped,
+                               uint32_t *outBudgetSkipped) {
+    bool have = (m != NULL && ch < CHANNEL_COUNT && m->ch[ch].bestEffort);
+
+    if (outSent != NULL) *outSent = have ? m->beSent[ch] : 0;
+    if (outRingDropped != NULL) {
+        *outRingDropped = have ? m->beRingDropped[ch] : 0;
+    }
+    if (outBudgetSkipped != NULL) {
+        *outBudgetSkipped = have ? m->beBudgetSkipped[ch] : 0;
+    }
+}
+
 bool channelSendBestEffort(ChannelMux *m, uint8_t ch, const uint8_t *msg,
                            uint16_t len) {
     if (m == NULL || ch >= CHANNEL_COUNT) {
@@ -197,6 +211,7 @@ bool channelSendBestEffort(ChannelMux *m, uint8_t ch, const uint8_t *msg,
     /* No ack ever drains this ring, so reclaim it here: when the window is
      * full, drop the oldest pending segment rather than block or fail. */
     if ((c->nextSeq - c->ackedSeq) >= c->window) {
+        m->beRingDropped[ch]++;
         c->ackedSeq++;
         if (c->txNext < c->ackedSeq) {
             c->txNext = c->ackedSeq;
@@ -314,7 +329,11 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
                 uint16_t slen = c->sendLen[idx];
                 if (segCount == 255 ||
                     pos + CHANNEL_SEG_HEADER_SIZE + slen > budget) {
-                    break; /* tight budget — remaining drain next frame */
+                    /* Tight budget — the rest drain next frame. Counted per
+                     * segment left behind: the ring is shallow, so a run of
+                     * frames that all end here loses the oldest of them. */
+                    m->beBudgetSkipped[ch] += (c->nextSeq - seq);
+                    break;
                 }
                 buf[pos] = (uint8_t)ch;
                 packU32(buf + pos + 1, seq);
@@ -325,6 +344,7 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
                 }
                 pos += slen;
                 segCount++;
+                m->beSent[ch]++;
                 c->sendLen[idx] = 0; /* drained; nothing retained for retransmit */
             }
             c->txNext = seq;

@@ -28,6 +28,7 @@
 
 #include "global.h"
 #include "grass.h"
+#include "game_sim.h"
 
 /*********************************************************
 *NAME:          grassCreate
@@ -76,11 +77,12 @@ void grassDestroy(grass *grs) {
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim   - The game the grass belongs to
 *  grs   - Pointer to the grass object
 *  x     - X co-ord
 *  y     - Y co-ord
 *********************************************************/
-BYTE grassAddItem(grass *grs, BYTE x, BYTE y) {
+BYTE grassAddItem(GameSim *sim, grass *grs, BYTE x, BYTE y) {
   BYTE returnValue; /* Value to return */
   bool found;       /* Is the item found */
   int count;        /* Looping Variable */
@@ -112,7 +114,7 @@ BYTE grassAddItem(grass *grs, BYTE x, BYTE y) {
     New (q);
     q->x = x;
     q->y = y;
-    q->life = GRASS_LIFE;
+    q->life = (BYTE) sim->rules.grass_life;
     q->next = *grs;
     *grs = q;
   }

@@ -851,7 +851,7 @@ static void simRunHalfStep(ServerSim *sim) {
                         basesRefueling(&sim->sim, &sim->sim.tanks[count], baseNum);
                     } else {
                         (*sim->sim.bs).item[baseNum - 1].justStopped = FALSE;
-                        (*sim->sim.bs).item[baseNum - 1].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+                        (*sim->sim.bs).item[baseNum - 1].refuelTime = basesHalfTickCalulator(&sim->sim, BASES_HALFTICK_TYPE_ARMOUR);
                     }
                 }
             }
@@ -934,6 +934,12 @@ static void simRunHalfStep(ServerSim *sim) {
         int np = serverSimGetPills(sim, currentPills, MAX_SNAPSHOT_PILLS);
         int p;
         for (p = 0; p < np; p++) {
+            /* A removed pillbox is not on the map, so nothing names its
+               index: the slot and the count stay put and the periodic full
+               sync is what says how long the list is. */
+            if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) {
+                continue;
+            }
             /* An index at or above prevPillCount is one the previous tick did
              * not have at all: a scenario created a pill (game.add_pill).
              * prevPills[] is zeroed only at sim create, so in round 2 those
@@ -953,7 +959,8 @@ static void simRunHalfStep(ServerSim *sim) {
                 ev.data[1] = currentPills[p].x;
                 ev.data[2] = currentPills[p].y;
                 ev.data[3] = currentPills[p].owner;
-                ev.data[4] = currentPills[p].armourInTank;
+                ev.data[4] = currentPills[p].pillFlags;
+                ev.data[5] = currentPills[p].armour;
                 serverSimAddEvent(sim, &ev);
             }
         }
@@ -967,6 +974,11 @@ static void simRunHalfStep(ServerSim *sim) {
         int nb = serverSimGetBases(sim, currentBases, MAX_SNAPSHOT_BASES);
         int b;
         for (b = 0; b < nb; b++) {
+            /* Same rule as the pillboxes above: a removed base's index is
+               not named by an update or a stock line. */
+            if (basesIsActive(&sim->sim.bs, (BYTE)(b + 1)) == FALSE) {
+                continue;
+            }
             /* Owner change: reliable, broadcast — everyone sees base colour. */
             if (currentBases[b].owner != sim->prevBases[b].owner) {
                 GameEvent ev;
@@ -995,13 +1007,13 @@ static void simRunHalfStep(ServerSim *sim) {
     }
 
     /* All-bases win. Every base held by one alliance with none of them dead
-     * (armour > MIN_ARMOUR_CAPTURE — the same test basesGetStatusNum uses to
+     * (armour > base_capture_armour — the same test basesGetStatusNum uses to
      * draw the X) IS the win condition, so it ends the round on the spot.
      *
      * There is deliberately no grace period layered on top. The grace period
      * is already built into the condition: a base shelled to 0 stays dead,
      * and therefore keeps the sweep false, for the whole time it takes to
-     * regenerate past MIN_ARMOUR_CAPTURE. That is the losing side's window to
+     * regenerate past base_capture_armour. That is the losing side's window to
      * retake it. A second countdown on top only bought the right to announce
      * a win and then retract it.
      *
@@ -1124,6 +1136,25 @@ void serverSimTick(ServerSim *sim) {
         serverSimFlushPendingPings(sim);
         simRunHalfStep(sim);
         simRunHalfStep(sim);
+        /* Ahead of the shadow tick so terrain a scenario edits from here
+         * lands in the same frame's map events instead of the next one's.
+         * The half-steps drop the map-change callback on their way out, so
+         * it goes back on for the length of the hook and the fill drain and
+         * comes off again before the shadow tick: without it a scenario's
+         * terrain writes would reach the server's map and nobody else's. */
+        mapSetChangeCallback(simMapChangeCallback);
+        if (sim->scenarioTick != NULL) {
+            sim->scenarioTick(sim->scenarioTickCtx);
+        }
+        /* After the hook, so a fill it has just started and the tail of an
+         * older one are paced out of the one tile budget rather than each
+         * spending a full one in the same frame. */
+        serverSimScenarioDrainFill(sim);
+        /* One roster change a frame, from the same queue the hook has just
+         * added to. Inside the map callback's bracket because a bot joining
+         * takes a copy of the terrain on its way in. */
+        serverSimScenarioDrainRoster(sim);
+        mapSetChangeCallback(NULL);
         /* Both half-steps have finished filling mapEvents and no transport has
          * drained them yet, so this is where each client's copy of the terrain
          * takes the frame's changes. Here rather than in the UDP drain so
@@ -1133,7 +1164,19 @@ void serverSimTick(ServerSim *sim) {
          * so there is nothing to apply on that branch. */
         serverSimShadowTick(sim);
     } else {
+        /* No map event is recorded on this branch, but the fill drain below
+           reads the count as a bound, so it starts each tick at zero here as
+           it does on a running frame. */
+        sim->mapEventCount = 0;
         simRunHalfStep(sim);
+        if (sim->scenarioTick != NULL) {
+            sim->scenarioTick(sim->scenarioTickCtx);
+        }
+        /* The non-running states run no simulation and publish no map
+         * events — a lobby client is handed the whole map on download and
+         * again at the start — so the callback stays off here and a fill is
+         * paced only so one frame's work stays one frame's work. */
+        serverSimScenarioDrainFill(sim);
     }
 }
 

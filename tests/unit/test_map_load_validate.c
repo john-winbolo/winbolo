@@ -1,13 +1,18 @@
 /*
- * Pins the clamps mapLoadCompressedMap applies to a map it is handed.
+ * Pins the clamps a map handed to mapLoadCompressedMap comes out with.
  *
  * A compressed map arrives from whatever server the player joined, and the
  * three *SetCompressData calls that unpack its bases, pillboxes and starts
- * memcpy the wire structs wholesale. None of the per-field clamps that
- * basesSetBase / pillsSetPill / startsSetStart apply on the file-load path run
- * on that route, so before basesValidate / pillsValidate / startsValidate a
- * downloaded map could seat an owner of 200, a pill armour of 255 or a start
- * dir of 99 in live game state.
+ * memcpy the wire structs wholesale, so nothing has looked at a field before
+ * the loader's own clamps: a downloaded map could otherwise seat an owner of
+ * 200, a pill armour of 255 or a start dir of 99 in live game state.
+ *
+ * The clamps come in two halves and this walks both, because a sim sees the
+ * result of both. basesValidate / pillsValidate / startsValidate settle what
+ * the file may say — the counts, the owners, the start dir — and run without
+ * a sim, so the preview and the map editor get them too. mapClampToRules
+ * settles what this sim lets a pill or a base hold, and every caller that
+ * owns a sim runs it straight after the load.
  *
  * Coordinates need no clamp and are deliberately not asserted here: x and y
  * are BYTE against a 256x256 map, so every value they can hold is in range.
@@ -26,6 +31,7 @@
 #include "bases.h"
 #include "pillbox.h"
 #include "starts.h"
+#include "game_sim.h"
 #include "test_harness.h"
 
 /* bases | pillboxes | starts | terrain */
@@ -52,7 +58,7 @@ static void build_hostile_blob(BYTE *blob) {
     memset(blob, 0, BLOB_LEN);
 
     basesCreate(&bsSrc);
-    bsSrc->numBases = MAX_BASES;
+    basesSetNumBases(&bsSrc, MAX_BASES);
     for (i = 0; i < MAX_BASES; i++) {
         bsSrc->item[i].x      = i;
         bsSrc->item[i].y      = i;
@@ -65,7 +71,7 @@ static void build_hostile_blob(BYTE *blob) {
     basesDestroy(&bsSrc);
 
     pillsCreate(&pbSrc);
-    pbSrc->numPills = MAX_PILLS;
+    pillsSetNumPills(&pbSrc, MAX_PILLS);
     for (i = 0; i < MAX_PILLS; i++) {
         pbSrc->item[i].x      = i;
         pbSrc->item[i].y      = i;
@@ -77,7 +83,7 @@ static void build_hostile_blob(BYTE *blob) {
     pillsDestroy(&pbSrc);
 
     startsCreate(&ssSrc);
-    ssSrc->numStarts = MAX_STARTS;
+    startsSetNumStarts(&ssSrc, MAX_STARTS);
     for (i = 0; i < MAX_STARTS; i++) {
         ssSrc->item[i].x   = i;
         ssSrc->item[i].y   = i;
@@ -97,6 +103,11 @@ static int load_hostile(map *mp, pillboxes *pb, bases *bs, starts *ss) {
     /* Return deliberately ignored: the terrain is garbage, so this is FALSE.
      * The clamps run before the terrain decode. */
     (void)mapLoadCompressedMap(mp, pb, bs, ss, blob, BLOB_LEN);
+    /* The second half, the one a sim does for itself. These lists are local
+     * rather than a sim's, so the two halves of mapClampToRules are called
+     * on them directly. */
+    pillsClampToRules(ut_rules_only_sim(), pb);
+    basesClampToRules(ut_rules_only_sim(), bs);
     return 0;
 }
 

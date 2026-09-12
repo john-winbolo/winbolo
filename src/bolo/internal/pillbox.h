@@ -49,14 +49,16 @@ struct ClientSim;
 
 #define PILLS_MAX_ARMOUR 15
 
-/* Pill armour (0..PILLS_MAX_ARMOUR) and the inTank flag share one wire byte:
- * armour in the low nibble, inTank in bit 4. */
-static inline uint8_t pillPackArmourInTank(uint8_t armour, bool inTank) {
-    assert(armour <= PILLS_MAX_ARMOUR);
-    return (uint8_t)((armour & 0x0F) | (inTank ? 0x10 : 0x00));
+/* A pill's flags byte. Armour travels in a byte of its own; this byte carries
+ * the two flags below and nothing else.
+ *
+ * Bit 4: the pill is inside a tank rather than on the map. */
+#define PILL_IN_TANK 0x10
+static inline uint8_t pillSetInTank(uint8_t b, bool inTank) {
+    return (uint8_t)(inTank ? (b | PILL_IN_TANK)
+                            : (b & (uint8_t)~PILL_IN_TANK));
 }
-static inline uint8_t pillArmourFromByte(uint8_t b) { return (uint8_t)(b & 0x0F); }
-static inline bool    pillInTankFromByte(uint8_t b) { return (b & 0x10) != 0; }
+static inline bool    pillInTankFromByte(uint8_t b) { return (b & PILL_IN_TANK) != 0; }
 
 /* Bit 5 of the same byte: the x/y sent with this pill are its square right
  * now. Clear means the recipient was not told — the square is the last one it
@@ -87,9 +89,6 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
-
-/* Maximum amount of health a pillbox can have */
-#define PILL_MAX_HEALTH 15
 
 /* A pillbox has to be within 9 squares of a base to get angry if it is shot */
 #define PILL_BASE_HIT_LEFT -9
@@ -178,12 +177,113 @@ BYTE pillsGetNumPills(pillboxes *value);
 *PURPOSE:
 *  Sets a specific pill with its item data
 *
+*  Clamps armour and speed to what the sim's rules allow,
+*  so a caller handing it a record from anywhere gets one
+*  the rest of the code can trust. The scenario arms that
+*  write a pill's armour and its speed rely on that clamp
+*  and on the cooldown it arms alongside speed, which is
+*  why this one clamps where basesSetBase does not.
+*
 *ARGUMENTS:
+*  sim     - Pointer to the game sim
 *  value   - Pointer to the pillbox structure
 *  item    - Pointer to a pillbox
 *  pillNum - The pillbox number
 *********************************************************/
-void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum);
+void pillsSetPill(struct GameSim *sim, pillboxes *value, pillbox *item, BYTE pillNum);
+
+/*********************************************************
+*NAME:          pillsAddItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Puts a pillbox into the list and returns its number in
+*  outPillNum. The lowest removed slot is reused; when
+*  every slot in the count is live the list is extended and
+*  the count raised. Returns FALSE with outPillNum
+*  untouched when all MAX_PILLS pills are live.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  item       - The pillbox to store
+*  outPillNum - Receives the pillbox number, 1 based
+*********************************************************/
+bool pillsAddItem(pillboxes *value, const pillbox *item, BYTE *outPillNum);
+
+/*********************************************************
+*NAME:          pillsInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a pillbox at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  pillboxes this list has not been told about. Returns
+*  FALSE for number 0 or a number past MAX_PILLS.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  item    - The pillbox to store
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool pillsInstallItem(pillboxes *value, const pillbox *item, BYTE pillNum);
+
+/*********************************************************
+*NAME:          pillsRemoveItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Clears a pillbox's live flag. The slot, the count and
+*  every pillbox number above it are left alone, so the
+*  numbers the wire and the recordings use keep meaning the
+*  same pillbox. Returns FALSE for a number out of range or
+*  one already removed.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool pillsRemoveItem(pillboxes *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          pillsIsActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Returns whether a pillbox number names a pillbox that is
+*  on the map. A removed pillbox keeps its slot and its
+*  number, so a number in range is not on its own enough.
+*  A number out of range returns FALSE.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool pillsIsActive(pillboxes *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          pillsSetActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Puts a pillbox on the map or takes it off it, leaving its
+*  record alone either way. The flag is all that moves, so a
+*  pillbox put back is the one the slot already held. Returns
+*  FALSE for a number out of range.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool pillsSetActive(pillboxes *value, BYTE pillNum, bool onMap);
 
 /*********************************************************
 *NAME:          pillsGetPill
@@ -323,7 +423,7 @@ BYTE pillsGetScreenHealth(struct GameSim *sim, pillboxes *value, BYTE xValue, BY
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
 *********************************************************/
-TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat);
+TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed);
 
 /*********************************************************
 *NAME:          pillsTargetTankMove
@@ -344,7 +444,7 @@ TURNTYPE pillsTargetTank(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs,
 *  speed  - The speed of the tank
 *  onBoat - Is the tank on a boat
 *********************************************************/
-TURNTYPE pillsTargetTankMove(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat);
+TURNTYPE pillsTargetTankMove(struct GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD xValue, WORLD yValue, WORLD tankX, WORLD tankY, TURNTYPE angle, BYTE speed, bool onBoat, BYTE boatExitSpeed);
 
 /*********************************************************
 *NAME:          pillsDeadPos
@@ -694,19 +794,16 @@ void pillsBaseHit(struct GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE 
 BYTE pillsGetNumNeutral(pillboxes *value);
 
 /*********************************************************
-*NAME:          pillsSetPillNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/02/99
-*LAST MODIFIED: 27/07/04
+*NAME:          pillsGetNumActive
 *PURPOSE:
-* Sets the pills data to buff.
+*  Returns how many pillboxes are on the map: the slots
+*  under the count whose live flag is set. The count itself
+*  is the slot count and keeps a removed pillbox's number.
 *
 *ARGUMENTS:
-*  value   - Pointer to the pills structure
-*  buff    - Buffer of data to set pills structure to
-*  dataLen - Length of the data
+*  value - Pointer to the pillbox structure
 *********************************************************/
-void pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen);
+BYTE pillsGetNumActive(pillboxes *value);
 
 /*********************************************************
 *NAME:          pillsGetPillNetData
@@ -934,8 +1031,12 @@ bool pillsMoveView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible,
 BYTE pillsGetNumberOwnedByPlayer(pillboxes *value, BYTE playerNum);
 
 void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen);
-/* Clamps every pillbox field a map can supply. See basesValidate. */
+/* Clamps the pillbox fields a map cannot be trusted on whatever the rules
+   say — the count and each owner. See basesValidate. */
 void pillsValidate(pillboxes *value);
+/* Clamps every pillbox against the sim's gameplay caps. Called by
+   mapClampToRules once a sim owns the records; see bolo_map.h. */
+void pillsClampToRules(struct GameSim *sim, pillboxes *value);
 
 
 #endif /* PILLBOX_H */

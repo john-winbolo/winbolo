@@ -54,6 +54,9 @@
  * used to label the partial print2 flush on the kill path below. Same
  * static lib (bolo_static), so no new link dependency. */
 #include "bot_manager.h"
+#include "tank.h"  /* tankModPct. The movement rates themselves arrive on
+                    * the pathfinder each think, so the stop predictor and
+                    * the engine cannot drift apart */
 
 /* C-side pill_grid from the gh_threat brain module (same link unit). */
 extern float *naThreatGetPillGrid(lua_State *L);
@@ -95,6 +98,24 @@ static int l_get_terrain_upvalue(lua_State *L) {
     lua_pushinteger(L, (*worldPtrPtr)[y * 256 + x]);
   }
   return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-brain init table                                                */
+/* ------------------------------------------------------------------ */
+
+void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
+  int n = (init != NULL) ? (int)init->count : 0;
+  int i;
+
+  if (n > SCN_TABLE_MAX) n = SCN_TABLE_MAX;
+  lua_createtable(L, 0, n);
+  for (i = 0; i < n; i++) {
+    if (init->kv[i].key[0] == '\0') continue;
+    lua_pushstring(L, init->kv[i].value);
+    lua_setfield(L, -2, init->kv[i].key);
+  }
+  lua_setglobal(L, "BRAIN_INIT");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1880,12 +1901,15 @@ static int l_cpf_rebuild_edge_costs(lua_State *L) {
 /* cpf_simulate_shot(origin_wx, origin_wy, target_wx, target_wy,
  *                   shooter_type=TANK, sight_len=0)
  *   -> { {mx=..., my=...}, ... }
- * Stateless wrapper over brainPathfinderSimulateShot (no pf instance
- * needed — uses only static physics constants). The angle is derived
- * from origin → target via atan2 + lroundf. For sub-brad precision
- * matching the engine's actual shell flight, use
- * cpf_simulate_shot_angle with BrainInfo.tank_angle (a float). */
+ * Wrapper over brainPathfinderSimulateShot. It keeps no state of its
+ * own, but it does read this sim's shell rules off the pathfinder the
+ * bot manager pushes to each think — the same upvalue cpf_predict_stop
+ * takes its movement rules from. The angle is derived from
+ * origin → target via atan2 + lroundf. For sub-brad precision matching
+ * the engine's actual shell flight, use cpf_simulate_shot_angle with
+ * BrainInfo.tank_angle (a float). */
 static int l_cpf_simulate_shot(lua_State *L) {
+  CPF_GET(L);
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
   WORLD tx = (WORLD)luaL_checkinteger(L, 3);
@@ -1894,7 +1918,7 @@ static int l_cpf_simulate_shot(lua_State *L) {
   int sight_len = (int)luaL_optinteger(L, 6, 0);
 
   BrainShotTile tiles[64];
-  int n = brainPathfinderSimulateShot(ox, oy, tx, ty, shooter, sight_len,
+  int n = brainPathfinderSimulateShot(pf, ox, oy, tx, ty, shooter, sight_len,
                                       tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
   lua_createtable(L, n, 0);
   for (int i = 0; i < n; i++) {
@@ -1916,6 +1940,7 @@ static int l_cpf_simulate_shot(lua_State *L) {
  * predicts using the BYTE-floored direction will be off by up to
  * one brad. */
 static int l_cpf_simulate_shot_angle(lua_State *L) {
+  CPF_GET(L);
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
   float angle  = (float)luaL_checknumber(L, 3);
@@ -1923,7 +1948,7 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   int sight_len= (int)luaL_optinteger(L, 5, 0);
 
   BrainShotTile tiles[64];
-  int n = brainPathfinderSimulateShotAngle(ox, oy, angle, shooter, sight_len,
+  int n = brainPathfinderSimulateShotAngle(pf, ox, oy, angle, shooter, sight_len,
                                            tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
   lua_createtable(L, n, 0);
   for (int i = 0; i < n; i++) {
@@ -1941,13 +1966,14 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
  * mirroring the engine's exact decel + residual-move model (tank.c tankAccel
  * + tankMoveUnified) so the brain can decide whether a stop here lands it in
  * firing range of a pill:
- *   - brake = 0.25/tick (TANK_SLOWKEY_RATE); an extra 0.25/tick
- *     (TANK_TERRAIN_DECEL_RATE) applies WHILE speed > terrain_cap (terrain
- *     only drags speed down to its cap, never below). Auto-slowdown is the
- *     same 0.25 and does NOT stack with the brake key, so a brake-to-stop is
- *     a flat 0.25 ramp on uniform terrain.
+ *   - brake = tank_brake_rate per tick; a further tank_decel_rate
+ *     applies WHILE speed > terrain_cap (terrain only drags speed down to its
+ *     cap, never below). Auto-slowdown is the same rate and does NOT stack
+ *     with the brake key, so a brake-to-stop is a flat ramp on uniform
+ *     terrain. Both rates take this tank's acceleration modifier, so a
+ *     modified bot predicts against the rate it will actually brake at.
  *   - each tick (decel first, then move): residual += floor(speed); when
- *     residual >= TANK_MIN_MOVE_SPEED (6) advance `residual` wu along
+ *     residual >= tank_min_move advance `residual` wu along
  *     utilGet16Dir(angle) (16-dir quantized) via utilCalcDistance, reset.
  * residualSpeed is assumed 0 at entry (the brain can't observe it → the stop
  * can be up to one sub-move, <6 wu, short of reality). terrain_cap defaults to
@@ -1955,9 +1981,17 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
  * constant for the short stop — a mid-stop speed-boundary crossing isn't
  * modeled. */
 static int l_cpf_predict_stop(lua_State *L) {
-  const double BRAKE_RATE   = 0.25;  /* TANK_SLOWKEY_RATE */
-  const double TERRAIN_RATE = 0.25;  /* TANK_TERRAIN_DECEL_RATE */
-  const int    MIN_MOVE     = 6;     /* TANK_MIN_MOVE_SPEED */
+  /* Both rates take this tank's acceleration modifier, as tankAccel and the
+   * auto-slow do; the bot manager pushed it in before the think. The minimum
+   * move is sub-move granularity and stays absolute, as it does in tank.c.
+   * The terrain cap arrives as an argument, so no speed modifier is needed
+   * here. */
+  BrainPathfinder **ppfRates = (BrainPathfinder **)lua_touserdata(L, lua_upvalueindex(1));
+  BrainPathfinder *pfRates = (ppfRates && *ppfRates) ? *ppfRates : NULL;
+  const int accelPct = tankModPct(pfRates ? pfRates->accel_pct : 0);
+  const double BRAKE_RATE   = (pfRates ? pfRates->brake_rate : 0.0f) * accelPct / 100;
+  const double TERRAIN_RATE = (pfRates ? pfRates->terrain_decel_rate : 0.0f) * accelPct / 100;
+  const int    MIN_MOVE     = pfRates ? (int) pfRates->min_move : 0;
 
   WORLD x  = (WORLD)luaL_checkinteger(L, 1);
   WORLD y  = (WORLD)luaL_checkinteger(L, 2);
@@ -2020,6 +2054,7 @@ static int l_cpf_predict_stop(lua_State *L) {
  * tanks_table is an array of {wx=, wy=, player_num=} entries.
  * hit_type: 0=tile, 1=tank hit. hit_id: player number (when hit_type==1). */
 static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
+  CPF_GET(L);
   WORLD ox = (WORLD)luaL_checkinteger(L, 1);
   WORLD oy = (WORLD)luaL_checkinteger(L, 2);
   WORLD tx = (WORLD)luaL_checkinteger(L, 3);
@@ -2046,7 +2081,7 @@ static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
   }
 
   BrainShotTile tiles[64];
-  int n = brainPathfinderSimulateShotWithTanks(ox, oy, tx, ty,
+  int n = brainPathfinderSimulateShotWithTanks(pf, ox, oy, tx, ty,
             shooter, sight_len, tanks, num_tanks, owner,
             tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
   lua_createtable(L, n, 0);

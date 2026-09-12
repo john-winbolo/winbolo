@@ -48,8 +48,8 @@
 #include <string.h>
 
 #include "input_packet.h"
+#include "ping_sounds.h"
 #include "../../src/gui/ping_kinds.h"
-#include "../../src/gui/ping_sounds.h"
 #include "../../src/gui/sdl3/ping_binding.h"
 #include "../../src/gui/sdl3/ping_pie.h"
 #include "../../src/gui/sdl3/ping_edge.h"
@@ -814,6 +814,12 @@ int run_ping_sound_fallback(void) {
 #define PT_CYR2  "\xD0\x9F\xD1\x80"
 #define PT_GRIN  "\xF0\x9F\x98\x80"
 
+/* Some ellipsis other than PING_NAME_ELLIPSIS, so the tests below drive the
+   `ellipsis` argument rather than only the default. Three dots is what a
+   caller whose font has no U+2026 would pass; every renderer in the tree can
+   draw the real one, so this lives here rather than in ping_kinds.h. */
+#define PT_ELLIPSIS_ASCII "..."
+
 int run_ping_name_truncate(void) {
     char out[PING_NAME_DISPLAY_MAX];
 
@@ -831,9 +837,9 @@ int run_ping_name_truncate(void) {
     UT_ASSERT(strcmp(pingDisplayName("Bartholomew", NULL, out, sizeof(out)),
                      "Bartho" PING_NAME_ELLIPSIS) == 0);
 
-    /* The renderer that cannot draw U+2026 asks for three dots instead, and
-       gets the same cut. */
-    UT_ASSERT(strcmp(pingDisplayName("Bartholomew", PING_NAME_ELLIPSIS_ASCII,
+    /* A caller that asks for a different ellipsis gets the same cut with its
+       own tail on the end. */
+    UT_ASSERT(strcmp(pingDisplayName("Bartholomew", PT_ELLIPSIS_ASCII,
                                      out, sizeof(out)), "Bartho...") == 0);
 
     /* Multibyte: six Cyrillic letters are twelve bytes and are six
@@ -880,7 +886,7 @@ int run_ping_name_truncate(void) {
        end rather than half of one, and is always terminated. */
     {
         char tiny[4];
-        UT_ASSERT(strcmp(pingDisplayName("Bartholomew", PING_NAME_ELLIPSIS_ASCII,
+        UT_ASSERT(strcmp(pingDisplayName("Bartholomew", PT_ELLIPSIS_ASCII,
                                          tiny, sizeof(tiny)), "...") == 0);
         UT_ASSERT(strcmp(pingDisplayName(PT_CYR8, NULL, tiny, sizeof(tiny)),
                          PING_NAME_ELLIPSIS) == 0);

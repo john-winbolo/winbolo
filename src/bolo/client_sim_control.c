@@ -32,9 +32,12 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 #include "client_sim_control.h"
+#include "client_snapshot.h"  /* clientApplyEntityChange */
 #include "client_sim_internal.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
+#include "bolo_map.h"    /* mapClampToRules — the re-clamp a new table needs */
+#include "sim_rules.h"   /* simRulesCheckCarried — the check before the keep */
 #include "frontend.h"    /* frontEndAudioReturningToLobby */
 #include "messages.h"
 #include "netpacks.h"
@@ -211,7 +214,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                          nameBuf, ccBuf,
                          0, 0, 0, 0, 0, FALSE,
                          numAllies, numAllies > 0 ? allies : NULL, FALSE);
-        if ((cs->isSpectator || pNum != cs->myPlayerNum) && cs->inLobby) {
+        /* The roster above is applied whatever the answer; only the line is
+         * the policy's to withhold. quiet is 0 with no scenario registered. */
+        if ((cs->isSpectator || pNum != cs->myPlayerNum) && cs->inLobby &&
+            evt->u.playerJoin.quiet == 0) {
             char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", joinMsg);
@@ -225,7 +231,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         memcpy(nameBuf, evt->u.playerName.name, sizeof(nameBuf));
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         playersSetPlayerName(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                             evt->u.playerName.playerNum, nameBuf, FALSE);
+                             evt->u.playerName.playerNum, nameBuf, FALSE,
+                             evt->u.playerName.quiet == 0);
         break;
     }
 
@@ -407,6 +414,18 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
+        /* The server chooses what the map overview keeps live and what
+         * blocks sight inside it; the keys no longer do. A byte this
+         * build has no name for reads as the default rather than
+         * being wrapped onto a value the server did not ask for. */
+        cs->overviewWindow = (evt->u.lobbySettings.lobbyOverviewWindow <
+                              (uint8_t)OVERVIEW_WINDOW_COUNT)
+                                 ? evt->u.lobbySettings.lobbyOverviewWindow
+                                 : (uint8_t)overviewWindowExpanded;
+        cs->lineOfSight = (evt->u.lobbySettings.lobbyLineOfSight <
+                           (uint8_t)LINE_OF_SIGHT_COUNT)
+                              ? evt->u.lobbySettings.lobbyLineOfSight
+                              : (uint8_t)lineOfSightOff;
         cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
@@ -835,28 +854,37 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * convergence point for all three. Reads cs->sim.{bs,plyrs,game}
          * and the per-game counters set by client_snapshot during play. */
         BYTE numBases = basesGetNumBases(&cs->sim.bs);
+        BYTE liveBases = 0;
         BYTE first    = NEUTRAL;
         bool allOwned = true;
         bool localWon = false;
         BYTE b;
 
+        /* A removed base is not on the map, so it neither blocks the win nor
+           counts toward it; the first live base sets the owner to match. */
         for (b = 1; b <= numBases && allOwned; b++) {
-            BYTE owner = basesGetBaseOwner(&cs->sim.bs, b);
+            BYTE owner;
             BYTE shellsAmt, minesAmt, armourAmt;
+            if (basesIsActive(&cs->sim.bs, b) == FALSE) {
+                continue;
+            }
+            owner = basesGetBaseOwner(&cs->sim.bs, b);
             basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
-            if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            if (owner == NEUTRAL ||
+                armourAmt <= cs->sim.rules.base_capture_armour) {
                 allOwned = false;
-            } else if (b == 1) {
+            } else if (liveBases == 0) {
                 first = owner;
             } else {
                 allOwned = playersIsAllie(&cs->sim.plyrs, owner, first);
             }
+            liveBases++;
         }
 
         /* Steam stats/achievements are for the local human only — bots run
          * this same game-over path with their own ClientSim and must not
          * credit wins/losses to the local user. */
-        if (allOwned && numBases > 0 && !cs->isBot) {
+        if (allOwned && liveBases > 0 && !cs->isBot) {
             localWon = (cs->myPlayerNum == first) ||
                        playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
 
@@ -915,6 +943,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             BYTE myPN = clientSimGetMyPlayerNum(cs);
             const ClientLobbySlot *ms = clientSimGetLobbySlot(cs, myPN);
             if (!ms || ms->teamNumber != evt->u.serverText.destTeam) break;
+        }
+        /* Player-scoped server text: only the addressed slot sees it. 0xFF is
+         * everyone — 0 is slot 0, so an event that never set the field would
+         * land here as a unicast. */
+        if (evt->u.serverText.destPlayer != 0xFF &&
+            clientSimGetMyPlayerNum(cs) != evt->u.serverText.destPlayer) {
+            break;
         }
         if (cs->inLobby) {
             clientSimAppendLobbyChat(cs, "Server", text);
@@ -1012,10 +1047,26 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         /* announce=false in the lobby: the in-game newswire is wrong there
          * (it would queue and pop at game start); the lobby chat line below
-         * is the right surface. In-game, announce the leave on the newswire. */
+         * is the right surface. In-game, announce the leave on the newswire.
+         * A departure the announce policy turned down writes neither: the
+         * removal itself still happens on both surfaces' behalf. */
         playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                         pNum, FALSE, !cs->inLobby);
-        if (cs->inLobby) {
+                         pNum, FALSE,
+                         evt->u.playerLeave.quiet == 0 && !cs->inLobby);
+        /* Forget what this client held about the departing slot's smart
+         * pings. A ping mute is on the player, not the slot, and slots are
+         * recycled: the bit left set would show the next joiner as "pings
+         * hidden" in the players panel while their pings arrived anyway —
+         * the server swept its own copy of the mute in both directions when
+         * the slot was released (server_sim_players.c) — and the first click
+         * on them would spend itself sending a no-op unmute. The render
+         * limiter's ring goes for the same reason: a slot vacated by a
+         * spammer would otherwise start the next occupant off already over
+         * the cap. Same argument as voiceForgetPlayer on the voice mute. */
+        clientSimSetPingMuted(cs, pNum, false);
+        memset(cs->pingRenderMs[pNum], 0, sizeof(cs->pingRenderMs[pNum]));
+        cs->pingRenderIdx[pNum] = 0;
+        if (cs->inLobby && evt->u.playerLeave.quiet == 0) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", leaveMsg);
@@ -1123,6 +1174,77 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* No impact drawn here: the owner already receives the authoritative
          * EVENT_EXPLOSION for this shell on the snapshot tail (drawn for every
          * client with no owner filter), so drawing one here would double up. */
+        break;
+    }
+
+    case CTRL_ENTITY_CHANGE:
+        /* A pillbox, base or start has joined the map or left it. The lists
+         * live behind client_snapshot.c, beside the per-tick pill and base
+         * snapshots that write the same records, so the apply lives there
+         * too. Broadcast, with no per-recipient filter: which items are on
+         * the map is as public as the map. */
+        clientApplyEntityChange(cs, evt);
+        break;
+
+    case CTRL_ENTITY_SYNC:
+        /* Which pillboxes, bases and starts are on the map, sent once this
+         * client holds the compressed map the lists came out of. The install
+         * marks everything the blob carries as on the map, so this is how a
+         * client that arrived after a removal learns about it. Beside the
+         * entity-change apply for the same reason: the lists live behind
+         * client_snapshot.c. */
+        clientApplyEntitySync(cs, evt);
+        break;
+
+    case CTRL_SIM_RULES: {
+        /* The gameplay numbers the server is running on. From this table the
+           movement this client predicts, the shells it fires predicted, the
+           base thresholds it tests captures against and the rules view a
+           brain is handed all read what the server reads.
+
+           Checked before it is kept. What arrives is bytes off the wire, and
+           a hostile or broken server can put anything in them: a NaN turn
+           rate that the tank code later casts to a byte, which is undefined
+           behaviour; a zero shell_life or tank_water_ticks the server's own
+           validator would never have passed; a u32 rule wide enough to
+           decode negative. The candidate is this client's table with the
+           carried rules written over it, so the rules the event does not
+           carry stay whatever the client already had, and only the arms that
+           can speak about the carried half are asked — see
+           simRulesCheckCarried.
+
+           A refusal keeps the table exactly as it was: a client reading the
+           numbers it had is out of step with the server, but a client
+           reading a NaN is out of step with the C standard. One line names
+           the reason so the disagreement is visible rather than silent.
+
+           One assignment per carried rule, generated from the event's own
+           field lists, so a rule that arrives cannot be one nothing
+           writes. */
+        SimRules candidate = cs->sim.rules;
+        char     why[SIM_RULES_WHY_LEN];
+
+#define SIM_RULES_APPLY_FIELD(name) candidate.name = evt->u.simRules.name;
+        CTRL_SIM_RULES_ALL_FIELDS(SIM_RULES_APPLY_FIELD)
+#undef SIM_RULES_APPLY_FIELD
+
+        if (simRulesCheckCarried(&candidate, why, sizeof(why)) !=
+            SIM_RULES_OK) {
+            WB_LOG_ERROR(WB_LOG_CAT_SIM,
+                         "refused the server's rules table: %s", why);
+            break;
+        }
+
+        cs->sim.rules = candidate;
+
+        /* The pill and base records this client is already holding were
+           capped against the table that has just been replaced, so a lower
+           cap would leave records standing above it — a pill showing more
+           armour than the new table allows, a base holding more shells than
+           it can. This is the pass a sim runs when it takes a map on, which
+           is the same question asked the other way round, and it is
+           idempotent, so records already inside the new caps are untouched. */
+        mapClampToRules(&cs->sim);
         break;
     }
     }

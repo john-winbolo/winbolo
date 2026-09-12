@@ -127,7 +127,7 @@ typedef struct {
   bool           ranked;              /* serverSimSetRanked. ranked forces
                                        * autoLockOnGameStart inside startup. */
   bool           openHost;            /* serverSimSetOpenHost */
-  uint16_t       serverLocks;         /* serverSimSetServerLocks bitmask */
+  uint32_t       serverLocks;         /* serverSimSetServerLocks bitmask */
   BYTE           viewPlayer;          /* sim->sim.viewPlayer at startup —
                                        * SP/host/headless designate which
                                        * slot the in-process renderer
