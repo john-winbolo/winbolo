@@ -209,7 +209,6 @@ void serverPumpVoice(ServerSim *sim) {
     for (from = 0; from < MAX_TANKS; from++) {
         uint8_t segBuf[CHANNEL_MAX_SEG];
         uint16_t segLen;
-        int accepted = 0;
         bool onsetDone = false;
         bool anyStaged = false;
         uint8_t newestSeq = 0;
@@ -271,7 +270,6 @@ void serverPumpVoice(ServerSim *sim) {
             }
             /* Spent from here, whatever the pack below does with it. */
             udpServer.voiceCredits[from]--;
-            accepted++;
 
             downLen = voiceSegmentPackDown(downBuf, (int)sizeof(downBuf),
                                            (uint8_t)from, seq, flags,
