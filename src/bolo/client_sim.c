@@ -344,13 +344,27 @@ bool clientSimCreate(ClientSim *cs) {
   cs->netStat = netRunning;
 
   /* Visibility rules, until the server's own arrive with the lobby settings.
-   * The three a server starts with (server_sim.c), so a display tick before
-   * they land draws what the server is actually sending rather than a block
-   * round every allied base. The memset above would leave every category on
-   * viewPolicyAlways. */
-  cs->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+   * The three an unconfigured server starts on (serverSimInit in
+   * server_sim.c): a pillbox only while the player is watching it, bases and
+   * allied tanks not at all. Keeping the two in step means a display tick
+   * before the settings land draws what the server is actually sending,
+   * rather than a block round every allied tank the server sends nothing
+   * about. The memset above would leave every category on viewPolicyAlways,
+   * which is why all three are written out.
+   *
+   * cs->overviewWindow and cs->lineOfSight, a few fields up, are deliberately
+   * NOT seeded from serverSimInit the same way — they ride the memset, which
+   * is overviewWindowExpanded / lineOfSightOff. That is the wire default, not
+   * the server's starting value: clientSimApplyControl writes Expanded for a
+   * byte that is absent or out of range, so a peer whose payload predates the
+   * fields has to read back Expanded, and client_sim.h documents exactly that.
+   * Seeding Classic here would make a pre-fields payload visibly jump
+   * Classic -> Expanded. The view policies have no such wire default to fall
+   * back on — viewPolicyAlways is 0 only by historical accident — which is
+   * why they, and only they, are seeded from the server. */
+  cs->viewPolicy[viewCategoryPill] = viewPolicyKey;
   cs->viewPolicy[viewCategoryBase] = viewPolicyOff;
-  cs->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+  cs->viewPolicy[viewCategoryAlly] = viewPolicyOff;
 
   /* Lobby state defaults (memset already zeroed, but be explicit) */
   memset(cs->lobbySlots, 0, sizeof(cs->lobbySlots));

@@ -946,10 +946,13 @@ uint32_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
 
 /* Server visibility rules (pillboxes / bases / allied tanks) as last
- * broadcast in the lobby-settings event. Raw mirror: both read back 0
- * (viewPolicyAlways / 0 seconds) until the first event arrives, and a
- * payload that predates the fields leaves them at 0 too. Out-of-range
- * categories read back the same zeros. */
+ * broadcast in the lobby-settings event. Raw mirror. Until the first event
+ * arrives the policies read back the set an unconfigured server starts on
+ * (Key for pillboxes, off for bases and allied tanks, matching serverSimInit)
+ * and the decays read back 0 seconds; a payload that predates the fields
+ * carries viewPolicyAlways and a zero decay for every category and is
+ * mirrored as it stands. Out-of-range categories read back viewPolicyAlways
+ * and 0. */
 ViewPolicy  clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat);
 uint16_t    clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat);
 
