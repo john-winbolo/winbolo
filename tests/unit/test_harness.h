@@ -2044,6 +2044,20 @@ int run_scenario_policy_spawn_loadout(void);
 int run_scenario_policy_can_respawn(void);
 int run_scenario_policy_null_is_classic(void);
 
+/* The four combat policy pointers (test_scenario_policy_combat.c). What a
+ * blow is worth, whether a square may be built on, whether an objective may
+ * change hands and whether a blow may finish what it landed on — each at its
+ * own call site with a policy answering the opposite of classic, the two kill
+ * ops shown not to ask at all, and once more with nothing registered. */
+int run_scenario_policy_damage_scale(void);
+int run_scenario_policy_invulnerable_tank(void);
+int run_scenario_policy_protected_builder(void);
+int run_scenario_policy_protected_pill(void);
+int run_scenario_policy_can_build(void);
+int run_scenario_policy_can_capture(void);
+int run_scenario_policy_kill_ops_ignore_can_die(void);
+int run_scenario_policy_combat_null_is_classic(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

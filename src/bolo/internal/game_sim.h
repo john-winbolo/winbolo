@@ -74,6 +74,14 @@ typedef struct GameSim GameSim;
 #define PLAYER_ACTION_BUILD 1
 #define PLAYER_ACTION_MINE  2
 #define PLAYER_ACTION_SHELL 3
+/* canDie kind — what the blow would destroy. index is the tank slot for a
+ * tank and for the builder riding in it, and the pill index for a pill. */
+#define DIE_KIND_TANK    0
+#define DIE_KIND_BUILDER 1
+#define DIE_KIND_PILL    2
+/* canCapture kind — what is being taken, with index the pill or base. */
+#define CAPTURE_KIND_PILL 0
+#define CAPTURE_KIND_BASE 1
 
 typedef struct GameSimCallbacks {
     void (*messageAdd)(void *ctx, messageType msgType,
@@ -124,11 +132,29 @@ typedef struct GameSimCallbacks {
      * spawnLoadout: what a spawning tank is handed. True with the four
      * amounts filled; false leaves the sim's game type to decide.
      * canRespawn: whether a dead tank may come back. False holds the death
-     * wait where it is and the question is asked again next tick. */
+     * wait where it is and the question is asked again next tick.
+     * damageScale: the percent one blow actually does, 100 being the classic
+     * amount and 0 a hit that costs no armour at all. cause is a
+     * LAST_DEATH_BY_* value.
+     * canBuild: whether a build order may go ahead. False turns it down the
+     * way an order on an impossible square is turned down. pillIdx is the
+     * pillbox a place-pill order would put down, LGM_NO_PILL otherwise.
+     * canCapture: whether a pill or base may change hands. False leaves the
+     * objective where it is; it does not block the tank.
+     * canDie: whether this blow may destroy what it landed on. False leaves a
+     * tank at zero armour and alive, a builder untouched and a pill at one.
+     *
+     * Ask these through the gameSim* helpers below rather than through the
+     * member, so the NULL answer is written once. */
     bool (*chooseStart)(void *ctx, BYTE player, BYTE *startIdx);
     bool (*spawnLoadout)(void *ctx, BYTE player, BYTE *shells, BYTE *mines,
                          BYTE *armour, BYTE *trees);
     bool (*canRespawn)(void *ctx, BYTE player);
+    int  (*damageScale)(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+    bool (*canBuild)(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                     BYTE mapY, BYTE pillIdx);
+    bool (*canCapture)(void *ctx, BYTE kind, BYTE index, BYTE player);
+    bool (*canDie)(void *ctx, BYTE kind, BYTE index, BYTE killer, BYTE cause);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 
@@ -288,6 +314,52 @@ static inline BYTE gameSimGetTankPlayer(GameSim *sim, tank *value) {
     count++;
   }
   return NEUTRAL;
+}
+
+/*********************************************************
+ * The combat policy questions. Each is the one place the
+ * classic answer is written down, so a site asks without
+ * testing the member and a sim with nothing registered —
+ * every ClientSim — takes the classic branch by
+ * construction.
+ *********************************************************/
+
+/* The percent one blow does. Negative is read as nothing at all; the caller
+   caps the top end where it multiplies. */
+static inline int gameSimDamageScale(GameSim *sim, BYTE attacker, BYTE victim,
+                                     BYTE cause) {
+  int pct;
+
+  if (sim == NULL || sim->callbacks.damageScale == NULL) {
+    return 100;
+  }
+  pct = sim->callbacks.damageScale(sim->callbacks.ctx, attacker, victim, cause);
+  return (pct < 0) ? 0 : pct;
+}
+
+static inline bool gameSimCanBuild(GameSim *sim, BYTE player, BYTE action,
+                                   BYTE mapX, BYTE mapY, BYTE pillIdx) {
+  if (sim->callbacks.canBuild == NULL) {
+    return TRUE;
+  }
+  return sim->callbacks.canBuild(sim->callbacks.ctx, player, action, mapX,
+                                 mapY, pillIdx);
+}
+
+static inline bool gameSimCanCapture(GameSim *sim, BYTE kind, BYTE index,
+                                     BYTE player) {
+  if (sim->callbacks.canCapture == NULL) {
+    return TRUE;
+  }
+  return sim->callbacks.canCapture(sim->callbacks.ctx, kind, index, player);
+}
+
+static inline bool gameSimCanDie(GameSim *sim, BYTE kind, BYTE index,
+                                 BYTE killer, BYTE cause) {
+  if (sim->callbacks.canDie == NULL) {
+    return TRUE;
+  }
+  return sim->callbacks.canDie(sim->callbacks.ctx, kind, index, killer, cause);
 }
 
 static inline bool gameSimCheckTankRange(GameSim *sim, BYTE x, BYTE y, BYTE playerNum, double distance) {

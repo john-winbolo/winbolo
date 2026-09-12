@@ -325,6 +325,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   BYTE tankTrees;
   BYTE pos;      /* Map terrain at build request place */
   BYTE why;      /* Why it was refused, for a caller that asked for it */
+  BYTE wantPill; /* The pill a place-pill order would put down */
 
   tankX = tankGetMX(tnk);
   tankY = tankGetMY(tnk);
@@ -338,6 +339,32 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   *trees = 0;
   *minesAmount = 0;
   *pillNum = LGM_NO_PILL;
+
+  /* The host's say on the order, asked before the switch below rather than
+     after it: the branches there spend the tank's trees and mines and take
+     the carried pill off it, so a refusal arriving later would charge the
+     player for an order that never happened. Every caller reaches this one
+     function, so the dry run and the acting path get the same answer without
+     either asking twice. A refused order is turned down the way one aimed at
+     a square that cannot take it is. */
+  wantPill = LGM_NO_PILL;
+  if (*action == LGM_PILL_REQUEST &&
+      tankPeekCarriedPill(tnk, &wantPill) != FALSE) {
+    /* tankPeekCarriedPill counts from one, as the carry list and every other
+       pill call in this file do; the policy surface counts from zero, so the
+       question takes one off. Only where a pill was named: a tank carrying
+       none leaves LGM_NO_PILL standing, which is not an index and must not be
+       turned into one. Leave the subtraction alone. */
+    wantPill = (BYTE)(wantPill - 1);
+  }
+  if (gameSimCanBuild(sim, gameSimGetTankPlayer(sim, tnk), *action, mapX, mapY,
+                      wantPill) == FALSE) {
+    lgmAssist(sim, announce, LGM_NO_BUILD);
+    if (refusal != NULL) {
+      *refusal = why;
+    }
+    return FALSE;
+  }
 
   /* Get the terrain of the map square that the user clicked on */
   pos = mapGetPos(mp,mapX,mapY);
@@ -1435,7 +1462,16 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
     }
 
     if (dead == TRUE) {
-      lgmKill(sim, lgman, tnk, owner);
+      /* The engine's own test says the blast caught him; the host has the
+         last word, and a refusal leaves him untouched. Asked here rather
+         than inside lgmKill, because a death a script orders outright goes
+         straight to lgmKill and is not the host's to reconsider. Every
+         builder death in the engine comes through this test, so this covers
+         shells, mine and tank explosions and his own mine alike. */
+      if (gameSimCanDie(sim, DIE_KIND_BUILDER, (*lgman)->playerNum, owner,
+                        DMG_SRC_UNKNOWN) != FALSE) {
+        lgmKill(sim, lgman, tnk, owner);
+      }
     }
   }
 }

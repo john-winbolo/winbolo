@@ -336,6 +336,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.chooseStart = serverSimCbChooseStart;
     sim->sim.callbacks.spawnLoadout = serverSimCbSpawnLoadout;
     sim->sim.callbacks.canRespawn = serverSimCbCanRespawn;
+    sim->sim.callbacks.damageScale = serverSimCbDamageScale;
+    sim->sim.callbacks.canBuild = serverSimCbCanBuild;
+    sim->sim.callbacks.canCapture = serverSimCbCanCapture;
+    sim->sim.callbacks.canDie = serverSimCbCanDie;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {

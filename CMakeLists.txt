@@ -3353,6 +3353,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # death wait — each at its own call site under a policy answering the
     # opposite of classic, and once more with nothing registered.
     tests/unit/test_scenario_policy_lifecycle.c
+    # The four combat policy pointers: the damage helper all three damage
+    # paths go through, the build request, the pill and base captures, and the
+    # five death sites — each under a policy answering the opposite of
+    # classic, with the two kill ops shown to reach the death bodies without
+    # asking, and once more with nothing registered.
+    tests/unit/test_scenario_policy_combat.c
     # The init table a bot is created with: one table per brain VM, an
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
@@ -4799,6 +4805,14 @@ set(_unit_test_names
     scenario_policy_spawn_loadout
     scenario_policy_can_respawn
     scenario_policy_null_is_classic
+    scenario_policy_damage_scale
+    scenario_policy_invulnerable_tank
+    scenario_policy_protected_builder
+    scenario_policy_protected_pill
+    scenario_policy_can_build
+    scenario_policy_can_capture
+    scenario_policy_kill_ops_ignore_can_die
+    scenario_policy_combat_null_is_classic
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

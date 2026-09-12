@@ -429,3 +429,78 @@ bool serverSimCbCanRespawn(void *ctx, BYTE player) {
     serverSimScenarioPolicyLeave(sim);
     return may;
 }
+
+/* The four combat questions. Same shape as the three above: the classic
+ * answer with nothing registered, and the policy asked between the enter and
+ * the leave so it cannot write back through the op funnel mid-question. */
+
+/* What this blow is worth against this victim, as a percent. A hundred is
+ * the classic amount and leaves the damage arithmetic exactly where it
+ * was. */
+int serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+    ServerSim *sim = (ServerSim *)ctx;
+    int pct;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->damageScale == NULL) {
+        return 100;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    pct = sim->scenarioPolicy->damageScale(sim->scenarioPolicy->ctx, attacker,
+                                           victim, cause);
+    serverSimScenarioPolicyLeave(sim);
+    return pct;
+}
+
+/* Whether a build order may go ahead. */
+bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                         BYTE mapY, BYTE pillIdx) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canBuild == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canBuild(sim->scenarioPolicy->ctx, player,
+                                        action, mapX, mapY, pillIdx);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
+/* Whether a pill or base may change hands. The engine's own capture tests
+ * have already passed by the time this is asked. */
+bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canCapture == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canCapture(sim->scenarioPolicy->ctx, kind,
+                                          index, player);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
+/* Whether this blow may destroy what it landed on. The kill ops do not come
+ * through here: they call the death bodies directly, so a script that kills
+ * what it protected gets the death it asked for. */
+bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
+                       BYTE cause) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canDie == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canDie(sim->scenarioPolicy->ctx, kind, index,
+                                      killer, cause);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}

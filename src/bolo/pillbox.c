@@ -689,6 +689,15 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       BYTE before = (*value)->item[count].armour;  /* > 0 here */
       if (wantDamage == TRUE && (*value)->item[count].armour > 0) {
         (*value)->item[count].armour--;
+        /* The blow that would finish the pill is the host's to refuse, and a
+           refusal holds it at one armour, where it goes on firing. Taken back
+           before the damage is recorded, so the record says what the pill
+           actually lost. */
+        if ((*value)->item[count].armour == 0 &&
+            gameSimCanDie(sim, DIE_KIND_PILL, count, owner,
+                          DMG_SRC_SHELL) == FALSE) {
+          (*value)->item[count].armour = 1;
+        }
       }
       if (wantDamage == TRUE && sim->callbacks.recordDamage) {
         BYTE after = (*value)->item[count].armour;
@@ -1412,9 +1421,19 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
   count = 0;
   while (count < ((*value)->numPills)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
+      BYTE before = (*value)->item[count].armour;
       (*value)->item[count].armour -= amount;
       if ((*value)->item[count].armour > PILL_MAX_HEALTH) {
         (*value)->item[count].armour = 0;
+      }
+      /* The blow that would finish the pill is the host's to refuse, and a
+         refusal holds it at one armour, where it goes on firing. Asked only
+         where this blow is what emptied it, so a pill already dead is left
+         dead rather than raised by an explosion landing on it. */
+      if ((*value)->item[count].armour == 0 && before > 0 &&
+          gameSimCanDie(sim, DIE_KIND_PILL, count, NEUTRAL,
+                        DMG_SRC_UNKNOWN) == FALSE) {
+        (*value)->item[count].armour = 1;
       }
       if ((*value)->item[count].armour == 0) {
         if (sim->isServer == FALSE) {

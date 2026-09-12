@@ -625,14 +625,21 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
   } else if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
       /* Death by drowning — server-authoritative. The sink sound and the
          message belong to drowning; the death itself is tankKillNow, which a
-         death ordered from outside the sim goes through too. */
+         death ordered from outside the sim goes through too.
+         Drowning is not damage, so it never reaches tankApplyDamage and the
+         host is asked here instead. Asked before the sound, so a tank the
+         host will not let drown sits in the water quietly rather than sinking
+         once a tick; the square is tested again next tick. */
       BYTE drownedPlayer = gameSimGetTankPlayer(sim, value);
-      tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
-      sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
-      if (!isServer) {
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
+      if (gameSimCanDie(sim, DIE_KIND_TANK, drownedPlayer, drownedPlayer,
+                        LAST_DEATH_BY_DEEPSEA) != FALSE) {
+        tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
+        sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
+        if (!isServer) {
+          sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
+        }
+        tankKillNow(sim, value, drownedPlayer, LAST_DEATH_BY_DEEPSEA);
       }
-      tankKillNow(sim, value, drownedPlayer, LAST_DEATH_BY_DEEPSEA);
   } else {
     /* Tank Movement (unified boat/land) */
     (*value)->newTank = FALSE;
@@ -835,13 +842,27 @@ void tankSetDestroyed(tank *value, bool destroyed) {
 *  remaining. A hit that exactly empties the armour leaves
 *  the tank alive at zero; the next hit destroys it.
 *
+*  Every blow that damages a tank is applied here, so this
+*  is where the host is asked whether the blow may finish
+*  it. A refusal empties the armour and leaves the tank
+*  alive at zero, which is a state the engine already
+*  produces on its own.
+*
 *ARGUMENTS:
+*  sim    - The game the tank belongs to
 *  value  - Pointer to the tank structure
 *  damage - Amount of damage to apply
+*  killer - Slot that dealt the blow, or NEUTRAL
+*  cause  - A LAST_DEATH_BY_* value naming the blow
 *********************************************************/
-static bool tankApplyDamage(tank *value, BYTE damage) {
+static bool tankApplyDamage(GameSim *sim, tank *value, BYTE damage,
+                            BYTE killer, BYTE cause) {
   if (damage > (*value)->armour) {
     (*value)->armour = 0;
+    if (gameSimCanDie(sim, DIE_KIND_TANK, gameSimGetTankPlayer(sim, value),
+                      killer, cause) == FALSE) {
+      return FALSE;
+    }
     (*value)->destroyed = TRUE;
     return TRUE;
   }
@@ -1378,8 +1399,8 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value));
-		bool wasDestroyed = tankApplyDamage(value, amount);
+		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
+		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
@@ -2060,12 +2081,22 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         if (baseIsCapturable(bs, newbmx, newbmy) == TRUE) {
           if (playersCheckSameSquare(&sim->plyrs, gameSimGetTankPlayer(sim, value), newbmx, newbmy) == FALSE) {
             if (basesAmOwner(sim, gameSimGetTankPlayer(sim, value), newbmx, newbmy) == FALSE) {
-              basesSetOwner(sim, newbmx, newbmy, gameSimGetTankPlayer(sim, value), FALSE);
               BYTE baseNum = basesGetBaseNum(bs, newbmx, newbmy);
-              if (!isServer) {
-                frontEndStatusBase(clientSimFromSim(sim), baseNum, (basesGetStatusNum(sim, baseNum)));
+              /* The base is capturable and the tank is entitled to it; the
+               * host decides whether it actually changes hands. A refusal
+               * only holds the owner — the tank is already on the square and
+               * drives on.
+               * basesGetBaseNum counts from one and the rest of this block
+               * wants it that way; the policy surface counts from zero, so
+               * the question takes one off. Leave the subtraction alone. */
+              if (gameSimCanCapture(sim, CAPTURE_KIND_BASE, (BYTE)(baseNum - 1),
+                                    gameSimGetTankPlayer(sim, value)) != FALSE) {
+                basesSetOwner(sim, newbmx, newbmy, gameSimGetTankPlayer(sim, value), FALSE);
+                if (!isServer) {
+                  frontEndStatusBase(clientSimFromSim(sim), baseNum, (basesGetStatusNum(sim, baseNum)));
+                }
+                if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
               }
-              if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
             }
           }
         }
@@ -2251,6 +2282,18 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 			 * harmless. */
 			if (bmx != 0 && bmy != 0 && pillsIsCapturable(pb, bmx,bmy) == TRUE) {
 				pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
+				/* The engine's own test has passed; the host has the last
+				 * word on whether the pill changes hands. Asked once for the
+				 * square, before anything is taken, so a refusal leaves the
+				 * pill where it is and the tank drives on over it.
+				 * pillsGetPillNum counts from one and tankTakePill below
+				 * wants it that way; the policy surface counts from zero, so
+				 * the question takes one off. Leave the subtraction alone. */
+				if (pillNum != PILL_NOT_FOUND &&
+				    gameSimCanCapture(sim, CAPTURE_KIND_PILL, (BYTE)(pillNum - 1),
+				                      gameSimGetTankPlayer(sim, value)) == FALSE) {
+					continue;
+				}
 				while (pillNum != PILL_NOT_FOUND) {
 					tankTakePill(sim, value, pillNum);
 					if (pillsExistPos(pb, bmx, bmy) == TRUE) {
@@ -2584,6 +2627,30 @@ void tankGiveMines(GameSim *sim, tank *value, BYTE amount) {
 }
 
 /*********************************************************
+*NAME:          tankPeekCarriedPill
+*PURPOSE:
+* Which pillbox a place-pill order would put down: the
+* first one on the carry list, read without taking it.
+* Returns FALSE and leaves pillNum alone when the tank is
+* carrying none.
+*
+* tankGetCarriedPill only fills the number on the path that
+* takes the pill, so a caller that has to name the pill
+* before it decides anything asks here.
+*
+*ARGUMENTS:
+*  value   - Pointer to the tank structure
+*  pillNum - Pointer to hold the pillbox number
+*********************************************************/
+bool tankPeekCarriedPill(tank *value, BYTE *pillNum) {
+  if (IsEmpty((*value)->carryPills)) {
+    return FALSE;
+  }
+  *pillNum = (*value)->carryPills->pillNum;
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          tankGetCarriedPill
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/01/99
@@ -2830,8 +2897,8 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
 
   if (diffX < 384 && diffY < 384 && !(*value)->destroyed) {
     BYTE armourBefore = (*value)->armour;
-    BYTE amount = tankDamageAmount(sim, MINE_DAMAGE, owner, gameSimGetTankPlayer(sim, value));
-    bool wasDestroyed = tankApplyDamage(value, amount);
+    BYTE amount = tankDamageAmount(sim, MINE_DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_MINES);
+    bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_MINES);
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
       uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
       sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
@@ -3477,11 +3544,14 @@ BYTE tankReloadTicks(GameSim *sim, tank value) {
 *  base   - The blow's unmodified damage
 *  owner  - Slot that dealt it, or NEUTRAL
 *  victim - Slot taking it
+*  cause  - A LAST_DEATH_BY_* value naming the blow
 *********************************************************/
-BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim) {
+BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim,
+                      BYTE cause) {
   int dealt = 100;  /* An environmental blow deals the classic amount */
   int taken = 100;
-  int amount;
+  int scale;
+  int64_t amount;
 
   if (sim != NULL) {
     if (owner < MAX_TANKS && sim->tanks[owner] != NULL) {
@@ -3491,11 +3561,16 @@ BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim) {
       taken = tankModPct(sim->tanks[victim]->mods.taken);
     }
   }
+  /* The host's say on this pairing, and the last factor. Every shell and
+     every mine in the game is priced here, so a scale of zero is what makes
+     a tank take no damage at all rather than a little. */
+  scale = gameSimDamageScale(sim, owner, victim, cause);
 
-  /* One rounding at the end, so the two factors compose without each
-     losing a fraction. A third factor belongs here when the damage-scale
-     decision arrives; it divides by the same power of a hundred. */
-  amount = (base * dealt * taken + 5000) / 10000;
+  /* One rounding at the end, so the three factors compose without each
+     losing a fraction. A scale of a hundred divides out exactly, leaving
+     the classic arithmetic untouched. Widened because a scale a script
+     names has no ceiling of its own. */
+  amount = ((int64_t) base * dealt * taken * scale + 500000) / 1000000;
   if (amount > 255) {
     amount = 255;
   }
@@ -3799,8 +3874,8 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value));
-		bool wasDestroyed = tankApplyDamage(value, amount);
+		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
+		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,

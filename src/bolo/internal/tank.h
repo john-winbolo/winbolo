@@ -1081,6 +1081,20 @@ bool tankGetLgmMines(struct GameSim *sim, tank *value, BYTE amount, bool perform
 void tankGiveMines(struct GameSim *sim, tank *value, BYTE amount);
 
 /*********************************************************
+*NAME:          tankPeekCarriedPill
+*PURPOSE:
+* Which pillbox a place-pill order would put down: the
+* first one on the carry list, read without taking it.
+* Returns FALSE and leaves pillNum alone when the tank is
+* carrying none.
+*
+*ARGUMENTS:
+*  value   - Pointer to the tank structure
+*  pillNum - Pointer to hold the pillbox number
+*********************************************************/
+bool tankPeekCarriedPill(tank *value, BYTE *pillNum);
+
+/*********************************************************
 *NAME:          tankGetCarriedPill
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/1/99
@@ -1515,18 +1529,20 @@ BYTE tankReloadTicks(struct GameSim *sim, tank value);
 *NAME:          tankDamageAmount
 *PURPOSE:
 *  The damage one blow actually does, from its base amount
-*  scaled by what the owner deals and what the victim takes.
-*  owner == NEUTRAL deals the classic amount. The result is
-*  rounded once and capped at a byte, so no caller rounds a
-*  second time.
+*  scaled by what the owner deals, what the victim takes and
+*  what the host says the pairing is worth. owner == NEUTRAL
+*  deals the classic amount. The result is rounded once and
+*  capped at a byte, so no caller rounds a second time.
 *
 *ARGUMENTS:
 *  sim    - The game both tanks belong to
 *  base   - The blow's unmodified damage
 *  owner  - Slot that dealt it, or NEUTRAL
 *  victim - Slot taking it
+*  cause  - A LAST_DEATH_BY_* value naming the blow
 *********************************************************/
-BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim);
+BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim,
+                      BYTE cause);
 
 /*********************************************************
 *NAME:          tankBoatExitSpeed

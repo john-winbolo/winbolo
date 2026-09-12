@@ -67,6 +67,12 @@ bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx);
 bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
                              BYTE *mines, BYTE *armour, BYTE *trees);
 bool serverSimCbCanRespawn(void *ctx, BYTE player);
+int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                         BYTE mapY, BYTE pillIdx);
+bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player);
+bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
+                       BYTE cause);
 
 /* Defined in server_sim_callbacks.c. Appends a packed attribution record to
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
