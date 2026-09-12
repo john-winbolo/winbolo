@@ -3541,6 +3541,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
     tests/unit/test_loopback_sim_rules.c
+    # The client's own check of the rules table before it keeps one.
+    tests/unit/test_sim_rules_client_check.c
     tests/unit/test_loopback_map_cull.c
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
@@ -4857,6 +4859,11 @@ set(_unit_test_names
     scenario_entity_publish
     scenario_entity_add_out_null
     loopback_entity_change
+    sim_rules_client_check_every_carried_field
+    sim_rules_client_check_nan_and_inf
+    sim_rules_client_check_attack_pair
+    sim_rules_client_check_server_only_pair
+    sim_rules_client_check_valid_applies
     loopback_sim_rules_change
     loopback_sim_rules_join
     loopback_sim_rules_reclamp

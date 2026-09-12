@@ -2098,6 +2098,16 @@ int run_loopback_entity_change(void);
  * client, a joiner arriving on the changed table, a server-only rule
  * publishing nothing, a new table clamping what the client holds, and the two
  * sides reading the same records after a cap drops. */
+/* What a client does with a CTRL_SIM_RULES event it should not trust
+ * (test_sim_rules_client_check.c): every carried rule driven outside its own
+ * row, NaN and infinity rates, a carried pair, a pair the event only carries
+ * half of, and the ordinary table still landing. */
+int run_sim_rules_client_check_every_carried_field(void);
+int run_sim_rules_client_check_nan_and_inf(void);
+int run_sim_rules_client_check_attack_pair(void);
+int run_sim_rules_client_check_server_only_pair(void);
+int run_sim_rules_client_check_valid_applies(void);
+
 int run_loopback_sim_rules_change(void);
 int run_loopback_sim_rules_join(void);
 int run_loopback_sim_rules_reclamp(void);

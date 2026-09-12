@@ -19,9 +19,11 @@
 
 #include "sim_rules.h"
 
+#include <stddef.h>   /* offsetof — which rules CTRL_SIM_RULES carries */
 #include <stdio.h>
 #include <string.h>   /* memcmp — the comparison against the classic table */
 
+#include "control_event.h"  /* CTRL_SIM_RULES_ALL_FIELDS */
 #include "global.h"      /* DAMAGE */
 #include "gametype.h"    /* TANK_FULL_* */
 #include "tank.h"        /* the tank timings, rates and MINE_DAMAGE */
@@ -207,7 +209,46 @@ bool simRulesAreClassic(const SimRules *rules) {
  *
  * One arm per field, in the order the struct declares them. A row whose bound
  * is another field is checked only as far as its own number goes — the fixed
- * end — because what one field allows another is a different question. */
+ * end — because what one field allows another is a different question.
+ *
+ * Every arm is written once and asked twice: the server asks all of them, and
+ * a client checking a CTRL_SIM_RULES event asks only the ones whose fields
+ * that event carries. The two callers share this one body rather than each
+ * keeping its own copy of the numbers, because a second copy is a second
+ * place a bound can be changed and forgotten.
+ *
+ * Which arms the carried pass asks is read off CTRL_SIM_RULES' own field
+ * list, so a rule added to or dropped from the event changes the answer with
+ * it. The client cannot ask every arm: some pairs hold a carried field
+ * against one the event leaves behind, and a server that lowered both would
+ * be refused by a client still reading the classic value for the half it was
+ * never sent. So a pair is asked on the client only when the event carries
+ * every field it names. */
+
+/* Where each carried rule sits in the struct. offsetof identifies a field
+ * without naming its type, which is what lets one list cover the integer
+ * rows and the float ones together. */
+#define SIM_RULES_CARRIED_OFFSET(name) offsetof(SimRules, name),
+static const size_t simRulesCarriedOffsets[] = {
+    CTRL_SIM_RULES_ALL_FIELDS(SIM_RULES_CARRIED_OFFSET)
+};
+#undef SIM_RULES_CARRIED_OFFSET
+
+static bool simRulesOffsetCarried(size_t offset) {
+    size_t i;
+    const size_t count =
+        sizeof(simRulesCarriedOffsets) / sizeof(simRulesCarriedOffsets[0]);
+
+    for (i = 0; i < count; i++) {
+        if (simRulesCarriedOffsets[i] == offset) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Whether CTRL_SIM_RULES carries this rule. */
+#define SIM_RULES_CARRIES(field) simRulesOffsetCarried(offsetof(SimRules, field))
 
 static void simRulesWhyInt(char *why, size_t whyLen, const char *field,
                            int32_t value, int32_t lo, int32_t hi) {
@@ -227,8 +268,13 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
              (double) lo, (double) hi);
 }
 
+/* Whether this pass asks a row at all: the server asks every one, the
+ * carried pass only the rows whose field rides the event. */
+#define RULE_ASKED(field) (!carriedOnly || SIM_RULES_CARRIES(field))
+
 #define RULE_INT(field, lo, hi)                                              \
-    if (rules->field < (int32_t) (lo) || rules->field > (int32_t) (hi)) {    \
+    if (RULE_ASKED(field) &&                                                 \
+        (rules->field < (int32_t) (lo) || rules->field > (int32_t) (hi))) {  \
         simRulesWhyInt(why, whyLen, #field, rules->field, (int32_t) (lo),    \
                        (int32_t) (hi));                                      \
         return SIM_RULES_FAULT_RANGE;                                        \
@@ -236,7 +282,7 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
 
 /* Only the fixed end of a row bounded by another field. */
 #define RULE_INT_MIN(field, lo)                                              \
-    if (rules->field < (int32_t) (lo)) {                                     \
+    if (RULE_ASKED(field) && rules->field < (int32_t) (lo)) {                \
         simRulesWhyInt(why, whyLen, #field, rules->field, (int32_t) (lo),    \
                        INT32_MAX);                                           \
         return SIM_RULES_FAULT_RANGE;                                        \
@@ -245,24 +291,39 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
 /* One arm per pair of fields. The reason names both sides and the numbers
  * they hold, so a caller reading a refusal can see which of the two has to
  * move rather than only that something is wrong. A pair never changes a
- * value: it refuses the table or it passes it. */
-#define RULE_PAIR(cond, ...)                                                 \
-    if (!(cond)) {                                                           \
+ * value: it refuses the table or it passes it.
+ *
+ * The first argument says when the pair is asked — PAIR_ASKED2 or
+ * PAIR_ASKED3 naming the fields it reads, so the carried pass skips a pair
+ * whose other side the event does not carry. */
+#define RULE_PAIR(asked, cond, ...)                                          \
+    if ((asked) && !(cond)) {                                                \
         if (why != NULL && whyLen > 0) {                                     \
             snprintf(why, whyLen, __VA_ARGS__);                              \
         }                                                                    \
         return SIM_RULES_FAULT_PAIR;                                         \
     }
 
+#define PAIR_ASKED2(a, b)                                                    \
+    (!carriedOnly || (SIM_RULES_CARRIES(a) && SIM_RULES_CARRIES(b)))
+#define PAIR_ASKED3(a, b, c)                                                 \
+    (!carriedOnly || (SIM_RULES_CARRIES(a) && SIM_RULES_CARRIES(b) &&        \
+                      SIM_RULES_CARRIES(c)))
+
 /* Written as a negated in-range test so a NaN fails rather than passing. */
 #define RULE_FLT(field, lo, hi)                                              \
-    if (!(rules->field >= (float) (lo) && rules->field <= (float) (hi))) {   \
+    if (RULE_ASKED(field) &&                                                 \
+        !(rules->field >= (float) (lo) && rules->field <= (float) (hi))) {   \
         simRulesWhyFloat(why, whyLen, #field, rules->field, (float) (lo),    \
                          (float) (hi));                                      \
         return SIM_RULES_FAULT_RANGE;                                        \
     }
 
-SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
+/* The one body both passes run. carriedOnly false is the server's whole
+ * check; true is the client's, asking only what a CTRL_SIM_RULES event can
+ * have brought. */
+static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
+                                       char *why, size_t whyLen) {
     if (why != NULL && whyLen > 0) {
         why[0] = '\0';
     }
@@ -341,17 +402,13 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
     /* Both ends of the attack interval are converted, so the pair can be
      * asked here: the fastest a hurt pill fires cannot be slower than the
      * rate an untouched one sits at, or the clamp has no window to land in. */
-    if (rules->pill_attack_min_ticks > rules->pill_attack_ticks) {
-        if (why != NULL && whyLen > 0) {
-            snprintf(why, whyLen,
-                     "pill_attack_min_ticks is %ld, above pill_attack_ticks %ld",
-                     (long) rules->pill_attack_min_ticks,
-                     (long) rules->pill_attack_ticks);
-        }
-        /* A pair, though it is asked here rather than in the pairs block
-           below: both its sides are pillbox rows and it sits with them. */
-        return SIM_RULES_FAULT_PAIR;
-    }
+    /* A pair, though it is asked here rather than in the pairs block below:
+       both its sides are pillbox rows and it sits with them. */
+    RULE_PAIR(PAIR_ASKED2(pill_attack_min_ticks, pill_attack_ticks),
+              rules->pill_attack_min_ticks <= rules->pill_attack_ticks,
+              "pill_attack_min_ticks is %ld, above pill_attack_ticks %ld",
+              (long) rules->pill_attack_min_ticks,
+              (long) rules->pill_attack_ticks)
     RULE_INT(pill_cooldown_ticks, 0, 255)
     RULE_INT_MIN(pill_repair_amount, 1)
     RULE_INT(pill_range, 0, 65535)
@@ -414,41 +471,49 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
      * every base on the map permanently capturable, since its armour could
      * never climb past the threshold. Checked before the hit arm below, so a
      * table breaking both is told about the outer one first. */
-    RULE_PAIR(rules->base_capture_armour <= rules->base_full_armour,
+    RULE_PAIR(PAIR_ASKED2(base_capture_armour, base_full_armour),
+              rules->base_capture_armour <= rules->base_full_armour,
               "base_capture_armour is %ld, above base_full_armour %ld",
               (long) rules->base_capture_armour,
               (long) rules->base_full_armour)
 
-    RULE_PAIR(rules->base_hit_armour <= rules->base_capture_armour,
+    RULE_PAIR(PAIR_ASKED2(base_hit_armour, base_capture_armour),
+              rules->base_hit_armour <= rules->base_capture_armour,
               "base_hit_armour is %ld, above base_capture_armour %ld",
               (long) rules->base_hit_armour,
               (long) rules->base_capture_armour)
 
-    RULE_PAIR(rules->base_min_armour <= rules->base_full_armour,
+    RULE_PAIR(PAIR_ASKED2(base_min_armour, base_full_armour),
+              rules->base_min_armour <= rules->base_full_armour,
               "base_min_armour is %ld, above base_full_armour %ld",
               (long) rules->base_min_armour, (long) rules->base_full_armour)
-    RULE_PAIR(rules->base_min_shells <= rules->base_full_shells,
+    RULE_PAIR(PAIR_ASKED2(base_min_shells, base_full_shells),
+              rules->base_min_shells <= rules->base_full_shells,
               "base_min_shells is %ld, above base_full_shells %ld",
               (long) rules->base_min_shells, (long) rules->base_full_shells)
-    RULE_PAIR(rules->base_min_mines <= rules->base_full_mines,
+    RULE_PAIR(PAIR_ASKED2(base_min_mines, base_full_mines),
+              rules->base_min_mines <= rules->base_full_mines,
               "base_min_mines is %ld, above base_full_mines %ld",
               (long) rules->base_min_mines, (long) rules->base_full_mines)
 
     /* A base hands out what it holds above its reserve, so a give bigger
      * than that gap would take the base under its own floor. */
-    RULE_PAIR(rules->base_armour_give <=
+    RULE_PAIR(PAIR_ASKED3(base_armour_give, base_full_armour, base_min_armour),
+              rules->base_armour_give <=
                   rules->base_full_armour - rules->base_min_armour,
               "base_armour_give is %ld, above base_full_armour %ld less "
               "base_min_armour %ld",
               (long) rules->base_armour_give, (long) rules->base_full_armour,
               (long) rules->base_min_armour)
-    RULE_PAIR(rules->base_shells_give <=
+    RULE_PAIR(PAIR_ASKED3(base_shells_give, base_full_shells, base_min_shells),
+              rules->base_shells_give <=
                   rules->base_full_shells - rules->base_min_shells,
               "base_shells_give is %ld, above base_full_shells %ld less "
               "base_min_shells %ld",
               (long) rules->base_shells_give, (long) rules->base_full_shells,
               (long) rules->base_min_shells)
-    RULE_PAIR(rules->base_mines_give <=
+    RULE_PAIR(PAIR_ASKED3(base_mines_give, base_full_mines, base_min_mines),
+              rules->base_mines_give <=
                   rules->base_full_mines - rules->base_min_mines,
               "base_mines_give is %ld, above base_full_mines %ld less "
               "base_min_mines %ld",
@@ -456,27 +521,34 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
               (long) rules->base_min_mines)
 
     /* A job the man can never pay for is one no player can order. */
-    RULE_PAIR(rules->lgm_cost_road <= rules->tank_full_trees,
+    RULE_PAIR(PAIR_ASKED2(lgm_cost_road, tank_full_trees),
+              rules->lgm_cost_road <= rules->tank_full_trees,
               "lgm_cost_road is %ld, above tank_full_trees %ld",
               (long) rules->lgm_cost_road, (long) rules->tank_full_trees)
-    RULE_PAIR(rules->lgm_cost_building <= rules->tank_full_trees,
+    RULE_PAIR(PAIR_ASKED2(lgm_cost_building, tank_full_trees),
+              rules->lgm_cost_building <= rules->tank_full_trees,
               "lgm_cost_building is %ld, above tank_full_trees %ld",
               (long) rules->lgm_cost_building, (long) rules->tank_full_trees)
-    RULE_PAIR(rules->lgm_cost_repair_building <= rules->tank_full_trees,
+    RULE_PAIR(PAIR_ASKED2(lgm_cost_repair_building, tank_full_trees),
+              rules->lgm_cost_repair_building <= rules->tank_full_trees,
               "lgm_cost_repair_building is %ld, above tank_full_trees %ld",
               (long) rules->lgm_cost_repair_building,
               (long) rules->tank_full_trees)
-    RULE_PAIR(rules->lgm_cost_boat <= rules->tank_full_trees,
+    RULE_PAIR(PAIR_ASKED2(lgm_cost_boat, tank_full_trees),
+              rules->lgm_cost_boat <= rules->tank_full_trees,
               "lgm_cost_boat is %ld, above tank_full_trees %ld",
               (long) rules->lgm_cost_boat, (long) rules->tank_full_trees)
-    RULE_PAIR(rules->lgm_cost_pill_new <= rules->tank_full_trees,
+    RULE_PAIR(PAIR_ASKED2(lgm_cost_pill_new, tank_full_trees),
+              rules->lgm_cost_pill_new <= rules->tank_full_trees,
               "lgm_cost_pill_new is %ld, above tank_full_trees %ld",
               (long) rules->lgm_cost_pill_new, (long) rules->tank_full_trees)
 
     /* The repair order takes a whole load at once, so what it costs is the
      * cost times the load and that is what the tank has to be able to
      * carry — a script setting the two apart multiplies them. */
-    RULE_PAIR((int64_t) rules->lgm_cost_pill_repair *
+    RULE_PAIR(PAIR_ASKED3(lgm_cost_pill_repair, lgm_pill_repair_load,
+                        tank_full_trees),
+              (int64_t) rules->lgm_cost_pill_repair *
                   rules->lgm_pill_repair_load <= rules->tank_full_trees,
               "lgm_cost_pill_repair %ld times lgm_pill_repair_load %ld is "
               "above tank_full_trees %ld",
@@ -484,20 +556,24 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
               (long) rules->lgm_pill_repair_load,
               (long) rules->tank_full_trees)
 
-    RULE_PAIR(rules->lgm_cost_mine <= rules->tank_full_mines,
+    RULE_PAIR(PAIR_ASKED2(lgm_cost_mine, tank_full_mines),
+              rules->lgm_cost_mine <= rules->tank_full_mines,
               "lgm_cost_mine is %ld, above tank_full_mines %ld",
               (long) rules->lgm_cost_mine, (long) rules->tank_full_mines)
 
     /* One delivery has to be able to finish a pill on nothing, or the man
      * walks out, spends the trees and leaves the pill short. */
-    RULE_PAIR((int64_t) rules->lgm_pill_repair_load *
+    RULE_PAIR(PAIR_ASKED3(lgm_pill_repair_load, pill_repair_amount,
+                        pill_max_armour),
+              (int64_t) rules->lgm_pill_repair_load *
                   rules->pill_repair_amount >= rules->pill_max_armour,
               "lgm_pill_repair_load %ld times pill_repair_amount %ld is "
               "below pill_max_armour %ld",
               (long) rules->lgm_pill_repair_load,
               (long) rules->pill_repair_amount,
               (long) rules->pill_max_armour)
-    RULE_PAIR(rules->pill_repair_amount <= rules->pill_max_armour,
+    RULE_PAIR(PAIR_ASKED2(pill_repair_amount, pill_max_armour),
+              rules->pill_repair_amount <= rules->pill_max_armour,
               "pill_repair_amount is %ld, above pill_max_armour %ld",
               (long) rules->pill_repair_amount,
               (long) rules->pill_max_armour)
@@ -506,7 +582,8 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
      * minimum above the maximum leaves nowhere to stand: tankCreate would
      * start the tank outside it and neither the increase nor the decrease
      * key could bring it back. */
-    RULE_PAIR(rules->gunsight_min <= rules->gunsight_max,
+    RULE_PAIR(PAIR_ASKED2(gunsight_min, gunsight_max),
+              rules->gunsight_min <= rules->gunsight_max,
               "gunsight_min is %ld, above gunsight_max %ld",
               (long) rules->gunsight_min, (long) rules->gunsight_max)
 
@@ -515,7 +592,8 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
      * that dies where it is born. Measured at gunsight_min, the shortest
      * shot a player can take. The product is 64-bit because neither field
      * is bounded above by the other. */
-    RULE_PAIR((int64_t) rules->shell_start_add <=
+    RULE_PAIR(PAIR_ASKED3(shell_start_add, shell_life, gunsight_min),
+              (int64_t) rules->shell_start_add <=
                   (int64_t) rules->shell_life * rules->gunsight_min / 2,
               "shell_start_add is %ld, above shell_life %ld times "
               "gunsight_min %ld halved",
@@ -526,7 +604,8 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
      * stores the answer in the shell record's BYTE, so the longest shot a
      * player can take has to still fit. Computed the way shellLifeTicks
      * computes it, so the check and the code cannot disagree. */
-    RULE_PAIR((int64_t) rules->shell_life * rules->gunsight_max / 2 -
+    RULE_PAIR(PAIR_ASKED3(shell_life, gunsight_max, shell_start_add),
+              (int64_t) rules->shell_life * rules->gunsight_max / 2 -
                       rules->shell_start_add + 1 <= 255,
               "shell_life %ld times gunsight_max %ld halved, less "
               "shell_start_add %ld, plus 1, is above 255",
@@ -536,10 +615,22 @@ SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
     return SIM_RULES_OK;
 }
 
+#undef RULE_ASKED
 #undef RULE_INT
 #undef RULE_INT_MIN
 #undef RULE_FLT
 #undef RULE_PAIR
+#undef PAIR_ASKED2
+#undef PAIR_ASKED3
+
+SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
+    return simRulesCheckRows(rules, false, why, whyLen);
+}
+
+SimRulesFault simRulesCheckCarried(const SimRules *rules, char *why,
+                                   size_t whyLen) {
+    return simRulesCheckRows(rules, true, why, whyLen);
+}
 
 /* For the callers that only want to know whether the table is usable. */
 bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {

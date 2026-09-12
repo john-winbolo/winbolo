@@ -239,6 +239,33 @@ typedef enum {
 SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen);
 
 /*********************************************************
+ *NAME:          simRulesCheckCarried
+ *PURPOSE:
+ *  simRulesCheck over the part of a table a CTRL_SIM_RULES
+ *  event can have set: the range row of every rule the event
+ *  carries, and every pair whose fields are all carried. The
+ *  rows and pairs are the same ones simRulesCheck asks and
+ *  the reasons are the same strings — one body answers both,
+ *  and which arms this pass skips is read off the event's own
+ *  field list rather than written down a second time.
+ *
+ *  For the client, which has to refuse a table a hostile or
+ *  broken server sends it before that table reaches the tank
+ *  code. It cannot ask the whole check: a pair holding a
+ *  carried rule against one the event leaves on the server —
+ *  lgm_cost_pill_new against tank_full_trees, say — would
+ *  refuse a server that legitimately lowered both, because
+ *  the client never hears about the half it is not sent.
+ *
+ *ARGUMENTS:
+ *  rules  - table to check
+ *  why    - buffer the reason is written into, or NULL
+ *  whyLen - bytes available at why
+ *********************************************************/
+SimRulesFault simRulesCheckCarried(const SimRules *rules, char *why,
+                                   size_t whyLen);
+
+/*********************************************************
  *NAME:          simRulesValidate
  *PURPOSE:
  *  Checks every field against the range its row allows.
