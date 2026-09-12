@@ -7,7 +7,12 @@
  * pins the shape of that set — a 29x29 block on the tank and a 15x15 block on
  * each viewable pill, trimmed at the map edges, the tank rect always first and
  * pills after it in index order, and never more rects than the caller asked
- * for. overviewMapDeathBlackout is where the overview goes black inside a
+ * for. Where the tank's own block goes is the fog mode's to decide and
+ * overviewMapUpdate's to place, so the last cases there run through the update:
+ * Expanded puts the 29x29 on the tank as it always has, and Classic puts a
+ * 15x15 at the classic view instead, falling back to the tank when there is no
+ * view to read and holding the view a dying tank last had.
+ * overviewMapDeathBlackout is where the overview goes black inside a
  * death wait: from the tick the classic view cuts to static through to the
  * respawn, never dropping once it is up, and a drowning given longer to watch
  * than a shell.
@@ -56,6 +61,7 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "global.h"
@@ -87,6 +93,35 @@
                   "rect {%d,%d,%d,%d}, expected {%d,%d,%d,%d}",                \
                   (r).left, (r).top, (r).right, (r).bottom, (l), (t), (rt), (b))
 
+/* An inclusive block round a centre, trimmed at the map edges: both the tank
+ * rect a caller hands overviewMapBuildRegions and, restated, something for the
+ * assertions to check the built regions against that is not the code under
+ * test. Zeroed whole so a rect handed in comes back out comparable byte for
+ * byte. run_overview_regions is what pins the two together. */
+static OverviewRect overviewTestBlock(int cx, int cy, int half) {
+    OverviewRect r; /* Rect to return */
+
+    memset(&r, 0, sizeof(r));
+    r.alpha = 255;
+    r.left = cx - half;
+    r.top = cy - half;
+    r.right = cx + half;
+    r.bottom = cy + half;
+    if (r.left < 0) {
+        r.left = 0;
+    }
+    if (r.top < 0) {
+        r.top = 0;
+    }
+    if (r.right > MAP_ARRAY_SIZE - 1) {
+        r.right = MAP_ARRAY_SIZE - 1;
+    }
+    if (r.bottom > MAP_ARRAY_SIZE - 1) {
+        r.bottom = MAP_ARRAY_SIZE - 1;
+    }
+    return r;
+}
+
 int run_overview_regions(void) {
     ServerSim *sim = ut_make_running_sim("Over");
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
@@ -104,41 +139,50 @@ int run_overview_regions(void) {
     gs->pb->numPills = 0;
 
     OverviewRect out[OVERVIEW_MAX_REGIONS + 1];
+    OverviewRect tank; /* The block the caller hands the build */
     int n;
 
-    /* The rules a server ships with, which is what every case here is about:
-     * pillboxes always, bases off, allied tanks always with nobody viewable.
+    /* What a pillbox contributes to the region list is the subject here, so
+     * the pill category is named rather than inherited: the fixture hands out
+     * the stock rules, under which pills are on key and only the one the
+     * player is watching earns a block, and every case below claims no view.
+     * Bases and allied tanks stay off, which is where the fixture leaves them.
      * test_overview_view_policy.c is where the other policies are pinned. */
     OverviewViewInputs in;
     overviewViewInputsDefaults(&in);
+    in.policy[viewCategoryPill] = viewPolicyAlways;
 
     /* Tank alone, well clear of every edge: one 29x29 rect on it. */
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "tank with no pills gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
 
     /* Over the left and bottom edges the block is trimmed, not wrapped. */
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 3, 250, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    tank = overviewTestBlock(3, 250, OVERVIEW_TANK_HALF);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "corner tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 0, 236, 17, 255);
 
-    /* A narrower half-width is the same rect drawn smaller, centred where it
-     * was; at nothing left it is the single square the tank is on, and a
-     * negative one means no rect at all. */
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 4, out,
+    /* A narrower block is the same rect drawn smaller, centred where it was;
+     * at nothing left it is the single square the tank is on, and no rect at
+     * all means no region. */
+    tank = overviewTestBlock(100, 100, 4);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a narrowed block gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 96, 96, 104, 104);
 
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 0, out,
+    tank = overviewTestBlock(100, 100, 0);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a single-square block gave %d regions, expected 1",
                   n);
     ASSERT_RECT(out[0], 100, 100, 100, 100);
 
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, -1, out,
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "a block that has gone gave %d regions, expected 0",
                   n);
@@ -153,50 +197,51 @@ int run_overview_regions(void) {
     gs->pb->item[0].x = 200;
     gs->pb->item[0].y = 50;
 
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "tank + own pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* An allied owner views the same as an own one. */
     gs->pb->item[0].owner = 1;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "allied pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* A pill the player cannot view through contributes nothing: owned by
      * someone hostile, or dead, or carried in a tank. */
     gs->pb->item[0].owner = 2;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "enemy pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].owner = 0;
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "dead pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].armour = PILLBOX_15;
     gs->pb->item[0].inTank = TRUE;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "carried pill gave %d regions, expected 1", n);
 
     /* No tank: a viewable pill still gives the player its block, and it is
      * the only rect. */
     gs->pb->item[0].inTank = FALSE;
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "pill without a tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 193, 43, 207, 57);
 
     /* No tank and nothing to view through: no live squares at all. */
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "no tank and no viewable pill gave %d regions", n);
 
     /* A full map of viewable pills plus the tank wants more rects than a
@@ -219,11 +264,380 @@ int run_overview_regions(void) {
         out[maxOut].right = -1;
         out[maxOut].bottom = -1;
 
-        n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100,
-                                    OVERVIEW_TANK_HALF, out, maxOut);
+        tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
+        n = overviewMapBuildRegions(gs, 0, &in, &tank, out, maxOut);
         UT_ASSERT_MSG(n == maxOut, "capped build returned %d, expected %d", n,
                       maxOut);
         ASSERT_RECT(out[maxOut], -1, -1, -1, -1);
+    }
+
+    /* Which block the tank gets is the overview window's, and overviewMapUpdate
+     * is the only thing that places it, so these run through it. The memory is
+     * a hundred kilobytes and more, too much to put on the stack. */
+    {
+        OverviewMap *om;        /* The memory the update writes */
+        OverviewViewInputs fog; /* Inputs carrying the window and the view */
+
+        om = (OverviewMap *)calloc(1, sizeof(OverviewMap));
+        UT_ASSERT_MSG(om != NULL, "no memory for an OverviewMap");
+        gs->pb->numPills = 0;
+
+        /* Expanded with the view fields zeroed, which is what a caller that
+         * keeps no view state passes: the 29x29 on the tank, where it has
+         * always been. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "Expanded gave %d regions, expected 1", om->liveCount);
+        ASSERT_RECT(om->live[0], 86, 86, 114, 114);
+
+        /* Classic with a view to place from: the 15x15 sits at the view,
+         * not at the tank, which is a hundred squares off it. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.window = overviewWindowClassic;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 40;
+        fog.viewTop = 60;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1, "Classic gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 40, 60, 54, 74);
+
+        /* Classic with no view to read - a dead tank, or an item view just left -
+         * puts the same 15x15 round the tank instead. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.window = overviewWindowClassic;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "Classic without a view gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 93, 93, 107, 107);
+
+        /* A Classic block over an edge is trimmed to the map, the way the Expanded
+         * block over the corner above is, and so is the fallback round a tank
+         * standing near one. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.window = overviewWindowClassic;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 250;
+        fog.viewTop = 0;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "a Classic block at the edge gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 250, 0, 255, 14);
+
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.window = overviewWindowClassic;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 250);
+        ASSERT_RECT(om->live[0], 0, 243, 10, 255);
+
+        /* A tank that dies holds its block where the player was looking. The
+         * dead tank reports no view of its own, so the block has to come from
+         * what was recorded on the last update it was alive for - at the
+         * wreck it would be the 15x15 round 100,100. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.window = overviewWindowClassic;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 40;
+        fog.viewTop = 60;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        fog.viewValid = FALSE;
+        fog.viewLeft = 0;
+        fog.viewTop = 0;
+        overviewMapUpdate(om, gs, 0, &fog, FALSE, TANK_DEATH_WAIT, 0, 0);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "a dead tank gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 40, 60, 54, 74);
+
+        /* The generation is what a frontend copying the map keys off, so an
+         * update that changed nothing must not move it: a struct whose padding
+         * did not settle would move it every frame and the copy would be taken
+         * every frame. */
+        {
+            uint32_t genStill; /* Generation after an update that changed nothing */
+
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+
+            genStill = om->generation;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->generation == genStill,
+                          "an update with nothing changed moved the generation "
+                          "from %u to %u", (unsigned)genStill,
+                          (unsigned)om->generation);
+        }
+
+        /* Live and sight go together over the whole map, which is what keeps
+         * the plain live assertions elsewhere in this file saying the same
+         * thing about entities as they always did. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        {
+            int x; /* Looping variable */
+            int y; /* Looping variable */
+
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    BYTE flags = om->flags[x][y];
+
+                    UT_ASSERT_MSG(((flags & OVERVIEW_F_LIVE) != 0) ==
+                                      ((flags & OVERVIEW_F_SIGHT) != 0),
+                                  "square %d,%d carries flags 0x%02X under "
+                                  "Expanded, where live and sight go together",
+                                  x, y, (unsigned)flags);
+                }
+            }
+        }
+
+        /* Line of sight, which rides on top of whichever window is
+         * running: inside the blocks round the tank a square with a building
+         * between it and the tank keeps the tile it last showed and has
+         * nothing drawn moving on it. The wall itself is seen - what is hidden
+         * is the ground behind it - and a watched item's block is not masked
+         * at all, because the player is seeing through the item rather than
+         * from the tank. */
+        {
+            BYTE heldTile; /* The tile the hidden square is holding on to */
+            int  x;        /* Looping variable */
+            int  y;        /* Looping variable */
+
+            /* A clear line east from 100,100 with one building across it, and
+             * a pillbox of the player's own far enough off to have a block of
+             * its own that the tank's wall could only reach through the mask.
+             */
+            mapSetPos(gs, &gs->mp, 101, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 102, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 104, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 105, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 106, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 103, 100, BUILDING, TRUE, TRUE);
+            gs->pb->numPills = 1;
+            gs->pb->item[0].owner = 0;
+            gs->pb->item[0].armour = PILLBOX_15;
+            gs->pb->item[0].inTank = FALSE;
+            gs->pb->item[0].x = 200;
+            gs->pb->item[0].y = 100;
+
+            /* With the toggle off the block is stamped the way it always was,
+             * which is what leaves the square a tile to hold on to. */
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            /* The pill needs a block of its own for any of this to say
+             * anything, and the fixture's stock rules put pills on key, under
+             * which a player watching nothing gets none. */
+            fog.policy[viewCategoryPill] = viewPolicyAlways;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->hiddenActive == FALSE,
+                          "the map hid squares with the toggle off");
+            heldTile = om->tile[106][100];
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    UT_ASSERT_MSG((om->flags[x][y] & OVERVIEW_F_HIDDEN) == 0,
+                                  "square %d,%d is hidden with line of sight "
+                                  "off", x, y);
+                }
+            }
+
+            /* And with it on the ground behind the building drops out of the
+             * block while the building itself stays in it. */
+            fog.lineOfSight = lineOfSightBuildingsAndTrees;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                          "the map hid nothing with the toggle on");
+            UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0 &&
+                              (om->flags[106][100] &
+                               (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
+                          "the square behind the building carries flags "
+                          "0x%02X, expected hidden with neither live nor "
+                          "sight", (unsigned)om->flags[106][100]);
+            UT_ASSERT_MSG((om->flags[103][100] &
+                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                                  (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT) &&
+                              (om->flags[103][100] & OVERVIEW_F_HIDDEN) == 0,
+                          "the building itself carries flags 0x%02X, expected "
+                          "live and in sight", (unsigned)om->flags[103][100]);
+            UT_ASSERT_MSG((om->flags[100][100] & OVERVIEW_F_SIGHT) != 0 &&
+                              (om->flags[100][100] & OVERVIEW_F_HIDDEN) == 0,
+                          "the tank's own square carries flags 0x%02X, so the "
+                          "reticle would not be drawn",
+                          (unsigned)om->flags[100][100]);
+
+            /* Nothing is hidden outside a live block: the wall in front of the
+             * tank reaches the tank's own 29x29 and the pill's 15x15 round
+             * 200,100, and nowhere else. */
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    if ((om->flags[x][y] & OVERVIEW_F_HIDDEN) == 0) {
+                        continue;
+                    }
+                    UT_ASSERT_MSG((x >= 86 && x <= 114 && y >= 86 &&
+                                   y <= 114) ||
+                                      (x >= 193 && x <= 207 && y >= 93 &&
+                                       y <= 107),
+                                  "square %d,%d is hidden and is inside no live "
+                                  "block", x, y);
+                }
+            }
+
+            /* And the pill's block is masked from the pill, not from the tank:
+             * a wall beside the pill hides the ground behind it, where the wall
+             * in front of the tank a hundred squares away says nothing about
+             * what the pill can see. */
+            mapSetPos(gs, &gs->mp, 203, 100, BUILDING, TRUE, TRUE);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG((om->flags[206][100] & OVERVIEW_F_HIDDEN) != 0,
+                          "the square behind the wall beside the pill carries "
+                          "flags 0x%02X, expected the pill's own block masked "
+                          "by what the pill can see",
+                          (unsigned)om->flags[206][100]);
+            UT_ASSERT_MSG((om->flags[203][100] &
+                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                              (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT),
+                          "the wall beside the pill carries flags 0x%02X, "
+                          "expected the pill to see the wall itself",
+                          (unsigned)om->flags[203][100]);
+            mapSetPos(gs, &gs->mp, 203, 100, GRASS, TRUE, TRUE);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+
+            /* The terrain behind the building changes and the memory does not:
+             * holding the tile it last showed is the whole of the effect. The
+             * change is put past the per-square calculator first, so a square
+             * whose tile would not have moved anyway fails here instead of
+             * passing for the wrong reason. */
+            {
+                bool isMine = FALSE;
+                BYTE before = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                BYTE after;
+
+                mapSetPos(gs, &gs->mp, 106, 100, DEEP_SEA, TRUE, TRUE);
+                after = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                UT_ASSERT_MSG(after != before,
+                              "square 106,100 still draws as tile %u after the "
+                              "terrain under it changed, so there is nothing "
+                              "for the memory to hold back", (unsigned)before);
+            }
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->tile[106][100] == heldTile,
+                          "the hidden square moved to tile %u, expected it to "
+                          "hold the %u it last showed",
+                          (unsigned)om->tile[106][100], (unsigned)heldTile);
+
+            /* Turning the toggle off puts the square back in the block, and
+             * what it shows then is what has been there all along. */
+            fog.lineOfSight = lineOfSightOff;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->hiddenActive == FALSE,
+                          "the map went on hiding squares after the toggle was "
+                          "dropped");
+            UT_ASSERT_MSG(om->tile[106][100] != heldTile,
+                          "the square came back into the block still showing "
+                          "tile %u, so the terrain change never reached it",
+                          (unsigned)heldTile);
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    UT_ASSERT_MSG((om->flags[x][y] & OVERVIEW_F_HIDDEN) == 0,
+                                  "square %d,%d is still hidden a tick after "
+                                  "the toggle was dropped", x, y);
+                }
+            }
+
+            /* The last stamp a block gets as it stops being live is masked as
+             * well. Without that, letting the block go - by dying, or by
+             * watching a pillbox for a tick - would show the player everything
+             * it had been keeping from them on the way out. */
+            {
+                bool isMine = FALSE;
+                BYTE hiddenTile; /* What the square behind the wall holds */
+                BYTE seenTile;   /* What the square in front of it held */
+                BYTE before;     /* Tile a terrain change moves from */
+                BYTE after;      /* and to */
+
+                /* Ground the memory can hold again, and one update with the
+                 * toggle off to put a tile on both squares. */
+                mapSetPos(gs, &gs->mp, 106, 100, GRASS, TRUE, TRUE);
+                overviewMapReset(om);
+                overviewViewInputsDefaults(&fog);
+                /* The pill's block has to outlive the tank's below, so the
+                 * pill category is named here too rather than left on key. */
+                fog.policy[viewCategoryPill] = viewPolicyAlways;
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                hiddenTile = om->tile[106][100];
+                seenTile = om->tile[102][100];
+
+                fog.lineOfSight = lineOfSightBuildingsAndTrees;
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0,
+                              "the square behind the building carries flags "
+                              "0x%02X, expected it hidden before the block "
+                              "goes", (unsigned)om->flags[106][100]);
+
+                /* Terrain moves on both sides of the wall, and then the tank's
+                 * block goes. */
+                before = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                mapSetPos(gs, &gs->mp, 106, 100, DEEP_SEA, TRUE, TRUE);
+                after = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                UT_ASSERT_MSG(after != before,
+                              "square 106,100 still draws as tile %u after the "
+                              "terrain under it changed, so there is nothing "
+                              "for the farewell to hold back",
+                              (unsigned)before);
+
+                before = viewportCalcSquarePure(gs, 0, 102, 100, &isMine);
+                mapSetPos(gs, &gs->mp, 102, 100, DEEP_SEA, TRUE, TRUE);
+                after = viewportCalcSquarePure(gs, 0, 102, 100, &isMine);
+                UT_ASSERT_MSG(after != before,
+                              "square 102,100 still draws as tile %u after the "
+                              "terrain under it changed, so it says nothing "
+                              "about the farewell running", (unsigned)before);
+
+                overviewMapUpdate(om, gs, 0, &fog, FALSE, 0, 0, 0);
+                UT_ASSERT_MSG(om->tile[106][100] == hiddenTile,
+                              "the block's last stamp moved the hidden square "
+                              "to tile %u, expected it to hold the %u the "
+                              "player last saw",
+                              (unsigned)om->tile[106][100],
+                              (unsigned)hiddenTile);
+
+                /* The square the player could see took the change, so the
+                 * farewell did run - what it left alone is the hidden part of
+                 * the block and nothing else. */
+                UT_ASSERT_MSG(om->tile[102][100] != seenTile,
+                              "the square in front of the wall is still on "
+                              "tile %u, so the farewell stamp never ran",
+                              (unsigned)seenTile);
+
+                UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) == 0,
+                              "the square carries flags 0x%02X after leaving "
+                              "the live set, expected the hidden bit dropped "
+                              "with the rest", (unsigned)om->flags[106][100]);
+
+                /* The tank's block has gone and the pill's has not, and the
+                 * pill's is masked from the pill, so the map is still hiding
+                 * squares. It stops only when there is no block left. */
+                UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                              "the map stopped hiding squares while the pill's "
+                              "block was still live");
+                gs->pb->numPills = 0;
+                overviewMapUpdate(om, gs, 0, &fog, FALSE, 0, 0, 0);
+                UT_ASSERT_MSG(om->hiddenActive == FALSE,
+                              "the map hid squares on an update with no live "
+                              "block at all");
+                gs->pb->numPills = 1;
+            }
+
+        }
+
+        free(om);
     }
 
     /* Where the blackout sits in the death wait: the player watches their own
@@ -338,6 +752,22 @@ static const char *overviewFixtureStart(OverviewFixture *f, const char *name) {
         return "ut_make_running_sim returned NULL";
     }
 
+    /* The two rules the cases below are written against, set rather than
+     * inherited. A sim comes up with pills on viewPolicyKey, under which an
+     * owned pill grants no block of its own, and on the classic overview
+     * window, whose block is narrower than OVERVIEW_TANK_HALF and sits where
+     * the classic view is looking rather than round the tank. Every case here
+     * builds what it expects from overviewTestBlock(..., OVERVIEW_TANK_HALF)
+     * and from pills it hands the player, so both rules have to hold.
+     *
+     * Set before the connect below, not after: the client is told the rules
+     * once, in the sync replay the join triggers, and neither setter publishes
+     * a settings event of its own — a value written afterwards would stay on
+     * the server. */
+    serverSimSetViewPolicy(f->sim, viewCategoryPill, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetOverviewWindow(f->sim, (uint8_t)overviewWindowExpanded);
+
     f->cs = clientSimAlloc();
     if (f->cs == NULL) {
         return "clientSimAlloc returned NULL";
@@ -383,32 +813,6 @@ static const char *overviewFixtureStart(OverviewFixture *f, const char *name) {
  * wherever the join dropped the tank. */
 static int overviewAwayFromEdge(BYTE mapCoord) {
     return (mapCoord < MAP_ARRAY_SIZE / 2) ? 1 : -1;
-}
-
-/* The inclusive block overviewMapBuildRegions builds round a centre, restated
- * so the assertions have something to check against that is not the code under
- * test. run_overview_regions is what pins the two together. */
-static OverviewRect overviewTestBlock(int cx, int cy, int half) {
-    OverviewRect r; /* Rect to return */
-
-    r.alpha = 255;
-    r.left = cx - half;
-    r.top = cy - half;
-    r.right = cx + half;
-    r.bottom = cy + half;
-    if (r.left < 0) {
-        r.left = 0;
-    }
-    if (r.top < 0) {
-        r.top = 0;
-    }
-    if (r.right > MAP_ARRAY_SIZE - 1) {
-        r.right = MAP_ARRAY_SIZE - 1;
-    }
-    if (r.bottom > MAP_ARRAY_SIZE - 1) {
-        r.bottom = MAP_ARRAY_SIZE - 1;
-    }
-    return r;
 }
 
 /* TRUE when the square falls inside any of the rects. */
@@ -524,8 +928,9 @@ int run_overview_reveal(void) {
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
     OverviewViewInputs in;
     clientSimFillOverviewViewInputs(f.cs, &in);
-    int n = overviewMapBuildRegions(f.gs, f.me, &in, TRUE, f.tankMX, f.tankMY,
-                                    OVERVIEW_TANK_HALF, expect,
+    OverviewRect tankBlock = overviewTestBlock(f.tankMX, f.tankMY,
+                                               OVERVIEW_TANK_HALF);
+    int n = overviewMapBuildRegions(f.gs, f.me, &in, &tankBlock, expect,
                                     OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "expected the tank block and one pill block, got %d",
                   n);
@@ -1838,6 +2243,14 @@ int run_overview_loopback(void) {
         UT_FAIL("harness start (overview loopback) failed");
     }
 
+    /* The expected set below is built with OVERVIEW_TANK_HALF, which is the
+     * block the expanded window keeps live; the classic window a sim now comes
+     * up on keeps a narrower one, placed where the classic view is looking. Set
+     * rather than inherited, and set here because the handshake the pumps below
+     * drive is what carries the rules to the client — the setter writes server
+     * state and publishes nothing itself. */
+    serverSimSetOverviewWindow(h.sim, (uint8_t)overviewWindowExpanded);
+
     at = loopbackHarnessPumpUntil(&h, OVERVIEW_LOOP_CONNECT_MAX,
                                   overviewLoopConnected, NULL);
     if (at < 0) {
@@ -1885,8 +2298,9 @@ int run_overview_loopback(void) {
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
     OverviewViewInputs in;
     clientSimFillOverviewViewInputs(h.cs, &in);
-    int n = overviewMapBuildRegions(gs, me, &in, TRUE, tankMX, tankMY,
-                                    OVERVIEW_TANK_HALF, expect,
+    OverviewRect tankBlock = overviewTestBlock(tankMX, tankMY,
+                                               OVERVIEW_TANK_HALF);
+    int n = overviewMapBuildRegions(gs, me, &in, &tankBlock, expect,
                                     OVERVIEW_MAX_REGIONS);
     if (n < 1) {
         loopbackHarnessStop(&h);
@@ -2097,14 +2511,18 @@ int run_overview_removed_item_has_no_region(void) {
     basesSetNumBases(&gs->bs, 1);
     basesSetBase(&gs->bs, &b, 1);
 
+    /* Both categories are named: the fixture's stock rules have pills on key
+     * and bases off, and this case is about a live item earning a region and
+     * a removed one not, with nothing being watched. */
     OverviewViewInputs in;
     overviewViewInputsDefaults(&in);
+    in.policy[viewCategoryPill] = viewPolicyAlways;
     in.policy[viewCategoryBase] = viewPolicyAlways;
 
     OverviewRect out[OVERVIEW_MAX_REGIONS + 1];
     int n;
 
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 0, 0, -1, out,
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "a live pill and base gave %d regions, expected 2", n);
     UT_ASSERT_MSG(overviewInAnyRect(out, n, 60, 60) == TRUE,
@@ -2114,7 +2532,7 @@ int run_overview_removed_item_has_no_region(void) {
 
     UT_ASSERT(pillsRemoveItem(&gs->pb, 1) == TRUE);
     UT_ASSERT(basesRemoveItem(&gs->bs, 1) == TRUE);
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 0, 0, -1, out,
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "a removed pill and base still gave %d regions", n);
 

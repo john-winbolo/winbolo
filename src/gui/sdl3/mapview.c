@@ -23,6 +23,7 @@
  *********************************************************/
 
 #include "mapview.h"
+#include "fog_look.h"
 #include "../tiles.h"
 #include "tilenum.h"
 #include "screencalc.h"
@@ -44,13 +45,26 @@
  * Moved from sdl3draw.c tile blit loop.
  *********************************************************/
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
+                      screenHidden *hiddenView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
   int ss = ctx->sheetScale;
+  bool haveHidden = (hiddenView != NULL && *hiddenView != NULL);
+  /* The hidden squares, kept as the tiles go down and washed over in one call
+     once they are all down. Collected rather than drawn a square at a time so
+     the tile blits stay one run the renderer can batch, and because the wash
+     has to sit over the mine as well as the ground under it — both are what
+     was last seen here. The whole back buffer at worst, which is what the
+     walk below can mark. */
+  SDL_FRect fog[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
+  int fogCount = 0;
   BYTE x = 0, y = 0;
   bool done = FALSE;
   while (!done) {
     BYTE pos = screenGetPos(value, x, y);
+    /* The whole back buffer, both spare columns and rows included: the border
+       squares are on screen while the view is part way between two squares. */
+    bool hidden = haveHidden && (*hiddenView)->hiddenItem[x][y];
     SDL_FRect src = mapViewAtlasSrc(mapViewPosX[pos], mapViewPosY[pos],
                                     TILE_SIZE_X, TILE_SIZE_Y, ss);
     SDL_FRect dest = {
@@ -66,12 +80,26 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                                           TILE_SIZE_X, TILE_SIZE_Y, ss);
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
+    if (hidden) fog[fogCount++] = dest;
 
     x++;
     if (x == MAIN_BACK_BUFFER_SIZE_X) {
       x = 0; y++;
       if (y == MAIN_BACK_BUFFER_SIZE_Y) done = TRUE;
     }
+  }
+
+  /* The blend mode is put back rather than left on: the callers that draw
+     rectangles after this one set the colour they want but not always the
+     mode, and one of them runs with blending off. */
+  if (fogCount > 0) {
+    SDL_BlendMode was = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(ctx->renderer, &was);
+    SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ctx->renderer, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B,
+                           FOG_LOOK_ALPHA);
+    SDL_RenderFillRects(ctx->renderer, fog, fogCount);
+    SDL_SetRenderDrawBlendMode(ctx->renderer, was);
   }
 }
 

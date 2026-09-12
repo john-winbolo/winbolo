@@ -268,16 +268,24 @@ bool           gameFrontHostingServeReplays   = TRUE;
 int            gameFrontHostingVoiceMode      = serverVoiceOn;
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
- * Defaults match serverSimInit so hosting with an untouched INI leaves
- * the sim exactly as it was created. */
-int gameFrontViewPillPolicy    = viewPolicyAlways;
-int gameFrontViewBasePolicy    = viewPolicyOff;
-int gameFrontViewAllyPolicy    = viewPolicyAlways;
+ * The stock set from view_policy.h, the same one serverSimInit writes —
+ * a pillbox shows only while it is watched, bases and allied tanks not
+ * at all — so hosting with an untouched INI leaves the sim exactly as
+ * it was created. */
+int gameFrontViewPillPolicy    = VIEW_POLICY_STOCK_PILL;
+int gameFrontViewBasePolicy    = VIEW_POLICY_STOCK_BASE;
+int gameFrontViewAllyPolicy    = VIEW_POLICY_STOCK_ALLY;
 int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+/* Which block of squares the map overview keeps live, and what stops the
+ * player seeing inside it. Ints rather than bools because each holds a
+ * named value — OverviewWindow and LineOfSightMode — the way the three
+ * policies above hold a ViewPolicy. */
+int gameFrontOverviewWindow    = OVERVIEW_WINDOW_STOCK;
+int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -2157,6 +2165,20 @@ static int viewPolicyFromPrefWord(const char *word, int fallback) {
   return fallback;
 }
 
+/* The overview window in the same word form, one of the two
+ * OverviewWindow names rather than its byte. */
+static const char *overviewWindowPrefWord(int window) {
+  return (window == overviewWindowClassic) ? "Classic" : "Expanded";
+}
+
+/* Reads back what overviewWindowPrefWord wrote. Any other word returns
+ * the caller's fallback, the same as viewPolicyFromPrefWord. */
+static int overviewWindowFromPrefWord(const char *word, int fallback) {
+  if (strcmp(word, "Expanded") == 0) return overviewWindowExpanded;
+  if (strcmp(word, "Classic")  == 0) return overviewWindowClassic;
+  return fallback;
+}
+
 static int viewDecayClamp(int secs) {
   if (secs < VIEW_DECAY_MIN_SECS) return VIEW_DECAY_MIN_SECS;
   if (secs > VIEW_DECAY_MAX_SECS) return VIEW_DECAY_MAX_SECS;
@@ -2207,6 +2229,18 @@ void gameFrontSetClassicMode(bool on) {
 void gameFrontSetAlliesInTrees(bool on) {
   gameFrontAlliesInTrees = on;
   prefsSetString("GAME OPTIONS", "Allies In Trees", TRUEFALSE_TO_STR(on));
+}
+
+void gameFrontSetOverviewWindow(int window) {
+  gameFrontOverviewWindow = window;
+  prefsSetString("GAME OPTIONS", "Overview Window",
+                 overviewWindowPrefWord(window));
+}
+
+void gameFrontSetLineOfSight(int mode) {
+  bool on = (mode != lineOfSightOff);
+  gameFrontLineOfSight = mode;
+  prefsSetString("GAME OPTIONS", "Line Of Sight", TRUEFALSE_TO_STR(on));
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -2790,6 +2824,11 @@ bool gameFrontSetupServer(void) {
   if (gameFrontAlliesInTrees) {
     serverSimSetAlliesInTrees(spServerSim, true);
   }
+  /* These two go on whatever they hold, not only when on: either value
+   * is a real choice, and the expanded window is not what the sim was
+   * created with. Still before classic mode, which writes both. */
+  serverSimSetOverviewWindow(spServerSim, (uint8_t)gameFrontOverviewWindow);
+  serverSimSetLineOfSight(spServerSim, (uint8_t)gameFrontLineOfSight);
   if (gameFrontClassicMode) {
     serverSimSetClassicMode(spServerSim, true);
   }
@@ -3413,31 +3452,35 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Visibility rules for games this client hosts. Clamped on read so a
-   * hand-edited INI can't inject an out-of-range decay. A word that is
-   * none of the four reads as that row's own default, matching the
-   * dedicated server's -pillview / -baseview / -allyview (Off for bases). */
+   * hand-edited INI can't inject an out-of-range decay. A key that is
+   * absent, and a word that is none of the four, both read as that
+   * row's stock policy — the same set the dedicated server's -pillview
+   * / -baseview / -allyview start from. The word handed to
+   * prefsGetString is derived from that policy through
+   * viewPolicyPrefWord rather than spelled out again, so the INI
+   * default and the value it stands for cannot drift apart. */
   {
     static const struct {
       const char *policyKey;
       const char *decayKey;
-      const char *policyDefault;
+      int         policyStock;   /* meaning A in view_policy.h */
       int        *policyOut;
       int        *decayOut;
     } viewPrefs[] = {
-      { "Pill View", "Pill View Decay", "Always",
+      { "Pill View", "Pill View Decay", VIEW_POLICY_STOCK_PILL,
         &gameFrontViewPillPolicy, &gameFrontViewPillDecaySecs },
-      { "Base View", "Base View Decay", "Off",
+      { "Base View", "Base View Decay", VIEW_POLICY_STOCK_BASE,
         &gameFrontViewBasePolicy, &gameFrontViewBaseDecaySecs },
-      { "Ally View", "Ally View Decay", "Always",
+      { "Ally View", "Ally View Decay", VIEW_POLICY_STOCK_ALLY,
         &gameFrontViewAllyPolicy, &gameFrontViewAllyDecaySecs },
     };
     intToStr(VIEW_DECAY_DEFAULT_SECS, def, sizeof(def));
     for (int vi = 0; vi < (int)(sizeof(viewPrefs) / sizeof(viewPrefs[0])); vi++) {
       prefsGetString("GAME OPTIONS", viewPrefs[vi].policyKey,
-                     viewPrefs[vi].policyDefault, buff, FILENAME_MAX);
-      int fallback =
-          viewPolicyFromPrefWord(viewPrefs[vi].policyDefault, viewPolicyAlways);
-      *viewPrefs[vi].policyOut = viewPolicyFromPrefWord(buff, fallback);
+                     viewPolicyPrefWord(viewPrefs[vi].policyStock), buff,
+                     FILENAME_MAX);
+      *viewPrefs[vi].policyOut =
+          viewPolicyFromPrefWord(buff, viewPrefs[vi].policyStock);
       prefsGetString("GAME OPTIONS", viewPrefs[vi].decayKey, def, buff,
                      FILENAME_MAX);
       *viewPrefs[vi].decayOut = viewDecayClamp(atoi(buff));
@@ -3446,6 +3489,21 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
     prefsGetString("GAME OPTIONS", "Allies In Trees", "No", buff, FILENAME_MAX);
     gameFrontAlliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+    /* Same derivation as the three above: the INI default word and the
+     * fallback both come from OVERVIEW_WINDOW_STOCK. */
+    prefsGetString("GAME OPTIONS", "Overview Window",
+                   overviewWindowPrefWord(OVERVIEW_WINDOW_STOCK), buff,
+                   FILENAME_MAX);
+    gameFrontOverviewWindow =
+        overviewWindowFromPrefWord(buff, OVERVIEW_WINDOW_STOCK);
+    /* Stored Yes/No rather than a mode word, so the INI default is the
+     * answer LINE_OF_SIGHT_STOCK gives to "does anything block sight". */
+    prefsGetString("GAME OPTIONS", "Line Of Sight",
+                   (LINE_OF_SIGHT_STOCK != lineOfSightOff) ? "Yes" : "No",
+                   buff, FILENAME_MAX);
+    gameFrontLineOfSight = YESNO_TO_TRUEFALSE(buff[0])
+                               ? lineOfSightBuildingsAndTrees
+                               : lineOfSightOff;
   }
 
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
@@ -3905,6 +3963,10 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gameFrontClassicMode));
   prefsSetString("GAME OPTIONS", "Allies In Trees",
                  TRUEFALSE_TO_STR(gameFrontAlliesInTrees));
+  prefsSetString("GAME OPTIONS", "Overview Window",
+                 overviewWindowPrefWord(gameFrontOverviewWindow));
+  prefsSetString("GAME OPTIONS", "Line Of Sight",
+                 TRUEFALSE_TO_STR((gameFrontLineOfSight != lineOfSightOff)));
 
   prefsSetString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp));
   prefsSetString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal));

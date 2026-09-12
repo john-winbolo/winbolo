@@ -113,15 +113,28 @@ and skips the rest by the framed length.
 | 5–6 | Ally view decay | Big-endian seconds; same condition |
 | 7 | Game type | `gameType` — 1 open, 2 tournament, 3 strict |
 | 8 | AI policy | `aiType` — 0 `aiNone`, 1 `aiYes`, 2 `aiYesAdvantage`, 3 `aiFull` |
-| 9 | Flags | bit0 hidden mines, bit1 time limit on, bit2 auto-lock on game start, bit3 ranked, bit4 password set, bit5 allow new players |
+| 9 | Flags | bit0 hidden mines, bit1 time limit on, bit2 auto-lock on game start, bit3 ranked, bit4 password set, bit5 allow new players, bit6 overview window is classic, bit7 line of sight is not off |
 | 10–11 | Time minutes | Big-endian; meaningless when the time-limit bit is clear |
-| 12–13 | Lobby locks | Big-endian `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`) — which settings the host was allowed to change |
+| 12–13 | Lobby locks | Big-endian — the **low 16 bits** of the `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`), which settings the host was allowed to change |
 
 Bit 4 of the flags says only that a password is set; the password itself is
-never recorded. The event is written by `src/server/server_dedicated_log.c` when
-the lobby opens, when the round starts, and when a lobby edit changes any of
-these values, so a recording seeked to the middle needs the earlier events to
-know the current settings.
+never recorded.
+
+The flags byte is **full**. Bits 6 and 7 are one bit each because the overview
+window and the line-of-sight mode have two values apiece today
+(`OverviewWindow` and `LineOfSightMode` in `src/bolo/public/view_policy.h`); a
+third value in either setting, or any new flag, needs the blob to grow rather
+than another bit in this byte.
+
+The lock mask is a **16-bit truncation**: `sim->serverLocks` is a `uint32_t` and
+the blob writes only its low two bytes. `LOBBY_LOCK_LINE_OF_SIGHT` (`1u << 15`)
+is the last bit that fits. Whoever defines lock 17 must grow the blob at the same
+time, or that lock will silently read as clear in every recording.
+
+The event is written by `src/server/server_dedicated_log.c` when the lobby opens,
+when the round starts, and when a lobby edit changes any of these values, so a
+recording seeked to the middle needs the earlier events to know the current
+settings.
 
 ### `log_Ping` payload
 

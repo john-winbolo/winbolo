@@ -459,7 +459,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 int          label;
                 ViewCategory cat;
                 uint8_t      lst;
-                uint16_t     lockBit;
+                uint32_t     lockBit;
                 const char  *id;
             };
             static const ViewRow rows[] = {
@@ -588,6 +588,72 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                     "%s", langGetText(classicIsWhy
                                           ? STR_DLGLOBBY_CLASSIC_MODE_TIP
                                           : STR_DLGLOBBY_ALLIES_TREES_TIP));
+            }
+
+            /* Which block of squares the map overview keeps live round
+             * the player's own tank. A combo rather than a tick box
+             * because the choice is a named mode, and the index is the
+             * wire byte, so the entries are in enum order. Classic mode
+             * holds it the way it holds the rows above: the server
+             * refuses the edit while it is on. */
+            const char *windows[] = {
+                langGetText(STR_DLGLOBBY_WINDOW_EXPANDED),
+                langGetText(STR_DLGLOBBY_WINDOW_CLASSIC),
+            };
+            int  window = (int)clientSimGetOverviewWindow(cs);
+            bool windowLocked =
+                (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_OVERVIEW_WINDOW) != 0;
+            bool windowDisabled = !effectiveHost || windowLocked || classic;
+            ImGui::PushID("overviewwindow");
+            if (windowDisabled) ImGui::BeginDisabled();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f * s);
+            if (ImGui::Combo("##window", &window, windows,
+                             (int)OVERVIEW_WINDOW_COUNT)) {
+                uint8_t v = (uint8_t)window;
+                lobbySendSetting(cs, LST_OVERVIEW_WINDOW, &v, 1);
+            }
+            /* Hover read before the badge draws, as above. */
+            bool windowHovered =
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            if (windowDisabled) ImGui::EndDisabled();
+            if (windowLocked) lobbyRenderLockBadge();
+            if (windowHovered) {
+                bool classicIsWhy = classic && !windowLocked && effectiveHost;
+                ImGui::SetTooltip(
+                    "%s", langGetText(classicIsWhy
+                                          ? STR_DLGLOBBY_CLASSIC_MODE_TIP
+                                          : STR_DLGLOBBY_OVERVIEW_WINDOW_TIP));
+            }
+            ImGui::PopID();
+
+            /* What stops the player seeing inside that block. A tick box
+             * because there is one rule to turn on, though the wire
+             * carries a selector so another rule can join it. */
+            bool sight =
+                clientSimGetLineOfSight(cs) != (uint8_t)lineOfSightOff;
+            bool sightLocked =
+                (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_LINE_OF_SIGHT) != 0;
+            bool sightDisabled = !effectiveHost || sightLocked || classic;
+            if (sightDisabled) ImGui::BeginDisabled();
+            if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),
+                                &sight)) {
+                uint8_t v = (uint8_t)(sight ? lineOfSightBuildingsAndTrees
+                                            : lineOfSightOff);
+                lobbySendSetting(cs, LST_LINE_OF_SIGHT, &v, 1);
+            }
+            bool sightHovered =
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            if (sightDisabled) ImGui::EndDisabled();
+            if (sightLocked) lobbyRenderLockBadge();
+            if (sightHovered) {
+                bool classicIsWhy = classic && !sightLocked && effectiveHost;
+                ImGui::SetTooltip(
+                    "%s", langGetText(classicIsWhy
+                                          ? STR_DLGLOBBY_CLASSIC_MODE_TIP
+                                          : STR_DLGLOBBY_LINE_OF_SIGHT_TIP));
             }
 
             /* A real Close button, not just the title-bar X: ImGui's

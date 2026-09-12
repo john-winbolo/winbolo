@@ -412,6 +412,18 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         cs->alliesInTrees = evt->u.lobbySettings.lobbyAlliesInTrees;
+        /* The server chooses what the map overview keeps live and what
+         * blocks sight inside it; the keys no longer do. A byte this
+         * build has no name for reads as the default rather than
+         * being wrapped onto a value the server did not ask for. */
+        cs->overviewWindow = (evt->u.lobbySettings.lobbyOverviewWindow <
+                              (uint8_t)OVERVIEW_WINDOW_COUNT)
+                                 ? evt->u.lobbySettings.lobbyOverviewWindow
+                                 : (uint8_t)overviewWindowExpanded;
+        cs->lineOfSight = (evt->u.lobbySettings.lobbyLineOfSight <
+                           (uint8_t)LINE_OF_SIGHT_COUNT)
+                              ? evt->u.lobbySettings.lobbyLineOfSight
+                              : (uint8_t)lineOfSightOff;
         cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining

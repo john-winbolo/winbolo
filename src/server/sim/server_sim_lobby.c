@@ -101,6 +101,8 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   }
   sim->originalLobbySettings.classicMode         = sim->classicMode;
   sim->originalLobbySettings.alliesInTrees       = sim->alliesInTrees;
+  sim->originalLobbySettings.overviewWindow      = sim->overviewWindow;
+  sim->originalLobbySettings.lineOfSight         = sim->lineOfSight;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -393,6 +395,28 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
              * is set, the same way it owns the three view policies. */
             if (sim->classicMode) return false;
             serverSimSetAlliesInTrees(sim, value[0] != 0);
+            return true;
+        }
+        case LST_OVERVIEW_WINDOW: {
+            if (len != 1) return false;
+            /* Classic mode owns the overview while it is set, the same
+             * way it owns the three view policies. */
+            if (sim->classicMode) return false;
+            /* A byte outside the enum is refused rather than left to the
+             * setter to ignore: the lobby offers a fixed set of choices,
+             * so anything else is a malformed command — the same reading
+             * LST_PILL_VIEW gives an unknown policy. LST_ALLIES_IN_TREES
+             * takes any non-zero byte because it is a bool; these two are
+             * selectors. */
+            if (value[0] >= (uint8_t)OVERVIEW_WINDOW_COUNT) return false;
+            serverSimSetOverviewWindow(sim, value[0]);
+            return true;
+        }
+        case LST_LINE_OF_SIGHT: {
+            if (len != 1) return false;
+            if (sim->classicMode) return false;
+            if (value[0] >= (uint8_t)LINE_OF_SIGHT_COUNT) return false;
+            serverSimSetLineOfSight(sim, value[0]);
             return true;
         }
         case LST_PILL_VIEW:

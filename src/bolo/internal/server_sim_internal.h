@@ -141,7 +141,7 @@ struct ServerSim {
                                       * 0 is empty (or unowned), the next
                                       * incoming player is promoted to host.
                                       * Consumed by the join handler. */
-    uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+    uint32_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
     /* WBN lobby_update batching: lobby/setting/map changes mark the
      * snapshot dirty; it is flushed on the periodic WBN tick at most
      * every WBN_LOBBY_UPDATE_INTERVAL seconds, and force-sent before
@@ -173,6 +173,13 @@ struct ServerSim {
     bool     alliesInTrees;        /* allied tanks standing in trees are sent
                                     * to their allies instead of being
                                     * withheld; off is the classic
+                                    * behaviour. */
+    uint8_t  overviewWindow;       /* OverviewWindow — which block of squares
+                                    * the map overview keeps live round the
+                                    * player's own tank. Expanded (0) is
+                                    * today's behaviour. */
+    uint8_t  lineOfSight;          /* LineOfSightMode — what blocks sight
+                                    * inside that block. Off (0) is today's
                                     * behaviour. */
     ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
                                     * startup, read by the advertisement
@@ -215,11 +222,13 @@ struct ServerSim {
         bool     openHost;
         bool     autoLockOnGameStart;
         bool     ranked;
-        uint16_t serverLocks;
+        uint32_t serverLocks;
         ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         bool       classicMode;
         bool       alliesInTrees;
+        uint8_t    overviewWindow;
+        uint8_t    lineOfSight;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running

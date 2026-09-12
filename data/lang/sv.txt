@@ -1932,6 +1932,13 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=Ställer Bunkervy på Tangent, och Basvy och Vy f�
 STR_MENU_CLASSIC_MODE_TIP=Servern har klassiskt läge på, så den här vyn är avstängd.
 STR_DLGLOBBY_ALLIES_TREES_CB=Se allierade i skogen
 STR_DLGLOBBY_ALLIES_TREES_TIP=Allierade tanks som står i skogen ritas på din skärm\ni stället för att gömmas. Krigsdimman gäller ändå, så\ndu ser dem bara där du redan ser. Av är den klassiska\nregeln, och klassiskt läge stänger av det.
+# Map overview live block, and what blocks sight inside it
+STR_DLGLOBBY_OVERVIEW_WINDOW=Översiktsfönster
+STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Vilket block rutor kartöversikten håller aktivt runt din\negen tank. Utökat är allt den klassiska vyn kan scrolla\ntill; Klassiskt begränsar det till fönstret den vyn visar.\nKlassiskt läge ställer det på Klassiskt och håller det\ndär. Servern skickar samma kartdata oavsett.
+STR_DLGLOBBY_LINE_OF_SIGHT_CB=Siktlinje
+STR_DLGLOBBY_LINE_OF_SIGHT_TIP=Byggnader och dungar med träd hindrar dig från att se\nlängre in i det aktiva blocket. Av är den klassiska\nregeln, och klassiskt läge stänger av det. Servern\nskickar samma kartdata oavsett, så det här är en\nbekvämlighetsregel och ingen garanti mot en modifierad klient.
+STR_DLGLOBBY_WINDOW_EXPANDED=Utökat
+STR_DLGLOBBY_WINDOW_CLASSIC=Klassiskt
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standard

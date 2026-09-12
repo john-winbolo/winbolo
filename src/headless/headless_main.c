@@ -142,10 +142,11 @@ static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
 /* Visibility rules for the fast-mode server sim, indexed by
- * ViewCategory. Defaults match serverSimInit: pills and allied tanks
- * always visible, bases off, 30-second decay everywhere. */
+ * ViewCategory. The stock set from view_policy.h, the same one
+ * serverSimInit writes: a pillbox shows only while it is watched,
+ * bases and allied tanks not at all, 30-second decay everywhere. */
 static ViewPolicy optViewPolicy[VIEW_CATEGORY_COUNT] = {
-  viewPolicyAlways, viewPolicyOff, viewPolicyAlways
+  VIEW_POLICY_STOCK_PILL, VIEW_POLICY_STOCK_BASE, VIEW_POLICY_STOCK_ALLY
 };
 static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
   VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS
@@ -154,6 +155,14 @@ static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
 static bool optClassicMode = false;
 /* Send allied tanks standing in trees to their allies; off is classic. */
 static bool optAlliesInTrees = false;
+/* Which block of squares the map overview keeps live, and what blocks
+ * sight inside it. Both are the stock set from view_policy.h, the same
+ * one serverSimInit writes: the narrow window, with nothing blocking
+ * sight inside it. */
+static OverviewWindow optOverviewWindow = OVERVIEW_WINDOW_STOCK;
+/* A bool here because the switch is on/off, so it tracks the stock mode
+ * by asking whether that mode is the "nothing blocks sight" one. */
+static bool optLineOfSight = (LINE_OF_SIGHT_STOCK != lineOfSightOff);
 
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
@@ -1917,9 +1926,10 @@ static void printUsage(const char *prog) {
     "                    first game tick and closed at exit\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
-    "  --pillview MODE   Pillbox visibility: always (default), key, decay, off\n"
+    "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
     "  --baseview MODE   Base visibility: always, key, decay, off (default off)\n"
-    "  --allyview MODE   Allied tank visibility: always (default), key, decay, off\n"
+    "  --allyview MODE   Allied tank visibility: always, key, decay, off\n"
+    "                    (default off)\n"
     "  --pillviewdecay S Seconds a pill stays visible under \"decay\" (5-600,\n"
     "                    default 30)\n"
     "  --baseviewdecay S Same for bases (5-600, default 30)\n"
@@ -1927,9 +1937,14 @@ static void printUsage(const char *prog) {
     "  --alliesintrees   Send allied tanks standing in trees to their allies\n"
     "                    instead of withholding them (off by default, and off\n"
     "                    under --classicmode)\n"
+    "  --overviewwindow M  Map overview live block: expanded, classic (default)\n"
+    "  --lineofsight     Buildings and stands of trees block sight inside the\n"
+    "                    live block (off by default, and off under\n"
+    "                    --classicmode)\n"
     "  --classicmode     Classic Bolo view: sets pillview key, baseview off\n"
     "                    and allyview off, overriding those three switches,\n"
-    "                    and turns allies in trees off\n"
+    "                    turns allies in trees off, and sets the overview\n"
+    "                    window to classic with line of sight off\n"
     "  An unknown mode word or a decay outside the range is an error here,\n"
     "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
@@ -1944,6 +1959,18 @@ static bool parseViewPolicyWord(const char *word, ViewPolicy *out) {
   else if (strcmp(word, "off") == 0) *out = viewPolicyOff;
   else {
     fprintf(stderr, "Error: unknown view policy '%s' (use: always, key, decay, off)\n", word);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* Body for --overviewwindow. Rejects an unknown mode word the same way
+ * parseViewPolicyWord does. */
+static bool parseOverviewWindowWord(const char *word, OverviewWindow *out) {
+  if (strcmp(word, "expanded") == 0) *out = overviewWindowExpanded;
+  else if (strcmp(word, "classic") == 0) *out = overviewWindowClassic;
+  else {
+    fprintf(stderr, "Error: unknown overview window '%s' (use: expanded, classic)\n", word);
     return FALSE;
   }
   return TRUE;
@@ -2037,6 +2064,10 @@ static bool parseArgs(int argc, char **argv) {
                               &optViewDecaySecs[viewCategoryAlly])) return FALSE;
     } else if (strcmp(argv[i], "--alliesintrees") == 0) {
       optAlliesInTrees = true;
+    } else if (strcmp(argv[i], "--overviewwindow") == 0 && i + 1 < argc) {
+      if (!parseOverviewWindowWord(argv[++i], &optOverviewWindow)) return FALSE;
+    } else if (strcmp(argv[i], "--lineofsight") == 0) {
+      optLineOfSight = true;
     } else if (strcmp(argv[i], "--classicmode") == 0) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
@@ -2153,8 +2184,13 @@ static void applyViewPolicyOptions(ServerSim *sim) {
   if (optAlliesInTrees) {
     serverSimSetAlliesInTrees(sim, true);
   }
-  /* After the loop and after allies in trees, so classic mode wins over
-   * the three switches and over that one. */
+  serverSimSetOverviewWindow(sim, (uint8_t)optOverviewWindow);
+  if (optLineOfSight) {
+    serverSimSetLineOfSight(sim, (uint8_t)lineOfSightBuildingsAndTrees);
+  }
+  /* After the loop and after allies in trees, the overview window and
+   * line of sight, so classic mode wins over the three switches and over
+   * those three. */
   if (optClassicMode) {
     serverSimSetClassicMode(sim, true);
   }

@@ -101,8 +101,13 @@ static inline SDL_Texture *mapViewSpriteSrc(const MapViewCtx *ctx,
     return ctx->tilesTex;
 }
 
-/* Draw pre-built tile buffer. */
+/* Draw pre-built tile buffer. hiddenView marks the squares the player cannot
+   see into; those are washed over with fog, because the tile they carry is
+   what was last seen there rather than what is there now. NULL draws every
+   square clear. The colour and the strength are in fog_look.h, shared with
+   the full screen map so the same ground reads the same in both. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
+                      screenHidden *hiddenView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY);
 

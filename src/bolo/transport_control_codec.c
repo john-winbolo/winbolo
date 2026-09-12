@@ -481,27 +481,28 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
  *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [hasLobby 1]
- *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
+ *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 4 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
  *   [lobbyStartDelay 4 BE] [hostSlot 1]
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
- *   [classicMode 1] [alliesInTrees 1]
+ *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
+ *   [overviewWindow 1] [lineOfSight 1]
  *
  * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
  * optionally and leaves zero-init defaults in place when the sender
  * omits them, which keeps old/new codec pairs interoperable.
- * serverLocks is packed big-endian to match every other multi-byte
- * field in the codec (packU16/packU32). */
+ * serverLocks is packed big-endian with packU32, matching every other
+ * multi-byte field in the codec. */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
-    (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
+    (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
  * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
- * + alliesInTrees(1) + voiceMode(1). */
+ * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -531,8 +532,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.hasLobby ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyOpenHost ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAutoLockOnGameStart ? 1 : 0;
-    packU16(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
-    pos += 2;
+    packU32(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
+    pos += 4;
     buf[pos++] = evt->u.lobbySettings.lobbyRanked ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAllowNewPlayers ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyWbnAvailable ? 1 : 0;
@@ -550,6 +551,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyClassicMode ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAlliesInTrees ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.voiceMode;
+    buf[pos++] = evt->u.lobbySettings.lobbyOverviewWindow;
+    buf[pos++] = evt->u.lobbySettings.lobbyLineOfSight;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -2091,8 +2094,8 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     outEvt->u.lobbySettings.hasLobby         = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyOpenHost            = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyAutoLockOnGameStart = buf[pos++] ? true : false;
-    outEvt->u.lobbySettings.lobbyServerLocks         = unpackU16(buf + pos);
-    pos += 2;
+    outEvt->u.lobbySettings.lobbyServerLocks         = unpackU32(buf + pos);
+    pos += 4;
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyRanked = buf[pos++] ? true : false;
     }
@@ -2143,6 +2146,14 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
             outEvt->u.lobbySettings.voiceMode = serverVoiceOn;
             break;
         }
+    }
+    /* Both bytes are stored raw. The range check happens once, where the
+     * client acts on them in clientSimApplyControl. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyOverviewWindow = buf[pos++];
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyLineOfSight = buf[pos++];
     }
     return true;
 }

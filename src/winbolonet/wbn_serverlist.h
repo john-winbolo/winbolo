@@ -35,6 +35,8 @@ typedef struct {
   int  allyView;                             /* "allyview" ViewPolicy; absent = always */
   bool classicMode;                          /* "classicmode"; absent = off */
   bool alliesInTrees;                        /* "alliesintrees"; absent = off */
+  int  overviewWindow;                       /* "overviewwindow"; absent = expanded */
+  int  lineOfSight;                          /* "lineofsight"; absent = off */
   int  pillViewDecay;                        /* "pillviewdecay" secs; absent = 30 */
   int  baseViewDecay;                        /* "baseviewdecay" secs; absent = 30 */
   int  allyViewDecay;                        /* "allyviewdecay" secs; absent = 30 */

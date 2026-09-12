@@ -1578,6 +1578,13 @@
 #define STR_MENU_CLASSIC_MODE_TIP           2010
 #define STR_DLGLOBBY_ALLIES_TREES_CB        2011
 #define STR_DLGLOBBY_ALLIES_TREES_TIP       2012
+/* Map overview live block, and what blocks sight inside it */
+#define STR_DLGLOBBY_OVERVIEW_WINDOW        2154
+#define STR_DLGLOBBY_OVERVIEW_WINDOW_TIP    2155
+#define STR_DLGLOBBY_LINE_OF_SIGHT_CB       2156
+#define STR_DLGLOBBY_LINE_OF_SIGHT_TIP      2157
+#define STR_DLGLOBBY_WINDOW_EXPANDED        2158
+#define STR_DLGLOBBY_WINDOW_CLASSIC         2159
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014

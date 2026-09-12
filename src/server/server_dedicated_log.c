@@ -330,10 +330,16 @@ static void serverDedicatedLogBuildSettings(ServerSim *sim, char *out) {
     /* Whether a password is set, never the password text. */
     if (sim->hasPassword)           flags |= 0x10u;
     if (sim->allowNewPlayers)       flags |= 0x20u;
+    /* One bit each, because each of these has two values today. A third
+     * value in either would need the blob to grow rather than another
+     * bit here. */
+    if (sim->overviewWindow == (BYTE)overviewWindowClassic) flags |= 0x40u;
+    if (sim->lineOfSight != (BYTE)lineOfSightOff)           flags |= 0x80u;
 
     out[0]  = (char)LOG_SETTINGS_PAYLOAD_LEN;
-    /* Same packing as INFO_PACKET.view_policies, so the three carriers of the
-     * visibility rules all read the same byte. */
+    /* Same packing as INFO_PACKET.view_policies, so this byte reads the
+     * same wherever it is carried. The overview window and line of sight
+     * ride the flags byte here rather than INFO's second view byte. */
     out[1]  = (char)infoPacketPackViewPolicies(sim->viewPolicy[viewCategoryPill],
                                                sim->viewPolicy[viewCategoryBase],
                                                sim->viewPolicy[viewCategoryAlly],
@@ -350,6 +356,9 @@ static void serverDedicatedLogBuildSettings(ServerSim *sim, char *out) {
     out[10] = (char)flags;
     out[11] = (char)((timeMinutes >> 8) & 0xFF);
     out[12] = (char)(timeMinutes & 0xFF);
+    /* The blob carries 16 bits of the lock mask. No lock uses bit 16 or
+     * above, so nothing is lost; widening the blob would version the
+     * format for a value that is still zero. */
     out[13] = (char)((sim->serverLocks >> 8) & 0xFF);
     out[14] = (char)(sim->serverLocks & 0xFF);
 }

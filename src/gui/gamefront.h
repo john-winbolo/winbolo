@@ -1018,11 +1018,12 @@ void gameFrontSetHostingVoiceMode(int mode);
  * Read by gameFrontGetPrefs and pushed onto the sim with
  * serverSimSetViewPolicy in gameFrontSetupServer. Each policy global
  * holds a ViewPolicy value; the decay globals hold seconds in the
- * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Defaults match the
- * sim: pills and allied tanks always visible, bases off. */
-extern int gameFrontViewPillPolicy;     /* default viewPolicyAlways (0) */
-extern int gameFrontViewBasePolicy;     /* default viewPolicyOff (3)    */
-extern int gameFrontViewAllyPolicy;     /* default viewPolicyAlways (0) */
+ * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Each starts on the
+ * rules an unconfigured server runs, so hosting with an untouched INI
+ * leaves the sim as serverSimInit created it. */
+extern int gameFrontViewPillPolicy;     /* VIEW_POLICY_STOCK_PILL */
+extern int gameFrontViewBasePolicy;     /* VIEW_POLICY_STOCK_BASE */
+extern int gameFrontViewAllyPolicy;     /* VIEW_POLICY_STOCK_ALLY */
 extern int gameFrontViewPillDecaySecs;  /* 5-600, default 30 */
 extern int gameFrontViewBaseDecaySecs;
 extern int gameFrontViewAllyDecaySecs;
@@ -1032,6 +1033,13 @@ extern bool gameFrontClassicMode;
 /* Allied tanks standing in trees are sent to their allies. Applied before
  * classic mode, which forces it back off. Default off. */
 extern bool gameFrontAlliesInTrees;
+/* Which block of squares the map overview keeps live. Holds an
+ * OverviewWindow; starts on OVERVIEW_WINDOW_STOCK. */
+extern int gameFrontOverviewWindow;
+/* What stops the player seeing inside that block. Holds a
+ * LineOfSightMode; starts on LINE_OF_SIGHT_STOCK. Both are applied
+ * before classic mode, which writes them itself. */
+extern int gameFrontLineOfSight;
 
 void gameFrontSetViewPillPolicy(int policy);
 void gameFrontSetViewBasePolicy(int policy);
@@ -1041,5 +1049,7 @@ void gameFrontSetViewBaseDecaySecs(int secs);
 void gameFrontSetViewAllyDecaySecs(int secs);
 void gameFrontSetClassicMode(bool on);
 void gameFrontSetAlliesInTrees(bool on);
+void gameFrontSetOverviewWindow(int window);
+void gameFrontSetLineOfSight(int mode);
 
 #endif

@@ -52,6 +52,8 @@ static int parse_full_entry(void) {
         "\"baseview\":2,"
         "\"allyview\":3,"
         "\"alliesintrees\":true,"
+        "\"overviewwindow\":1,"
+        "\"lineofsight\":1,"
         "\"pillviewdecay\":45,"
         "\"baseviewdecay\":90,"
         "\"allyviewdecay\":15,"
@@ -88,6 +90,11 @@ static int parse_full_entry(void) {
     UT_ASSERT_MSG(s->pillView == 1 && s->baseView == 2 && s->allyView == 3,
                   "view policies=%d/%d/%d", s->pillView, s->baseView, s->allyView);
     UT_ASSERT_MSG(s->alliesInTrees, "alliesInTrees should be true");
+    /* 1 is the narrow overview window, and 1 is sight blocked by
+     * buildings and trees. Both are 0 by default. */
+    UT_ASSERT_MSG(s->overviewWindow == 1 && s->lineOfSight == 1,
+                  "overview window/line of sight=%d/%d, want 1/1",
+                  s->overviewWindow, s->lineOfSight);
     UT_ASSERT_MSG(s->pillViewDecay == 45 && s->baseViewDecay == 90 &&
                       s->allyViewDecay == 15,
                   "decay secs=%d/%d/%d", s->pillViewDecay, s->baseViewDecay,
@@ -136,6 +143,12 @@ static int parse_defaults(void) {
                   "absent view policies=%d/%d/%d, want 0/3/0",
                   s->pillView, s->baseView, s->allyView);
     UT_ASSERT_MSG(!s->alliesInTrees, "absent alliesintrees should be false");
+    /* Absent overview window and line of sight are the expanded window
+     * with nothing blocking sight, which is what the server ran before
+     * the fields existed. */
+    UT_ASSERT_MSG(s->overviewWindow == 0 && s->lineOfSight == 0,
+                  "absent overview window/line of sight=%d/%d, want 0/0",
+                  s->overviewWindow, s->lineOfSight);
     /* Absent decay seconds are VIEW_DECAY_DEFAULT_SECS, not 0 — a
      * tracker that has not learned the fields must not report 0s. */
     UT_ASSERT_MSG(s->pillViewDecay == 30 && s->baseViewDecay == 30 &&
@@ -152,11 +165,32 @@ static int parse_defaults(void) {
     return 0;
 }
 
+static int parse_view_out_of_range(void) {
+    /* A number neither enum names — a newer tracker, or a bad row — must
+     * not reach the browser as a mode with no name. Each clamps back to
+     * its default. */
+    const char *body =
+        "{\"servers\":[{\"address\":\"h\",\"overviewwindow\":7,"
+        "\"lineofsight\":-3}]}";
+    WbnServerList list;
+    UT_ASSERT(wbnServerListParse(body, &list));
+    UT_ASSERT_MSG(list.count == 1, "count=%d", list.count);
+
+    const WbnServerListEntry *s = &list.servers[0];
+    UT_ASSERT_MSG(s->overviewWindow == 0,
+                  "out-of-range overview window=%d, want 0", s->overviewWindow);
+    UT_ASSERT_MSG(s->lineOfSight == 0,
+                  "out-of-range line of sight=%d, want 0", s->lineOfSight);
+    wbnServerListFree(&list);
+    return 0;
+}
+
 int run_wbn_serverlist_parse(void) {
     int rc;
     rc = parse_full_entry();            if (rc) return rc;
     rc = parse_forward_compat_version(); if (rc) return rc;
     rc = parse_defaults();              if (rc) return rc;
+    rc = parse_view_out_of_range();     if (rc) return rc;
     return 0;
 }
 

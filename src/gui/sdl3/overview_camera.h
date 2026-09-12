@@ -45,7 +45,7 @@
 #endif
 
 #include "types.h"           /* MAP_ARRAY_SIZE */
-#include "overview_types.h"  /* OverviewMap, OVERVIEW_F_LIVE */
+#include "overview_types.h"  /* OverviewMap, OVERVIEW_F_SIGHT */
 #include "../tiles.h"        /* TILE_SIZE_X */
 
 /* Screen pixels one map square occupies at 1x zoom. A square is drawn from
@@ -233,8 +233,10 @@ bool overviewCameraVisibleRange(const OverviewCamera *cam, int viewW, int viewH,
  * off the picture — the memory behind a frozen square is terrain, and nothing
  * that moves belongs on it. The local player's own tank is no different:
  * under a key view policy the block round the tank closes while an item view
- * is on, and the tank goes dark with the ground it is standing on. Off-map
- * squares are never drawn, and a NULL memory shows nothing. */
+ * is on, and the tank goes dark with the ground it is standing on. The test is
+ * OVERVIEW_F_SIGHT rather than OVERVIEW_F_LIVE, so a square a terrain-only
+ * region has lit shows its ground and nothing standing on it. Off-map squares
+ * are never drawn, and a NULL memory shows nothing. */
 bool overviewEntityIsVisible(const OverviewMap *om, int mapX, int mapY);
 
 #ifdef __cplusplus

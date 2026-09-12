@@ -63,25 +63,28 @@ int run_lobby_lock_bit_lookup(void) {
     UT_ASSERT(serverSimGetSettingLockBit(LST_ALLY_VIEW)         == LOBBY_LOCK_ALLY_VIEW);
     UT_ASSERT(serverSimGetSettingLockBit(LST_CLASSIC_MODE)      == LOBBY_LOCK_CLASSIC_MODE);
     UT_ASSERT(serverSimGetSettingLockBit(LST_ALLIES_IN_TREES)   == LOBBY_LOCK_ALLIES_IN_TREES);
+    UT_ASSERT(serverSimGetSettingLockBit(LST_OVERVIEW_WINDOW)   == LOBBY_LOCK_OVERVIEW_WINDOW);
+    UT_ASSERT(serverSimGetSettingLockBit(LST_LINE_OF_SIGHT)     == LOBBY_LOCK_LINE_OF_SIGHT);
 
-    /* Unknown setting ids must return 0xFFFF so the packet handler can
-     * silently drop them (forward-compat) instead of treating them as
-     * "always lockable". 0xFE is unused at the time of writing. */
-    UT_ASSERT(serverSimGetSettingLockBit(0xFE) == 0xFFFFu);
+    /* Unknown setting ids must return 0xFFFFFFFF so the packet handler
+     * can silently drop them (forward-compat) instead of treating them
+     * as "always lockable". 0xFE is unused at the time of writing. */
+    UT_ASSERT(serverSimGetSettingLockBit(0xFE) == 0xFFFFFFFFu);
 
     /* All used lock bits must be distinct so no setting accidentally
      * shadows another. Build a mask from every LST_*-derived bit and
      * count the population — if any two collide, popcount drops. */
-    uint16_t allBits =
+    uint32_t allBits =
         LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_MINES | LOBBY_LOCK_AI_POLICY |
         LOBBY_LOCK_TIME_LIMIT | LOBBY_LOCK_AUTO_LOCK_ON_GAME |
         LOBBY_LOCK_RANKED | LOBBY_LOCK_PASSWORD | LOBBY_LOCK_OPEN_HOST |
         LOBBY_LOCK_MAP | LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
         LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_CLASSIC_MODE |
-        LOBBY_LOCK_ALLIES_IN_TREES;
+        LOBBY_LOCK_ALLIES_IN_TREES | LOBBY_LOCK_OVERVIEW_WINDOW |
+        LOBBY_LOCK_LINE_OF_SIGHT;
     int popcount = 0;
-    for (int i = 0; i < 16; i++) if (allBits & (1u << i)) popcount++;
-    UT_ASSERT_MSG(popcount == 14, "every defined LOBBY_LOCK_* bit must be distinct");
+    for (int i = 0; i < 32; i++) if (allBits & (1u << i)) popcount++;
+    UT_ASSERT_MSG(popcount == 16, "every defined LOBBY_LOCK_* bit must be distinct");
 
     return 0;
 }
@@ -126,7 +129,7 @@ int run_lobby_lock_rejects_settings(void) {
     /* Composite mask — every locked setting reports locked, nothing
      * else does. Mirrors a real "-lock gametype,ranked,autolock"
      * invocation. */
-    uint16_t composite = LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_RANKED |
+    uint32_t composite = LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_RANKED |
                          LOBBY_LOCK_AUTO_LOCK_ON_GAME | LOBBY_LOCK_BASE_VIEW;
     serverSimSetServerLocks(sim, composite);
     /* The stored mask is the CLI mask plus its implied locks: base view
@@ -134,7 +137,7 @@ int run_lobby_lock_rejects_settings(void) {
      * comes along. See run_classic_mode_lock_implied. */
     UT_ASSERT_MSG(serverSimGetServerLocks(sim) ==
                       (composite | LOBBY_LOCK_CLASSIC_MODE),
-                  "stored mask = 0x%04X, want the CLI mask 0x%04X plus "
+                  "stored mask = 0x%08X, want the CLI mask 0x%08X plus "
                   "the implied classic-mode lock",
                   (unsigned)serverSimGetServerLocks(sim),
                   (unsigned)composite);
@@ -170,7 +173,7 @@ int run_lobby_lock_mask_roundtrip(void) {
     UT_ASSERT(serverSimGetServerLocks(sim) == 0);
 
     /* Set every defined bit and read back unchanged. */
-    uint16_t allLocks =
+    uint32_t allLocks =
         LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_AI_POLICY | LOBBY_LOCK_MINES |
         LOBBY_LOCK_TIME_LIMIT | LOBBY_LOCK_AUTO_LOCK_ON_GAME |
         LOBBY_LOCK_PASSWORD | LOBBY_LOCK_RANKED | LOBBY_LOCK_OPEN_HOST |

@@ -48,6 +48,15 @@ struct screenMineObj {
   bool mineItem[MAIN_BACK_BUFFER_SIZE_X][MAIN_BACK_BUFFER_SIZE_Y];
 };
 
+/* Screen Hidden - the squares of the back buffer the player cannot see into.
+ * Such a square draws the tile it last showed rather than the tile that is
+ * there, and nothing moving on it is drawn. Every square is false while
+ * buildings do not block sight. */
+typedef struct screenHiddenObj *screenHidden;
+struct screenHiddenObj {
+  bool hiddenItem[MAIN_BACK_BUFFER_SIZE_X][MAIN_BACK_BUFFER_SIZE_Y];
+};
+
 /* Flag to indicate no gunsight is to be drawn */
 #define NO_GUNSIGHT -1
 

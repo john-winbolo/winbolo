@@ -344,13 +344,30 @@ bool clientSimCreate(ClientSim *cs) {
   cs->netStat = netRunning;
 
   /* Visibility rules, until the server's own arrive with the lobby settings.
-   * The three a server starts with (server_sim.c), so a display tick before
-   * they land draws what the server is actually sending rather than a block
-   * round every allied base. The memset above would leave every category on
-   * viewPolicyAlways. */
-  cs->viewPolicy[viewCategoryPill] = viewPolicyAlways;
-  cs->viewPolicy[viewCategoryBase] = viewPolicyOff;
-  cs->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+   * The three an unconfigured server starts on (serverSimInit in
+   * server_sim.c): a pillbox only while the player is watching it, bases and
+   * allied tanks not at all. Keeping the two in step means a display tick
+   * before the settings land draws what the server is actually sending,
+   * rather than a block round every allied tank the server sends nothing
+   * about. The memset above would leave every category on viewPolicyAlways,
+   * which is why all three are written out.
+   *
+   * cs->overviewWindow and cs->lineOfSight, a few fields up, are deliberately
+   * NOT seeded from serverSimInit the same way — they ride the memset, which
+   * is overviewWindowExpanded / lineOfSightOff. That is the wire default, not
+   * the server's starting value: clientSimApplyControl writes Expanded for a
+   * byte that is absent or out of range, so a peer whose payload predates the
+   * fields has to read back Expanded, and client_sim.h documents exactly that.
+   * Seeding Classic here would make a pre-fields payload visibly jump
+   * Classic -> Expanded. The view policies have no such wire default to fall
+   * back on — viewPolicyAlways is 0 only by historical accident — which is
+   * why they, and only they, are seeded from the server.
+   *
+   * In the terms view_policy.h sets out: the three below are meaning A,
+   * the two above are meaning B. */
+  cs->viewPolicy[viewCategoryPill] = VIEW_POLICY_STOCK_PILL;
+  cs->viewPolicy[viewCategoryBase] = VIEW_POLICY_STOCK_BASE;
+  cs->viewPolicy[viewCategoryAlly] = VIEW_POLICY_STOCK_ALLY;
 
   /* Lobby state defaults (memset already zeroed, but be explicit) */
   memset(cs->lobbySlots, 0, sizeof(cs->lobbySlots));
@@ -1016,7 +1033,8 @@ bool clientSimAllyViewAwaitingFirstData(const ClientSim *cs) {
 
 void clientSimFillOverviewViewInputs(const ClientSim *cs,
                                      OverviewViewInputs *in) {
-  int cat; /* Looping variable */
+  int cat;                 /* Looping variable */
+  const ScrollState *sc;   /* The client's own scroll state */
 
   if (in == NULL) {
     return;
@@ -1038,6 +1056,30 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->allyViewable = clientSimAllyViewMask(cs);
   in->viewKind = cs->viewport.viewKind;
   in->viewTarget = cs->viewport.viewTarget;
+
+  in->window = (OverviewWindow)cs->overviewWindow;
+  in->lineOfSight = (LineOfSightMode)cs->lineOfSight;
+
+  /* A player with no tank in their slot has no window to report: those fields
+   * keep the zeroes the defaults gave them, and viewValid says so. */
+  if (MY_TANK((ClientSim *)cs) == NULL) {
+    return;
+  }
+
+  /* The classic scroll keeps running whether or not the classic view is on
+   * screen, so its offset is always the square that view would be showing. The
+   * back buffer carries one spare square each side of the 15x15, so the first
+   * square actually visible is one in from the offset. */
+  sc = clientSimGetScroll((ClientSim *)cs);
+  in->viewLeft = (BYTE)(cs->viewport.xOffset + 1);
+  in->viewTop = (BYTE)(cs->viewport.yOffset + 1);
+  in->manualHold = sc->autoScrollOverRide;
+  in->viewSubX = sc->subPosX;
+  in->viewSubY = sc->subPosY;
+  /* Those readings only say where the player is looking while a live tank is
+   * being followed: an item view has taken the camera off the tank, and a dead
+   * one leaves the offsets wherever the view stopped. */
+  in->viewValid = clientSimIsMyTankAlive(cs) && in->viewKind == VIEW_KIND_TANK;
 }
 
 /* Feeds the overview its per-tick view of the world. Reads the local tank's
@@ -2247,6 +2289,7 @@ ScrollState   *clientSimGetScroll(ClientSim *cs)     { return &cs->scroll; }
 InterpContext *clientSimGetInterpCtx(ClientSim *cs)  { return &cs->interpCtx; }
 screen        *clientSimGetView(ClientSim *cs)       { return &cs->viewport.view; }
 screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->viewport.mineView; }
+screenHidden  *clientSimGetHiddenView(ClientSim *cs) { return &cs->viewport.hiddenView; }
 
 const struct ViewPort *clientSimViewport(const ClientSim *cs)  { return &cs->viewport; }
 struct ViewPort       *clientSimViewportMut(ClientSim *cs)     { return &cs->viewport; }
@@ -2486,7 +2529,7 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
      * CTRL_LOBBY_SETTINGS has populated (or empty, until it arrives). */
   }
 
-  clientSimUpdateView(cs, redraw);
+  clientSimUpdateView(cs, redraw, NULL);
   basesClearMines(gs);
   return true;
 }
@@ -2533,9 +2576,13 @@ bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs
 bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
 bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
-uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
+uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
 
+/* The NULL-cs answers here and in the two getters below are meaning B in
+ * view_policy.h — what a reader assumes when nothing named a policy —
+ * not the VIEW_POLICY_STOCK_* set clientSimCreate seeds the real fields
+ * with. */
 ViewPolicy clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat) {
   if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
     return viewPolicyAlways;
@@ -2549,6 +2596,14 @@ bool clientSimGetClassicMode(const ClientSim *cs) {
 
 bool clientSimGetAlliesInTrees(const ClientSim *cs) {
   return cs ? cs->alliesInTrees : false;
+}
+
+uint8_t clientSimGetOverviewWindow(const ClientSim *cs) {
+  return cs ? cs->overviewWindow : (uint8_t)overviewWindowExpanded;
+}
+
+uint8_t clientSimGetLineOfSight(const ClientSim *cs) {
+  return cs ? cs->lineOfSight : (uint8_t)lineOfSightOff;
 }
 
 ServerVoiceMode clientSimGetServerVoiceMode(const ClientSim *cs) {
@@ -3010,6 +3065,47 @@ void clientSimSetScrollMechanism(int mech) {
   scrollSetMechanism((ScrollMechanism)mech);
 }
 
+/* Which window is in force, for a frontend that cannot see the enum and has to
+ * tell the two apart: the block is either placed from the classic view or
+ * centred on the tank, and the scroll keys belong to whichever of them is
+ * actually moving something. No sim, no window to follow. */
+bool clientSimOverviewWindowFollowsView(const ClientSim *cs) {
+  if (cs == NULL) {
+    return FALSE;
+  }
+  return overviewWindowFollowsView((OverviewWindow)cs->overviewWindow);
+}
+
+/* Read from the same struct the overview places the block from, so the two
+ * cannot disagree about where it is. The sub-square part is the fraction of a
+ * square the classic view has scrolled past its offset, the same reading the
+ * classic renderer folds in as a drag offset, so it adds to the position.
+ *
+ * A window centred on the tank has nothing here to follow: declining leaves
+ * the caller following the tank, which is where the block is.
+ */
+bool clientSimGetOverviewWindowCentreF(const ClientSim *cs, float *outX,
+                                       float *outY) {
+  OverviewViewInputs in; /* Where the block is this tick */
+
+  if (cs == NULL || outX == NULL || outY == NULL) {
+    return FALSE;
+  }
+  clientSimFillOverviewViewInputs(cs, &in);
+  if (overviewWindowFollowsView(in.window) == FALSE) {
+    return FALSE;
+  }
+  if (in.viewValid == FALSE) {
+    return FALSE;
+  }
+
+  *outX = (float)in.viewLeft + (float)OVERVIEW_CLASSIC_HALF + 0.5f +
+          (float)in.viewSubX / 256.0f;
+  *outY = (float)in.viewTop + (float)OVERVIEW_CLASSIC_HALF + 0.5f +
+          (float)in.viewSubY / 256.0f;
+  return TRUE;
+}
+
 void clientSimSetAutoScrollOverride(ClientSim *cs, bool value) {
   cs->scroll.autoScrollOverRide = value;
 }
@@ -3237,6 +3333,14 @@ struct OverviewSnapshot {
   int           pillViewX;
   int           pillViewY;
 
+  /* The centre of the live block, for an overview window that places it from
+   * the classic view. Invalid under a window that centres its block on the
+   * tank, where the tank position the camera already follows is the same
+   * thing. */
+  bool          windowCentreValid;
+  float         windowCentreX;
+  float         windowCentreY;
+
   /* Every pill and base at its square, numbered as the classic view numbers
    * them. Rebuilt on every fill; nothing is filtered here. */
   OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
@@ -3368,6 +3472,9 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->viewTarget    = 0;
   s->pillViewX     = 0;
   s->pillViewY     = 0;
+  s->windowCentreValid = false;
+  s->windowCentreX     = 0.0f;
+  s->windowCentreY     = 0.0f;
   s->itemLabelCount = 0;
   s->pingCount     = 0;
   s->haveMap       = (cs != NULL);
@@ -3403,6 +3510,9 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->viewTarget = clientSimGetViewTarget(cs);
   s->pillViewX  = clientSimGetPillViewX(cs);
   s->pillViewY  = clientSimGetPillViewY(cs);
+  s->windowCentreValid =
+      clientSimGetOverviewWindowCentreF(cs, &s->windowCentreX,
+                                        &s->windowCentreY);
 
   /* Every pill and base on the map at its square. The number is the one the
    * classic view draws — pillsGetViewPillNum / basesGetBaseNum at that
@@ -3529,6 +3639,14 @@ void overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
                                     int *mapY) {
   if (mapX) *mapX = s ? s->pillViewX : 0;
   if (mapY) *mapY = s ? s->pillViewY : 0;
+}
+
+bool overviewSnapshotWindowCentre(const OverviewSnapshot *s, float *mapX,
+                                  float *mapY) {
+  if (s == NULL || !s->windowCentreValid) return false;
+  if (mapX) *mapX = s->windowCentreX;
+  if (mapY) *mapY = s->windowCentreY;
+  return true;
 }
 
 int overviewSnapshotItemLabelCount(const OverviewSnapshot *s) {
@@ -3720,10 +3838,12 @@ void clientSimRecalc(ClientSim *cs) {
   viewportRecalc(clientSimViewportMut(cs));
 }
 
-void clientSimUpdateView(ClientSim *cs, updateType value) {
+void clientSimUpdateView(ClientSim *cs, updateType value,
+                         const struct ViewSight *sight) {
   viewportUpdateView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
                      clientSimGetMyPlayerNum(cs),
-                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs), value);
+                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs), value,
+                     sight);
 }
 
 void clientSimPanX(ClientSim *cs, int dxTiles) {

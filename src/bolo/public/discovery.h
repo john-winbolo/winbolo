@@ -64,12 +64,16 @@ typedef struct {
                       * hide the rich fields when false. */
   /* Server visibility rules. A server whose INFO predates the
    * view_policies byte reports the defaults (pill always, base off,
-   * ally always) with classic mode and allies in trees both off. */
+   * ally always) with classic mode and allies in trees both off, and one
+   * whose INFO predates view_policies2 reports the expanded overview
+   * window with nothing blocking sight inside it. */
   ViewPolicy pillView;
   ViewPolicy baseView;
   ViewPolicy allyView;
   bool classicMode;
   bool alliesInTrees;
+  uint8_t overviewWindow;  /* OverviewWindow the server advertises */
+  uint8_t lineOfSight;     /* LineOfSightMode the server advertises */
   /* Voice the server forwards. A server whose INFO predates the flag bits
    * reports serverVoiceOn, which is what it does. */
   ServerVoiceMode voiceMode;
@@ -113,12 +117,16 @@ typedef struct {
                                    * — consumers hide the rich fields when false. */
   /* Server visibility rules. A server whose INFO predates the
    * view_policies byte reports the defaults (pill always, base off,
-   * ally always) with classic mode and allies in trees both off. */
+   * ally always) with classic mode and allies in trees both off, and one
+   * whose INFO predates view_policies2 reports the expanded overview
+   * window with nothing blocking sight inside it. */
   ViewPolicy     pillView;
   ViewPolicy     baseView;
   ViewPolicy     allyView;
   bool           classicMode;
   bool           alliesInTrees;
+  uint8_t        overviewWindow;  /* OverviewWindow the server advertises */
+  uint8_t        lineOfSight;     /* LineOfSightMode the server advertises */
   /* Voice the server forwards. A server whose INFO predates the flag bits
    * reports serverVoiceOn, which is what it does. */
   ServerVoiceMode voiceMode;

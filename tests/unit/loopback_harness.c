@@ -19,8 +19,15 @@
 #include "client_net.h"
 #include "client_connect_state.h"
 #include "threads.h"
+#include "transport_udp.h"  /* transportUdpServerRecvQueuePending */
 
 #include "loopback_harness.h"
+
+/* Longest a pump waits for the server's recv thread to deliver before it
+ * ticks the server anyway. Only reached on a pump that carried nothing,
+ * since the wait ends as soon as a datagram is queued. Generous enough to
+ * cover a scheduling delay on a machine running the whole suite. */
+#define LOOPBACK_DELIVER_MAX_MS 5
 
 /* E_MAP compressed length — the same literal ut_make_running_sim passes to
  * serverSimCreateCompressed. */
@@ -248,6 +255,26 @@ bool loopbackHarnessStartSpectatorLobby(LoopbackHarness *h,
     return true;
 }
 
+/* True while a client is still working through the join handshake. That
+ * phase gives up after JOIN_RETRY_INTERVAL * JOIN_MAX_RETRIES client ticks,
+ * so a datagram the recv thread delivers a pump late costs part of a budget
+ * nothing else in the harness measures in ticks. Everything after it is
+ * driven by wall clock and does not care. */
+static bool loopbackPumpHandshaking(LoopbackHarness *h) {
+    ClientConnectState st;
+    if (h->clientUp) {
+        st = clientSimGetConnectState(h->cs);
+        if (st == CLIENT_CONNECT_JOINING ||
+            st == CLIENT_CONNECT_DOWNLOADING_MAP) return true;
+    }
+    if (h->client2Up) {
+        st = clientSimGetConnectState(h->cs2);
+        if (st == CLIENT_CONNECT_JOINING ||
+            st == CLIENT_CONNECT_DOWNLOADING_MAP) return true;
+    }
+    return false;
+}
+
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
     if (h->clientUp) clientSimNetTick(h->cs);
@@ -260,10 +287,31 @@ void loopbackHarnessPump(LoopbackHarness *h) {
      * thread can lag a pump, so the just-sent client datagram isn't drained
      * until a later tick — and that scheduling slack shifts ack/retransmit
      * timing relative to the seeded impairment, which made connect/lobby
-     * convergence under loss nondeterministic. Yield ~1ms so the recv thread
-     * delivers this pump's datagram before the server tick consumes the queue,
-     * making the loopback tests deterministic. */
-    SDL_Delay(1);
+     * convergence under loss nondeterministic.
+     *
+     * Ask the queue whether the thread has delivered rather than sleeping a
+     * fixed interval and assuming it has. A flat 1ms was long enough on an
+     * idle machine and not on a busy one, so a full-suite run could slip a
+     * datagram by enough pumps to burn the client's whole join budget
+     * (JOIN_RETRY_INTERVAL * JOIN_MAX_RETRIES ticks) while the same test
+     * passed on its own. Returns the moment something is queued.
+     *
+     * Only while a client is still handshaking. That is where the budget is
+     * tight and where all but a handful of pumps carry a datagram, so the
+     * wait ends almost at once. Once connected the flat yield stands: a
+     * steady-state pump is usually carrying nothing, so waiting the cap on
+     * every one of them buys nothing and slows the quiet scenario tests
+     * enough to move the timers they are measuring. */
+    if (h->serverUp && loopbackPumpHandshaking(h)) {
+        int waited = 0;
+        while (waited < LOOPBACK_DELIVER_MAX_MS &&
+               transportUdpServerRecvQueuePending() == 0) {
+            SDL_Delay(1);
+            waited++;
+        }
+    } else {
+        SDL_Delay(1);
+    }
     if (h->serverUp) serverInstanceTick(h->sim);
 }
 

@@ -72,9 +72,10 @@ static void vp_place_pill(GameSim *gs, BYTE idx, BYTE owner, BYTE mx, BYTE my) {
     gs->pb->item[idx].y      = my;
 }
 
-/* 1. Stock policies (pill always, base off, ally always) with nobody allied:
- *    the rect set is the tank screen plus each live owned pillbox, and a dead
- *    pillbox contributes nothing. */
+/* 1. Pills always, base off, ally always, with nobody allied: the rect set is
+ *    the tank screen plus each live owned pillbox, and a dead pillbox
+ *    contributes nothing. The case is about what "always" grants, so it sets
+ *    the policies rather than leaning on what a fresh sim holds. */
 int run_view_rects_default_baseline(void) {
     ServerSim *sim = ut_make_running_sim("P0");
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
@@ -86,14 +87,20 @@ int run_view_rects_default_baseline(void) {
                   pillsGetNumPills(&gs->pb));
     UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid for positioning");
 
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff,
+                           VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
     UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) == viewPolicyAlways,
-                  "default pill policy is not always (%d)",
+                  "pill policy is not always (%d)",
                   (int)serverSimGetViewPolicy(sim, viewCategoryPill));
     UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryBase) == viewPolicyOff,
-                  "default base policy is not off (%d)",
+                  "base policy is not off (%d)",
                   (int)serverSimGetViewPolicy(sim, viewCategoryBase));
     UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways,
-                  "default ally policy is not always (%d)",
+                  "ally policy is not always (%d)",
                   (int)serverSimGetViewPolicy(sim, viewCategoryAlly));
 
     vp_clear_owners(gs);
@@ -144,6 +151,8 @@ int run_view_rects_always_base_ally(void) {
                   "players 0 and 2 must stay un-allied for the enemy cases");
 
     serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyAlways,
                            VIEW_DECAY_DEFAULT_SECS);
 
     vp_place_tank(gs, 0, 50, 50);

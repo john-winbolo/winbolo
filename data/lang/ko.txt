@@ -1930,6 +1930,13 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=토치카 표시를 '키'로, 기지 표시와 아
 STR_MENU_CLASSIC_MODE_TIP=서버가 클래식 모드이므로 이 보기는 꺼져 있습니다.
 STR_DLGLOBBY_ALLIES_TREES_CB=숲 속 아군 표시
 STR_DLGLOBBY_ALLIES_TREES_TIP=숲 속에 있는 아군 탱크가 숨겨지지 않고 화면에\n표시됩니다. 전장의 안개는 그대로 적용되므로 원래\n보이는 곳에서만 보입니다. 꺼짐이 기존 규칙이며,\n클래식 모드에서는 꺼짐으로 고정됩니다.
+# Map overview live block, and what blocks sight inside it
+STR_DLGLOBBY_OVERVIEW_WINDOW=전체 보기 범위
+STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=지도 전체 보기가 내 탱크 주위에 항상 유지하는\n타일 범위입니다. 확장은 메인 보기가 스크롤할\n수 있는 범위 전체이며, 클래식은 그 화면이\n보여주는 범위로 좁힙니다. 클래식 모드는 이를\n클래식으로 설정하고 그대로 유지합니다. 서버는\n어느 쪽이든 같은 지도 데이터를 보냅니다.
+STR_DLGLOBBY_LINE_OF_SIGHT_CB=시야
+STR_DLGLOBBY_LINE_OF_SIGHT_TIP=건물과 숲은 그 범위 안쪽까지 시야를 가립니다.\n꺼짐이 기존 규칙이며, 클래식 모드에서는 꺼짐으로\n고정됩니다. 서버는 어느 쪽이든 같은 지도 데이터를\n보내므로, 이는 편의를 위한 규칙일 뿐 변조된\n클라이언트에 대한 보장은 아닙니다.
+STR_DLGLOBBY_WINDOW_EXPANDED=확장
+STR_DLGLOBBY_WINDOW_CLASSIC=클래식
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=스킨
 STR_DLGSKIN_DEFAULT=기본값

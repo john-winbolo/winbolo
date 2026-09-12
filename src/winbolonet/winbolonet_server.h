@@ -66,7 +66,7 @@ typedef struct {
   bool     hasLobby;                 /* Server has a lobby (false for -nolobby/-maprotate) */
   bool     timeLimit;               /* Time limit enabled (false=unlimited) */
   uint16_t timeMinutes;              /* Time limit in minutes */
-  uint16_t lobbyLocks;               /* LOBBY_LOCK_* bitmask */
+  uint32_t lobbyLocks;               /* LOBBY_LOCK_* bitmask */
   BYTE     numBases;                 /* Total bases */
   BYTE     numPills;                 /* Total pills */
   BYTE     freeBases;                /* Neutral bases */
@@ -78,6 +78,8 @@ typedef struct {
   BYTE     allyView;                 /* ViewPolicy for allied tanks (0..3) */
   bool     classicMode;              /* Classic Bolo view restrictions */
   bool     alliesInTrees;            /* Allied tanks show through forest */
+  BYTE     overviewWindow;           /* OverviewWindow the map overview keeps live */
+  BYTE     lineOfSight;              /* LineOfSightMode inside that block */
   uint16_t pillViewDecay;            /* Pillbox decay seconds (viewPolicyDecay) */
   uint16_t baseViewDecay;            /* Base decay seconds (viewPolicyDecay) */
   uint16_t allyViewDecay;            /* Allied tank decay seconds (viewPolicyDecay) */

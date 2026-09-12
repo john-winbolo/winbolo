@@ -2129,11 +2129,12 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     }
 
     /* ---- Visibility ----
-     * The pill / base / allied-tank view rules a game hosted from here
-     * starts with; the host can still change them from the lobby once the
-     * game is up, and this dialog has no path into a running game.  The
-     * setters persist to prefs and clamp the seconds, so the values go
-     * through them untouched. */
+     * The seven view rules a game hosted from here starts with: the
+     * pill / base / allied-tank policies, classic mode, allies in trees,
+     * the overview window and line of sight.  The host can still change
+     * them from the lobby once the game is up, and this dialog has no
+     * path into a running game.  The setters persist to prefs and clamp
+     * the seconds, so the values go through them untouched. */
     {
         int policy, secs;
         bool policyEdited, secsEdited;
@@ -2177,6 +2178,44 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_ALLIES_TREES_TIP));
+        }
+
+        /* Which block of squares the map overview keeps live round the
+         * player's own tank. A combo rather than a tick box because the
+         * choice is a named mode, and the index is the OverviewWindow
+         * value, so the entries are in enum order. */
+        const char *windows[] = {
+            langGetText(STR_DLGLOBBY_WINDOW_EXPANDED),
+            langGetText(STR_DLGLOBBY_WINDOW_CLASSIC),
+        };
+        int window = gameFrontOverviewWindow;
+        ImGui::PushID("overviewwindow");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+        if (ImGui::Combo("##window", &window, windows,
+                         (int)OVERVIEW_WINDOW_COUNT)) {
+            gameFrontSetOverviewWindow(window);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW_TIP));
+        }
+        ImGui::PopID();
+
+        /* What stops the player seeing inside that block. A tick box
+         * because there is one rule to turn on, though the setting
+         * carries a selector so another rule can join it. */
+        bool sight = (gameFrontLineOfSight != (int)lineOfSightOff);
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),
+                            &sight)) {
+            gameFrontSetLineOfSight(sight ? (int)lineOfSightBuildingsAndTrees
+                                          : (int)lineOfSightOff);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_TIP));
         }
     }
 
