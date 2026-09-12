@@ -157,7 +157,7 @@ MSG_CHECK_FN(check_pill, PillSnapshot, packPillSnapshot, unpackPillSnapshot,
  * packTankSnapshot / unpackTankSnapshot must match byte-for-byte and
  * struct-for-struct. */
 static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
-    uint8_t mask = 0;
+    uint16_t mask = 0;
     int pos;
 
     buf[0] = s->playerNum;
@@ -177,14 +177,18 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
     if (s->pingMs)      mask |= TANK_PRESENT_PING;
     if (s->clientFlags) mask |= TANK_PRESENT_FLAGS;
     if (s->hiddenFlags) mask |= TANK_PRESENT_HIDDEN;
+    if (s->modSpeed || s->modAccel || s->modTurn ||
+        s->modReload || s->modDealt || s->modTaken) {
+        mask |= TANK_PRESENT_MODS;
+    }
 
-    buf[1] = mask;
-    packU16(buf + 2, s->worldX);
-    packU16(buf + 4, s->worldY);
-    packU16(buf + 6, s->angle);
-    packU16(buf + 8, s->speed);
-    buf[10] = s->tankStatus;
-    pos = 11;
+    packU16(buf + 1, mask);
+    packU16(buf + 3, s->worldX);
+    packU16(buf + 5, s->worldY);
+    packU16(buf + 7, s->angle);
+    packU16(buf + 9, s->speed);
+    buf[11] = s->tankStatus;
+    pos = 12;
 
     if (mask & TANK_PRESENT_OWNER_RES) {
         buf[pos++] = s->armour;
@@ -212,11 +216,19 @@ static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
     }
     if (mask & TANK_PRESENT_FLAGS)  buf[pos++] = s->clientFlags;
     if (mask & TANK_PRESENT_HIDDEN) buf[pos++] = s->hiddenFlags;
+    if (mask & TANK_PRESENT_MODS) {
+        buf[pos++] = s->modSpeed;
+        buf[pos++] = s->modAccel;
+        buf[pos++] = s->modTurn;
+        buf[pos++] = s->modReload;
+        buf[pos++] = s->modDealt;
+        buf[pos++] = s->modTaken;
+    }
     return pos;
 }
 
 static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
-    uint8_t mask;
+    uint16_t mask;
     size_t pos;
 
     memset(s, 0, sizeof(*s));
@@ -226,14 +238,14 @@ static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
         return 1;
     }
 
-    if (avail < 11) return 0;
-    mask = buf[1];
-    s->worldX = unpackU16(buf + 2);
-    s->worldY = unpackU16(buf + 4);
-    s->angle = unpackU16(buf + 6);
-    s->speed = unpackU16(buf + 8);
-    s->tankStatus = buf[10];
-    pos = 11;
+    if (avail < 12) return 0;
+    mask = unpackU16(buf + 1);
+    s->worldX = unpackU16(buf + 3);
+    s->worldY = unpackU16(buf + 5);
+    s->angle = unpackU16(buf + 7);
+    s->speed = unpackU16(buf + 9);
+    s->tankStatus = buf[11];
+    pos = 12;
 
     if (mask & TANK_PRESENT_OWNER_RES) {
         if (avail < pos + 5) return 0;
@@ -277,6 +289,15 @@ static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
         if (avail < pos + 1) return 0;
         s->hiddenFlags = buf[pos++];
     }
+    if (mask & TANK_PRESENT_MODS) {
+        if (avail < pos + 6) return 0;
+        s->modSpeed = buf[pos++];
+        s->modAccel = buf[pos++];
+        s->modTurn = buf[pos++];
+        s->modReload = buf[pos++];
+        s->modDealt = buf[pos++];
+        s->modTaken = buf[pos++];
+    }
     return (int)pos;
 }
 
@@ -306,6 +327,8 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->pingMs = 0x8081;
         s->clientFlags = 0x91;
         s->hiddenFlags = 0xA1;
+        s->modSpeed = 0xB1; s->modAccel = 0xB2; s->modTurn = 0xB3;
+        s->modReload = 0xB4; s->modDealt = 0xB5; s->modTaken = 0xB6;
     } else {
         s->playerNum = 0x7F;
         s->worldX = 0xFFFF; s->worldY = 0xFFFF;
@@ -321,6 +344,8 @@ static void fillTank(TankSnapshot *s, int pass) {
         s->pingMs = 0xFFFF;
         s->clientFlags = 0xFF;
         s->hiddenFlags = 0xFF;
+        s->modSpeed = 0xFF; s->modAccel = 0xFF; s->modTurn = 0xFF;
+        s->modReload = 0xFF; s->modDealt = 0xFF; s->modTaken = 0xFF;
     }
 }
 
@@ -353,11 +378,11 @@ static int check_tank(void) {
                       "tank_snapshot golden pack != fixture");
     }
 
-    /* (exhaustive group combos) all 256 group subsets, two value patterns. */
+    /* (exhaustive group combos) all 512 group subsets, two value patterns. */
     for (pass = 0; pass < 2; pass++) {
         TankSnapshot filled;
         fillTank(&filled, pass);
-        for (combo = 0; combo < 256; combo++) {
+        for (combo = 0; combo < 512; combo++) {
             TankSnapshot s, sg, sr;
             uint8_t g[WC_BYTES], r[WC_BYTES];
             int ng, nr, ug, ur;

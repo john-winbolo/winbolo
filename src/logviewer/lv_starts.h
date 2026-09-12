@@ -145,4 +145,60 @@ bool lv_startsExistPos(starts *value, BYTE xValue, BYTE yValue);
 *********************************************************/
 void lv_startsSetStartNetData(starts *value, BYTE *buff, BYTE dataLen);
 
+/*********************************************************
+*NAME:          lv_startsIsActive
+*PURPOSE:
+*  Returns whether a start number names a start that is on
+*  the map. A log_EntityChange can take one off mid-round
+*  and the slot and the count stay, so a number in range is
+*  not on its own enough.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool lv_startsIsActive(starts *value, BYTE startNum);
+
+/*********************************************************
+*NAME:          lv_startsInstallItem
+*PURPOSE:
+*  Writes a start at the number a log_EntityChange names and
+*  puts that slot on the map. A number past the count raises
+*  the count and leaves the gap off the map. Mirrors
+*  startsInstallItem on the sim side.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  item     - The start to store
+*  startNum - The start number, 1 based
+*********************************************************/
+bool lv_startsInstallItem(starts *value, start *item, BYTE startNum);
+
+/*********************************************************
+*NAME:          lv_startsRemoveItem
+*PURPOSE:
+*  Takes a start off the map and keeps its slot, its count
+*  and every number above it. Mirrors startsRemoveItem on
+*  the sim side.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool lv_startsRemoveItem(starts *value, BYTE startNum);
+
+/*********************************************************
+*NAME:          lv_startsSetActive
+*PURPOSE:
+*  Puts a start on the map or takes it off it, leaving its
+*  record and the count alone. What a log_EntityMasks
+*  record writes. Mirrors startsSetActive on the sim side.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*  onMap    - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool lv_startsSetActive(starts *value, BYTE startNum, bool onMap);
+
 #endif /* STARTS_H */

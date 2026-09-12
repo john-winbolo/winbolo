@@ -196,6 +196,18 @@ static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armou
   g_lv->tankInv[slot].trees  = trees;
 }
 
+/* Store a slot's modifier set. A log_TankSetModifiers record replaces the whole
+ * set, as the op that wrote it did. Nothing draws these yet. */
+static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods) {
+  if (slot >= MAX_TANKS) return;
+  g_lv->tankMods[slot].speed  = mods[0];
+  g_lv->tankMods[slot].accel  = mods[1];
+  g_lv->tankMods[slot].turn   = mods[2];
+  g_lv->tankMods[slot].reload = mods[3];
+  g_lv->tankMods[slot].dealt  = mods[4];
+  g_lv->tankMods[slot].taken  = mods[5];
+}
+
 // Some prototypes to cleanup and document
 
 bool logIsEOF();
@@ -846,6 +858,24 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt5, 1);  /* trees */
       lv_screenSetTankStock(opt1, opt2, opt3, opt4, opt5);
       break;
+    case log_TankSetModifiers: {
+      /* player, then a length-prefixed blob of the six modifier bytes. */
+      BYTE modLen;
+      BYTE mods[6];
+      logReadBytes(&opt1, 1);
+      logReadBytes(&modLen, 1);
+      /* Consume the blob whatever its length byte says, so a record with the
+         wrong length costs this one value and not the reader's alignment for
+         the rest of the file. Only a six-byte blob is a modifier set. */
+      if (modLen > 0) {
+        logReadBytes((BYTE *)mem, modLen);
+      }
+      if (modLen == sizeof(mods)) {
+        memcpy(mods, mem, sizeof(mods));
+        lv_screenSetTankModifiers(opt1, mods);
+      }
+      break;
+    }
     case log_Shell:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -902,6 +932,50 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
+    case log_ServerText:
+      /* A server line with the destination it was published to: opt1 the team
+         it was held to, opt2 the slot. A line the whole game saw carries 0 and
+         0xFF and reads like any other server line; one that reached a single
+         team or a single player says so, because the recording is the only
+         place that difference is visible. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, str);
+      {
+        MessageArgs args = {0};
+        /* The destination and the line share one 64-byte argument, so each
+           part carries its own precision — the same defence the message cases
+           above use against a name or a line longer than the field. */
+        if (opt2 != 0xFF) {
+          lv_playersGetPlayerName(opt2, name, sizeof(name));
+          snprintf(args.string1, sizeof(args.string1), "[to %.*s] %.*s",
+                   16, name, 36, str);
+        } else if (opt1 != 0) {
+          snprintf(args.string1, sizeof(args.string1), "[to team %u] %.*s",
+                   (unsigned)opt1, 36, str);
+        } else {
+          snprintf(args.string1, sizeof(args.string1), "%.*s",
+                   (int)sizeof(args.string1) - 1, str);
+        }
+        lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
+      }
+      break;
+    case log_GameTimeSet:
+      /* The round's game time, as a big-endian int32 of ticks. The viewer
+         counts gmeLength down a tick at a time the way the server does, so
+         adopting the recorded value keeps a replay's clock on the round's own
+         remaining time instead of the length the round opened with. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes(&opt4, 1);
+      g_lv->gmeLength = (int32_t)(((uint32_t)opt1 << 24) |
+                                  ((uint32_t)opt2 << 16) |
+                                  ((uint32_t)opt3 << 8)  |
+                                  (uint32_t)opt4);
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -939,6 +1013,127 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       lv_utilGetNibbles(opt1, &opt2, &opt3);
       lv_pillsSetInTank(&g_lv->pb, opt2, opt3);
+      break;
+    case log_EntityChange:
+      /* One pillbox, base or start has joined the map or left it. opt1 is
+         which list, opt2 the item's number counting from zero — the three
+         modules count from one — and opt3 whether it is now on the map. The
+         pascal blob after them is the item's map record, six bytes for a
+         pillbox or a base and three for a start, the same bytes a live client
+         gets on the wire. A removal keeps the slot and the count, so every
+         number above it goes on meaning the same item. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      {
+        BYTE num = (BYTE)(opt2 + 1);
+        const BYTE *rec = (const BYTE *)(mem + 1);
+        BYTE recLen = (BYTE)mem[0];
+        switch (opt1) {
+        case LV_ENTITY_KIND_PILL:
+          if (opt3 != 0) {
+            if (recLen >= 6) {
+              pillbox item;
+              memset(&item, 0, sizeof(item));
+              item.x = rec[0];
+              item.y = rec[1];
+              item.owner = rec[2];
+              item.armour = rec[3];
+              item.speed = rec[4];
+              item.inTank = rec[5] ? TRUE : FALSE;
+              lv_pillsInstallItem(&g_lv->pb, &item, num);
+            }
+          } else {
+            lv_pillsRemoveItem(&g_lv->pb, num);
+          }
+          break;
+        case LV_ENTITY_KIND_BASE:
+          if (opt3 != 0) {
+            if (recLen >= 6) {
+              base item;
+              memset(&item, 0, sizeof(item));
+              item.x = rec[0];
+              item.y = rec[1];
+              item.owner = rec[2];
+              item.armour = rec[3];
+              item.shells = rec[4];
+              item.mines = rec[5];
+              lv_basesInstallItem(&g_lv->bs, &item, num);
+            }
+          } else {
+            lv_basesRemoveItem(&g_lv->bs, num);
+          }
+          break;
+        case LV_ENTITY_KIND_START:
+          if (opt3 != 0) {
+            if (recLen >= 3) {
+              start item;
+              memset(&item, 0, sizeof(item));
+              item.x = rec[0];
+              item.y = rec[1];
+              item.dir = rec[2];
+              lv_startsInstallItem(&g_lv->ss, &item, num);
+            }
+          } else {
+            lv_startsRemoveItem(&g_lv->ss, num);
+          }
+          break;
+        default:
+          /* A kind with no list behind it. The framed length has already
+             been consumed, so there is nothing to resynchronise. */
+          break;
+        }
+      }
+      g_lv->wantScreenUpdate = TRUE;
+      break;
+    case log_EntityMasks:
+      /* Which indices are on the map, as three big-endian 16-bit masks — the
+         part the snapshot before this one had nowhere to put. Bit i stands
+         for index i counting from zero; a bit at or above a list's own count
+         names no item and is skipped. Only the flags move: the counts and the
+         records are the ones the snapshot installed, and taking an item off
+         the map keeps its record, so an index put back holds the item it
+         always held. That makes a snapshot and this record together enough to
+         state the world, which is what a seek lands on. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes(&opt4, 1);
+      logReadBytes(&opt5, 1);
+      logReadBytes(&px, 1);
+      {
+        unsigned short pillMask  = (unsigned short)((opt1 << 8) | opt2);
+        unsigned short baseMask  = (unsigned short)((opt3 << 8) | opt4);
+        unsigned short startMask = (unsigned short)((opt5 << 8) | px);
+        BYTE num;
+        BYTE total;
+
+        /* Each count is clamped to its list's size before it is walked: a
+           16-bit mask cannot name anything past index 15 anyway, and a count
+           a malformed blob left above the array is not a number this loop
+           should reach for. */
+        total = lv_pillsGetNumPills(&g_lv->pb);
+        if (total > MAX_PILLS) total = MAX_PILLS;
+        for (num = 1; num <= total; num++) {
+          lv_pillsSetActive(&g_lv->pb, num,
+                            (pillMask & (1u << (num - 1))) != 0);
+        }
+        total = lv_basesGetNumBases(&g_lv->bs);
+        if (total > MAX_BASES) total = MAX_BASES;
+        for (num = 1; num <= total; num++) {
+          lv_basesSetActive(&g_lv->bs, num,
+                            (baseMask & (1u << (num - 1))) != 0);
+        }
+        total = lv_startsGetNumStarts(&g_lv->ss);
+        if (total > MAX_STARTS) total = MAX_STARTS;
+        for (num = 1; num <= total; num++) {
+          lv_startsSetActive(&g_lv->ss, num,
+                             (startMask & (1u << (num - 1))) != 0);
+        }
+      }
+      g_lv->wantScreenUpdate = TRUE;
       break;
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
@@ -1681,6 +1876,7 @@ static int walkSkipEventBody(BYTE code) {
     case log_BaseSetStock:
     case log_LgmLocation:
     case log_Shell:
+    case log_GameTimeSet:
       { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
       return 4;
     case log_PlayerLocation:
@@ -1688,8 +1884,10 @@ static int walkSkipEventBody(BYTE code) {
       { BYTE b[5]; if (logReadBytes(b, 5) != 5) return -1; }
       return 5;
     case log_Ping:
-      /* sender + kind + two big-endian u16 coordinates. Only v2 logs can
-         carry one, but the v1 walker keeps a full table so a future
+    case log_EntityMasks:
+      /* A ping is sender + kind + two big-endian u16 coordinates; the masks
+         record is three big-endian u16. Six bytes either way. Only v2 logs
+         can carry either, but the v1 walker keeps a full table so a future
          re-encoder cannot silently desynchronise the cursor. */
       { BYTE b[6]; if (logReadBytes(b, 6) != 6) return -1; }
       return 6;
@@ -1709,7 +1907,9 @@ static int walkSkipEventBody(BYTE code) {
         if (rc != lenByte) return -1; }
       return 6 + lenByte;
     case log_ChangeName:
-      /* 1 opt byte + pascal string */
+    case log_TankSetModifiers:
+      /* 1 opt byte + pascal string (the modifier record's blob is always six
+         bytes, but it is walked as a pascal string like any other) */
       { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
@@ -1723,12 +1923,22 @@ static int walkSkipEventBody(BYTE code) {
         if (rc != lenByte) return -1; }
       return 2 + lenByte;
     case log_MessagePlayers:
+    case log_ServerText:
       /* 2 opt bytes + pascal string */
       { BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
         if (rc != lenByte) return -1; }
       return 3 + lenByte;
+    case log_EntityChange:
+      /* kind + index + on-the-map flag + the item's record as a pascal blob.
+         Only v2 logs can carry one, but the v1 walker keeps a full table for
+         the reason it keeps one for log_Ping. */
+      { BYTE b[3]; if (logReadBytes(b, 3) != 3) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 4 + lenByte;
     case log_MessageServer:
     case log_MapSkipApplied:
       /* pascal string only */

@@ -40,6 +40,7 @@
 #include "global.h"
 #include "brain.h"  /* For BrainInfo, aiType */
 #include "brain_lua_glue.h"  /* BrainPathfinder, BrainWorldSim, brainCore*, mlBrain* */
+#include "scenario_table.h"  /* ScnTable — a bot's init table */
 #include "brain_overlay.h"
 
 /* Forward declarations */
@@ -339,11 +340,17 @@ typedef struct {
 *  The instance is bound to the given ClientSim.
 *  Caller must hold any necessary locks.
 *  Returns true on success.
+*
+*  init is this bot's configuration, read into the
+*  BRAIN_INIT Lua global before the brain script runs. It
+*  belongs to this VM alone, so bots created one after
+*  another each see their own pairs. NULL means no pairs,
+*  and BRAIN_INIT is then an empty table.
 *********************************************************/
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
-                            int player_num);
+                            int player_num, const ScnTable *init);
 
 /*********************************************************
 *NAME:          luaBrainsSetRunScript
@@ -430,29 +437,11 @@ void luaBrainsSetLogJson(int enable);
 *********************************************************/
 void luaBrainsSetAllowUnsafe(int enable);
 
-/*********************************************************
-*NAME:          luaBrainsSetNextInitArg
-*PURPOSE:
-*  Stages an optional per-bot init argument for the NEXT
-*  brain instance created. When non-empty, the string is
-*  injected as the BRAIN_INIT_ARG Lua global (nil otherwise)
-*  before the brain's init script runs, so a brain can branch
-*  on it "if it supports it". Drives the [..] suffix of the
-*  shared -bot-init CLI flag.
-*
-*  Consume-once: luaBrainInstanceCreate() reads the staged
-*  value, sets BRAIN_INIT_ARG, then clears it — so it applies
-*  only to the immediately-following create and the next brain
-*  defaults back to nil unless re-staged. Set it right before
-*  each botManagerAddBot / serverSimCreateBot call.
-*********************************************************/
-void luaBrainsSetNextInitArg(const char *arg);
-
 /* One resolved bot from a -bot-init spec. Indexed by player id. */
 typedef struct {
-  char path[512];  /* brain/init.lua path for this bot */
-  char arg[128];   /* BRAIN_INIT_ARG text, or "" if none */
-  int  covered;    /* 1 if a -bot-init entry named this id */
+  char     path[512];  /* brain/init.lua path for this bot */
+  ScnTable init;       /* BRAIN_INIT pairs, empty if none */
+  int      covered;    /* 1 if a -bot-init entry named this id */
 } BotInitSlot;
 
 /*********************************************************
@@ -466,14 +455,18 @@ typedef struct {
 *
 *  where <id-range> is "a-b" (inclusive) or a single "n",
 *  <path> is a literal brain/init.lua path, and the optional
-*  bracketed [<arg>] becomes that bot's BRAIN_INIT_ARG. E.g.
+*  bracketed [<arg>] becomes that bot's init table, through
+*  scnTableFromArgText: ';'-separated "key=value" pairs, a
+*  bare token being the value "1". E.g.
 *
 *     0-3=brains/GoalHunter_1.6/init.lua,4-5=brains/Foo/init.lua[llm]
 *
 *  The caller pre-fills `slots` for every id with the default
-*  brain path and an empty arg; this overwrites only the ids
+*  brain path and an empty table; this overwrites only the ids
 *  named in the spec and sets their `covered` flag. Commas
-*  separate entries, so paths must not contain commas.
+*  separate entries, so paths must not contain commas — which
+*  is why an [<arg>] with several pairs separates them with
+*  ';' (e.g. [ammoless;deprive=100]).
 *
 *  Returns true on a well-formed spec; on a malformed entry it
 *  logs to stderr and returns false (leaving slots partially

@@ -232,4 +232,60 @@ void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len);
 // Assumes that the base exists otherwise returns 0
 BYTE lv_basesItemNumAt(bases *value, BYTE xValue, BYTE yValue);
 
+/*********************************************************
+*NAME:          lv_basesIsActive
+*PURPOSE:
+*  Returns whether a base number names a base that is on the
+*  map. A log_EntityChange can take one off mid-round and
+*  the slot and the count stay, so a number in range is not
+*  on its own enough.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool lv_basesIsActive(bases *value, BYTE baseNum);
+
+/*********************************************************
+*NAME:          lv_basesInstallItem
+*PURPOSE:
+*  Writes a base at the number a log_EntityChange names and
+*  puts that slot on the map. A number past the count raises
+*  the count and leaves the gap off the map. Mirrors
+*  basesInstallItem on the sim side.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  item    - The base to store
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool lv_basesInstallItem(bases *value, base *item, BYTE baseNum);
+
+/*********************************************************
+*NAME:          lv_basesRemoveItem
+*PURPOSE:
+*  Takes a base off the map and keeps its slot, its count
+*  and every number above it. Mirrors basesRemoveItem on the
+*  sim side.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*********************************************************/
+bool lv_basesRemoveItem(bases *value, BYTE baseNum);
+
+/*********************************************************
+*NAME:          lv_basesSetActive
+*PURPOSE:
+*  Puts a base on the map or takes it off it, leaving its
+*  record and the count alone. What a log_EntityMasks
+*  record writes. Mirrors basesSetActive on the sim side.
+*
+*ARGUMENTS:
+*  value   - Pointer to the bases structure
+*  baseNum - The base number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool lv_basesSetActive(bases *value, BYTE baseNum, bool onMap);
+
 #endif /* BASES_H */

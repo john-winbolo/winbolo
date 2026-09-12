@@ -64,6 +64,7 @@
                               * threadsContextActive, threadsCurrentlyHoldsMutex */
 #include "../../common/wb_log.h"      /* WB_LOG_*, WB_LOG_CAT_NET */
 #include "../../common/mp_diag_log.h" /* mpDiagLog */
+#include "../sim/server_sim_shared.h"  /* serverSimAnnounce */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetAddEvent,
                                                  * WINBOLO_NET_EVENT_QUITTING,
                                                  * WINBOLO_NET_NO_PLAYER */
@@ -251,7 +252,9 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
          * broadcast a no-op for this slot; the other slots still see
          * "X has left." normally. */
         udpServer.clients[idx].connected = false;
-        serverSendServerEnglishBroadcast(sim, chatMsg);
+        if (serverSimAnnounce(sim, ANNOUNCE_KIND_LEFT, (BYTE)idx, (BYTE)idx)) {
+            serverSendServerEnglishBroadcast(sim, chatMsg);
+        }
     }
 
     /* Notify WinBolo.net that the player is leaving (must happen before
@@ -421,6 +424,7 @@ void serverSendServerEnglishBroadcast(ServerSim *sim, const char *message) {
     size_t maxChars = sizeof(evt.u.serverText.text) - 1; /* PACKET_MAX_CHAT_MESSAGE */
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;
+    evt.u.serverText.destPlayer = 0xFF;  /* everyone, not slot 0 */
     if (SDL_strlen(message) <= maxChars) {
         SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
     } else {

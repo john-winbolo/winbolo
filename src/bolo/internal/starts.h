@@ -108,6 +108,18 @@ void startsSetNumStarts(starts *value, BYTE numStarts);
 BYTE startsGetNumStarts(starts *value);
 
 /*********************************************************
+*NAME:          startsGetNumActive
+*PURPOSE:
+*  Returns how many starts are on the map: the slots under
+*  the count whose live flag is set. The count itself is
+*  the slot count and keeps a removed start's number.
+*
+*ARGUMENTS:
+*  value - Pointer to the starts structure
+*********************************************************/
+BYTE startsGetNumActive(starts *value);
+
+/*********************************************************
 *NAME:          startsSetStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/10/98
@@ -121,6 +133,99 @@ BYTE startsGetNumStarts(starts *value);
 *  startNum - The start number
 *********************************************************/
 void startsSetStart(starts *value, start *item, BYTE startNum);
+
+/*********************************************************
+*NAME:          startsAddItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Puts a start into the list and returns its number in
+*  outStartNum. The lowest removed slot is reused; when
+*  every slot in the count is live the list is extended and
+*  the count raised. Returns FALSE with outStartNum
+*  untouched when all MAX_STARTS starts are live.
+*
+*ARGUMENTS:
+*  value       - Pointer to the starts structure
+*  item        - The start to store
+*  outStartNum - Receives the start number, 1 based
+*********************************************************/
+bool startsAddItem(starts *value, const start *item, BYTE *outStartNum);
+
+/*********************************************************
+*NAME:          startsInstallItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Writes a start at the number it is given and marks that
+*  slot live, whatever the slot held before. A number past
+*  the count raises the count to cover it and leaves every
+*  slot the gap opens up removed: a number arrives from a
+*  list that has already filled it, so the gap is the set of
+*  starts this list has not been told about. Returns FALSE
+*  for number 0 or a number past MAX_STARTS.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  item     - The start to store
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsInstallItem(starts *value, const start *item, BYTE startNum);
+
+/*********************************************************
+*NAME:          startsRemoveItem
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Clears a start's live flag. The slot, the count and every
+*  start number above it are left alone, so the numbers the
+*  map blob and the recordings use keep meaning the same
+*  start. Returns FALSE for a number out of range or one
+*  already removed.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsRemoveItem(starts *value, BYTE startNum);
+
+/*********************************************************
+*NAME:          startsIsActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/9/26
+*LAST MODIFIED: 11/9/26
+*PURPOSE:
+*  Returns whether a start number names a start that is on
+*  the map. A removed start keeps its slot and its number, so
+*  a number in range is not on its own enough. A number out
+*  of range returns FALSE.
+*
+*ARGUMENTS:
+*  value    - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*********************************************************/
+bool startsIsActive(starts *value, BYTE startNum);
+
+/*********************************************************
+*NAME:          startsSetActive
+*AUTHOR:        John Morrison
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+*  Puts a start on the map or takes it off it, leaving its
+*  record alone either way. The flag is all that moves, so a
+*  start put back is the one the slot already held. Returns
+*  FALSE for a number out of range.
+*
+*ARGUMENTS:
+*  value   - Pointer to the starts structure
+*  startNum - The start number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool startsSetActive(starts *value, BYTE startNum, bool onMap);
 
 /*********************************************************
 *NAME:          startsExistPos

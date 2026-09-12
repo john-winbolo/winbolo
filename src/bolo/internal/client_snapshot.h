@@ -30,6 +30,7 @@
 #include "tank.h"
 
 struct ClientSim;
+struct ControlEvent;
 
 void clientApplySnapshot(struct ClientSim *cs,
                          const SnapshotHeader *hdr,
@@ -40,6 +41,21 @@ void clientApplySnapshot(struct ClientSim *cs,
                          const PillSnapshot *pillSnaps, int pillCount,
                          const GameEvent *events, int eventCount,
                          BYTE playerNum);
+
+/* Applies a CTRL_ENTITY_CHANGE to this client's own pill, base or start
+ * list: an add writes the record at the number the event names and marks
+ * that slot live, a remove clears the live flag and keeps the slot. The
+ * event's index is 0 based and the three list modules number from 1. */
+void clientApplyEntityChange(struct ClientSim *cs,
+                             const struct ControlEvent *evt);
+
+/* Applies a CTRL_ENTITY_SYNC to this client's own pill, base and start
+ * lists: bit i of a mask puts index i on the map or takes it off it. Only
+ * the live flags move — the counts and the records are the ones the
+ * compressed map installed, and a bit at or above a list's count is
+ * ignored. The masks are 0 based and the three list modules number from 1. */
+void clientApplyEntitySync(struct ClientSim *cs,
+                           const struct ControlEvent *evt);
 
 /* Settles base-death prediction for base `idx` against authoritative
  * armour dated by `serverInputTick` (the carrying snapshot's

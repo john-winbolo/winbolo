@@ -229,4 +229,60 @@ BYTE lv_pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue);
 *********************************************************/
 pillAlliance lv_pillsGetAllianceNum(pillboxes *value, BYTE pillNum);
 
+/*********************************************************
+*NAME:          lv_pillsIsActive
+*PURPOSE:
+*  Returns whether a pillbox number names a pillbox that is
+*  on the map. A log_EntityChange can take one off mid-round
+*  and the slot and the count stay, so a number in range is
+*  not on its own enough.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool lv_pillsIsActive(pillboxes *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          lv_pillsInstallItem
+*PURPOSE:
+*  Writes a pillbox at the number a log_EntityChange names
+*  and puts that slot on the map. A number past the count
+*  raises the count and leaves the gap off the map. Mirrors
+*  pillsInstallItem on the sim side.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  item    - The pillbox to store
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool lv_pillsInstallItem(pillboxes *value, pillbox *item, BYTE pillNum);
+
+/*********************************************************
+*NAME:          lv_pillsRemoveItem
+*PURPOSE:
+*  Takes a pillbox off the map and keeps its slot, its
+*  count and every number above it. Mirrors pillsRemoveItem
+*  on the sim side.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool lv_pillsRemoveItem(pillboxes *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          lv_pillsSetActive
+*PURPOSE:
+*  Puts a pillbox on the map or takes it off it, leaving
+*  its record and the count alone. What a log_EntityMasks
+*  record writes. Mirrors pillsSetActive on the sim side.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool lv_pillsSetActive(pillboxes *value, BYTE pillNum, bool onMap);
+
 #endif /* PILLBOX_H */

@@ -337,6 +337,19 @@ void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind,
 void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                                  BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
+    /* The pickup is also published. pillIndex reaches this callback counted
+       from one — tankTakePill's argument is the pillbox number, not the array
+       position — while every index on an event is the 0-based item[] slot, so
+       the event subtracts one. The record below keeps the number it has
+       always kept; moving it would rewrite what old recordings mean. */
+    if (pillIndex > 0) {
+        GameEvent ev;
+        ev.type = EVENT_PILL_PICKED_UP;
+        memset(ev.data, 0, sizeof(ev.data));
+        ev.data[0] = picker;
+        ev.data[1] = (BYTE)(pillIndex - 1);
+        serverSimAddEvent(sim, &ev);
+    }
     if (sim->state != serverStateRunning) return;
     AttrPickupRecord r;
     r.type = ATTR_REC_PICKUP; r.tick = sim->tick;
@@ -347,6 +360,168 @@ void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                           &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
+/* A base changed hands. The sim core settled the change and worked out which
+ * of the three kinds it was; turning that into the event the snapshot stream
+ * carries is the server's job and happens here. newOwner is NEUTRAL when the
+ * base was neutralised rather than taken.
+ *
+ * data[0] to data[3] are the wire payload — gameEventDataSize() gives
+ * EVENT_BASE_CAPTURED four bytes, so a client learns which base as well as who
+ * holds it. data[3] is the quiet byte the announce policy answers with. From
+ * data[4] on is the server-internal side channel the stats funnel in
+ * serverSimAddEvent reads: the capture class and the base's map cell. */
+void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_BASE_CAPTURED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = newOwner;
+    ev.data[1] = oldOwner;
+    ev.data[2] = index;
+    ev.data[3] = serverSimAnnounce(sim, ANNOUNCE_KIND_BASE_CAPTURED, index,
+                                   newOwner) ? 0 : 1;
+    ev.data[4] = captureClass;
+    ev.data[5] = mapX;
+    ev.data[6] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* A pillbox changed hands. The same shape as the base above, and the same
+ * split between the four wire bytes and the three the funnel reads. */
+void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_PILL_CAPTURED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = newOwner;
+    ev.data[1] = oldOwner;
+    ev.data[2] = index;
+    ev.data[3] = serverSimAnnounce(sim, ANNOUNCE_KIND_PILL_CAPTURED, index,
+                                   newOwner) ? 0 : 1;
+    ev.data[4] = captureClass;
+    ev.data[5] = mapX;
+    ev.data[6] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* A builder was lost. data[0] to data[2] are the three wire bytes, the third
+ * being the quiet byte the announce policy answers with; data[3] and data[4]
+ * are the man's map cell, past gameEventDataSize() and read by the stats
+ * funnel for the LGM record's mapX/mapY. */
+void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
+                        BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_LGM_LOST;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = victim;
+    ev.data[1] = killer;
+    ev.data[2] = serverSimAnnounce(sim, ANNOUNCE_KIND_BUILDER_LOST, victim,
+                                   killer) ? 0 : 1;
+    ev.data[3] = mapX;
+    ev.data[4] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* The facts that had no event at all before. Each casts ctx once and builds
+ * the event its gameEventDataSize row describes; nothing here reads the sim
+ * beyond the queue, because the call site has already worked the values out. */
+
+void serverSimCbTankSpawned(void *ctx, BYTE player, BYTE mapX, BYTE mapY,
+                            bool respawn) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_TANK_SPAWNED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = mapX;
+    ev.data[2] = mapY;
+    ev.data[3] = respawn ? 1 : 0;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_LGM_LANDED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = mapX;
+    ev.data[2] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
+                           BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_PILL_PLACED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = index;
+    ev.data[2] = mapX;
+    ev.data[3] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbPillKilled(void *ctx, BYTE index, BYTE attacker) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_PILL_KILLED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = index;
+    ev.data[1] = attacker;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                      BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_BUILT;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = action;
+    ev.data[2] = mapX;
+    ev.data[3] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* The one event that must not be serialized. It goes on the tick's queue like
+ * any other, so the host's subscriber and the god-view recording both see it;
+ * gameEventIsLocal is what keeps it out of every client's snapshot and off the
+ * UDP drain. */
+void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_MINE_PLACED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = player;
+    ev.data[1] = mapX;
+    ev.data[2] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_MINE_EXPLODED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = mapX;
+    ev.data[1] = mapY;
+    /* The layer sits behind the wire bytes (gameEventDataSize is 2), so an
+       in-process subscriber reads it and a remote client does not: the wire
+       has never said whose minefield a square belongs to, and a client that
+       could read it back by shelling squares would learn hidden mines'
+       owners. */
+    ev.data[2] = layer;
+    serverSimAddEvent(sim, &ev);
+}
+
 void serverSimCbCenterTank(void *ctx) {
     (void)ctx;
     /* No-op on server */
@@ -355,4 +530,171 @@ void serverSimCbCenterTank(void *ctx) {
 void serverSimCbConsoleMessage(void *ctx, char *msg) {
     ServerSim *sim = (ServerSim *)ctx;
     serverMessageConsoleMessage(sim, msg);
+}
+
+/* The three callbacks that answer rather than announce. Each is the one
+ * place a decision the sim core takes is put to the scenario, which is why
+ * the core can ask its question without a scenario existing: with no policy
+ * registered, or none that has an opinion, the answer here is the classic
+ * one and the caller carries on as it always did. Every call runs between
+ * the policy enter and leave, so a policy that tries to write back through
+ * the op funnel while it is answering is refused there. */
+
+/* Where a tank starts. The index is the policy's to name and the caller's
+ * to range-check. */
+bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool named;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->chooseStart == NULL) {
+        return FALSE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    named = sim->scenarioPolicy->chooseStart(sim->scenarioPolicy->ctx,
+                                             player, startIdx);
+    serverSimScenarioPolicyLeave(sim);
+    return named;
+}
+
+/* What a spawning tank is handed. A loadout that names a game type is
+ * turned into the four amounts here, so the sim core only ever deals in
+ * amounts and the two forms of the answer cost it nothing. */
+bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
+                             BYTE *mines, BYTE *armour, BYTE *trees) {
+    ServerSim *sim = (ServerSim *)ctx;
+    ScnLoadout wanted;
+    bool answered;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->spawnLoadout == NULL) {
+        return FALSE;
+    }
+    memset(&wanted, 0, sizeof(wanted));
+    serverSimScenarioPolicyEnter(sim);
+    answered = sim->scenarioPolicy->spawnLoadout(sim->scenarioPolicy->ctx,
+                                                 player, &wanted);
+    serverSimScenarioPolicyLeave(sim);
+    if (answered == FALSE) {
+        return FALSE;
+    }
+    if (wanted.useGameType != 0) {
+        gameType named = (gameType)wanted.gameType;
+        gameTypeGetItems(&sim->sim, &named, shells, mines, armour, trees);
+        return TRUE;
+    }
+    *shells = wanted.shells;
+    *mines  = wanted.mines;
+    *armour = wanted.armour;
+    *trees  = wanted.trees;
+    return TRUE;
+}
+
+/* Whether a dead tank may come back yet. */
+bool serverSimCbCanRespawn(void *ctx, BYTE player) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canRespawn == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canRespawn(sim->scenarioPolicy->ctx, player);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
+/* The four combat questions. Same shape as the three above: the classic
+ * answer with nothing registered, and the policy asked between the enter and
+ * the leave so it cannot write back through the op funnel mid-question. */
+
+/* What this blow is worth against this victim, as a percent. A hundred is
+ * the classic amount and leaves the damage arithmetic exactly where it
+ * was. */
+int serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+    ServerSim *sim = (ServerSim *)ctx;
+    int pct;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->damageScale == NULL) {
+        return 100;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    pct = sim->scenarioPolicy->damageScale(sim->scenarioPolicy->ctx, attacker,
+                                           victim, cause);
+    serverSimScenarioPolicyLeave(sim);
+    return pct;
+}
+
+/* Whether a build order may go ahead. */
+bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                         BYTE mapY, BYTE pillIdx) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canBuild == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canBuild(sim->scenarioPolicy->ctx, player,
+                                        action, mapX, mapY, pillIdx);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
+/* Whether a pill or base may change hands. The engine's own capture tests
+ * have already passed by the time this is asked. */
+bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canCapture == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canCapture(sim->scenarioPolicy->ctx, kind,
+                                          index, player);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
+/* Whether this blow may destroy what it landed on. The kill ops do not come
+ * through here: they call the death bodies directly, so a script that kills
+ * what it protected gets the death it asked for. */
+bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
+                       BYTE cause) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canDie == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canDie(sim->scenarioPolicy->ctx, kind, index,
+                                      killer, cause);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
+/* Whether this fact may be shown to players. Every site that builds a
+ * newswire-worthy fact comes through here, so the enter and leave bracket is
+ * written once and a policy that answers by writing back through the op funnel
+ * is refused there. A ServerSim rather than a void *ctx: the askers are server
+ * sources holding the sim, not GameSim callbacks. */
+bool serverSimAnnounce(ServerSim *sim, BYTE kind, BYTE subject, BYTE actor) {
+    bool show;
+
+    if (sim == NULL || sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->announce == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    show = sim->scenarioPolicy->announce(sim->scenarioPolicy->ctx, kind,
+                                         subject, actor);
+    serverSimScenarioPolicyLeave(sim);
+    return show;
 }

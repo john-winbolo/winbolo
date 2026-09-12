@@ -1702,6 +1702,7 @@ static void meCommitPaste(MapEditorState *ed, int originX, int originY) {
             *p = ed->clipPills[i];
             p->x = (BYTE)px;
             p->y = (BYTE)py;
+            ed->pb->active[ed->pb->numPills] = TRUE;
             undoRecordObjAdd(&ed->undoStack, OBJ_PILL, ed->pb->numPills, p);
             ed->pb->numPills++;
         }
@@ -1715,6 +1716,7 @@ static void meCommitPaste(MapEditorState *ed, int originX, int originY) {
             *b = ed->clipBases[i];
             b->x = (BYTE)bx;
             b->y = (BYTE)by;
+            ed->bs->active[ed->bs->numBases] = TRUE;
             undoRecordObjAdd(&ed->undoStack, OBJ_BASE, ed->bs->numBases, b);
             ed->bs->numBases++;
         }
@@ -1728,6 +1730,7 @@ static void meCommitPaste(MapEditorState *ed, int originX, int originY) {
             *s = ed->clipStarts[i];
             s->x = (BYTE)sx;
             s->y = (BYTE)sy;
+            ed->ss->active[ed->ss->numStarts] = TRUE;
             undoRecordObjAdd(&ed->undoStack, OBJ_START, ed->ss->numStarts, s);
             ed->ss->numStarts++;
         }
@@ -3689,6 +3692,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                             b->armour = 90;
                             b->shells = 90;
                             b->mines = 90;
+                            ed->bs->active[ed->bs->numBases] = TRUE;
                             ed->bs->numBases++;
                             undoRecordObjAdd(&ed->undoStack, OBJ_BASE, ed->bs->numBases - 1, b);
                             undoEndCommand(&ed->undoStack);
@@ -3714,6 +3718,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                             p->owner = NEUTRAL;
                             p->armour = 15;
                             p->speed = 50;
+                            ed->pb->active[ed->pb->numPills] = TRUE;
                             ed->pb->numPills++;
                             undoRecordObjAdd(&ed->undoStack, OBJ_PILL, ed->pb->numPills - 1, p);
                             undoEndCommand(&ed->undoStack);
@@ -3736,6 +3741,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                             s->x = (BYTE)mx;
                             s->y = (BYTE)my;
                             s->dir = meComputeDirToLand(ed, mx, my);
+                            ed->ss->active[ed->ss->numStarts] = TRUE;
                             ed->ss->numStarts++;
                             undoRecordObjAdd(&ed->undoStack, OBJ_START, ed->ss->numStarts - 1, s);
                             undoEndCommand(&ed->undoStack);

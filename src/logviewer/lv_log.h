@@ -110,8 +110,20 @@ log_SpectatorLeft,   // opt1=spectator slot, then name pstr (names the leaver ac
 log_SpectatorChat,   // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
 log_GameSettings,    // pascal-string blob of every lobby setting (layout in docs/replay-format.md)
 log_Ping,            // opt1=sender, opt2=kind, then worldX/worldY as two big-endian u16 (layout in docs/replay-format.md)
-log_TankSetStock     // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
+log_TankSetStock,    // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
+log_TankSetModifiers,// opt1=player, then a 6-byte pascal blob: speed, accel, turn, reload, dealt, taken
+log_EntityChange,    // opt1=kind (LV_ENTITY_KIND_*), opt2=index (0 based), opt3=on the map, then the item's record as a pascal blob (layout in docs/replay-format.md)
+log_EntityMasks,     // which indices are on the map, as three big-endian u16: pills in opt1/opt2, bases in opt3/opt4, starts in short1. Follows every snapshot (layout in docs/replay-format.md)
+log_ServerText,      // a server line a scenario wrote: opt1=destTeam (0 = everyone), opt2=destPlayer (0xFF = everyone), then the text as a pascal string
+log_GameTimeSet      // the round's game time after a scenario changed it, as a big-endian int32 of ticks across opt1..opt4
 } logitem;
+
+/* Which list a log_EntityChange names. Mirrors ENTITY_KIND_* in
+ * src/bolo/public/control_event.h; that header is engine-side, and the
+ * viewer reads the values off the record rather than sharing the enum. */
+#define LV_ENTITY_KIND_PILL  0
+#define LV_ENTITY_KIND_BASE  1
+#define LV_ENTITY_KIND_START 2
 
 /* Vote-kind values inside the log_GameVote* events. Mirrored from
  * src/bolo/internal/netpacks.h; that header is server-only, but the

@@ -544,7 +544,7 @@ void serverCleanupMapDownload(int slot);
 void serverDrainBulk(struct ServerSim *sim, int clientIdx);
 void serverInitMapDownload(int slot);
 void serverRebaseBulkAndRearmDownload(int i);
-void serverServiceMapTransfer(int slot);
+void serverServiceMapTransfer(struct ServerSim *sim, int slot);
 void udpServerClearClientUploadState(int idx);
 void udpServerResetMapReaskLimit(int idx);
 

@@ -199,6 +199,13 @@ struct BrainPathfinder {
    * SDL3 — the .c file casts on read. */
   void *abort_flag;
 
+  /* The owning tank's acceleration modifier, raw off the tank with 0
+   * meaning classic. Pushed each think by the bot manager, which has the
+   * tank in hand; the stop predictor reads it so a modified bot's braking
+   * maths matches what the engine will actually do. Zero-initialised, so a
+   * pathfinder nobody pushes to predicts for an unmodified tank. */
+  uint8_t accel_pct;
+
   /* ── Incremental Dijkstra slates ──
    * Each slate holds the full state of one Dijkstra search. The brain
    * can use them however it wants — typical pattern is double-buffered
@@ -220,6 +227,12 @@ void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map);
  * `flag` is an SDL_AtomicInt * (void * here so callers without SDL
  * available don't need to depend on it). NULL disables polling. */
 void brainPathfinderSetAbortFlag(BrainPathfinder *pf, void *flag);
+
+/* Set the owning tank's acceleration modifier, the raw percentage byte
+ * off the tank with 0 meaning classic — so a pathfinder nobody has
+ * pushed to reads as an unmodified tank. Pushed each think by the bot
+ * manager so the stop predictor brakes at the rate the engine will. */
+void brainPathfinderSetAccelPct(BrainPathfinder *pf, uint8_t pct);
 
 /*
  * Eagerly allocate the per-slate working arrays for every slate AND touch

@@ -462,20 +462,24 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
         int self_pills = 0, enemy_pills = 0, ally_pills = 0;
         int self_bases = 0, ally_bases = 0;
         BYTE np = pillsGetNumPills(&gs->pb);
-        int total_pills = np;
+        int total_pills = 0;
         for (BYTE pi = 1; pi <= np; pi++) {
             pillbox p;
             pillsGetPill(&gs->pb, &p, pi);
+            if (pillsIsActive(&gs->pb, pi) == FALSE) continue;
+            total_pills++;
             if (p.owner == 0xFF) continue;
             if (p.owner == selfPlayer) self_pills++;
             else if (alliesBits & (1u << p.owner)) ally_pills++;
             else enemy_pills++;
         }
         BYTE nb = basesGetNumBases(&gs->bs);
-        int total_bases = nb;
+        int total_bases = 0;
         for (BYTE bsi = 1; bsi <= nb; bsi++) {
             base b;
             basesGetBase(&gs->bs, &b, bsi);
+            if (basesIsActive(&gs->bs, bsi) == FALSE) continue;
+            total_bases++;
             if (b.owner == 0xFF) continue;
             if (b.owner == selfPlayer) self_bases++;
             else if (alliesBits & (1u << b.owner)) ally_bases++;
@@ -546,6 +550,7 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
         for (BYTE pi = 1; pi <= np && obs->num_pillboxes < WBGYM_MAX_PILLBOXES; pi++) {
             pillbox p;
             pillsGetPill(&gs->pb, &p, pi);
+            if (pillsIsActive(&gs->pb, pi) == FALSE) continue;
             WinBoloPillObs *po = &obs->pillboxes[obs->num_pillboxes];
             po->tx = p.x;
             po->ty = p.y;
@@ -564,6 +569,7 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
         for (BYTE bsi = 1; bsi <= nb && obs->num_bases < WBGYM_MAX_BASES; bsi++) {
             base b;
             basesGetBase(&gs->bs, &b, bsi);
+            if (basesIsActive(&gs->bs, bsi) == FALSE) continue;
             WinBoloBaseObs *bo = &obs->bases[obs->num_bases];
             bo->tx = b.x;
             bo->ty = b.y;
@@ -732,7 +738,8 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
         pillbox p;
         pillsGetPill(&gs->pb, &p, pi);
 
-        /* Must be: owned by self or ally, not in tank, armour > 0 */
+        /* Must be: live, owned by self or ally, not in tank, armour > 0 */
+        if (pillsIsActive(&gs->pb, pi) == FALSE) continue;
         if (p.inTank) continue;
         if (p.armour == 0) continue;
         if (p.owner == 0xFF) continue;

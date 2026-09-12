@@ -26,8 +26,9 @@
 #define BRAIN_LUA_GLUE_H
 
 #include "global.h"
-#include "brain.h"          /* For BrainInfo */
-#include "brain_overlay.h"  /* For OverlayCmdBuffer */
+#include "brain.h"           /* For BrainInfo */
+#include "brain_overlay.h"   /* For OverlayCmdBuffer */
+#include "scenario_table.h"  /* ScnTable — the brain's init table */
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +65,7 @@ void           brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map);
  * CallThink / CallMethod run the brain's think / named function and
  * marshal BrainInfo in/out. */
 void brainCoreRegisterConstants(struct lua_State *L);
+void brainCoreSetInitTable(struct lua_State *L, const ScnTable *init);
 void brainCoreRegisterGetTerrain(struct lua_State *L, const BYTE **worldPtr);
 void brainCoreRegisterPathfinder(struct lua_State *L, BrainPathfinder **pfPtr);
 void brainCoreRegisterWorldSim(struct lua_State *L, BrainWorldSim **wsPtr);

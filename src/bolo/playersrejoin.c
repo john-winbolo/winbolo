@@ -194,7 +194,7 @@ void playersRejoinRequest(GameSim *sim, char *playerName, BYTE playerNum, pillbo
       if (testItem) {
         if (basesGetBaseOwner(&sim->bs, (BYTE) (count+1)) == NEUTRAL) {
           basesGetBase(&sim->bs, &ba, (BYTE) (count+1));
-          basesSetBaseOwner(sim, (BYTE) (count+1), playerNum, TRUE);
+          basesSetBaseOwner(sim, (BYTE) (count+1), playerNum, TRUE, TRUE);
         }        
       }
       count++;

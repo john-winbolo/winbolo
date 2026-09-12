@@ -2267,7 +2267,8 @@ static void printUsage(const char *prog) {
         "Options:\n"
         "  -brain PATH      Brain script directory (default: brains/GoalHunter)\n"
         "  -bot-init SPEC   Per-bot brain paths by id: 'range=path[arg],...' where range\n"
-        "                   is 'a-b' or 'n' and optional [arg] sets that bot's BRAIN_INIT_ARG.\n"
+        "                   is 'a-b' or 'n' and optional [arg] sets that bot's BRAIN_INIT\n"
+        "                   table: ';'-separated key=value pairs, a bare word being '1'.\n"
         "                   Ids not listed use -brain. E.g. 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
         "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
@@ -6068,12 +6069,13 @@ int main(int argc, char *argv[]) {
             if (us && us[1] >= '0' && us[1] <= '9') *us = '\0';
         }
         /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
-         * id defaults to the resolved brainPath with no arg; the spec overrides
-         * the ids it names. Shared parser/semantics with winbolods. */
+         * id defaults to the resolved brainPath with an empty init table; the
+         * spec overrides the ids it names. Shared parser/semantics with
+         * winbolods. */
         BotInitSlot botInit[MAX_TANKS];
         for (int i = 0; i < MAX_TANKS; i++) {
             SDL_snprintf(botInit[i].path, sizeof(botInit[i].path), "%s", brainPath);
-            botInit[i].arg[0] = '\0';
+            scnTableClear(&botInit[i].init);
             botInit[i].covered = 0;
         }
         if (optBotInit[0] &&
@@ -6088,15 +6090,19 @@ int main(int argc, char *argv[]) {
             g_currentInitBot = i;
             SDL_snprintf(g_currentInitBrainName,
                          sizeof(g_currentInitBrainName), "%s", brainName);
-            /* Stage this bot's BRAIN_INIT_ARG (consumed by the create) and use
-             * its resolved brain path. */
-            luaBrainsSetNextInitArg(botInit[i].arg);
-            if (botInit[i].covered)
+            /* This bot's init table and resolved brain path go down the
+             * create call, so each bot gets its own. */
+            if (botInit[i].covered) {
+                char initText[256];
+                scnTableFormat(&botInit[i].init, initText, sizeof(initText));
                 fprintf(stderr, "  Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
-                        botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
+                        initText[0] ? " init=" : "", initText);
+            }
             SDL_PumpEvents(); /* keep window responsive during brain.open() */
+            /* No team in the add: -teams places these bots through
+             * serverSimSetTeamBatch below, once the whole set is in. */
             bool ok = serverSimCreateBot(app.sim, (BYTE)i, botInit[i].path, name,
-                                       optAI, optGame, false);
+                                       optAI, optGame, false, 0, &botInit[i].init);
             SDL_PumpEvents();
             g_currentInitBot = -1;
             g_currentInitBrainName[0] = '\0';

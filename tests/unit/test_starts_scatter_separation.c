@@ -76,7 +76,7 @@ static void build_start(GameSim *gs) {
     gs->ss->item[0].x = K_SX;
     gs->ss->item[0].y = K_SY;
     gs->ss->item[0].dir = 0;
-    gs->ss->numStarts = 1;
+    startsSetNumStarts(&gs->ss, 1);
 }
 
 /* True when no live tank sits within margin squares of the start. */

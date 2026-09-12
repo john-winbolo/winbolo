@@ -113,7 +113,7 @@ static ServerSim *vpMakeWorld(GameSim **outGs) {
     allienceAdd(&(*gs->plyrs).item[0].allie, 3);
     allienceAdd(&(*gs->plyrs).item[3].allie, 0);
 
-    gs->pb->numPills = 3;
+    pillsSetNumPills(&gs->pb, 3);
     vpPlacePill(gs, 0, 0, 200, 50);
     vpPlacePill(gs, 1, 1, 210, 60);
     vpPlacePill(gs, 2, 2, 220, 70);

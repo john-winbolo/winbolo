@@ -48,7 +48,7 @@ static void build_starts(GameSim *gs) {
         gs->ss->item[i].y = k_sy[i];
         gs->ss->item[i].dir = 0;
     }
-    gs->ss->numStarts = K_NUM_STARTS;
+    startsSetNumStarts(&gs->ss, K_NUM_STARTS);
 }
 
 /* (a) Cluster: a teammate holds start 0; the nearest free start (1) wins. */

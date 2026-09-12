@@ -34,6 +34,7 @@
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
+#include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -56,10 +57,22 @@
 #define RETURN_REASON_SURRENDER   2
 #define RETURN_REASON_BASE_WIN    3
 #define RETURN_REASON_ABANDONED   4
+/* A scenario op ended the round: it brings its own lobby line and credits
+ * nobody, so the base sweep neither speaks for it nor wins for it. */
+#define RETURN_REASON_SCENARIO    5
 
 /* roundLogStartTick before the round's first log entry has been written. Not a
  * plausible tick, so it doubles as the "not latched yet" flag. */
 #define ROUND_LOG_START_UNSET     0xFFFFFFFFu
+
+/* One roster change waiting its turn. A spawn carries the whole payload
+ * because the seat, the brain and the init table are all read when it
+ * lands rather than when it was asked for; a removal needs only the slot. */
+typedef struct {
+    bool                isSpawn;
+    ScnOpRosterSpawnBot spawn;        /* read when isSpawn */
+    BYTE                removeSlot;   /* read when it is not */
+} ScnRosterQueueEntry;
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -552,7 +565,61 @@ struct ServerSim {
     ControlSubscriber subscribers[SUBSCRIBER_SLOT_COUNT];
     uint16_t          subscriberGen[SUBSCRIBER_SLOT_COUNT];
     int               numSubscribers;
-    bool              publishing;
+    int               numEventSubscribers; /* slots with a deliverEvent set */
+    bool              publishing;          /* inside serverSimPublishControl's deliver loop */
+    bool              publishingEvent;     /* inside serverSimAddEvent's deliver loop */
+
+    /* Scenario attachment. scenario is the host's own state and the only
+     * scenario data on any engine struct; everything else here is what
+     * the sim needs to call back into it.
+     *
+     * inScenarioPolicy counts the policy calls in progress. A policy
+     * callback is a question asked mid-operation and must answer without
+     * changing anything, so the op funnel's prelude refuses an op while
+     * the count is above zero. A depth rather than a flag so a question
+     * asked inside another does not open the funnel when it returns.
+     *
+     * startInProgress is set for the duration of both start functions.
+     * A start publishes while the state is still lobby, and a subscriber
+     * that edits the roster from that publish re-enters
+     * serverSimLobbyCheckAllReady with every player still ready — which
+     * would start a second game on top of the one being set up. The
+     * detector returns at its first line while this is set. */
+    void                  *scenario;
+    const ScenarioPolicy  *scenarioPolicy;
+    uint8_t                inScenarioPolicy;
+    bool                   startInProgress;
+    void                 (*scenarioTick)(void *ctx);
+    void                  *scenarioTickCtx;
+
+    /* What is left of a fill-rect that did not fit in one tick, and how
+     * much of this tick's tile budget has been spent on one. The
+     * rectangle is walked row by row, so what the next tick needs is the
+     * column the rows start at, the two the walk ends on, and the square
+     * it stopped at — the top row is behind the cursor by then and is
+     * not kept. The op and serverSimScenarioDrainFill share the one
+     * budget, so a fill started by a hook and a remainder drained after
+     * it cannot together change more squares in a frame than the map
+     * event buffer holds. Only fill queues, so there is one of these
+     * rather than a list: a fill arriving while another is outstanding
+     * is refused rather than replacing it. */
+    bool                   scenarioFillPending;
+    BYTE                   scenarioFillX0;
+    BYTE                   scenarioFillX1, scenarioFillY1;
+    BYTE                   scenarioFillTerrain;
+    BYTE                   scenarioFillX, scenarioFillY;
+    uint16_t               scenarioFillSpent;
+
+    /* Roster changes a scenario has asked for and the sim has not made
+     * yet. Adding a bot builds a Lua VM and a ClientSim and removing one
+     * tears them down, which is more than a frame should do on demand, so
+     * both queue here and serverSimScenarioDrainRoster makes one of them a
+     * tick. Spawns and removals share the one queue so they land in the
+     * order they were asked for: a spawn into the seat a removal is about
+     * to free must not overtake it. A ring, so a drain costs no shuffle. */
+    ScnRosterQueueEntry    scenarioRoster[SCN_ROSTER_QUEUE_MAX];
+    uint8_t                scenarioRosterHead;   /* the next one to drain */
+    uint8_t                scenarioRosterCount;
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
@@ -572,6 +639,47 @@ struct ServerSim {
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
+
+/* Bracket every call through sim->scenarioPolicy with these. They set and
+ * clear inScenarioPolicy, which the op funnel's prelude reads: a policy
+ * callback answers a question and must not write back through the funnel
+ * while the engine is mid-operation. Declared here rather than on the
+ * scenario surface because the call sites are the sim's own, not the
+ * scenario's. */
+void serverSimScenarioPolicyEnter(ServerSim *sim);
+void serverSimScenarioPolicyLeave(ServerSim *sim);
+
+/* Carry a queued fill-rect forward by whatever is left of this tick's
+ * tile budget, then hand the budget back for the next tick. serverSimTick
+ * calls it once a frame beside the scenario hook, after it, so a fill the
+ * hook has just started and the remainder of an older one are paced out of
+ * the same budget. Declared here rather than on the scenario surface: the
+ * caller is the sim's own tick, not a scenario. */
+void serverSimScenarioDrainFill(ServerSim *sim);
+
+/* Forget an outstanding fill and hand its budget back. The rectangle names
+ * squares on the map the fill was issued against, so once a different map is
+ * installed under it — or the round it belongs to is over — those squares are
+ * other ground and finishing the fill would paint terrain nobody asked for.
+ * Called at the round boundaries in server_sim_round.c. Here rather than on
+ * the scenario surface for the same reason as the drain, and beside it so the
+ * one function knows every field the funnel keeps. */
+void serverSimScenarioResetFill(ServerSim *sim);
+
+/* Make one queued roster change. serverSimTick calls it once a running
+ * frame, beside the fill drain: a spawn builds a Lua VM and a ClientSim
+ * and a removal tears them down, so one a tick is the rate a script gets
+ * whatever it asks for. The world is re-checked as the change lands — a
+ * seat taken or freed since it was queued drops that entry rather than
+ * stalling the ones behind it. Declared here rather than on the scenario
+ * surface: the caller is the sim's own tick, not a scenario. */
+void serverSimScenarioDrainRoster(ServerSim *sim);
+
+/* Forget every queued roster change. The seats a queue names belong to the
+ * round it was filled in, so a round that ends takes its queue with it
+ * rather than spawning into the next one. Called at the game starts in
+ * server_sim_round.c, beside the fill reset. */
+void serverSimScenarioResetRoster(ServerSim *sim);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

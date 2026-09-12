@@ -68,6 +68,18 @@ typedef struct {
   BYTE trees;
 } TankInventory;
 
+/* Per-tank modifier percentages as the recording states them, from the
+ * log_TankSetModifiers records. 0 means classic, so a slot the recording says
+ * nothing about reads as an unmodified tank. Stored but not drawn. */
+typedef struct {
+  BYTE speed;
+  BYTE accel;
+  BYTE turn;
+  BYTE reload;
+  BYTE dealt;
+  BYTE taken;
+} TankMods;
+
 /*********************************************************
  * LogViewerState — all viewer state in one struct.
  *
@@ -145,6 +157,7 @@ typedef struct LogViewerState {
   uint16_t     deaths[MAX_TANKS];    /* per-player death tally */
   GameViewPlayerHud gameViewHud[MAX_TANKS];
   TankInventory tankInv[MAX_TANKS];  /* per-tank stocks, as the recording states them */
+  TankMods     tankMods[MAX_TANKS];  /* per-tank modifiers, as the recording states them */
 
   /* --- Embedded reel (post-game recap) state --- */
   /* Colour tanks by their alliance to the local player -- green allies, red

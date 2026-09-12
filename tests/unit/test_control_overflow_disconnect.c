@@ -73,6 +73,7 @@ int run_control_overflow_defers_disconnect(void) {
     evt.type = CTRL_SERVER_TEXT;
     SDL_strlcpy(evt.u.serverText.text, "overflow probe",
                 sizeof(evt.u.serverText.text));
+    evt.u.serverText.destPlayer = 0xFF;  /* every client, not slot 0 alone */
 
     threadsWaitForMutex();
     for (i = 0; i < OVERFLOW_EVENTS; i++) {

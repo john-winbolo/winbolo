@@ -32,6 +32,7 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 #include "client_sim_control.h"
+#include "client_snapshot.h"  /* clientApplyEntityChange */
 #include "client_sim_internal.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
@@ -211,7 +212,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                          nameBuf, ccBuf,
                          0, 0, 0, 0, 0, FALSE,
                          numAllies, numAllies > 0 ? allies : NULL, FALSE);
-        if ((cs->isSpectator || pNum != cs->myPlayerNum) && cs->inLobby) {
+        /* The roster above is applied whatever the answer; only the line is
+         * the policy's to withhold. quiet is 0 with no scenario registered. */
+        if ((cs->isSpectator || pNum != cs->myPlayerNum) && cs->inLobby &&
+            evt->u.playerJoin.quiet == 0) {
             char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", joinMsg);
@@ -225,7 +229,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         memcpy(nameBuf, evt->u.playerName.name, sizeof(nameBuf));
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         playersSetPlayerName(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                             evt->u.playerName.playerNum, nameBuf, FALSE);
+                             evt->u.playerName.playerNum, nameBuf, FALSE,
+                             evt->u.playerName.quiet == 0);
         break;
     }
 
@@ -827,28 +832,36 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * convergence point for all three. Reads cs->sim.{bs,plyrs,game}
          * and the per-game counters set by client_snapshot during play. */
         BYTE numBases = basesGetNumBases(&cs->sim.bs);
+        BYTE liveBases = 0;
         BYTE first    = NEUTRAL;
         bool allOwned = true;
         bool localWon = false;
         BYTE b;
 
+        /* A removed base is not on the map, so it neither blocks the win nor
+           counts toward it; the first live base sets the owner to match. */
         for (b = 1; b <= numBases && allOwned; b++) {
-            BYTE owner = basesGetBaseOwner(&cs->sim.bs, b);
+            BYTE owner;
             BYTE shellsAmt, minesAmt, armourAmt;
+            if (basesIsActive(&cs->sim.bs, b) == FALSE) {
+                continue;
+            }
+            owner = basesGetBaseOwner(&cs->sim.bs, b);
             basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
             if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
                 allOwned = false;
-            } else if (b == 1) {
+            } else if (liveBases == 0) {
                 first = owner;
             } else {
                 allOwned = playersIsAllie(&cs->sim.plyrs, owner, first);
             }
+            liveBases++;
         }
 
         /* Steam stats/achievements are for the local human only — bots run
          * this same game-over path with their own ClientSim and must not
          * credit wins/losses to the local user. */
-        if (allOwned && numBases > 0 && !cs->isBot) {
+        if (allOwned && liveBases > 0 && !cs->isBot) {
             localWon = (cs->myPlayerNum == first) ||
                        playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
 
@@ -899,6 +912,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             BYTE myPN = clientSimGetMyPlayerNum(cs);
             const ClientLobbySlot *ms = clientSimGetLobbySlot(cs, myPN);
             if (!ms || ms->teamNumber != evt->u.serverText.destTeam) break;
+        }
+        /* Player-scoped server text: only the addressed slot sees it. 0xFF is
+         * everyone — 0 is slot 0, so an event that never set the field would
+         * land here as a unicast. */
+        if (evt->u.serverText.destPlayer != 0xFF &&
+            clientSimGetMyPlayerNum(cs) != evt->u.serverText.destPlayer) {
+            break;
         }
         if (cs->inLobby) {
             clientSimAppendLobbyChat(cs, "Server", text);
@@ -996,10 +1016,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         /* announce=false in the lobby: the in-game newswire is wrong there
          * (it would queue and pop at game start); the lobby chat line below
-         * is the right surface. In-game, announce the leave on the newswire. */
+         * is the right surface. In-game, announce the leave on the newswire.
+         * A departure the announce policy turned down writes neither: the
+         * removal itself still happens on both surfaces' behalf. */
         playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                         pNum, FALSE, !cs->inLobby);
-        if (cs->inLobby) {
+                         pNum, FALSE,
+                         evt->u.playerLeave.quiet == 0 && !cs->inLobby);
+        if (cs->inLobby && evt->u.playerLeave.quiet == 0) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", leaveMsg);
@@ -1109,5 +1132,24 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * client with no owner filter), so drawing one here would double up. */
         break;
     }
+
+    case CTRL_ENTITY_CHANGE:
+        /* A pillbox, base or start has joined the map or left it. The lists
+         * live behind client_snapshot.c, beside the per-tick pill and base
+         * snapshots that write the same records, so the apply lives there
+         * too. Broadcast, with no per-recipient filter: which items are on
+         * the map is as public as the map. */
+        clientApplyEntityChange(cs, evt);
+        break;
+
+    case CTRL_ENTITY_SYNC:
+        /* Which pillboxes, bases and starts are on the map, sent once this
+         * client holds the compressed map the lists came out of. The install
+         * marks everything the blob carries as on the map, so this is how a
+         * client that arrived after a removal learns about it. Beside the
+         * entity-change apply for the same reason: the lists live behind
+         * client_snapshot.c. */
+        clientApplyEntitySync(cs, evt);
+        break;
     }
 }

@@ -147,10 +147,11 @@ uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample);
  * + returnToLobbyTicks(2). The server packer reserves and the client size
  * guard check this one constant so the two sides can't drift. */
 #define SNAPSHOT_HEADER_WIRE_SIZE 17
-/* Upper bound on one non-stub tank entry: the 11-byte core (incl. presence
- * mask) plus every field group present at once. NOT the typical on-wire size —
- * most entries are far smaller because absent (zero) groups are omitted. */
-#define TANK_SNAPSHOT_WIRE_SIZE 29
+/* Upper bound on one non-stub tank entry: the 12-byte core (incl. the two-byte
+ * presence mask) plus every field group present at once. NOT the typical
+ * on-wire size — most entries are far smaller because absent (zero) groups are
+ * omitted. */
+#define TANK_SNAPSHOT_WIRE_SIZE 36
 
 /* ---- Serialization helpers ---- */
 

@@ -48,7 +48,7 @@ static void build_open_scene(GameSim *gs, BYTE playerNum) {
         gs->ss->item[i].y = sy[i];
         gs->ss->item[i].dir = 0;
     }
-    gs->ss->numStarts = 3;
+    startsSetNumStarts(&gs->ss, 3);
 
     gs->bs->numBases = 0;   /* open path ignores bases; keep the scene clean */
 
@@ -64,7 +64,7 @@ static void build_open_scene(GameSim *gs, BYTE playerNum) {
     gs->pb->item[1].owner = NEUTRAL;
     gs->pb->item[1].armour = 15;
     gs->pb->item[1].inTank = FALSE;
-    gs->pb->numPills = 2;
+    pillsSetNumPills(&gs->pb, 2);
 
     gs->game = gameOpen;
 }
@@ -122,6 +122,82 @@ int run_starts_open_ideal_friendly_pill_eligible(void) {
                   neutralChosen);
     /* sanity: the clean start is ideal too and does get picked */
     UT_ASSERT_MSG(cleanChosen > 0, "clean start never chosen");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A pillbox a removal has taken off the map does not disqualify a start: the
+ * neutral pill's start becomes ideal once that pill is removed. */
+int run_starts_open_ideal_removed_pill_ignored(void) {
+    ServerSim *sim = ut_make_running_sim("OpenIdeal");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+
+    BYTE playerNum = 0;
+    int neutralChosen = 0;
+    int s;
+
+    build_open_scene(gs, playerNum);
+    UT_ASSERT_MSG(pillsRemoveItem(&gs->pb, 2), "setup: removing pill 2 failed");
+
+    for (s = 0; s < 64; s++) {
+        BYTE x = 0;
+        BYTE y = 0;
+        TURNTYPE dir = 0;
+        gs->pendingStartIdx[playerNum] = MAX_STARTS;
+        bolo_srand((uint64_t)(s + 1));
+        startsGetStart(gs, &gs->ss, &x, &y, &dir, playerNum);
+        if (nearest_start(gs, x, y) == S_NEUTRAL) neutralChosen++;
+    }
+    UT_ASSERT_MSG(neutralChosen > 0,
+                  "a start beside a removed pillbox was never chosen: the "
+                  "placement sweep still counts the pillbox");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A start a removal has taken off the map is never chosen, ideal or not, and
+ * nor is it the fallback when nothing else qualifies. */
+int run_starts_open_removed_start_never_chosen(void) {
+    ServerSim *sim = ut_make_running_sim("OpenIdeal");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+
+    BYTE playerNum = 0;
+    int cleanChosen = 0;
+    int s;
+
+    build_open_scene(gs, playerNum);
+    UT_ASSERT_MSG(startsRemoveItem(&gs->ss, 1), "setup: removing start 1 failed");
+
+    for (s = 0; s < 64; s++) {
+        BYTE x = 0;
+        BYTE y = 0;
+        TURNTYPE dir = 0;
+        gs->pendingStartIdx[playerNum] = MAX_STARTS;
+        bolo_srand((uint64_t)(s + 1));
+        startsGetStart(gs, &gs->ss, &x, &y, &dir, playerNum);
+        if (nearest_start(gs, x, y) == S_CLEAN) cleanChosen++;
+    }
+    UT_ASSERT_MSG(cleanChosen == 0,
+                  "a removed start was chosen %d times", cleanChosen);
+
+    /* With every other start under water that is not deep sea, the fallback
+       is still not the removed one. */
+    mapSetPos(gs, &gs->mp, gs->ss->item[1].x, gs->ss->item[1].y, GRASS, FALSE, TRUE);
+    mapSetPos(gs, &gs->mp, gs->ss->item[2].x, gs->ss->item[2].y, GRASS, FALSE, TRUE);
+    {
+        BYTE x = 0;
+        BYTE y = 0;
+        TURNTYPE dir = 0;
+        gs->pendingStartIdx[playerNum] = MAX_STARTS;
+        bolo_srand(7);
+        startsGetStart(gs, &gs->ss, &x, &y, &dir, playerNum);
+        UT_ASSERT_MSG(nearest_start(gs, x, y) != S_CLEAN,
+                      "the fallback placed the tank at a removed start");
+    }
     serverSimDestroy(sim);
     return 0;
 }

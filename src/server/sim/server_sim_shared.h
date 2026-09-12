@@ -57,8 +57,58 @@ void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind,
                                    BYTE mapX, BYTE mapY);
 void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                                  BYTE mapX, BYTE mapY);
+/* The three announcements that used to be built inline in bases.c, pillbox.c
+ * and lgm.c. Each casts ctx once and raises the game event the shared site
+ * used to raise for itself. index is the 0-based item[] slot. */
+void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY);
+void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY);
+void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
+                        BYTE mapX, BYTE mapY);
+/* The facts that had no event before. Same file, same shape. */
+void serverSimCbTankSpawned(void *ctx, BYTE player, BYTE mapX, BYTE mapY,
+                            bool respawn);
+void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
+void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
+                           BYTE mapY);
+void serverSimCbPillKilled(void *ctx, BYTE index, BYTE attacker);
+void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                      BYTE mapY);
+void serverSimCbMineLaid(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
+void serverSimCbMineExploded(void *ctx, BYTE mapX, BYTE mapY, BYTE layer);
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
+
+/* The policy queries, also in server_sim_callbacks.c. These are where the
+ * scenario policy is asked for the decisions shared code takes, so the sim
+ * core can put the question without knowing a scenario exists. */
+bool serverSimCbChooseStart(void *ctx, BYTE player, BYTE *startIdx);
+bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
+                             BYTE *mines, BYTE *armour, BYTE *trees);
+bool serverSimCbCanRespawn(void *ctx, BYTE player);
+int  serverSimCbDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause);
+bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
+                         BYTE mapY, BYTE pillIdx);
+bool serverSimCbCanCapture(void *ctx, BYTE kind, BYTE index, BYTE player);
+bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
+                       BYTE cause);
+
+/* Whether a newswire-worthy fact may be shown to players, also in
+ * server_sim_callbacks.c. Unlike the queries above this one is not a GameSim
+ * callback: nothing in shared code asks it. The server asks it where it builds
+ * the fact — the two capture callbacks and the builder death here, the control
+ * events in server_sim_control.c, server_sim_players.c and server_sim_round.c,
+ * and the vote's own text in server_sim_vote.c — and stamps the answer as the
+ * quiet byte the fact carries. TRUE with no policy registered, which is why a
+ * plain map's newswire reads exactly as it always has.
+ *
+ * kind is an ANNOUNCE_KIND_* (scenario_defs.h) and subject and actor are what
+ * that table says they are. This is the single bracketed call: the policy
+ * enter and leave are here rather than at each of the sites. */
+bool serverSimAnnounce(ServerSim *sim, BYTE kind, BYTE subject, BYTE actor);
 
 /* Defined in server_sim_callbacks.c. Appends a packed attribution record to
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
@@ -106,6 +156,12 @@ void publishMapSkipState(ServerSim *sim);
  * subscriber. The base-sweep branch of the tick core in server_sim_tick.c calls
  * it. */
 void publishServerMessage(ServerSim *sim, const char *message);
+
+/* The same line held to one team (1..MAX_TANKS-1), through destTeam on the
+ * event. The surrender vote's private notices use it, and so does the scenario
+ * funnel's team-text arm in server_sim_scenario.c. */
+void publishServerMessageToTeam(ServerSim *sim, const char *message,
+                                BYTE teamId);
 
 /* Defined in server_sim_control.c — the one control-event filler with a caller
  * outside that translation unit. */
