@@ -119,6 +119,29 @@ typedef struct GameSimCallbacks {
                                BYTE mapX, BYTE mapY);
     void (*recordPillPickup)(void *ctx, BYTE picker, BYTE pillIndex,
                              BYTE mapX, BYTE mapY);
+    /* Server-only announcements of a fact the sim core has just settled.
+     * Each is fired where the core used to build the GameEvent itself: the
+     * event, and the queue it goes on, are the server's. NULL on the client,
+     * which never reaches any of them — every call sits inside the
+     * sim->isServer test that was already around the emit.
+     *
+     * baseOwnerChanged / pillOwnerChanged: the objective at `index` — the
+     * 0-based item[] slot, the base the rest of these files call the pill or
+     * base number less one — passed from `oldOwner` to `newOwner`.
+     * captureClass is a CAPTURE_CLASS_* separating a take from neutral, a
+     * steal from an enemy and a hand-over between allies; it is worked out at
+     * the call site because that is where the alliance is known. mapX/mapY
+     * are the objective's square.
+     * lgmDied: `victim`'s builder was lost and `killer` is credited, NEUTRAL
+     * for a death nobody caused. mapX/mapY are the man's square as it stands
+     * when the call is made. */
+    void (*baseOwnerChanged)(void *ctx, BYTE index, BYTE oldOwner,
+                             BYTE newOwner, BYTE captureClass,
+                             BYTE mapX, BYTE mapY);
+    void (*pillOwnerChanged)(void *ctx, BYTE index, BYTE oldOwner,
+                             BYTE newOwner, BYTE captureClass,
+                             BYTE mapX, BYTE mapY);
+    void (*lgmDied)(void *ctx, BYTE victim, BYTE killer, BYTE mapX, BYTE mapY);
     /* Policy queries — the members that return an answer rather than
      * announcing something. Each asks the host a decision the sim would
      * otherwise make alone; the server's implementation is the only place

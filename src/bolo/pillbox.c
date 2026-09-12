@@ -1365,20 +1365,18 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
     }
-    /* Emit event so networked clients receive the capture message */
+    /* Report the capture, which is what networked clients get the message from */
     if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
-      GameEvent ev;
-      ev.type = EVENT_PILL_CAPTURED;
-      memset(ev.data, 0, sizeof(ev.data));
-      ev.data[0] = owner;
-      ev.data[1] = returnValue;
-      ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
-                 : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
-                 :                                                           CAPTURE_CLASS_ALLY;
-      ev.data[3] = pillNum;
-      ev.data[4] = (*value)->item[pillNum].x;
-      ev.data[5] = (*value)->item[pillNum].y;
-      serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
+      if (sim->callbacks.pillOwnerChanged) {
+        BYTE captureClass;
+        captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                     : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                     :                                                           CAPTURE_CLASS_ALLY;
+        sim->callbacks.pillOwnerChanged(sim->callbacks.ctx, pillNum,
+                                        returnValue, owner, captureClass,
+                                        (*value)->item[pillNum].x,
+                                        (*value)->item[pillNum].y);
+      }
     }
     (*value)->item[pillNum].owner = owner;
     logAddEvent(log_PillSetOwner, pillNum, owner, migrate, 0, 0, NULL);

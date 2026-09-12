@@ -841,20 +841,18 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYT
     (*value)->item[baseNum].owner = owner;
     logAddEvent(log_BaseSetOwner, baseNum, owner, migrate, 0, 0, NULL);
 
-    /* Emit event so networked clients receive the capture message */
+    /* Report the capture, which is what networked clients get the message from */
     if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
-      GameEvent ev;
-      ev.type = EVENT_BASE_CAPTURED;
-      memset(ev.data, 0, sizeof(ev.data));
-      ev.data[0] = owner;
-      ev.data[1] = returnValue;
-      ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
-                 : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
-                 :                                                           CAPTURE_CLASS_ALLY;
-      ev.data[3] = baseNum;
-      ev.data[4] = (*value)->item[baseNum].x;
-      ev.data[5] = (*value)->item[baseNum].y;
-      serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
+      if (sim->callbacks.baseOwnerChanged) {
+        BYTE captureClass;
+        captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                     : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                     :                                                           CAPTURE_CLASS_ALLY;
+        sim->callbacks.baseOwnerChanged(sim->callbacks.ctx, baseNum,
+                                        returnValue, owner, captureClass,
+                                        (*value)->item[baseNum].x,
+                                        (*value)->item[baseNum].y);
+      }
     }
 
     /* WinBolo.net Stuff */
@@ -916,20 +914,18 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         }
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
-        /* Emit event so clients receive the capture message */
+        /* Report the capture, which is what clients get the message from */
         if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
-          GameEvent ev;
-          ev.type = EVENT_BASE_CAPTURED;
-          memset(ev.data, 0, sizeof(ev.data));
-          ev.data[0] = owner;
-          ev.data[1] = returnValue;
-          ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
-                     : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
-                     :                                                           CAPTURE_CLASS_ALLY;
-          ev.data[3] = count;
-          ev.data[4] = (*value)->item[count].x;
-          ev.data[5] = (*value)->item[count].y;
-          serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
+          if (sim->callbacks.baseOwnerChanged) {
+            BYTE captureClass;
+            captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                         : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                         :                                                           CAPTURE_CLASS_ALLY;
+            sim->callbacks.baseOwnerChanged(sim->callbacks.ctx, count,
+                                            returnValue, owner, captureClass,
+                                            (*value)->item[count].x,
+                                            (*value)->item[count].y);
+          }
         }
         done = TRUE;
         /* WinBolo.net Stuff */

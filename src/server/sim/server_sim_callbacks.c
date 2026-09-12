@@ -347,6 +347,64 @@ void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                           &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
+/* A base changed hands. The sim core settled the capture and worked out which
+ * of the three kinds it was; turning that into the event the snapshot stream
+ * carries is the server's job and happens here.
+ *
+ * data[0] and data[1] are the whole of the wire payload — gameEventDataSize()
+ * gives EVENT_BASE_CAPTURED two bytes. The rest is the server-internal side
+ * channel the stats funnel in serverSimAddEvent reads: the capture class, the
+ * 0-based item[] index, and the base's map cell. */
+void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_BASE_CAPTURED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = newOwner;
+    ev.data[1] = oldOwner;
+    ev.data[2] = captureClass;
+    ev.data[3] = index;
+    ev.data[4] = mapX;
+    ev.data[5] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* A pillbox changed hands. The same shape as the base above, and the same
+ * split between the two wire bytes and the four the funnel reads. */
+void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_PILL_CAPTURED;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = newOwner;
+    ev.data[1] = oldOwner;
+    ev.data[2] = captureClass;
+    ev.data[3] = index;
+    ev.data[4] = mapX;
+    ev.data[5] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
+/* A builder was lost. data[0] and data[1] are the two wire bytes; data[2] and
+ * data[3] are the man's map cell, past gameEventDataSize() and read by the
+ * stats funnel for the LGM record's mapX/mapY. */
+void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
+                        BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    GameEvent ev;
+    ev.type = EVENT_LGM_LOST;
+    memset(ev.data, 0, sizeof(ev.data));
+    ev.data[0] = victim;
+    ev.data[1] = killer;
+    ev.data[2] = mapX;
+    ev.data[3] = mapY;
+    serverSimAddEvent(sim, &ev);
+}
+
 void serverSimCbCenterTank(void *ctx) {
     (void)ctx;
     /* No-op on server */

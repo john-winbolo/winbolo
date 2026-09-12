@@ -106,6 +106,30 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
         sim->events[sim->eventCount] = *event;
         sim->eventCount++;
     }
+
+    /* The in-process game-event channel, the counterpart of the control
+     * fan-out in serverSimPublishControl. A subscriber hears the event
+     * whether or not the frame buffer had room for it above: the buffer is
+     * what the snapshot stream sends to a remote client, and a full one is a
+     * wire-side drop rather than a fact that did not happen.
+     *
+     * Walked off a snapshot of the active list, as the control fan-out is, so
+     * a callback that registers or unregisters cannot corrupt the walk. */
+    {
+        ControlSubscriber snapshot[SUBSCRIBER_SLOT_COUNT];
+        int snapCount = 0;
+        int i;
+
+        for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+            if (sim->subscribers[i].deliver != NULL &&
+                sim->subscribers[i].deliverEvent != NULL) {
+                snapshot[snapCount++] = sim->subscribers[i];
+            }
+        }
+        for (i = 0; i < snapCount; i++) {
+            snapshot[i].deliverEvent(snapshot[i].ctx, event);
+        }
+    }
 }
 
 void serverSimFlushPendingPings(ServerSim *sim) {
@@ -801,12 +825,40 @@ SubscriberHandle serverSimRegisterSubscriber(
      * invokes serverSimRegisterSubscriber. */
     serverSimSyncSubscriber(sim, deliver, ctx);
 
-    sim->subscribers[slot].deliver    = deliver;
-    sim->subscribers[slot].ctx        = ctx;
-    sim->subscribers[slot].generation = sim->subscriberGen[slot];
+    sim->subscribers[slot].deliver      = deliver;
+    /* Control events only until the caller asks for the second channel. */
+    sim->subscribers[slot].deliverEvent = NULL;
+    sim->subscribers[slot].ctx          = ctx;
+    sim->subscribers[slot].generation   = sim->subscriberGen[slot];
     sim->numSubscribers++;
 
     return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
+}
+
+bool serverSimSetSubscriberEventDeliver(
+    ServerSim *sim,
+    SubscriberHandle h,
+    void (*deliverEvent)(void *, const GameEvent *)) {
+    int slot;
+    uint16_t gen;
+
+    if (sim == NULL || h == SUBSCRIBER_HANDLE_INVALID) {
+        return false;
+    }
+    slot = SUBSCRIBER_HANDLE_SLOT(h);
+    gen  = SUBSCRIBER_HANDLE_GEN(h);
+    if (slot < 0 || slot >= SUBSCRIBER_SLOT_COUNT) {
+        return false;
+    }
+    /* The same slot-and-generation test unregister makes, so a handle left
+     * over from a subscriber that has gone writes nothing to the slot that
+     * replaced it. */
+    if (sim->subscribers[slot].deliver == NULL ||
+        sim->subscribers[slot].generation != gen) {
+        return false;
+    }
+    sim->subscribers[slot].deliverEvent = deliverEvent;
+    return true;
 }
 
 static void serverSimDeliverToClientSim(void *ctx, const struct ControlEvent *evt) {
@@ -873,9 +925,10 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
         sim->subscribers[slot].generation != gen) {
         return;
     }
-    sim->subscribers[slot].deliver    = NULL;
-    sim->subscribers[slot].ctx        = NULL;
-    sim->subscribers[slot].generation = 0;
+    sim->subscribers[slot].deliver      = NULL;
+    sim->subscribers[slot].deliverEvent = NULL;
+    sim->subscribers[slot].ctx          = NULL;
+    sim->subscribers[slot].generation   = 0;
     if (sim->numSubscribers > 0) {
         sim->numSubscribers--;
     }

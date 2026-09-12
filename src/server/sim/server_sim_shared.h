@@ -57,6 +57,17 @@ void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind,
                                    BYTE mapX, BYTE mapY);
 void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                                  BYTE mapX, BYTE mapY);
+/* The three announcements that used to be built inline in bases.c, pillbox.c
+ * and lgm.c. Each casts ctx once and raises the game event the shared site
+ * used to raise for itself. index is the 0-based item[] slot. */
+void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY);
+void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
+                                 BYTE newOwner, BYTE captureClass,
+                                 BYTE mapX, BYTE mapY);
+void serverSimCbLgmDied(void *ctx, BYTE victim, BYTE killer,
+                        BYTE mapX, BYTE mapY);
 void serverSimCbCenterTank(void *ctx);
 void serverSimCbConsoleMessage(void *ctx, char *msg);
 

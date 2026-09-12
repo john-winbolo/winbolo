@@ -1618,18 +1618,15 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
     playersGetCountryCode(&sim->plyrs, (*lgman)->playerNum, args.playerCountry);
     sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
   }
-  /* Emit event so all clients see the newswire message */
+  /* Report the loss, which is what all clients see the newswire message from.
+   * The square is the man's position as it stands here, which the random
+   * start above has already moved to the one he flies back in from. */
   if (sim->isServer) {
-    GameEvent ev;
-    ev.type = EVENT_LGM_LOST;
-    memset(ev.data, 0, sizeof(ev.data));
-    ev.data[0] = (*lgman)->playerNum;
-    ev.data[1] = owner;
-    /* Server-internal: LGM map cell (data[2]/data[3], past gameEventDataSize())
-     * read by the stats funnel for the LGM record's mapX/mapY. */
-    ev.data[2] = (BYTE)((*lgman)->x >> M_W_SHIFT_SIZE);
-    ev.data[3] = (BYTE)((*lgman)->y >> M_W_SHIFT_SIZE);
-    serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
+    if (sim->callbacks.lgmDied) {
+      sim->callbacks.lgmDied(sim->callbacks.ctx, (*lgman)->playerNum, owner,
+                             (BYTE)((*lgman)->x >> M_W_SHIFT_SIZE),
+                             (BYTE)((*lgman)->y >> M_W_SHIFT_SIZE));
+    }
   }
 }
 

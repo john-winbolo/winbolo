@@ -330,6 +330,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
+    /* The captures and the builder loss. Registered on the server alone, for
+     * the same reason the records above are: the event queue is here. */
+    sim->sim.callbacks.baseOwnerChanged = serverSimCbBaseOwnerChanged;
+    sim->sim.callbacks.pillOwnerChanged = serverSimCbPillOwnerChanged;
+    sim->sim.callbacks.lgmDied = serverSimCbLgmDied;
     /* The policy queries. Registered on the server alone: a ClientSim leaves
      * them NULL, which is what keeps shared code on the classic branch
      * there. */

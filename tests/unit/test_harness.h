@@ -2058,6 +2058,17 @@ int run_scenario_policy_can_capture(void);
 int run_scenario_policy_kill_ops_ignore_can_die(void);
 int run_scenario_policy_combat_null_is_classic(void);
 
+/* The in-process game-event channel (test_game_event_channel.c): a subscriber
+ * that asks for it hears the captures and the builder death on it rather than
+ * on the control stream, with every byte of each event — the ones past
+ * gameEventDataSize() included — where it has always been; one that asks for
+ * nothing is unaffected; and a ClientSim raises none of the three. */
+int run_game_event_channel_base_captured(void);
+int run_game_event_channel_pill_captured(void);
+int run_game_event_channel_lgm_lost(void);
+int run_game_event_channel_control_only_subscriber(void);
+int run_game_event_channel_client_emits_nothing(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

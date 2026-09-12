@@ -3359,6 +3359,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # classic, with the two kill ops shown to reach the death bodies without
     # asking, and once more with nothing registered.
     tests/unit/test_scenario_policy_combat.c
+    # The in-process game-event channel: the second subscriber callback, and
+    # the captures and builder death that reach it from GameSim callbacks
+    # rather than from an event built in shared code, byte for byte as before.
+    tests/unit/test_game_event_channel.c
     # The init table a bot is created with: one table per brain VM, an
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
@@ -4813,6 +4817,11 @@ set(_unit_test_names
     scenario_policy_can_capture
     scenario_policy_kill_ops_ignore_can_die
     scenario_policy_combat_null_is_classic
+    game_event_channel_base_captured
+    game_event_channel_pill_captured
+    game_event_channel_lgm_lost
+    game_event_channel_control_only_subscriber
+    game_event_channel_client_emits_nothing
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

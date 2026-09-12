@@ -91,6 +91,12 @@ typedef int SubscriberHandle;
  * is the primary one. */
 typedef struct {
     void (*deliver)(void *ctx, const struct ControlEvent *evt);
+    /* The second channel. A subscriber that wants the tick's game events as
+     * well as the control stream sets this with
+     * serverSimSetSubscriberEventDeliver after it has registered. NULL — which
+     * is what registration leaves, and what every subscriber that asks for
+     * nothing more keeps — means control events alone. */
+    void (*deliverEvent)(void *ctx, const GameEvent *evt);
     void *ctx;
     uint16_t generation;   /* matches subscriberGen[slot] when active */
 } ControlSubscriber;
@@ -1218,6 +1224,24 @@ SubscriberHandle serverSimRegisterSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetSubscriberEventDeliver
+ *PURPOSE:
+ *  Gives the subscriber registered under `h` the game-event
+ *  channel as well. The callback is handed every GameEvent
+ *  serverSimAddEvent raises, whole, the way the deliver
+ *  callback is handed every ControlEvent. NULL takes the
+ *  channel away again. Returns FALSE if the handle names no
+ *  live subscriber.
+ *
+ *  Kept apart from registration so a subscriber that wants
+ *  control events alone says nothing and is unaffected.
+ *********************************************************/
+bool serverSimSetSubscriberEventDeliver(
+    ServerSim *sim,
+    SubscriberHandle h,
+    void (*deliverEvent)(void *, const GameEvent *));
 
 /*********************************************************
  *NAME:          serverSimReplayLobbyChat

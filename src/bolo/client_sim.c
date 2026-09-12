@@ -272,6 +272,9 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.callbacks.recordDamage = NULL;
   cs->sim.callbacks.recordPlayerAction = NULL;
   cs->sim.callbacks.recordPillPickup = NULL;
+  cs->sim.callbacks.baseOwnerChanged = NULL;
+  cs->sim.callbacks.pillOwnerChanged = NULL;
+  cs->sim.callbacks.lgmDied = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;
