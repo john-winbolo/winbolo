@@ -10,11 +10,12 @@
 -- 0..5 hugging the spawn puddle, 6 DEAD pills just beyond them (the
 -- defenders' starting pills — scoop, place, repair), 8 horde bases
 -- ringing the shore at r=25 on eight of the ten 36-degree spokes (0,
--- 36, 72, 108, 180, 216, 252, 288 — 144 and 324 left open), and 10 DEAD
--- neutral pills parked out on the old ring at r=26 — dead on the
--- ground for the attackers' engineering. Those 10 are HIDDEN (off the
--- map entirely) except for the last few seconds before each wave: see
--- PILL_REVEAL_LEAD_TICKS.
+-- 36, 72, 108, 180, 216, 252, 288 — 144 and 324 left open).
+--
+-- The horde's own 10 pillboxes are NOT in the map file at all. They are
+-- CREATED one per attacker as each comes ashore (game.add_pill) and
+-- loaded straight into that tank, so a wave pill never lies on the
+-- ground for the defenders to drive out and collect. See drop_pill_for.
 --
 -- History: the horde first held a full ring of 10 bases at r=26 that
 -- never got fought over, then 4 forward bases at r=13 inside the
@@ -184,18 +185,23 @@ local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 -- preparation for wave N+1" has just said the same thing. See warn_gap.
 local WAVE_WARN_TICKS = { 1500, 500 }   -- 30 s, 10 s
 
--- The wave's dead ring pills are kept OFF THE MAP (game.hide_pill) and
--- put back this many ticks before the wave lands. Andrew's reason,
--- verbatim: don't spawn those enemy dead pillboxes until a few seconds
--- before the AI swarm is spawned, "otherwise humans will run and pick
--- them up".
+-- The wave's dead pillboxes are not in the map file at all. Andrew's reason,
+-- verbatim: don't spawn those enemy dead pillboxes until a few seconds before
+-- the AI swarm is spawned, "otherwise humans will run and pick them up" --
+-- and then, when hiding them at setup was still not enough: "Pills 7 to 16
+-- should be removed from the MAP itself. Then added in in the game by the
+-- script."
 --
--- 3 s is long enough that the pills are on every client's map before the
--- first attacker comes ashore and short enough that nobody can drive out
--- from the center and scoop one. They sit NEUTRAL for those 3 seconds —
--- the wave's first attacker stamps them on the wave tick
--- (stamp_wave_owner), not before, because no attacker exists yet.
-local PILL_REVEAL_LEAD_TICKS = 150   -- 3 s before the wave tick
+-- So each is CREATED (game.add_pill) and loaded straight INTO the attacker
+-- that brings it, one step of the arrival queue after that attacker lands. A
+-- wave pill is therefore never loose for the defenders to drive out and
+-- collect, and never anywhere on the map before a bot puts it there.
+-- See drop_pill_for and pump_spawn_queue.
+--
+-- How far from the attacker the drop may look for ground a pill can
+-- sit on. Three rings is 48 tiles, plenty for a shoreline landing; a
+-- drop that finds nothing falls back to the pill's remembered spot.
+local PILL_DROP_SEARCH = 3
 
 -- Wave bots arrive and leave ONE AT A TIME, this many ticks apart, instead
 -- of all ten inside a single tick.
@@ -288,6 +294,14 @@ local CENTER_FIRST = 9      -- bases 9..14 form the human center, owners 0..5
 local CENTER_PILLS = 6      -- pill k (1..6) pairs center base CENTER_FIRST-1+k
 local WAVE_PILLS   = 10     -- pills 7..16: the wave's dead ground pills
 
+-- Terrain codes (engine values; see src/bolo/public/global.h). map_tile
+-- hands back 0..15, or DEEP_SEA for anything outside the mine border.
+-- Declared up here because pill_droppable (the arrival interleave) needs
+-- them, and a Lua local is invisible to anything defined above it.
+local T_BUILDING, T_RIVER, T_ROAD, T_FOREST = 0, 1, 4, 5
+local T_HALFBUILDING, T_BOAT = 8, 9
+local T_MINE_START, T_DEEP_SEA = 10, 0xFF
+
 local wave = 0
 local wave_bots = {}        -- playerNum -> true for living wave members
 local next_wave_at = nil    -- tick the next wave spawns (nil = wave live)
@@ -301,6 +315,13 @@ local half_min_said = false -- the one 30-seconds-left warning
 -- The staggered ARRIVAL queue (see SPAWN_SPACING_TICKS).
 local spawn_left    = 0     -- attackers still to spawn this wave
 local spawn_next_at = nil   -- tick the next one spawns (nil = spawn now)
+-- The arrival queue ALTERNATES attacker, pill, attacker, pill ... one step
+-- every SPAWN_SPACING_TICKS (Andrew): an attacker comes ashore, a second
+-- later the dead pillbox it brings lands beside it, a second later the next
+-- attacker. spawn_pill_next says which kind of step is due; pill_for_bot is
+-- the attacker the next pill lands beside. See pump_spawn_queue.
+local spawn_pill_next = false
+local pill_for_bot    = nil
 
 -- The defenders' own lobby bots (allies, any team but WAVE_TEAM) are LEFT
 -- ON THE FIELD for the whole round (Andrew 2026-09-09, option a): they are
@@ -329,12 +350,15 @@ local vanish_queue  = {}    -- slots still to be removed, in order
 local vanish_next_at = nil  -- tick the next removal fires (nil = remove now)
 local horde_estate = nil    -- {bases={[k]=slot}, pills={[n]=slot}} recorded before the wave leaves (see vanish_wave)
 
--- The HIDDEN wave pills (see PILL_REVEAL_LEAD_TICKS): pill number ->
--- {x=,y=} the spot to put it back on. Filled at setup with the map's
--- ring spots and at every breather with wherever the wave LEFT each
--- pill, so a pill the attackers carried inland comes back inland.
-local hidden_pills = {}
-local reveal_at = nil       -- tick the hidden pills come back (nil = none)
+-- How many of the wave's pillboxes have been CREATED so far (game.add_pill).
+--
+-- Survival.map ships with its six centre pills and no others: the horde's ten
+-- were cut out of the map FILE, so there is nothing to hide at setup and
+-- nothing lying on the shore for the defenders to drive out and collect. Wave
+-- 1 makes them, one per attacker, as each attacker comes ashore
+-- (drop_pill_for). Once this reaches WAVE_PILLS no more are ever made: waves
+-- 2..5 fight over the same ten, wherever the last wave left them standing.
+local wave_pills_made = 0
 
 -- Newswire mute state (see NEWSWIRE_MUTE_LEAD_TICKS). newswire_muted is
 -- our mirror of the server switch so we only ask for changes;
@@ -455,6 +479,8 @@ local function vanish_wave(game, tick)
   end
   spawn_left = 0
   spawn_next_at = nil
+  spawn_pill_next = false
+  pill_for_bot = nil
   vanish_queue = {}
   for p in pairs(wave_bots) do
     vanish_queue[#vanish_queue + 1] = p
@@ -523,78 +549,23 @@ local function wave_pill_free(pi)
   return true
 end
 
--- Take every free wave pill OFF THE MAP until the next wave is nearly
--- here (see PILL_REVEAL_LEAD_TICKS), remembering where each one stood so
--- it can be put back on that exact tile.
---
--- The pills that qualify are the ones this script was always allowed to
--- move: dead, on the ground, not in anybody's tank, and not flying
--- defender colours (wave_pill_free — a pill the humans captured and
--- placed is theirs and stays where it is, and a BUILT pill is a manned
--- gun and stays too). A hidden pill is already in_tank, so a second
--- hide pass simply finds nothing to do.
---
--- Ownership is dropped to neutral on the way out: a hidden pill still
--- carries an owner, and the brain's own "pills I am carrying" count is
--- in_tank pills owned by me (brain_data.c). After a wave leaves these
--- are neutral anyway — the engine hands a leaver's pills to a connected
--- ally or to nobody — this just guarantees it before we set in_tank.
-local function hide_wave_pills(game, why)
-  local n = 0
-  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
-    local pi = game.pill(pn)
-    if wave_pill_free(pi) then
-      game.set_pill_owner(pn, nil)             -- neutral; quiet (no newswire)
-      if game.hide_pill(pn) then
-        hidden_pills[pn] = { x = pi.x, y = pi.y }
-        n = n + 1
-      end
-    end
-  end
-  game.message(string.format(
-    "[pills] %s: %d wave pill(s) off the map until the next wave", why, n))
-  return n
-end
-
--- Put the hidden pills back, DEAD on the ground, on the tiles they were
--- hidden on — the map's ring spots for the first wave, and for every
--- wave after that WHEREVER THE LAST WAVE LEFT THEM (an attacker may
--- have carried one halfway to the center and dropped it there when it
--- died), never back out on the ring.
---
--- Numeric loop, not pairs(): the same seed must reveal in the same order
--- on every run.
-local function reveal_wave_pills(game)
-  local n = 0
-  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
-    local spot = hidden_pills[pn]
-    if spot ~= nil then
-      if game.show_pill(pn, spot.x, spot.y) then n = n + 1 end
-      hidden_pills[pn] = nil
-    end
-  end
-  if n > 0 then
-    game.message(string.format(
-      "*** %d dead pillbox(es) drop into place — the horde is landing! ***",
-      n))
-  end
-  return n
-end
+-- There is no hide/reveal pair any more. Both existed to take the map's ten
+-- ring pills off the world at setup and put them back as the wave landed;
+-- those pills are no longer IN the map file, so there is nothing to take off
+-- and nothing to put back. They are created instead -- see drop_pill_for and
+-- wave_pills_made.
 
 -- Start the clock on the next wave, `gap` ticks from `tick`, and with it
--- the two things that hang off that clock: the countdown warnings (which
--- marks apply is decided from the gap — see WAVE_WARN_TICKS) and the
--- tick the hidden wave pills come back on.
+-- the countdown warnings that hang off it (which marks apply is decided
+-- from the gap — see WAVE_WARN_TICKS).
 --
--- A gap SHORTER than the reveal lead (a harness with a tiny grace) puts
--- the reveal on this very tick rather than in the past, so the pills are
--- always on the map before the wave's first attacker stamps them.
+-- Nothing pill-related keys off this clock any more. There is no reveal
+-- lead and no reveal tick: the wave's pills are CREATED as their attackers
+-- come ashore (drop_pill_for), so they cannot be early or late.
 local function arm_next_wave(tick, gap)
   next_wave_at = tick + gap
   warn_gap = gap
   warn_next = 1
-  reveal_at = next_wave_at - PILL_REVEAL_LEAD_TICKS
-  if reveal_at < tick then reveal_at = tick end
 end
 
 -- ONE claimable pill per attacker, and not a crumb more.
@@ -625,8 +596,12 @@ end
 local function deal_wave_pills(game, spawned)
   if #spawned == 0 then return end
 
+  -- Over the pills that actually EXIST above the centre six, not a fixed
+  -- 7..16: the wave's own are created as the attackers land (drop_pill_for),
+  -- so on wave 1 this runs against a list that is still growing, and
+  -- CENTER_PILLS + WAVE_PILLS would name pills that are not there yet.
   local pool = {}
-  for n = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+  for n = CENTER_PILLS + 1, game.num_pills() do
     local pi = game.pill(n)
     if wave_pill_free(pi) then
       pool[#pool + 1] = { n = n, x = pi.x, y = pi.y }
@@ -705,7 +680,10 @@ local function stamp_wave_owner(game, s)
     game.set_base_owner(k, s)
     if restock_quiet(game, k, k) > 0 then n = n + 1 end
   end
-  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+  -- Bounded by what EXISTS, not by a fixed 7..16: this runs on the FIRST
+  -- attacker's tick, when the rest of the wave's pills have not been created
+  -- yet. Each of those is stamped as it is made instead (drop_pill_for).
+  for pn = CENTER_PILLS + 1, game.num_pills() do
     -- Not carried (it is wherever its tank is) and not flying DEFENDER
     -- colours (one the humans captured stays theirs). NEUTRAL counts as
     -- stampable, which is what pill_stampable's "> 5" is really catching.
@@ -761,6 +739,86 @@ local function seize_defender_pills(game)
   end
 end
 
+-- Ground a dead pillbox may be dropped on. Water and structures refuse it,
+-- and a MINED tile is skipped so the drop cannot eat a mine someone laid.
+-- ROAD is fine here, unlike for a tree: a pill standing on paving is normal.
+local function pill_droppable(t)
+  if t == nil or t == T_DEEP_SEA then return false end
+  if t == T_BUILDING or t == T_HALFBUILDING then return false end
+  if t == T_RIVER or t == T_BOAT then return false end
+  if t >= T_MINE_START then return false end
+  return true
+end
+
+-- A tile the attacker's pill can sit on: its own tile first, then the rings
+-- around it, outward, up to PILL_DROP_SEARCH. nil when an attacker landed
+-- with no ground it can take next to it at all.
+local function pill_drop_spot(game, x, y)
+  if pill_droppable(game.map_tile(x, y)) then return x, y end
+  for r = 1, PILL_DROP_SEARCH do
+    for dx = -r, r do
+      for dy = -r, r do
+        -- The ring only, not the filled square: the inner tiles were covered
+        -- by a smaller r, so nearer ground always wins.
+        if dx == -r or dx == r or dy == -r or dy == r then
+          local nx, ny = x + dx, y + dy
+          if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255
+             and pill_droppable(game.map_tile(nx, ny)) then
+            return nx, ny
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+-- CREATE one of the wave's pillboxes and load it into the attacker that has
+-- just come ashore. Returns false when nothing was made, so a caller looping
+-- over the roster knows to stop.
+--
+-- The pill is created on ground beside that tank (pill_drop_spot), not on any
+-- remembered ring spot: the ten ring pills are gone from the map file, so
+-- there is no spot to go back to, and making it where the attacker actually
+-- landed is what "the pill arrives with the bot" means. It stands on the
+-- ground only for the instant between add_pill and give_pill -- both inside
+-- one tick, so no player ever sees it loose.
+--
+-- If give_pill refuses (the tank died between landing and this step) the pill
+-- already exists, so it is left standing rather than thrown away, and stamped
+-- to the wave's owner: stamp_wave_owner ran on the first attacker's tick and
+-- could not see a pill that did not exist yet, and a NEUTRAL pill shoots at
+-- everybody, attackers included.
+local function drop_pill_for(game, p)
+  if p == nil then return false end
+  if wave_pills_made >= WAVE_PILLS then return false end
+  local t = game.tank(p)
+  if t == nil then return false end
+
+  local x, y = pill_drop_spot(game, t.mx, t.my)
+  if x == nil then return false end      -- no ground it can take beside it
+
+  local n = game.add_pill(x, y)
+  if not n then return false end         -- the pill list is full
+  wave_pills_made = wave_pills_made + 1
+
+  -- Into the tank, not onto the ground. give_pill loads it exactly as if the
+  -- tank had driven over it, and the engine hands ownership to the carrier,
+  -- so no separate stamp is needed on this path.
+  if game.give_pill(p, n) then
+    slog(string.format("pills: attacker slot %s carries pill %d ashore",
+                       tostring(p), n))
+    return true
+  end
+
+  local owner = spawned[1]
+  if owner ~= nil then game.set_pill_owner(n, owner) end
+  slog(string.format("pills: attacker slot %s could not carry pill %d — "
+                     .. "left on the ground at (%d,%d)",
+                     tostring(p), n, x, y))
+  return true
+end
+
 local function finish_wave_spawn(game)
   spawn_next_at = nil
 
@@ -773,17 +831,29 @@ local function finish_wave_spawn(game)
   -- pointing at a slot that failed to fill.
   restock_report(game, 1, wave_bases_restocked, "horde")
 
-  -- The 10 outer pills (7..16) are DEAD ON THE GROUND by now: they were
-  -- hidden until PILL_REVEAL_LEAD_TICKS before this wave's tick and put
-  -- back on the tiles they were hidden on — the map's ring spots (r=26,
-  -- where the horde's bases used to sit) for wave 1, and wherever the
-  -- previous wave left them for every wave after. The stamping above put
-  -- them in the wave's slots, so the attackers' brains treat them as
-  -- their own dead pills — scoop, carry, place, repair, at the AI's
-  -- discretion. One per tank is deliberately left lying there for exactly
-  -- that reason; the SURPLUS (a short roster can't cover 10) is loaded
-  -- into tanks instead of being left as defender loot. Ownership is fresh
-  -- above, so the free/defender test inside reads this wave's state.
+  -- Every attacker carries the pill it brought ashore (drop_pill_for), so no
+  -- wave pill is lying loose for the defenders to collect. A short roster has
+  -- fewer attackers than WAVE_PILLS, so the remainder are made here, one more
+  -- to each attacker in turn. Any that cannot be placed are simply NEVER MADE
+  -- -- which is the point: these pillboxes exist only where a bot puts them.
+  -- Round-robin, not always from the front: tankGivePill has no carry limit,
+  -- so restarting at spawned[1] every time would pile the whole surplus into
+  -- ONE tank -- four or five pills on a single carrier, which is exactly the
+  -- loaded-carrier death case. `turn` carries the rotation across iterations
+  -- so each attacker takes one more in turn.
+  local turn = 0
+  while wave_pills_made < WAVE_PILLS and #spawned > 0 do
+    local placed = false
+    for i = 1, #spawned do
+      local sp = spawned[((turn + i - 1) % #spawned) + 1]
+      if drop_pill_for(game, sp) then
+        placed = true
+        turn = turn + i
+        break
+      end
+    end
+    if not placed then break end     -- no attacker can take another one
+  end
   deal_wave_pills(game, spawned)
   seize_defender_pills(game)
 end
@@ -792,8 +862,24 @@ end
 -- SPAWN_SPACING_TICKS. Called from on_tick; the first call for a wave
 -- happens on the wave's own tick, so wave 1 still starts on time.
 local function pump_spawn_queue(game, tick)
-  if spawn_left <= 0 then return end
+  if spawn_left <= 0 and not spawn_pill_next then return end
   if spawn_next_at ~= nil and tick < spawn_next_at then return end
+
+  -- A PILL step: the attacker that landed a second ago drops the dead
+  -- pillbox it brought ashore, and the next attacker follows a second after
+  -- that. The wave therefore fields one tank, one pill, one tank ... instead
+  -- of ten pills appearing together with nobody there to guard them.
+  if spawn_pill_next then
+    spawn_pill_next = false
+    drop_pill_for(game, pill_for_bot)
+    pill_for_bot = nil
+    if spawn_left > 0 then
+      spawn_next_at = tick + SPAWN_SPACING_TICKS
+    else
+      finish_wave_spawn(game)
+    end
+    return
+  end
 
   spawn_index = spawn_index + 1
   spawn_left = spawn_left - 1
@@ -814,6 +900,14 @@ local function pump_spawn_queue(game, tick)
     -- for the seconds the arrival takes. Later arrivals own nothing of
     -- their own. See stamp_wave_owner.
     if #spawned == 1 then stamp_wave_owner(game, p) end
+    -- This attacker's pill lands on the next step of the queue -- but only
+    -- while there are still any left to make. Wave 1 makes all WAVE_PILLS of
+    -- them, so waves 2..5 have nothing to bring: they field their attackers at
+    -- the plain SPAWN_SPACING_TICKS rhythm, with no empty pill steps between.
+    if wave_pills_made < WAVE_PILLS then
+      pill_for_bot    = p
+      spawn_pill_next = true
+    end
   elseif not spawn_fail_said then
     -- Every slot is taken. Skip this attacker and carry on with the rest;
     -- say so once per wave rather than once per failed spawn.
@@ -823,7 +917,9 @@ local function pump_spawn_queue(game, tick)
       wave))
   end
 
-  if spawn_left > 0 then
+  -- A pill step still owed counts as queue work, so the wave is not finished
+  -- until the last attacker's pill is down.
+  if spawn_pill_next or spawn_left > 0 then
     spawn_next_at = tick + SPAWN_SPACING_TICKS
   else
     finish_wave_spawn(game)
@@ -849,6 +945,8 @@ local function spawn_wave(game)
   spawn_left = WAVE_SIZE
   spawn_next_at = nil          -- the first attacker rides the wave's own tick
   spawn_fail_said = false
+  spawn_pill_next = false
+  pill_for_bot = nil
   wave_bases_restocked = 0
 
   wave_ends_at = game.tick() + WAVE_LIMIT
@@ -953,12 +1051,6 @@ local function deal_center(game)
   end
   return true
 end
-
--- Terrain codes (engine values; see src/bolo/public/global.h). map_tile
--- hands back 0..15, or DEEP_SEA for anything outside the mine border.
-local T_BUILDING, T_RIVER, T_ROAD, T_FOREST = 0, 1, 4, 5
-local T_HALFBUILDING, T_BOAT = 8, 9
-local T_MINE_START, T_DEEP_SEA = 10, 0xFF
 
 -- ---------------------------------------------------------------------
 -- The TREE RING: the map's only forest replenishment. A one-tile-thick
@@ -1140,8 +1232,9 @@ end
 -- ready. HUMAN defenders are skipped on purpose: a human carries the pill
 -- in-tank and builds it wherever they choose.
 --
--- Only the six centre pills (1..CENTER_PILLS) are considered: the ten wave
--- pills are off-map by this point (hide_wave_pills) and are the attackers'.
+-- Only the six centre pills (1..CENTER_PILLS) are considered, and at this
+-- point they are the ONLY pills that exist: the wave's ten are not in the map
+-- file and are not created until their attackers come ashore (drop_pill_for).
 local BUILT_PILL_ARMOUR = 15   -- a full pillbox (0 = the dead/scoopable state)
 
 -- Paint T_ROAD along the straight line between two tiles (Bresenham),
@@ -1294,16 +1387,14 @@ function on_setup(game)
   dealt = deal_center(game)
   slog("on_setup: after deal_center")
 
-  -- The wave's 10 ring pills go OFF THE MAP right here, after the center
-  -- deal (which only touches pills 1..6) and before any client sees the
-  -- world — so they ride the baseline snapshot and the round simply
-  -- OPENS without them. They come back 3 s before wave 1 lands. Andrew's
-  -- reason: a full minute of grace with ten free dead pillboxes lying on
-  -- the shore is a minute the defenders spend driving out to collect
-  -- them. See PILL_REVEAL_LEAD_TICKS.
-  slog("on_setup: before hide_wave_pills")
-  hide_wave_pills(game, "setup")
-  slog("on_setup: after hide_wave_pills")
+  -- NOTHING TO HIDE. Survival.map ships with its six centre pills and no
+  -- others, so the round opens with no wave pillboxes in the world at all --
+  -- not hidden ones, none. Each is CREATED as an attacker of wave 1 comes
+  -- ashore, beside where that attacker landed, and goes straight into its
+  -- tank (drop_pill_for). Andrew's reason: a full minute of grace with ten
+  -- free dead pillboxes lying on the shore is a minute the defenders spend
+  -- driving out to collect them. The breathers between waves leave the pills
+  -- where they stand.
 
   -- The ring is fixed geometry, so it is measured once, here, off the
   -- base positions the map file actually shipped.
@@ -1438,14 +1529,6 @@ function on_tick(game, tick)
         break
       end
     end
-    -- The wave's dead pills come back PILL_REVEAL_LEAD_TICKS before the
-    -- wave itself. Ahead of the spawn below on purpose: on a harness
-    -- whose grace is shorter than the lead both land on the same tick,
-    -- and the pills must be on the map before stamp_wave_owner runs.
-    if reveal_at ~= nil and tick >= reveal_at then
-      reveal_at = nil
-      reveal_wave_pills(game)
-    end
     if tick >= next_wave_at then
       next_wave_at = nil
       spawn_wave(game)
@@ -1517,11 +1600,15 @@ function on_tick(game, tick)
       game.end_round(string.format(
         "*** All %d waves survived — the defenders win! ***", WAVES))
     else
-      -- The field is empty: take the wave's leftover dead pills off the
-      -- map for the breather (whatever the defenders didn't capture and
-      -- place), then start the clock — arm_next_wave sets the reveal for
-      -- 3 s before wave N+1, at the tiles they are standing on right now.
-      hide_wave_pills(game, string.format("wave %d over", wave))
+      -- The field is empty: start the breather clock. The wave's leftover
+      -- dead pills STAY WHERE THEY LIE (Andrew: "why are pills going off
+      -- the map between rounds? I don't want that"). They are the horde's
+      -- again either way -- restore_horde_estate above just put every one
+      -- the defenders did not capture back in its recorded slot -- so the
+      -- breather is played against the horde's guns, standing on the ground
+      -- the last wave left them on. Nothing is hidden or taken away at any
+      -- point: the wave's pills are CREATED once, during wave 1, and stay on
+      -- the field from then on. See drop_pill_for.
       arm_next_wave(tick, BREATHER)
       game.message(string.format(
         "*** Wave %d survived! %d second preparation for wave %d. ***",

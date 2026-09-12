@@ -846,6 +846,56 @@ void serverSimSeedScenarioEnemyTeam(ServerSim *sim) {
     }
     if (want <= 0) return;
 
+    /* Clear the enemy side before seeding it. A bot already sitting on that
+     * team when the map is committed — one the host added, or a leftover
+     * from the previous map — is not part of this scenario's roster. It was
+     * made before the map's rules existed, so it carries the lobby's default
+     * mode instead of the one bot_mode names, and it holds a slot the seed
+     * wants. Survival's on_lobby cap then trims the roster from the HIGHEST
+     * slots, which are the ones just seeded, so the strangers stay and the
+     * new bots go: four default-mode bots beside six survival ones. Only
+     * bots are removed; a human on the team is never touched. */
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        const char *slotBrain;
+        uint8_t haveMode;
+        uint8_t haveLevel;
+        uint8_t wantMode;
+        uint8_t wantLevel;
+
+        if (!botManagerIsBot(sim, (BYTE)slot)) continue;
+        if (sim->lobbyPlayers[slot].teamNumber != 2) continue;  /* enemy team */
+
+        /* A bot the map already agrees with is left alone. This matters on
+         * the return to lobby: the scenario's own wave bots are sitting on
+         * that team in the right mode, and removing all ten only to add ten
+         * more put about sixty control events in ONE call stack, where no
+         * client ack can be read. The window holds 64. That overran it and
+         * the host was dropped. */
+        slotBrain = sim->botMgr.bots[slot].brainPath;
+        haveMode  = sim->botConfigs[slot].mode;
+        haveLevel = sim->botConfigs[slot].difficulty;
+        wantMode  = haveMode;
+        wantLevel = haveLevel;
+        {
+            bool resolved = (slotBrain[0] != '\0') &&
+                            serverSimResolveNewBotConfig(sim, 2, slotBrain,
+                                                         FALSE, &wantMode,
+                                                         &wantLevel);
+            if (resolved && wantMode == haveMode && wantLevel == haveLevel) {
+                WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                    "seed keep: slot %d already %u/%u", slot,
+                    (unsigned)haveMode, (unsigned)haveLevel);
+                continue;
+            }
+            WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "seed remove: slot %d have=%u/%u want=%u/%u resolved=%d brain='%s'",
+                slot, (unsigned)haveMode, (unsigned)haveLevel,
+                (unsigned)wantMode, (unsigned)wantLevel, (int)resolved,
+                slotBrain[0] != '\0' ? slotBrain : "(none)");
+        }
+        serverSimRemoveBot(sim, (BYTE)slot);
+    }
+
     brain = serverSimGetBotBrainPath(sim);
     if (brain == NULL || brain[0] == '\0') {
         brain = scenarioGetDefaultBrain(sim);

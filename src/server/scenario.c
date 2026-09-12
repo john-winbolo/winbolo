@@ -550,6 +550,21 @@ static int l_spawn_bot(lua_State *L) {
      * for this slot before consulting the script. */
     st->spawnStartHint[slot] = (startArg != 0) ? (BYTE)startArg : 0;
 
+    /* Record the map's own mode for this side in the slot's lobby config.
+     * The brain gets its mode from the init arg either way (a wave arg
+     * carries "mode=..." itself, and botManagerStageInitArg fills in what
+     * the arg leaves out), but the CONFIG is what everything else reads:
+     * the lobby row, and the scenario commit's test for "is this bot
+     * already what the map wants?". Left at the lobby default, a wave bot
+     * looked like a stranger to that test, so a return to lobby removed all
+     * ten and added ten more — about sixty control events in one call
+     * stack, which overran the client's 64-event window and dropped the
+     * host. FALSE: a bot the map fields itself never takes the host's
+     * manual pick. */
+    if (hasTeam && team >= 0 && team < MAX_TANKS) {
+        serverSimApplyNewBotDefaults(sim, slot, team, brain, FALSE);
+    }
+
     /* Stage the brain's BRAIN_INIT_ARG immediately before the create that
      * consumes it — luaBrainInstanceCreate reads the staged value, sets the
      * global, and clears it, so it lands on THIS bot and no other. Always
@@ -904,6 +919,99 @@ static int l_show_pill(lua_State *L) {
     return 1;
 }
 
+/* game.add_pill(x, y) -> n | nil, err. CREATE a new pillbox at (x, y),
+ * DEAD on the ground and neutral, and return its 1-based number.
+ *
+ * Survival.map ships with only its six centre pills. The horde's ten were
+ * cut out of the map FILE so the round cannot open with dead pillboxes
+ * lying on the shore for the defenders to drive out and collect (Andrew:
+ * "Pills 7 to 16 should be removed from the MAP itself. Then added in in
+ * the game by the script."). Each one is created here at the moment the
+ * attacker carrying it comes ashore, and loaded straight into that tank.
+ *
+ * The pill list is a fixed array of MAX_PILLS records plus a live count, so
+ * "creating" a pill is raising the count and writing the record. The count
+ * goes up FIRST: pillsSetPill refuses any pillNum above numPills.
+ *
+ * How it reaches the clients, with no new wire type: the tick's pill diff
+ * (server_sim_tick.c) walks the LIVE count and counts any index at or above
+ * prevPillCount as changed, so the new pill goes out as EVENT_PILL_UPDATE
+ * and clients adopt an index past their own count (client_snapshot.c) —
+ * nothing waits on the five-second full sync.
+ *
+ * It goes out on the NEXT tick's first half-step, not this one: the diff
+ * runs inside simRunHalfStep and scenarioTick runs after both half-steps
+ * have finished, so this tick's diff is already behind us. That one tick of
+ * delay is harmless, and it is part of why a wave pill is never seen loose —
+ * give_pill runs in this same Lua call, so the first record any client is
+ * ever sent already has the pill in a tank.
+ *
+ * Why the per-slot squares are written here: each client's record of where
+ * every pill stands (clientKnownPillX/Y) is seeded when that slot is handed
+ * the map, when this pill did not exist. Both the fog filter
+ * (serverSimFogPillUpdateEvent) and the map checksum
+ * (serverSimGetPillsForSlot -> mapCalcChecksum) read that record for every
+ * index below the live count. An unseeded index would send a junk square
+ * and, worse, checksum a tile the client is not holding, which is exactly
+ * the endless map resync mapCalcChecksum's own comment warns about. Only
+ * the NEW index is written: re-seeding the whole slot would overwrite the
+ * records of pills these clients cannot see, telling the server it had sent
+ * squares it never sent.
+ *
+ * In the .wbv replay the pill appears at the next periodic full snapshot
+ * (server_sim_tick.c writes one every FULL_SYNC_INTERVAL ticks), because the
+ * log's pill opcodes address existing pills and there is no create opcode. */
+static int l_add_pill(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    ServerSim *sim = st->sim;
+    GameSim *gs = serverSimGetGameSim(sim);
+    int x = (int)luaL_checkinteger(L, 1);
+    int y = (int)luaL_checkinteger(L, 2);
+    BYTE n = pillsGetNumPills(&gs->pb);
+    pillbox item;
+    BYTE slot;
+
+    if (x < 0 || x > 255 || y < 0 || y > 255) {
+        lua_pushnil(L);
+        lua_pushstring(L, "position off the map");
+        return 2;
+    }
+    if (n >= MAX_PILLS) {
+        lua_pushnil(L);
+        lua_pushstring(L, "pill list full");
+        return 2;
+    }
+
+    memset(&item, 0, sizeof(item));
+    item.x        = (BYTE)x;
+    item.y        = (BYTE)y;
+    item.owner    = NEUTRAL;   /* the caller stamps it, or give_pill does */
+    item.armour   = 0;         /* dead on the ground: the scoopable state */
+    /* Fire rate copied from the pills the map DID ship, not from an engine
+     * default: lower is faster in the clamped range [PILLBOX_MAX_FIRERATE,
+     * PILLBOX_ATTACK_NORMAL], Survival.map sets every one of its pills to 50,
+     * and PILLBOX_ATTACK_NORMAL is 100 — the passive end. Creating at the
+     * default would hand the horde pillboxes that fire half as often as the
+     * ones cut out of the map file, which is a behaviour change nobody asked
+     * for. With no pill to copy, fall back to the engine default. */
+    item.speed    = (n > 0) ? (*gs->pb).item[0].speed : PILLBOX_ATTACK_NORMAL;
+    item.inTank   = FALSE;
+    item.justSeen = FALSE;
+
+    pillsSetNumPills(&gs->pb, (BYTE)(n + 1));
+    pillsSetPill(&gs->pb, &item, (BYTE)(n + 1));
+
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        sim->clientKnownPillX[slot][n] = (BYTE)x;
+        sim->clientKnownPillY[slot][n] = (BYTE)y;
+    }
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "scenario: pill %d created at (%d,%d) dead", (int)(n + 1), x, y);
+    lua_pushinteger(L, (lua_Integer)(n + 1));
+    return 1;
+}
+
 /* game.set_pill_armour(n, a) -> true | false. Writes pill n's armour
  * (clamped to 0..PILLS_MAX_ARMOUR) and nothing else, through the same
  * whole-record write show_pill uses; the per-tick pill diff carries it
@@ -1150,6 +1258,7 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "give_pill",      l_give_pill);
     scRegister(L, st, "hide_pill",      l_hide_pill);
     scRegister(L, st, "show_pill",      l_show_pill);
+    scRegister(L, st, "add_pill",       l_add_pill);
     scRegister(L, st, "set_pill_armour", l_set_pill_armour);
     scRegister(L, st, "kill_lgm",       l_kill_lgm);
     scRegister(L, st, "enemy_team_size", l_enemy_team_size);
