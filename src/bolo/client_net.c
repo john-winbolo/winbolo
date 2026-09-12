@@ -924,6 +924,19 @@ bool clientSimNetHasVoiceTransport(const ClientSim *cs) {
   return cs != NULL && cs->hasTransport && cs->isUdpTransport;
 }
 
+void clientSimNetGetVoiceChannelStats(ClientSim *cs, uint32_t *outSent,
+                                      uint32_t *outRingDropped,
+                                      uint32_t *outBudgetSkipped) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    if (outSent != NULL) *outSent = 0;
+    if (outRingDropped != NULL) *outRingDropped = 0;
+    if (outBudgetSkipped != NULL) *outBudgetSkipped = 0;
+    return;
+  }
+  transportUdpClientGetVoiceChannelStats(&cs->transport, outSent,
+                                         outRingDropped, outBudgetSkipped);
+}
+
 /* === Net stats === */
 
 uint16_t clientSimGetNetPing(const ClientSim *cs) {

@@ -289,6 +289,9 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * would hand a new joiner talker priority they did not earn. */
     udpServer.voiceLastFrameTick[idx] = 0;
     udpServer.voiceOnsetTick[idx] = 0;
+    /* The diagnostic counters go with them, so a joiner does not inherit the
+     * previous occupant's drops and read as a bad client. */
+    memset(&udpServer.voiceSlot[idx], 0, sizeof(udpServer.voiceSlot[idx]));
     /* If the set every other client holds names this slot as talking, they go
      * on showing it until they are told otherwise, and clearing the tick above
      * is what stops the next pass computing a set that differs from the

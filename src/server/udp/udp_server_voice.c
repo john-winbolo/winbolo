@@ -17,6 +17,9 @@
  *      command dispatch call.
  *********************************************************/
 
+#if defined(WB_VOICEDEBUG)
+#include <stdio.h>                         /* fopen, fprintf, fflush */
+#endif
 #include <string.h>                        /* memcpy, memset, NULL */
 
 #include "transport_udp_server_internal.h" /* udpServer, serverPumpVoice,
@@ -70,6 +73,67 @@ void transportUdpServerGetVoiceStats(uint32_t *outAccepted,
         *outTalkerCapped = udpServer.voiceSegsTalkerCapped;
     }
 }
+
+#if defined(WB_VOICEDEBUG)
+/* One row per connected slot per second, written to voicestats-server.csv in
+ * the working directory for the length of the run. Built only under
+ * WB_VOICEDEBUG: the counters below it are always compiled in and cost an
+ * increment, but a shipping server does not write a file nobody asked for.
+ *
+ * A voice fault is reported after the game, by someone who could not see it
+ * happening and had nothing to capture. The counters above already separate
+ * every way a frame can be refused; without a file they are only readable
+ * from a debugger. Written unconditionally and flushed per row, so a server
+ * stopped with a signal still leaves everything it had. */
+static void voiceStatsWrite(void) {
+    static FILE *fp = NULL;
+    static bool tried = false;
+    static uint32_t nextTick = 0;
+    int i;
+
+    if (udpServer.tickCount < nextTick) {
+        return;
+    }
+    /* SERVER_TICK_LENGTH is 20 ms, so fifty ticks is a second. */
+    nextTick = udpServer.tickCount + 50;
+
+    if (!tried) {
+        tried = true;
+        fp = fopen("voicestats-server.csv", "w");
+        if (fp != NULL) {
+            fprintf(fp, "tick,slot,name,pingMs,accepted,dropVoiceOff,"
+                        "dropPerTickCap,dropNotInGame,dropUnpack,dropRepack,"
+                        "forwarded,capped,sent,ringDropped,budgetSkipped\n");
+        }
+    }
+    if (fp == NULL) {
+        return;
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        uint32_t sent, ringDropped, budgetSkipped;
+
+        if (!udpServer.clients[i].connected) continue;
+        channelGetBestEffortStats(&udpServer.channelMux[i], CHANNEL_VOICE,
+                                  &sent, &ringDropped, &budgetSkipped);
+        fprintf(fp, "%u,%d,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+                udpServer.tickCount, i, udpServer.clients[i].playerName,
+                (unsigned)udpServer.clients[i].pingMs,
+                udpServer.voiceSlot[i].accepted,
+                udpServer.voiceSlot[i].dropVoiceOff,
+                udpServer.voiceSlot[i].dropPerTickCap,
+                udpServer.voiceSlot[i].dropNotInGame,
+                udpServer.voiceSlot[i].dropUnpack,
+                udpServer.voiceSlot[i].dropRepack,
+                udpServer.voiceSlot[i].forwarded,
+                udpServer.voiceSlot[i].capped,
+                sent, ringDropped, budgetSkipped);
+    }
+    fflush(fp);
+}
+#else
+#define voiceStatsWrite() ((void)0)
+#endif /* WB_VOICEDEBUG */
 
 /* Most voice frames a client may have accepted from it in one tick: one is
  * the steady state at the 20 ms wire cadence, and the second absorbs drift
@@ -157,22 +221,26 @@ void serverPumpVoice(ServerSim *sim) {
              * not carry it. */
             if (!voiceOn) {
                 udpServer.voiceSegsDropped++;
+                udpServer.voiceSlot[from].dropVoiceOff++;
                 continue;
             }
 
             if (accepted >= VOICE_SEGMENTS_PER_TICK) {
                 udpServer.voiceSegsDropped++;
+                udpServer.voiceSlot[from].dropPerTickCap++;
                 continue;
             }
             /* Not in the game yet: a client still taking the map is not a
              * talker, and the same rule keeps it off the receiving end. */
             if (!udpServer.mapDownload[from].downloadComplete) {
                 udpServer.voiceSegsDropped++;
+                udpServer.voiceSlot[from].dropNotInGame++;
                 continue;
             }
             if (!voiceSegmentUnpackUp(segBuf, (int)segLen, &seq, &flags,
                                       &opus, &opusLen)) {
                 udpServer.voiceSegsDropped++;
+                udpServer.voiceSlot[from].dropUnpack++;
                 continue;
             }
             /* Counts towards the per-sender flood cap from here, whatever
@@ -184,9 +252,11 @@ void serverPumpVoice(ServerSim *sim) {
                                            opus, opusLen);
             if (downLen <= 0) {
                 udpServer.voiceSegsDropped++;
+                udpServer.voiceSlot[from].dropRepack++;
                 continue;
             }
             udpServer.voiceSegsAccepted++;
+            udpServer.voiceSlot[from].accepted++;
 
             if (stagedCount < (int)(sizeof(staged) / sizeof(staged[0]))) {
                 VoiceStagedFrame *st = &staged[stagedCount];
@@ -292,10 +362,12 @@ void serverPumpVoice(ServerSim *sim) {
             if ((audibleMask & bit) == 0) continue;
             if ((chosenMask & bit) == 0) {
                 udpServer.voiceSegsTalkerCapped++;
+                udpServer.voiceSlot[to].capped++;
                 continue;
             }
             channelSendBestEffort(&udpServer.channelMux[to], CHANNEL_VOICE,
                                   staged[f].bytes, staged[f].len);
+            udpServer.voiceSlot[to].forwarded++;
         }
     }
 
@@ -363,4 +435,6 @@ void serverPumpVoice(ServerSim *sim) {
             udpServer.voiceTalkingResend = false;
         }
     }
+
+    voiceStatsWrite();
 }

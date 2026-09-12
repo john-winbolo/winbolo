@@ -521,6 +521,10 @@ void voiceDebugStop(void) {
 *ARGUMENTS:
 *  (none)
 *********************************************************/
+const char *voiceDebugOutDir(void) {
+    return (outDir[0] != '\0') ? outDir : NULL;
+}
+
 bool voiceDebugIsRecording(void) {
     return recording;
 }

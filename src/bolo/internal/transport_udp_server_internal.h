@@ -359,6 +359,26 @@ typedef struct UdpServerState {
      * nowhere, these were accepted and forwarded to everyone else. */
     uint32_t voiceSegsTalkerCapped;
 
+    /* The same traffic again, per slot and with the drop reasons apart. The
+     * totals above answer "is this server dropping voice"; these answer
+     * "whose, and why", which is the question a player reporting that nobody
+     * could hear them actually asks. The five reasons share one counter above
+     * and mean five different things: a server with voice off, a sender past
+     * the per-tick cap, a sender still taking the map, a malformed segment,
+     * and a repack that failed — the last being the only one that means the
+     * server itself is at fault. forwarded and capped count this slot as a
+     * recipient rather than a sender. Cleared when the slot disconnects. */
+    struct {
+        uint32_t accepted;
+        uint32_t dropVoiceOff;
+        uint32_t dropPerTickCap;
+        uint32_t dropNotInGame;
+        uint32_t dropUnpack;
+        uint32_t dropRepack;
+        uint32_t forwarded;
+        uint32_t capped;
+    } voiceSlot[MAX_TANKS];
+
     /* Per-slot voice arrival bookkeeping, in tickCount ticks, feeding the
      * concurrent-talker cap: the tick this slot's last voice frame landed on,
      * and the tick its current utterance began.  A gap longer than
