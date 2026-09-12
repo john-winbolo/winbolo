@@ -581,9 +581,11 @@ void printArgs() {
   fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
-  fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees.\n");
-  fprintf(stderr, "                Locking pillview, baseview, allyview or alliesintrees\n");
-  fprintf(stderr, "                also locks classicmode, which writes those values.\n");
+  fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees,\n");
+  fprintf(stderr, "                overviewwindow, lineofsight.\n");
+  fprintf(stderr, "                Locking pillview, baseview, allyview, alliesintrees,\n");
+  fprintf(stderr, "                overviewwindow or lineofsight also locks classicmode,\n");
+  fprintf(stderr, "                which writes those values.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
@@ -605,9 +607,13 @@ void printArgs() {
   fprintf(stderr, "-alliesintrees- Allied tanks standing in trees are sent to their allies\n");
   fprintf(stderr, "                instead of being withheld (fog of war still applies).\n");
   fprintf(stderr, "                Off by default, and off under -classicmode.\n");
+  fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded (default), classic\n");
+  fprintf(stderr, "-lineofsight  - Buildings and stands of trees block sight inside the live\n");
+  fprintf(stderr, "                block. Off by default, and off under -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
   fprintf(stderr, "                allyview off, overriding those three switches, turns\n");
-  fprintf(stderr, "                allies in trees off, and stops the lobby changing them.\n");
+  fprintf(stderr, "                allies in trees off, sets the overview window to classic\n");
+  fprintf(stderr, "                with line of sight off, and stops the lobby changing them.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -1538,12 +1544,15 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "allyview") == 0)  serverLocks |= LOBBY_LOCK_ALLY_VIEW;
         else if (strcmp(lo, "classicmode") == 0) serverLocks |= LOBBY_LOCK_CLASSIC_MODE;
         else if (strcmp(lo, "alliesintrees") == 0) serverLocks |= LOBBY_LOCK_ALLIES_IN_TREES;
+        else if (strcmp(lo, "overviewwindow") == 0) serverLocks |= LOBBY_LOCK_OVERVIEW_WINDOW;
+        else if (strcmp(lo, "lineofsight") == 0) serverLocks |= LOBBY_LOCK_LINE_OF_SIGHT;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
                   "openhost, map, pillview, baseview, allyview, "
-                  "classicmode, alliesintrees)\n", lo);
+                  "classicmode, alliesintrees, overviewwindow, "
+                  "lineofsight)\n", lo);
         }
       }
       /* Locking any visibility setting locks classicmode too, because
@@ -1554,8 +1563,8 @@ int main(int argc, char **argv) {
       if (implied != serverLocks) {
         fprintf(stderr,
                 "Note: -lock of pillview / baseview / allyview / "
-                "alliesintrees also locks classicmode, which writes "
-                "those values.\n");
+                "alliesintrees / overviewwindow / lineofsight also "
+                "locks classicmode, which writes those values.\n");
         serverLocks = implied;
       }
     }
@@ -1627,6 +1636,38 @@ int main(int argc, char **argv) {
    * default is off. */
   if (argExist(argc, argv, "alliesintrees") == TRUE) {
     serverSimSetAlliesInTrees(serverSim, true);
+  }
+
+  /* -overviewwindow <M>: which block of squares the map overview keeps
+   * live. An unrecognised word warns and falls back to expanded, the
+   * same as the three view switches. */
+  {
+    OverviewWindow window = overviewWindowExpanded;
+    int windowNum = findArg(argc, argv, "overviewwindow");
+    if (windowNum != ARG_NOT_FOUND) {
+      char modeStr[32];
+      strncpy(modeStr, (char *)argv[windowNum], sizeof(modeStr) - 1);
+      modeStr[sizeof(modeStr) - 1] = '\0';
+      strlower(modeStr);
+      if (strcmp(modeStr, "expanded") == 0) {
+        window = overviewWindowExpanded;
+      } else if (strcmp(modeStr, "classic") == 0) {
+        window = overviewWindowClassic;
+      } else {
+        fprintf(stderr, "Unknown -overviewwindow '%s'; using expanded\n",
+                modeStr);
+        window = overviewWindowExpanded;
+      }
+    }
+    serverSimSetOverviewWindow(serverSim, (uint8_t)window);
+  }
+
+  /* -lineofsight: buildings and stands of trees block sight inside the
+   * live block. Applied before -classicmode so classic mode wins when
+   * both are on the same command line. Only set when the flag is
+   * present — the sim default is off. */
+  if (argExist(argc, argv, "lineofsight") == TRUE) {
+    serverSimSetLineOfSight(serverSim, (uint8_t)lineOfSightBuildingsAndTrees);
   }
 
   /* -classicmode: the classic Bolo view. Applied after the three view

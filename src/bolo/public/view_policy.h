@@ -44,6 +44,26 @@ typedef enum {
     VIEW_CATEGORY_COUNT
 } ViewCategory;
 
+/* Which block of squares the map overview keeps live around the player's
+ * own tank. Expanded is everything the classic 15x15 view could scroll
+ * to; Classic narrows it to the window that view is actually showing.
+ * Zero is today's behaviour, so a zero-initialized server and a client
+ * decoding a payload without the field both land on Expanded. */
+typedef enum {
+    overviewWindowExpanded = 0,
+    overviewWindowClassic  = 1,
+    OVERVIEW_WINDOW_COUNT
+} OverviewWindow;
+
+/* Whether anything stops the player seeing inside that block. A selector
+ * rather than a bool so another rule can join it without a second
+ * setting. Zero is today's behaviour. */
+typedef enum {
+    lineOfSightOff               = 0,
+    lineOfSightBuildingsAndTrees = 1,
+    LINE_OF_SIGHT_COUNT
+} LineOfSightMode;
+
 #define VIEW_DECAY_DEFAULT_SECS 30
 #define VIEW_DECAY_MIN_SECS 5
 #define VIEW_DECAY_MAX_SECS 600

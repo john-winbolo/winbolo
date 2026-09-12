@@ -591,19 +591,21 @@ bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
 }
 
 uint32_t serverSimAddImpliedLocks(uint32_t locks) {
-    /* Turning classic mode on writes the three view policies and allies
-     * in trees (serverSimSetClassicMode), so leaving the checkbox
-     * editable while any of those four is locked would let a host change
-     * a locked value with one tick — and the value does not come back,
-     * because turning classic mode off leaves all four where classic
-     * mode put them. Locking any of the four locks classic mode too.
+    /* Turning classic mode on writes the three view policies, allies in
+     * trees, the overview window and line of sight
+     * (serverSimSetClassicMode), so leaving the checkbox editable while
+     * any of those six is locked would let a host change a locked value
+     * with one tick — and the value does not come back, because turning
+     * classic mode off leaves all six where classic mode put them.
+     * Locking any of the six locks classic mode too.
      *
      * Deliberately decided from the mask alone rather than from the
      * current values: the mask is fixed at startup, so the host sees a
      * checkbox that is either always available or always locked, rather
      * than one that appears and disappears as other settings move. */
     if (locks & (LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
-                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES)) {
+                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES |
+                 LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT)) {
         locks |= LOBBY_LOCK_CLASSIC_MODE;
     }
     return locks;
@@ -646,6 +648,10 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryAlly]);
         /* Classic mode hides allies in trees, so it owns this value too. */
         serverSimSetAlliesInTrees(sim, false);
+        /* Classic mode is the classic overview too: the narrow window,
+         * with nothing blocking sight inside it. */
+        serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowClassic);
+        serverSimSetLineOfSight(sim, (uint8_t)lineOfSightOff);
     }
 }
 
@@ -660,6 +666,26 @@ void serverSimSetAlliesInTrees(ServerSim *sim, bool on) {
 
 bool serverSimGetAlliesInTrees(const ServerSim *sim) {
     return sim ? sim->alliesInTrees : false;
+}
+
+void serverSimSetOverviewWindow(ServerSim *sim, uint8_t window) {
+    if (sim == NULL) return;
+    if (window >= (uint8_t)OVERVIEW_WINDOW_COUNT) return;
+    sim->overviewWindow = window;
+}
+
+uint8_t serverSimGetOverviewWindow(const ServerSim *sim) {
+    return sim ? sim->overviewWindow : (uint8_t)overviewWindowExpanded;
+}
+
+void serverSimSetLineOfSight(ServerSim *sim, uint8_t mode) {
+    if (sim == NULL) return;
+    if (mode >= (uint8_t)LINE_OF_SIGHT_COUNT) return;
+    sim->lineOfSight = mode;
+}
+
+uint8_t serverSimGetLineOfSight(const ServerSim *sim) {
+    return sim ? sim->lineOfSight : (uint8_t)lineOfSightOff;
 }
 
 void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {

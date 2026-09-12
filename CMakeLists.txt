@@ -3317,6 +3317,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_settings.c
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
+    tests/unit/test_fog_settings.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
@@ -4059,6 +4060,10 @@ set(_unit_test_names
     classic_mode_lobby_reset
     allies_in_trees_defaults
     allies_in_trees_classic_mode
+    fog_settings_defaults
+    fog_settings_classic_mode_preset
+    fog_settings_lock_implied
+    fog_settings_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
     upload_cap_enforced

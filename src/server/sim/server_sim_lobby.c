@@ -100,6 +100,8 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   }
   sim->originalLobbySettings.classicMode         = sim->classicMode;
   sim->originalLobbySettings.alliesInTrees       = sim->alliesInTrees;
+  sim->originalLobbySettings.overviewWindow      = sim->overviewWindow;
+  sim->originalLobbySettings.lineOfSight         = sim->lineOfSight;
 }
 
 /* ────────────────────────────────────────────────────────────────

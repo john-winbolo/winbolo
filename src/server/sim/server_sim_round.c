@@ -83,6 +83,8 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         }
         sim->classicMode         = sim->originalLobbySettings.classicMode;
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
+        sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
+        sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who

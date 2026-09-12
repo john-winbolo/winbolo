@@ -160,6 +160,13 @@ struct ServerSim {
                                     * to their allies instead of being
                                     * withheld; off is the classic
                                     * behaviour. */
+    uint8_t  overviewWindow;       /* OverviewWindow — which block of squares
+                                    * the map overview keeps live round the
+                                    * player's own tank. Expanded (0) is
+                                    * today's behaviour. */
+    uint8_t  lineOfSight;          /* LineOfSightMode — what blocks sight
+                                    * inside that block. Off (0) is today's
+                                    * behaviour. */
     ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
                                     * startup, read by the advertisement
                                     * paths. */
@@ -206,6 +213,8 @@ struct ServerSim {
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         bool       classicMode;
         bool       alliesInTrees;
+        uint8_t    overviewWindow;
+        uint8_t    lineOfSight;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running

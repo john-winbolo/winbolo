@@ -79,6 +79,8 @@
 #define LOBBY_LOCK_ALLY_VIEW         (1u << 11)
 #define LOBBY_LOCK_CLASSIC_MODE      (1u << 12)
 #define LOBBY_LOCK_ALLIES_IN_TREES   (1u << 13)
+#define LOBBY_LOCK_OVERVIEW_WINDOW   (1u << 14)
+#define LOBBY_LOCK_LINE_OF_SIGHT     (1u << 15)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative

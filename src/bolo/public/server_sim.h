@@ -1597,10 +1597,11 @@ uint16_t    serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat);
 
 /* Classic mode — the host is asking for the classic Bolo view. Turning
  * it on sets pill view to key and base and ally view to off, keeping
- * each category's own decay seconds, and the lobby then refuses edits
- * to those three until it is turned off. Turning it off clears the flag
- * and nothing else: the three policies stay where classic mode put
- * them. Off by default.
+ * each category's own decay seconds, turns allies in trees off, and
+ * sets the overview window to Classic with line of sight off; the lobby
+ * then refuses edits to those until it is turned off. Turning it off
+ * clears the flag and nothing else: every value it wrote stays where
+ * classic mode put it. Off by default.
  *
  * Because it writes those values, an operator lock on any of them locks
  * classic mode as well — see serverSimAddImpliedLocks. This setter is
@@ -1615,6 +1616,22 @@ bool        serverSimGetClassicMode(const ServerSim *sim);
  * turning classic mode on forces it off. */
 void        serverSimSetAlliesInTrees(ServerSim *sim, bool on);
 bool        serverSimGetAlliesInTrees(const ServerSim *sim);
+
+/* Overview window — which block of squares the map overview keeps live
+ * around the player's own tank, and line of sight — whether anything
+ * stops the player seeing inside that block. Values are OverviewWindow
+ * and LineOfSightMode from view_policy.h, carried a byte wide. Expanded
+ * and off are the defaults and today's behaviour.
+ *
+ * Turning classic mode on writes both — the narrow window, with nothing
+ * blocking sight inside it — so an operator lock on either locks classic
+ * mode as well; see serverSimAddImpliedLocks. Each setter ignores a
+ * value outside its enum, and each getter returns the default for a
+ * NULL sim. */
+void        serverSimSetOverviewWindow(ServerSim *sim, uint8_t window);
+uint8_t     serverSimGetOverviewWindow(const ServerSim *sim);
+void        serverSimSetLineOfSight(ServerSim *sim, uint8_t mode);
+uint8_t     serverSimGetLineOfSight(const ServerSim *sim);
 
 /* Voice mode — how the server handles the voice its clients send it.
  * serverVoiceOff forwards nothing; serverVoiceProximity is not
@@ -1645,11 +1662,12 @@ uint32_t    serverSimGetServerLocks(const ServerSim *sim);
  * around is not a lock; this is where that is settled, once, for both
  * the server's REJECT_LOCKED check and the client's disabled controls.
  *
- * Locking pill / base / ally view or allies in trees also locks classic
- * mode, which writes all four. serverSimSetServerLocks runs every mask
- * through this, so callers rarely need it directly — it is exposed so
- * the CLI can report the expanded set and tests can check the mapping
- * without a sim. Idempotent. */
+ * Locking pill / base / ally view, allies in trees, the overview window
+ * or line of sight also locks classic mode, which writes all six.
+ * serverSimSetServerLocks runs every mask through this, so callers
+ * rarely need it directly — it is exposed so the CLI can report the
+ * expanded set and tests can check the mapping without a sim.
+ * Idempotent. */
 uint32_t    serverSimAddImpliedLocks(uint32_t locks);
 
 /* Map an LST_* setting id to the LOBBY_LOCK_* bit that gates it.
