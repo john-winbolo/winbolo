@@ -562,10 +562,6 @@ uint8_t      clientSimGetViewKind(const ClientSim *cs);
 BYTE         clientSimGetViewTarget(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
-/* TRUE while the server has the engine newswire muted (CTRL_NEWSWIRE_MUTE).
- * Shared predicate for every newswire emitter; server text and chat are not
- * newswire and must not consult it. */
-bool         clientSimNewswireMuted(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
 
 /* Monotonic count of installed maps this client has discarded because a

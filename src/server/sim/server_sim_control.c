@@ -770,18 +770,6 @@ static void serverSimSyncSubscriber(
     }
 #endif
 
-    /* Newswire mute — only when it is actually on, so a normal join replay
-     * is unchanged. A client that connects while a scripted wave is filing
-     * on or off the field must start muted, or it newswires the half of the
-     * churn it arrives in time to see. The matching un-mute reaches it as a
-     * live publish like everyone else's. */
-    if (sim->newswireMuted) {
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_NEWSWIRE_MUTE;
-        evt.u.newswireMute.muted = 1;
-        deliver(ctx, &evt);
-    }
-
     /* Terminal marker: the roster replay above re-announces every existing
      * player/slot with the subscriber already in the lobby. This final event
      * lets the subscriber tell the replay burst apart from live events, so it
@@ -863,26 +851,6 @@ int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
  * sync replay has set the lobby phase, so the events land in lobbyChatHistory);
  * never on a fresh accept or player join, which is what makes it
  * drain-flip-only. */
-/* Server-wide engine-newswire switch. Publishes only on a change, so a
- * script that asks for the state it already has costs nothing; the join
- * sync above replays the ON state for late arrivals. */
-void serverSimSetNewswireMute(ServerSim *sim, bool muted) {
-    ControlEvent evt;
-    if (sim == NULL) return;
-    if (sim->newswireMuted == muted) return;
-    sim->newswireMuted = muted;
-    WB_LOG_INFO(WB_LOG_CAT_SERVER, "newswire mute %s (tick %u)",
-                muted ? "ON" : "OFF", (unsigned)sim->tick);
-    memset(&evt, 0, sizeof(evt));
-    evt.type = CTRL_NEWSWIRE_MUTE;
-    evt.u.newswireMute.muted = muted ? 1 : 0;
-    serverSimPublishControl(sim, &evt);
-}
-
-bool serverSimGetNewswireMuted(const ServerSim *sim) {
-    return (sim != NULL) && sim->newswireMuted;
-}
-
 void serverSimReplayLobbyChat(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),

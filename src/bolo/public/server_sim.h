@@ -1088,35 +1088,6 @@ void serverSimClearBalanceProposal(ServerSim *sim);
 void serverSimReapplyTeamAlliances(ServerSim *sim);
 
 /*********************************************************
- *NAME:          serverSimSetNewswireMute
- *PURPOSE:
- *  Silence (or restore) the ENGINE-GENERATED newswire for
- *  this server and every client attached to it. While muted,
- *  clients drop event newswire lines (player quit, base and
- *  pill captures, builder lost, name handover) and the server
- *  drops its own "X has joined." / "X has left." broadcasts.
- *  Server text published on purpose (game.message, vote and
- *  wave banners) and player chat are NOT affected.
- *
- *  Publishes CTRL_NEWSWIRE_MUTE only on an actual change, and
- *  the join sync replays the current state so a client that
- *  connects mid-window starts muted as well.
- *
- *ARGUMENTS:
- *  sim   - the server simulation
- *  muted - TRUE to silence, FALSE to restore
- *********************************************************/
-void serverSimSetNewswireMute(ServerSim *sim, bool muted);
-
-/*********************************************************
- *NAME:          serverSimGetNewswireMuted
- *PURPOSE:
- *  TRUE while serverSimSetNewswireMute has the engine
- *  newswire silenced.
- *********************************************************/
-bool serverSimGetNewswireMuted(const ServerSim *sim);
-
-/*********************************************************
  *NAME:          serverSimReassignStarts
  *PURPOSE:
  *  Re-runs the batch start placement over the currently

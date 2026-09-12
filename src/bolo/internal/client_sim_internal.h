@@ -344,18 +344,6 @@ struct ClientSim {
      * out, so this is 0 in a running game. Raw: the local mute list is not
      * folded in here. */
     PlayerBitMap     voiceTalkingMap;
-    bool             newswireMuted;     /* Mirror of the server's newswire mute
-                                         * (CTRL_NEWSWIRE_MUTE). While set,
-                                         * csCallbackMessageAdd drops every
-                                         * ENGINE-generated newswire line —
-                                         * player quit, base/pill capture,
-                                         * builder lost, name handover — so a
-                                         * scripted wave filing on or off the
-                                         * field doesn't bury the newswire.
-                                         * Server text (the wave banner),
-                                         * assistant lines and player chat are
-                                         * untouched. Cleared on every game
-                                         * phase change so it cannot stick. */
     char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
     char             lobbyTeamChatHistory[4096]; /* Team-only lobby chat buffer */
 

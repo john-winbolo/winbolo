@@ -1184,7 +1184,6 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * once a human is seen this round. */
     sim->roundHadHuman = false;
 
-    sim->newswireMuted = false;   /* a mute must never outlive its round */
 
     /* Flush any game-events queued during the lobby before the first
      * running snapshot goes out. The sim doesn't tick in the lobby, so the
@@ -1323,7 +1322,6 @@ void serverSimStartGame(ServerSim *sim) {
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
 
-    sim->newswireMuted = false;   /* a mute must never outlive its round */
 
     /* Restore connected-player state so tank creation works */
     for (i = 0; i < MAX_TANKS; i++) {

@@ -1885,38 +1885,6 @@ static EncodeResult encodeBalanceFailed(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* CTRL_NEWSWIRE_MUTE → PACKET_NEWSWIRE_MUTE. Wire: [header 8] [muted 1].
- * Broadcast to every client on each change, and replayed from the join
- * sync so a mid-window joiner starts muted. */
-
-/* recipient: safe — ignored (the mute is global, not per-client). */
-static EncodeResult encodeNewswireMuteBody(const ControlEvent *evt,
-                                           const struct UdpServerClient *recipient,
-                                           uint8_t *buf, size_t bufCap,
-                                           size_t *outLen) {
-    (void)recipient;
-    if (bufCap < 1) return ENCODE_OVERFLOW;
-    buf[0] = evt->u.newswireMute.muted ? 1 : 0;
-    *outLen = 1;
-    return ENCODE_OK;
-}
-
-static EncodeResult encodeNewswireMute(const ControlEvent *evt,
-                                       const struct UdpServerClient *recipient,
-                                       uint8_t *buf, size_t bufCap,
-                                       size_t *outLen) {
-    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
-    packHeader(buf, PACKET_NEWSWIRE_MUTE, 0);
-    size_t bodyLen = 0;
-    EncodeResult r = encodeNewswireMuteBody(evt, recipient,
-                                            buf + PACKET_HEADER_SIZE,
-                                            bufCap - PACKET_HEADER_SIZE,
-                                            &bodyLen);
-    if (r != ENCODE_OK) return r;
-    *outLen = PACKET_HEADER_SIZE + bodyLen;
-    return ENCODE_OK;
-}
-
 /* Wire: [header 8] [fireTick 4 BE] [impactWX 2 BE] [impactWY 2 BE]
  * [owner 1] [outcome 1] — 10-byte body. Unicast to the shell's owner;
  * per-recipient filtering lives in udpClientDeliverControl (matching
@@ -2546,15 +2514,6 @@ static bool decodeBalanceFailedBody(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeNewswireMuteBody(const uint8_t *buf, size_t len,
-                                   ControlEvent *outEvt) {
-    if (len < 1) return false;
-    memset(outEvt, 0, sizeof(*outEvt));
-    outEvt->type = CTRL_NEWSWIRE_MUTE;
-    outEvt->u.newswireMute.muted = buf[0] ? 1 : 0;
-    return true;
-}
-
 static bool decodeShellDeathBody(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
     if (len < 10) return false;
@@ -2636,7 +2595,6 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BALANCE_FAILED]     = encodeBalanceFailed,
     [CTRL_SHELL_DEATH]        = encodeShellDeath,
     [CTRL_ROUND_STATS]        = encodeRoundStats,
-    [CTRL_NEWSWIRE_MUTE]      = encodeNewswireMute,
 };
 
 /* ================================================================
@@ -2768,7 +2726,6 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_BALANCE_FAILED:       return decodeBalanceFailedBody;
         case PACKET_SHELL_DEATH:          return decodeShellDeathBody;
         case PACKET_ROUND_STATS:          return decodeRoundStatsBody;
-        case PACKET_NEWSWIRE_MUTE:        return decodeNewswireMuteBody;
         default:                      return NULL;
     }
 }

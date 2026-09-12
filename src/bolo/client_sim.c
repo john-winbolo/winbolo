@@ -82,16 +82,6 @@ static void csCallbackMessageAdd(void *ctx, messageType msgType,
                                  langid topId, langid bodyId,
                                  const MessageArgs *args) {
   ClientSim *cs = (ClientSim *)ctx;
-  /* THE newswire gate. Every engine-generated newswire line in the client
-   * arrives through this one callback — base and pill captures/steals
-   * (bases.c, pillbox.c, client_snapshot.c), builder lost (lgm.c), player
-   * quit and name handover (players.c), saved map. When the server has the
-   * newswire muted (a scripted wave filing on or off the field), drop them
-   * here. Assistant and brain lines still come through, and server text
-   * (game.message -> CTRL_SERVER_TEXT, which the scenario's wave banner
-   * rides) never uses this callback at all — it calls clientMessageAdd
-   * directly from client_sim_control.c, so the banner still shows. */
-  if (msgType == newsWireMessage && clientSimNewswireMuted(cs)) return;
   /* Render at receive time using the client's currently-loaded language.
    * langGetTextFmt returns a pointer into a small thread-local ring of
    * buffers, so copy the result before any further langGet* call could
@@ -114,12 +104,6 @@ static void csCallbackMessageAdd(void *ctx, messageType msgType,
     bodyBuf[sizeof(bodyBuf) - 1] = '\0';
   }
   clientMessageAdd(&cs->messages, msgType, topBuf, bodyBuf);
-}
-
-/* Shared predicate for every newswire emitter: is the server's newswire
- * mute (CTRL_NEWSWIRE_MUTE) currently on for this client? */
-bool clientSimNewswireMuted(const ClientSim *cs) {
-  return (cs != NULL) && cs->newswireMuted;
 }
 
 static void csCallbackSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {

@@ -631,10 +631,6 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.voiceTalking.talking);
       break;
 
-    case CTRL_NEWSWIRE_MUTE:
-      fprintf(f, ",\"muted\":%u", (unsigned)evt->u.newswireMute.muted);
-      break;
-
     case CTRL_EVENT_TYPE_COUNT:
       /* Sentinel — never actually delivered. */
       break;
