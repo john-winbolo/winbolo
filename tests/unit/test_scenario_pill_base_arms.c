@@ -101,7 +101,7 @@ static void pbPlacePill(ServerSim *sim, BYTE opIndex, BYTE x, BYTE y,
     item.owner = owner;
     item.armour = armour;
     item.inTank = inTank;
-    pillsSetPill(&sim->sim.pb, &item, (BYTE)(opIndex + 1));
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, (BYTE)(opIndex + 1));
 }
 
 /* A square inside the minable area holding nothing but the wanted terrain,

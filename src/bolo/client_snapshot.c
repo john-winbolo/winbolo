@@ -298,7 +298,7 @@ static ClientPlayerStats *liveStatsSlot(ClientSim *csPtr, BYTE slot) {
 *
 *  The stamp survives only while both hold: the server has not
 *  yet processed the stamped tick, and one more hit would still
-*  drop the armour to MIN_ARMOUR_CAPTURE. Armour from before the
+*  drop the armour to base_capture_armour. Armour from before the
 *  hit therefore leaves a live prediction alone (a full sync or
 *  a stock update for an earlier shell used to wipe it, and the
 *  shell that armed it was gone, so nothing put it back); armour
@@ -330,8 +330,8 @@ void clientBaseArmourArrived(ClientSim *csPtr, BYTE idx, BYTE armour,
   }
   stamp = csPtr->sim.basePredictedDeadTick[idx];
   hit = csPtr->sim.basePredictedHitTick[idx];
-  oneHitKills = armour > MIN_ARMOUR_CAPTURE &&
-                (int)armour - DAMAGE <= MIN_ARMOUR_CAPTURE;
+  oneHitKills = armour > csPtr->sim.rules.base_capture_armour &&
+                (int)armour - DAMAGE <= csPtr->sim.rules.base_capture_armour;
 
   if (!oneHitKills) {
     /* Dead already (the real rule makes it drivable), or high enough that
@@ -401,7 +401,8 @@ static void clientApplyBaseStock(ClientSim *csPtr, const GameEvent *ev) {
    * high-RTT catch-up onto the now-passable tile glides rather than
    * snapping. Restricted to a base within one tile of the local tank
    * so it stays a special case, not a global clamp raise. */
-  if (oldArmour > MIN_ARMOUR_CAPTURE && newArmour <= MIN_ARMOUR_CAPTURE &&
+  if (oldArmour > csPtr->sim.rules.base_capture_armour &&
+      newArmour <= csPtr->sim.rules.base_capture_armour &&
       MY_TANK(csPtr) != NULL) {
     int tankMX = tankGetMX(&MY_TANK(csPtr));
     int tankMY = tankGetMY(&MY_TANK(csPtr));

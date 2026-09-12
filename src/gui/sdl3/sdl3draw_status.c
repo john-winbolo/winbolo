@@ -128,6 +128,8 @@ static BYTE gCachedTankShells = 0, gCachedTankMines = 0, gCachedTankArmour = 0, 
 static BYTE gCachedTankFullShells = 40, gCachedTankFullMines = 40,
             gCachedTankFullArmour = 40, gCachedTankFullTrees = 40;
 static BYTE gCachedBaseShells = 0, gCachedBaseMines = 0, gCachedBaseArmour = 0;
+static BYTE gCachedBaseFullShells = 90, gCachedBaseFullMines = 90,
+            gCachedBaseFullArmour = 90;
 static bool gCachedBaseValid = false;
 
 /* -----------------------------------------------------------------
@@ -614,7 +616,9 @@ void sdl3DrawCopyTankStatusBars(int x, int y) {
   /* Panel texture is read by sdl3RenderStatusPanels each frame — no-op. */
 }
 
-void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, bool redraw) {
+void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour,
+                            BYTE fullShells, BYTE fullMines, BYTE fullArmour,
+                            bool redraw) {
   /* Cache-only — may run on the server-tick thread. The texture is rebuilt
      from this cache on the render thread by sdl3RenderBaseBarsTex(), called
      each frame from sdl3RenderStatusPanels(). */
@@ -622,6 +626,9 @@ void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, 
   gCachedBaseShells = shells;
   gCachedBaseMines = mines;
   gCachedBaseArmour = armour;
+  gCachedBaseFullShells = fullShells;
+  gCachedBaseFullMines = fullMines;
+  gCachedBaseFullArmour = fullArmour;
   gCachedBaseValid = (shells > 0 || mines > 0 || armour > 0);
 }
 
@@ -645,14 +652,19 @@ void sdl3RenderBaseBarsTex(void) {
     SDL_SetRenderDrawColor(gRenderer, 0, 255, 0, 255);
 
     int bh = STATUS_BASE_BARS_HEIGHT;
-    float mult = (float)(2.0 / 3.0);
+    /* Each bar fills at its own cap, so the classic 90 still draws 60 pixels
+       and a raised cap draws the same bar with a finer step. A cap of 0 would
+       divide by zero, so it draws as empty. */
+    float sShells = gCachedBaseFullShells ? (float)BAR_BASE_FULL_PIXELS / gCachedBaseFullShells : 0.0f;
+    float sMines  = gCachedBaseFullMines  ? (float)BAR_BASE_FULL_PIXELS / gCachedBaseFullMines  : 0.0f;
+    float sArmour = gCachedBaseFullArmour ? (float)BAR_BASE_FULL_PIXELS / gCachedBaseFullArmour : 0.0f;
 
     SDL_FRect rShells = { 0.0f, 0.0f,
-                          (float)(shells * mult), (float)bh };
+                          sShells * shells, (float)bh };
     SDL_FRect rMines  = { 0.0f, (float)STATUS_BASE_MINES,
-                          (float)(mines  * mult), (float)bh };
+                          sMines * mines, (float)bh };
     SDL_FRect rArmour = { 0.0f, (float)STATUS_BASE_ARMOUR,
-                          (float)(armour * mult), (float)bh };
+                          sArmour * armour, (float)bh };
 
     if (shells > 0) SDL_RenderFillRect(gRenderer, &rShells);
     if (mines  > 0) SDL_RenderFillRect(gRenderer, &rMines);

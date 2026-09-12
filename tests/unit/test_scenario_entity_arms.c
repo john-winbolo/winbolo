@@ -318,7 +318,7 @@ int run_scenario_entity_remove_pill(void) {
         memset(&carried, 0, sizeof(carried));
         pillsGetPill(&gs->pb, &carried, 3);
         carried.inTank = TRUE;
-        pillsSetPill(&gs->pb, &carried, 3);
+        pillsSetPill(gs, &gs->pb, &carried, 3);
         eaRemoveOp(&op, SCN_OP_ENTITY_REMOVE_PILL, 2);
         UT_ASSERT_MSG(eaApply(sim, &op, NULL) == SCN_OP_CARRIED,
                       "a carried pillbox should be refused");

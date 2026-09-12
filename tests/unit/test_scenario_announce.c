@@ -967,7 +967,7 @@ int run_scenario_announce_pill_line_written_once(void) {
     pill.owner = NEUTRAL;
     pill.armour = PILLS_MAX_ARMOUR;
     pill.speed = PILLBOX_ATTACK_NORMAL;
-    pillsSetPill(&gs->pb, &pill, 1);
+    pillsSetPill(gs, &gs->pb, &pill, 1);
 
     /* The ownership change itself says nothing. This is the workaround that
        went: the two messageAdd calls that used to sit inside this function

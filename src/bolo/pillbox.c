@@ -143,11 +143,12 @@ BYTE pillsGetNumPills(pillboxes *value) {
 *  Sets a specific pill with its item data
 *
 *ARGUMENTS:
+*  sim     - Pointer to the game sim
 *  value   - Pointer to the pillbox structure
 *  item    - Pointer to a pillbox
 *  pillNum - The pillbox number
 *********************************************************/
-void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
+void pillsSetPill(GameSim *sim, pillboxes *value, pillbox *item, BYTE pillNum) {
   if (pillNum > 0 && pillNum  <= (*value)->numPills) {
     pillNum--;
     (((*value)->item[pillNum]).x) = item->x;
@@ -156,32 +157,31 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
       item->owner = NEUTRAL;
     }
     (((*value)->item[pillNum]).owner) = item->owner;
-    /* Clamp armour to [0, PILLS_MAX_ARMOUR]. The damage path's
-     * unsigned-underflow guard at pillsGetDamagePos already catches
-     * overflow during gameplay, but an attacker-supplied map can
-     * load 255 directly — the repair path only caps on the way up,
-     * so an out-of-range value would persist until first repair. */
-    if (item->armour > PILLS_MAX_ARMOUR) {
-      item->armour = PILLS_MAX_ARMOUR;
+    /* Clamp armour to the sim's cap. The damage path's guard at
+     * pillsGetDamagePos already catches overflow during gameplay,
+     * but a caller can hand this a record holding anything — the
+     * repair path only caps on the way up, so an out-of-range
+     * value would persist until first repair. */
+    if (item->armour > sim->rules.pill_max_armour) {
+      item->armour = (BYTE) sim->rules.pill_max_armour;
     }
     (((*value)->item[pillNum]).armour) = item->armour;
 
 
-    /* Clamp speed to the runtime range [PILLBOX_MAX_FIRERATE,
-     * PILLBOX_ATTACK_NORMAL]. The damage path floors speed at
-     * PILLBOX_MAX_FIRERATE when the pill gets hit and the cooldown
-     * tick growth ceilings at PILLBOX_ATTACK_NORMAL — values
+    /* Clamp speed into the attack interval the sim allows. The damage
+     * path floors speed at the minimum when the pill gets hit and the
+     * cooldown tick growth ceilings it at the normal interval — values
      * outside that window are unreachable through normal play but
      * survive on the wire (speed=0 fires every tick; speed=255 is
      * a passive pillbox). The "starts angry" feature still works
-     * because any value in [6, 100] is legitimate. */
-    if (item->speed < PILLBOX_MAX_FIRERATE) {
-      item->speed = PILLBOX_MAX_FIRERATE;
-    } else if (item->speed > PILLBOX_ATTACK_NORMAL) {
-      item->speed = PILLBOX_ATTACK_NORMAL;
+     * because any value inside the pair is legitimate. */
+    if (item->speed < sim->rules.pill_attack_min_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_min_ticks;
+    } else if (item->speed > sim->rules.pill_attack_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_ticks;
     }
-    if (item->speed != PILLBOX_ATTACK_NORMAL) {
-      (*value)->item[pillNum].coolDown = PILLBOX_COOLDOWN_TIME;
+    if (item->speed != sim->rules.pill_attack_ticks) {
+      (*value)->item[pillNum].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
     }
     (((*value)->item[pillNum]).speed) = item->speed;
     (((*value)->item[pillNum]).inTank) = item->inTank;
@@ -555,8 +555,8 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       (*value)->item[count].coolDown--;
       if ((*value)->item[count].coolDown ==0) {
         (*value)->item[count].speed++;
-        if ((*value)->item[count].speed < PILLBOX_ATTACK_NORMAL) {
-          (*value)->item[count].coolDown = PILLBOX_COOLDOWN_TIME;
+        if ((*value)->item[count].speed < sim->rules.pill_attack_ticks) {
+          (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
         }
       }
     }
@@ -721,11 +721,11 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }
       } else if (wantDamage == TRUE) {
-        (*value)->item[count].coolDown = PILLBOX_COOLDOWN_TIME;
-        if ((*value)->item[count].speed > PILLBOX_MAX_FIRERATE) {
+        (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
+        if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
           (*value)->item[count].speed /=2;
-          if ((*value)->item[count].speed < PILLBOX_MAX_FIRERATE) {
-            (*value)->item[count].speed = PILLBOX_MAX_FIRERATE;
+          if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
+            (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
           }
         }
       }
@@ -1407,9 +1407,14 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
   while (count < ((*value)->numPills)) {
     if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue) {
       BYTE before = (*value)->item[count].armour;
-      (*value)->item[count].armour -= amount;
-      if ((*value)->item[count].armour > PILL_MAX_HEALTH) {
+      /* Ask whether the blow takes more than is left rather than subtracting
+         first and reading the wrap: a wrapped value only looks like "was
+         full" while the cap and the damage are both compile-time, and a rules
+         table can put any pair of numbers here. */
+      if (amount > before) {
         (*value)->item[count].armour = 0;
+      } else {
+        (*value)->item[count].armour = (BYTE) (before - amount);
       }
       /* The blow that would finish the pill is the host's to refuse, and a
          refusal holds it at one armour, where it goes on firing. Asked only
@@ -1504,17 +1509,19 @@ BYTE pillsRepairPos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BY
          been patched up by someone else. */
       armour = (*value)->item[count].armour;
       needed = 0;
-      if (armour < PILLS_MAX_ARMOUR) {
-        needed = (BYTE) (((PILLS_MAX_ARMOUR - armour) + PILL_REPAIR_AMOUNT - 1) / PILL_REPAIR_AMOUNT);
+      if (armour < sim->rules.pill_max_armour) {
+        needed = (BYTE) (((sim->rules.pill_max_armour - armour) +
+                          sim->rules.pill_repair_amount - 1) /
+                         sim->rules.pill_repair_amount);
       }
       used = treeAmount;
       if (used > needed) {
         used = needed;
       }
       if (used > 0) {
-        armour = (BYTE) (armour + (used * PILL_REPAIR_AMOUNT));
-        if (armour > PILLS_MAX_ARMOUR) {
-          armour = PILLS_MAX_ARMOUR;
+        armour = (BYTE) (armour + (used * sim->rules.pill_repair_amount));
+        if (armour > sim->rules.pill_max_armour) {
+          armour = (BYTE) sim->rules.pill_max_armour;
         }
         (*value)->item[count].armour = armour;
         if (sim->isServer == FALSE) {
@@ -1762,11 +1769,11 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
     yDist = ((*value)->item[count].y) - my;
     if ((*value)->active[count] != FALSE && xDist >= PILL_BASE_HIT_LEFT && xDist <= PILL_BASE_HIT_RIGHT && yDist >= PILL_BASE_HIT_TOP && yDist <= PILL_BASE_HIT_BOTTOM && (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
-      (*value)->item[count].coolDown = PILLBOX_COOLDOWN_TIME;
-      if ((*value)->item[count].speed > PILLBOX_MAX_FIRERATE) {
+      (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
+      if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
         (*value)->item[count].speed /=2;
-        if ((*value)->item[count].speed < PILLBOX_MAX_FIRERATE) {
-          (*value)->item[count].speed = PILLBOX_MAX_FIRERATE;
+        if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
+          (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
         }
       }
     }
@@ -1801,12 +1808,13 @@ BYTE pillsGetNumNeutral(pillboxes *value) {
 /*********************************************************
 *NAME:          pillsValidate
 *PURPOSE:
-*  Clamps every pillbox field a map can supply to the range the
-*  rest of the codebase assumes. pillsSetPill applies these on
-*  the file-load path; the compressed path memcpys the structs
-*  wholesale and reaches none of them. Pure clamping — the
-*  coolDown that pillsSetPill sets alongside speed is gameplay
-*  state, not a safety property, so it is left alone.
+*  Clamps the pillbox fields a map cannot be trusted on
+*  whatever the rules are: the count, which indexes item[],
+*  and each owner, which indexes the player list. Both are
+*  properties of the file, so this runs without a sim and
+*  the map editor, the preview and the tile-test tool get it
+*  as the game does. The gameplay caps are pillsClampToRules
+*  below. Pure clamping, and idempotent.
 *
 *ARGUMENTS:
 *  value - Pointer to the pillboxes structure
@@ -1826,13 +1834,46 @@ void pillsValidate(pillboxes *value) {
     if (item->owner > (MAX_TANKS - 1) && item->owner != NEUTRAL) {
       item->owner = NEUTRAL;
     }
-    if (item->armour > PILLS_MAX_ARMOUR) {
-      item->armour = PILLS_MAX_ARMOUR;
+  }
+}
+
+/*********************************************************
+*NAME:          pillsClampToRules
+*PURPOSE:
+*  Clamps every pillbox to the gameplay caps this sim runs
+*  on: armour to the pill armour cap, and speed into the
+*  attack interval. The same clamps pillsSetPill applies to
+*  one record, over the whole list, for the load paths that
+*  do not go through it, and arms the cooldown alongside
+*  speed as that function does. Idempotent.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the pillboxes structure
+*********************************************************/
+void pillsClampToRules(GameSim *sim, pillboxes *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numPills; count++) {
+    pillbox *item = &((*value)->item[count]);
+    if (item->armour > sim->rules.pill_max_armour) {
+      item->armour = (BYTE) sim->rules.pill_max_armour;
     }
-    if (item->speed < PILLBOX_MAX_FIRERATE) {
-      item->speed = PILLBOX_MAX_FIRERATE;
-    } else if (item->speed > PILLBOX_ATTACK_NORMAL) {
-      item->speed = PILLBOX_ATTACK_NORMAL;
+    if (item->speed < sim->rules.pill_attack_min_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_min_ticks;
+    } else if (item->speed > sim->rules.pill_attack_ticks) {
+      item->speed = (BYTE) sim->rules.pill_attack_ticks;
+    }
+    /* A pill firing faster than the normal interval is warming back up, and
+       the countdown is what walks it there. A record can arrive without one —
+       the .map format has no field for it — so arm it rather than leave the
+       pill angry for the rest of the game. One already counting down keeps
+       its countdown, so a map installed mid-game does not restart it. */
+    if (item->speed != sim->rules.pill_attack_ticks && item->coolDown == 0) {
+      item->coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
     }
   }
 }

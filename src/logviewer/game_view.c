@@ -72,6 +72,7 @@ extern uint16_t lv_gameViewGetKills(BYTE slot);
 extern uint16_t lv_gameViewGetDeaths(BYTE slot);
 extern void  lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
 extern void  lv_gameViewGetTankFulls(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees);
+extern void  lv_gameViewGetBaseFulls(BYTE *shells, BYTE *mines, BYTE *armour);
 
 extern SDL_Window   *lv_drawGetSDLWindow(void);
 extern SDL_Renderer *lv_drawGetSDLRenderer(void);
@@ -857,7 +858,10 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
     lv_gameViewGetTankFulls(&fullShells, &fullMines, &fullArmour, &fullTrees);
     sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
                            fullShells, fullMines, fullArmour, fullTrees);
-    sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0, FALSE);
+    BYTE baseFullShells, baseFullMines, baseFullArmour;
+    lv_gameViewGetBaseFulls(&baseFullShells, &baseFullMines, &baseFullArmour);
+    sdl3DrawStatusBaseBars(0, 0, /* shells */ 0, /* mines */ 0, /* armour */ 0,
+                           baseFullShells, baseFullMines, baseFullArmour, FALSE);
   }
 
   /* Step 11b — man-status circle. Mirrors live game's screen.c:4042-4051:

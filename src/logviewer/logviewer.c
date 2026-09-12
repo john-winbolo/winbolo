@@ -103,6 +103,11 @@ void lv_gameViewGetTankFulls(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *tree
   if (armour) *armour = g_lv->rules.tankFullArmour;
   if (trees)  *trees  = g_lv->rules.tankFullTrees;
 }
+void lv_gameViewGetBaseFulls(BYTE *shells, BYTE *mines, BYTE *armour) {
+  if (shells) *shells = g_lv->rules.baseFullShells;
+  if (mines)  *mines  = g_lv->rules.baseFullMines;
+  if (armour) *armour = g_lv->rules.baseFullArmour;
+}
 void lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
   if (slot >= MAX_TANKS) {
     if (shells) *shells = 0;

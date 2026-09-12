@@ -215,7 +215,7 @@ int run_replay_roundtrip_pill_health(void) {
     firstPill.armour = 6;
     firstPill.x = pillX;
     firstPill.y = pillY;
-    pillsSetPill(&gs->pb, &firstPill, 1);
+    pillsSetPill(gs, &gs->pb, &firstPill, 1);
 
     memset(&firstPill, 0, sizeof(firstPill));
     pillsGetPill(&gs->pb, &firstPill, 1);

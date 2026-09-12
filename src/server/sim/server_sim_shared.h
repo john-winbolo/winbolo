@@ -133,7 +133,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim);
 
 /* The player slot every base owner is allied to when one side has swept
  * the map, or NEUTRAL when no side has. Same predicate as
- * serverSimCheckGameWin: a base at or below MIN_ARMOUR_CAPTURE is dead
+ * serverSimCheckGameWin: a base at or below base_capture_armour is dead
  * and recapturable, so it does not count toward a sweep. The tick core in
  * server_sim_tick.c reads it each half-step to spot a win. */
 BYTE serverSimWinningOwner(ServerSim *sim);

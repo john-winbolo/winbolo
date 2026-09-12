@@ -1311,6 +1311,10 @@ void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *mine
    by a literal 40 draws the wrong length the moment one does. This is the
    frontend's only route to the rules — src/gui/ cannot see the sim. */
 void         clientSimGetTankFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+/* What a full base holds on this sim: the three caps the base status bars
+   are drawn against, reached the same way and for the same reason as the
+   tank's caps above. */
+void         clientSimGetBaseFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
 
 /*********************************************************

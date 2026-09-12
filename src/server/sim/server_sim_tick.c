@@ -984,13 +984,13 @@ static void simRunHalfStep(ServerSim *sim) {
     }
 
     /* All-bases win. Every base held by one alliance with none of them dead
-     * (armour > MIN_ARMOUR_CAPTURE — the same test basesGetStatusNum uses to
+     * (armour > base_capture_armour — the same test basesGetStatusNum uses to
      * draw the X) IS the win condition, so it ends the round on the spot.
      *
      * There is deliberately no grace period layered on top. The grace period
      * is already built into the condition: a base shelled to 0 stays dead,
      * and therefore keeps the sweep false, for the whole time it takes to
-     * regenerate past MIN_ARMOUR_CAPTURE. That is the losing side's window to
+     * regenerate past base_capture_armour. That is the losing side's window to
      * retake it. A second countdown on top only bought the right to announce
      * a win and then retract it.
      *

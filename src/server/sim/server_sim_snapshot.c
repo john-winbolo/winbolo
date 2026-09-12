@@ -1357,7 +1357,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (!recipientIsBot) {
             /* Per-recipient base visibility (owner is always real):
              *  - armour is public base condition: real for neutral/own/allied bases;
-             *    an enemy base reports BASE_FULL_ARMOUR while alive (exact value hidden)
+             *    an enemy base reports a full base's armour while alive (exact value
+             *    hidden)
              *    but its true armour once dead/capturable, so the capturable flip shows,
              *    and once the recipient's tank is inside BASE_PREDICT_REVEAL_RANGE so
              *    their client can predict the square becoming drivable rather than
@@ -1374,7 +1375,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
                                 playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
                 if (!basesArmourVisibleToPlayer(&sim->sim, (BYTE)i, clientIdx)) {
-                    basesOut[i].armour = BASE_FULL_ARMOUR;
+                    basesOut[i].armour = (BYTE) sim->sim.rules.base_full_armour;
                 }
                 if (!friendly) {
                     basesOut[i].shells = 0;

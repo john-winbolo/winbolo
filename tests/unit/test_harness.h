@@ -275,6 +275,7 @@ int run_upload_cap_enforced(void);
 int run_map_field_clamps_evil(void);
 int run_map_field_clamps_passthrough(void);
 int run_map_field_clamps_angry_start(void);
+int run_map_field_clamps_no_sim(void);
 int run_map_reload_rollback(void);
 
 /* In-memory BMAP parser (test_map_read_memory.c). mapReadFromMemory
@@ -1040,6 +1041,11 @@ int run_voice_talking_clears_on_leave(void);
 
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
+
+/* The half-tick carry basesHalfTickCalulator keeps between calls
+   (test_base_half_tick.c): one pair of fields per sim, not per process. */
+int run_base_half_tick_per_sim_sequence(void);
+int run_base_half_tick_other_sim_does_not_disturb(void);
 int run_base_armour_fog_of_war(void);
 int run_base_armour_reveal_in_range(void);
 int run_two_clients_full_sync_independent(void);
@@ -1483,6 +1489,11 @@ int run_sim_rules_terrain_caps_follow(void);
 int run_sim_rules_river_cap_moves_drowning(void);
 int run_sim_rules_base_regen_seed_follows(void);
 int run_sim_rules_terrain_life_follows(void);
+int run_sim_rules_base_empties_without_wrapping(void);
+int run_sim_rules_pill_empties_without_wrapping(void);
+int run_sim_rules_pairs(void);
+int run_sim_rules_capture_threshold_moves(void);
+int run_sim_rules_builder_cost_follows(void);
 
 int run_snapshot_compaction(void);
 
@@ -2187,6 +2198,11 @@ int run_netdebug_error_offset_clamped(void);
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
 struct ServerSim *ut_make_running_sim(const char *player_name);
+
+/* A sim that carries nothing but the classic rules, for a case that builds a
+ * bare pill or base list and calls a function taking a sim only so it can
+ * read a cap off it. Shared and never destroyed; do not tick it. */
+struct GameSim *ut_rules_only_sim(void);
 
 /* The sounds frontEndPlaySound was handed, recorded by the stub in
  * test_stubs.c so a test can assert which variant the client played.

@@ -370,6 +370,10 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
         ok = mapLoadCompressedMap(&gs->mp, &gs->pb,
                                   &gs->bs, &gs->ss,
                                   buf, len);
+        /* The map is this sim's now: cap what it brought against the rules. */
+        if (ok) {
+            mapClampToRules(gs);
+        }
     }
     free(buf);
 

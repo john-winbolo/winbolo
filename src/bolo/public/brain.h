@@ -172,6 +172,15 @@ typedef struct {
 	float   turn_boat;
 	float   turn_deep_sea;
 	float   turn_refuel_base;
+	/* What a pill's armour and a base's stocks top out at, and the interval
+	   a pill fires on. A brain reading a pill or base strength against a
+	   literal 15 or 90 is wrong the moment a sim changes one. */
+	int32_t pill_max_armour;
+	int32_t pill_attack_ticks;
+	int32_t pill_attack_min_ticks;
+	int32_t base_full_armour;
+	int32_t base_full_shells;
+	int32_t base_full_mines;
 } BrainRules;
 
 enum { GameType_open=1, GameType_tournament, GameType_strict_tment };

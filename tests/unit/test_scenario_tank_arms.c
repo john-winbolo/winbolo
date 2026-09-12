@@ -366,7 +366,7 @@ int run_scenario_tank_teleport(void) {
         memset(&pl, 0, sizeof(pl));
         pillsGetPill(&sim->sim.pb, &pl, 1);
         pl.x = px; pl.y = py; pl.armour = PILLS_MAX_ARMOUR; pl.inTank = FALSE;
-        pillsSetPill(&sim->sim.pb, &pl, 1);
+        pillsSetPill(&sim->sim, &sim->sim.pb, &pl, 1);
         op.u.tankTeleport.x = px;
         op.u.tankTeleport.y = py;
         UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_BAD_TERRAIN,
@@ -374,7 +374,7 @@ int run_scenario_tank_teleport(void) {
         memset(&pl, 0, sizeof(pl));
         pillsGetPill(&sim->sim.pb, &pl, 1);
         pl.armour = 0;
-        pillsSetPill(&sim->sim.pb, &pl, 1);
+        pillsSetPill(&sim->sim, &sim->sim.pb, &pl, 1);
         UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
                       "a dead pill should be drivable");
     }
@@ -544,7 +544,7 @@ int run_scenario_tank_give_pill(void) {
     pl.armour = PILLS_MAX_ARMOUR;
     pl.inTank = FALSE;
     pl.owner = NEUTRAL;
-    pillsSetPill(&sim->sim.pb, &pl, 1);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &pl, 1);
 
     taDrainEvents(sim);
     memset(&op, 0, sizeof(op));

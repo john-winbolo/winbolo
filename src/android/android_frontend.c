@@ -300,7 +300,10 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
-  sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
+  BYTE fullShells, fullMines, fullArmour;
+  clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
+  sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
+                         fullShells, fullMines, fullArmour, FALSE);
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {

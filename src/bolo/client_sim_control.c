@@ -848,7 +848,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             }
             owner = basesGetBaseOwner(&cs->sim.bs, b);
             basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
-            if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            if (owner == NEUTRAL ||
+                armourAmt <= cs->sim.rules.base_capture_armour) {
                 allOwned = false;
             } else if (liveBases == 0) {
                 first = owner;

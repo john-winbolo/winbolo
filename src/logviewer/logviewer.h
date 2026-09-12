@@ -96,6 +96,9 @@ typedef struct {
   BYTE tankFullMines;
   BYTE tankFullArmour;
   BYTE tankFullTrees;
+  BYTE baseFullShells;
+  BYTE baseFullMines;
+  BYTE baseFullArmour;
   BYTE mineDamage;
 } LvRules;
 

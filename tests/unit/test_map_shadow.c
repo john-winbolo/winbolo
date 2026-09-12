@@ -1015,7 +1015,7 @@ static bool ms_find_plain_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
 static void ms_pill_owned_by_slot0(ServerSim *sim, BYTE p) {
     GameSim *gs = serverSimGetGameSim(sim);
     (*gs->pb).item[p].owner  = 0;
-    (*gs->pb).item[p].armour = PILL_MAX_HEALTH;
+    (*gs->pb).item[p].armour = PILLS_MAX_ARMOUR;
     (*gs->pb).item[p].inTank = FALSE;
 }
 

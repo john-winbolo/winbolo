@@ -177,7 +177,7 @@ static ClientSim *esClientWithLists(BYTE count) {
         pill.owner = NEUTRAL;
         pill.armour = PILLS_MAX_ARMOUR;
         pill.speed = PILLBOX_ATTACK_NORMAL;
-        pillsSetPill(&gs->pb, &pill, i);
+        pillsSetPill(gs, &gs->pb, &pill, i);
 
         memset(&bse, 0, sizeof(bse));
         bse.x = (BYTE)(60 + i);

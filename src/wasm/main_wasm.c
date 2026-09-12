@@ -1116,7 +1116,10 @@ void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
   (void)cs;
-  sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
+  BYTE fullShells, fullMines, fullArmour;
+  clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
+  sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
+                         fullShells, fullMines, fullArmour, FALSE);
 }
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {

@@ -117,8 +117,12 @@ void sdl3DrawStatusTankBars(int x, int y,
                             BYTE fullArmour, BYTE fullTrees);
 void sdl3DrawCopyTankStatusBars(int x, int y);
 
+/* The three amounts and the three caps they are drawn against; a bar fills
+   at its cap. The caller supplies both because this file has no sim. */
 void sdl3DrawStatusBaseBars(int x, int y,
-                            BYTE shells, BYTE mines, BYTE armour, bool redraw);
+                            BYTE shells, BYTE mines, BYTE armour,
+                            BYTE fullShells, BYTE fullMines, BYTE fullArmour,
+                            bool redraw);
 void sdl3DrawCopyBasesStatusBars(int x, int y);
 
 /* Render-thread-only rebuilds of the resource-bar textures from the cached

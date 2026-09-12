@@ -490,6 +490,21 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos);
 bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE *input, int inputLen);
 
 /*********************************************************
+*NAME:          mapClampToRules
+*PURPOSE:
+*  Clamps the pills and bases a map just put into this sim
+*  against the gameplay caps the sim runs on. mapRead and
+*  mapLoadCompressedMap settle what the file may say and
+*  leave the caps alone, having no sim to ask; every caller
+*  that owns one calls this straight after the load.
+*  Idempotent.
+*
+*ARGUMENTS:
+*  sim - The sim that has just taken the map on
+*********************************************************/
+void mapClampToRules(struct GameSim *sim);
+
+/*********************************************************
 *NAME:          mapSaveCompressedMap
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/5/99

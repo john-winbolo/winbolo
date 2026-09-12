@@ -122,7 +122,7 @@ static const TankBoundingBox tank_bbox_boat[16] = {
  * driven the tank through — the client snaps forward each
  * snapshot and replays itself back into the wall. Once the
  * client's own predicted shell is due to drop the base to
- * MIN_ARMOUR_CAPTURE, both ends derive "drivable" from the
+ * base_capture_armour, both ends derive "drivable" from the
  * same rule at the same tick and there is nothing to correct.
  *
  * Compares against replayTick rather than the latest tick so
@@ -2097,7 +2097,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
 
       /* Check for capture base */
       if (isServer == TRUE) {
-        if (baseIsCapturable(bs, newbmx, newbmy) == TRUE) {
+        if (baseIsCapturable(sim, bs, newbmx, newbmy) == TRUE) {
           if (playersCheckSameSquare(&sim->plyrs, gameSimGetTankPlayer(sim, value), newbmx, newbmy) == FALSE) {
             if (basesAmOwner(sim, gameSimGetTankPlayer(sim, value), newbmx, newbmy) == FALSE) {
               BYTE baseNum = basesGetBaseNum(bs, newbmx, newbmy);
@@ -2410,13 +2410,13 @@ bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
   item.y = my;
   item.armour = 0;
   item.owner = gameSimGetTankPlayer(sim, value);
-  item.speed = PILLBOX_ATTACK_NORMAL;
-  item.reload = PILLBOX_ATTACK_NORMAL;
+  item.speed = (BYTE) sim->rules.pill_attack_ticks;
+  item.reload = (BYTE) sim->rules.pill_attack_ticks;
   item.coolDown = 0;
   item.inTank = FALSE;
   item.justSeen = FALSE;
   if (isServer) {
-    pillsSetPill(pb,&item,pillNum);
+    pillsSetPill(sim, pb,&item,pillNum);
   }
   if (!isServer) {
     frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));

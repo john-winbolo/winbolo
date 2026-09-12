@@ -44,6 +44,7 @@
 #include "sounddist.h"
 #include "floodfill.h"
 #include "log.h"
+#include "util.h"
 #include "../common/wb_log.h"
 #include "screenbrainmap.h"
 #include "bolo_map_validate.h"
@@ -205,6 +206,13 @@ static bool mrError(MapReader *r) {
 *  into the pill structure. Returns if the 
 *  operation was successful or not
 *
+*  Stores each record as it is read. Clamping armour and the
+*  attack interval needs the sim's rules and this path has no
+*  sim — the map editor, the preview and the tile-test tool
+*  load maps through here. mapClampToRules caps the list once
+*  a sim owns it; pillsValidate covers the count and the
+*  owners, which are the file's own business.
+*
 *ARGUMENTS:
 *  fp    - Pointer to the file being read from
 *  value - Pointer to the pillbox structure
@@ -227,7 +235,29 @@ static bool mapReadPills(MapReader *fp, pillboxes *value) {
       returnValue = FALSE;
     } else {
       readInto.justSeen = FALSE;
-      pillsSetPill(value,&readInto,(BYTE) count);
+      if (readInto.owner > (MAX_TANKS - 1) && readInto.owner != NEUTRAL) {
+        readInto.owner = NEUTRAL;
+      }
+      if (count <= (int)(*value)->numPills) {
+        pillbox *slot = &((*value)->item[count - 1]);
+        /* The five fields the record carries, plus the two the loop sets.
+           reload is left where it is, as the setter this replaced left it:
+           it is the slot's, not the file's. coolDown starts at zero and
+           pillsClampToRules arms it if the pill loaded angry, which it can
+           only work out once a sim says what angry is. */
+        slot->x        = readInto.x;
+        slot->y        = readInto.y;
+        slot->owner    = readInto.owner;
+        slot->armour   = readInto.armour;
+        slot->speed    = readInto.speed;
+        slot->inTank   = readInto.inTank;
+        slot->justSeen = readInto.justSeen;
+        slot->coolDown = 0;
+        logAddEvent(log_PillSetOwner, (BYTE) (count - 1), readInto.owner, TRUE, 0, 0, NULL);
+        logAddEvent(log_PillSetHealth, (BYTE) (count - 1), readInto.armour, 0, 0, 0, NULL);
+        logAddEvent(log_PillSetInTank, utilPutNibble((BYTE) (count - 1), FALSE), 0, 0, 0, 0, NULL);
+        logAddEvent(log_PillSetPlace, (BYTE) (count - 1), readInto.x, readInto.y, 0, 0, NULL);
+      }
     }
     count++;
   }
@@ -1612,7 +1642,11 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
    * the file-load path have run. Everything downstream — the terrain fixups
    * below included — reads these values, and a map arrives from whatever
    * server the player joined. Clamp here, once, so the rest of the codebase
-   * can trust the fields rather than each consumer having to re-check. */
+   * can trust the fields rather than each consumer having to re-check.
+   *
+   * What a pill or a base may hold is not settled here: that is the sim's to
+   * say, and this loader has none — the map editor and the preview call it
+   * too. A caller that owns a sim calls mapClampToRules afterwards. */
   basesValidate(bs);
   pillsValidate(pb);
   startsValidate(ss);
@@ -1830,6 +1864,33 @@ uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb) {
   crc = (uint16_t)CRCCalc(masked, (int)n);
   free(masked);
   return crc;
+}
+
+/*********************************************************
+*NAME:          mapClampToRules
+*PURPOSE:
+*  Clamps the pills and bases a map just put into this sim
+*  against the gameplay caps the sim runs on. mapRead and
+*  mapLoadCompressedMap settle what the file may say — the
+*  counts and the owners — and leave the caps alone, because
+*  both are shared with the map editor, the preview and the
+*  server's scratch validation, none of which has a sim. A
+*  caller that does have one calls this straight after the
+*  load, so the records the game goes on to read are inside
+*  what this sim allows.
+*
+*  Idempotent, so a caller that loads twice may call it
+*  twice.
+*
+*ARGUMENTS:
+*  sim - The sim that has just taken the map on
+*********************************************************/
+void mapClampToRules(GameSim *sim) {
+  if (sim == NULL) {
+    return;
+  }
+  pillsClampToRules(sim, &sim->pb);
+  basesClampToRules(sim, &sim->bs);
 }
 
 bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize) {

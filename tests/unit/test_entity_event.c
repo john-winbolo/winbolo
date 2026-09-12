@@ -305,7 +305,7 @@ static ClientSim *ecClientWithLists(BYTE count) {
         pill.owner = NEUTRAL;
         pill.armour = PILLS_MAX_ARMOUR;
         pill.speed = PILLBOX_ATTACK_NORMAL;
-        pillsSetPill(&gs->pb, &pill, i);
+        pillsSetPill(gs, &gs->pb, &pill, i);
 
         memset(&bse, 0, sizeof(bse));
         bse.x = (BYTE)(60 + i);
@@ -689,7 +689,7 @@ int run_entity_event_removed_index_sends_no_delta(void) {
     memset(&pill, 0, sizeof(pill));
     pillsGetPill(&sim->sim.pb, &pill, 1);
     pill.owner = (pill.owner == NEUTRAL) ? 0 : NEUTRAL;
-    pillsSetPill(&sim->sim.pb, &pill, 1);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &pill, 1);
     serverSimTick(sim);
     UT_ASSERT_MSG(ecCountFor(sim, EVENT_PILL_UPDATE, 0) > 0,
                   "a live pillbox's change raised no update");
@@ -700,7 +700,7 @@ int run_entity_event_removed_index_sends_no_delta(void) {
     pillsGetPill(&sim->sim.pb, &pill, 1);
     pill.owner = (pill.owner == NEUTRAL) ? 0 : NEUTRAL;
     pill.x = (BYTE)(pill.x + 1);
-    pillsSetPill(&sim->sim.pb, &pill, 1);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &pill, 1);
     serverSimTick(sim);
     UT_ASSERT_MSG(ecCountFor(sim, EVENT_PILL_UPDATE, 0) == 0,
                   "a removed pillbox raised %d update(s)",

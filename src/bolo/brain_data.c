@@ -234,6 +234,12 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->rules.turn_boat          = gs->rules.turn_boat;
   value->rules.turn_deep_sea      = gs->rules.turn_deep_sea;
   value->rules.turn_refuel_base   = gs->rules.turn_refuel_base;
+  value->rules.pill_max_armour       = gs->rules.pill_max_armour;
+  value->rules.pill_attack_ticks     = gs->rules.pill_attack_ticks;
+  value->rules.pill_attack_min_ticks = gs->rules.pill_attack_min_ticks;
+  value->rules.base_full_armour      = gs->rules.base_full_armour;
+  value->rules.base_full_shells      = gs->rules.base_full_shells;
+  value->rules.base_full_mines       = gs->rules.base_full_mines;
 
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */

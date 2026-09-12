@@ -3459,6 +3459,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_base_half_tick.c
     tests/unit/test_base_death_prediction.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_status_wire.c
@@ -4149,6 +4150,7 @@ set(_unit_test_names
     map_field_clamps_evil
     map_field_clamps_passthrough
     map_field_clamps_angry_start
+    map_field_clamps_no_sim
     map_reload_rollback
     map_read_memory_matches_file
     map_read_memory_handbuilt
@@ -4368,6 +4370,8 @@ set(_unit_test_names
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
+    base_half_tick_per_sim_sequence
+    base_half_tick_other_sim_does_not_disturb
     base_armour_fog_of_war
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
@@ -4484,6 +4488,11 @@ set(_unit_test_names
     sim_rules_river_cap_moves_drowning
     sim_rules_base_regen_seed_follows
     sim_rules_terrain_life_follows
+    sim_rules_base_empties_without_wrapping
+    sim_rules_pill_empties_without_wrapping
+    sim_rules_pairs
+    sim_rules_capture_threshold_moves
+    sim_rules_builder_cost_follows
     screen_bullets_build
     ping_smoother
     client_timing

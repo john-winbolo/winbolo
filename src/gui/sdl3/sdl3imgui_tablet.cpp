@@ -1142,11 +1142,16 @@ static void renderResourceBars(ClientSim *cs) {
       ImU32 bgColor = IM_COL32(40, 40, 40, 180);
 
       BYTE vals[3] = { baseShells, baseMines, baseArmour };
+      /* Each bar fills at its own cap, so a tuned sim draws a full base
+         full rather than off the end of the bar. */
+      BYTE fullShells, fullMines, fullArmour;
+      clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
+      BYTE fulls[3] = { fullShells, fullMines, fullArmour };
 
       for (int i = 0; i < 3; i++) {
         float bx = winPos.x + winPad + i * (barW + barGap);
         dl->AddRectFilled(ImVec2(bx, barTop), ImVec2(bx + barW, barTop + maxBarH), bgColor);
-        float fillH = hasBase ? (vals[i] / 90.0f) * maxBarH : 0.0f;
+        float fillH = (hasBase && fulls[i]) ? (vals[i] / (float)fulls[i]) * maxBarH : 0.0f;
         if (fillH > maxBarH) fillH = maxBarH;
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);

@@ -318,7 +318,8 @@ BYTE serverSimWinningOwner(ServerSim *sim) {
         }
         current = basesGetBaseOwner(&sim->sim.bs, count);
         basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+        if (current == NEUTRAL ||
+            armourAmt <= sim->sim.rules.base_capture_armour) {
             return NEUTRAL;
         }
         if (live == 0) {
@@ -887,6 +888,8 @@ void serverSimResetGameWorld(ServerSim *sim) {
     if (sim->cachedMapData != NULL) {
         mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss,
                              sim->cachedMapData, sim->cachedMapDataLen);
+        /* The map is this sim's now: cap what it brought against the rules. */
+        mapClampToRules(&sim->sim);
     }
 
     /* 4. Clear mines from under bases */
@@ -1412,6 +1415,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         return FALSE;
     }
+
+    /* The map is this sim's now: cap what it brought against the rules. */
+    mapClampToRules(&sim->sim);
 
     /* Hash the canonical BMAPBOLO file so WBN can match it. */
     serverSimCacheMapMd5FromFile(sim, mapFileName);

@@ -748,7 +748,7 @@ static ScnOpResult scenarioOpPillSetArmour(ServerSim *sim,
     /* pillsSetPill clamps, because a map file may carry anything. A script is
        told instead: asking for more armour than a pill can hold is a mistake
        worth reporting, the same answer the tank's own stock op gives. */
-    if (p->armour > PILLS_MAX_ARMOUR) {
+    if (p->armour > sim->sim.rules.pill_max_armour) {
         return SCN_OP_RANGE;
     }
     if (item.inTank) {
@@ -756,7 +756,7 @@ static ScnOpResult scenarioOpPillSetArmour(ServerSim *sim,
     }
 
     item.armour = p->armour;
-    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, pillNum);
     return SCN_OP_OK;
 }
 
@@ -774,12 +774,13 @@ static ScnOpResult scenarioOpPillSetSpeed(ServerSim *sim,
     /* The attack interval runs from the fastest a hurt pill fires to the rate
        an untouched one sits at. pillsSetPill clamps into that pair and arms the
        cooldown for anything under the top of it. */
-    if (p->speed < PILLBOX_MAX_FIRERATE || p->speed > PILLBOX_ATTACK_NORMAL) {
+    if (p->speed < sim->sim.rules.pill_attack_min_ticks ||
+        p->speed > sim->sim.rules.pill_attack_ticks) {
         return SCN_OP_RANGE;
     }
 
     item.speed = p->speed;
-    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, pillNum);
     return SCN_OP_OK;
 }
 
@@ -806,7 +807,7 @@ static ScnOpResult scenarioOpPillMove(ServerSim *sim, const ScnOpPillMove *p) {
 
     item.x = p->x;
     item.y = p->y;
-    pillsSetPill(&sim->sim.pb, &item, pillNum);
+    pillsSetPill(&sim->sim, &sim->sim.pb, &item, pillNum);
     return SCN_OP_OK;
 }
 
@@ -1293,10 +1294,11 @@ static ScnOpResult scenarioOpEntityAddPill(ServerSim *sim,
     if (!scenarioOwnerIsLegal(p->owner)) {
         return SCN_OP_RANGE;
     }
-    if (p->armour > PILLS_MAX_ARMOUR) {
+    if (p->armour > sim->sim.rules.pill_max_armour) {
         return SCN_OP_RANGE;
     }
-    if (p->speed < PILLBOX_MAX_FIRERATE || p->speed > PILLBOX_ATTACK_NORMAL) {
+    if (p->speed < sim->sim.rules.pill_attack_min_ticks ||
+        p->speed > sim->sim.rules.pill_attack_ticks) {
         return SCN_OP_RANGE;
     }
     if (!scenarioSquareTakesPill(sim, p->x, p->y)) {
@@ -1371,8 +1373,9 @@ static ScnOpResult scenarioOpEntityAddBase(ServerSim *sim,
     }
     /* Checked rather than clamped, for the reason the pill add checks: the
        list stores what it is handed. */
-    if (p->armour > BASE_FULL_ARMOUR || p->shells > BASE_FULL_SHELLS ||
-        p->mines > BASE_FULL_MINES) {
+    if (p->armour > sim->sim.rules.base_full_armour ||
+        p->shells > sim->sim.rules.base_full_shells ||
+        p->mines > sim->sim.rules.base_full_mines) {
         return SCN_OP_RANGE;
     }
     if (!scenarioSquareTakesPill(sim, p->x, p->y)) {

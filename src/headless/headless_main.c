@@ -1698,7 +1698,7 @@ static void logStateBinary(int tickNum) {
         int gx = (int)px - tank_tx + 14;
         int gy = (int)py - tank_ty + 14;
         if (gx < 0 || gx >= 29 || gy < 0 || gy >= 29) continue;
-        float intensity = (float)parmour / 15.0f;
+        float intensity = (float)parmour / (float)bi.rules.pill_max_armour;
         if (powner == 0xFF) {
           spatial[gy][gx][5] = intensity; /* neutral */
         } else if (powner == selfPlayer) {

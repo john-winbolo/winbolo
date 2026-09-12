@@ -106,7 +106,9 @@ void simRulesClassic(SimRules *out) {
     out->lgm_gather_trees         = LGM_GATHER_TREE;
     out->lgm_helicopter_speed     = LGM_HELICOPTER_SPEED;
 
-    /* ---- Pillbox ---- */
+    /* ---- Pillbox ----
+     * pill_max_armour was PILLS_MAX_ARMOUR and PILL_MAX_HEALTH, two names for
+     * the same 15; the second is gone and this field is the one spelling. */
     out->pill_max_armour       = PILLS_MAX_ARMOUR;
     out->pill_attack_ticks     = PILLBOX_ATTACK_NORMAL;
     out->pill_attack_min_ticks = PILLBOX_MAX_FIRERATE;
@@ -195,6 +197,18 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
         return false;                                                        \
     }
 
+/* One arm per pair of fields. The reason names both sides and the numbers
+ * they hold, so a caller reading a refusal can see which of the two has to
+ * move rather than only that something is wrong. A pair never changes a
+ * value: it refuses the table or it passes it. */
+#define RULE_PAIR(cond, ...)                                                 \
+    if (!(cond)) {                                                           \
+        if (why != NULL && whyLen > 0) {                                     \
+            snprintf(why, whyLen, __VA_ARGS__);                              \
+        }                                                                    \
+        return false;                                                        \
+    }
+
 /* Written as a negated in-range test so a NaN fails rather than passing. */
 #define RULE_FLT(field, lo, hi)                                              \
     if (!(rules->field >= (float) (lo) && rules->field <= (float) (hi))) {   \
@@ -279,6 +293,18 @@ bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
     RULE_INT(pill_max_armour, 1, 255)
     RULE_INT(pill_attack_ticks, 1, 255)
     RULE_INT_MIN(pill_attack_min_ticks, 1)
+    /* Both ends of the attack interval are converted, so the pair can be
+     * asked here: the fastest a hurt pill fires cannot be slower than the
+     * rate an untouched one sits at, or the clamp has no window to land in. */
+    if (rules->pill_attack_min_ticks > rules->pill_attack_ticks) {
+        if (why != NULL && whyLen > 0) {
+            snprintf(why, whyLen,
+                     "pill_attack_min_ticks is %ld, above pill_attack_ticks %ld",
+                     (long) rules->pill_attack_min_ticks,
+                     (long) rules->pill_attack_ticks);
+        }
+        return false;
+    }
     RULE_INT(pill_cooldown_ticks, 0, 255)
     RULE_INT_MIN(pill_repair_amount, 1)
     RULE_INT(pill_range, 0, 65535)
@@ -324,9 +350,105 @@ bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
     RULE_INT(tree_weight_road, -32768, 32767)
     RULE_INT(tree_weight_mine, -32768, 32767)
 
+    /* ---- Pairs ----------------------------------------------------------
+     *
+     * What one field allows another, now that both sides of each of these is
+     * a rule. The rows above check each field against its own fixed bounds;
+     * these check the rows against each other, in an order that lets a later
+     * arm rely on an earlier one — base_min_* is known to be inside
+     * base_full_* before the give rows subtract the two. The attack-interval
+     * pair is not here: both its sides are pillbox rows and it sits with
+     * them. The two products are computed in 64 bits because a cost and a
+     * load are each bounded below and not above, so multiplying them in
+     * int32_t could overflow before the comparison. */
+
+    RULE_PAIR(rules->base_hit_armour <= rules->base_capture_armour,
+              "base_hit_armour is %ld, above base_capture_armour %ld",
+              (long) rules->base_hit_armour,
+              (long) rules->base_capture_armour)
+
+    RULE_PAIR(rules->base_min_armour <= rules->base_full_armour,
+              "base_min_armour is %ld, above base_full_armour %ld",
+              (long) rules->base_min_armour, (long) rules->base_full_armour)
+    RULE_PAIR(rules->base_min_shells <= rules->base_full_shells,
+              "base_min_shells is %ld, above base_full_shells %ld",
+              (long) rules->base_min_shells, (long) rules->base_full_shells)
+    RULE_PAIR(rules->base_min_mines <= rules->base_full_mines,
+              "base_min_mines is %ld, above base_full_mines %ld",
+              (long) rules->base_min_mines, (long) rules->base_full_mines)
+
+    /* A base hands out what it holds above its reserve, so a give bigger
+     * than that gap would take the base under its own floor. */
+    RULE_PAIR(rules->base_armour_give <=
+                  rules->base_full_armour - rules->base_min_armour,
+              "base_armour_give is %ld, above base_full_armour %ld less "
+              "base_min_armour %ld",
+              (long) rules->base_armour_give, (long) rules->base_full_armour,
+              (long) rules->base_min_armour)
+    RULE_PAIR(rules->base_shells_give <=
+                  rules->base_full_shells - rules->base_min_shells,
+              "base_shells_give is %ld, above base_full_shells %ld less "
+              "base_min_shells %ld",
+              (long) rules->base_shells_give, (long) rules->base_full_shells,
+              (long) rules->base_min_shells)
+    RULE_PAIR(rules->base_mines_give <=
+                  rules->base_full_mines - rules->base_min_mines,
+              "base_mines_give is %ld, above base_full_mines %ld less "
+              "base_min_mines %ld",
+              (long) rules->base_mines_give, (long) rules->base_full_mines,
+              (long) rules->base_min_mines)
+
+    /* A job the man can never pay for is one no player can order. */
+    RULE_PAIR(rules->lgm_cost_road <= rules->tank_full_trees,
+              "lgm_cost_road is %ld, above tank_full_trees %ld",
+              (long) rules->lgm_cost_road, (long) rules->tank_full_trees)
+    RULE_PAIR(rules->lgm_cost_building <= rules->tank_full_trees,
+              "lgm_cost_building is %ld, above tank_full_trees %ld",
+              (long) rules->lgm_cost_building, (long) rules->tank_full_trees)
+    RULE_PAIR(rules->lgm_cost_repair_building <= rules->tank_full_trees,
+              "lgm_cost_repair_building is %ld, above tank_full_trees %ld",
+              (long) rules->lgm_cost_repair_building,
+              (long) rules->tank_full_trees)
+    RULE_PAIR(rules->lgm_cost_boat <= rules->tank_full_trees,
+              "lgm_cost_boat is %ld, above tank_full_trees %ld",
+              (long) rules->lgm_cost_boat, (long) rules->tank_full_trees)
+    RULE_PAIR(rules->lgm_cost_pill_new <= rules->tank_full_trees,
+              "lgm_cost_pill_new is %ld, above tank_full_trees %ld",
+              (long) rules->lgm_cost_pill_new, (long) rules->tank_full_trees)
+
+    /* The repair order takes a whole load at once, so what it costs is the
+     * cost times the load and that is what the tank has to be able to
+     * carry — a script setting the two apart multiplies them. */
+    RULE_PAIR((int64_t) rules->lgm_cost_pill_repair *
+                  rules->lgm_pill_repair_load <= rules->tank_full_trees,
+              "lgm_cost_pill_repair %ld times lgm_pill_repair_load %ld is "
+              "above tank_full_trees %ld",
+              (long) rules->lgm_cost_pill_repair,
+              (long) rules->lgm_pill_repair_load,
+              (long) rules->tank_full_trees)
+
+    RULE_PAIR(rules->lgm_cost_mine <= rules->tank_full_mines,
+              "lgm_cost_mine is %ld, above tank_full_mines %ld",
+              (long) rules->lgm_cost_mine, (long) rules->tank_full_mines)
+
+    /* One delivery has to be able to finish a pill on nothing, or the man
+     * walks out, spends the trees and leaves the pill short. */
+    RULE_PAIR((int64_t) rules->lgm_pill_repair_load *
+                  rules->pill_repair_amount >= rules->pill_max_armour,
+              "lgm_pill_repair_load %ld times pill_repair_amount %ld is "
+              "below pill_max_armour %ld",
+              (long) rules->lgm_pill_repair_load,
+              (long) rules->pill_repair_amount,
+              (long) rules->pill_max_armour)
+    RULE_PAIR(rules->pill_repair_amount <= rules->pill_max_armour,
+              "pill_repair_amount is %ld, above pill_max_armour %ld",
+              (long) rules->pill_repair_amount,
+              (long) rules->pill_max_armour)
+
     return true;
 }
 
 #undef RULE_INT
 #undef RULE_INT_MIN
 #undef RULE_FLT
+#undef RULE_PAIR

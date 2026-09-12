@@ -189,7 +189,8 @@ static bool gymCheckGameWin(WinBoloGym *g, bool *agentWon) {
         BYTE shellsAmt = 0, minesAmt = 0, armourAmt = 0;
         if (!serverSimGetBase(g->serverSim, i, NULL, NULL, &owner)) continue;
         serverSimGetBaseStats(g->serverSim, i, &shellsAmt, &minesAmt, &armourAmt);
-        if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) return false;
+        if (owner == NEUTRAL ||
+            armourAmt <= gs->rules.base_capture_armour) return false;
         if (i == 1) {
             first = owner;
         } else if (!playersIsAllie(&gs->plyrs, owner, first)) {
@@ -660,7 +661,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
                         : gymGetAllegiance(powner, selfPlayer, alliesBits);
         ent->direction = 0.0f;
         ent->speed = 0.0f;
-        ent->strength = (float)parmour / 15.0f;
+        ent->strength = (float)parmour / (float)gs->rules.pill_max_armour;
         ent->flags = 0;
         if (pinTank) ent->flags |= WBGYM_FLAG_IN_TANK;
         ent->id = pi - 1; /* 0-based index */
@@ -685,7 +686,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
         {
             BYTE shellsAmt, minesAmt, armourAmt;
             serverSimGetBaseStats(g->serverSim, bsi, &shellsAmt, &minesAmt, &armourAmt);
-            ent->strength = (float)armourAmt / 90.0f;
+            ent->strength = (float)armourAmt / (float)gs->rules.base_full_armour;
         }
         ent->flags = 0;
         ent->id = bsi - 1; /* 0-based index */

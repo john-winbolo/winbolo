@@ -1232,7 +1232,7 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
  *  removes any that have expired.
  *
  *  A shell that lands on an enemy base also arms base-death
- *  prediction when the hit would drop it to MIN_ARMOUR_CAPTURE:
+ *  prediction when the hit would drop it to base_capture_armour:
  *  see tankBasePredictedDrivable. This is what stops a tank
  *  driving into a base it is killing from fighting its own
  *  prediction for a round trip.
@@ -1274,8 +1274,8 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
          * clientBaseArmourArrived arms the stamp from this tick once that
          * hit's armour lands. */
         cs->sim.basePredictedHitTick[hitBaseIdx] = cs->sim.replayTick;
-        if (armour > MIN_ARMOUR_CAPTURE &&
-            armour - DAMAGE <= MIN_ARMOUR_CAPTURE) {
+        if (armour > cs->sim.rules.base_capture_armour &&
+            armour - DAMAGE <= cs->sim.rules.base_capture_armour) {
           cs->sim.basePredictedDeadTick[hitBaseIdx] = cs->sim.replayTick;
         }
       }
@@ -2420,6 +2420,8 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
                             (BYTE *)buf, len)) {
     return false;
   }
+  /* The map is this sim's now: cap what it brought against the rules. */
+  mapClampToRules(gs);
 
   /* First map load (initViewport): clientSimCreate deliberately skips
    * viewport init (see comment above on clientSimCreate); the map install
@@ -3791,6 +3793,12 @@ void clientSimGetTankFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmo
   if (minesAmount  != NULL) *minesAmount  = (BYTE) cs->sim.rules.tank_full_mines;
   if (armourAmount != NULL) *armourAmount = (BYTE) cs->sim.rules.tank_full_armour;
   if (treesAmount  != NULL) *treesAmount  = (BYTE) cs->sim.rules.tank_full_trees;
+}
+
+void clientSimGetBaseFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount) {
+  if (shellsAmount != NULL) *shellsAmount = (BYTE) cs->sim.rules.base_full_shells;
+  if (minesAmount  != NULL) *minesAmount  = (BYTE) cs->sim.rules.base_full_mines;
+  if (armourAmount != NULL) *armourAmount = (BYTE) cs->sim.rules.base_full_armour;
 }
 
 void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {

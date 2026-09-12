@@ -16,6 +16,8 @@
 #include "test_harness.h"
 
 #include "everard_map.h"
+#include "game_sim.h"
+#include "sim_rules.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
 
@@ -252,6 +254,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_field_clamps_evil",                   run_map_field_clamps_evil                   },
     { "map_field_clamps_passthrough",            run_map_field_clamps_passthrough            },
     { "map_field_clamps_angry_start",            run_map_field_clamps_angry_start            },
+    { "map_field_clamps_no_sim",                 run_map_field_clamps_no_sim                 },
     { "map_reload_rollback",                     run_map_reload_rollback                     },
     { "map_read_memory_matches_file",            run_map_read_memory_matches_file            },
     { "map_read_memory_handbuilt",               run_map_read_memory_handbuilt               },
@@ -571,6 +574,8 @@ static const UnitTestEntry s_tests[] = {
     { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "bases_closest_for_player",                run_bases_closest_for_player                },
     { "base_stock_visibility",                   run_base_stock_visibility                   },
+    { "base_half_tick_per_sim_sequence",         run_base_half_tick_per_sim_sequence         },
+    { "base_half_tick_other_sim_does_not_disturb", run_base_half_tick_other_sim_does_not_disturb },
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
     { "base_armour_reveal_in_range",             run_base_armour_reveal_in_range             },
     { "base_death_prediction_replay_tick",       run_base_death_prediction_replay_tick       },
@@ -692,6 +697,11 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_river_cap_moves_drowning",      run_sim_rules_river_cap_moves_drowning      },
     { "sim_rules_base_regen_seed_follows",       run_sim_rules_base_regen_seed_follows       },
     { "sim_rules_terrain_life_follows",          run_sim_rules_terrain_life_follows          },
+    { "sim_rules_base_empties_without_wrapping", run_sim_rules_base_empties_without_wrapping },
+    { "sim_rules_pill_empties_without_wrapping", run_sim_rules_pill_empties_without_wrapping },
+    { "sim_rules_pairs",                         run_sim_rules_pairs                         },
+    { "sim_rules_capture_threshold_moves",       run_sim_rules_capture_threshold_moves       },
+    { "sim_rules_builder_cost_follows",          run_sim_rules_builder_cost_follows          },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },
@@ -1030,6 +1040,16 @@ static const UnitTestEntry s_tests[] = {
 /* Defined in test_stubs.c — every binary that links ClientSim needs to
  * own this symbol because the engine reads it from menu-aware paths. */
 extern bool isInMenu;
+
+GameSim *ut_rules_only_sim(void) {
+    static GameSim gs;
+    static bool filled = false;
+    if (!filled) {
+        simRulesClassic(&gs.rules);
+        filled = true;
+    }
+    return &gs;
+}
 
 ServerSim *ut_make_running_sim(const char *player_name) {
     BYTE emap[6000] = E_MAP;

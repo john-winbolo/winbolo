@@ -2920,6 +2920,9 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.tankFullMines  = 40;
   lv->rules.tankFullArmour = 40;
   lv->rules.tankFullTrees  = 40;
+  lv->rules.baseFullShells = 90;
+  lv->rules.baseFullMines  = 90;
+  lv->rules.baseFullArmour = 90;
   lv->rules.mineDamage     = 10;
 
   lv->fromMainMenu = fromMainMenu;

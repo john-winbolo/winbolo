@@ -39,7 +39,7 @@ static bool ut_repair_pill(GameSim *gs, BYTE armourBefore, BYTE load,
     pillsGetPill(&gs->pb, &item, 1);
     item.armour = armourBefore;
     item.inTank = FALSE;
-    pillsSetPill(&gs->pb, &item, 1);
+    pillsSetPill(gs, &gs->pb, &item, 1);
 
     if (pillsGetArmourPos(&gs->pb, item.x, item.y) != armourBefore) {
         return false;

@@ -800,7 +800,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
     hasNeutralBase = FALSE;
     for (baseCount = 0; baseCount < numBases; baseCount++) {
       if (sim->bs->active[baseCount] == FALSE ||
-          sim->bs->item[baseCount].armour <= MIN_ARMOUR_CAPTURE) {
+          sim->bs->item[baseCount].armour <= sim->rules.base_capture_armour) {
         continue;
       }
       dist = startsMapDistance(sx, sy, sim->bs->item[baseCount].x, sim->bs->item[baseCount].y);
@@ -910,7 +910,7 @@ static bool startsHasHostileNearAtStart(GameSim *sim, starts *value, BYTE startI
   }
   for (i = 0; i < numBases; i++) {
     if (sim->bs->active[i] == FALSE) continue;
-    if (sim->bs->item[i].armour <= MIN_ARMOUR_CAPTURE) continue;
+    if (sim->bs->item[i].armour <= sim->rules.base_capture_armour) continue;
     dist = startsMapDistance(sx, sy, sim->bs->item[i].x, sim->bs->item[i].y);
     if (dist > START_BASE_RANGE) continue;
     owner = sim->bs->item[i].owner;
@@ -1233,7 +1233,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
     for (b = 0; b < numBases; b++) {
       BYTE owner = sim->bs->item[b].owner;
       if (sim->bs->active[b] == FALSE) continue;
-      if (sim->bs->item[b].armour <= MIN_ARMOUR_CAPTURE) continue;
+      if (sim->bs->item[b].armour <= sim->rules.base_capture_armour) continue;
       if (owner == NEUTRAL) continue;
       for (p = 0; p < groups[g].size; p++) {
         if (groups[g].players[p] == owner) {
