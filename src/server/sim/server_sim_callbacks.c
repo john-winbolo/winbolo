@@ -347,14 +347,16 @@ void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                           &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
-/* A base changed hands. The sim core settled the capture and worked out which
+/* A base changed hands. The sim core settled the change and worked out which
  * of the three kinds it was; turning that into the event the snapshot stream
- * carries is the server's job and happens here.
+ * carries is the server's job and happens here. newOwner is NEUTRAL when the
+ * base was neutralised rather than taken.
  *
- * data[0] and data[1] are the whole of the wire payload — gameEventDataSize()
- * gives EVENT_BASE_CAPTURED two bytes. The rest is the server-internal side
- * channel the stats funnel in serverSimAddEvent reads: the capture class, the
- * 0-based item[] index, and the base's map cell. */
+ * data[0] to data[3] are the wire payload — gameEventDataSize() gives
+ * EVENT_BASE_CAPTURED four bytes, so a client learns which base as well as who
+ * holds it. data[3] is reserved and written 0. From data[4] on is the
+ * server-internal side channel the stats funnel in serverSimAddEvent reads:
+ * the capture class and the base's map cell. */
 void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
                                  BYTE newOwner, BYTE captureClass,
                                  BYTE mapX, BYTE mapY) {
@@ -364,15 +366,16 @@ void serverSimCbBaseOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = newOwner;
     ev.data[1] = oldOwner;
-    ev.data[2] = captureClass;
-    ev.data[3] = index;
-    ev.data[4] = mapX;
-    ev.data[5] = mapY;
+    ev.data[2] = index;
+    ev.data[3] = 0;
+    ev.data[4] = captureClass;
+    ev.data[5] = mapX;
+    ev.data[6] = mapY;
     serverSimAddEvent(sim, &ev);
 }
 
 /* A pillbox changed hands. The same shape as the base above, and the same
- * split between the two wire bytes and the four the funnel reads. */
+ * split between the four wire bytes and the three the funnel reads. */
 void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
                                  BYTE newOwner, BYTE captureClass,
                                  BYTE mapX, BYTE mapY) {
@@ -382,10 +385,11 @@ void serverSimCbPillOwnerChanged(void *ctx, BYTE index, BYTE oldOwner,
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = newOwner;
     ev.data[1] = oldOwner;
-    ev.data[2] = captureClass;
-    ev.data[3] = index;
-    ev.data[4] = mapX;
-    ev.data[5] = mapY;
+    ev.data[2] = index;
+    ev.data[3] = 0;
+    ev.data[4] = captureClass;
+    ev.data[5] = mapX;
+    ev.data[6] = mapY;
     serverSimAddEvent(sim, &ev);
 }
 

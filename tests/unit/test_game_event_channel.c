@@ -7,23 +7,24 @@
  * Asking is optional: a subscriber that says nothing keeps the control stream
  * alone and is not touched by any of this.
  *
- * The three events below used to be built in shared code, which reached the
- * server's queue by casting GameSim's callback context back to a ServerSim *.
- * They are now GameSim callbacks — baseOwnerChanged, pillOwnerChanged and
- * lgmDied — implemented in server_sim_callbacks.c. Nothing about the event
- * changed, and that is what most of this file is for: every expected byte
- * here, the server-internal ones past gameEventDataSize() included, is
- * written out by hand from what the old inline emit built, so the test fails
- * if the bytes move rather than agreeing with whatever the new path happens
- * to produce.
+ * The three events below are raised by GameSim callbacks — baseOwnerChanged,
+ * pillOwnerChanged and lgmDied — implemented in server_sim_callbacks.c.
+ *
+ * The two capture events carry [newOwner, prevOwner, index, reserved] on the
+ * wire and keep the capture class and the objective's square behind it. Every
+ * expected byte in this file is written out by hand, including the ones past
+ * gameEventDataSize(), so a payload that shifts fails here rather than
+ * agreeing with whatever the emit happens to produce. The wire case composes
+ * its bytes by hand for the same reason: it must not ask the codec what the
+ * codec should be answering.
  *
  * Pinned here:
  *   1. A base capture reaches an asking subscriber on the event channel, not
- *      the control one, with all eight bytes unchanged — from neutral and as
- *      a steal, which are the two capture classes data[2] can hold here.
+ *      the control one, with all seven meaningful bytes — from neutral and as
+ *      a steal, which are the two capture classes this path can produce.
  *   2. The same for a pillbox.
- *   3. The same for a builder death, whose internal bytes are the man's map
- *      cell rather than a class and an index.
+ *   3. The same for a builder death, which keeps its two wire bytes and
+ *      carries the man's map cell behind them rather than a class and index.
  *   4. A subscriber that registered no event callback hears none of it and
  *      still receives control events; the setter refuses a handle that names
  *      no live subscriber.
@@ -31,6 +32,17 @@
  *      the isServer test around each call site is what keeps them unreached —
  *      so the client is driven through all three actions with recording
  *      callbacks installed, and must still fire nothing.
+ *   6. An objective handed to nobody is published like a capture with no new
+ *      owner, from the two sites that can reach one; the third cannot, and
+ *      the case says why.
+ *   7. The index on the wire is the 0-based item[] slot, at both ends of the
+ *      pill and base lists.
+ *   8. A capture packs to five bytes — type and four — with the reserved byte
+ *      zero and the class and square left behind.
+ *   9. A neutralisation draws no newswire line on a client and credits no
+ *      capture, against a control that shows the same fixture drawing one.
+ *  10. The stats funnel reads the class, the index and the square from their
+ *      new offsets.
  */
 
 #include <stdint.h>
@@ -50,6 +62,8 @@
 #include "tank.h"
 #include "lgm.h"
 #include "players.h"               /* playersIsAllie — the capture-class premise */
+#include "messages.h"              /* messageType, newsWireMessage */
+#include "transport_udp_internal.h" /* packGameEvent / unpackGameEvent */
 #include "test_harness.h"
 
 #define GEC_HOLDER 0   /* takes the objectives first */
@@ -204,10 +218,11 @@ int run_game_event_channel_base_captured(void) {
     memset(want, 0, sizeof(want));
     want[0] = GEC_HOLDER;
     want[1] = NEUTRAL;
-    want[2] = CAPTURE_CLASS_NEUTRAL;
-    want[3] = 0;
-    want[4] = bx;
-    want[5] = by;
+    want[2] = 0;                    /* index: base number 1 is item[0] */
+    want[3] = 0;                    /* reserved */
+    want[4] = CAPTURE_CLASS_NEUTRAL;
+    want[5] = bx;
+    want[6] = by;
     GEC_ASSERT_BYTES(ev, want, "base taken from neutral");
 
     buffered = gecBuffered(sim, EVENT_BASE_CAPTURED);
@@ -227,10 +242,11 @@ int run_game_event_channel_base_captured(void) {
     memset(want, 0, sizeof(want));
     want[0] = GEC_THIEF;
     want[1] = GEC_HOLDER;
-    want[2] = CAPTURE_CLASS_ENEMY;
+    want[2] = 0;
     want[3] = 0;
-    want[4] = bx;
-    want[5] = by;
+    want[4] = CAPTURE_CLASS_ENEMY;
+    want[5] = bx;
+    want[6] = by;
     GEC_ASSERT_BYTES(ev, want, "base stolen from an enemy");
 
     /* basesSetOwner, the by-square form, builds the identical event from its
@@ -248,10 +264,11 @@ int run_game_event_channel_base_captured(void) {
     memset(want, 0, sizeof(want));
     want[0] = GEC_HOLDER;
     want[1] = NEUTRAL;
-    want[2] = CAPTURE_CLASS_NEUTRAL;
+    want[2] = 0;
     want[3] = 0;
-    want[4] = bx;
-    want[5] = by;
+    want[4] = CAPTURE_CLASS_NEUTRAL;
+    want[5] = bx;
+    want[6] = by;
     GEC_ASSERT_BYTES(ev, want, "base taken by square");
 
     serverSimUnregisterSubscriber(sim, h);
@@ -306,10 +323,11 @@ int run_game_event_channel_pill_captured(void) {
     memset(want, 0, sizeof(want));
     want[0] = GEC_HOLDER;
     want[1] = NEUTRAL;
-    want[2] = CAPTURE_CLASS_NEUTRAL;
-    want[3] = 0;
-    want[4] = pill.x;
-    want[5] = pill.y;
+    want[2] = 0;                    /* index: pill number 1 is item[0] */
+    want[3] = 0;                    /* reserved */
+    want[4] = CAPTURE_CLASS_NEUTRAL;
+    want[5] = pill.x;
+    want[6] = pill.y;
     GEC_ASSERT_BYTES(ev, want, "pill taken from neutral");
 
     buffered = gecBuffered(sim, EVENT_PILL_CAPTURED);
@@ -329,10 +347,11 @@ int run_game_event_channel_pill_captured(void) {
     memset(want, 0, sizeof(want));
     want[0] = GEC_THIEF;
     want[1] = GEC_HOLDER;
-    want[2] = CAPTURE_CLASS_ENEMY;
+    want[2] = 0;
     want[3] = 0;
-    want[4] = pill.x;
-    want[5] = pill.y;
+    want[4] = CAPTURE_CLASS_ENEMY;
+    want[5] = pill.x;
+    want[6] = pill.y;
     GEC_ASSERT_BYTES(ev, want, "pill stolen from an enemy");
 
     serverSimUnregisterSubscriber(sim, h);
@@ -581,5 +600,374 @@ int run_game_event_channel_client_emits_nothing(void) {
     UT_ASSERT_MSG((*man)->isDead, "the builder did not die on the client");
 
     clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * 6. An objective handed to nobody.
+ * ================================================================ */
+int run_game_event_channel_neutralised(void) {
+    ServerSim *sim = ut_make_running_sim("Holder");
+    GameSim *gs;
+    GecSink sink;
+    SubscriberHandle h;
+    const GameEvent *ev;
+    BYTE want[GAME_EVENT_MAX_DATA];
+    BYTE bx, by;
+    pillbox pill;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT(basesGetNumBases(&gs->bs) >= 1 && basesIsActive(&gs->bs, 1));
+    UT_ASSERT(pillsGetNumPills(&gs->pb) >= 1 && pillsIsActive(&gs->pb, 1));
+
+    h = gecSubscribe(sim, &sink, /*wantEvents*/ true);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+
+    bx = (*gs->bs).item[0].x;
+    by = (*gs->bs).item[0].y;
+
+    /* A base taken off a player and handed to nobody publishes the capture
+       event with no new owner. */
+    (*gs->bs).item[0].owner = GEC_HOLDER;
+    gecDrain(sim, &sink);
+    UT_ASSERT(basesSetBaseOwner(gs, 1, NEUTRAL, FALSE, FALSE) == GEC_HOLDER);
+
+    UT_ASSERT_MSG(gecCount(&sink, EVENT_BASE_CAPTURED) == 1,
+                  "a neutralised base published %d events",
+                  gecCount(&sink, EVENT_BASE_CAPTURED));
+    ev = gecFind(&sink, EVENT_BASE_CAPTURED);
+    UT_ASSERT(ev != NULL);
+
+    memset(want, 0, sizeof(want));
+    want[0] = NEUTRAL;
+    want[1] = GEC_HOLDER;
+    want[2] = 0;
+    want[3] = 0;
+    /* The class expression at the emit site is unchanged, and an owner that is
+       nobody is not an ally of the slot that held it, so the internal byte
+       reads as a steal. It credits nobody: the derivation drops a record whose
+       new owner is not a seat. */
+    want[4] = CAPTURE_CLASS_ENEMY;
+    want[5] = bx;
+    want[6] = by;
+    GEC_ASSERT_BYTES(ev, want, "base neutralised");
+
+    /* And a pillbox, through the other site. */
+    memset(&pill, 0, sizeof(pill));
+    pillsGetPill(&gs->pb, &pill, 1);
+    (*gs->pb).item[0].owner = GEC_HOLDER;
+    gecDrain(sim, &sink);
+    UT_ASSERT(pillsSetPillOwner(gs, &gs->pb, 1, NEUTRAL, FALSE) == GEC_HOLDER);
+
+    UT_ASSERT_MSG(gecCount(&sink, EVENT_PILL_CAPTURED) == 1,
+                  "a neutralised pill published %d events",
+                  gecCount(&sink, EVENT_PILL_CAPTURED));
+    ev = gecFind(&sink, EVENT_PILL_CAPTURED);
+    UT_ASSERT(ev != NULL);
+
+    memset(want, 0, sizeof(want));
+    want[0] = NEUTRAL;
+    want[1] = GEC_HOLDER;
+    want[2] = 0;
+    want[3] = 0;
+    want[4] = CAPTURE_CLASS_ENEMY;
+    want[5] = pill.x;
+    want[6] = pill.y;
+    GEC_ASSERT_BYTES(ev, want, "pill neutralised");
+
+    /* The third emit site, basesSetOwner, publishes nothing for one — and
+       dropping the owner test from its guard did not change that. The arm
+       above the emit (bases.c, "else if (owner == NEUTRAL)") finishes every
+       neutralising call before the emit below it is reached, and the one
+       caller that exists hands it the driving tank's slot, never NEUTRAL.
+       Pinned here so a later change to that chain is noticed. */
+    (*gs->bs).item[0].owner = GEC_HOLDER;
+    gecDrain(sim, &sink);
+    UT_ASSERT(basesSetOwner(gs, bx, by, NEUTRAL, FALSE) == GEC_HOLDER);
+    UT_ASSERT_MSG((*gs->bs).item[0].owner == NEUTRAL,
+                  "the base did not go neutral at all");
+    UT_ASSERT_MSG(gecCount(&sink, EVENT_BASE_CAPTURED) == 0,
+                  "the by-square form published %d events for a neutralisation",
+                  gecCount(&sink, EVENT_BASE_CAPTURED));
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 7. The index on the wire is the 0-based one.
+ * ================================================================ */
+int run_game_event_channel_capture_index_base(void) {
+    ServerSim *sim = ut_make_running_sim("Holder");
+    GameSim *gs;
+    GecSink sink;
+    SubscriberHandle h;
+    const GameEvent *ev;
+    BYTE nb, np;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    nb = basesGetNumBases(&gs->bs);
+    np = pillsGetNumPills(&gs->pb);
+    UT_ASSERT_MSG(nb >= 2, "map has %u bases, this case needs two", (unsigned)nb);
+    UT_ASSERT_MSG(np >= 2, "map has %u pills, this case needs two", (unsigned)np);
+    UT_ASSERT(basesIsActive(&gs->bs, 1) && basesIsActive(&gs->bs, nb));
+    UT_ASSERT(pillsIsActive(&gs->pb, 1) && pillsIsActive(&gs->pb, np));
+
+    h = gecSubscribe(sim, &sink, /*wantEvents*/ true);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+
+    /* Base number 1 is item[0], so the event says 0 and not 1. */
+    (*gs->bs).item[0].owner = NEUTRAL;
+    gecDrain(sim, &sink);
+    UT_ASSERT(basesSetBaseOwner(gs, 1, GEC_HOLDER, FALSE, FALSE) == NEUTRAL);
+    ev = gecFind(&sink, EVENT_BASE_CAPTURED);
+    UT_ASSERT_MSG(ev != NULL, "base 1 published nothing");
+    UT_ASSERT_MSG(ev->data[2] == 0, "base 1 reported index %u, want 0",
+                  (unsigned)ev->data[2]);
+
+    /* The last base is item[nb - 1] — the end the off-by-one shows at. */
+    (*gs->bs).item[nb - 1].owner = NEUTRAL;
+    gecDrain(sim, &sink);
+    UT_ASSERT(basesSetBaseOwner(gs, nb, GEC_HOLDER, FALSE, FALSE) == NEUTRAL);
+    ev = gecFind(&sink, EVENT_BASE_CAPTURED);
+    UT_ASSERT_MSG(ev != NULL, "base %u published nothing", (unsigned)nb);
+    UT_ASSERT_MSG(ev->data[2] == (BYTE)(nb - 1),
+                  "base %u reported index %u, want %u", (unsigned)nb,
+                  (unsigned)ev->data[2], (unsigned)(nb - 1));
+
+    /* The same both ends for pillboxes. */
+    (*gs->pb).item[0].owner = NEUTRAL;
+    gecDrain(sim, &sink);
+    UT_ASSERT(pillsSetPillOwner(gs, &gs->pb, 1, GEC_HOLDER, FALSE) == NEUTRAL);
+    ev = gecFind(&sink, EVENT_PILL_CAPTURED);
+    UT_ASSERT_MSG(ev != NULL, "pill 1 published nothing");
+    UT_ASSERT_MSG(ev->data[2] == 0, "pill 1 reported index %u, want 0",
+                  (unsigned)ev->data[2]);
+
+    (*gs->pb).item[np - 1].owner = NEUTRAL;
+    gecDrain(sim, &sink);
+    UT_ASSERT(pillsSetPillOwner(gs, &gs->pb, np, GEC_HOLDER, FALSE) == NEUTRAL);
+    ev = gecFind(&sink, EVENT_PILL_CAPTURED);
+    UT_ASSERT_MSG(ev != NULL, "pill %u published nothing", (unsigned)np);
+    UT_ASSERT_MSG(ev->data[2] == (BYTE)(np - 1),
+                  "pill %u reported index %u, want %u", (unsigned)np,
+                  (unsigned)ev->data[2], (unsigned)(np - 1));
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 8. What a capture puts on the wire.
+ * ================================================================ */
+
+/* The byte vectors below are written out by hand rather than derived from
+ * gameEventDataSize, so a change to that table shows up here as a failure
+ * instead of quietly agreeing with itself. */
+int run_game_event_channel_capture_wire_bytes(void) {
+    static const uint8_t wantBase[5] = { EVENT_BASE_CAPTURED, 3, 7, 5, 0 };
+    static const uint8_t wantPill[5] = { EVENT_PILL_CAPTURED, NEUTRAL, 2, 9, 0 };
+    GameEvent in;
+    GameEvent out;
+    uint8_t buf[GAME_EVENT_MAX_WIRE_SIZE];
+    int packed, consumed, i;
+
+    /* A base stolen by slot 3 from slot 7, base index 5. */
+    memset(&in, 0, sizeof(in));
+    in.type = EVENT_BASE_CAPTURED;
+    in.data[0] = 3;
+    in.data[1] = 7;
+    in.data[2] = 5;
+    in.data[3] = 0;
+    in.data[4] = CAPTURE_CLASS_ENEMY;   /* internal — must stay off the wire */
+    in.data[5] = 41;
+    in.data[6] = 42;
+
+    memset(buf, 0xAA, sizeof(buf));
+    packed = packGameEvent(buf, &in);
+    UT_ASSERT_MSG(packed == 5, "a base capture packed %d bytes, want 5", packed);
+    for (i = 0; i < 5; i++) {
+        UT_ASSERT_MSG(buf[i] == wantBase[i],
+                      "base capture wire byte %d = 0x%02x, want 0x%02x",
+                      i, (unsigned)buf[i], (unsigned)wantBase[i]);
+    }
+    UT_ASSERT_MSG(buf[5] == 0xAA,
+                  "a byte past the payload was written: 0x%02x", (unsigned)buf[5]);
+
+    memset(&out, 0xEE, sizeof(out));
+    consumed = unpackGameEvent(buf, (size_t)packed, &out);
+    UT_ASSERT_MSG(consumed == 5, "a base capture consumed %d bytes, want 5",
+                  consumed);
+    UT_ASSERT(out.type == EVENT_BASE_CAPTURED);
+    UT_ASSERT_MSG(out.data[0] == 3 && out.data[1] == 7,
+                  "owners decoded as %u/%u", (unsigned)out.data[0],
+                  (unsigned)out.data[1]);
+    UT_ASSERT_MSG(out.data[2] == 5, "index decoded as %u", (unsigned)out.data[2]);
+    UT_ASSERT_MSG(out.data[3] == 0, "the reserved byte decoded as %u",
+                  (unsigned)out.data[3]);
+    UT_ASSERT_MSG(out.data[4] == 0 && out.data[5] == 0 && out.data[6] == 0,
+                  "an internal byte crossed the wire (%u/%u/%u)",
+                  (unsigned)out.data[4], (unsigned)out.data[5],
+                  (unsigned)out.data[6]);
+
+    /* A pillbox neutralised: no new owner, pill index 9. */
+    memset(&in, 0, sizeof(in));
+    in.type = EVENT_PILL_CAPTURED;
+    in.data[0] = NEUTRAL;
+    in.data[1] = 2;
+    in.data[2] = 9;
+    in.data[3] = 0;
+    in.data[4] = CAPTURE_CLASS_ENEMY;
+    in.data[5] = 12;
+    in.data[6] = 13;
+
+    memset(buf, 0xAA, sizeof(buf));
+    packed = packGameEvent(buf, &in);
+    UT_ASSERT_MSG(packed == 5, "a pill capture packed %d bytes, want 5", packed);
+    for (i = 0; i < 5; i++) {
+        UT_ASSERT_MSG(buf[i] == wantPill[i],
+                      "pill capture wire byte %d = 0x%02x, want 0x%02x",
+                      i, (unsigned)buf[i], (unsigned)wantPill[i]);
+    }
+    UT_ASSERT_MSG(buf[5] == 0xAA,
+                  "a byte past the payload was written: 0x%02x", (unsigned)buf[5]);
+
+    return 0;
+}
+
+/* ================================================================
+ * 9. A neutralisation draws no newswire line on a client.
+ * ================================================================ */
+
+#define GEC_LOCAL 0   /* the viewing client; the events below name other slots */
+
+static int gecClientLines;
+
+static void gecSpyMessageAdd(void *ctx, messageType msgType, langid topId,
+                             langid bodyId, const MessageArgs *args) {
+    (void)ctx; (void)topId; (void)bodyId; (void)args;
+    if (msgType == newsWireMessage) gecClientLines++;
+}
+
+/* Apply one game event to the client under the local slot. */
+static void gecClientApply(ClientSim *cs, BYTE type, BYTE newOwner,
+                           BYTE prevOwner, BYTE index) {
+    GameEvent e;
+    memset(&e, 0, sizeof(e));
+    e.type = type;
+    e.data[0] = newOwner;
+    e.data[1] = prevOwner;
+    e.data[2] = index;
+    e.data[3] = 0;
+    clientSimApplyGameEvents(cs, &e, 1, GEC_LOCAL);
+}
+
+int run_game_event_channel_neutralised_no_client_line(void) {
+    ClientSim *cs = clientSimAlloc();
+    GameSim *gs;
+    int i;
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, GEC_LOCAL);
+    /* The line sites are the human ones, so this fixture must not be a bot. */
+    clientSimSetIsBot(cs, false);
+    gs = clientSimGetGameSim(cs);
+    UT_ASSERT(gs != NULL);
+    gs->callbacks.messageAdd = gecSpyMessageAdd;
+
+    /* Positive control: a pillbox taken off nobody says so. Without this the
+       case below passes on a fixture that could never draw a line at all. */
+    gecClientLines = 0;
+    gecClientApply(cs, EVENT_PILL_CAPTURED, /*new*/ 1, /*prev*/ NEUTRAL, 0);
+    UT_ASSERT_MSG(gecClientLines == 1,
+                  "a pill capture drew %d newswire lines, want 1",
+                  gecClientLines);
+
+    /* The same pillbox handed to nobody draws none. */
+    gecClientLines = 0;
+    gecClientApply(cs, EVENT_PILL_CAPTURED, /*new*/ NEUTRAL, /*prev*/ 1, 0);
+    UT_ASSERT_MSG(gecClientLines == 0,
+                  "a neutralised pill drew %d newswire lines", gecClientLines);
+
+    /* And a base. Its line site debounces rather than emitting on the spot,
+       so the queue is pumped afterwards: a line held back for later is still
+       a line. */
+    gecClientLines = 0;
+    gecClientApply(cs, EVENT_BASE_CAPTURED, /*new*/ NEUTRAL, /*prev*/ 1, 0);
+    for (i = 0; i < 600; i++) {
+        basesTickMessageQueue(gs, cs);
+    }
+    UT_ASSERT_MSG(gecClientLines == 0,
+                  "a neutralised base drew %d newswire lines", gecClientLines);
+
+    /* The live scoreboard is untouched too: NEUTRAL is not a seat. */
+    {
+        const ClientPlayerStats *row = clientSimGetPlayerStats(cs, 1);
+        UT_ASSERT(row != NULL);
+        UT_ASSERT_MSG(row->pillCaptures == 1,
+                      "slot 1 holds %u pill captures, want the one real capture",
+                      (unsigned)row->pillCaptures);
+        UT_ASSERT_MSG(row->baseCaptures == 0,
+                      "a neutralisation credited slot 1 with %u base captures",
+                      (unsigned)row->baseCaptures);
+    }
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * 10. The stats funnel still reads the right bytes.
+ * ================================================================ */
+int run_game_event_channel_capture_attribution(void) {
+    ServerSim *sim = ut_make_running_sim("Holder");
+    GameSim *gs;
+    AttrCaptureRecord r;
+    BYTE bx, by;
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, GEC_THIEF, "Thief", false);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT(basesGetNumBases(&gs->bs) >= 2);
+    UT_ASSERT(basesIsActive(&gs->bs, 2));
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, GEC_THIEF, GEC_HOLDER) == FALSE,
+                  "the two players must not be allies for the steal below");
+
+    bx = (*gs->bs).item[1].x;
+    by = (*gs->bs).item[1].y;
+
+    /* Base 2 stolen from a player, so class, index and square are all
+       non-zero and a byte read from the wrong offset cannot pass. */
+    (*gs->bs).item[1].owner = GEC_HOLDER;
+    sim->trackLen = 0;
+    sim->trackRecordCount = 0;
+    sim->trackTruncated = false;
+    UT_ASSERT(basesSetBaseOwner(gs, 2, GEC_THIEF, FALSE, FALSE) == GEC_HOLDER);
+
+    UT_ASSERT_MSG(sim->trackLen >= sizeof r,
+                  "the capture appended %u bytes of record",
+                  (unsigned)sim->trackLen);
+    memcpy(&r, sim->trackBuf, sizeof r);
+    UT_ASSERT_MSG(r.type == ATTR_REC_CAPTURE, "record tag %u", (unsigned)r.type);
+    UT_ASSERT_MSG(r.target == ATTR_CAP_TGT_BASE, "target %u", (unsigned)r.target);
+    UT_ASSERT_MSG(r.targetIndex == 1, "index %u, want 1 for base 2",
+                  (unsigned)r.targetIndex);
+    UT_ASSERT_MSG(r.newOwner == GEC_THIEF && r.prevOwner == GEC_HOLDER,
+                  "owners %u/%u", (unsigned)r.newOwner, (unsigned)r.prevOwner);
+    UT_ASSERT_MSG(r.captureClass == CAPTURE_CLASS_ENEMY,
+                  "class %u, want the enemy steal", (unsigned)r.captureClass);
+    UT_ASSERT_MSG(r.mapX == bx && r.mapY == by,
+                  "cell %u,%u want %u,%u", (unsigned)r.mapX, (unsigned)r.mapY,
+                  (unsigned)bx, (unsigned)by);
+
+    serverSimDestroy(sim);
     return 0;
 }

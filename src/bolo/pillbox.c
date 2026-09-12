@@ -1365,8 +1365,10 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
     }
-    /* Report the capture, which is what networked clients get the message from */
-    if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
+    /* Report the change, which is what networked clients get the message from.
+       A pill going neutral is reported the same way; the message chain above
+       already says nothing for one, and the client draws no line for it. */
+    if (migrate == FALSE && sim->isServer) {
       if (sim->callbacks.pillOwnerChanged) {
         BYTE captureClass;
         captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL

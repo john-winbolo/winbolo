@@ -4822,6 +4822,11 @@ set(_unit_test_names
     game_event_channel_lgm_lost
     game_event_channel_control_only_subscriber
     game_event_channel_client_emits_nothing
+    game_event_channel_neutralised
+    game_event_channel_capture_index_base
+    game_event_channel_capture_wire_bytes
+    game_event_channel_neutralised_no_client_line
+    game_event_channel_capture_attribution
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

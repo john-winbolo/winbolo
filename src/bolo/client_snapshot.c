@@ -551,7 +551,16 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         break;
       }
       case EVENT_BASE_CAPTURED:
-        /* data: [newOwner, previousOwner] */
+        /* data: [newOwner, previousOwner, index, quiet] */
+        /* A base going neutral is published as the same event with no new
+         * owner. Nothing here is about losing a base — the line, the
+         * scoreboard credit, the Steam stat and the first-capture latch all
+         * belong to whoever took it — so the client leaves a neutralisation
+         * alone, as it did when the server did not publish one at all. The
+         * owner itself arrives on EVENT_BASE_UPDATE and the periodic sync. */
+        if (events[i].data[0] == NEUTRAL) {
+          break;
+        }
         /* Live scoreboard: counted for every slot. */
         {
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
@@ -584,7 +593,13 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         csPtr->hasAnyBaseCaptured = true;
         break;
       case EVENT_PILL_CAPTURED:
-        /* data: [newOwner, previousOwner] */
+        /* data: [newOwner, previousOwner, index, quiet] */
+        /* A pillbox going neutral is left alone for the same reason the base
+         * above is: every line and counter here belongs to whoever took it.
+         * The owner arrives on EVENT_PILL_UPDATE and the periodic sync. */
+        if (events[i].data[0] == NEUTRAL) {
+          break;
+        }
         /* Live scoreboard: counted for every slot. */
         {
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);

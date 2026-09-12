@@ -199,19 +199,19 @@ int run_round_stats_capture_steal(void) {
     UT_ASSERT(s != NULL);
 
     /* Neutral capture. */
-    const uint8_t cap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t cap[8] = { 0, 0xFF, 0, 0, CAPTURE_CLASS_NEUTRAL, 0, 0, 0 };
     inject(sim, EVENT_PILL_CAPTURED, cap);
     UT_ASSERT_MSG(s->pillCaptures == 1, "neutral capture, got %u", s->pillCaptures);
     UT_ASSERT_MSG(s->steals == 0, "neutral capture is no steal, got %u", s->steals);
 
     /* Steal from an enemy — counts as both a capture and a steal. */
-    const uint8_t steal[8] = { 0, 1, CAPTURE_CLASS_ENEMY, 0, 0, 0, 0, 0 };
+    const uint8_t steal[8] = { 0, 1, 0, 0, CAPTURE_CLASS_ENEMY, 0, 0, 0 };
     inject(sim, EVENT_PILL_CAPTURED, steal);
     UT_ASSERT_MSG(s->pillCaptures == 2, "steal counts as capture, got %u", s->pillCaptures);
     UT_ASSERT_MSG(s->steals == 1, "steal counted, got %u", s->steals);
 
     /* Allied take — counts for nobody. */
-    const uint8_t ally[8] = { 0, 2, CAPTURE_CLASS_ALLY, 0, 0, 0, 0, 0 };
+    const uint8_t ally[8] = { 0, 2, 0, 0, CAPTURE_CLASS_ALLY, 0, 0, 0 };
     inject(sim, EVENT_PILL_CAPTURED, ally);
     UT_ASSERT_MSG(s->pillCaptures == 2, "allied take is no capture, got %u", s->pillCaptures);
     UT_ASSERT_MSG(s->steals == 1, "allied take is no steal, got %u", s->steals);
@@ -227,17 +227,17 @@ int run_round_stats_base_capture_steal(void) {
     const PlayerRoundStats *s = serverSimGetRoundStats(sim, 0);
     UT_ASSERT(s != NULL);
 
-    const uint8_t cap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t cap[8] = { 0, 0xFF, 0, 0, CAPTURE_CLASS_NEUTRAL, 0, 0, 0 };
     inject(sim, EVENT_BASE_CAPTURED, cap);
     UT_ASSERT_MSG(s->baseCaptures == 1, "neutral base capture, got %u", s->baseCaptures);
     UT_ASSERT_MSG(s->steals == 0, "neutral base capture is no steal, got %u", s->steals);
 
-    const uint8_t steal[8] = { 0, 1, CAPTURE_CLASS_ENEMY, 0, 0, 0, 0, 0 };
+    const uint8_t steal[8] = { 0, 1, 0, 0, CAPTURE_CLASS_ENEMY, 0, 0, 0 };
     inject(sim, EVENT_BASE_CAPTURED, steal);
     UT_ASSERT_MSG(s->baseCaptures == 2, "base steal counts as capture, got %u", s->baseCaptures);
     UT_ASSERT_MSG(s->steals == 1, "base steal counted, got %u", s->steals);
 
-    const uint8_t ally[8] = { 0, 2, CAPTURE_CLASS_ALLY, 0, 0, 0, 0, 0 };
+    const uint8_t ally[8] = { 0, 2, 0, 0, CAPTURE_CLASS_ALLY, 0, 0, 0 };
     inject(sim, EVENT_BASE_CAPTURED, ally);
     UT_ASSERT_MSG(s->baseCaptures == 2, "allied base take is no capture, got %u", s->baseCaptures);
     UT_ASSERT_MSG(s->steals == 1, "allied base take is no steal, got %u", s->steals);
@@ -306,7 +306,7 @@ int run_round_stats_reset_clears_notables(void) {
     UT_ASSERT(sim != NULL);
 
     const uint8_t kill[8]    = { 0, 1, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
-    const uint8_t capture[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t capture[8] = { 0, 0xFF, 0, 0, CAPTURE_CLASS_NEUTRAL, 0, 0, 0 };
     const uint8_t lgm[8]     = { 5, 0, 0, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_TANK_KILLED, kill);
     inject(sim, EVENT_PILL_CAPTURED, capture);
@@ -331,8 +331,8 @@ int run_round_stats_notables_ordered(void) {
     UT_ASSERT(sim != NULL);
 
     const uint8_t kill[8]    = { 0, 1, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
-    const uint8_t pillCap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
-    const uint8_t baseCap[8] = { 2, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t pillCap[8] = { 0, 0xFF, 0, 0, CAPTURE_CLASS_NEUTRAL, 0, 0, 0 };
+    const uint8_t baseCap[8] = { 2, 0xFF, 0, 0, CAPTURE_CLASS_NEUTRAL, 0, 0, 0 };
     const uint8_t lgm[8]     = { 5, 3, 0, 0, 0, 0, 0, 0 };  /* victim 5, killer 3 */
     inject(sim, EVENT_TANK_KILLED, kill);
     inject(sim, EVENT_PILL_CAPTURED, pillCap);
@@ -375,7 +375,7 @@ int run_round_stats_leaver_dropped(void) {
 
     const uint8_t kill01[8]  = { 0, 1, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
     const uint8_t kill12[8]  = { 1, 2, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
-    const uint8_t capture[8] = { 2, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t capture[8] = { 2, 0xFF, 0, 0, CAPTURE_CLASS_NEUTRAL, 0, 0, 0 };
     inject(sim, EVENT_TANK_KILLED, kill01);
     inject(sim, EVENT_TANK_KILLED, kill12);
     inject(sim, EVENT_PILL_CAPTURED, capture);
@@ -1408,8 +1408,8 @@ int run_round_stats_track_records(void) {
     const uint8_t kd[8] = { 2, 5, LAST_DEATH_BY_SHELL, 4, 7, 11, 22, 0 };
     inject(sim, EVENT_TANK_KILLED, kd);
 
-    /* Capture event: data = [newOwner, prevOwner, class, index, mapX, mapY]. */
-    const uint8_t cd[8] = { 1, NEUTRAL, CAPTURE_CLASS_NEUTRAL, 3, 33, 44, 0, 0 };
+    /* Capture event: data = [newOwner, prevOwner, index, quiet, class, mapX, mapY]. */
+    const uint8_t cd[8] = { 1, NEUTRAL, 3, 0, CAPTURE_CLASS_NEUTRAL, 33, 44, 0 };
     inject(sim, EVENT_PILL_CAPTURED, cd);
 
     sim->sim.callbacks.recordPillPickup(ctx, 2, 5, 55, 66);
@@ -1544,9 +1544,9 @@ int run_round_stats_derive_equivalence(void) {
     inject(sim, EVENT_TANK_KILLED, suicide);
 
     /* Captures: neutral pill, enemy steal, neutral base. */
-    const uint8_t pillCap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 1, 10, 11, 0, 0 };
-    const uint8_t steal[8]   = { 2, 5, CAPTURE_CLASS_ENEMY, 2, 12, 13, 0, 0 };
-    const uint8_t baseCap[8] = { 2, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 14, 15, 0, 0 };
+    const uint8_t pillCap[8] = { 0, 0xFF, 1, 0, CAPTURE_CLASS_NEUTRAL, 10, 11, 0 };
+    const uint8_t steal[8]   = { 2, 5, 2, 0, CAPTURE_CLASS_ENEMY, 12, 13, 0 };
+    const uint8_t baseCap[8] = { 2, 0xFF, 0, 0, CAPTURE_CLASS_NEUTRAL, 14, 15, 0 };
     inject(sim, EVENT_PILL_CAPTURED, pillCap);
     inject(sim, EVENT_PILL_CAPTURED, steal);
     inject(sim, EVENT_BASE_CAPTURED, baseCap);

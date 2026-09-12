@@ -2068,6 +2068,16 @@ int run_game_event_channel_pill_captured(void);
 int run_game_event_channel_lgm_lost(void);
 int run_game_event_channel_control_only_subscriber(void);
 int run_game_event_channel_client_emits_nothing(void);
+/* The same two capture events after the payload grew: an objective handed to
+ * nobody is published like a capture with no new owner and draws no client
+ * line, the 0-based item index reaches the wire at both ends of the list, the
+ * wire payload is four bytes with the fourth reserved, and the stats funnel
+ * still finds the class and the square where they moved to. */
+int run_game_event_channel_neutralised(void);
+int run_game_event_channel_capture_index_base(void);
+int run_game_event_channel_capture_wire_bytes(void);
+int run_game_event_channel_neutralised_no_client_line(void);
+int run_game_event_channel_capture_attribution(void);
 
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init

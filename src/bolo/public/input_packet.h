@@ -241,13 +241,23 @@ typedef struct {
 #define EVENT_SHELL_FIRED   1
 #define EVENT_MINE_PLACED   2
 #define EVENT_EXPLOSION     3  /* data: [mx, my, px, py] */
-#define EVENT_PILL_CAPTURED 4  /* data: [newOwner, prevOwner] */
-#define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner] */
+#define EVENT_PILL_CAPTURED 4  /* data: [newOwner, prevOwner, index, quiet] */
+#define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner, index, quiet] */
 #define EVENT_TANK_KILLED   6  /* data: [killer, killed, deathCause, carriedPills] */
 
-/* Capture classification carried in EVENT_PILL_CAPTURED / EVENT_BASE_CAPTURED
- * data[2]. Server-internal: data[2] is past gameEventDataSize() for these
- * events, so it is never serialized — used only by the server stats funnel. */
+/* Both capture events carry four bytes on the wire and three more the server
+ * keeps to itself:
+ *
+ *   [0] newOwner   the slot that now holds it, or NEUTRAL for a neutralisation
+ *   [1] prevOwner  the slot that held it, or NEUTRAL
+ *   [2] index      the 0-based pill/base item[] slot, as every op uses
+ *   [3] quiet      reserved, always 0
+ *   [4] captureClass    CAPTURE_CLASS_*, server-internal
+ *   [5] mapX            the objective's square, server-internal
+ *   [6] mapY
+ *
+ * data[4] and beyond are past gameEventDataSize() for these events, so they
+ * are never serialized — the server stats funnel is what reads them. */
 #define CAPTURE_CLASS_NEUTRAL 0  /* from neutral — a capture */
 #define CAPTURE_CLASS_ENEMY   1  /* from an enemy — a steal (also a capture) */
 #define CAPTURE_CLASS_ALLY    2  /* from an ally — tracked for nobody */
@@ -361,8 +371,8 @@ static inline bool gameEventIsReliable(uint8_t type) {
  * Unknown types return GAME_EVENT_MAX_DATA as a safe fallback. */
 static inline int gameEventDataSize(uint8_t type) {
     switch (type) {
-    case EVENT_PILL_CAPTURED:  return 2;
-    case EVENT_BASE_CAPTURED:  return 2;
+    case EVENT_PILL_CAPTURED:  return 4;
+    case EVENT_BASE_CAPTURED:  return 4;
     case EVENT_EXPLOSION:      return 4;
     case EVENT_MAP_CHANGE:     return 3;
     case EVENT_SOUND:          return 4;

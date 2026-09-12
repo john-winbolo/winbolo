@@ -841,8 +841,10 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYT
     (*value)->item[baseNum].owner = owner;
     logAddEvent(log_BaseSetOwner, baseNum, owner, migrate, 0, 0, NULL);
 
-    /* Report the capture, which is what networked clients get the message from */
-    if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
+    /* Report the change, which is what networked clients get the message from.
+       A base going neutral is reported the same way, with owner as the new
+       owner; the client draws no newswire line for that one. */
+    if (migrate == FALSE && sim->isServer) {
       if (sim->callbacks.baseOwnerChanged) {
         BYTE captureClass;
         captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
@@ -914,8 +916,9 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         }
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
-        /* Report the capture, which is what clients get the message from */
-        if (migrate == FALSE && owner != NEUTRAL && sim->isServer) {
+        /* Report the change, which is what clients get the message from. A
+           base going neutral is reported the same way. */
+        if (migrate == FALSE && sim->isServer) {
           if (sim->callbacks.baseOwnerChanged) {
             BYTE captureClass;
             captureClass = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL

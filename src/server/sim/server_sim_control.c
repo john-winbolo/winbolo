@@ -81,9 +81,12 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
             r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
             r.target = (event->type == EVENT_PILL_CAPTURED)
                            ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
-            r.targetIndex = d[3];   /* pill/base array index (server-internal, past wire size) */
-            r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
-            r.mapX = d[4]; r.mapY = d[5];   /* pill/base map cell, stashed at emit */
+            r.targetIndex = d[2];   /* 0-based pill/base array index; on the wire */
+            r.newOwner = d[0]; r.prevOwner = d[1];
+            /* d[3] is the reserved byte. The class and the square are past the
+               wire size, stashed at emit for this funnel alone. */
+            r.captureClass = d[4];
+            r.mapX = d[5]; r.mapY = d[6];
             serverSimTrackAppend(sim, &r, sizeof r);
             roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
                                   &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
