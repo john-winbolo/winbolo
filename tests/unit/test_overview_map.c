@@ -2483,7 +2483,7 @@ int run_overview_removed_item_has_no_region(void) {
     OverviewRect out[OVERVIEW_MAX_REGIONS + 1];
     int n;
 
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 0, 0, -1, out,
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "a live pill and base gave %d regions, expected 2", n);
     UT_ASSERT_MSG(overviewInAnyRect(out, n, 60, 60) == TRUE,
@@ -2493,7 +2493,7 @@ int run_overview_removed_item_has_no_region(void) {
 
     UT_ASSERT(pillsRemoveItem(&gs->pb, 1) == TRUE);
     UT_ASSERT(basesRemoveItem(&gs->bs, 1) == TRUE);
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 0, 0, -1, out,
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "a removed pill and base still gave %d regions", n);
 
