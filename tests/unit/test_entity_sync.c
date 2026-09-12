@@ -38,6 +38,7 @@
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "client_sim.h"
+#include "client_net.h"    /* clientSimGetConnectState */
 #include "client_sim_control.h"
 #include "client_connect_state.h"
 #include "game_sim.h"

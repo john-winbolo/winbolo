@@ -22,6 +22,7 @@
 
 #include "global.h"
 #include "client_sim.h"
+#include "client_net.h"    /* clientSimGetConnectState */
 #include "client_connect_state.h"
 #include "game_sim.h"
 #include "server_sim.h"
