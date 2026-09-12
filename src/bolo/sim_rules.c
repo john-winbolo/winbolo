@@ -362,6 +362,16 @@ bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
      * load are each bounded below and not above, so multiplying them in
      * int32_t could overflow before the comparison. */
 
+    /* The three base armour thresholds read hit, capture, full, in that
+     * order. A capture threshold above what a base can ever hold would make
+     * every base on the map permanently capturable, since its armour could
+     * never climb past the threshold. Checked before the hit arm below, so a
+     * table breaking both is told about the outer one first. */
+    RULE_PAIR(rules->base_capture_armour <= rules->base_full_armour,
+              "base_capture_armour is %ld, above base_full_armour %ld",
+              (long) rules->base_capture_armour,
+              (long) rules->base_full_armour)
+
     RULE_PAIR(rules->base_hit_armour <= rules->base_capture_armour,
               "base_hit_armour is %ld, above base_capture_armour %ld",
               (long) rules->base_hit_armour,

@@ -348,9 +348,12 @@ int run_sim_rules_validate_ranges(void) {
                       t.pill_repair_amount = 1,
                       t.pill_repair_amount = 255);
     SR_RANGE_INT(pill_cooldown_ticks, 0, 255);
-    /* A base that holds nothing keeps nothing back and hands nothing out. */
+    /* A base that holds nothing keeps nothing back, hands nothing out, and
+       is taken the moment it is touched — and the hit threshold comes down
+       with the capture threshold, since it sits under it. */
     SR_RANGE_INT_WITH(base_full_armour, 0, 255,
-                      t.base_min_armour = 0; t.base_armour_give = 0,
+                      t.base_min_armour = 0; t.base_armour_give = 0;
+                      t.base_capture_armour = 0; t.base_hit_armour = 0,
                       (void) 0);
     SR_RANGE_INT_WITH(base_full_shells, 0, 255,
                       t.base_shells_give = 0,
@@ -938,6 +941,13 @@ int run_sim_rules_pairs(void) {
                     "base_hit_armour", "base_capture_armour");
     SR_PAIR_OK(t.base_hit_armour = t.base_capture_armour,
                "a hit threshold equal to the capture threshold");
+
+    /* And a base taken at armour it could never hold is one that is always
+       there for the taking, so the threshold cannot sit above full. */
+    SR_PAIR_REFUSED(t.base_capture_armour = t.base_full_armour + 1,
+                    "base_capture_armour", "base_full_armour");
+    SR_PAIR_OK(t.base_capture_armour = t.base_full_armour,
+               "a capture threshold equal to what a base holds");
 
     /* A reserve bigger than the tank is what the base is allowed to hold. */
     SR_PAIR_REFUSED(t.base_min_armour = t.base_full_armour + 1,
