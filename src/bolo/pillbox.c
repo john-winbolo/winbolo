@@ -736,6 +736,69 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
   return returnValue;
 }
 
+/* The sixteen pictures a pillbox is drawn with, worst first: entry 0 is the
+ * empty pill and entry 15 the intact one. Two arrays because a pill an ally
+ * owns is drawn differently from one an enemy does, and each is written out
+ * rather than computed because PILL_EVIL_15 sits away from the other fifteen
+ * evil tiles in the tile numbering. */
+static const BYTE pillEvilTiles[PILLS_MAX_ARMOUR + 1] = {
+  PILL_EVIL_0,  PILL_EVIL_1,  PILL_EVIL_2,  PILL_EVIL_3,
+  PILL_EVIL_4,  PILL_EVIL_5,  PILL_EVIL_6,  PILL_EVIL_7,
+  PILL_EVIL_8,  PILL_EVIL_9,  PILL_EVIL_10, PILL_EVIL_11,
+  PILL_EVIL_12, PILL_EVIL_13, PILL_EVIL_14, PILL_EVIL_15
+};
+static const BYTE pillGoodTiles[PILLS_MAX_ARMOUR + 1] = {
+  PILL_GOOD_0,  PILL_GOOD_1,  PILL_GOOD_2,  PILL_GOOD_3,
+  PILL_GOOD_4,  PILL_GOOD_5,  PILL_GOOD_6,  PILL_GOOD_7,
+  PILL_GOOD_8,  PILL_GOOD_9,  PILL_GOOD_10, PILL_GOOD_11,
+  PILL_GOOD_12, PILL_GOOD_13, PILL_GOOD_14, PILL_GOOD_15
+};
+
+/*********************************************************
+*NAME:          pillsArmourTile
+*PURPOSE:
+*  Which of the sixteen pillbox pictures an armour value is
+*  drawn as.
+*
+*  There are sixteen pictures and pill_max_armour is a rule a
+*  scenario can set as high as 255, so the armour is scaled
+*  onto the pictures rather than used as an index into them.
+*  Armour 0 draws the empty pill, armour at the cap draws the
+*  intact one, and everything between lands in proportion.
+*  Before this, anything above 15 fell through to the empty
+*  tile, so on a sim with a raised cap every pill on the map
+*  drew as a wreck until somebody shot it down to 15.
+*
+*  Integer arithmetic, rounded down. Rounding down keeps the
+*  classic cap exact — armour times 15 over 15 is the armour
+*  itself, so each of the sixteen armour values still has its
+*  own picture — and means a pill that has taken any damage at
+*  all stops drawing as the intact one however high the cap
+*  goes.
+*
+*ARGUMENTS:
+*  sim    - The sim whose rules table holds the cap
+*  armour - The pillbox's armour
+*  allied - Whether the viewer is allied to the pill's owner
+*********************************************************/
+static BYTE pillsArmourTile(GameSim *sim, BYTE armour, bool allied) {
+  int32_t maxArmour = (sim != NULL) ? sim->rules.pill_max_armour
+                                    : PILLS_MAX_ARMOUR;
+  int32_t level;
+
+  /* The rules check holds the cap at 1 or above; a table that never went
+     through it would divide by zero here. */
+  if (maxArmour < 1) {
+    maxArmour = PILLS_MAX_ARMOUR;
+  }
+  if ((int32_t)armour >= maxArmour) {
+    level = PILLS_MAX_ARMOUR;
+  } else {
+    level = ((int32_t)armour * PILLS_MAX_ARMOUR) / maxArmour;
+  }
+  return allied ? pillGoodTiles[level] : pillEvilTiles[level];
+}
+
 /*********************************************************
 *NAME:          pillsGetScreenHealth
 *AUTHOR:        John Morrison
@@ -766,111 +829,10 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
       /* Pillbox has been Hit */
       done = TRUE;
 
-      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, viewPlayer ) == FALSE) {
-        switch((*value)->item[count].armour) {
-        case PILLBOX_15:
-          returnValue = PILL_EVIL_15;
-          break;
-        case PILLBOX_14:
-          returnValue = PILL_EVIL_14;
-          break;
-        case PILLBOX_13:
-          returnValue = PILL_EVIL_13;
-          break;
-        case PILLBOX_12:
-          returnValue = PILL_EVIL_12;
-          break;
-        case PILLBOX_11:
-          returnValue = PILL_EVIL_11;
-          break;
-        case PILLBOX_10:
-          returnValue = PILL_EVIL_10;
-          break;
-        case PILLBOX_9:
-          returnValue = PILL_EVIL_9;
-          break;
-        case PILLBOX_8:
-          returnValue = PILL_EVIL_8;
-          break;
-        case PILLBOX_7:
-          returnValue = PILL_EVIL_7;
-          break;
-        case PILLBOX_6:
-          returnValue = PILL_EVIL_6;
-          break;
-        case PILLBOX_5:
-          returnValue = PILL_EVIL_5;
-          break;
-        case PILLBOX_4:
-          returnValue = PILL_EVIL_4;
-          break;
-        case PILLBOX_3:
-          returnValue = PILL_EVIL_3;
-          break;
-        case PILLBOX_2:
-          returnValue = PILL_EVIL_2;
-          break;
-        case PILLBOX_1:
-          returnValue = PILL_EVIL_1;
-          break;
-        case PILLBOX_0:
-        default:
-          returnValue = PILL_EVIL_0;
-          break;
-        }
-      } else {
-        switch((*value)->item[count].armour) {
-        case PILLBOX_15:
-          returnValue = PILL_GOOD_15;
-          break;
-        case PILLBOX_14:
-          returnValue = PILL_GOOD_14;
-          break;
-        case PILLBOX_13:
-          returnValue = PILL_GOOD_13;
-          break;
-        case PILLBOX_12:
-          returnValue = PILL_GOOD_12;
-          break;
-        case PILLBOX_11:
-          returnValue = PILL_GOOD_11;
-          break;
-        case PILLBOX_10:
-          returnValue = PILL_GOOD_10;
-          break;
-        case PILLBOX_9:
-          returnValue = PILL_GOOD_9;
-          break;
-        case PILLBOX_8:
-          returnValue = PILL_GOOD_8;
-          break;
-        case PILLBOX_7:
-          returnValue = PILL_GOOD_7;
-          break;
-        case PILLBOX_6:
-          returnValue = PILL_GOOD_6;
-          break;
-        case PILLBOX_5:
-          returnValue = PILL_GOOD_5;
-          break;
-        case PILLBOX_4:
-          returnValue = PILL_GOOD_4;
-          break;
-        case PILLBOX_3:
-          returnValue = PILL_GOOD_3;
-          break;
-        case PILLBOX_2:
-          returnValue = PILL_GOOD_2;
-          break;
-        case PILLBOX_1:
-          returnValue = PILL_GOOD_1;
-          break;
-        case PILLBOX_0:
-        default:
-          returnValue = PILL_GOOD_0;
-          break;
-        }
-      }
+      returnValue = pillsArmourTile(
+          sim, (*value)->item[count].armour,
+          playersIsAllie(&sim->plyrs, (*value)->item[count].owner,
+                         viewPlayer) != FALSE);
 
     }
     count++;

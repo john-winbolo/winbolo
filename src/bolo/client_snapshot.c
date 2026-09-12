@@ -281,6 +281,24 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
   }
 }
 
+/* One pillbox's armour, capped to what this client's table says a pillbox
+ * can hold. The two places a pill's armour arrives — the per-pill event and
+ * the snapshot's pill array — both write the server's byte straight into the
+ * record, and the sim's own load paths cap it (pillsSetPill, and the
+ * re-clamp a new rules table runs), so these have to as well or a record
+ * lands above the cap and stays there until something else touches it. */
+static BYTE clientPillArmourToRules(const ClientSim *csPtr, BYTE armour) {
+  int32_t cap = csPtr->sim.rules.pill_max_armour;
+
+  if (cap < 0) {
+    return 0;
+  }
+  if ((int32_t)armour > cap) {
+    return (BYTE)cap;
+  }
+  return armour;
+}
+
 /* Bounds-checked live-scoreboard row. Slot bytes arrive off the wire and
  * an owner field can legitimately hold NEUTRAL, so nothing indexes
  * liveStats without passing through here. */
@@ -678,7 +696,12 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
             (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
             (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
             (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
-            (*csPtr->sim.pb).item[idx].armour = events[i].data[5];
+            /* Capped as the sim's own load path caps it. The byte is what a
+               server said, and this client's table says what a pillbox can
+               hold; an armour above the cap would outlive the re-clamp a new
+               table runs and draw against a scale it is off the end of. */
+            (*csPtr->sim.pb).item[idx].armour =
+                clientPillArmourToRules(csPtr, events[i].data[5]);
             (*csPtr->sim.pb).item[idx].inTank = pillInTankFromByte(events[i].data[4]) ? TRUE : FALSE;
           }
         }
@@ -1480,7 +1503,9 @@ void clientApplySnapshot(ClientSim *csPtr,
       (*csPtr->sim.pb).item[i].x      = pillSnaps[i].x;
       (*csPtr->sim.pb).item[i].y      = pillSnaps[i].y;
       (*csPtr->sim.pb).item[i].owner  = pillSnaps[i].owner;
-      (*csPtr->sim.pb).item[i].armour = pillSnaps[i].armour;
+      /* Capped against this client's table, as the event path above is. */
+      (*csPtr->sim.pb).item[i].armour =
+          clientPillArmourToRules(csPtr, pillSnaps[i].armour);
       (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].pillFlags) ? TRUE : FALSE;
     }
   }
