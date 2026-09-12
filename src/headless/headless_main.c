@@ -1605,7 +1605,7 @@ static void logChangesFinish(void) {
  * whole output is a file somebody trains on later: a frame that is merely
  * marked bad is one a loader can skip reading. Asked on every frame, not
  * once at startup — a scenario can move a rule mid-round — and it costs one
- * comparison of a 168-byte table beside the 33KB frame it guards. */
+ * comparison of a 368-byte table beside the 33KB frame it guards. */
 static void logStateBinaryDieNotClassic(void) {
   fprintf(stderr,
           "WinBoloHeadless: this simulation's rules are not the classic "

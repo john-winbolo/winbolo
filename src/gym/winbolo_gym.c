@@ -367,7 +367,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
        Asked on every build rather than once at startup: a scenario can move
        a rule mid-round, and an answer given at the first reset would not
-       have heard about it. One comparison of a 168-byte table against a
+       have heard about it. One comparison of a 368-byte table against a
        classic one, against the tens of thousands of floats filled below. */
     if (gs == NULL || !simRulesAreClassic(&gs->rules)) {
         gymDieNotClassic(gs);
