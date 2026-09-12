@@ -1667,6 +1667,8 @@ STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Muted by you — click to unmute
 STR_PLAYER_TIP_VOICE_SELF=Your microphone — click to mute
 STR_PLAYER_TIP_VOICE_SELF_NOMIC=You have no microphone
 STR_PLAYER_TIP_VOICE_SELF_MUTED=Your microphone is off — click to unmute
+STR_PLAYER_TIP_PING_SHOWN=Pings shown — click to hide this player's pings
+STR_PLAYER_TIP_PING_MUTED=Pings hidden — click to show this player's pings
 
 # Players panel — per-player playback volume slider
 STR_PLAYER_TIP_VOICE_VOLUME=How loud this player is played here
