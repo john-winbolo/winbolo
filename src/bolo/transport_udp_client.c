@@ -1037,6 +1037,8 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     case CTRL_VOICE_TALKING:    return "VOICE_TALKING";
+    case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
+    case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
     case CTRL_SIM_RULES:        return "SIM_RULES";
     default:                    return "<unknown>";
     }

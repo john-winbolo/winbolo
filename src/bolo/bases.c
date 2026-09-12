@@ -1634,51 +1634,6 @@ BYTE basesGetNumNeutral(bases *value) {
 }
 
 /*********************************************************
-*NAME:          basesSetBaseNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 27/2/99
-*PURPOSE:
-* Sets the base data to buff.
-*
-*ARGUMENTS:
-*  value - Pointer to the bases structure
-*  buff  - Buffer of data to set base structure to
-*  len   - Length of the data
-*********************************************************/
-void basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
-  BYTE returnValue = 1;
-  BYTE count = 0;
-  unsigned short us;
-
-  (*value)->numBases = buff[0];
-  while (count < (*value)->numBases) {
-    (*value)->item[count].x = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].y = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].owner = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].armour = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].shells = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].mines = buff[returnValue];
-    returnValue++;
-    (*value)->item[count].refuelTime = buff[returnValue];
-    returnValue++;
-    us = buff[returnValue];
-    us += (buff[returnValue+1] << 8);
-    (*value)->item[count].baseTime = ntohs(us);
-    returnValue += 2;
-    (*value)->item[count].justStopped = buff[returnValue];
-    returnValue++;
-    count++;
-  }
-}
-
-
-/*********************************************************
 *NAME:          basesValidate
 *PURPOSE:
 *  Clamps the base fields a map cannot be trusted on whatever

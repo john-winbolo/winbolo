@@ -1902,54 +1902,6 @@ void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen) {
 }
 
 /*********************************************************
-*NAME:          pillsSetPillNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/02/99
-*LAST MODIFIED: 27/07/04
-*PURPOSE:
-* Sets the pills data to buff.
-*
-*ARGUMENTS:
-*  value   - Pointer to the pills structure
-*  buff    - Buffer of data to set pills structure to
-*  dataLen - Length of the data
-*********************************************************/
-void pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
-  BYTE count = 0;
-  BYTE len = 1;
-  
-  (*value)->numPills = buff[0];
-  while (count < (*value)->numPills) {
-    (*value)->item[count].x = buff[len];
-    len++;
-    (*value)->item[count].y = buff[len];
-    len++;
-    (*value)->item[count].armour = buff[len];
-    len++;
-    (*value)->item[count].owner = buff[len];
-    len++;
-    (*value)->item[count].speed = buff[len];
-    len++;
-    (*value)->item[count].inTank = buff[len];
-    len++;
-    (*value)->item[count].reload = buff[len];
-    len++;
-    (*value)->item[count].justSeen = buff[len];
-    len++;
-    (*value)->item[count].coolDown = buff[len];
-    len++;
-    count++;
-  }
-
-/* was in old code to reset this on join? 
- while (count < MAX_TANKS) {
-    (*value)->item[count].reload = PILLBOX_ATTACK_NORMAL;
-    (*value)->item[count].speed = PILLBOX_ATTACK_NORMAL;
-    count++;
-  } */
-}
-
-/*********************************************************
 *NAME:          pillsGetPillNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99

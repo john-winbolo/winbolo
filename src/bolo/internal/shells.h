@@ -349,25 +349,6 @@ BYTE shellsCheckRoad(struct GameSim *sim, BYTE mapX, BYTE mapY, TURNTYPE dir);
 BYTE shellsNetMake(shells *value, BYTE *buff, BYTE noPlayerNum, bool sentState);
 
 /*********************************************************
-*NAME:          shellsNetExtract
-*AUTHOR:        John Morrison
-*CREATION DATE:  6/3/99
-*LAST MODIFIED: 23/9/00
-*PURPOSE:
-* Network shells data have arrived. Add them to our 
-* shells structure here.
-*  
-*ARGUMENTS:
-*  value    - Pointer to shells structure
-*  pb       - Pointer to the pillboxes structure
-*  buff     - Pointer to a buffer to hold the shells 
-*             net data
-*  dataLen  - Length of the data
-*  isServer - TRUE if we are the game server.
-*********************************************************/
-void shellsNetExtract(struct GameSim *sim, shells *value, pillboxes *pb, BYTE *buff, BYTE dataLen, bool isServer, tank *tanks);
-
-/*********************************************************
 *NAME:          shellsGetBrainShellsInRect
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99

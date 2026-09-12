@@ -806,21 +806,6 @@ BYTE pillsGetNumNeutral(pillboxes *value);
 BYTE pillsGetNumActive(pillboxes *value);
 
 /*********************************************************
-*NAME:          pillsSetPillNetData
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/02/99
-*LAST MODIFIED: 27/07/04
-*PURPOSE:
-* Sets the pills data to buff.
-*
-*ARGUMENTS:
-*  value   - Pointer to the pills structure
-*  buff    - Buffer of data to set pills structure to
-*  dataLen - Length of the data
-*********************************************************/
-void pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen);
-
-/*********************************************************
 *NAME:          pillsGetPillNetData
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99

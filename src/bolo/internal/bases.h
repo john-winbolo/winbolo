@@ -736,21 +736,6 @@ BYTE basesGetNumActive(bases *value);
 /*********************************************************
 *NAME:          basesSetBaseNetData
 *AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 27/2/99
-*PURPOSE:
-* Sets the base data to buff.
-*
-*ARGUMENTS:
-*  value - Pointer to the bases structure
-*  buff  - Buffer of data to set base structure to
-*  len   - Length of the data
-*********************************************************/
-void basesSetBaseNetData(bases *value, BYTE *buff, int len);
-
-/*********************************************************
-*NAME:          basesSetBaseNetData
-*AUTHOR:        John Morrison
 *CREATION DATE: 27/02/99
 *LAST MODIFIED: 24/07/04
 *PURPOSE:
