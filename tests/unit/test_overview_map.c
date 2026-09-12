@@ -741,6 +741,22 @@ static const char *overviewFixtureStart(OverviewFixture *f, const char *name) {
         return "ut_make_running_sim returned NULL";
     }
 
+    /* The two rules the cases below are written against, set rather than
+     * inherited. A sim comes up with pills on viewPolicyKey, under which an
+     * owned pill grants no block of its own, and on the classic overview
+     * window, whose block is narrower than OVERVIEW_TANK_HALF and sits where
+     * the classic view is looking rather than round the tank. Every case here
+     * builds what it expects from overviewTestBlock(..., OVERVIEW_TANK_HALF)
+     * and from pills it hands the player, so both rules have to hold.
+     *
+     * Set before the connect below, not after: the client is told the rules
+     * once, in the sync replay the join triggers, and neither setter publishes
+     * a settings event of its own — a value written afterwards would stay on
+     * the server. */
+    serverSimSetViewPolicy(f->sim, viewCategoryPill, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetOverviewWindow(f->sim, (uint8_t)overviewWindowExpanded);
+
     f->cs = clientSimAlloc();
     if (f->cs == NULL) {
         return "clientSimAlloc returned NULL";
@@ -2215,6 +2231,14 @@ int run_overview_loopback(void) {
         loopbackHarnessStop(&h);
         UT_FAIL("harness start (overview loopback) failed");
     }
+
+    /* The expected set below is built with OVERVIEW_TANK_HALF, which is the
+     * block the expanded window keeps live; the classic window a sim now comes
+     * up on keeps a narrower one, placed where the classic view is looking. Set
+     * rather than inherited, and set here because the handshake the pumps below
+     * drive is what carries the rules to the client — the setter writes server
+     * state and publishes nothing itself. */
+    serverSimSetOverviewWindow(h.sim, (uint8_t)overviewWindowExpanded);
 
     at = loopbackHarnessPumpUntil(&h, OVERVIEW_LOOP_CONNECT_MAX,
                                   overviewLoopConnected, NULL);
