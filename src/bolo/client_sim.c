@@ -3803,6 +3803,19 @@ void clientSimGetBaseFullStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmo
   if (armourAmount != NULL) *armourAmount = (BYTE) cs->sim.rules.base_full_armour;
 }
 
+/* No sim is not a classic sim: a caller with nothing to read cannot be told
+   the numbers it would have read are the right ones. */
+bool clientSimRulesAreClassic(ClientSim *cs) {
+  return cs != NULL && simRulesAreClassic(&cs->sim.rules);
+}
+
+int clientSimRulesFirstDifference(ClientSim *cs) {
+  if (cs == NULL) {
+    return 0;
+  }
+  return simRulesFirstDifference(&cs->sim.rules);
+}
+
 void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {
   tankGetKillsDeaths(&MY_TANK(cs), kills, deaths);
 }

@@ -20,6 +20,7 @@
 #include "sim_rules.h"
 
 #include <stdio.h>
+#include <string.h>   /* memcmp — the comparison against the classic table */
 
 #include "global.h"      /* DAMAGE */
 #include "gametype.h"    /* TANK_FULL_* */
@@ -152,6 +153,54 @@ void simRulesClassic(SimRules *out) {
     out->tree_weight_crater        = TREE_GROW_CRATER;
     out->tree_weight_road          = TREE_GROW_ROAD;
     out->tree_weight_mine          = TREE_GROW_MINE;
+}
+
+/* ---- Against the classic table -------------------------------------------
+ *
+ * Answered by filling a classic table and comparing the whole struct, so the
+ * answer follows simRulesClassic wherever its values are written down and
+ * there is no second list of them to keep in step with it.
+ *
+ * A whole-struct comparison is exact here because the struct has no padding
+ * to read: every field is four bytes wide, and the static assertion in
+ * server_sim_scenario.c holds sizeof(SimRules) to SCN_RULE_COUNT times four,
+ * which cannot be true of a struct carrying a pad byte. Floats compare by
+ * their bits rather than numerically, which is the answer this question
+ * wants — a rate written to a value that is not the classic one is not
+ * classic however close to it it lands, and no classic value is a NaN. */
+
+int simRulesFirstDifference(const SimRules *rules) {
+    SimRules        classic;
+    const int32_t  *a;
+    const int32_t  *b;
+    int             i;
+    const int       fields = (int) (sizeof(SimRules) / sizeof(int32_t));
+
+    if (rules == NULL) {
+        return 0;
+    }
+    simRulesClassic(&classic);
+    if (memcmp(rules, &classic, sizeof(classic)) == 0) {
+        return -1;
+    }
+
+    /* Which one. Walked as four-byte words rather than by name: the fields
+       are all four bytes and the list that names them is the scenario's,
+       which sits above this file. The index is that list's own index, so a
+       caller holding SCN_RULE_LIST can turn it into the rule's name. */
+    a = (const int32_t *) (const void *) rules;
+    b = (const int32_t *) (const void *) &classic;
+    for (i = 0; i < fields; i++) {
+        if (memcmp(&a[i], &b[i], sizeof(int32_t)) != 0) {
+            return i;
+        }
+    }
+    /* The whole-struct compare above said they differ, so a word does. */
+    return 0;
+}
+
+bool simRulesAreClassic(const SimRules *rules) {
+    return simRulesFirstDifference(rules) < 0;
 }
 
 /* ---- Range checks ---------------------------------------------------------

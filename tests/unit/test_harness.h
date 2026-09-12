@@ -1501,6 +1501,11 @@ int run_sim_rules_pill_empties_without_wrapping(void);
 int run_sim_rules_pairs(void);
 int run_sim_rules_capture_threshold_moves(void);
 int run_sim_rules_builder_cost_follows(void);
+
+/* A table against the classic one, and the observation builder's refusal to
+ * build on a sim that is not running it (test_sim_rules.c). */
+int run_sim_rules_are_classic(void);
+int run_sim_rules_obs_refuses_non_classic(void);
 int run_sim_rules_shell_flight_follows(void);
 int run_sim_rules_brain_shot_follows(void);
 

@@ -166,6 +166,52 @@ typedef struct SimRules {
  *********************************************************/
 void simRulesClassic(SimRules *out);
 
+/*********************************************************
+ *NAME:          simRulesAreClassic
+ *PURPOSE:
+ *  Whether a table holds the classic game's numbers, every
+ *  field of it. Asked by code whose own numbers describe the
+ *  classic game and which has nothing sensible to do on a
+ *  sim running anything else — the observation builders,
+ *  whose normalisation is a fixed scale a model was trained
+ *  against.
+ *
+ *  Answered against a table simRulesClassic has just filled,
+ *  so the answer follows those values and there is no second
+ *  list of them here to drift from them.
+ *
+ *  A NULL table is not classic: a caller with no table to
+ *  show cannot be told its numbers are the right ones.
+ *
+ *ARGUMENTS:
+ *  rules - table to test, or NULL
+ *********************************************************/
+bool simRulesAreClassic(const SimRules *rules);
+
+/*********************************************************
+ *NAME:          simRulesFirstDifference
+ *PURPOSE:
+ *  simRulesAreClassic, answering with which field differs
+ *  rather than whether one does: the index of the first
+ *  field that is not the classic value, or -1 when the whole
+ *  table is classic. A NULL table answers 0.
+ *
+ *  The index counts fields from the front of the struct, so
+ *  it is the same index the scenario surface names a rule by
+ *  and a caller holding SCN_RULE_LIST can turn it into that
+ *  rule's name. This file cannot: the name list is the
+ *  scenario's and sits above it.
+ *
+ *  A refusal that has to tell an operator what is wrong
+ *  wants this rather than the bool — "the rules are not
+ *  classic" leaves them hunting through a scenario, a server
+ *  setting and a saved config for which number moved.
+ *
+ *ARGUMENTS:
+ *  rules - table to test, or NULL
+ *********************************************************/
+int simRulesFirstDifference(const SimRules *rules);
+
 /* Which kind of check a table failed. A caller that has to answer for the
  * table in its own vocabulary — the scenario funnel's set-rule arm answers
  * SCN_OP_RANGE or SCN_OP_PAIR — needs to know which of the two happened,

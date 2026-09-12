@@ -1582,6 +1582,33 @@ static void logChangesFinish(void) {
  *              4=pill_captured 5=pill_lost 6=base_captured 7=base_lost
  */
 
+/* A frame written here is training data, so its entries have to mean the
+ * same thing in every frame of every run. The scalars below normalise a
+ * stock against what full means by reading the rule rather than a
+ * written-out number, which would rescale the frame the moment a scenario
+ * moved one — frames either side of the change on two scales, with nothing
+ * in the file saying which is which, and a model trained across them reading
+ * them as one world. What stops that is this: the run ends rather than write
+ * frames on a scale nothing was trained against, so every divisor below is
+ * the classic value and the observation space holds still.
+ *
+ * Ending the process is the loud answer, and the right one for a tool whose
+ * whole output is a file somebody trains on later: a frame that is merely
+ * marked bad is one a loader can skip reading. Asked on every frame, not
+ * once at startup — a scenario can move a rule mid-round — and it costs one
+ * comparison of a 168-byte table beside the 33KB frame it guards. */
+static void logStateBinaryDieNotClassic(void) {
+  fprintf(stderr,
+          "WinBoloHeadless: this simulation's rules are not the classic "
+          "ones — scenario rule index %d is the first that differs. The "
+          "observation scale is the classic game's, so every frame written "
+          "here would be on a scale nothing was trained against. Refusing "
+          "to run.\n",
+          clientSimRulesFirstDifference(humanSim));
+  fflush(stderr);
+  exit(1);
+}
+
 static void logStateBinary(int tickNum) {
   static bool needMapInit = TRUE;
   BrainInfo bi;
@@ -1591,6 +1618,10 @@ static void logStateBinary(int tickNum) {
 
   if (logFile == NULL) {
     return;
+  }
+
+  if (!clientSimRulesAreClassic(humanSim)) {
+    logStateBinaryDieNotClassic();
   }
 
   brainDataMakeInfo(humanSim, &bi, needMapInit, optAi);

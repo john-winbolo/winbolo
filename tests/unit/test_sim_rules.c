@@ -60,8 +60,20 @@
  *
  *   sim_rules_builder_cost_follows — what a boat costs the builder is the
  *     rule, so raising it refuses an order the same wood used to buy.
+ *
+ *   sim_rules_are_classic — a table simRulesClassic filled is reported
+ *     classic, and one with a single rule moved is not: an integer rule, a
+ *     float rule, the last field in the struct, and a rule the brain's own
+ *     view does not carry, which is the one a check written against that
+ *     view would wave through.
+ *
+ *   sim_rules_obs_refuses_non_classic — the observation builder refuses to
+ *     build on a sim whose rules are not classic and builds on one whose
+ *     rules are, so a model is never handed a vector on a scale it was not
+ *     trained against.
  */
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,6 +103,7 @@
 #include "brain.h"
 #include "brain_data.h"
 #include "brain_pathfinder.h"
+#include "obs_builder.h"  /* obsBuildMultiView — the refusal a case can drive */
 #include "loopback_harness.h"
 #include "test_harness.h"
 
@@ -1316,5 +1329,161 @@ int run_sim_rules_brain_shot_follows(void) {
                   nFast, nSeeded);
 
     brainPathfinderDestroy(pf);
+    return 0;
+}
+
+/* brainDataMakeInfo allocates the variable-length members; the cases below
+ * only read them, so they are freed the way the headless loggers free them
+ * and the way run_sim_rules_copies_follow does above. */
+static void srFreeBrainInfo(BrainInfo *bi) {
+    free(bi->allies);
+    free(bi->base);
+    free(bi->pillview);
+    free(bi->viewdata);
+    free(bi->events);
+    if (bi->message != NULL) {
+        free(bi->message->receivers);
+        free(bi->message->message);
+        free(bi->message);
+    }
+}
+
+/* ---- against the classic table ------------------------------------------
+ *
+ * What the observation builders ask before they will build. The cases below
+ * move one rule at a time, because the question is whether any field moving
+ * is noticed rather than whether a particular one is.
+ */
+
+int run_sim_rules_are_classic(void) {
+    SimRules r;
+    int      at;
+
+    simRulesClassic(&r);
+    UT_ASSERT_MSG(simRulesAreClassic(&r),
+                  "a table simRulesClassic has just filled is not reported "
+                  "classic");
+    UT_ASSERT_MSG(simRulesFirstDifference(&r) < 0,
+                  "a classic table reports field %d as differing",
+                  simRulesFirstDifference(&r));
+
+    /* An integer rule. */
+    simRulesClassic(&r);
+    r.tank_full_armour = TANK_FULL_ARMOUR + 1;
+    UT_ASSERT_MSG(!simRulesAreClassic(&r),
+                  "a table with tank_full_armour moved is reported classic");
+    at = simRulesFirstDifference(&r);
+    UT_ASSERT_MSG(at == (int) (offsetof(SimRules, tank_full_armour) /
+                               sizeof(int32_t)),
+                  "the first difference is field %d, expected the one "
+                  "tank_full_armour sits at (%d)", at,
+                  (int) (offsetof(SimRules, tank_full_armour) /
+                         sizeof(int32_t)));
+
+    /* A float rule. The comparison is over the bits, so a rate that is not
+       the classic rate is not classic however close it lands: 0.3125 is as
+       exact in a float as the 0.25 it replaces, and neither is a NaN. */
+    simRulesClassic(&r);
+    r.tank_accel_rate = r.tank_accel_rate + 0.0625f;
+    UT_ASSERT_MSG(!simRulesAreClassic(&r),
+                  "a table with tank_accel_rate moved to %g is reported "
+                  "classic", (double) r.tank_accel_rate);
+
+    /* A rule the brain's own view does not carry. BrainRules holds the tank,
+       terrain, pill and base numbers and none of the builder's costs, so a
+       check written against that view would call this table classic and let
+       an observation out on a sim that is not the classic game. */
+    simRulesClassic(&r);
+    r.lgm_cost_road = r.lgm_cost_road + 1;
+    UT_ASSERT_MSG(!simRulesAreClassic(&r),
+                  "a table with lgm_cost_road moved is reported classic — a "
+                  "rule outside the brain's view still makes a sim not the "
+                  "classic game");
+
+    /* The last field, so the walk is not stopping short of the end. */
+    simRulesClassic(&r);
+    r.tree_weight_mine = r.tree_weight_mine + 1;
+    UT_ASSERT_MSG(!simRulesAreClassic(&r),
+                  "a table with its last field moved is reported classic");
+
+    /* No table is not a classic table: a caller with nothing to show cannot
+       be told its numbers are the right ones. */
+    UT_ASSERT_MSG(!simRulesAreClassic(NULL), "NULL is reported classic");
+
+    return 0;
+}
+
+/* ---- the refusal, through an observation path ----------------------------
+ *
+ * obsBuildMultiView is the one of the three paths that answers rather than
+ * ends the process — it runs inside a live client, where killing the game
+ * over a rule change would be worse than the rescaled vector it is avoiding.
+ * That makes it the path a case can drive: the gym's and the headless
+ * logger's refusals call exit(), so a case over either would take the test
+ * runner down with it and there is no case here for them.
+ */
+
+int run_sim_rules_obs_refuses_non_classic(void) {
+    LoopbackHarness h;
+    BrainInfo       bi;
+    WinBoloObs     *obs;
+    WinBoloObs     *zero;
+    bool            built;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "ObsScale", false, NULL, 4322),
+                  "loopback start failed");
+    loopbackHarnessPumpUntil(&h, 40, NULL, NULL);
+    UT_ASSERT_MSG(h.cs != NULL, "the harness produced no client");
+
+    obs  = (WinBoloObs *) malloc(sizeof(*obs));
+    zero = (WinBoloObs *) calloc(1, sizeof(*zero));
+    UT_ASSERT_MSG(obs != NULL && zero != NULL, "could not allocate an observation");
+
+    /* Classic first: the observation is built, and it is not the zeroed
+       buffer a refusal leaves behind. */
+    UT_ASSERT_MSG(simRulesAreClassic(&h.cs->sim.rules),
+                  "setup: a fresh client is not running the classic rules, so "
+                  "the build below would prove nothing");
+    memset(&bi, 0, sizeof(bi));
+    brainDataMakeInfo(h.cs, &bi, true, aiNone);
+    built = obsBuildMultiView(h.cs, &bi, obs);
+    UT_ASSERT_MSG(built,
+                  "the builder refused a sim running the classic rules");
+    UT_ASSERT_MSG(memcmp(obs, zero, sizeof(*obs)) != 0,
+                  "the builder said it built an observation and left it "
+                  "zeroed");
+    srFreeBrainInfo(&bi);
+
+    /* Now one rule away from classic — a pill's armour cap, which is one of
+       the numbers the observation normalises against. */
+    h.cs->sim.rules.pill_max_armour = 23;
+    memset(&bi, 0, sizeof(bi));
+    brainDataMakeInfo(h.cs, &bi, true, aiNone);
+    built = obsBuildMultiView(h.cs, &bi, obs);
+    UT_ASSERT_MSG(!built,
+                  "the builder produced an observation on a sim whose pill "
+                  "armour cap is 23, not the classic 15 — the vector would be "
+                  "on a scale nothing was trained against");
+    UT_ASSERT_MSG(memcmp(obs, zero, sizeof(*obs)) == 0,
+                  "a refused build left something behind in the observation");
+    srFreeBrainInfo(&bi);
+
+    /* And a rule the observation does not read at all still refuses: the
+       question is whether this is the classic game, not whether the entries
+       this vector happens to use have moved. */
+    h.cs->sim.rules.pill_max_armour = PILLS_MAX_ARMOUR;
+    h.cs->sim.rules.lgm_cost_road = h.cs->sim.rules.lgm_cost_road + 1;
+    memset(&bi, 0, sizeof(bi));
+    brainDataMakeInfo(h.cs, &bi, true, aiNone);
+    built = obsBuildMultiView(h.cs, &bi, obs);
+    UT_ASSERT_MSG(!built,
+                  "the builder produced an observation on a sim whose "
+                  "builder costs are not the classic ones");
+    srFreeBrainInfo(&bi);
+
+    free(obs);
+    free(zero);
+    loopbackHarnessStop(&h);
     return 0;
 }

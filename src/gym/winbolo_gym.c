@@ -320,6 +320,31 @@ static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
 /* gymBuildObs — V3 observation builder                                */
 /* ------------------------------------------------------------------ */
 
+/* A training run on a sim whose rules are not the classic ones has nothing
+ * worth recording, so it stops here rather than filling episodes nobody can
+ * use. Ending the process is the loud answer this wants: the caller is a
+ * training harness, and every other answer — a zeroed observation, a flag in
+ * a struct — is one a training loop can miss and keep running past. Dying on
+ * the first observation of the first episode costs the operator a restart;
+ * not dying costs them the run, after it finishes and looks fine. */
+static void gymDieNotClassic(const GameSim *gs) {
+    if (gs == NULL) {
+        fprintf(stderr,
+                "winbolo_gym: no simulation to read the rules from; "
+                "refusing to build an observation.\n");
+    } else {
+        fprintf(stderr,
+                "winbolo_gym: this simulation's rules are not the classic "
+                "ones — scenario rule index %d is the first that differs. "
+                "The observation scale is the classic game's, so every "
+                "trajectory recorded here would be on a scale nothing was "
+                "trained against. Refusing to run.\n",
+                simRulesFirstDifference(&gs->rules));
+    }
+    fflush(stderr);
+    exit(1);
+}
+
 static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     BrainInfo bi;
     memset(obs, 0, sizeof(*obs));
@@ -328,6 +353,25 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     g->needMapInit = FALSE;
 
     GameSim *gs = serverSimGetGameSim(g->serverSim);
+
+    /* The observation this fills is a vector a model trains against, so its
+       entries have to mean the same thing on every tick of every episode.
+       The entries that normalise a stock against what full means read the
+       rule below rather than a written-out number, which would rescale the
+       vector the moment a scenario moved one: trajectories recorded either
+       side of the change would be on two scales with nothing in the data
+       saying so, and a model trained across them reads them as one world.
+       What stops that is this — the run refuses to go on at all rather than
+       record observations on a scale nothing was trained for, so every
+       divisor below is the classic value and the space holds still.
+
+       Asked on every build rather than once at startup: a scenario can move
+       a rule mid-round, and an answer given at the first reset would not
+       have heard about it. One comparison of a 168-byte table against a
+       classic one, against the tens of thousands of floats filled below. */
+    if (gs == NULL || !simRulesAreClassic(&gs->rules)) {
+        gymDieNotClassic(gs);
+    }
 
     BYTE selfPlayer = (BYTE)bi.player_number;
     PlayerBitMap alliesBits = bi.allies ? *(bi.allies) : 0;

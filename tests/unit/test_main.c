@@ -704,6 +704,8 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_pairs",                         run_sim_rules_pairs                         },
     { "sim_rules_capture_threshold_moves",       run_sim_rules_capture_threshold_moves       },
     { "sim_rules_builder_cost_follows",          run_sim_rules_builder_cost_follows          },
+    { "sim_rules_are_classic",                   run_sim_rules_are_classic                   },
+    { "sim_rules_obs_refuses_non_classic",       run_sim_rules_obs_refuses_non_classic       },
     { "sim_rules_shell_flight_follows",          run_sim_rules_shell_flight_follows          },
     { "sim_rules_brain_shot_follows",            run_sim_rules_brain_shot_follows            },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
