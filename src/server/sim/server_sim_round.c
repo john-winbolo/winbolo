@@ -1072,7 +1072,17 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
     }
     if (numConnected == 0) return;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i]) {
+            /* Disarm a slot nobody is in, rather than leaving whatever the
+             * last round put there. basesUpdate treats every timer that is
+             * not the off sentinel as a live restock cycle, so a slot armed
+             * for a player who has since left goes on restocking every base
+             * for the rest of the server's life. Skipping these was how a
+             * server that once held eight players kept refuelling at eight
+             * players' rate for a two-player game. */
+            basesRemoveTimer(&sim->sim, (int)i);
+            continue;
+        }
         sim->sim.baseTimer[i] = (BASE_TICKS_BETWEEN_REFUEL * (orderIdx + 1)) / numConnected;
         orderIdx++;
     }

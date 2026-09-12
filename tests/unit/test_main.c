@@ -405,6 +405,8 @@ static const UnitTestEntry s_tests[] = {
     { "claim_resolve_unverified_preempts",         run_claim_resolve_unverified_preempts         },
     { "claim_resolve_verified_keeps_temp",         run_claim_resolve_verified_keeps_temp         },
     { "claim_resolve_free_ignores_holder_flag",    run_claim_resolve_free_ignores_holder_flag    },
+    { "base_timer_cleared_on_leave",        run_base_timer_cleared_on_leave        },
+    { "base_timer_not_inherited_next_round", run_base_timer_not_inherited_next_round },
     { "remove_player_clears_slot",                 run_remove_player_clears_slot                 },
     { "return_to_lobby_clears_phantom_slot",       run_return_to_lobby_clears_phantom_slot       },
     { "last_human_leave_returns_to_lobby",         run_last_human_leave_returns_to_lobby         },
