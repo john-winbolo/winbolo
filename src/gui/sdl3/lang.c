@@ -1411,6 +1411,12 @@ static const LangEntry langTable[] = {
     {2010, "The server has classic mode on, so this view is turned off."},
     {2011, "See allies in trees"},
     {2012, "Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off."},
+    {2154, "Overview window"},
+    {2155, "Which block of squares the Map Overview keeps live around\nyour own tank. Expanded is everything the classic view can\nscroll to; Classic narrows it to the window that view is\nshowing. Classic mode sets it to Classic and holds it there.\nThe server sends the same map data either way."},
+    {2156, "Line of sight"},
+    {2157, "Buildings and stands of trees stop you seeing further into\nthe live block. Off is the classic rule, and classic mode\nforces it off. The server sends the same map data either\nway, so this is a convenience rule, not a guarantee about a\nmodified client."},
+    {2158, "Expanded"},
+    {2159, "Classic"},
     /* Settings > Display & Sound > Full Screen */
     {2013, "Full Screen"},
     {2014, "Newswire transparency"},
@@ -2046,6 +2052,10 @@ static const LangEntry langTable[] = {
 
     /* Players panel — per-player playback volume slider */
     {2090, "How loud this player is played here"},
+
+    /* Players panel — per-player smart-ping mute toggle */
+    {2162, "Pings shown — click to hide this player's pings"},
+    {2163, "Pings hidden — click to show this player's pings"},
 
     /* Lobby — the local player's voice sub-row */
     {2095, "Your microphone and voice settings"},

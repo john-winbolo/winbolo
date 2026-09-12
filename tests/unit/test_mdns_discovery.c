@@ -23,6 +23,8 @@
 #include "mdns.h"             /* mdns_query_answer_unicast / mdns_query_recv */
 #include "mdns_records.h"     /* MdnsServerInfo + mdnsAdvertiseBuildRecords */
 #include "discovery.h"        /* DiscoveryServer */
+#include "netpacks.h"         /* infoPacketPackViewPolicies / ...2 */
+#include "view_policy.h"      /* the policies the view key carries */
 #include "discovery_mdns.h"   /* parse seam */
 
 #define MDNS_TEST_SERVICE "_winbolo._udp.local."
@@ -155,6 +157,12 @@ int run_mdns_discovery(void) {
   info.numHumans       = 3;
   info.numBots         = 1;
   info.maxPlayers      = 12;
+  info.viewPolicies    = infoPacketPackViewPolicies(viewPolicyKey,
+                                                    viewPolicyAlways,
+                                                    viewPolicyOff, true, true);
+  info.viewPolicies2   = infoPacketPackViewPolicies2(
+      (uint8_t)overviewWindowClassic,
+      (uint8_t)lineOfSightBuildingsAndTrees);
 
   UT_ASSERT(sendServerAnswer(responder, &browserAddr, &info) == 0);
 
@@ -180,6 +188,16 @@ int run_mdns_discovery(void) {
   UT_ASSERT(s.game == (gameType)2);
   UT_ASSERT(s.ai == (aiType)0);
   UT_ASSERT_MSG(strcmp(s.address, "127.0.0.1") == 0, "addr='%s'", s.address);
+  /* The view key: seven values in four hex chars, over the real wire. */
+  UT_ASSERT_MSG(s.pillView == viewPolicyKey, "pill=%d", (int)s.pillView);
+  UT_ASSERT_MSG(s.baseView == viewPolicyAlways, "base=%d", (int)s.baseView);
+  UT_ASSERT_MSG(s.allyView == viewPolicyOff, "ally=%d", (int)s.allyView);
+  UT_ASSERT(s.classicMode == true);
+  UT_ASSERT(s.alliesInTrees == true);
+  UT_ASSERT_MSG(s.overviewWindow == (uint8_t)overviewWindowClassic,
+                "window=%u", (unsigned)s.overviewWindow);
+  UT_ASSERT_MSG(s.lineOfSight == (uint8_t)lineOfSightBuildingsAndTrees,
+                "sight=%u", (unsigned)s.lineOfSight);
 
   /* ---- unique instance label: distinct ports => distinct SRV owner name ---- */
   {

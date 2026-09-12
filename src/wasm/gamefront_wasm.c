@@ -228,15 +228,18 @@ bool           gameFrontHostingServeReplays     = TRUE;
 int            gameFrontHostingVoiceMode        = serverVoiceOn;
 
 /* Visibility rules a hosted game starts with. Same story as the hosting
- * knobs above — held for the dialogs, never applied to a server here. */
-int gameFrontViewPillPolicy    = viewPolicyAlways;
-int gameFrontViewBasePolicy    = viewPolicyOff;
-int gameFrontViewAllyPolicy    = viewPolicyAlways;
+ * knobs above — held for the dialogs, never applied to a server here.
+ * The stock set from view_policy.h, matching serverSimInit. */
+int gameFrontViewPillPolicy    = VIEW_POLICY_STOCK_PILL;
+int gameFrontViewBasePolicy    = VIEW_POLICY_STOCK_BASE;
+int gameFrontViewAllyPolicy    = VIEW_POLICY_STOCK_ALLY;
 int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+int gameFrontOverviewWindow    = OVERVIEW_WINDOW_STOCK;
+int gameFrontLineOfSight       = LINE_OF_SIGHT_STOCK;
 
 /* Server-authoritative state — the Transport handle itself now lives
  * inside humanSim; only high-level lifecycle gating is tracked here. */
@@ -934,6 +937,8 @@ void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs
 void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
 void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
 void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
+void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
+void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */
 void gameFrontSetSteamPresenceMenu(void)           { }

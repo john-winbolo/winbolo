@@ -148,6 +148,10 @@ void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
 TTF_Font *sdl3DrawGetMessageFont(void);
 /* The classic view's tank-label cache, for the shared overlay pass. */
 struct TankLabelCache *sdl3DrawGetTankLabelCache(void);
+/* The classic view's cache for the names under smart-ping markers. A second
+   cache rather than the one above because both are keyed on the player slot
+   and the two hold different text for it — see the note by the definition. */
+struct TankLabelCache *sdl3DrawGetPingNameCache(void);
 /* The faces the pill and base numbers are drawn in — the label font for
    pills, the tiny font for bases — opened at the main window's zoom. The
    overview reads them through here and scales what they render to its own

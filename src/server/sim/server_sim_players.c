@@ -97,6 +97,8 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
     sim->soundSquares[playerNum] = false;
+    /* A recycled slot must not inherit the previous occupant's ping mutes. */
+    sim->pingMuteMask[playerNum] = 0;
     {
         uint8_t defaultTeam = 1;
         if (playerNum == 0) {
@@ -354,6 +356,12 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 
     sim->playerConnected[playerNum] = FALSE;
+    /* Stop this slot's base restock cycle. serverSimAddPlayer arms it with
+     * basesUpdateTimer on a mid-game join and basesUpdate treats every timer
+     * that is not the off sentinel as a live cycle, each one restocking every
+     * base on the map. Left armed, a player who leaves goes on speeding the
+     * bases up for everyone still playing. */
+    basesRemoveTimer(&sim->sim, (int)playerNum);
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
         sim->sim.tanks[playerNum] = NULL;
@@ -530,6 +538,18 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
     sim->mapSkipVotes[playerNum] = false;
     sim->soundSquares[playerNum] = false;
+    /* Smart-ping mutes, both directions, exactly as a voice mute is swept on
+     * leave (udp_server_admin.c): clear the leaver's own row, and clear the
+     * leaver's bit out of every other slot's row so a recycled slot's next
+     * occupant is not silenced by a ping mute it never earned. */
+    sim->pingMuteMask[playerNum] = 0;
+    {
+        const PlayerBitMap leaving = ~((PlayerBitMap)1u << playerNum);
+        int muter;
+        for (muter = 0; muter < MAX_TANKS; muter++) {
+            sim->pingMuteMask[muter] &= leaving;
+        }
+    }
 
     /* The leaver's start is free again: re-pick every slot still without
      * one, humans before bots, and publish the slots that move. No-op

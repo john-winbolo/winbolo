@@ -45,9 +45,9 @@
  * square it is not being told.
  *
  * A slot only records the square of a pill inside one of its rects, so the
- * cases that want the record to follow the live list hand the pill to slot 0
- * and ally the other slots to it: an allied live pill grants a screen around
- * itself under the default pill policy, so it is shown wherever it goes.
+ * cases that want the record to follow the live list hand the pill to slot 0,
+ * ally the other slots to it and put pills on viewPolicyAlways: an allied live
+ * pill then grants a screen around itself, so it is shown wherever it goes.
  *
  * Every case drives ut_make_running_sim and pokes the GameSim directly (the
  * unittests profile permits T2-internal access).
@@ -1007,16 +1007,20 @@ static bool ms_find_plain_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
     return false;
 }
 
-/* Hand pill p to slot 0, alive and out of a tank. Under the default pill policy
- * an allied live pill grants a screen around itself, so slot 0 — and anyone
- * allied to it — is shown that pill's square wherever it is moved. That is what
- * a case wants when it is pinning the record against the live list rather than
- * against what is withheld. */
+/* Hand pill p to slot 0, alive and out of a tank, and put the pill category on
+ * viewPolicyAlways, under which an allied live pill grants a screen around
+ * itself — so slot 0, and anyone allied to it, is shown that pill's square
+ * wherever it is moved. That is what a case wants when it is pinning the record
+ * against the live list rather than against what is withheld. The policy is set
+ * here rather than inherited: a sim comes up with pills on viewPolicyKey, which
+ * grants a screen only around the pill the slot is watching. */
 static void ms_pill_owned_by_slot0(ServerSim *sim, BYTE p) {
     GameSim *gs = serverSimGetGameSim(sim);
     (*gs->pb).item[p].owner  = 0;
     (*gs->pb).item[p].armour = PILLS_MAX_ARMOUR;
     (*gs->pb).item[p].inTank = FALSE;
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
 }
 
 /* The map square a slot's tank stands on. */

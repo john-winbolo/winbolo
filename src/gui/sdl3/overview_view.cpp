@@ -166,19 +166,30 @@ struct OverviewView {
     int            targetW;
     int            targetH;
 
-    /* The fog overlay: one texel per map square, stretched over the whole map
-     * and filtered, so the fade out of a live region is smooth at every zoom
-     * rather than stepping a square at a time. Bound to a renderer the same
-     * way the offscreen above is. The mask is rebuilt only when the live
-     * regions move — the tank crossing a square, or a pill's view coming and
-     * going — so fogLive/fogLiveCount hold the set it was last built from and
-     * fogValid says whether they mean anything yet. */
+    /* The fog overlay: one texel to a map square, stretched over the whole map
+     * and sampled nearest, so a boundary lands on the square it belongs to at
+     * every zoom. Bound to a renderer the same way the offscreen above is. The
+     * mask is rebuilt only when the live regions move — the tank crossing a
+     * square, or a pill's view coming and going — so fogLive/fogLiveCount hold
+     * the set it was last built from and fogValid says whether they mean
+     * anything yet. */
     SDL_Texture   *fog;
     SDL_Renderer  *fogRenderer;
     OverviewRect   fogLive[OVERVIEW_MAX_REGIONS];
     int            fogLiveCount;
     bool           fogValid;
     BYTE           fogMask[OVERVIEW_FOG_MASK_BYTES];
+
+    /* Ground inside a region the player cannot see into — behind a building
+     * with line of sight on: full fog for each square the map has marked
+     * hidden, and nothing for the rest. The set of hidden squares moves as the
+     * tank moves without a single rect moving, so the map generation the mask
+     * was last built at is held with it, plus whether the map hid anything at
+     * all, which catches the tick the mode is dropped and the rects sit
+     * still. */
+    BYTE           fogDark[OVERVIEW_FOG_SQUARE_BYTES];
+    unsigned       fogGeneration;
+    bool           fogHiddenActive;
 
     /* The OS pointer is switched to the game's crosshair while it is over the
      * map, so the view has to remember that it did the switching — nothing
@@ -237,6 +248,11 @@ struct OverviewView {
      * itself when the font (reopened on zoom change) or the renderer
      * changes. */
     TankLabelCache labelCache;
+    /* The names under this view's smart-ping markers. Separate from the tank
+     * names above because both caches are keyed on the player slot and hold
+     * different text for it — the note in sdl3draw_status.c has the whole
+     * story. */
+    TankLabelCache pingNameCache;
     /* The pill and base numbers, on this view's renderer for the same reason
      * the tank names are: the pop-out has its own. */
     ItemLabelCache itemLabelCache;
@@ -274,7 +290,7 @@ static bool overviewViewEnsureTarget(OverviewView *v, SDL_Renderer *r,
 /* Every square the view covers, all at full brightness — what the player can
  * see this instant and what they are only remembering alike. The fog pass
  * below takes the second kind back down; keeping the two apart is what lets
- * the boundary between them be softer than one square. */
+ * the fog go over the lot in one blit rather than a colour mod per tile. */
 static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
                                     const OverviewCamera *cam,
                                     int viewW, int viewH,
@@ -323,9 +339,8 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
 }
 
 /* (Re)create the fog texture when the renderer changes. White, so the fog's
- * colour is the colour mod and nothing else: interpolating a constant white
- * leaves the filtered edge free of the fringe a two-coloured texture would
- * bleed into it. Nothing else ever draws this texture, so — unlike the host's
+ * colour is the colour mod and nothing else and the mask is carried by the
+ * alpha alone. Nothing else ever draws this texture, so — unlike the host's
  * tile sheet, which ImGui also submits — the sampler set here survives from
  * frame to frame. */
 static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
@@ -340,34 +355,55 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
 
     v->fog = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA8888,
                                SDL_TEXTUREACCESS_STREAMING,
-                               MAP_ARRAY_SIZE, MAP_ARRAY_SIZE);
+                               OVERVIEW_FOG_MASK_SIDE, OVERVIEW_FOG_MASK_SIDE);
     if (!v->fog) return false;
 
     SDL_SetTextureBlendMode(v->fog, SDL_BLENDMODE_BLEND);
-    /* The whole point: one texel per square blown up to whole tiles, with the
-     * hardware shading between them. */
-    SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_LINEAR);
-    /* Black fog — src is white, so this alone picks the colour a future tint
-     * would change. */
-    SDL_SetTextureColorMod(v->fog, 0, 0, 0);
+    /* One texel per square, blown up to a whole tile. Linear filtering would
+     * shade between neighbouring texels and blur every boundary the mask draws,
+     * so a square would come out part lit whatever byte it was given; nearest
+     * keeps the edge where the mask puts it. The view target above is set the
+     * same way. */
+    SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
+    /* The fog's colour — src is white, so this alone picks it. Grey rather
+     * than black: see fog_look.h for why a darkening had nothing to work on. */
+    SDL_SetTextureColorMod(v->fog, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B);
     v->fogRenderer = r;
     return true;
 }
 
 /* Rebuild the mask from the regions and push it into the texture. RGBA8888 is
  * one Uint32 per texel with red in the top byte, so a white texel carrying the
- * mask as its alpha is 0xFFFFFF00 | mask. */
+ * mask as its alpha is 0xFFFFFF00 | mask.
+ *
+ * A square the map has marked hidden is handed over at full fog: it sits inside
+ * the block, so the regions would otherwise leave it clear. The map's arrays
+ * are [x][y] and the mask is a texture row at a time, so the scratch is filled
+ * transposed, and only when the map says it hid something this update. */
 static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
-    void *pixels = NULL;
-    int   pitch  = 0;
+    void       *pixels = NULL;
+    int         pitch  = 0;
+    const BYTE *dark   = NULL;
 
-    overviewFogBuildMask(om->live, om->liveCount, v->fogMask);
+    if (om->hiddenActive) {
+        for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+            BYTE *row = v->fogDark + (size_t)y * MAP_ARRAY_SIZE;
+            for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+                row[x] = (om->flags[x][y] & OVERVIEW_F_HIDDEN) != 0
+                             ? (BYTE)OVERVIEW_FOG_ALPHA
+                             : (BYTE)0;
+            }
+        }
+        dark = v->fogDark;
+    }
+
+    overviewFogBuildMask(om->live, om->liveCount, dark, v->fogMask);
     if (!SDL_LockTexture(v->fog, NULL, &pixels, &pitch)) return;
 
-    for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+    for (int y = 0; y < OVERVIEW_FOG_MASK_SIDE; y++) {
         Uint32     *row = (Uint32 *)((Uint8 *)pixels + (size_t)y * (size_t)pitch);
-        const BYTE *src = v->fogMask + (size_t)y * MAP_ARRAY_SIZE;
-        for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+        const BYTE *src = v->fogMask + (size_t)y * OVERVIEW_FOG_MASK_SIDE;
+        for (int x = 0; x < OVERVIEW_FOG_MASK_SIDE; x++) {
             row[x] = 0xFFFFFF00u | (Uint32)src[x];
         }
     }
@@ -376,33 +412,40 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
 
 /* The fog over the terrain the pass above just drew.
  *
- * The texture covers the whole map, one texel to a square, so it goes down as
- * a single blit of the map's own rect: texel i then spans exactly square i and
- * its centre lands on the square's centre, which is what makes the filtering
- * shade between square centres instead of smearing the mask off by half a
- * tile. The rect's origin is rounded the way the terrain's is, and its size is
- * a whole number of tiles, so the two stay registered at every zoom.
+ * The texture covers the whole map, one texel to a square, so it goes down as a
+ * single blit of the map's own rect: a texel then spans exactly its square, and
+ * sampled nearest it carries its own byte and none of its neighbours'. The
+ * rect's origin is rounded the way the terrain's is, and its size is a whole
+ * number of tiles, so the two stay registered at every zoom.
  *
  * The mask comes from the live regions rather than the per-square LIVE flag —
  * the sim writes the flag from those same rects, so they say the same thing,
  * and the rects are at most OVERVIEW_MAX_REGIONS structs to compare where the
- * flags are 64K of bytes.
- *
- * One consequence of filtering: the fade starts at the last live square's
- * centre, not its outer edge, so the fully-clear area gives up half a square
- * at the boundary. It never gains any, which is the direction that matters —
- * nothing outside a live region is ever drawn at full brightness. */
+ * flags are 64K of bytes. */
 static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                                 const OverviewCamera *cam, int viewW, int viewH,
                                 const OverviewMap *om) {
     if (!overviewViewEnsureFog(v, r)) return;
 
+    /* With line of sight on, the hidden squares move as the tank drives without
+     * any rect moving, so the map's generation is what the mask is held against
+     * — it counts up on any update that moved anything. Only then: generation
+     * moves for a terrain change anywhere on the map, so reading it whatever
+     * the mode would rebuild the mask far more often than the rects do.
+     * hiddenActive changing is the mode being taken up or left, which has to
+     * rebuild on its own account: the tick it is dropped the rects can sit
+     * exactly where they were, and the mask would otherwise keep drawing fog
+     * over squares the map no longer hides. */
     if (!v->fogValid || v->fogLiveCount != om->liveCount ||
+        om->hiddenActive != v->fogHiddenActive ||
+        (om->hiddenActive && om->generation != v->fogGeneration) ||
         SDL_memcmp(v->fogLive, om->live,
                    sizeof(OverviewRect) * (size_t)om->liveCount) != 0) {
         overviewViewUploadFog(v, om);
         SDL_memcpy(v->fogLive, om->live, sizeof(v->fogLive));
         v->fogLiveCount = om->liveCount;
+        v->fogGeneration = om->generation;
+        v->fogHiddenActive = om->hiddenActive;
         v->fogValid = true;
     }
 
@@ -890,6 +933,7 @@ extern "C" OverviewView *overviewViewCreate(void) {
 extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
     tankLabelCacheFlush(&v->labelCache);
+    tankLabelCacheFlush(&v->pingNameCache);
     itemLabelCacheFlush(&v->itemLabelCache);
     if (v->fog) {
         SDL_DestroyTexture(v->fog);
@@ -1026,7 +1070,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
 
         bool inItemView = ownsWindow && overviewSnapshotInItemView(snap);
 
-        /* Three claims on the centre, in the order they win.
+        /* Four claims on the centre, in the order they win.
          *
          * A scroll in flight is the player being taken somewhere, so it has
          * the frame to itself — anything else moving the centre would leave
@@ -1034,15 +1078,23 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * watching, the same way the tank view centres on the tank, so an ally
          * stays in the middle of the picture instead of riding the edge they
          * were scrolled in over. With follow off — the player has panned away
-         * — nothing moves. Under that, the tank view follows the tank.
+         * — nothing moves. Under that, a fog mode that places the live block
+         * from the classic view is followed on the block: it is what the
+         * player is driving, and following the tank instead would leave the
+         * block riding the edge of the picture. Under that again, the tank
+         * view follows the tank, which is what a mode that centres its block
+         * on the tank always does and what the rest fall back to with no block
+         * to follow.
          *
          * A tank waiting to respawn has a position but is not anywhere the
          * player is, so follow mode holds the centre it already had. The
          * sub-square read is what lets follow glide with the tank rather
          * than stepping a whole square at a time; with Smooth Scrolling off
          * the position is snapped back to its square's centre, so follow
-         * steps the way the classic view's scroll does. */
+         * steps the way the classic view's scroll does. The block follow reads
+         * and snaps the same way. */
         float tankX = 0.0f, tankY = 0.0f;
+        float winX = 0.0f, winY = 0.0f;
         if (overviewCameraScrollTick(&v->cam, dtMs)) {
             /* The scroll has the centre this frame. */
         } else if (inItemView) {
@@ -1051,6 +1103,12 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             overviewCameraFollowTick(&v->cam, w, h,
                                      (float)itemMX + 0.5f,
                                      (float)itemMY + 0.5f);
+        } else if (overviewSnapshotWindowCentre(snap, &winX, &winY)) {
+            if (!smoothScrollingEnabled) {
+                winX = SDL_floorf(winX) + 0.5f;
+                winY = SDL_floorf(winY) + 0.5f;
+            }
+            overviewCameraFollowTick(&v->cam, w, h, winX, winY);
         } else if (overviewSnapshotTankPos(snap, &tankX, &tankY)) {
             if (!smoothScrollingEnabled) {
                 tankX = SDL_floorf(tankX) + 0.5f;
@@ -1078,8 +1136,27 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             const ClientPing *pl   = overviewSnapshotPings(snap);
             int               np   = overviewSnapshotPingCount(snap);
             Uint32            nowMs = (Uint32)SDL_GetTicks();
-            float tilePx =
-                (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(&v->cam);
+            float zoomScale = overviewCameraZoomScale(&v->cam);
+            float tilePx = (float)OVERVIEW_TILE_PX * zoomScale;
+            /* The sender's names, through this view's own cache and the main
+             * window's face — the same arrangement, and the same scaling from
+             * the face's own size to this view's zoom, the tank names use.
+             *
+             * Where they part company is the zoomed-out end. Below
+             * OVERVIEW_LABEL_MIN_ZOOM the tank names are dropped, because a
+             * map full of tanks at that size is a wall of unreadable text; a
+             * ping is one of a handful and naming it is the whole point, so
+             * instead of dropping it the size stops following the zoom down.
+             * The name is then larger than the map around it, which is what a
+             * player zoomed out to see the whole board wants. */
+            int mainZoom = sdl3DrawGetZoomFactor();
+            if (mainZoom < 1) mainZoom = 1;
+            float nameZoom = (zoomScale > OVERVIEW_LABEL_MIN_ZOOM)
+                           ? zoomScale : OVERVIEW_LABEL_MIN_ZOOM;
+            PingMarkerLabel label;
+            label.cache = &v->pingNameCache;
+            label.font  = sdl3DrawGetMessageFont();
+            label.scale = nameZoom / (float)mainZoom;
             for (int i = 0; i < np; i++) {
                 Uint32 ageMs = nowMs - pl[i].recvMs;
                 float  alpha = pingDisplayAlpha((int)ageMs);
@@ -1089,8 +1166,10 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             (float)(pl[i].worldX >> 8) + 0.5f,
                                             (float)(pl[i].worldY >> 8) + 0.5f,
                                             &sx, &sy);
+                label.name = pl[i].senderName;
+                label.slot = pl[i].sender;
                 pingMarkerDraw(r, pl[i].kind, sx, sy, tilePx, tilePx,
-                               ageMs, alpha);
+                               ageMs, alpha, &label);
             }
         }
 
@@ -1399,13 +1478,16 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * Not while an item view has them: there the scroll keys step between
      * pills, bases or allied tanks, which is still their job with the classic
      * view hidden. Not while a text box has the keyboard either, or typing a
-     * message would pan the map behind it.
+     * message would pan the map behind it. Not under an overview window that
+     * places the live block from the classic view either: there the scroll
+     * keys are what drags the block, and the classic scroll wants them back.
      *
      * Panning clears follow, the way a drag does, so a held key wins over the
      * tank exactly as manual scrolling wins over auto-scroll in the classic
      * view. Home hands the map back to the tank. */
     if (!io.WantTextInput) {
-        bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs);
+        bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs) &&
+                                !clientSimOverviewWindowFollowsView(cs);
         float dx = 0.0f, dy = 0.0f;
         if (overviewKeyDown(keys, ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;

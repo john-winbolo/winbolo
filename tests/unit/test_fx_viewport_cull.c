@@ -21,7 +21,7 @@
 #include "game_sim.h"
 #include "tank.h"
 #include "pillbox.h"
-#include "view_policy.h"           /* viewPolicyOff — leave only the tank rect */
+#include "view_policy.h"           /* viewPolicyAlways / viewPolicyOff — the rules each case sets */
 #include "test_harness.h"
 
 int run_fx_viewport_cull(void) {
@@ -48,6 +48,13 @@ int run_fx_viewport_cull(void) {
     gs->pb->item[0].armour = PILLS_MAX_ARMOUR; /* alive — a dead pill grants no view */
     gs->pb->item[0].x      = pillMX;
     gs->pb->item[0].y      = pillMY;
+
+    /* An owned pillbox granting a rect is the subject, so the pill category
+     * is set here rather than inherited: a sim comes up on viewPolicyKey,
+     * under which only the pill the player is watching grants one, and this
+     * case — which claims no view — would see the tank's rect alone. */
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyAlways,
+                           VIEW_DECAY_DEFAULT_SECS);
 
     ViewportRect vps[MAX_VIEWPORTS];
     int n = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);

@@ -1,9 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Smart ping: On My Way. A fat arrow. It points straight up rather than
-     towards the ping: the marker is drawn at the spot itself, so an arrow
-     that tried to indicate direction would be pointing at its own feet.
-     One filled shape, no strokes. Authored solid black and used as an alpha
-     mask; see standard.svg. -->
+<!-- Smart ping: On My Way. A chunky arrow pointing down at the ground it
+     names, given a little depth: the arrow is drawn twice, once offset up and
+     to the right at part strength for the extruded top and side faces, then
+     the front face solid on top of it. A thin ellipse under the tip is the
+     ground the arrow is coming down onto.
+
+     The tones are alphas, not colours, because that is all the loader keeps:
+     ping_icons.c forces every pixel's colour channels white and each drawer
+     tints from the kind table in src/gui/ping_kinds.h, so a grey authored here
+     would arrive white. A face at 0.55 therefore reads as a darker shade of
+     the kind's blue over the marker's dark disc, which is what makes the
+     extrusion look like a side rather than a second arrow.
+
+     The offset faces are drawn first so the solid front face covers where the
+     two overlap; only the sliver that sticks out past it is left showing. One
+     filled shape each, no strokes, so the whole thing survives being
+     rasterised down to a map square (~24-32 px) and to the smallest edge-bar
+     icon (12 px), where it reads as a plain fat down arrow. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
-  <path d="M12 1 L22.5 12.4 L16.6 12.4 L16.6 23 L7.4 23 L7.4 12.4 L1.5 12.4 Z"/>
+  <!-- The ground under the tip. -->
+  <ellipse cx="12" cy="21.7" rx="5.6" ry="1.6" fill-opacity="0.32"/>
+  <!-- The extruded body: the same arrow, up and right by (2.4, -1.6). -->
+  <path fill-opacity="0.55" d="M11 0.4 L17.8 0.4 L17.8 9.4 L22 9.4 L14.4 18.4 L6.8 9.4 L11 9.4 Z"/>
+  <!-- The lit front face. -->
+  <path d="M8.6 2 L15.4 2 L15.4 11 L19.6 11 L12 20 L4.4 11 L8.6 11 Z"/>
 </svg>

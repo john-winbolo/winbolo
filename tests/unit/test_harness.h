@@ -269,6 +269,11 @@ int run_classic_mode_lock_blocks_dispatch(void);
 int run_classic_mode_lobby_reset(void);
 int run_allies_in_trees_defaults(void);
 int run_allies_in_trees_classic_mode(void);
+int run_fog_settings_defaults(void);
+int run_fog_settings_classic_mode_preset(void);
+int run_fog_settings_lock_implied(void);
+int run_fog_settings_lobby_edits(void);
+int run_fog_settings_lobby_reset(void);
 int run_info_packet_view_policy_layout(void);
 int run_info_packet_view_policy_length_tier(void);
 int run_upload_cap_enforced(void);
@@ -631,6 +636,8 @@ int run_claim_resolve_free_ignores_holder_flag(void);
 /* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
  * (no phantom re-announce), and the last human leaving a running game
  * returns the server to the lobby. */
+int run_base_timer_cleared_on_leave(void);
+int run_base_timer_not_inherited_next_round(void);
 int run_remove_player_clears_slot(void);
 int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);
@@ -1244,9 +1251,18 @@ int run_viewport_calc_square_pure(void);
 int run_viewport_calc_pill_square_moved(void);
 
 /* Overview region geometry (test_overview_map.c): overviewMapBuildRegions
- * gives the tank a 29x29 block and every viewable pillbox a 15x15 one,
- * trimmed at the map edges, tank rect first and pills in index order, and
- * never writes more rects than the caller allowed for; and
+ * writes the tank's block, which it is handed, first, gives every viewable
+ * pillbox a 15x15 one trimmed at the map edges, keeps the pills in index
+ * order and never writes more rects than the caller allowed for; where that
+ * block goes is the overview window's to decide, and is covered through
+ * overviewMapUpdate — the 29x29 on the tank under the Expanded window, the
+ * 15x15 at the classic view under the Classic one, the same 15x15 round the
+ * tank with no view to read, and the view a dying tank last had;
+ * line of sight hides a square behind
+ * a building without touching the tile it last showed, leaves the building and
+ * the tank's own square in the block, reaches no watched item's block, holds
+ * that tile through the update the block stops being live, and sets nothing at
+ * all with the toggle off; and
  * overviewMapDeathBlackout puts the overview's blackout in the stretch of a
  * death wait running from the tick the classic view cuts to static through to
  * the respawn. */
@@ -1287,13 +1303,16 @@ int run_overview_decay_mirror(void);
 int run_overview_decay_view_exit(void);
 
 /* Overview regions under the view policies (test_overview_view_policy.c): the
- * rules a server ships with produce the region set the overview has always
- * had; always sweeps a category, key grants only what the player is watching
- * and off grants nothing, each kind in its own block size and in the order the
- * farewell stamp replays; and a decay window runs from full brightness through
- * the fade to nothing, with an item the player could never watch earning
- * nothing from having been driven past. */
+ * rules a server ships with produce the player's own screen and nothing else,
+ * where pills and allied tanks on always produce the region list the overview
+ * drew before any of this was settable; always sweeps a category, key grants
+ * only what the player is watching and off grants nothing, each kind in its
+ * own block size and in the order the farewell stamp replays; and a decay
+ * window runs from full brightness through the fade to nothing, with an item
+ * the player could never watch earning nothing from having been driven
+ * past. */
 int run_overview_policy_baseline(void);
+int run_overview_policy_pills_and_allies(void);
 int run_overview_policy_categories(void);
 int run_overview_policy_decay(void);
 
@@ -1323,12 +1342,20 @@ int run_overview_camera(void);
 int run_overview_scroll(void);
 
 /* Overview fog mask (test_overview_fog.cpp): a live square comes out clear and
- * ground past the ramp fully fogged, the fade rises square by square out of
- * every edge and is darker diagonally off a corner than the same way out of an
- * edge, overlapping regions take the brightest answer, a region against the
- * map border keeps its brightness to the border without writing past the end
- * of the mask, and no regions at all fogs the whole map. */
+ * ground outside every region fully fogged, the fog steps to full in the one
+ * square outside an edge and is as hard off a corner as along a side,
+ * overlapping regions take the brightest answer, a region against the map
+ * border keeps its brightness to the border without writing past the end of
+ * the mask, and no regions at all fogs the whole map. */
 int run_overview_fog(void);
+
+/* Line of sight (test_sight.c): the square the player stands on is seen even
+ * when it is itself a building, a building across the line hides everything
+ * behind it while the building itself is seen, the same building beside the
+ * line hides nothing, the diagonal between two buildings that touch is closed,
+ * squares off the map are never seen, only a building and a half building stop
+ * a line, and a block the origin is nowhere near is written at its own width. */
+int run_sight(void);
 
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
@@ -1751,8 +1778,12 @@ int run_ping_binding_format(void);
 int run_ping_pie_slices(void);
 int run_ping_edge_sides(void);
 int run_ping_edge_corner(void);
+int run_ping_edge_size_from_distance(void);
+int run_ping_edge_name_anchor(void);
 int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
+int run_ping_sound_fallback(void);
+int run_ping_name_truncate(void);
 
 /* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's
  * running-game / occupied-slot / known-kind gates, the per-player rate limit
@@ -1765,8 +1796,12 @@ int run_ping_dispatch_rejects_empty_slot_and_out_of_range(void);
 int run_ping_dispatch_map_range_bound(void);
 int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
+int run_ping_dispatch_spam_30s_window(void);
 int run_ping_dispatch_new_round_clears_rate_limit(void);
 int run_ping_reaches_team_only(void);
+int run_ping_mute_relay_skip(void);
+int run_ping_mute_client_mirror_cleared_on_leave(void);
+int run_ping_sender_name_empty_for_unused_slot(void);
 
 /* Smart ping across the wire (test_ping_network.c): the full client -> server
  * -> client path over the real loopback UDP transport, driven through
@@ -1785,6 +1820,11 @@ int run_lang_name_table(void);
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
+
+/* The mDNS view TXT key (test_mdns_view_txt.c): the server's visibility
+ * rules through the browser's parse seam, and what an absent or
+ * malformed value reports. */
+int run_mdns_view_txt_roundtrip(void);
 
 /* Self-reported client platform pin (test_client_type.c): the JOIN-time
  * bolo_detect_client_type() resolves to the build host's CLIENT_TYPE_*

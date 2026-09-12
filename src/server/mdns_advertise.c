@@ -59,6 +59,7 @@ void transportUdpServerStopMdnsAdvertiser(void) {}
 #include "pillbox.h"
 #include "transport_udp.h"  /* transportUdpServerGetLock */
 #include "mdns_records.h"   /* MdnsServerInfo + builder (pulls mdns.h) */
+#include "netpacks.h"       /* infoPacketPackViewPolicies / ...2 */
 #include "../common/wb_log.h"
 
 /* Single advertiser per process (one server instance per process). sock < 0
@@ -265,6 +266,8 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   MDNS_TXT_ADD("humans",  "%u", (unsigned)info->numHumans);
   MDNS_TXT_ADD("bots",    "%u", (unsigned)info->numBots);
   MDNS_TXT_ADD("max",     "%u", (unsigned)info->maxPlayers);
+  MDNS_TXT_ADD("view",    "%02X%02X", (unsigned)info->viewPolicies,
+               (unsigned)info->viewPolicies2);
 
 #undef MDNS_TXT_ADD
 
@@ -324,6 +327,18 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
   out->ranked          = serverSimGetRanked(sim);
   out->randomMap       = serverSimIsRandomMapEnabled(sim);
   out->timeLimit       = serverSimGetGameLength(sim);
+
+  /* The same two bytes buildInfoPacket puts in the INFO packet, from the
+   * same getters, so a server reports one set of rules on both paths. */
+  out->viewPolicies  = infoPacketPackViewPolicies(
+      serverSimGetViewPolicy(sim, viewCategoryPill),
+      serverSimGetViewPolicy(sim, viewCategoryBase),
+      serverSimGetViewPolicy(sim, viewCategoryAlly),
+      serverSimGetClassicMode(sim),
+      serverSimGetAlliesInTrees(sim));
+  out->viewPolicies2 = infoPacketPackViewPolicies2(
+      serverSimGetOverviewWindow(sim),
+      serverSimGetLineOfSight(sim));
 }
 
 /*---------------------------------------------------------

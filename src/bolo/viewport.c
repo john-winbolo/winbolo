@@ -43,6 +43,10 @@
 void viewportInit(ViewPort *vp) {
   New(vp->view);
   New(vp->mineView);
+  New(vp->hiddenView);
+  /* Cleared outright rather than left to the first update, so nothing is drawn
+   * dim before anything has decided a square is out of sight. */
+  memset(vp->hiddenView, 0, sizeof(*vp->hiddenView));
   vp->xOffset = 0;
   vp->yOffset = 0;
   vp->cursorPosX = -1;
@@ -63,33 +67,74 @@ void viewportDestroy(ViewPort *vp) {
     Dispose(vp->mineView);
     vp->mineView = NULL;
   }
+  if (vp->hiddenView != NULL) {
+    Dispose(vp->hiddenView);
+    vp->hiddenView = NULL;
+  }
 }
 
 void viewportRecalc(ViewPort *vp) {
   vp->needRecalc = TRUE;
 }
 
+/* Whether the mask calls one map square hidden. A square the block does not
+ * cover is not hidden: the mask says nothing about it. */
+static bool viewportSquareHidden(const ViewSight *sight, int mx, int my) {
+  int stride; /* Squares across the block, which is the mask's row length */
+
+  if (sight == NULL || sight->vis == NULL || sight->memory == NULL) {
+    return FALSE;
+  }
+  if (mx < sight->block.left || mx > sight->block.right ||
+      my < sight->block.top || my > sight->block.bottom) {
+    return FALSE;
+  }
+  stride = sight->block.right - sight->block.left + 1;
+  return (bool)(sight->vis[(my - sight->block.top) * stride +
+                           (mx - sight->block.left)] == 0);
+}
+
 void viewportUpdateView(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
-                        BYTE brainMap[][MAP_ARRAY_SIZE], updateType value) {
+                        BYTE brainMap[][MAP_ARRAY_SIZE], updateType value,
+                        const ViewSight *sight) {
   /* NOTE: value UNUSED */
   BYTE count;
   BYTE count2;
+  BYTE mapX;   /* The map square this back-buffer square shows */
+  BYTE mapY;
+  BYTE tileNum; /* The tile it draws */
+  bool hidden;  /* Is it out of sight behind a building */
   (void)value;
 
   for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
     for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
-      vp->view->screenItem[count][count2] =
-          viewportCalcSquare(vp, sim, myPlayerNum,
-                             (BYTE)(count + vp->xOffset),
-                             (BYTE)(count2 + vp->yOffset), count, count2);
-      screenBrainMapSetPos(brainMap,
-                           (BYTE)(count + vp->xOffset),
-                           (BYTE)(count2 + vp->yOffset),
-                           mapGetPos(&sim->mp, (BYTE)(count + vp->xOffset),
-                                     (BYTE)(count2 + vp->yOffset)),
-                           minesExistPos(&sim->mns, &sim->mp,
-                                         (BYTE)(count + vp->xOffset),
-                                         (BYTE)(count2 + vp->yOffset)));
+      mapX = (BYTE)(count + vp->xOffset);
+      mapY = (BYTE)(count2 + vp->yOffset);
+
+      /* Every square is calculated, hidden or not: the calculator repairs a
+       * malformed terrain byte and fills the mine view, and skipping it would
+       * leave both undone. Only what the square draws changes below. */
+      tileNum = viewportCalcSquare(vp, sim, myPlayerNum, mapX, mapY, count,
+                                   count2);
+      hidden = viewportSquareHidden(sight, (int)mapX, (int)mapY);
+      if (hidden == TRUE && sight->memory->tile[mapX][mapY] != OVERVIEW_UNSEEN) {
+        /* What the player last saw here, mine and all: a mine laid out of
+         * sight is exactly what the rule exists to keep from them. A square
+         * with nothing remembered at all keeps the tile it has - the memory is
+         * seeded when the map lands, so that is the empty case, not a real
+         * one - and is still drawn as a square out of sight. */
+        tileNum = sight->memory->tile[mapX][mapY];
+        vp->mineView->mineItem[count][count2] =
+            (bool)((sight->memory->flags[mapX][mapY] & OVERVIEW_F_MINE) != 0);
+      }
+      vp->view->screenItem[count][count2] = tileNum;
+      vp->hiddenView->hiddenItem[count][count2] = hidden;
+
+      /* The brain map is fed the real terrain whatever the player can see:
+       * blinding a bot is the server's job, not the view's. */
+      screenBrainMapSetPos(brainMap, mapX, mapY,
+                           mapGetPos(&sim->mp, mapX, mapY),
+                           minesExistPos(&sim->mns, &sim->mp, mapX, mapY));
     }
   }
 }

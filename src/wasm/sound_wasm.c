@@ -31,6 +31,7 @@
 
 #include "global.h"
 #include "client_enums.h"  /* sndEffects */
+#include "ping_sounds.h"   /* pingSoundResolve / pingSoundKindOf */
 #include "../gui/sound.h"
 
 #include <emscripten.h>
@@ -39,7 +40,12 @@
 
 /* Order matches gui/sdl3/sound.c so existing soundPlayEffect() index
  * mappings still resolve to the right WAV file. */
-#define WB_NUM_SOUNDS 31
+#define WB_NUM_SOUNDS 38
+
+/* The ping sounds sit at the end of the table in one run: the default first,
+ * then one per PING_KIND_* in kind order. */
+#define WB_PING_DEFAULT_INDEX 31
+#define WB_PING_KIND_FIRST_INDEX 32
 
 static const char *kSoundFiles[WB_NUM_SOUNDS] = {
     "tank_sinking_near.wav",   /*  0 */
@@ -73,7 +79,25 @@ static const char *kSoundFiles[WB_NUM_SOUNDS] = {
     "lobby_game_start.wav",    /* 28 */
     "lobby_player_join.wav",   /* 29 */
     "lobby_player_leave.wav",  /* 30 */
+    /* Smart pings, named after the same keys the icons use. Only the default
+     * and the caution ping ship with the game; a kind with no file of its own
+     * plays the default, which is pingSoundResolve's decision. */
+    "ping_default.wav",        /* 31 */
+    "ping_standard.wav",       /* 32 */
+    "ping_caution.wav",        /* 33 */
+    "ping_assist.wav",         /* 34 */
+    "ping_attack.wav",         /* 35 */
+    "ping_onmyway.wav",        /* 36 */
+    "ping_botcommand.wav",     /* 37 */
 };
+BOLO_STATIC_ASSERT(WB_PING_KIND_FIRST_INDEX + PING_KIND_COUNT == WB_NUM_SOUNDS,
+                   every_ping_kind_needs_a_sound_file_name);
+
+/* Which of those files were there to read. wb_audio_load answers that part
+ * synchronously (the decode that follows is asynchronous, and a slot still
+ * decoding simply plays nothing for a tick or two), which is enough to build
+ * the mask pingSoundResolve reads. */
+static bool s_loaded[WB_NUM_SOUNDS];
 
 static bool s_isPlayable = FALSE;
 
@@ -212,7 +236,7 @@ bool soundSetup(void) {
   applyStreamGain();
   for (i = 0; i < WB_NUM_SOUNDS; i++) {
     snprintf(path, sizeof(path), "/data/sounds/%s", kSoundFiles[i]);
-    wb_audio_load(i, path);
+    s_loaded[i] = (wb_audio_load(i, path) != 0);
   }
   s_isPlayable = TRUE;
   return TRUE;
@@ -220,11 +244,30 @@ bool soundSetup(void) {
 
 void soundCleanup(void) {
   wb_audio_cleanup();
+  memset(s_loaded, 0, sizeof(s_loaded));
   s_isPlayable = FALSE;
+}
+
+/* Bit PING_KIND_x set when that kind's own sound file was there to load. */
+static unsigned int soundPingFoundMask(void) {
+  unsigned int mask = 0;
+  int k;
+
+  for (k = 0; k < PING_KIND_COUNT; k++) {
+    if (s_loaded[WB_PING_KIND_FIRST_INDEX + k]) mask |= 1u << k;
+  }
+  return mask;
 }
 
 void soundPlayEffect(sndEffects value) {
   int index;
+  unsigned char pingKind = pingSoundKindOf(value);
+
+  /* A ping kind with no sound file of its own plays the default ping. Same
+     rule as the desktop backend, and the same one copy of it. */
+  if (pingKind < PING_KIND_COUNT) {
+    value = pingSoundResolve(pingKind, soundPingFoundMask());
+  }
 
   switch (value) {
   case shootSelf:         index = 6;  break;
@@ -257,6 +300,13 @@ void soundPlayEffect(sndEffects value) {
   case lobbyGameStart:    index = 28; break;
   case lobbyPlayerJoin:   index = 29; break;
   case lobbyPlayerLeave:  index = 30; break;
+  case pingDefault:       index = WB_PING_DEFAULT_INDEX; break;
+  case pingStandard:      index = WB_PING_KIND_FIRST_INDEX + PING_KIND_STANDARD; break;
+  case pingCaution:       index = WB_PING_KIND_FIRST_INDEX + PING_KIND_CAUTION; break;
+  case pingAssist:        index = WB_PING_KIND_FIRST_INDEX + PING_KIND_ASSIST; break;
+  case pingAttack:        index = WB_PING_KIND_FIRST_INDEX + PING_KIND_ATTACK; break;
+  case pingOnMyWay:       index = WB_PING_KIND_FIRST_INDEX + PING_KIND_ON_MY_WAY; break;
+  case pingBotCommand:    index = WB_PING_KIND_FIRST_INDEX + PING_KIND_BOT_COMMAND; break;
   default:                index = 8;  break;  /* shootFar */
   }
 

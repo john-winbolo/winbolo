@@ -39,25 +39,66 @@
                                        never produces TANK_TRANSPARENT (255) */
 #define OVERVIEW_F_MINE      0x01   /* mine was visible on the square when last seen */
 #define OVERVIEW_F_LIVE      0x02   /* inside a live region on the latest update */
+/* Close enough to see things moving on the square, not just the ground under
+ * them. Every region grants it, so it is set wherever OVERVIEW_F_LIVE is. Kept
+ * as its own bit because sight and liveness are separate questions to a
+ * frontend, and a region that stamps ground without granting sight is the
+ * obvious next thing to want. */
+#define OVERVIEW_F_SIGHT     0x04
+/* Inside a live region and not seen out of that region's own origin all the
+ * same - behind a building, or deep in a wood. The square keeps the tile it
+ * last showed rather than being rewritten, nothing moving on it is drawn, and
+ * it is left in full fog. Only set while line of sight is masking the live
+ * blocks. */
+#define OVERVIEW_F_HIDDEN    0x08
 
 /* The tank region is the full scroll envelope of the main view. An item view
  * cannot be scrolled, so it shows one fixed block round what it watches: a
  * pillbox, a base and an allied tank all take the pill block. */
 #define OVERVIEW_TANK_HALF   (MAIN_SCREEN_SIZE_X - 1)   /* 14 -> 29x29 */
 #define OVERVIEW_PILL_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
+/* The classic view's own visible block, which is what the Classic overview
+ * window narrows the tank's region down to. Same number as the item block and
+ * a different thing, so tuning one never moves the other. */
+#define OVERVIEW_CLASSIC_HALF (MAIN_SCREEN_SIZE_X / 2)  /* 7  -> 15x15 */
+
+/* One round the player's own tank, and one for each item a view policy grants
+ * a block to. */
 #define OVERVIEW_MAX_REGIONS (1 + MAX_PILLS + MAX_BASES + MAX_TANKS)
 
 /* Inclusive on all four edges, clamped to 0..255. alpha is 255 for a region
  * the player holds outright and ramps down over the last VIEW_DECAY_FADE_SECS
- * of a decay window, reaching 0 as the window runs out. */
+ * of a decay window, reaching 0 as the window runs out.
+ *
+ * originX/originY is the square the block is looked out of, which is what line
+ * of sight is worked out from: the tank for the player's own block, and the
+ * pillbox, base or allied tank for a block one of them earned. It is not the
+ * centre of the rect - a block trimmed at the map edge is off centre, and the
+ * Classic block is placed by the classic view rather than round the tank - so
+ * it is carried rather than worked back out. A block that nothing looks out of
+ * does not exist: every rect has one.
+ *
+ * The frontend compares stored rects byte for byte to decide it can reuse a
+ * fog mask, so every rect has to be zeroed whole when it is built rather than
+ * filled field by field - which is what overviewRectAround does. The origin is
+ * in that comparison on purpose: under Classic the tank moves inside a window
+ * that is standing still, which moves what it can see without moving an
+ * edge. */
 typedef struct OverviewRect {
     int  left, top, right, bottom;
     BYTE alpha;
+    BYTE originX, originY;
 } OverviewRect;
 
 typedef struct OverviewMap {
     BYTE         tile[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   /* [x][y] tilenum index as last seen */
     BYTE         flags[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];  /* [x][y] OVERVIEW_F_* */
+    /* Whether the latest update masked the blocks round the tank by line of
+     * sight, so some of their squares are hidden rather than live. It is the
+     * record of what the map did rather than of which mode is on, so a frontend
+     * reads the squares it was handed and cannot be caught out by a mode
+     * changed between the update and the drawing of it. */
+    bool         hiddenActive;
     OverviewRect live[OVERVIEW_MAX_REGIONS];             /* regions used by the latest update */
     int          liveCount;
     OverviewRect prevLive[OVERVIEW_MAX_REGIONS];         /* regions used by the update before it */
@@ -68,6 +109,8 @@ typedef struct OverviewMap {
      * without it there is no position to hold the block still at. */
     BYTE         lastTankMX, lastTankMY;                 /* where the tank last had a live block */
     bool         haveLastTank;                           /* whether the two above mean anything yet */
+    BYTE         lastViewLeft, lastViewTop;              /* where the classic view was when the tank last had a block */
+    bool         haveLastView;                           /* whether the two above mean anything yet */
     bool         pillWasLive[MAX_PILLS];                 /* pill i had a region last update */
     bool         baseWasLive[MAX_BASES];                 /* base i had a region last update */
     bool         allyWasLive[MAX_TANKS];                 /* player i's tank had a region last update */

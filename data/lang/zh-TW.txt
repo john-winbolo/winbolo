@@ -1930,6 +1930,13 @@ STR_DLGLOBBY_CLASSIC_MODE_TIP=將碉堡顯示設為「按鍵」，將基地顯�
 STR_MENU_CLASSIC_MODE_TIP=伺服器已開啟經典模式，因此此檢視已關閉。
 STR_DLGLOBBY_ALLIES_TREES_CB=顯示樹林中的友軍
 STR_DLGLOBBY_ALLIES_TREES_TIP=站在樹林中的友軍坦克會顯示在你的畫面上，而不是被隱藏。\n戰爭迷霧仍然有效，所以你只能在原本看得到的地方看到他們。\n關閉是經典規則，經典模式會強制關閉此項。
+# Map overview live block, and what blocks sight inside it
+STR_DLGLOBBY_OVERVIEW_WINDOW=總覽範圍
+STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=地圖總覽在你坦克周圍持續保持即時的圖格範圍。\n展開是主視角能捲動到的全部範圍；經典則縮小為該畫面\n正在顯示的範圍。經典模式會將其設為經典並保持不變。\n無論哪種情況伺服器送出的地圖資料都相同。
+STR_DLGLOBBY_LINE_OF_SIGHT_CB=視線
+STR_DLGLOBBY_LINE_OF_SIGHT_TIP=建築物和樹林會擋住視線，讓你看不到範圍更深處。\n關閉是經典規則，經典模式會強制關閉此項。無論哪種情況\n伺服器送出的地圖資料都相同，因此這只是便利規則，\n並不能保證對修改過的用戶端有效。
+STR_DLGLOBBY_WINDOW_EXPANDED=展開
+STR_DLGLOBBY_WINDOW_CLASSIC=經典
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=外觀
 STR_DLGSKIN_DEFAULT=預設

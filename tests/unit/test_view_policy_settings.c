@@ -63,14 +63,14 @@ int run_view_policy_defaults(void) {
     ServerSim *sim = make_view_sim();
     UT_ASSERT(sim != NULL);
 
-    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) == viewPolicyAlways,
-                  "pill view default = %d, want always",
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryPill) == viewPolicyKey,
+                  "pill view default = %d, want key",
                   (int)serverSimGetViewPolicy(sim, viewCategoryPill));
     UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryBase) == viewPolicyOff,
                   "base view default = %d, want off",
                   (int)serverSimGetViewPolicy(sim, viewCategoryBase));
-    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways,
-                  "ally view default = %d, want always",
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyOff,
+                  "ally view default = %d, want off",
                   (int)serverSimGetViewPolicy(sim, viewCategoryAlly));
 
     for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
@@ -106,7 +106,7 @@ int run_view_policy_apply_validates(void) {
     UT_ASSERT(serverSimGetViewDecaySecs(sim, viewCategoryPill) == 120);
     UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryBase) == viewPolicyOff,
                   "applying pill view disturbed the base view");
-    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways);
+    UT_ASSERT(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyOff);
 
     /* A policy byte above viewPolicyOff is refused and changes nothing
      * — same shape as LST_AI_POLICY refusing an aiType above 3. */

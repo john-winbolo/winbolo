@@ -162,8 +162,9 @@ static void lv_pingAdd(BYTE sender, BYTE kind, uint16_t wx, uint16_t wy) {
 /* Read out one live ping. `index` walks 0..LV_MAX_PINGS-1 from the oldest
  * slot, so drawing in order puts the newest on top; a slot that is empty,
  * expired or (after a rewind) still in the future returns false and the
- * caller moves on. ageMs is measured on the playback clock. */
-bool lv_screenGetPing(int index, BYTE *kind, uint16_t *worldX,
+ * caller moves on. ageMs is measured on the playback clock. `sender` is the
+ * slot that sent it, which is how the drawer names the marker. */
+bool lv_screenGetPing(int index, BYTE *sender, BYTE *kind, uint16_t *worldX,
                       uint16_t *worldY, uint32_t *ageMs) {
   const lvPing *p;
   uint32_t at;
@@ -173,6 +174,7 @@ bool lv_screenGetPing(int index, BYTE *kind, uint16_t *worldX,
   at = p->timeMs - 1;
   if (g_lv->timeRunning < at) return FALSE;
   if (g_lv->timeRunning - at >= (uint32_t)PING_DISPLAY_MS) return FALSE;
+  if (sender) *sender = p->sender;
   if (kind)   *kind   = p->kind;
   if (worldX) *worldX = p->worldX;
   if (worldY) *worldY = p->worldY;

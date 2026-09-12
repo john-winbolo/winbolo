@@ -134,14 +134,19 @@ struct ServerEntry {
     bool hasRichInfo;    /* false for a legacy 76-byte server that can't report
                           * the flags/counts/md5 fields; gates the rich-only
                           * lines in the detail pane. */
-    /* Server visibility rules. Defaults (pill always, base off, ally
-     * always, classic mode and allies in trees off) for a server whose
-     * advertisement doesn't carry them. */
+    /* Server visibility rules. An advertisement that doesn't carry them
+     * predates them, so it reads as the behaviour of the day: pill
+     * always, base off, ally always, classic mode and allies in trees
+     * off, the expanded overview window with nothing blocking sight.
+     * That back-compatibility reading is not what an unconfigured
+     * server runs today - see viewPolicyTag below. */
     ViewPolicy pillView;
     ViewPolicy baseView;
     ViewPolicy allyView;
     bool classicMode;
     bool alliesInTrees;
+    uint8_t overviewWindow;
+    uint8_t lineOfSight;
     /* Voice the server forwards. Unlike the fields above this one has a
      * true answer for a server that says nothing: both wires define an
      * absent value as serverVoiceOn. */
@@ -152,7 +157,15 @@ struct ServerEntry {
 /* Compact "Views:" tag for the detail pane. Lists only the categories
  * that differ from the defaults, so a stock server shows nothing at
  * all. Classic mode leads the list because it explains the policies
- * that follow it. Returns "" when the server is stock. */
+ * that follow it. Returns "" when the server is stock.
+ *
+ * The values compared against here are the rules a current unconfigured
+ * server runs — the VIEW_POLICY_STOCK_* / OVERVIEW_WINDOW_STOCK /
+ * LINE_OF_SIGHT_STOCK set, meaning A in view_policy.h. That is
+ * deliberately not the same set as the back-compatibility reading an
+ * advertisement missing the rules gets (meaning B; see ServerEntry
+ * above). A server old enough to leave them out really does play
+ * differently from a stock one, so it gets tagged. */
 static std::string viewPolicyTag(const ServerEntry &e) {
     /* Same four policy words the lobby, the hosting tab and the game info
      * panel use, so one server's rules read the same wherever they show. */
@@ -162,10 +175,10 @@ static std::string viewPolicyTag(const ServerEntry &e) {
         langGetText(STR_DLGLOBBY_VIEW_DECAY),
         langGetText(STR_DLGLOBBY_VIEW_OFF),
     };
-    struct { const char *letter; ViewPolicy value; ViewPolicy def; } cats[] = {
-        { "P", e.pillView, viewPolicyAlways },
-        { "B", e.baseView, viewPolicyOff    },
-        { "A", e.allyView, viewPolicyAlways },
+    struct { const char *letter; ViewPolicy value; ViewPolicy stock; } cats[] = {
+        { "P", e.pillView, VIEW_POLICY_STOCK_PILL },
+        { "B", e.baseView, VIEW_POLICY_STOCK_BASE },
+        { "A", e.allyView, VIEW_POLICY_STOCK_ALLY },
     };
     std::string out;
     if (e.classicMode) {
@@ -175,8 +188,26 @@ static std::string viewPolicyTag(const ServerEntry &e) {
         if (!out.empty()) out += " ";
         out += langGetText(STR_DLGBROWSER_VIEWS_ALLYTREES);
     }
+    /* The overview window and line of sight are server-wide rules like
+     * the two above rather than per-category, so they sit with them.
+     * Only a value away from stock is worth a tag: an unconfigured
+     * server runs OVERVIEW_WINDOW_STOCK with LINE_OF_SIGHT_STOCK. Each
+     * test names the other value outright rather than saying "not the
+     * stock one", because the string it prints names that value too —
+     * the two have to move together. The window is prefixed to
+     * match the P=/B=/A= form the categories below use, since a bare
+     * "Expanded" in a list of tags names no setting in particular. */
+    if (e.overviewWindow == (uint8_t)overviewWindowExpanded) {
+        if (!out.empty()) out += " ";
+        out += "W=";
+        out += langGetText(STR_DLGLOBBY_WINDOW_EXPANDED);
+    }
+    if (e.lineOfSight != (uint8_t)lineOfSightOff) {
+        if (!out.empty()) out += " ";
+        out += langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB);
+    }
     for (const auto &c : cats) {
-        if (c.value == c.def) continue;
+        if (c.value == c.stock) continue;
         int idx = (int)c.value;
         if (idx < 0 || idx > 3) continue;
         if (!out.empty()) out += " ";
@@ -238,6 +269,8 @@ struct PingResult {
     ViewPolicy allyView;
     bool classicMode;
     bool alliesInTrees;
+    uint8_t overviewWindow;
+    uint8_t lineOfSight;
     ServerVoiceMode voiceMode;
 };
 
@@ -313,11 +346,16 @@ static PingResult pingServer(const PingWork &work) {
     res.numBots = 0;
     res.timeLimit = 0;
     res.hasRichInfo = false;
+    /* What a server that answers with no view rules is read as —
+     * meaning B in view_policy.h, deliberately not the
+     * VIEW_POLICY_STOCK_* set the tag above compares against. */
     res.pillView = viewPolicyAlways;
     res.baseView = viewPolicyOff;
     res.allyView = viewPolicyAlways;
     res.classicMode = false;
     res.alliesInTrees = false;
+    res.overviewWindow = (uint8_t)overviewWindowExpanded;
+    res.lineOfSight = (uint8_t)lineOfSightOff;
     res.voiceMode = serverVoiceOn;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
@@ -346,6 +384,8 @@ static PingResult pingServer(const PingWork &work) {
         res.allyView        = dpr.allyView;
         res.classicMode     = dpr.classicMode;
         res.alliesInTrees   = dpr.alliesInTrees;
+        res.overviewWindow  = dpr.overviewWindow;
+        res.lineOfSight     = dpr.lineOfSight;
         res.voiceMode       = dpr.voiceMode;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
@@ -469,6 +509,8 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.allyView        = src->allyView;
     e.classicMode     = src->classicMode;
     e.alliesInTrees   = src->alliesInTrees;
+    e.overviewWindow  = src->overviewWindow;
+    e.lineOfSight     = src->lineOfSight;
     e.voiceMode       = src->voiceMode;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
@@ -789,6 +831,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.allyView = (ViewPolicy)w.allyView;
                         e.classicMode = w.classicMode;
                         e.alliesInTrees = w.alliesInTrees;
+                        e.overviewWindow = (uint8_t)w.overviewWindow;
+                        e.lineOfSight = (uint8_t)w.lineOfSight;
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
 
                         e.players.clear();
@@ -903,6 +947,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].allyView        = pr.allyView;
                         servers[pr.index].classicMode     = pr.classicMode;
                         servers[pr.index].alliesInTrees   = pr.alliesInTrees;
+                        servers[pr.index].overviewWindow  = pr.overviewWindow;
+                        servers[pr.index].lineOfSight     = pr.lineOfSight;
                         servers[pr.index].voiceMode       = pr.voiceMode;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));

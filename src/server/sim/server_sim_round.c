@@ -83,6 +83,8 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         }
         sim->classicMode         = sim->originalLobbySettings.classicMode;
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
+        sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
+        sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who
@@ -483,6 +485,8 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.allyView        = (BYTE)sim->viewPolicy[viewCategoryAlly];
     info.classicMode     = sim->classicMode;
     info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
+    info.overviewWindow  = serverSimGetOverviewWindow(sim);
+    info.lineOfSight     = serverSimGetLineOfSight(sim);
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
     info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);
@@ -1071,7 +1075,17 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
     }
     if (numConnected == 0) return;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i]) {
+            /* Disarm a slot nobody is in, rather than leaving whatever the
+             * last round put there. basesUpdate treats every timer that is
+             * not the off sentinel as a live restock cycle, so a slot armed
+             * for a player who has since left goes on restocking every base
+             * for the rest of the server's life. Skipping these was how a
+             * server that once held eight players kept refuelling at eight
+             * players' rate for a two-player game. */
+            basesRemoveTimer(&sim->sim, (int)i);
+            continue;
+        }
         sim->sim.baseTimer[i] = (sim->sim.rules.base_regen_ticks * (orderIdx + 1)) / numConnected;
         orderIdx++;
     }

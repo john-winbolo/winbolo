@@ -9,11 +9,19 @@
  *Purpose:
  *  Where the marker for an off-screen ping goes: the point
  *  at which the straight line from the viewer's tank to the
- *  ping leaves the game rectangle, and the short bar laid
- *  along that border so it reads as "over there".
+ *  ping leaves the game rectangle, the bar laid along that
+ *  border so it reads as "over there", how big that bar is
+ *  for a ping that far away, and where the sender's name sits
+ *  beside it.
  *
  *  Split out with no SDL and no ImGui so the four edges, the
  *  corner and the on-screen case can be tested directly.
+ *
+ *  The sizes the callers feed in (bar length, icon size, the
+ *  air between them) are knobs in src/gui/ping_kinds.h, which
+ *  this header deliberately does not include: everything here
+ *  is a pure function of its arguments, so a test can drive it
+ *  with the real knobs or with round numbers of its own.
  *
  *  Screen axes: x right, y DOWN.
  *********************************************************/
@@ -21,6 +29,7 @@
 #ifndef WINBOLO_PING_EDGE_H
 #define WINBOLO_PING_EDGE_H
 
+#include <math.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -187,6 +196,131 @@ static inline bool pingEdgeMarker(float rx, float ry, float rw, float rh,
     out->cx = (out->x0 + out->x1) * 0.5f;
     out->cy = (out->y0 + out->y1) * 0.5f;
     out->side = side;
+    return true;
+}
+
+/* How big the off-screen marker for a ping `distTiles` map squares away
+ * should be, as 0..1 — 1 at nearTiles or closer, 0 at farTiles or beyond.
+ *
+ * Not a straight ramp: the fraction follows 1 - sqrt(u) of the way between
+ * the two distances, so the bar loses most of its length in the first stretch
+ * past the near distance and then flattens out. A ping twenty squares off and
+ * one forty squares off are both "a long way", and what the player wants told
+ * apart is the teammate at the edge of the view from the one across the map.
+ *
+ * A near/far pair the wrong way round or equal returns 1 rather than dividing
+ * by nothing: a marker at full size is a worse look than no marker, not a
+ * crash. */
+static inline float pingEdgeSizeFactor(float distTiles, float nearTiles,
+                                       float farTiles) {
+    float u;
+    if (!(farTiles > nearTiles)) return 1.0f;
+    if (distTiles <= nearTiles) return 1.0f;
+    if (distTiles >= farTiles)  return 0.0f;
+    u = (distTiles - nearTiles) / (farTiles - nearTiles);
+    return 1.0f - sqrtf(u);
+}
+
+/* A size in pixels for that fraction: minPx at 0, maxPx at 1. Kept separate
+ * from the fraction so the bar and the icon on it shrink together off one
+ * distance instead of each deriving their own. */
+static inline float pingEdgeSizeFor(float factor, float minPx, float maxPx) {
+    if (factor < 0.0f) factor = 0.0f;
+    if (factor > 1.0f) factor = 1.0f;
+    return minPx + (maxPx - minPx) * factor;
+}
+
+/* Where the icon on an edge bar goes: the bar's midpoint stepped in off the
+ * border, far enough that the icon clears the bar itself — half the bar's
+ * thickness, half the icon, and `gapPx` of air between the two. */
+static inline void pingEdgeIconCentre(const PingEdgeMarker *m, float thickness,
+                                      float iconPx, float gapPx,
+                                      float *outX, float *outY) {
+    float step = thickness * 0.5f + iconPx * 0.5f + gapPx;
+    float x, y;
+    if (m == NULL) return;
+    x = m->cx;
+    y = m->cy;
+    if (m->side == PING_EDGE_LEFT)   x += step;
+    if (m->side == PING_EDGE_RIGHT)  x -= step;
+    if (m->side == PING_EDGE_TOP)    y += step;
+    if (m->side == PING_EDGE_BOTTOM) y -= step;
+    if (outX) *outX = x;
+    if (outY) *outY = y;
+}
+
+/* The top-left corner of the sender's name beside an edge marker. */
+typedef struct {
+    float x, y;
+    /* The rectangle moved the box from where the side asked for it — a bar
+     * near a corner, or a name wider than the room beside it. Reported for a
+     * caller that wants to know; the position is usable either way. */
+    bool  clamped;
+} PingEdgeNameBox;
+
+/* Place a name of `textW` x `textH` against the icon at (iconCx, iconCy),
+ * always on the inside of the rectangle:
+ *
+ *   top border    - under the icon, centred on it
+ *   bottom border - above the icon, centred on it
+ *   left border   - to the right of the icon, on its centre line
+ *   right border  - to the left of the icon, on its centre line
+ *
+ * so the text always runs away from the border rather than off it. It is then
+ * clamped into the rectangle, which is what a bar in a corner needs: the bar
+ * itself is already slid flush into the corner, and a name centred under it
+ * would hang past the end.
+ *
+ * The name is the point of the whole indicator — knowing WHO is on their way
+ * without finding them on the map — so it is not scaled with the distance the
+ * bar is: the caller passes the size it renders at and gets it placed.
+ *
+ * Returns false, with nothing written, for a degenerate rectangle or no out;
+ * the position is still written (clamped as best it can be) when the text is
+ * simply wider or taller than the rectangle. */
+static inline bool pingEdgeNameAnchor(PingEdgeSide side,
+                                      float iconCx, float iconCy,
+                                      float iconPx, float gapPx,
+                                      float textW, float textH,
+                                      float rx, float ry, float rw, float rh,
+                                      PingEdgeNameBox *out) {
+    float x, y, loX, hiX, loY, hiY;
+    float step = iconPx * 0.5f + gapPx;
+
+    if (out == NULL || rw <= 0.0f || rh <= 0.0f) return false;
+
+    switch (side) {
+    case PING_EDGE_TOP:
+        x = iconCx - textW * 0.5f;
+        y = iconCy + step;
+        break;
+    case PING_EDGE_BOTTOM:
+        x = iconCx - textW * 0.5f;
+        y = iconCy - step - textH;
+        break;
+    case PING_EDGE_RIGHT:
+        x = iconCx - step - textW;
+        y = iconCy - textH * 0.5f;
+        break;
+    default:   /* PING_EDGE_LEFT */
+        x = iconCx + step;
+        y = iconCy - textH * 0.5f;
+        break;
+    }
+
+    loX = rx;
+    hiX = rx + rw - textW;
+    loY = ry;
+    hiY = ry + rh - textH;
+    out->clamped = false;
+    /* hi below lo means the text does not fit that way at all; pin it to the
+     * near corner so at least its start is readable. */
+    if (x > hiX) { x = hiX; out->clamped = true; }
+    if (x < loX) { x = loX; out->clamped = true; }
+    if (y > hiY) { y = hiY; out->clamped = true; }
+    if (y < loY) { y = loY; out->clamped = true; }
+    out->x = x;
+    out->y = y;
     return true;
 }
 

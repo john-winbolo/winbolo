@@ -1556,6 +1556,15 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                          pflags,
                                          clientSimGetLobbySlot(cs, (BYTE)(i))->clientType,
                                          "", false);
+                        /* Smart-ping mute toggle, beside the voice cell.
+                         * Independent of voice, so drawn whether or not
+                         * WINBOLO_VOICE is compiled in. The SameLine that
+                         * keeps the next item on the row is unconditional to
+                         * match — without it, a non-voice build would wrap the
+                         * name onto the next row. */
+                        renderPlayerPingMuteCell(cs, i, isSelf,
+                                                 (float)LOBBY_WBN_ICON_SIZE);
+                        ImGui::SameLine();
 #if defined(WINBOLO_VOICE)
                         /* Voice state and the mute toggle. Lobby voice
                          * is all-talk, so this shows for every player. The

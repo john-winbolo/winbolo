@@ -140,11 +140,13 @@ int run_entity_sync_codec_roundtrip(void) {
     {
         ControlEncodeBodyFn enc =
             transportControlCodecBodyEncoder(CTRL_ENTITY_SYNC);
-        uint8_t small[ES_BODY_LEN - 1];
+        /* Not "small": the Windows SDK's rpcndr.h defines that as char,
+           so the declaration preprocesses to "uint8_t char[...]". */
+        uint8_t tooSmall[ES_BODY_LEN - 1];
         size_t outLen = 0;
         UT_ASSERT(enc != NULL);
         esMasks(&in, 0x0F0Fu, 0, 0);
-        UT_ASSERT(enc(&in, NULL, small, sizeof(small), &outLen)
+        UT_ASSERT(enc(&in, NULL, tooSmall, sizeof(tooSmall), &outLen)
                   == ENCODE_OVERFLOW);
     }
     return 0;

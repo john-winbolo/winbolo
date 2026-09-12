@@ -17,14 +17,15 @@
  * Purpose:       How dark the map overview draws each square,
  *                given the regions the player can see this
  *                instant: one byte per square, clear inside a
- *                live region and rising to full fog over the
- *                few squares outside one.
+ *                live region and full fog outside one.
  *
  *                The renderer hands the whole mask to the GPU
- *                as a 256x256 texture stretched over the map,
- *                so bilinear filtering shades between the
- *                bytes and the fade comes out smooth at every
- *                zoom instead of stepping square by square.
+ *                as a square texture stretched over the map and
+ *                samples it nearest, so the boundary lands where
+ *                the mask puts it at every zoom. Every rule here
+ *                answers per square, so the texture is one texel
+ *                to a square and the edges land on square
+ *                boundaries.
  *
  *                Pure state in, bytes out — no SDL, so it
  *                compiles into the unit-test binary the way
@@ -42,35 +43,53 @@
 
 #include "types.h"          /* BYTE, MAP_ARRAY_SIZE */
 #include "overview_types.h" /* OverviewRect */
+#include "fog_look.h"       /* FOG_LOOK_ALPHA — shared with the classic view */
 
 /* Fog over ground the player is not looking at, as an alpha blended over the
- * terrain. 145 leaves 110/255 of the colour through, which is the multiply
- * the two-pass renderer used to dim remembered squares with. */
-#define OVERVIEW_FOG_ALPHA 145
+ * terrain. The mask this file builds carries that alpha per square, so full
+ * fog here is whatever the shared look says it is and the classic view washes
+ * its own tiles by the same amount. */
+#define OVERVIEW_FOG_ALPHA FOG_LOOK_ALPHA
 
-/* Squares the fade takes to go from clear to that. The ramp lies entirely
- * outside the live region: a live square is always fully clear, so full
- * brightness still means "the client has this square live" and the softening
- * spends itself on remembered ground. */
-#define OVERVIEW_FOG_RAMP 3
+/* Squares the fade takes to reach that, counted outside the live region. At 0
+ * a region's edge is its edge: a square the region covers is lit to the
+ * region's alpha, the square beside it carries full fog, and there is nothing
+ * in between. Put it back to 3 for the fade that spread over three squares of
+ * remembered ground outside every region. */
+#define OVERVIEW_FOG_RAMP 0
 
-/* Row-major — mask[y * MAP_ARRAY_SIZE + x] — because that is the order a
- * texture's rows want it in. */
-#define OVERVIEW_FOG_MASK_BYTES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
+/* The mask is square and row-major — mask[y * OVERVIEW_FOG_MASK_SIDE + x] —
+ * because that is the order a texture's rows want it in, and one texel covers
+ * one map square. 256x256, so 64 KB of mask and 256 KB written into the
+ * texture on each upload. */
+#define OVERVIEW_FOG_MASK_SIDE  MAP_ARRAY_SIZE
+#define OVERVIEW_FOG_MASK_BYTES (OVERVIEW_FOG_MASK_SIDE * OVERVIEW_FOG_MASK_SIDE)
+
+/* One byte per map square, row-major over the map — the shape dark is handed
+ * in, which is the same shape as the mask itself. */
+#define OVERVIEW_FOG_SQUARE_BYTES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Writes OVERVIEW_FOG_MASK_BYTES bytes: 0 for a square inside any of the
- * `liveCount` regions, OVERVIEW_FOG_ALPHA for one more than OVERVIEW_FOG_RAMP
- * squares away from all of them, and a smoothstep of the Euclidean distance to
- * the nearest region in between — which is what rounds the corners the regions
- * are square at. A region's alpha scales its brightness: 255 gives the values
- * above, a lower one lifts every square it covers less far out of the fog, and
- * 0 reads as if the region were not in the list. No live regions at all is a
- * legitimate call and fogs the whole map. */
-void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask);
+ * `liveCount` regions and OVERVIEW_FOG_ALPHA for a square outside every one of
+ * them. With OVERVIEW_FOG_RAMP at 0 there is nothing in between; a ramp of more
+ * than 0 puts a smoothstep of the Euclidean distance to the nearest region over
+ * that many squares outside it, which rounds the corners the regions are square
+ * at. A region's alpha scales its brightness: 255 gives the values above, a
+ * lower one lifts every square it covers less far out of the fog, and 0 reads
+ * as if the region were not in the list. No live regions at all is a legitimate
+ * call and fogs the whole map.
+ *
+ * dark is OVERVIEW_FOG_SQUARE_BYTES, row-major over the map, and darkens rather
+ * than lights: the darkest answer wins, so a square it names is fogged whatever
+ * a region has said about it. It is what covers ground inside a region the
+ * player cannot see into - behind a building, with line of sight on - and NULL
+ * is no such ground, which gives the mask the regions alone produce. */
+void overviewFogBuildMask(const OverviewRect *live, int liveCount,
+                          const BYTE *dark, BYTE *mask);
 
 #ifdef __cplusplus
 }

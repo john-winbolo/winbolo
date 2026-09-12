@@ -742,11 +742,11 @@ void serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v) {
     if (sim) sim->firstJoinerBecomesHost = v;
 }
 
-uint16_t serverSimGetServerLocks(const ServerSim *sim) {
+uint32_t serverSimGetServerLocks(const ServerSim *sim) {
     return sim ? sim->serverLocks : 0;
 }
 
-uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
+uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
     switch (lstSettingType) {
         case LST_GAME_TYPE:         return LOBBY_LOCK_GAME_TYPE;
         case LST_HIDDEN_MINES:      return LOBBY_LOCK_MINES;
@@ -760,31 +760,35 @@ uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
         case LST_CLASSIC_MODE:      return LOBBY_LOCK_CLASSIC_MODE;
         case LST_ALLIES_IN_TREES:   return LOBBY_LOCK_ALLIES_IN_TREES;
-        default:                    return 0xFFFFu;  /* unknown setting */
+        case LST_OVERVIEW_WINDOW:   return LOBBY_LOCK_OVERVIEW_WINDOW;
+        case LST_LINE_OF_SIGHT:     return LOBBY_LOCK_LINE_OF_SIGHT;
+        default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
 
 bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
     if (sim == NULL) return false;
-    uint16_t bit = serverSimGetSettingLockBit(lstSettingType);
-    if (bit == 0u || bit == 0xFFFFu) return false;
+    uint32_t bit = serverSimGetSettingLockBit(lstSettingType);
+    if (bit == 0u || bit == 0xFFFFFFFFu) return false;
     return (sim->serverLocks & bit) != 0u;
 }
 
-uint16_t serverSimAddImpliedLocks(uint16_t locks) {
-    /* Turning classic mode on writes the three view policies and allies
-     * in trees (serverSimSetClassicMode), so leaving the checkbox
-     * editable while any of those four is locked would let a host change
-     * a locked value with one tick — and the value does not come back,
-     * because turning classic mode off leaves all four where classic
-     * mode put them. Locking any of the four locks classic mode too.
+uint32_t serverSimAddImpliedLocks(uint32_t locks) {
+    /* Turning classic mode on writes the three view policies, allies in
+     * trees, the overview window and line of sight
+     * (serverSimSetClassicMode), so leaving the checkbox editable while
+     * any of those six is locked would let a host change a locked value
+     * with one tick — and the value does not come back, because turning
+     * classic mode off leaves all six where classic mode put them.
+     * Locking any of the six locks classic mode too.
      *
      * Deliberately decided from the mask alone rather than from the
      * current values: the mask is fixed at startup, so the host sees a
      * checkbox that is either always available or always locked, rather
      * than one that appears and disappears as other settings move. */
     if (locks & (LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
-                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES)) {
+                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES |
+                 LOBBY_LOCK_OVERVIEW_WINDOW | LOBBY_LOCK_LINE_OF_SIGHT)) {
         locks |= LOBBY_LOCK_CLASSIC_MODE;
     }
     return locks;
@@ -805,6 +809,10 @@ void serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
     sim->viewDecaySecs[cat] = decaySecs;
 }
 
+/* The NULL-sim and out-of-range answers here, and in the two window /
+ * sight getters below, are meaning B in view_policy.h: what a reader
+ * assumes of a sender that named no policy, not what a sim starts on.
+ * They must not become the VIEW_POLICY_STOCK_* set. */
 ViewPolicy serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat) {
     if (sim == NULL) return viewPolicyAlways;
     if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return viewPolicyAlways;
@@ -818,7 +826,12 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
         /* Write the three classic values straight through the view-policy
          * setter, so the command-line switch and the lobby setting both
          * get the same result. Each category keeps its own decay seconds
-         * so the host's value survives a trip through classic mode. */
+         * so the host's value survives a trip through classic mode.
+         *
+         * These are classic mode's own set, spelled out on purpose. They
+         * match the VIEW_POLICY_STOCK_* set today, but they are a
+         * different statement — moving what a stock server runs must not
+         * silently redefine what classic mode means. */
         serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyKey,
                                sim->viewDecaySecs[viewCategoryPill]);
         serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff,
@@ -827,6 +840,10 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryAlly]);
         /* Classic mode hides allies in trees, so it owns this value too. */
         serverSimSetAlliesInTrees(sim, false);
+        /* Classic mode is the classic overview too: the narrow window,
+         * with nothing blocking sight inside it. */
+        serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowClassic);
+        serverSimSetLineOfSight(sim, (uint8_t)lineOfSightOff);
     }
 }
 
@@ -841,6 +858,26 @@ void serverSimSetAlliesInTrees(ServerSim *sim, bool on) {
 
 bool serverSimGetAlliesInTrees(const ServerSim *sim) {
     return sim ? sim->alliesInTrees : false;
+}
+
+void serverSimSetOverviewWindow(ServerSim *sim, uint8_t window) {
+    if (sim == NULL) return;
+    if (window >= (uint8_t)OVERVIEW_WINDOW_COUNT) return;
+    sim->overviewWindow = window;
+}
+
+uint8_t serverSimGetOverviewWindow(const ServerSim *sim) {
+    return sim ? sim->overviewWindow : (uint8_t)overviewWindowExpanded;
+}
+
+void serverSimSetLineOfSight(ServerSim *sim, uint8_t mode) {
+    if (sim == NULL) return;
+    if (mode >= (uint8_t)LINE_OF_SIGHT_COUNT) return;
+    sim->lineOfSight = mode;
+}
+
+uint8_t serverSimGetLineOfSight(const ServerSim *sim) {
+    return sim ? sim->lineOfSight : (uint8_t)lineOfSightOff;
 }
 
 void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {
@@ -912,7 +949,7 @@ void serverSimSetState(ServerSim *sim, ServerState s) {
     if (sim) sim->state = s;
 }
 
-void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
+void serverSimSetServerLocks(ServerSim *sim, uint32_t locks) {
     if (sim) sim->serverLocks = serverSimAddImpliedLocks(locks);
 }
 

@@ -3399,6 +3399,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_settings.c
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
+    tests/unit/test_fog_settings.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
@@ -3443,6 +3444,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_maprotate_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
+    tests/unit/test_base_refuel_timers.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
@@ -3493,6 +3495,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_sight.c
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
@@ -3558,6 +3561,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # mDNS discovery: unicast-loopback round-trip through the real advertiser
     # builder + browser parse path (no multicast socket).
     tests/unit/test_mdns_discovery.c
+    tests/unit/test_mdns_view_txt.c
     # Wire-codec corpus: the tap sink, the fast differential test (reads
     # committed fixtures), and the on-demand capture generator (uses the
     # loopback harness above).
@@ -4159,6 +4163,11 @@ set(_unit_test_names
     classic_mode_lobby_reset
     allies_in_trees_defaults
     allies_in_trees_classic_mode
+    fog_settings_defaults
+    fog_settings_classic_mode_preset
+    fog_settings_lock_implied
+    fog_settings_lobby_edits
+    fog_settings_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
     upload_cap_enforced
@@ -4457,6 +4466,7 @@ set(_unit_test_names
     overview_decay_mirror
     overview_decay_view_exit
     overview_policy_baseline
+    overview_policy_pills_and_allies
     overview_policy_categories
     overview_policy_decay
     overview_loopback
@@ -4464,6 +4474,7 @@ set(_unit_test_names
     overview_scroll
     overview_fog
     overview_hud_layout
+    sight
     overview_dead_tank
     overview_entities
     overview_removed_item_has_no_region
@@ -4636,22 +4647,31 @@ set(_unit_test_names
     ping_pie_slices
     ping_edge_sides
     ping_edge_corner
+    ping_edge_size_from_distance
+    ping_edge_name_anchor
     ping_rect_inset
     ping_event_wire
+    ping_sound_fallback
+    ping_name_truncate
     ping_dispatch_accepts_and_builds_event
     ping_dispatch_rejects_lobby
     ping_dispatch_rejects_empty_slot_and_out_of_range
     ping_dispatch_map_range_bound
     ping_dispatch_rejects_bad_kind
     ping_dispatch_rate_limit
+    ping_dispatch_spam_30s_window
     ping_dispatch_new_round_clears_rate_limit
     ping_reaches_team_only
+    ping_mute_relay_skip
+    ping_mute_client_mirror_cleared_on_leave
+    ping_sender_name_empty_for_unused_slot
     ping_network
     lang_name_table
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
     mdns_discovery
+    mdns_view_txt_roundtrip
     client_type_matches_platform
     client_type_name_round_trips
     map_load_clamps_base_fields
@@ -4707,6 +4727,8 @@ set(_unit_test_names
     claim_resolve_free_ignores_holder_flag
     claim_resolve_unverified_preempts
     claim_resolve_verified_keeps_temp
+    base_timer_cleared_on_leave
+    base_timer_not_inherited_next_round
     autolock_locks_on_start_inplace
     autolock_locks_on_start_wire
     autolock_join_blocked_after_start

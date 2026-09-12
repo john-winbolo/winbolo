@@ -49,12 +49,33 @@ bool serverSimPingReachesClient(ServerSim *sim, BYTE recipient, BYTE sender) {
     if (sim == NULL) return false;
     if (recipient >= MAX_TANKS || sender >= MAX_TANKS) return false;
     if (recipient == sender) return true;
+    /* The recipient has muted this sender's pings. Checked after the own-copy
+     * short-circuit above, so a player always sees their own ping even while
+     * others have muted them, and before the team/ally rules below so a muted
+     * teammate is dropped exactly as a muted voice/chat line is. A player
+     * cannot mute itself (the dispatch arm rejects it), so this never fires on
+     * recipient == sender in any case. */
+    if ((sim->pingMuteMask[recipient] & ((PlayerBitMap)1u << sender)) != 0) {
+        return false;
+    }
     if (playersIsAllie(&sim->sim.plyrs, recipient, sender)) return true;
     sLp = serverSimGetLobbyPlayer(sim, sender);
     rLp = serverSimGetLobbyPlayer(sim, recipient);
     if (sLp == NULL || rLp == NULL) return false;
     if (sLp->teamNumber == 0) return false;
     return sLp->teamNumber == rLp->teamNumber;
+}
+
+void serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,
+                          bool muted) {
+    if (sim == NULL || muterSlot >= MAX_TANKS || targetPlayer >= MAX_TANKS) {
+        return;
+    }
+    if (muted) {
+        sim->pingMuteMask[muterSlot] |= (PlayerBitMap)1u << targetPlayer;
+    } else {
+        sim->pingMuteMask[muterSlot] &= ~((PlayerBitMap)1u << targetPlayer);
+    }
 }
 
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
@@ -266,6 +287,8 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
     evt->u.lobbySettings.lobbyAlliesInTrees = sim->alliesInTrees;
     evt->u.lobbySettings.voiceMode = sim->voiceMode;
+    evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
+    evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -1058,7 +1081,7 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
                      evt->u.playerJoin.name);
         } else if (evt->type == CTRL_LOBBY_SETTINGS) {
             snprintf(extra, sizeof(extra),
-                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%04x]",
+                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%08x]",
                      evt->u.lobbySettings.mapName,
                      (int)evt->u.lobbySettings.lobbyGameType,
                      (int)evt->u.lobbySettings.lobbyHiddenMines,

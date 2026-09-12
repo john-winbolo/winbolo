@@ -83,6 +83,7 @@ add_library(bolo_static STATIC
     scroll.c
     scroll_item_list.c
     shells.c
+    sight.c
     sim_rules.c
     sounddist.c
     spectator_ring.c
