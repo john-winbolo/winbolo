@@ -64,6 +64,7 @@
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
 #include "wire_limits.h"
+#include "../scenario/scenario_host.h"
 #include "cJSON.h"
 
 /* Constants previously from backend.h */
@@ -1169,6 +1170,11 @@ int main(int argc, char **argv) {
   int32_t gmeLen;
   char pass[FILENAME_MAX]; /* Password */
   char mapName[2048];
+  /* The map file a scenario sidecar would sit beside, for the two start
+     paths that have one. -inbuilt and -randommap have no file on disk, so
+     they carry no scenario. */
+  char scenarioMapPath[2048] = "";
+  ScenarioHost *scenarioHost = NULL;
   aiType ai; /* Should we allow ai */
   /* Tracker stuff */
   char trackerAddr[FILENAME_MAX];
@@ -1407,7 +1413,11 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    serverSim = serverSimCreate(scannedFiles[bolo_rand_below((uint32_t)scannedCount)], game, hiddenMines, srtDelay, gmeLen);
+    {
+      const char *chosen = scannedFiles[bolo_rand_below((uint32_t)scannedCount)];
+      snprintf(scenarioMapPath, sizeof(scenarioMapPath), "%s", chosen);
+      serverSim = serverSimCreate(chosen, game, hiddenMines, srtDelay, gmeLen);
+    }
     if (serverSim == NULL) {
       int i;
       for (i = 0; i < scannedCount; i++) SDL_free(scannedFiles[i]);
@@ -1421,6 +1431,7 @@ int main(int argc, char **argv) {
     serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount,
                                (const char *)argv[mdArg]);
   } else {
+    snprintf(scenarioMapPath, sizeof(scenarioMapPath), "%s", mapName);
     serverSim = serverSimCreate(mapName, game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation\n");
@@ -1451,6 +1462,23 @@ int main(int argc, char **argv) {
     serverMessageConsoleMessage(serverSim, "Geo lookup database loaded.\n");
   } else {
     serverMessageConsoleMessage(serverSim, "Geo lookup database not found — country codes will be XX.\n");
+  }
+
+  /* A scenario sidecar beside the map, when the map came from a file and one
+     is there. No sidecar is the ordinary case and says nothing; a sidecar
+     that cannot be used says why, and the server runs the map plainly. */
+  if (scenarioMapPath[0] != '\0') {
+    char scenarioErr[512];
+    scenarioHost = scenarioHostAttach(serverSim, scenarioMapPath,
+                                      scenarioErr, sizeof(scenarioErr));
+    if (scenarioHost != NULL) {
+      char line[640];
+      snprintf(line, sizeof(line), "Scenario loaded: %s",
+               scenarioHostName(scenarioHost));
+      serverMessageConsoleMessage(serverSim, line);
+    } else if (scenarioErr[0] != '\0') {
+      serverMessageConsoleMessage(serverSim, scenarioErr);
+    }
   }
 
   useAddr = NULL;
@@ -1941,6 +1969,7 @@ int main(int argc, char **argv) {
     }
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
+      scenarioHostDetach(scenarioHost);
       serverSimDestroy(serverSim);
 #ifdef USING_SDL
       SDL_Quit();
@@ -2340,6 +2369,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Error starting Thread Manager\n");
     threadsDestroy();
     serverInstanceShutdown(serverSim);
+    scenarioHostDetach(scenarioHost);
     serverSimDestroy(serverSim);
 #ifdef USING_SDL
     SDL_Quit();
@@ -2370,6 +2400,7 @@ int main(int argc, char **argv) {
         botWorkerPoolDestroy();
         threadsDestroy();
         serverInstanceShutdown(serverSim);
+        scenarioHostDetach(scenarioHost);
         serverSimDestroy(serverSim);
 #ifdef USING_SDL
         SDL_Quit();
@@ -2422,6 +2453,7 @@ int main(int argc, char **argv) {
   }
   geoLookupDestroy();
   serverSimMapDirDestroy(serverSim);
+  scenarioHostDetach(scenarioHost);
   serverSimDestroy(serverSim);
   if (g_serverTickLock != NULL) {
     SDL_DestroyMutex(g_serverTickLock);

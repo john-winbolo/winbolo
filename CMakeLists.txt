@@ -1387,6 +1387,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
 # server_static and server_sim_static have a circular dependency that
@@ -2059,6 +2060,9 @@ endif()
 
 target_link_libraries(WinBoloDS PRIVATE
     bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides.
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -2456,6 +2460,7 @@ endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
     bolo_static
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -3311,6 +3316,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick registrations beside it, and the flag that keeps the all-ready
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
+    tests/unit/test_scenario_host.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -3979,7 +3985,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
 bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
-    bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+    bolo_static scenario_static ${SERVER_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image
@@ -4976,6 +4982,15 @@ set(_unit_test_names
     scenario_announce_pill_line_written_once
     scenario_announce_vote_line_held
     scenario_announce_loopback_quiet_draws_no_line
+    scenario_host_metadata
+    scenario_host_rules_change_round
+    scenario_host_syntax_error_line
+    scenario_host_unknown_rule_key
+    scenario_host_api_too_new
+    scenario_host_no_sidecar
+    scenario_host_manifest_roundtrip
+    scenario_host_seed_reproducible
+    scenario_host_edit_after_attach
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

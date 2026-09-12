@@ -96,6 +96,7 @@
 #include "../common/prefs.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
+#include "../scenario/scenario_host.h"
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -184,6 +185,7 @@ static ClientSim *humanSim = NULL;
 
 /* Fast mode: local server sim */
 static ServerSim *fastServerSim = NULL;
+static ScenarioHost *scenarioHost = NULL;
 
 /* Scripted command stream (NULL unless --cmd-stdin was supplied). */
 static CmdStdin *cmdStream = NULL;
@@ -2330,6 +2332,20 @@ static int runFastMode(void) {
     return 1;
   }
 
+  /* A scenario sidecar beside the map, if one is there. No sidecar is the
+     ordinary case and says nothing; a sidecar that cannot be used says why,
+     and the run plays the map plainly. */
+  {
+    char scenarioErr[512];
+    scenarioHost = scenarioHostAttach(fastServerSim, optMap,
+                                      scenarioErr, sizeof(scenarioErr));
+    if (scenarioHost != NULL) {
+      fprintf(stderr, "Scenario loaded: %s\n", scenarioHostName(scenarioHost));
+    } else if (scenarioErr[0] != '\0') {
+      fprintf(stderr, "%s\n", scenarioErr);
+    }
+  }
+
   /* Cache compressed map for fast resets */
   {
     BYTE tempMap[MAP_COMPRESSED_MAX_SIZE];
@@ -2337,6 +2353,8 @@ static int runFastMode(void) {
                                                        (int)sizeof(tempMap));
     if (cachedCompressedMapLen <= 0) {
       fprintf(stderr, "Error: failed to compress map\n");
+      scenarioHostDetach(scenarioHost);
+      scenarioHost = NULL;
       serverSimDestroy(fastServerSim);
       fastServerSim = NULL;
       return 1;
@@ -2557,6 +2575,8 @@ cleanup:
   }
   clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
+  scenarioHostDetach(scenarioHost);
+  scenarioHost = NULL;
   serverSimDestroy(fastServerSim);
   fastServerSim = NULL;
   free(cachedCompressedMap);

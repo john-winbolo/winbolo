@@ -2293,6 +2293,16 @@ int run_scenario_announce_pill_line_written_once(void);
 int run_scenario_announce_vote_line_held(void);
 int run_scenario_announce_loopback_quiet_draws_no_line(void);
 
+int run_scenario_host_metadata(void);
+int run_scenario_host_rules_change_round(void);
+int run_scenario_host_syntax_error_line(void);
+int run_scenario_host_unknown_rule_key(void);
+int run_scenario_host_api_too_new(void);
+int run_scenario_host_no_sidecar(void);
+int run_scenario_host_manifest_roundtrip(void);
+int run_scenario_host_seed_reproducible(void);
+int run_scenario_host_edit_after_attach(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */
