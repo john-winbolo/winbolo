@@ -111,6 +111,8 @@ int run_shell_death_rejected_culls_without_impact(void);
 int run_lobby_bot_config_memory_applies(void);
 int run_lobby_bot_config_memory_empty_is_noop(void);
 int run_lobby_bot_config_memory_unknown_key_ignored(void);
+int run_lobby_bot_config_memory_not_honoured(void);
+int run_lobby_bot_config_memory_manual_only(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -631,6 +633,8 @@ int run_scenario_setup_pre_snapshot(void);
 int run_scenario_enemy_roster(void);
 int run_scenario_seeded_round_start(void);
 int run_scenario_lobby_reset_recommit(void);
+int run_scenario_bot_mode_new_bot_defaults(void);
+int run_scenario_seed_ignores_manual_pick(void);
 
 /* Per-slot spawn-loadout override across respawns
  * (test_spawn_loadout_respawn.c): game.spawn_bot(..., "open") arms

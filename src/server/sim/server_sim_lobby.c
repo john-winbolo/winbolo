@@ -137,64 +137,166 @@ static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
     return (path[0] != '\0') ? path : NULL;
 }
 
-/* Remember what the host just picked, as the brain's own key strings, so
- * serverSimApplyLastBotConfig can give it to the next bot added. Called on
- * every config write; a brain with no manifest names no keys, and then there
- * is nothing meaningful to carry forward, so the previous memory stands. */
-static void rememberBotConfig(ServerSim *sim, BYTE slot,
-                              uint8_t mode, uint8_t difficulty) {
+/* ── A newly added bot's brain mode and difficulty ─────────────────────
+ *
+ * Andrew's rule, for Survival: "Hard mode always when the bots first appear
+ * on survival, then if they're removed and one added with Medium or Easy
+ * THEN a Add Bot defaults to what the user has manually added."
+ *
+ * Generalised, every bot a lobby gains resolves its mode and difficulty
+ * (serverSimResolveNewBotConfig) in this order:
+ *
+ *   1. the caller's base — the lobby default, or single player's own
+ *      chosen level;
+ *   2. what the map requires for the bot's side — the scenario's
+ *      bot_mode(game, team) hook; on Survival the horde is survival mode at
+ *      Hard;
+ *   3. what the host last picked BY HAND, when the caller honours it — only
+ *      the difficulty when step 2 fixed the mode (a horde bot stays in
+ *      survival mode, at the Medium the host chose), mode and difficulty
+ *      both otherwise.
+ *
+ * Bots that FIRST APPEAR — the scenario seed, single player's setup bots —
+ * do not honour step 3, so they always come up at the map's default. The
+ * Add Bot button does honour it.
+ *
+ * The manual pick is recorded only where a person made one
+ * (serverSimRememberManualBotPick). It used to be recorded on EVERY config
+ * write, so an automatic one — single player's add path writing its skill
+ * guess — was remembered as though the host had chosen it. */
+
+void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot) {
     BrainModes modes;
     const BrainMode *m;
+    const LobbyBotConfig *bc;
     const char *path = slotBrainPath(sim, slot);
 
     if (path == NULL) return;
     if (!brainListLoadModesForPath(path, &modes)) return;
-    if (mode >= (uint8_t)modes.modeCount) return;
-    m = &modes.modes[mode];
-    if (difficulty >= (uint8_t)m->levelCount) return;
+    bc = &sim->botConfigs[slot];
+    if (bc->mode >= (uint8_t)modes.modeCount) return;
+    m = &modes.modes[bc->mode];
+    if (bc->difficulty >= (uint8_t)m->levelCount) return;
 
     SDL_strlcpy(sim->lastBotModeKey, m->key, sizeof(sim->lastBotModeKey));
-    SDL_strlcpy(sim->lastBotLevelKey, m->levels[difficulty].key,
+    SDL_strlcpy(sim->lastBotLevelKey, m->levels[bc->difficulty].key,
                 sizeof(sim->lastBotLevelKey));
 }
 
-/* Start a newly added bot on the mode and difficulty the host last chose for
- * any bot, rather than the lobby default. Call it IMMEDIATELY BEFORE
- * botManagerAddBot: botManagerStageInitArg reads botConfigs at brain-create
- * time, so a write landing first reaches the brain through the init arg that
- * create already stages, and this publishes nothing at all. That matters --
- * a publish per bot here would add control events to exactly the bursts
- * (a ten-bot seed, a host adding bots quickly) that can overrun a client's
- * reliable-channel window and disconnect them.
- *
- * A no-op until the host picks something, when the remembered keys are ones
- * this bot's brain does not declare, or when it ships no manifest at all. In
- * every one of those cases the slot keeps the ordinary lobby default. */
-void serverSimApplyLastBotConfig(ServerSim *sim, BYTE slot,
-                                 const char *brainPath) {
+bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick,
+                                  uint8_t *ioMode, uint8_t *ioLevel) {
+    char modeKey[BRAIN_MODE_KEY_LEN];
+    char lvlKey[BRAIN_MODE_KEY_LEN];
     BrainModes modes;
-    LobbyBotConfig *bc;
-    int modeIdx;
-    int lvlIdx;
+    int mode;
+    int level;
+    bool mapFixedMode = false;
 
-    if (sim == NULL || slot >= MAX_TANKS) return;
-    if (sim->lastBotModeKey[0] == '\0') return;
-    if (brainPath == NULL || brainPath[0] == '\0') return;
-    if (!brainListLoadModesForPath(brainPath, &modes)) return;
+    if (sim == NULL || ioMode == NULL || ioLevel == NULL) return false;
+    if (brainPath == NULL || brainPath[0] == '\0') return false;
+    /* A brain with no manifest reads no mode=/difficulty= token at all
+     * (botManagerStageInitArg), so there is nothing to resolve. */
+    if (!brainListLoadModesForPath(brainPath, &modes)) return false;
 
-    modeIdx = brainModesFindMode(&modes, sim->lastBotModeKey);
-    if (modeIdx < 0) return;          /* a different brain: no such mode */
-    lvlIdx = modes.modes[modeIdx].defaultLevel;
-    if (sim->lastBotLevelKey[0] != '\0') {
-        int found = brainModeFindLevel(&modes.modes[modeIdx],
-                                       sim->lastBotLevelKey);
-        if (found >= 0) lvlIdx = found;
+    /* 1. The base, clamped into this brain's own lists the same way
+     *    botInitArgAppendModeTokens clamps it. */
+    mode = (int)*ioMode;
+    if (mode >= modes.modeCount) mode = 0;
+    level = (int)*ioLevel;
+    if (level >= modes.modes[mode].levelCount) {
+        level = modes.modes[mode].defaultLevel;
     }
 
-    bc = serverSimGetBotConfigMut(sim, slot);
-    if (bc != NULL) {
-        bc->mode       = (uint8_t)modeIdx;
-        bc->difficulty = (uint8_t)lvlIdx;
+    /* 2. What the map requires for this side. */
+    if (scenarioGetBotModeForTeam(sim, team, modeKey, sizeof modeKey,
+                                  lvlKey, sizeof lvlKey)) {
+        int mi = brainModesFindMode(&modes, modeKey);
+        if (mi < 0) {
+            WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                "scenario: bot_mode named mode '%s' for team %d, which brain "
+                "'%s' does not declare — the bot keeps its base mode",
+                modeKey, team, brainPath);
+        } else {
+            mode  = mi;
+            level = modes.modes[mi].defaultLevel;
+            if (lvlKey[0] != '\0') {
+                int li = brainModeFindLevel(&modes.modes[mi], lvlKey);
+                if (li < 0) {
+                    WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                        "scenario: bot_mode named difficulty '%s' in mode "
+                        "'%s', which brain '%s' does not declare — the bot "
+                        "takes that mode's own default instead",
+                        lvlKey, modeKey, brainPath);
+                } else {
+                    level = li;
+                }
+            }
+            mapFixedMode = true;
+        }
+    }
+
+    /* 3. What the host last picked by hand. */
+    if (honourManualPick && sim->lastBotLevelKey[0] != '\0') {
+        if (mapFixedMode) {
+            int li = brainModeFindLevel(&modes.modes[mode],
+                                        sim->lastBotLevelKey);
+            if (li >= 0) level = li;
+        } else if (sim->lastBotModeKey[0] != '\0') {
+            int mi = brainModesFindMode(&modes, sim->lastBotModeKey);
+            if (mi >= 0) {
+                int li = brainModeFindLevel(&modes.modes[mi],
+                                            sim->lastBotLevelKey);
+                mode  = mi;
+                level = (li >= 0) ? li : modes.modes[mi].defaultLevel;
+            }
+        }
+    }
+
+    *ioMode  = (uint8_t)mode;
+    *ioLevel = (uint8_t)level;
+    return true;
+}
+
+void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick) {
+    uint8_t mode  = 0;
+    uint8_t level = BOT_DIFFICULTY_HARD;
+
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    /* The lobby default is the base, and it is written even when the brain
+     * ships no manifest: botConfigs[slot] still holds whatever the slot's
+     * PREVIOUS occupant had, and a new defender must not inherit a removed
+     * horde bot's survival mode. */
+    serverSimResolveNewBotConfig(sim, team, brainPath, honourManualPick,
+                                 &mode, &level);
+    sim->botConfigs[slot].mode       = mode;
+    sim->botConfigs[slot].difficulty = level;
+    serverSimQueueBotConfigPublish(sim, slot);
+}
+
+/* How many queued bot-config events one lobby tick sends. Ten seeded bots
+ * show their mode within five ticks, a tenth of a second. */
+#define BOT_CONFIG_PUBLISHES_PER_TICK 2
+
+void serverSimQueueBotConfigPublish(ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    sim->botConfigPublishPending |= (uint16_t)(1u << slot);
+}
+
+void serverSimFlushBotConfigPublishes(ServerSim *sim) {
+    int sent = 0;
+    BYTE s;
+    if (sim == NULL || sim->botConfigPublishPending == 0) return;
+    for (s = 0; s < MAX_TANKS && sent < BOT_CONFIG_PUBLISHES_PER_TICK; s++) {
+        uint16_t bit = (uint16_t)(1u << s);
+        if ((sim->botConfigPublishPending & bit) == 0) continue;
+        sim->botConfigPublishPending &= (uint16_t)~bit;
+        if (!sim->playerConnected[s] || !serverSimIsBot(sim, s)) continue;
+        serverSimPublishLobbyBotConfig(sim, s);
+        sent++;
     }
 }
 
@@ -211,80 +313,16 @@ void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
             bc->personality = personality;
         }
     }
-    rememberBotConfig(sim, slot, mode, difficulty);
+    /* The publish just below carries these values, so any queued one for
+     * this slot is now redundant. Deliberately NOT a manual pick: this is
+     * called by automatic paths too — see serverSimRememberManualBotPick. */
+    sim->botConfigPublishPending &= (uint16_t)~(1u << slot);
     if (validatedName != NULL && validatedName[0] != '\0') {
         serverSimRenameBotSlot(sim, slot, validatedName);
     }
     serverSimPublishLobbyBotConfig(sim, slot);
     serverSimPublishLobbySlot(sim, slot);
     lobbyAutoUnreadyOnChange(sim);
-}
-
-/* Give a slot the brain mode/difficulty the active scenario wants for a bot
- * joining `team`, BEFORE that bot's brain is created.
- *
- * This is the quiet half of serverSimSetBotConfig: it writes the config and
- * stops — no PublishLobbyBotConfig, no PublishLobbySlot, no auto-unready.
- * That is the whole point. botManagerStageInitArg reads botConfigs[slot] at
- * brain-create time, inside botManagerAddBot, so a write that lands first
- * reaches the brain as its mode=/difficulty= tokens for free. Publishing
- * here instead would cost three control events per bot, and the Survival
- * seed adds ten bots in one call stack while no ack can be read: the
- * reliable control channel holds CHANNEL_CONTROL_WINDOW (64) unacked events
- * and that seed already spends about forty. Overflowing it disconnects the
- * host. Nothing is lost by the silence — CTRL_LOBBY_SLOT never carried
- * mode/difficulty anyway (serverSimFillLobbySlotEvent), and before this
- * function existed no bot-config event was published on the add path at
- * all, so connected clients see exactly what they saw before.
- *
- * Silently does nothing when there is no scenario, the script names no mode
- * for this team, the brain ships no modes.txt (it reads no such token), or
- * the key is one this brain has never heard of — an unknown key is reported
- * and the slot keeps the lobby default rather than failing the add. */
-void serverSimApplyScenarioBotDefaults(ServerSim *sim, BYTE slot, int team,
-                                       const char *brainPath) {
-    char modeKey[BRAIN_MODE_KEY_LEN];
-    char lvlKey[BRAIN_MODE_KEY_LEN];
-    BrainModes modes;
-    LobbyBotConfig *bc;
-    int modeIdx;
-    int lvlIdx;
-
-    if (sim == NULL || slot >= MAX_TANKS) return;
-    if (brainPath == NULL || brainPath[0] == '\0') return;
-    if (!scenarioGetBotModeForTeam(sim, team, modeKey, sizeof modeKey,
-                                   lvlKey, sizeof lvlKey)) {
-        return;
-    }
-    if (!brainListLoadModesForPath(brainPath, &modes)) return;
-
-    modeIdx = brainModesFindMode(&modes, modeKey);
-    if (modeIdx < 0) {
-        WB_LOG_WARN(WB_LOG_CAT_SERVER,
-            "scenario: bot_mode named mode '%s' for team %d, which brain "
-            "'%s' does not declare — slot %d keeps the lobby default",
-            modeKey, team, brainPath, (int)slot);
-        return;
-    }
-    lvlIdx = modes.modes[modeIdx].defaultLevel;
-    if (lvlKey[0] != '\0') {
-        int found = brainModeFindLevel(&modes.modes[modeIdx], lvlKey);
-        if (found < 0) {
-            WB_LOG_WARN(WB_LOG_CAT_SERVER,
-                "scenario: bot_mode named difficulty '%s' in mode '%s', which "
-                "brain '%s' does not declare — slot %d takes that mode's "
-                "own default instead",
-                lvlKey, modeKey, brainPath, (int)slot);
-        } else {
-            lvlIdx = found;
-        }
-    }
-
-    bc = serverSimGetBotConfigMut(sim, slot);
-    if (bc != NULL) {
-        bc->mode       = (uint8_t)modeIdx;
-        bc->difficulty = (uint8_t)lvlIdx;
-    }
 }
 
 void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx) {

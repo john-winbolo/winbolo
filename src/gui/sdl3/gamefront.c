@@ -85,6 +85,7 @@
 #include "playername_validate.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
+#include "../../server/scenario.h"         /* scenarioIsActive / scenarioGetEnemyBots — a map that fields its own enemy team */
 #include "../../server/server_dedicated_log.h"
 #include "../../winbolonet/winbolonet_client.h"
 #include "../../winbolonet/winbolonet_core.h"
@@ -1665,12 +1666,17 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. */
+        /* TRUE when the one enemy bot below was invented here rather than
+         * configured by the player — the bot loop drops it on a map that
+         * fields its own enemy team (see spSkipAutoOpponent). */
+        bool spAutoOpponent = false;
         if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
           gameFrontBotSetupData.bots[0].teamNumber = 2;
           /* brainPath left empty -> the bot loop falls back to spBrainPath. */
+          spAutoOpponent = true;
         }
         if (strncmp(fileName, "randommap:", 10) == 0) {
           /* Random map — parse seed from "randommap:<seed>" */
@@ -1873,8 +1879,24 @@ bool gameFrontSetDlgState(openingStates newState) {
              * sim via cfg above; here we only need brainPath as a
              * per-bot default for the serverSimCreateBot loop. */
             bool haveBrain = (spBrainPath[0] != '\0');
+            /* The automatic opponent invented above is for a regular game. A
+             * map whose scenario fields its own enemy team has already seeded
+             * that team by now — serverInstanceStartup commits the scenario
+             * before this loop runs — so the invented bot would be a stray:
+             * an extra bot on team 2, created before the map's rules touch it,
+             * at the player's saved difficulty in the default mode. On
+             * Survival it made an 11th horde bot, and the scenario's horde cap
+             * then removed a proper survival bot to make room for it. On such
+             * a map the invented opponent is simply not added, so the horde
+             * is exactly the scenario's own. A bot setup the player configured
+             * is still honoured, and the team, alliance and start passes after
+             * the loop still run — they cover the seeded bots too. */
+            bool spSkipAutoOpponent = spAutoOpponent &&
+                                      scenarioIsActive(spServerSim) &&
+                                      scenarioGetEnemyBots(spServerSim) > 0;
             if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
-              for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
+              for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS &&
+                               !spSkipAutoOpponent; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
                 snprintf(botName, sizeof(botName), "Bot %d", slot);
@@ -1886,9 +1908,17 @@ bool gameFrontSetDlgState(openingStates newState) {
                  * on its very first load. */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
                 if (botBrain[0] == '\0') botBrain = spBrainPath;
-                uint8_t spMode = gameFrontSpBotMode(botBrain);
-                serverSimSetBotConfig(spServerSim, slot, spMode,
-                                      gameFrontSpBotLevel(botBrain, spMode),
+                uint8_t spMode  = gameFrontSpBotMode(botBrain);
+                uint8_t spLevel = gameFrontSpBotLevel(botBrain, spMode);
+                /* Then what the map requires for the side this bot is set
+                 * up on — on Survival the horde is survival mode at Hard.
+                 * These bots are appearing for the first time, so the
+                 * player's manual pick is NOT applied: bots that first appear
+                 * on a scenario map always start at the map's own default. */
+                serverSimResolveNewBotConfig(spServerSim,
+                                             (int)gameFrontBotSetupData.bots[bi].teamNumber,
+                                             botBrain, false, &spMode, &spLevel);
+                serverSimSetBotConfig(spServerSim, slot, spMode, spLevel,
                                       0 /* personality: normal */, NULL);
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy, spGameType, hiddenMines);
                 /* serverSimCreateBot loads the brain from the path but leaves

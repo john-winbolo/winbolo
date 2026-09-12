@@ -874,12 +874,15 @@ void serverSimSeedScenarioEnemyTeam(ServerSim *sim) {
         char botName[64];
         if (sim->playerConnected[slot]) continue;
         lobbyBotPoolPick(poolIdx, used, usedCount, botName, sizeof(botName));
-        /* The script's own default mode for this side, written BEFORE the
-         * brain is created so it rides the init arg instead of costing a
-         * control event per bot (this loop seeds ten of them in one call
-         * stack — see serverSimApplyScenarioBotDefaults). Team 2 is the
-         * enemy side, the same number serverSimSetTeam assigns below. */
-        serverSimApplyScenarioBotDefaults(sim, (BYTE)slot, 2, brain);
+        /* The bots that FIRST APPEAR on a scenario map come up at the map's
+         * own default for their side — survival mode at Hard, on Survival —
+         * whatever the host picked by hand earlier (that pick is for the Add
+         * Bot button afterwards). Written before the add, since the team is
+         * already known, so the brain is created with it. The bot-config
+         * event that shows it in the lobby is queued rather than sent: this
+         * loop seeds ten bots in one call stack while no client ack can be
+         * read, and must not grow that burst. */
+        serverSimApplyNewBotDefaults(sim, (BYTE)slot, 2, brain, FALSE);
         if (!botManagerAddBot(sim, (BYTE)slot, brain, botName,
                               (aiType)serverSimGetBotAiType(sim),
                               gameTypeGet(&sim->sim.game),

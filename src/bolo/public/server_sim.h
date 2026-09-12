@@ -1880,31 +1880,61 @@ void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
 void serverSimSetState(ServerSim *sim, ServerState s);
 void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
 
+/* ── A newly added bot's brain mode and difficulty ─────────────────────
+ *
+ * Every bot a lobby gains — the host's Add Bot, a scenario's own seed,
+ * single player's add and setup paths — resolves its mode and difficulty
+ * through serverSimResolveNewBotConfig, in this order:
+ *
+ *   1. the caller's base (the lobby default, or single player's own
+ *      chosen level);
+ *   2. what the map requires for the bot's side (the scenario's bot_mode
+ *      hook) — on Survival, the horde is survival mode at Hard;
+ *   3. what the host last picked BY HAND, when the caller honours it —
+ *      the difficulty only when step 2 fixed the mode, both otherwise.
+ *
+ * Bots that first appear on a map (the seed, single player's setup bots)
+ * do not honour step 3; the Add Bot button does. See server_sim_lobby.c. */
+
+/* Resolve a new bot's mode and difficulty for `team` on the brain at
+ * `brainPath`. *ioMode / *ioLevel carry the caller's base in and the answer
+ * out. Returns false, leaving both untouched, when the brain ships no
+ * modes.txt. Writes no config and publishes nothing. */
+bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick,
+                                  uint8_t *ioMode, uint8_t *ioLevel);
+
+/* Give a lobby bot joining `team` its mode and difficulty — the lobby
+ * default as the base, then serverSimResolveNewBotConfig — and queue the
+ * bot-config event that shows it in the lobby. Safe before or after the
+ * add: pass the brain the bot runs, since before the add the slot has
+ * none. A lobby brain reloads from this config at round start. */
+void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick);
+
+/* Record the slot's current mode and difficulty as the host's manual pick.
+ * Call it only where a person chose them: CMD_LOBBY_BOT_CONFIG, and only
+ * when that command actually changed the mode or difficulty — the gear
+ * popup sends the same command for renames and personality edits. An
+ * automatic config write must never call it, or the game's own defaults
+ * pass for the host's choice. */
+void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot);
+
+/* Bot-config events waiting to be published, a couple per lobby tick. A
+ * scenario seeds its ten bots in one call stack while no client ack can be
+ * read, and the reliable control channel holds 64 unacked events; queuing
+ * those ten events for the lobby tick keeps the seed's burst exactly as
+ * large as it was. Flush skips slots that are no longer bots. */
+void serverSimQueueBotConfigPublish(ServerSim *sim, BYTE slot);
+void serverSimFlushBotConfigPublishes(ServerSim *sim);
+
 /* Switch a lobby bot to a new brain script. Updates both the
  * per-slot brain-index mirror (serverSimSetBotBrainIdxFor) and the
  * bot manager's live state in a single call — these are always
  * paired at call sites. brainIdx == 0xFF resolves to the
  * CLI-configured default brain. */
-/* Apply the active scenario's `bot_mode(game, team)` answer to a slot's
- * lobby bot config. Call it IMMEDIATELY BEFORE botManagerAddBot for a bot
- * joining `team`: botManagerStageInitArg reads the config at brain-create
- * time, so the mode and difficulty reach the brain as its init-arg tokens
- * without publishing anything. Deliberately silent — see the implementation
- * comment; publishing per bot here once overflowed the control channel
- * during the ten-bot scenario seed and disconnected the host. A no-op off a
- * scenario map, or when the script names no mode for that team. */
-void serverSimApplyScenarioBotDefaults(ServerSim *sim, BYTE slot, int team,
-                                       const char *brainPath);
-/* Start a newly added bot on the mode and difficulty the host last chose
- * for any bot, instead of the lobby default — so setting up a lobby means
- * picking a difficulty once rather than once per bot. Call it IMMEDIATELY
- * BEFORE botManagerAddBot; the pair then rides the init arg the brain
- * create already stages and costs no control event. A no-op until the host
- * picks something, and when the new bot's brain does not declare the
- * remembered mode. */
-void serverSimApplyLastBotConfig(ServerSim *sim, BYTE slot,
-                                 const char *brainPath);
-
 void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx);
 
 /* Rename a bot's display name in the players table without

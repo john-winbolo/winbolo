@@ -226,9 +226,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
             transportUdpServerSetBotName(p->slot, validatedName);
         }
-        serverSimSetBotConfig(sim, p->slot, p->mode, p->difficulty,
-                              p->personality,
-                              p->nameLen > 0 ? validatedName : NULL);
+        {
+            /* The gear popup sends this command for a rename or a
+             * personality edit too, carrying the bot's unchanged mode and
+             * difficulty. Only a real change is the host choosing a
+             * difficulty, so only that is remembered for the next Add Bot. */
+            uint8_t prevMode  = sim->botConfigs[p->slot].mode;
+            uint8_t prevLevel = sim->botConfigs[p->slot].difficulty;
+            serverSimSetBotConfig(sim, p->slot, p->mode, p->difficulty,
+                                  p->personality,
+                                  p->nameLen > 0 ? validatedName : NULL);
+            if (p->mode != prevMode || p->difficulty != prevLevel) {
+                serverSimRememberManualBotPick(sim, p->slot);
+            }
+        }
         return CMD_OK;
     }
     case CMD_LOBBY_TEAM_META: {
@@ -690,25 +701,6 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         } else {
             snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
         }
-        /* Both defaults are written BEFORE the brain is created, so they
-         * reach it through the init arg botManagerStageInitArg stages and
-         * publish nothing at all. ORDER MATTERS, and it is this:
-         *
-         *   1. what the host last picked for any bot — the general rule,
-         *      so adding five bots at Medium means choosing Medium once;
-         *   2. what the map asks for this side — the specific rule, which
-         *      wins, because a scenario naming a mode for its own team is
-         *      making a requirement, not a suggestion. On a Survival map
-         *      the horde comes up in survival mode however the host had
-         *      the last bot set.
-         *
-         * Off a scenario map, or for a side the script names no mode for
-         * (the defenders), step 2 does nothing and the inherited pair
-         * stands. Either way the host can still change any bot afterwards.
-         */
-        serverSimApplyLastBotConfig(sim, slot, serverSimGetBotBrainPath(sim));
-        serverSimApplyScenarioBotDefaults(sim, slot, (int)p->teamNumber,
-                                          serverSimGetBotBrainPath(sim));
         if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
@@ -720,6 +712,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         transportUdpServerSetBotName(slot, botName);
         if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS) {
             serverSimSetTeam(sim, slot, p->teamNumber);
+        }
+        /* The new bot's brain mode and difficulty (serverSimResolveNewBotConfig):
+         * the lobby default, then what the map requires for this side, then
+         * what the host last picked by hand. Applied now the team is final —
+         * a plain Add Bot only learns its team inside the add — and the lobby
+         * brain reloads from this config at round start. Shown in the lobby
+         * by a queued bot-config event, not one sent inside the command. */
+        {
+            const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
+            serverSimApplyNewBotDefaults(sim, slot,
+                                         lp ? (int)lp->teamNumber : 0,
+                                         serverSimGetBotBrainPath(sim), TRUE);
         }
         serverSimPublishLobbySlot(sim, slot);
         serverSimPublishLobbyBotBrain(sim, slot);

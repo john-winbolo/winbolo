@@ -60,6 +60,7 @@
 #include "tank.h"                  /* tankGetStats */
 #include "bolo_map.h"              /* mapWrite */
 #include "everard_map.h"
+#include "brain_list.h"            /* BrainModes — expected bot mode/level indices */
 #include "test_harness.h"
 
 /* Runtime fixture files (CWD-relative, like the other on-demand
@@ -1019,6 +1020,167 @@ int run_scenario_error_disables_after_limit(void) {
     UT_ASSERT_MSG(strstr(c.lastText, "disabled") != NULL,
                   "the last broadcast must be the disable notice so "
                   "players learn the script died, got \"%s\"", c.lastText);
+
+    serverSimDestroy(sim);
+    sc_cleanup_files();
+    return 0;
+}
+
+/* ================================================================
+ * 13. A new lobby bot's brain mode and difficulty, resolved in order:
+ *     the base, the map's bot_mode(game, team) answer for its side,
+ *     then the host's manual pick — the difficulty only, when the map
+ *     fixed the mode. Andrew's rule for Survival: bots that first appear
+ *     are Hard; after a manual Medium or Easy, Add Bot follows it.
+ * ================================================================ */
+
+#define SC_BRAIN "Brains/GoalHunter_1.7/init.lua"
+
+/* Index of a mode/level key pair in the shipped GoalHunter manifest, so the
+ * assertions survive a reordered modes.txt. */
+static bool sc_mode_level(const char *modeKey, const char *lvlKey,
+                          int *outMode, int *outLevel) {
+    BrainModes modes;
+    int m, l;
+    if (!brainListLoadModesForPath(SC_BRAIN, &modes)) return false;
+    m = brainModesFindMode(&modes, modeKey);
+    if (m < 0) return false;
+    l = brainModeFindLevel(&modes.modes[m], lvlKey);
+    if (l < 0) return false;
+    *outMode  = m;
+    *outLevel = l;
+    return true;
+}
+
+int run_scenario_bot_mode_new_bot_defaults(void) {
+    ServerSim *sim;
+    int survMode = 0, survHard = 0, survMed = 0, defMode = 0, defMed = 0;
+    uint8_t mode, level;
+
+    if (!sc_mode_level("survival", "hard",   &survMode, &survHard) ||
+        !sc_mode_level("survival", "medium", &survMode, &survMed)  ||
+        !sc_mode_level("default",  "medium", &defMode,  &defMed)) {
+        fprintf(stderr, "  (no GoalHunter modes.txt here — skipped)\n");
+        return 0;
+    }
+
+    sc_cleanup_files();
+    UT_ASSERT(sc_write_map_file(SC_MAP));
+    UT_ASSERT(sc_write_sidecar(
+        "function bot_mode(game, team)\n"
+        "  if team == 2 then return 'survival', 'hard' end\n"
+        "  return nil\n"
+        "end\n"
+        "function on_tick(game, tick) end\n"));
+    sim = sc_create();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(scenarioIsActive(sim));
+
+    /* No manual pick yet: a horde bot comes up survival / Hard. */
+    mode = 0; level = BOT_DIFFICULTY_HARD;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, 2, SC_BRAIN, true,
+                                           &mode, &level));
+    UT_ASSERT_MSG(mode == survMode && level == survHard,
+                  "a horde bot with no manual pick must be survival/Hard, "
+                  "got %d/%d", (int)mode, (int)level);
+
+    /* The host set a bot to Medium by hand: the next horde bot keeps the
+     * map's survival mode but takes the Medium. */
+    SDL_strlcpy(sim->lastBotModeKey, "default", sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotLevelKey, "medium", sizeof(sim->lastBotLevelKey));
+    mode = 0; level = BOT_DIFFICULTY_HARD;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, 2, SC_BRAIN, true,
+                                           &mode, &level));
+    UT_ASSERT_MSG(mode == survMode && level == survMed,
+                  "after a manual Medium, Add Bot on the horde must give "
+                  "survival/Medium, got %d/%d", (int)mode, (int)level);
+
+    /* A defender — a side the map names no mode for — takes the manual
+     * pick whole. */
+    mode = 0; level = BOT_DIFFICULTY_HARD;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, 1, SC_BRAIN, true,
+                                           &mode, &level));
+    UT_ASSERT_MSG(mode == defMode && level == defMed,
+                  "a defender must take the manual pick as it is, got %d/%d",
+                  (int)mode, (int)level);
+
+    /* A bot first appearing ignores the manual pick: survival / Hard. */
+    mode = 0; level = BOT_DIFFICULTY_HARD;
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, 2, SC_BRAIN, false,
+                                           &mode, &level));
+    UT_ASSERT_MSG(mode == survMode && level == survHard,
+                  "a first-appearing horde bot must be survival/Hard whatever "
+                  "was picked by hand, got %d/%d", (int)mode, (int)level);
+
+    serverSimDestroy(sim);
+    sc_cleanup_files();
+    return 0;
+}
+
+/* The real seed: whatever the host picked by hand earlier, every seeded
+ * horde bot comes up survival / Hard, and the event that shows it in the
+ * lobby is queued for the lobby tick rather than sent inside the seed. */
+int run_scenario_seed_ignores_manual_pick(void) {
+    ServerSim *sim;
+    int survMode = 0, survHard = 0, bots = 0, passes = 0;
+    BYTE s;
+
+    if (!sc_mode_level("survival", "hard", &survMode, &survHard)) {
+        fprintf(stderr, "  (no GoalHunter modes.txt here — skipped)\n");
+        return 0;
+    }
+
+    sc_cleanup_files();
+    UT_ASSERT(sc_write_map_file(SC_MAP));
+    UT_ASSERT(sc_write_sidecar(
+        "scenario = { max_players = 6,\n"
+        "  default_brain = 'Brains/GoalHunter_1.7/init.lua' }\n"
+        "function enemy_bots(game) return 3 end\n"
+        "function bot_mode(game, team)\n"
+        "  if team == 2 then return 'survival', 'hard' end\n"
+        "  return nil\n"
+        "end\n"
+        "function on_tick(game, tick) end\n"));
+    sim = sc_create();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(scenarioIsActive(sim));
+
+    /* A manual Easy pick left over from earlier in the lobby. */
+    SDL_strlcpy(sim->lastBotModeKey, "survival", sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotLevelKey, "easy", sizeof(sim->lastBotLevelKey));
+
+    serverSimApplyScenarioCommit(sim);
+    for (s = 0; s < MAX_TANKS; s++) {
+        if (!serverSimIsBot(sim, s)) continue;
+        bots++;
+        UT_ASSERT_MSG(sim->botConfigs[s].mode == survMode &&
+                      sim->botConfigs[s].difficulty == survHard,
+                      "seeded slot %u must be survival/Hard despite the "
+                      "manual Easy, got %d/%d", (unsigned)s,
+                      (int)sim->botConfigs[s].mode,
+                      (int)sim->botConfigs[s].difficulty);
+        UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << s)) != 0,
+                      "seeded slot %u must have its bot-config event queued, "
+                      "not sent inside the seed", (unsigned)s);
+    }
+    if (bots == 0) {
+        fprintf(stderr, "  (no brain loadable here — seed check skipped)\n");
+        serverSimDestroy(sim);
+        sc_cleanup_files();
+        return 0;
+    }
+    UT_ASSERT_MSG(bots == 3, "the seed must field 3 bots, got %d", bots);
+
+    /* The lobby tick drains the queue a couple at a time. */
+    while (sim->botConfigPublishPending != 0 && passes < MAX_TANKS) {
+        serverSimFlushBotConfigPublishes(sim);
+        passes++;
+    }
+    UT_ASSERT_MSG(sim->botConfigPublishPending == 0,
+                  "flushing must empty the bot-config queue");
+    UT_ASSERT_MSG(passes >= 2,
+                  "three queued events must take more than one lobby tick "
+                  "(two per tick), took %d", passes);
 
     serverSimDestroy(sim);
     sc_cleanup_files();
