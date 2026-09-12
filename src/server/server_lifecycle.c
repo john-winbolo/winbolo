@@ -250,8 +250,8 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                            cfg->compTanks,
                            (BYTE)sim->sim.hiddenMines,
                            (BYTE)sim->hasPassword,
-                           basesGetNumBases(&sim->sim.bs),
-                           pillsGetNumPills(&sim->sim.pb),
+                           basesGetNumActive(&sim->sim.bs),
+                           pillsGetNumActive(&sim->sim.pb),
                            serverSimGetNumNeutralBases(sim),
                            serverSimGetNumNeutralPills(sim),
                            serverSimGetNumPlayers(sim));
@@ -362,8 +362,8 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
       (BYTE)sim->botAiType,
       (BYTE)sim->sim.hiddenMines,
       sim->hasPassword,
-      basesGetNumBases(&sim->sim.bs),
-      pillsGetNumPills(&sim->sim.pb),
+      basesGetNumActive(&sim->sim.bs),
+      pillsGetNumActive(&sim->sim.pb),
       serverSimGetNumNeutralBases(sim),
       serverSimGetNumNeutralPills(sim),
       serverSimGetNumPlayers(sim));
@@ -740,8 +740,8 @@ void serverInstanceTick(ServerSim *sim) {
           (BYTE)sim->botAiType,
           (BYTE)sim->sim.hiddenMines,
           sim->hasPassword,
-          basesGetNumBases(&sim->sim.bs),
-          pillsGetNumPills(&sim->sim.pb),
+          basesGetNumActive(&sim->sim.bs),
+          pillsGetNumActive(&sim->sim.pb),
           serverSimGetNumNeutralBases(sim),
           serverSimGetNumNeutralPills(sim),
           serverSimGetNumPlayers(sim));
@@ -878,8 +878,8 @@ void serverInstanceTick(ServerSim *sim) {
         (BYTE)sim->botAiType,
         (BYTE)sim->sim.hiddenMines,
         sim->hasPassword,
-        basesGetNumBases(&sim->sim.bs),
-        pillsGetNumPills(&sim->sim.pb),
+        basesGetNumActive(&sim->sim.bs),
+        pillsGetNumActive(&sim->sim.pb),
         serverSimGetNumNeutralBases(sim),
         serverSimGetNumNeutralPills(sim),
         serverSimGetNumPlayers(sim));

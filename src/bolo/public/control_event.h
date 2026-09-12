@@ -155,6 +155,32 @@ typedef enum {
      * with its own mute list — a muted player sends nothing that reaches
      * you, so this is the only way to show that they are talking. */
     CTRL_VOICE_TALKING,
+    /* CTRL_ENTITY_CHANGE — one pillbox, base or start has joined the map
+     * or left it. The map's item lists are fixed at map load for a normal
+     * round; a scenario can change them mid-round, and this is how a client
+     * hears about it on the tick it happens. Removal keeps the item's slot
+     * and its index, so every index above a removal goes on naming the same
+     * item, and the record the event carries is the item's map data only.
+     * Broadcast: which items are on the map is public, the way the map is. */
+    CTRL_ENTITY_CHANGE,
+    /* CTRL_ENTITY_SYNC — which pillboxes, bases and starts are on the map
+     * right now, as one bit per index. A client builds its three item lists
+     * from the compressed map blob, and the blob carries the items but not
+     * which of them are still on the map, so installing one marks every item
+     * up to the count as on the map. That is right for a map as it loads and
+     * wrong for a client that arrives after a removal, which is what this
+     * corrects: the server sends it once the client has the blob, and the
+     * client clears the live flag of every index the mask does not name. The
+     * counts stay the blob's — a mask says which of those slots hold an item,
+     * never how many slots there are.
+     *
+     * Sent to one recipient rather than published: it answers a map the
+     * recipient has just taken a copy of, so the send sites are the ones that
+     * hand a copy over — the subscriber sync replay and the completion of a
+     * client's bulk map transfer. The masks read the same for everyone, so
+     * the body carries no per-recipient state; a change after this event
+     * travels as a CTRL_ENTITY_CHANGE to everyone at once. */
+    CTRL_ENTITY_SYNC,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -170,6 +196,22 @@ typedef enum {
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
 
+/* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
+ * ride the wire, so they are written out rather than left to the order
+ * of the members. */
+typedef enum {
+    ENTITY_KIND_PILL  = 0,
+    ENTITY_KIND_BASE  = 1,
+    ENTITY_KIND_START = 2
+} EntityKind;
+
+/* `quiet` on the five variants that carry one is the announce policy's
+ * answer, stamped by the server where it built the event: 0 to announce the
+ * fact, 1 to hold the line back. It rides the wire like any other field, and
+ * the client's line-emitting site reads it before writing a line. Nothing
+ * else about the event changes — the roster update, the alliance bitmap and
+ * the rename all still apply. With no scenario policy registered it is
+ * always 0. */
 typedef struct ControlEvent {
     ControlEventType type;
     union {
@@ -183,11 +225,13 @@ typedef struct ControlEvent {
         struct {
             BYTE acceptedBy;
             BYTE newMember;
+            BYTE quiet;
         } allianceAccept;
 
         /* CTRL_ALLIANCE_LEAVE — alliance leave, not player leave */
         struct {
             BYTE playerNum;
+            BYTE quiet;
         } allianceLeave;
 
         /* CTRL_ALLIANCE_RESET — full alliance matrix snapshot.
@@ -209,6 +253,7 @@ typedef struct ControlEvent {
             uint8_t clientFlags;
             BYTE  numAllies;
             BYTE  allies[MAX_TANKS];
+            BYTE  quiet;
         } playerJoin;
 
         /* CTRL_PLAYER_LEAVE — server announces a player has disconnected.
@@ -217,12 +262,14 @@ typedef struct ControlEvent {
             BYTE playerNum;
             char name[PACKET_MAX_PLAYER_NAME];
             char country[3];            /* 2 chars + NUL */
+            BYTE quiet;
         } playerLeave;
 
         /* CTRL_PLAYER_NAME */
         struct {
             BYTE playerNum;
             char name[PACKET_MAX_PLAYER_NAME];
+            BYTE quiet;
         } playerName;
 
         /* CTRL_LOBBY_SLOT */
@@ -390,9 +437,17 @@ typedef struct ControlEvent {
          * subscribers (SP / host) see the same lines. */
         struct {
             char    text[PACKET_MAX_CHAT_MESSAGE + 1];
-            uint8_t destTeam;  /* 0 = everyone; 1-16 = deliver only to that team.
+            uint8_t destTeam;  /* 0 = everyone; 1-15 = deliver only to that team
+                                  (teams run 1..MAX_TANKS-1, see ServerSim.teams[]).
                                   Server-side recipient filter (udpClientDeliver +
                                   the in-process handler); not sent on the wire. */
+            uint8_t destPlayer; /* 0xFF = everyone; otherwise deliver only to that
+                                   slot. Server-side recipient filter like destTeam,
+                                   and not sent on the wire either. 0 is a real
+                                   slot, so a memset-zeroed event would unicast to
+                                   slot 0: every producer of this variant — the
+                                   sim-side publishers and the body decoder that
+                                   rebuilds it — must set 0xFF explicitly. */
         } serverText;
 
         /* CTRL_GAME_VOTE_STATE — mirrors PACKET_GAME_VOTE_STATE. */
@@ -503,6 +558,57 @@ typedef struct ControlEvent {
         struct {
             PlayerBitMap talking;
         } voiceTalking;
+
+        /* CTRL_ENTITY_CHANGE — the item, where it sits in its list, and
+         * whether it is now on the map or off it.
+         *
+         * index is 0-based, the way the snapshots, the game events and the
+         * brain API number an item; the pillbox, bases and starts modules
+         * take the number one higher, and the boundary converts.
+         *
+         * The record is the item's map data and nothing more. A pillbox's
+         * reload, coolDown and justSeen and a base's refuelTime, baseTime
+         * and justStopped are the server's per-tick working state: no
+         * client rebuilds them from an event, and they would be stale by
+         * the time the event arrived. On a removal the record is the item
+         * as it stood, so a script that puts it back has it to hand. */
+        struct {
+            uint8_t kind;    /* EntityKind */
+            uint8_t index;   /* 0-based */
+            uint8_t added;   /* 1 on the map, 0 removed */
+            union {
+                struct {
+                    uint8_t x, y;
+                    uint8_t owner;
+                    uint8_t armour;
+                    uint8_t speed;
+                    uint8_t inTank;
+                } pill;
+                struct {
+                    uint8_t x, y;
+                    uint8_t owner;
+                    uint8_t armour;
+                    uint8_t shells;
+                    uint8_t mines;
+                } base;
+                struct {
+                    uint8_t x, y;
+                    uint8_t dir;
+                } start;
+            } rec;
+        } entityChange;
+
+        /* CTRL_ENTITY_SYNC — one bit per 0-based index in each list: bit i
+         * set means index i holds an item that is on the map, clear means
+         * the index is in range but its item has been taken off. Each list
+         * holds at most 16 items (MAX_PILLS, MAX_BASES and MAX_STARTS are
+         * all 16), so 16 bits covers every index a list can name. Bits at
+         * or above a list's own count name no item and are ignored. */
+        struct {
+            uint16_t pills;
+            uint16_t bases;
+            uint16_t starts;
+        } entitySync;
     } u;
 } ControlEvent;
 

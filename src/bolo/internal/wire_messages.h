@@ -30,7 +30,7 @@
     F(U8, x) F(U8, y) F(U8, owner) F(U8, armourInTank)
 
 /* Presence-bitmask message. Field order is WIRE order (follows the packer), not
- * the struct declaration order: the 11-byte core first, then the omit-zero
+ * the struct declaration order: the 12-byte core first, then the omit-zero
  * groups keyed on their TANK_PRESENT_* bit. */
 #define TANK_SNAPSHOT_FIELDS(F, FMASK, FGROUP)               \
     F(U8, playerNum)                                         \
@@ -53,6 +53,12 @@
     FGROUP(TANK_PRESENT_TURNRAMP, U8, firstRight)            \
     FGROUP(TANK_PRESENT_PING,  U16, pingMs)                  \
     FGROUP(TANK_PRESENT_FLAGS, U8, clientFlags)              \
-    FGROUP(TANK_PRESENT_HIDDEN, U8, hiddenFlags)
+    FGROUP(TANK_PRESENT_HIDDEN, U8, hiddenFlags)             \
+    FGROUP(TANK_PRESENT_MODS, U8, modSpeed)                  \
+    FGROUP(TANK_PRESENT_MODS, U8, modAccel)                  \
+    FGROUP(TANK_PRESENT_MODS, U8, modTurn)                   \
+    FGROUP(TANK_PRESENT_MODS, U8, modReload)                 \
+    FGROUP(TANK_PRESENT_MODS, U8, modDealt)                  \
+    FGROUP(TANK_PRESENT_MODS, U8, modTaken)
 
 #endif /* WINBOLO_WIRE_MESSAGES_H */

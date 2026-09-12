@@ -350,7 +350,9 @@ void lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize) {
   if (destSize == 0) {
     return;
   }
-  if (plrs.item[playerNum].inUse == TRUE) {
+  /* The slot comes off the recording in most callers, so a number past the
+     array reads as an empty seat rather than as whatever lies beyond it. */
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     snprintf(dest, destSize, "%s", plrs.item[playerNum].playerName);
   } else {
     snprintf(dest, destSize, "%s", NO_TANK);

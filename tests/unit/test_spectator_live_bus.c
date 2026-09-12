@@ -374,6 +374,36 @@ int run_spectator_control_filter(void) {
                   "(seq %u -> %u)", before,
                   transportUdpServerGetSpectatorControlSeq(0));
 
+    /* A pillbox leaving the map, and the liveness masks: a spectator draws
+       the map, so both reach it. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ENTITY_CHANGE;
+    evt.u.entityChange.kind  = ENTITY_KIND_PILL;
+    evt.u.entityChange.index = 0;
+    evt.u.entityChange.added = 0;
+    evt.u.entityChange.rec.pill.x      = 10;
+    evt.u.entityChange.rec.pill.y      = 10;
+    evt.u.entityChange.rec.pill.owner  = NEUTRAL;
+    evt.u.entityChange.rec.pill.armour = 15;
+    before = transportUdpServerGetSpectatorControlSeq(0);
+    serverSimPublishControl(h.sim, &evt);
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorControlSeq(0) == before + 1,
+                  "CTRL_ENTITY_CHANGE did not reach spectator "
+                  "(seq %u -> %u)", before,
+                  transportUdpServerGetSpectatorControlSeq(0));
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ENTITY_SYNC;
+    evt.u.entitySync.pills  = 0xFFFE;
+    evt.u.entitySync.bases  = 0xFFFF;
+    evt.u.entitySync.starts = 0xFFFF;
+    before = transportUdpServerGetSpectatorControlSeq(0);
+    serverSimPublishControl(h.sim, &evt);
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorControlSeq(0) == before + 1,
+                  "CTRL_ENTITY_SYNC did not reach spectator "
+                  "(seq %u -> %u)", before,
+                  transportUdpServerGetSpectatorControlSeq(0));
+
     closesocket(spec);
     loopbackHarnessStop(&h);
     return 0;

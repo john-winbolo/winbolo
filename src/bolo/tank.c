@@ -379,6 +379,31 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 }
 
 /*********************************************************
+*NAME:          tankSpawnLoadout
+*PURPOSE:
+*  What a spawning tank is handed. The host is asked first,
+*  so a scenario can arm a tank the game type would leave
+*  empty; with nobody to ask, or nobody with an answer, the
+*  sim's game type decides as it always has. Every place the
+*  engine hands out a fresh loadout comes through here.
+*
+*ARGUMENTS:
+*  sim       - The game the tank belongs to
+*  playerNum - The slot being fuelled
+*  shells    - Pointer to hold the number of shells
+*  mines     - Pointer to hold the number of mines
+*  armour    - Pointer to hold the amount of armour
+*  trees     - Pointer to hold the number of trees
+*********************************************************/
+static void tankSpawnLoadout(GameSim *sim, BYTE playerNum, BYTE *shells,
+                             BYTE *mines, BYTE *armour, BYTE *trees) {
+  if (gameSimSpawnLoadout(sim, playerNum, shells, mines, armour, trees) != FALSE) {
+    return;
+  }
+  gameTypeGetItems(sim, &sim->game, shells, mines, armour, trees);
+}
+
+/*********************************************************
 *NAME:          tankCreate
 *AUTHOR:        John Morrison
 *CREATION DATE: 23/11/98
@@ -406,7 +431,8 @@ void tankCreate(GameSim *sim, tank *value) {
   New(*value);
   (*value)->x = 0;
   (*value)->y = 0;
-  gameTypeGetItems(sim, &sim->game, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
+  tankSpawnLoadout(sim, gameSimGetTankPlayer(sim, value), &shellsAmount,
+                   &minesAmount, &armourAmount, &treesAmount);
   (*value)->armour = armourAmount;
   (*value)->destroyed = FALSE;
   (*value)->shells = shellsAmount;
@@ -439,6 +465,10 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
   (*value)->residualSpeed = 0;
+  /* The only place the modifiers are cleared. A respawn reuses the tank
+     object and leaves them alone; the lobby return destroys every tank, so
+     the next round's create is what puts a slot back to classic. */
+  memset(&(*value)->mods, 0, sizeof((*value)->mods));
 
   /* Get the start position */
   sim->inStartFind = TRUE;
@@ -452,6 +482,14 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->angle = dir;
   sim->callbacks.centerTank(sim->callbacks.ctx);
   sim->inStartFind = FALSE;
+
+  /* One report for every path that makes a tank — the round start, a join and
+     a scripted spawn all land here. A tank coming back from a death does not:
+     that reuses the object and is reported from tankDeath's server arm. */
+  if (sim->isServer && sim->callbacks.tankSpawned) {
+    sim->callbacks.tankSpawned(sim->callbacks.ctx,
+                               gameSimGetTankPlayer(sim, value), x, y, false);
+  }
 }
 
 /*********************************************************
@@ -552,7 +590,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     a = (*value)->sightLen;
     c = a / b;
     shellsAddItem(sim, shs, (*value)->x, (*value)->y, (*value)->angle, c, gameSimGetTankPlayer(sim, value), (*value)->onBoat);
-    (*value)->reload = TANK_RELOAD_TIME;
+    (*value)->reload = tankReloadTicks(sim, *value);
     (*value)->shells--;
 
     if (!isServer) {
@@ -566,6 +604,13 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
 
   if ((*value)->deathWait > 0) {
 	/* Tank is still waiting to respawn */
+    /* The last tick of the wait is the one the host can hold. Asked at one
+       rather than at zero so a "not yet" leaves the tank where it is — dead,
+       with a wait of one — and the same question is put again next tick. */
+    if ((*value)->deathWait == 1 &&
+        gameSimCanRespawn(sim, gameSimGetTankPlayer(sim, value)) == FALSE) {
+      return;
+    }
     (*value)->deathWait--;
     if ((*value)->deathWait == 0) {
       (*value)->newTank = TRUE;
@@ -582,24 +627,64 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     if (sim->inStartFind == FALSE) {
 	  tankDeath(sim, value);
     }
-  } else if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
-      /* Death by drowning — server-authoritative */
-      BYTE drownedPlayer = gameSimGetTankPlayer(sim, value);
-      tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
-      sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
-      if (!isServer) {
-        sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
-      }
-      sim->callbacks.tankKill(sim->callbacks.ctx, drownedPlayer, drownedPlayer, LAST_DEATH_BY_DEEPSEA, tankGetNumCarriedPills(value));
-      tankDropPills(sim, value);
-      (*value)->armour = 0;
-      (*value)->destroyed = TRUE;
-      (*value)->deathWait = TANK_DEATH_WAIT;
   } else {
-    /* Tank Movement (unified boat/land) */
-    (*value)->newTank = FALSE;
-    tankMoveUnified(sim, value, bmx, bmy, tb, inBrain);
+    bool drowned = FALSE;
+    if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
+      /* Death by drowning — server-authoritative. The sink sound and the
+         message belong to drowning; the death itself is tankKillNow, which a
+         death ordered from outside the sim goes through too.
+         Drowning is not damage, so it never reaches tankApplyDamage and the
+         host is asked here instead. Asked before the sound, so a tank the
+         host will not let drown sits in the water quietly rather than sinking
+         once a tick; the square is tested again next tick. */
+      BYTE drownedPlayer = gameSimGetTankPlayer(sim, value);
+      if (gameSimCanDie(sim, DIE_KIND_TANK, drownedPlayer, drownedPlayer,
+                        LAST_DEATH_BY_DEEPSEA) != FALSE) {
+        tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
+        sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
+        if (!isServer) {
+          sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
+        }
+        tankKillNow(sim, value, drownedPlayer, LAST_DEATH_BY_DEEPSEA);
+        drowned = TRUE;
+      }
+    }
+    if (!drowned) {
+      /* Tank Movement (unified boat/land). A tank the host would not let
+         drown reaches this too, so it can be driven back out of the water:
+         deep sea has a speed cap and a turn rate of its own. */
+      (*value)->newTank = FALSE;
+      tankMoveUnified(sim, value, bmx, bmy, tb, inBrain);
+    }
   }
+}
+
+/*********************************************************
+*NAME:          tankKillNow
+*PURPOSE:
+*  Kills the tank where it stands: tells the host through
+*  the tankKill callback, spills whatever pills it was
+*  carrying, empties its armour and starts the wait before
+*  it comes back. The caller records the cause and plays
+*  whatever sound the death deserves; this is the part
+*  every death has in common.
+*
+*ARGUMENTS:
+*  sim    - The game the tank belongs to
+*  value  - Pointer to the tank structure
+*  killer - Slot credited with the kill. A death nobody
+*           caused names the dying tank's own slot, the
+*           way drowning does.
+*  cause  - A LAST_DEATH_BY_* value
+*********************************************************/
+void tankKillNow(GameSim *sim, tank *value, BYTE killer, BYTE cause) {
+  sim->callbacks.tankKill(sim->callbacks.ctx, killer,
+                          gameSimGetTankPlayer(sim, value), cause,
+                          tankGetNumCarriedPills(value));
+  tankDropPills(sim, value);
+  (*value)->armour = 0;
+  (*value)->destroyed = TRUE;
+  (*value)->deathWait = TANK_DEATH_WAIT;
 }
 
 /*********************************************************
@@ -769,13 +854,27 @@ void tankSetDestroyed(tank *value, bool destroyed) {
 *  remaining. A hit that exactly empties the armour leaves
 *  the tank alive at zero; the next hit destroys it.
 *
+*  Every blow that damages a tank is applied here, so this
+*  is where the host is asked whether the blow may finish
+*  it. A refusal empties the armour and leaves the tank
+*  alive at zero, which is a state the engine already
+*  produces on its own.
+*
 *ARGUMENTS:
+*  sim    - The game the tank belongs to
 *  value  - Pointer to the tank structure
 *  damage - Amount of damage to apply
+*  killer - Slot that dealt the blow, or NEUTRAL
+*  cause  - A LAST_DEATH_BY_* value naming the blow
 *********************************************************/
-static bool tankApplyDamage(tank *value, BYTE damage) {
+static bool tankApplyDamage(GameSim *sim, tank *value, BYTE damage,
+                            BYTE killer, BYTE cause) {
   if (damage > (*value)->armour) {
     (*value)->armour = 0;
+    if (gameSimCanDie(sim, DIE_KIND_TANK, gameSimGetTankPlayer(sim, value),
+                      killer, cause) == FALSE) {
+      return FALSE;
+    }
     (*value)->destroyed = TRUE;
     return TRUE;
   }
@@ -1239,7 +1338,8 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   (*value)->y = y;
   (*value)->angle = angle;
   if (setResources == TRUE) {
-    gameTypeGetItems(sim, &sim->game, &shells, &mines, &armour, &trees);
+    tankSpawnLoadout(sim, gameSimGetTankPlayer(sim, value), &shells, &mines,
+                     &armour, &trees);
     (*value)->shells = shells;
     (*value)->mines = mines;
     (*value)->armour = armour;
@@ -1311,9 +1411,10 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		bool wasDestroyed = tankApplyDamage(value, DAMAGE);
+		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
+		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
-			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
 			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
 			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
@@ -1499,7 +1600,8 @@ void tankDeath(GameSim *sim, tank *value) {
   } else if (isServer) {
     /* Server-authoritative respawn: pick a new start and reset resources */
     lgmTankDied(&sim->lgmen[gameSimGetTankPlayer(sim, value)]);
-    gameTypeGetItems(sim, &sim->game, &shellAmount, &minesAmount, &armourAmount, &treesAmount);
+    tankSpawnLoadout(sim, gameSimGetTankPlayer(sim, value), &shellAmount,
+                     &minesAmount, &armourAmount, &treesAmount);
     (*value)->armour = armourAmount;
     (*value)->destroyed = FALSE;
     (*value)->tankHitCount = 0;
@@ -1528,6 +1630,11 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->waterCount = 0;
     if (sim->isTutorial && sim->tutorialStartIdx == 1) {
       sim->tutorialRespawn1Pending = TRUE;
+    }
+    /* The square is the start just chosen, not the one the tank died on. */
+    if (sim->callbacks.tankSpawned) {
+      sim->callbacks.tankSpawned(sim->callbacks.ctx,
+                                 gameSimGetTankPlayer(sim, value), x, y, true);
     }
   }
 }
@@ -1654,7 +1761,9 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   /* Auto-slowdown */
   if ((*value)->speed > 0 && (*value)->autoSlowdown == TRUE && inBrain == FALSE) {
     if (tb != TDECEL && tb != TLEFTDECEL && tb != TRIGHTDECEL && tb != TACCEL && tb != TLEFTACCEL && tb != TRIGHTACCEL) {
-      (*value)->speed -= TANK_AUTOSLOW_SPEED;
+      /* The same rate family as the decel keys, so the accel modifier
+         governs it too. */
+      (*value)->speed -= TANK_AUTOSLOW_SPEED * tankModPct((*value)->mods.accel) / 100;
       if ((*value)->speed < 0) {
         (*value)->speed = 0;
       }
@@ -1833,8 +1942,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
        * crosses and triggers the per-axis revert below. Skipped for
        * road/halfbuilding (slow exit onto road still works) and for
        * BOAT (allows pickup of an adjacent parked boat). Skipped at
-       * speed >= BOAT_FAST_EXIT_SPEED so deliberate fast exits work. */
-      if ((*value)->speed < BOAT_FAST_EXIT_SPEED &&
+       * the tank's own boat-exit speed so deliberate fast exits work. */
+      if ((*value)->speed < tankBoatExitSpeed(*value) &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == FALSE) {
         WORLD rMinX = ((WORLD)newbmx) << TANK_SHIFT_MAPSIZE;
         WORLD rMaxX = (((WORLD)newbmx + 1) << TANK_SHIFT_MAPSIZE) - 1;
@@ -1882,7 +1991,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
           (*value)->boatState = BoatState_NotOnBoat;
           (*value)->onBoat = FALSE;
           if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
-        } else if ((*value)->speed >= BOAT_FAST_EXIT_SPEED) {
+        } else if ((*value)->speed >= tankBoatExitSpeed(*value)) {
           /* Fast approach on soft terrain — instant exit.
            * Only drop boat if last river tile is adjacent (deep sea→land skip) */
           if (abs(newbmx - (*value)->lastBoatRiverX) + abs(newbmy - (*value)->lastBoatRiverY) <= 2) {
@@ -1899,7 +2008,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         } else {
           /* Soft terrain, slow approach — per-axis position revert.
            * Tank stays on the starting river tile until speed reaches
-           * BOAT_FAST_EXIT_SPEED. Sliding along the bank works because
+           * its boat-exit speed. Sliding along the bank works because
            * the parallel axis isn't blocked. Mirrors original WinBolo
            * boat-exit behavior. */
           WORLD rMinX = ((WORLD)bmx) << TANK_SHIFT_MAPSIZE;
@@ -1989,12 +2098,22 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         if (baseIsCapturable(bs, newbmx, newbmy) == TRUE) {
           if (playersCheckSameSquare(&sim->plyrs, gameSimGetTankPlayer(sim, value), newbmx, newbmy) == FALSE) {
             if (basesAmOwner(sim, gameSimGetTankPlayer(sim, value), newbmx, newbmy) == FALSE) {
-              basesSetOwner(sim, newbmx, newbmy, gameSimGetTankPlayer(sim, value), FALSE);
               BYTE baseNum = basesGetBaseNum(bs, newbmx, newbmy);
-              if (!isServer) {
-                frontEndStatusBase(clientSimFromSim(sim), baseNum, (basesGetStatusNum(sim, baseNum)));
+              /* The base is capturable and the tank is entitled to it; the
+               * host decides whether it actually changes hands. A refusal
+               * only holds the owner — the tank is already on the square and
+               * drives on.
+               * basesGetBaseNum counts from one and the rest of this block
+               * wants it that way; the policy surface counts from zero, so
+               * the question takes one off. Leave the subtraction alone. */
+              if (gameSimCanCapture(sim, CAPTURE_KIND_BASE, (BYTE)(baseNum - 1),
+                                    gameSimGetTankPlayer(sim, value)) != FALSE) {
+                basesSetOwner(sim, newbmx, newbmy, gameSimGetTankPlayer(sim, value), FALSE);
+                if (!isServer) {
+                  frontEndStatusBase(clientSimFromSim(sim), baseNum, (basesGetStatusNum(sim, baseNum)));
+                }
+                if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
               }
-              if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
             }
           }
         }
@@ -2032,10 +2151,13 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
   TURNTYPE turnAmount; /* Amount to turn */
+  /* Scales the terrain's turn rate before the ramp below, so a modified tank
+     ramps up over the same six ticks. */
+  int turnPct = tankModPct((*value)->mods.turn);
 
   /* Left turn */
   if (tb == TLEFT || tb == TLEFTACCEL || tb == TLEFTDECEL) {
-    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value)) * turnPct / 100;
     if ((*value)->firstLeft < 6) {
       (*value)->firstLeft++;
       turnAmount /= 8;
@@ -2049,7 +2171,7 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   }
   /* Right Turn */
   if (tb == TRIGHT || tb == TRIGHTACCEL || tb == TRIGHTDECEL) {
-    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+    turnAmount = mapGetTurnRate(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value)) * turnPct / 100;
     if ((*value)->firstRight < 6) {
       (*value)->firstRight++;
       turnAmount /= 8;
@@ -2084,17 +2206,29 @@ void tankAccel(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
-  BYTE displace; /* Amount to move */
+  BYTE rawCap;             /* Terrain's own cap for this square */
+  SPEEDTYPE displace;      /* That cap once the tank's speed modifier applies */
   SPEEDTYPE subAmount;     /* Amount to subtract */
+  int accelPct = tankModPct((*value)->mods.accel);
+  /* Both rates scale together: the accel modifier is how fast speed changes
+     in either direction, not how fast it rises. */
+  SPEEDTYPE terrainDecel = (SPEEDTYPE) (TANK_TERRAIN_DECEL_RATE * accelPct / 100);
+  SPEEDTYPE slowKeyRate = (SPEEDTYPE) (TANK_SLOWKEY_RATE * accelPct / 100);
 
-  displace = mapGetSpeed(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+  rawCap = mapGetSpeed(sim,mp,pb,bs,bmx,bmy,(*value)->onBoat, gameSimGetTankPlayer(sim, value));
+  displace = (SPEEDTYPE) ((rawCap * tankModPct((*value)->mods.speed)) / 100);
+  /* Ground the tank can cross stays crossable however slow it has been made:
+     a cap that scales away to nothing becomes the smallest cap that moves. */
+  if (rawCap > 0 && displace < 1) {
+    displace = 1;
+  }
   if ((tb == TDECEL || tb == TLEFTDECEL || tb == TRIGHTDECEL) || (*value)->speed > displace)  {
     subAmount = (*value)->speed;
     if ((*value)->speed > displace) {
-      subAmount = (SPEEDTYPE) ((*value)->speed - TANK_TERRAIN_DECEL_RATE);
+      subAmount = (SPEEDTYPE) ((*value)->speed - terrainDecel);
     }
     if (tb == TDECEL || tb == TLEFTDECEL || tb == TRIGHTDECEL) {
-      subAmount -= (float) TANK_SLOWKEY_RATE;
+      subAmount -= slowKeyRate;
     }
     if (subAmount > (*value)->speed) {
       ((*value)->speed) = 0;
@@ -2105,7 +2239,7 @@ void tankAccel(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
       }
     }
   } else if ((*value)->speed < displace && (tb == TACCEL || tb == TLEFTACCEL || tb == TRIGHTACCEL))  {
-    ((*value)->speed) += TANK_ACCELERATE_RATE;
+    ((*value)->speed) += TANK_ACCELERATE_RATE * accelPct / 100;
     if ((*value)->speed > displace) {
       (*value)->speed = displace;
     }
@@ -2133,7 +2267,6 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 	BYTE bmx;       /* MAP x-coord of the probe being tested */
 	BYTE bmy;       /* MAP y-coord of the probe being tested */
 	BYTE pillNum;   /* The pill number */
-	tankCarryPb q;  /* Temp pointer for adding PBs to tank */
 	bool captured = FALSE;
 	int p;
 
@@ -2155,10 +2288,19 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 		/* centre, 4 edge midpoints, 4 corners */
 		WORLD probeX[9] = { tankX, tankX, tankX, left,  right, right, right,  left,   left };
 		WORLD probeY[9] = { tankY, top,   bottom, tankY, tankY, top,   bottom, bottom, top  };
+		/* A square the host refused this tick; several probes land on one
+		 * square, and a refused pill stays capturable, so without this the
+		 * same question would be put up to nine times per tick. */
+		bool refused = FALSE;
+		BYTE refusedX = 0;
+		BYTE refusedY = 0;
 
 		for (p = 0; p < 9; p++) {
 			bmx = (BYTE)(probeX[p] >> TANK_SHIFT_MAPSIZE);
 			bmy = (BYTE)(probeY[p] >> TANK_SHIFT_MAPSIZE);
+			if (refused && bmx == refusedX && bmy == refusedY) {
+				continue;
+			}
 
 			/* The probe is not at the origin and the pill is capturable. A
 			 * tile captured by an earlier probe is already inTank, so
@@ -2166,22 +2308,23 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 			 * harmless. */
 			if (bmx != 0 && bmy != 0 && pillsIsCapturable(pb, bmx,bmy) == TRUE) {
 				pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
+				/* The engine's own test has passed; the host has the last
+				 * word on whether the pill changes hands. Asked once for the
+				 * square, before anything is taken, so a refusal leaves the
+				 * pill where it is and the tank drives on over it.
+				 * pillsGetPillNum counts from one and tankTakePill below
+				 * wants it that way; the policy surface counts from zero, so
+				 * the question takes one off. Leave the subtraction alone. */
+				if (pillNum != PILL_NOT_FOUND &&
+				    gameSimCanCapture(sim, CAPTURE_KIND_PILL, (BYTE)(pillNum - 1),
+				                      gameSimGetTankPlayer(sim, value)) == FALSE) {
+					refused = TRUE;
+					refusedX = bmx;
+					refusedY = bmy;
+					continue;
+				}
 				while (pillNum != PILL_NOT_FOUND) {
-					pillsSetPillInTank(pb,pillNum, TRUE);
-					if (sim->callbacks.recordPillPickup) {
-						sim->callbacks.recordPillPickup(sim->callbacks.ctx, gameSimGetTankPlayer(sim, value), pillNum, bmx, bmy);
-					}
-					/* We are a client.. which should only happen in a single player game */
-					if (!isServer) {
-						frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
-					}
-					New(q);
-					q->pillNum = pillNum;
-					q->next = (*value)->carryPills;
-					(*value)->carryPills = q;
-					if ((pillsGetPillOwner(pb, pillNum)) != gameSimGetTankPlayer(sim, value)) {
-						pillsSetPillOwner(sim, pb, pillNum, gameSimGetTankPlayer(sim, value), FALSE);
-					}
+					tankTakePill(sim, value, pillNum);
 					if (pillsExistPos(pb, bmx, bmy) == TRUE) {
 						pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
 					} else {
@@ -2193,6 +2336,91 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 		}
 		if (captured && !sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
 	}
+}
+
+/*********************************************************
+*NAME:          tankTakePill
+*PURPOSE:
+* Puts one pillbox into a tank: marks it carried, tells the
+* host so the pickup is recorded, adds it to the tank's
+* carry list and moves the ownership across. The caller
+* decides whether the pill may be taken; this is what
+* taking it does.
+*
+*ARGUMENTS:
+*  sim     - The game the tank belongs to
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*********************************************************/
+void tankTakePill(GameSim *sim, tank *value, BYTE pillNum) {
+  pillboxes *pb = &sim->pb;
+  pillbox p;      /* The pill, read for the square the pickup is recorded at */
+
+  memset(&p, 0, sizeof(p));
+  pillsGetPill(pb, &p, pillNum);
+  pillsSetPillInTank(pb, pillNum, TRUE);
+  if (sim->callbacks.recordPillPickup) {
+    sim->callbacks.recordPillPickup(sim->callbacks.ctx, gameSimGetTankPlayer(sim, value), pillNum, p.x, p.y);
+  }
+  tankPutPill(sim, value, pillNum);
+  if ((pillsGetPillOwner(pb, pillNum)) != gameSimGetTankPlayer(sim, value)) {
+    pillsSetPillOwner(sim, pb, pillNum, gameSimGetTankPlayer(sim, value), FALSE);
+  }
+}
+
+/*********************************************************
+*NAME:          tankDropPillAt
+*PURPOSE:
+* Drops one carried pillbox on a named map square. Answers
+* FALSE and changes nothing when the square will not hold a
+* pill — off the minable area, or already holding a pill, a
+* base, a building, a half-building or a boat — so a caller
+* laying several out can move along and try the next one.
+* The pill lands dead, owned by the tank that carried it,
+* at the normal firing interval.
+*
+*ARGUMENTS:
+*  sim     - The game the tank belongs to
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*  mx      - X map square to drop it on
+*  my      - Y map square to drop it on
+*********************************************************/
+bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
+  map *mp = &sim->mp;
+  pillboxes *pb = &sim->pb;
+  bases *bs = &sim->bs;
+  bool isServer = sim->isServer;
+  pillbox item;   /* Item to add to the pillbox */
+  BYTE pos;       /* The Map position */
+
+  if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
+      my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
+    return FALSE;
+  }
+  pos = mapGetPos(mp, mx, my);
+  if (pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE ||
+      pos == BUILDING || pos == HALFBUILDING || pos == BOAT) {
+    return FALSE;
+  }
+
+  item.x = mx;
+  item.y = my;
+  item.armour = 0;
+  item.owner = gameSimGetTankPlayer(sim, value);
+  item.speed = PILLBOX_ATTACK_NORMAL;
+  item.reload = PILLBOX_ATTACK_NORMAL;
+  item.coolDown = 0;
+  item.inTank = FALSE;
+  item.justSeen = FALSE;
+  if (isServer) {
+    pillsSetPill(pb,&item,pillNum);
+  }
+  if (!isServer) {
+    frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
+  }
+  tankGetCarriedPillNum(value, pillNum);
+  return TRUE;
 }
 
 /*********************************************************
@@ -2211,9 +2439,6 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 *  bs     - Pointer to the bases structure
 *********************************************************/
 void tankDropPills(GameSim *sim, tank *value) {
-  map *mp = &sim->mp;
-  pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
   bool isServer = sim->isServer;
   WORLD conv;     /* Used for conversion */
   BYTE bmx;       /* Current Position of Tank */
@@ -2221,9 +2446,7 @@ void tankDropPills(GameSim *sim, tank *value) {
   BYTE numPills;  /* The number of pills on the tank */
   BYTE width;     /* How wide the pills length should be */
   tankCarryPb q;  /* Temp pointer for removing pills */
-  pillbox item;   /* Item to add to the pillbox */
   BYTE count;     /* Looping variable */
-  BYTE pos;       /* The Map position */
 
 
   /* Get the number of pills on the tank */
@@ -2235,13 +2458,6 @@ void tankDropPills(GameSim *sim, tank *value) {
   }
   if (numPills > 0 && (isServer)) {
     count = 0;
-    item.armour = 0;
-    item.owner = gameSimGetTankPlayer(sim, value);
-    item.speed = PILLBOX_ATTACK_NORMAL;
-    item.reload = PILLBOX_ATTACK_NORMAL;
-    item.coolDown = 0;
-    item.inTank = FALSE;
-    item.justSeen = FALSE;
     /* Get tank location */
     conv = (*value)->x;
     conv >>= TANK_SHIFT_MAPSIZE;
@@ -2269,25 +2485,10 @@ void tankDropPills(GameSim *sim, tank *value) {
     while (NonEmpty((*value)->carryPills)) {
       q = (*value)->carryPills;
       if (isServer) {
-        item.x = bmx;
-        item.y = bmy+count;
-        if (item.x > MAP_MINE_EDGE_LEFT && item.x < MAP_MINE_EDGE_RIGHT && item.y > MAP_MINE_EDGE_TOP && item.y < MAP_MINE_EDGE_BOTTOM) {
-          pos = mapGetPos(mp, item.x, item.y);
-          if (pillsExistPos(pb, item.x, item.y) == FALSE && basesExistPos(bs, item.x, item.y) == FALSE && pos != BUILDING && pos != HALFBUILDING && pos != BOAT) {
-            if (isServer) {
-              pillsSetPill(pb,&item,q->pillNum);
-            }
-            if (!isServer) {
-              frontEndStatusPillbox(clientSimFromSim(sim), q->pillNum, (pillsGetAllianceNum(sim, pb, q->pillNum)));
-            }
-            (*value)->carryPills = TankPillsTail(q);
-            Dispose(q);
-          }
-        }
+        tankDropPillAt(sim, value, q->pillNum, bmx, (BYTE)(bmy+count));
         count++;
         if (count == width) {
           count = 0;
-          item.y = bmy;
           bmx++;
         }
       } else {
@@ -2455,6 +2656,30 @@ void tankGiveMines(GameSim *sim, tank *value, BYTE amount) {
 }
 
 /*********************************************************
+*NAME:          tankPeekCarriedPill
+*PURPOSE:
+* Which pillbox a place-pill order would put down: the
+* first one on the carry list, read without taking it.
+* Returns FALSE and leaves pillNum alone when the tank is
+* carrying none.
+*
+* tankGetCarriedPill only fills the number on the path that
+* takes the pill, so a caller that has to name the pill
+* before it decides anything asks here.
+*
+*ARGUMENTS:
+*  value   - Pointer to the tank structure
+*  pillNum - Pointer to hold the pillbox number
+*********************************************************/
+bool tankPeekCarriedPill(tank *value, BYTE *pillNum) {
+  if (IsEmpty((*value)->carryPills)) {
+    return FALSE;
+  }
+  *pillNum = (*value)->carryPills->pillNum;
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          tankGetCarriedPill
 *AUTHOR:        John Morrison
 *CREATION DATE: 17/01/99
@@ -2484,6 +2709,28 @@ bool tankGetCarriedPill(tank *value, BYTE *pillNum, bool perform) {
     returnValue = TRUE;
   }
   return returnValue;
+}
+
+/*********************************************************
+*NAME:          tankIsCarryingPill
+*PURPOSE:
+* Returns whether this tank is carrying a named pillbox.
+*
+*ARGUMENTS:
+*  value   - Pointer to the tank structure
+*  pillNum - The pillbox number, counted from 1
+*********************************************************/
+bool tankIsCarryingPill(tank *value, BYTE pillNum) {
+  tankCarryPb q;
+
+  q = (*value)->carryPills;
+  while (NonEmpty(q)) {
+    if (q->pillNum == pillNum) {
+      return TRUE;
+    }
+    q = TankPillsTail(q);
+  }
+  return FALSE;
 }
 
 void tankGetCarriedPillNum(tank *value, BYTE pillNum) {
@@ -2622,6 +2869,9 @@ void tankLayMine(GameSim *sim, tank *value) {
       if (isServer && sim->hiddenMines) {
         sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
       }
+      if (isServer && sim->callbacks.mineLaid) {
+        sim->callbacks.mineLaid(sim->callbacks.ctx, pn, bmx, bmy);
+      }
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       if (!(*value)->destroyed) {
         if (!isServer) {
@@ -2679,9 +2929,10 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
 
   if (diffX < 384 && diffY < 384 && !(*value)->destroyed) {
     BYTE armourBefore = (*value)->armour;
-    bool wasDestroyed = tankApplyDamage(value, MINE_DAMAGE);
+    BYTE amount = tankDamageAmount(sim, MINE_DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_MINES);
+    bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_MINES);
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
-      uint16_t eff = (armourBefore >= MINE_DAMAGE) ? MINE_DAMAGE : armourBefore;
+      uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
       sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
                                   gameSimGetTankPlayer(sim, value), DMG_SRC_MINE, eff, false,
                                   (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
@@ -3260,6 +3511,118 @@ void tankSetTrees(tank *value, BYTE amount) {
   }
 }
 
+/*********************************************************
+*NAME:          tankSetModifiers
+*PURPOSE:
+*  Replaces the tank's whole modifier set
+*
+*ARGUMENTS:
+*  value - The tank structure
+*  mods  - The set to store
+*********************************************************/
+void tankSetModifiers(tank value, const TankModifiers *mods) {
+  if (value == NULL || mods == NULL) {
+    return;
+  }
+  value->mods = *mods;
+}
+
+/*********************************************************
+*NAME:          tankGetModifiers
+*PURPOSE:
+*  Copies out the tank's modifier set
+*
+*ARGUMENTS:
+*  value - The tank structure
+*  out   - Filled with the stored set
+*********************************************************/
+void tankGetModifiers(tank value, TankModifiers *out) {
+  if (out == NULL) {
+    return;
+  }
+  if (value == NULL) {
+    memset(out, 0, sizeof(*out));
+    return;
+  }
+  *out = value->mods;
+}
+
+/*********************************************************
+*NAME:          tankReloadTicks
+*PURPOSE:
+*  How long this tank waits between shots, in ticks
+*
+*ARGUMENTS:
+*  sim   - The game the tank belongs to
+*  value - The tank structure
+*********************************************************/
+BYTE tankReloadTicks(GameSim *sim, tank value) {
+  int pct;
+  (void)sim;
+  pct = (value == NULL) ? 100 : tankModPct(value->mods.reload);
+  /* Multiply before dividing, and round half up, so 100 percent is exactly
+     the classic time. */
+  return (BYTE) ((TANK_RELOAD_TIME * pct + 50) / 100);
+}
+
+/*********************************************************
+*NAME:          tankDamageAmount
+*PURPOSE:
+*  The damage one blow actually does after the owner's and
+*  the victim's modifiers
+*
+*ARGUMENTS:
+*  sim    - The game both tanks belong to
+*  base   - The blow's unmodified damage
+*  owner  - Slot that dealt it, or NEUTRAL
+*  victim - Slot taking it
+*  cause  - A LAST_DEATH_BY_* value naming the blow
+*********************************************************/
+BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim,
+                      BYTE cause) {
+  int dealt = 100;  /* An environmental blow deals the classic amount */
+  int taken = 100;
+  int scale;
+  int64_t amount;
+
+  if (sim != NULL) {
+    if (owner < MAX_TANKS && sim->tanks[owner] != NULL) {
+      dealt = tankModPct(sim->tanks[owner]->mods.dealt);
+    }
+    if (victim < MAX_TANKS && sim->tanks[victim] != NULL) {
+      taken = tankModPct(sim->tanks[victim]->mods.taken);
+    }
+  }
+  /* The host's say on this pairing, and the last factor. Every shell and
+     every mine in the game is priced here, so a scale of zero is what makes
+     a tank take no damage at all rather than a little. */
+  scale = gameSimDamageScale(sim, owner, victim, cause);
+
+  /* One rounding at the end, so the three factors compose without each
+     losing a fraction. A scale of a hundred divides out exactly, leaving
+     the classic arithmetic untouched. Widened because a scale a script
+     names has no ceiling of its own. */
+  amount = ((int64_t) base * dealt * taken * scale + 500000) / 1000000;
+  if (amount > 255) {
+    amount = 255;
+  }
+  return (BYTE) amount;
+}
+
+/*********************************************************
+*NAME:          tankBoatExitSpeed
+*PURPOSE:
+*  The speed at which this tank leaves a boat onto soft
+*  ground
+*
+*ARGUMENTS:
+*  value - The tank structure
+*********************************************************/
+BYTE tankBoatExitSpeed(tank value) {
+  int pct = (value == NULL) ? 100 : tankModPct(value->mods.speed);
+  return (BYTE) ((MAP_SPEED_TBOAT * pct) / 100);
+}
+
 
 void tankPutPill(GameSim *sim, tank *value, BYTE pillNum) {
   pillboxes *pb = &sim->pb;
@@ -3307,6 +3670,37 @@ int tankCalcCRCSetup(tank *value) {
 void tankSetOnBoat(tank *value, bool onBoat) {
   (*value)->onBoat = onBoat;
   (*value)->boatState = onBoat ? BoatState_InBoat : BoatState_NotOnBoat;
+}
+
+/*********************************************************
+*NAME:          tankClearBoatTrail
+*PURPOSE:
+*  Forgets the river square the tank was last on while
+*  afloat. Leaving a boat turns that square back into a
+*  boat tile, so anything that moves a tank or changes its
+*  boat state without sailing there clears the square
+*  first, as a fresh tank has it.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+void tankClearBoatTrail(tank *value) {
+  (*value)->lastBoatRiverX = 0;
+  (*value)->lastBoatRiverY = 0;
+}
+
+/*********************************************************
+*NAME:          tankClearResidualSpeed
+*PURPOSE:
+*  Throws away the sub-tick movement the tank had banked.
+*  A tank put somewhere it did not drive to keeps no part
+*  of the step it was halfway through.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*********************************************************/
+void tankClearResidualSpeed(tank *value) {
+  (*value)->residualSpeed = 0;
 }
 
 void tankSetSpeed(tank *value, SPEEDTYPE speed) {
@@ -3512,9 +3906,10 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
 		BYTE armourBefore = (*value)->armour;
-		bool wasDestroyed = tankApplyDamage(value, DAMAGE);
+		BYTE amount = tankDamageAmount(sim, DAMAGE, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_SHELL);
+		bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_SHELL);
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
-			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
 			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
 			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
@@ -3579,6 +3974,7 @@ void tankSyncResources(tank dst, tank src) {
     dst->lastBoatRiverX = src->lastBoatRiverX;
     dst->lastBoatRiverY = src->lastBoatRiverY;
     dst->sightLen = src->sightLen;
+    dst->mods = src->mods;
 
     /* Deep-copy carried pills list from server to client */
     while (NonEmpty(dst->carryPills)) {

@@ -633,7 +633,8 @@ void printArgs() {
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
   fprintf(stderr, "-bot-init <spec> - Per-bot brain paths by player id: 'range=path[arg],...'\n");
   fprintf(stderr, "                where range is 'a-b' or 'n' and the optional [arg] becomes\n");
-  fprintf(stderr, "                that bot's BRAIN_INIT_ARG Lua global. Ids not listed use\n");
+  fprintf(stderr, "                that bot's BRAIN_INIT Lua table: ';'-separated key=value\n");
+  fprintf(stderr, "                pairs, a bare word being the value '1'. Ids not listed use\n");
   fprintf(stderr, "                -brain. E.g. -bot-init 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n");
   fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
   fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
@@ -2206,12 +2207,12 @@ int main(int argc, char **argv) {
         allyTeam = 0;
       }
       /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
-       * id defaults to the shared brainPath with no arg; the spec overrides the
-       * ids it names. Shared parser/semantics with BrainTest. */
+       * id defaults to the shared brainPath with an empty init table; the spec
+       * overrides the ids it names. Shared parser/semantics with BrainTest. */
       BotInitSlot botInit[MAX_TANKS];
       for (i = 0; i < MAX_TANKS; i++) {
         snprintf(botInit[i].path, sizeof(botInit[i].path), "%s", brainPath);
-        botInit[i].arg[0] = '\0';
+        scnTableClear(&botInit[i].init);
         botInit[i].covered = 0;
       }
       if (argExist(argc, argv, "bot-init") == TRUE) {
@@ -2260,15 +2261,20 @@ int main(int argc, char **argv) {
         bolo_rand_restore(&rngBeforeNaming);
       }
       for (i = 0; i < numBots; i++) {
-        /* Stage this bot's BRAIN_INIT_ARG (consumed by the create below) and
-         * use its resolved brain path. The name was pre-picked into botNames[i]
-         * above (under a bolo_rand save/restore so it stays off the sim PRNG). */
-        luaBrainsSetNextInitArg(botInit[i].arg);
+        /* This bot's init table and resolved brain path go down the create
+         * call, so each bot gets its own. The name was pre-picked into
+         * botNames[i] above (under a bolo_rand save/restore so it stays off
+         * the sim PRNG). */
         if (botInit[i].covered) {
+          char initText[256];
+          scnTableFormat(&botInit[i].init, initText, sizeof(initText));
           fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
-                  botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
+                  initText[0] ? " init=" : "", initText);
         }
-        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game, hiddenMines)) {
+        /* No team in the add: -allybots and -teams place these bots through
+         * serverSimSetTeamBatch below, once the whole set is in. */
+        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game,
+                              hiddenMines, 0, &botInit[i].init)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round

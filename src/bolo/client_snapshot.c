@@ -75,6 +75,7 @@
 #include "players.h"
 #include "screenbrainmap.h"
 #include "client_snapshot.h"
+#include "control_event.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
@@ -550,13 +551,26 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         break;
       }
       case EVENT_BASE_CAPTURED:
-        /* data: [newOwner, previousOwner] */
+        /* data: [newOwner, previousOwner, index, quiet] */
+        /* A base going neutral is published as the same event with no new
+         * owner. Nothing here is about losing a base — the line, the
+         * scoreboard credit, the Steam stat and the first-capture latch all
+         * belong to whoever took it — so the client leaves a neutralisation
+         * alone, as it did when the server did not publish one at all. The
+         * owner itself arrives on EVENT_BASE_UPDATE and the periodic sync. */
+        if (events[i].data[0] == NEUTRAL) {
+          break;
+        }
         /* Live scoreboard: counted for every slot. */
         {
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
           if (ownerRow != NULL) ownerRow->baseCaptures++;
         }
-        if (isHuman) {
+        /* data[3] is the announce policy's answer. A quiet capture never
+         * enters the debounce queue at all, so there is nothing left there
+         * to pop on a later tick; a line already pending from an earlier,
+         * announced capture is that capture's line and still comes out. */
+        if (isHuman && events[i].data[3] == 0) {
           basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
                                      events[i].data[0], events[i].data[1]);
         }
@@ -583,13 +597,23 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         csPtr->hasAnyBaseCaptured = true;
         break;
       case EVENT_PILL_CAPTURED:
-        /* data: [newOwner, previousOwner] */
+        /* data: [newOwner, previousOwner, index, quiet] */
+        /* A pillbox going neutral is left alone for the same reason the base
+         * above is: every line and counter here belongs to whoever took it.
+         * The owner arrives on EVENT_PILL_UPDATE and the periodic sync. */
+        if (events[i].data[0] == NEUTRAL) {
+          break;
+        }
         /* Live scoreboard: counted for every slot. */
         {
           ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
           if (ownerRow != NULL) ownerRow->pillCaptures++;
         }
-        if (isHuman) {
+        /* data[3] is the announce policy's answer; the scoreboard, the Steam
+         * stat and the achievement latch below are not lines and run either
+         * way. This is now the only site that writes a pill-capture line —
+         * pillsSetPillOwner writes none. */
+        if (isHuman && events[i].data[3] == 0) {
           BYTE newOwner = events[i].data[0];
           BYTE prevOwner = events[i].data[1];
           bool suppressAllied = (prevOwner != NEUTRAL &&
@@ -695,7 +719,7 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         break;
       case EVENT_LGM_LOST:
-        /* data: [victim, killer] — builder killed, broadcast newswire */
+        /* data: [victim, killer, quiet] — builder killed, broadcast newswire */
         /* Live scoreboard: counted for every slot. Killing your own LGM
          * credits no lgmKills, matching the Steam branch below. */
         {
@@ -706,7 +730,8 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
             if (killerRow != NULL) killerRow->lgmKills++;
           }
         }
-        if (isHuman) {
+        /* data[2] is the announce policy's answer. */
+        if (isHuman && events[i].data[2] == 0) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
           playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
@@ -995,6 +1020,16 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetTrees(&MY_TANK(csPtr), tanks[i].trees);
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+        {
+          TankModifiers mods;
+          mods.speed = tanks[i].modSpeed;
+          mods.accel = tanks[i].modAccel;
+          mods.turn = tanks[i].modTurn;
+          mods.reload = tanks[i].modReload;
+          mods.dealt = tanks[i].modDealt;
+          mods.taken = tanks[i].modTaken;
+          tankSetModifiers(MY_TANK(csPtr), &mods);
+        }
         csPtr->clientState.hasPredictedTank = TRUE;
         /* The tank just teleported onto the map from the server's chosen
          * start — a teleport snaps, so clear any stale render offset. */
@@ -1116,7 +1151,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                       tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                       tankGetShells(&MY_TANK(csPtr)) > 0 &&
                       !tankIsDestroyed(&MY_TANK(csPtr))) {
-                    tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
+                    tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
                     tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
                   }
                 }
@@ -1197,6 +1232,19 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetDeathWait(&MY_TANK(csPtr), tanks[i].deathWait);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
+        {
+          /* Every own-tank snapshot past the first lands here, whether or not
+             the position check above snapped and replayed, so this and the
+             first-snapshot write cover the whole stream. */
+          TankModifiers mods;
+          mods.speed = tanks[i].modSpeed;
+          mods.accel = tanks[i].modAccel;
+          mods.turn = tanks[i].modTurn;
+          mods.reload = tanks[i].modReload;
+          mods.dealt = tanks[i].modDealt;
+          mods.taken = tanks[i].modTaken;
+          tankSetModifiers(MY_TANK(csPtr), &mods);
+        }
         /* Sync boat state from server — prediction skips the boat state
          * machine (isPredicting guard in tankUpdate), so the client's
          * onBoat flag can go stale if no position mismatch triggers
@@ -1222,7 +1270,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                 tankGetReloadTime(&MY_TANK(csPtr)) == 0 &&
                 tankGetShells(&MY_TANK(csPtr)) > 0 &&
                 !tankIsDestroyed(&MY_TANK(csPtr))) {
-              tankSetReload(&MY_TANK(csPtr), TANK_RELOAD_TIME);
+              tankSetReload(&MY_TANK(csPtr), tankReloadTicks(&csPtr->sim, MY_TANK(csPtr)));
               tankSetShells(&MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }
@@ -1454,6 +1502,178 @@ void clientApplySnapshot(ClientSim *csPtr,
   if (!isHuman) {
     clientSnapshotRenderInterp(csPtr, arrivalMs, 0.0f, /*discrete=*/true);
   }
+}
+
+/*********************************************************
+*NAME:          clientApplyEntityChange
+*PURPOSE:
+*  Applies a CTRL_ENTITY_CHANGE to this client's own pill,
+*  base or start list. An add writes the record at the
+*  number the event names and marks that slot live; a remove
+*  clears the live flag and keeps the slot, so the count and
+*  every index above the removed one go on naming the same
+*  item.
+*
+*  The wire index is 0 based and the three list modules
+*  number from 1, so the number is one higher throughout.
+*
+*ARGUMENTS:
+*  cs  - Pointer to the ClientSim
+*  evt - The control event to apply
+*********************************************************/
+void clientApplyEntityChange(ClientSim *cs, const struct ControlEvent *evt) {
+  BYTE num;        /* the item's number in its list */
+  bool ok = FALSE;
+
+  if (cs == NULL || evt == NULL) {
+    return;
+  }
+  num = (BYTE)(evt->u.entityChange.index + 1);
+
+  /* The number comes from the server, which is the only place item numbers
+   * are decided, so an add writes the slot it names rather than choosing
+   * one: the install functions take a number where the add functions report
+   * one. A number past this list's count raises the count and leaves the
+   * gap removed — the server only sends a number it has filled, so a gap is
+   * the items this client has not been told about, not items it has. */
+  switch (evt->u.entityChange.kind) {
+  case ENTITY_KIND_PILL:
+    if (cs->sim.pb == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      pillbox item;
+      memset(&item, 0, sizeof(item));
+      item.x      = evt->u.entityChange.rec.pill.x;
+      item.y      = evt->u.entityChange.rec.pill.y;
+      item.owner  = evt->u.entityChange.rec.pill.owner;
+      item.armour = evt->u.entityChange.rec.pill.armour;
+      item.speed  = evt->u.entityChange.rec.pill.speed;
+      item.inTank = evt->u.entityChange.rec.pill.inTank ? TRUE : FALSE;
+      ok = pillsInstallItem(&cs->sim.pb, &item, num);
+    } else {
+      ok = pillsRemoveItem(&cs->sim.pb, num);
+    }
+    break;
+
+  case ENTITY_KIND_BASE:
+    if (cs->sim.bs == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      base item;
+      memset(&item, 0, sizeof(item));
+      item.x      = evt->u.entityChange.rec.base.x;
+      item.y      = evt->u.entityChange.rec.base.y;
+      item.owner  = evt->u.entityChange.rec.base.owner;
+      item.armour = evt->u.entityChange.rec.base.armour;
+      item.shells = evt->u.entityChange.rec.base.shells;
+      item.mines  = evt->u.entityChange.rec.base.mines;
+      ok = basesInstallItem(&cs->sim.bs, &item, num);
+    } else {
+      ok = basesRemoveItem(&cs->sim.bs, num);
+    }
+    break;
+
+  case ENTITY_KIND_START:
+    if (cs->sim.ss == NULL) {
+      break;
+    }
+    if (evt->u.entityChange.added) {
+      start item;
+      memset(&item, 0, sizeof(item));
+      item.x   = evt->u.entityChange.rec.start.x;
+      item.y   = evt->u.entityChange.rec.start.y;
+      item.dir = evt->u.entityChange.rec.start.dir;
+      ok = startsInstallItem(&cs->sim.ss, &item, num);
+    } else {
+      ok = startsRemoveItem(&cs->sim.ss, num);
+    }
+    break;
+
+  default:
+    break;
+  }
+
+  if (!ok) {
+    WB_LOG_WARN(WB_LOG_CAT_CLIENT,
+                "entity change not applied: kind=%u index=%u added=%u",
+                (unsigned)evt->u.entityChange.kind,
+                (unsigned)evt->u.entityChange.index,
+                (unsigned)evt->u.entityChange.added);
+    return;
+  }
+
+  /* The status panels are pushed, not polled: nothing else repaints the
+   * entry for an item that has just left or arrived, so it is done here. A
+   * removed item reads as neutral, which is how a slot the map does not use
+   * is drawn. */
+  if (evt->u.entityChange.kind == ENTITY_KIND_PILL) {
+    frontEndStatusPillbox(cs, num, pillsGetAllianceNum(&cs->sim, &cs->sim.pb, num));
+  } else if (evt->u.entityChange.kind == ENTITY_KIND_BASE) {
+    frontEndStatusBase(cs, num, basesGetStatusNum(&cs->sim, num));
+  }
+
+  /* A pill or base appearing or leaving changes what the screen draws over
+   * its square, the same way a revealed mine does. */
+  clientSimRecalc(cs);
+}
+
+/*********************************************************
+*NAME:          clientApplyEntitySync
+*PURPOSE:
+*  Applies a CTRL_ENTITY_SYNC to this client's own pill,
+*  base and start lists. Bit i of a mask stands for index i:
+*  set puts the item at that index on the map, clear takes
+*  it off. Only the live flags move — the counts are the
+*  ones the compressed map installed, and a bit at or above
+*  a list's count names no item and is ignored.
+*
+*  The records are left alone too. Every index a mask can
+*  reach is one the install wrote, and taking an item off
+*  the map keeps its record, so an index put back on the map
+*  holds the item it always held.
+*
+*  The wire index is 0 based and the three list modules
+*  number from 1, so the number is one higher throughout.
+*
+*ARGUMENTS:
+*  cs  - Pointer to the ClientSim
+*  evt - The control event to apply
+*********************************************************/
+void clientApplyEntitySync(ClientSim *cs, const struct ControlEvent *evt) {
+  BYTE num;   /* the item's number in its list */
+  BYTE count; /* how many numbers that list has  */
+
+  if (cs == NULL || evt == NULL) {
+    return;
+  }
+
+  if (cs->sim.pb != NULL) {
+    count = pillsGetNumPills(&cs->sim.pb);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.pills & (1u << (num - 1))) != 0;
+      pillsSetActive(&cs->sim.pb, num, onMap);
+    }
+  }
+  if (cs->sim.bs != NULL) {
+    count = basesGetNumBases(&cs->sim.bs);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.bases & (1u << (num - 1))) != 0;
+      basesSetActive(&cs->sim.bs, num, onMap);
+    }
+  }
+  if (cs->sim.ss != NULL) {
+    count = startsGetNumStarts(&cs->sim.ss);
+    for (num = 1; num <= count; num++) {
+      bool onMap = (evt->u.entitySync.starts & (1u << (num - 1))) != 0;
+      startsSetActive(&cs->sim.ss, num, onMap);
+    }
+  }
+
+  /* A pill or base leaving changes what the screen draws over its square,
+   * the same way one leaving on a CTRL_ENTITY_CHANGE does. */
+  clientSimRecalc(cs);
 }
 
 /*********************************************************

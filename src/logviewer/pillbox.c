@@ -34,6 +34,10 @@
 #include "lv_messages.h"
 #include "../gui/lang.h"
 
+/* Bytes per pillbox record in a snapshot's pill block: x, y, armour, owner,
+   speed, inTank, reload, justSeen, coolDown. */
+#define LV_PILL_NET_RECORD 9
+
 /*********************************************************
 *NAME:          lv_pillsCreate
 *AUTHOR:        John Morrison
@@ -48,7 +52,130 @@
 *********************************************************/
 void lv_pillsCreate(pillboxes *value) {
   New(*value);
+  /* emalloc does not zero, and the live flags past the wire region are read
+     from the first snapshot on, so the whole structure is cleared here the
+     way pillsCreate clears the sim's. Every slot starts off the map. */
+  memset(*value, 0, sizeof(**value));
   ((*value)->numPills) = 0;
+}
+
+/*********************************************************
+*NAME:          lv_pillsIsActive
+*PURPOSE:
+*  Returns whether a pillbox number names a pillbox that is
+*  on the map. A recording can take one off mid-round
+*  (log_EntityChange) and the slot and the count stay, so a
+*  number in range is not on its own enough. A number out of
+*  range returns FALSE.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool lv_pillsIsActive(pillboxes *value, BYTE pillNum) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (pillNum == 0 || pillNum > (*value)->numPills) {
+    return FALSE;
+  }
+  return ((*value)->active[pillNum - 1] != FALSE);
+}
+
+/*********************************************************
+*NAME:          lv_pillsInstallItem
+*PURPOSE:
+*  Writes a pillbox at the number the recording names and
+*  puts that slot on the map, whatever the slot held before.
+*  A number past the count raises the count to cover it and
+*  leaves the slots the gap opens up off the map. Mirrors
+*  pillsInstallItem, which is what a live client applies the
+*  same change through. Returns FALSE for number 0 or a
+*  number past MAX_PILLS.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  item    - The pillbox to store
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool lv_pillsInstallItem(pillboxes *value, pillbox *item, BYTE pillNum) {
+  BYTE slot;  /* The array index the number names */
+  BYTE count; /* Looping variable */
+
+  if (value == NULL || *value == NULL || item == NULL) {
+    return FALSE;
+  }
+  if (pillNum == 0 || pillNum > MAX_PILLS) {
+    return FALSE;
+  }
+  slot = (BYTE) (pillNum - 1);
+  for (count = (*value)->numPills; count < slot; count++) {
+    (*value)->active[count] = FALSE;
+  }
+  if (pillNum > (*value)->numPills) {
+    (*value)->numPills = pillNum;
+  }
+  (*value)->item[slot].x = item->x;
+  (*value)->item[slot].y = item->y;
+  (*value)->item[slot].owner = item->owner;
+  (*value)->item[slot].armour = item->armour;
+  (*value)->item[slot].speed = item->speed;
+  (*value)->item[slot].inTank = item->inTank;
+  (*value)->active[slot] = TRUE;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          lv_pillsRemoveItem
+*PURPOSE:
+*  Takes a pillbox off the map, leaving its slot, the count
+*  and every pillbox number above it alone, so the numbers
+*  the rest of the recording uses keep meaning the same
+*  pillbox. Returns FALSE for a number out of range or one
+*  already off the map.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*********************************************************/
+bool lv_pillsRemoveItem(pillboxes *value, BYTE pillNum) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (pillNum == 0 || pillNum > MAX_PILLS || pillNum > (*value)->numPills) {
+    return FALSE;
+  }
+  pillNum--;
+  if ((*value)->active[pillNum] == FALSE) {
+    return FALSE;
+  }
+  (*value)->active[pillNum] = FALSE;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          lv_pillsSetActive
+*PURPOSE:
+*  Puts a pillbox on the map or takes it off it, leaving its
+*  record and the count alone either way. This is what a
+*  log_EntityMasks record writes, so a slot put back holds
+*  the pillbox it already held. Returns FALSE for a number
+*  out of range. Mirrors pillsSetActive.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - The pillbox number, 1 based
+*  onMap   - TRUE for on the map, FALSE for off it
+*********************************************************/
+bool lv_pillsSetActive(pillboxes *value, BYTE pillNum, bool onMap) {
+  if (value == NULL || *value == NULL) {
+    return FALSE;
+  }
+  if (pillNum == 0 || pillNum > (*value)->numPills) {
+    return FALSE;
+  }
+  (*value)->active[pillNum - 1] = onMap ? TRUE : FALSE;
+  return TRUE;
 }
 
 
@@ -80,8 +207,15 @@ void lv_pillsDestroy(pillboxes *value) {
 *  numPills - The number of pills
 *********************************************************/
 void lv_pillsSetNumPills(pillboxes *value, BYTE numPills) {
+  BYTE count; /* Looping variable */
+
   if (numPills > 0 && numPills <= MAX_PILLS) {
     (*value)->numPills = numPills;
+    /* Nothing past the count names a pillbox, so a shorter list must not
+       leave the slots it dropped reading as on the map. */
+    for (count = numPills; count < MAX_PILLS; count++) {
+      (*value)->active[count] = FALSE;
+    }
   }
 }
 
@@ -122,6 +256,9 @@ void lv_pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
     (((*value)->item[pillNum]).armour) = item->armour;
     (((*value)->item[pillNum]).speed) = item->speed;
     (((*value)->item[pillNum]).inTank) = item->inTank;
+    /* Only ever called to put a real pillbox in the slot, so the slot is on
+       the map whatever it held before. */
+    (*value)->active[pillNum] = TRUE;
   }
 }
 
@@ -145,7 +282,7 @@ bool lv_pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
   returnValue = FALSE;
   count = 0;
   while (returnValue == FALSE && count < ((*value)->numPills)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
       returnValue = TRUE;
     }
     count++;
@@ -161,7 +298,7 @@ BYTE lv_pillsItemNumAt(pillboxes *value, BYTE xValue, BYTE yValue) {
 
   count = 0;
   while (count < ((*value)->numPills)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
       return count;
     }
     count++;
@@ -176,6 +313,10 @@ pillAlliance lv_pillsGetAllianceNum(pillboxes *value, BYTE pillNum) {
 
   if (*value == NULL) return returnValue;
   if (pillNum < 1 || pillNum > (*value)->numPills) return returnValue;
+  /* A pillbox the recording has taken off the map has no owner to report:
+     its record is the stale one the slot was carrying when it went. The
+     status panel skips such a number rather than drawing this default. */
+  if (lv_pillsIsActive(value, pillNum) == FALSE) return returnValue;
   pillNum--;
   self = lv_playersGetSelf();
 
@@ -264,7 +405,7 @@ BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue) {
   returnValue = PILL_EVIL_15;
 
   while (done == FALSE && count < ((*value)->numPills)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
+    if ((*value)->active[count] != FALSE && ((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
       /* Pillbox has been Hit */
       done = TRUE;
       
@@ -447,7 +588,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
 bool lv_pillsChooseView(pillboxes *value, int x, int y) {
   BYTE count = 0;
   while (count < (*value)->numPills) {
-    if ((*value)->item[count].inTank == FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].inTank == FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
       lv_playersSetSelf((*value)->item[count].owner);
       return TRUE;
     }
@@ -472,9 +613,43 @@ bool lv_pillsChooseView(pillboxes *value, int x, int y) {
 void lv_pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
   BYTE count = 0;
   BYTE len = 1;
-  
-  (*value)->numPills = buff[0];
-  while (count < (*value)->numPills) {
+  BYTE known = (*value)->numPills; /* How many numbers this list already had */
+  BYTE live;                       /* Numbers the blob actually describes */
+  BYTE avail;                      /* Records the block's length can hold */
+
+  /* The count is a byte read off the recording and item[] holds MAX_PILLS,
+     so a count past that, or past what the block's own length can describe,
+     is a damaged or hostile file. Clamp it before it is stored or walked;
+     nothing below indexes by the raw byte. */
+  live = buff[0];
+  avail = (BYTE)(dataLen >= 1 ? (dataLen - 1) / LV_PILL_NET_RECORD : 0);
+  if (live > MAX_PILLS) {
+    live = MAX_PILLS;
+  }
+  if (live > avail) {
+    live = avail;
+  }
+  (*value)->numPills = live;
+  /* The blob is the map: a count and a record per pillbox, with no room for
+     which of them are on it — the live flags sit past the wire region on both
+     sides. So a snapshot restates the records and leaves the flags to the
+     stream: a number this list already knew keeps the flag the records have
+     given it, a number the blob has grown past the old count arrives on the
+     map, and a number the blob no longer reaches is off it. Without that a
+     pillbox a log_EntityChange had taken away would come back at the next
+     snapshot and stay. */
+  if (known > MAX_PILLS) {
+    known = MAX_PILLS;
+  }
+  for (count = known; count < live; count++) {
+    (*value)->active[count] = TRUE;
+  }
+  for (count = live; count < MAX_PILLS; count++) {
+    (*value)->active[count] = FALSE;
+  }
+
+  count = 0;
+  while (count < live) {
     (*value)->item[count].x = buff[len];
     len++;
     (*value)->item[count].y = buff[len];

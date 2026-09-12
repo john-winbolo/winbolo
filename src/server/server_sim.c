@@ -199,6 +199,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * is a valid start index, so initialise explicitly. */
     for (count = 0; count < MAX_TANKS; count++) {
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
+        sim->sim.scenarioStartIdx[count] = MAX_STARTS;
     }
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below
@@ -330,6 +331,28 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
+    /* The captures and the builder loss. Registered on the server alone, for
+     * the same reason the records above are: the event queue is here. */
+    sim->sim.callbacks.baseOwnerChanged = serverSimCbBaseOwnerChanged;
+    sim->sim.callbacks.pillOwnerChanged = serverSimCbPillOwnerChanged;
+    sim->sim.callbacks.lgmDied = serverSimCbLgmDied;
+    sim->sim.callbacks.tankSpawned = serverSimCbTankSpawned;
+    sim->sim.callbacks.lgmLanded = serverSimCbLgmLanded;
+    sim->sim.callbacks.pillPlaced = serverSimCbPillPlaced;
+    sim->sim.callbacks.pillKilled = serverSimCbPillKilled;
+    sim->sim.callbacks.built = serverSimCbBuilt;
+    sim->sim.callbacks.mineLaid = serverSimCbMineLaid;
+    sim->sim.callbacks.mineExploded = serverSimCbMineExploded;
+    /* The policy queries. Registered on the server alone: a ClientSim leaves
+     * them NULL, which is what keeps shared code on the classic branch
+     * there. */
+    sim->sim.callbacks.chooseStart = serverSimCbChooseStart;
+    sim->sim.callbacks.spawnLoadout = serverSimCbSpawnLoadout;
+    sim->sim.callbacks.canRespawn = serverSimCbCanRespawn;
+    sim->sim.callbacks.damageScale = serverSimCbDamageScale;
+    sim->sim.callbacks.canBuild = serverSimCbCanBuild;
+    sim->sim.callbacks.canCapture = serverSimCbCanCapture;
+    sim->sim.callbacks.canDie = serverSimCbCanDie;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {

@@ -271,6 +271,41 @@ bool serverSimIsMapSkipVote(const ServerSim *sim, BYTE n) {
     return sim->mapSkipVotes[n];
 }
 
+bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
+    tank *t;
+    if (sim == NULL || out == NULL || i >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, i)) return false;
+
+    memset(out, 0, sizeof(*out));
+    out->connected = true;
+    out->is_bot    = sim->lobbyPlayers[i].isBot;
+    out->team      = sim->lobbyPlayers[i].teamNumber;
+    /* isServer=TRUE: read the server-side player table directly. */
+    playersGetPlayerName(&sim->sim.plyrs, i, out->name, sizeof(out->name),
+                         TRUE);
+    out->name[sizeof(out->name) - 1] = '\0';
+    out->ready = sim->lobbyPlayers[i].ready;
+    /* Holding a seat is playing the round. */
+    out->fielded = true;
+    t = &sim->sim.tanks[i];
+    out->alive = (*t != NULL && tankGetDeathWait(t) == 0);
+    return true;
+}
+
+BYTE serverSimGetNumFielded(ServerSim *sim) {
+    BYTE count;
+    BYTE num = 0;
+    if (sim == NULL) return 0;
+    /* Seats playing the round. Holding a seat is playing it, so this walks
+       the same flag serverSimGetNumPlayers does. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (sim->playerConnected[count]) {
+            num++;
+        }
+    }
+    return num;
+}
+
 char *const *serverSimGetMapDirFiles(const ServerSim *sim) {
     return sim->mapDirFiles;
 }
@@ -390,6 +425,26 @@ bool serverSimGetPillSpeed(ServerSim *sim, BYTE i, BYTE *speed) {
     return true;
 }
 
+bool serverSimGetPillInfo(ServerSim *sim, BYTE i, ServerSimPillInfo *out) {
+    pillbox p;
+    BYTE n;
+    if (sim == NULL || out == NULL) return false;
+    n = pillsGetNumPills(&sim->sim.pb);
+    if (i == 0 || i > n) return false;
+    memset(&p, 0, sizeof(p));
+    pillsGetPill(&sim->sim.pb, &p, i);
+
+    memset(out, 0, sizeof(*out));
+    out->x       = p.x;
+    out->y       = p.y;
+    out->owner   = p.owner;
+    out->armour  = p.armour;
+    out->speed   = p.speed;
+    out->in_tank = p.inTank;
+    out->active  = pillsIsActive(&sim->sim.pb, i);
+    return true;
+}
+
 bool serverSimGetBase(ServerSim *sim, BYTE i,
                       BYTE *x, BYTE *y, BYTE *owner) {
     base b;
@@ -410,6 +465,28 @@ bool serverSimGetBaseStats(ServerSim *sim, BYTE i,
     return true;
 }
 
+bool serverSimGetBaseInfo(ServerSim *sim, BYTE i, ServerSimBaseInfo *out) {
+    base b;
+    BYTE n;
+    if (sim == NULL || out == NULL) return false;
+    n = basesGetNumBases(&sim->sim.bs);
+    if (i == 0 || i > n) return false;
+    /* basesGetBase fills the six fields read below and leaves the rest of
+       the struct alone, so start from a cleared one. */
+    memset(&b, 0, sizeof(b));
+    basesGetBase(&sim->sim.bs, &b, i);
+
+    memset(out, 0, sizeof(*out));
+    out->x      = b.x;
+    out->y      = b.y;
+    out->owner  = b.owner;
+    out->armour = b.armour;
+    out->shells = b.shells;
+    out->mines  = b.mines;
+    out->active = basesIsActive(&sim->sim.bs, i);
+    return true;
+}
+
 bool serverSimGetStart(ServerSim *sim, BYTE i,
                        BYTE *x, BYTE *y, BYTE *dir) {
     start s;
@@ -419,6 +496,44 @@ bool serverSimGetStart(ServerSim *sim, BYTE i,
     if (x)   *x   = s.x;
     if (y)   *y   = s.y;
     if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    return true;
+}
+
+bool serverSimGetStartInfo(ServerSim *sim, BYTE i, ServerSimStartInfo *out) {
+    start s;
+    BYTE n;
+    if (sim == NULL || out == NULL) return false;
+    n = startsGetNumStarts(&sim->sim.ss);
+    if (i == 0 || i > n) return false;
+    /* startsGetStartStruct fills the fields read below and leaves the rest of
+       the struct alone, so start from a cleared one. */
+    memset(&s, 0, sizeof(s));
+    startsGetStartStruct(&sim->sim.ss, &s, i);
+
+    memset(out, 0, sizeof(*out));
+    out->x      = s.x;
+    out->y      = s.y;
+    out->dir    = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    out->active = startsIsActive(&sim->sim.ss, i);
+    return true;
+}
+
+bool serverSimGetMapTerrainBuffer(const ServerSim *sim, BYTE *out, size_t cap) {
+    map *mp;
+    int x;
+    int y;
+    if (sim == NULL || out == NULL) return false;
+    if (cap < (size_t)SERVER_SIM_TERRAIN_BYTES) return false;
+
+    /* One byte per square through mapGetPos, so the buffer and
+       serverSimGetMapTerrain agree on the border squares mapGetPos reports
+       as deep sea. Row-major: the row for y is 256 contiguous bytes. */
+    mp = &((ServerSim *)sim)->sim.mp;
+    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+        for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+            out[(y * MAP_ARRAY_SIZE) + x] = mapGetPos(mp, (BYTE)x, (BYTE)y);
+        }
+    }
     return true;
 }
 
@@ -446,6 +561,8 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     playersGetPlayerName(&sim->sim.plyrs, i, out->name, sizeof(out->name),
                          TRUE);
     out->name[sizeof(out->name) - 1] = '\0';
+    /* Identity, not tank state: filled whether or not a tank exists. */
+    out->is_bot = sim->lobbyPlayers[i].isBot;
 
     t = &sim->sim.tanks[i];
     if (*t == NULL) {
@@ -456,9 +573,15 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     }
     out->has_tank = true;
     tankGetWorld(t, &out->world_x, &out->world_y);
+    out->map_x   = tankGetMX(t);
+    out->map_y   = tankGetMY(t);
     out->dir     = tankGetDir(t);
+    out->dir256  = tankGet256Dir(t);
     out->on_boat = tankIsOnBoat(t);
     out->alive   = (tankGetDeathWait(t) == 0);
+    tankGetStats(t, &out->shells, &out->mines, &out->armour, &out->trees);
+    out->pills   = tankGetNumCarriedPills(t);
+    tankGetModifiers(*t, &out->mods);
     tankGetKillsDeaths(t, &out->kills, &out->deaths);
     return true;
 }
@@ -467,6 +590,64 @@ tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
                                          BYTE selfPlayer,
                                          BYTE tankNum) {
     return playersScreenAllience(&sim->sim.plyrs, selfPlayer, tankNum);
+}
+
+/* BuilderJob is handed to the engine's request path as-is, so each member
+   has to keep the value of the request code it stands for. */
+BOLO_STATIC_ASSERT((int)builderJobTrees    == LGM_TREE_REQUEST,
+                   builder_job_trees_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobRoad     == LGM_ROAD_REQUEST,
+                   builder_job_road_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobBuilding == LGM_BUILDING_REQUEST,
+                   builder_job_building_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobPill     == LGM_PILL_REQUEST,
+                   builder_job_pill_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobMine     == LGM_MINE_REQUEST,
+                   builder_job_mine_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobBoat     == LGM_BOAT_REQUEST,
+                   builder_job_boat_matches_request);
+BOLO_STATIC_ASSERT((int)builderJobNone     == LGM_IDLE,
+                   builder_job_none_matches_idle);
+
+bool serverSimGetBuilderInfo(ServerSim *sim, BYTE i, ServerSimBuilderInfo *out) {
+    lgm *l;
+    tank *t;
+    if (sim == NULL || out == NULL || i >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, i)) return false;
+    l = &sim->sim.lgmen[i];
+    if (*l == NULL) return false;
+
+    memset(out, 0, sizeof(*out));
+    t = &sim->sim.tanks[i];
+    if ((*l)->inTank) {
+        out->state = builderStateInTank;
+    } else if ((*l)->isDead) {
+        /* isDead covers the whole span from being killed to landing again:
+           the man is on his way back down while his tank is still standing,
+           and has nowhere to land once it is not. Same split obs_builder.c
+           reports to a brain. */
+        out->state = (*t != NULL && !tankIsDestroyed(t))
+                         ? builderStateParachuting
+                         : builderStateDead;
+    } else if ((*l)->state == LGM_STATE_GOING) {
+        out->state = builderStateGoing;
+    } else {
+        /* Out of the tank and not walking to a job: walking back to it. */
+        out->state = builderStateReturning;
+    }
+    out->world_x = lgmGetWX(l);
+    out->world_y = lgmGetWY(l);
+    out->map_x   = lgmGetMX(l);
+    out->map_y   = lgmGetMY(l);
+    /* The asserts above pin every member to the request code it stands
+       for, so the action carries straight across; anything outside that
+       range is no job at all. */
+    out->job     = ((*l)->action <= LGM_IDLE)
+                       ? (BuilderJob)(*l)->action
+                       : builderJobNone;
+    out->trees   = (*l)->numTrees;
+    out->mines   = (*l)->numMines;
+    return true;
 }
 
 int serverSimGetShellSnapshot(ServerSim *sim, ShellRender out[], int cap) {

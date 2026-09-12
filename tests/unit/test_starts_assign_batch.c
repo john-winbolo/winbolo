@@ -51,7 +51,7 @@ static void build_starts(GameSim *gs) {
         gs->ss->item[i].y = k_sy[i];
         gs->ss->item[i].dir = 0;
     }
-    gs->ss->numStarts = K_NUM_STARTS;
+    startsSetNumStarts(&gs->ss, K_NUM_STARTS);
 }
 
 /* Reset the per-slot inputs to "nobody connected, no reservations". */
@@ -262,7 +262,7 @@ static void build_two_clusters(GameSim *gs) {
         gs->ss->item[i].y = 100;
         gs->ss->item[i].dir = 0;
     }
-    gs->ss->numStarts = 6;
+    startsSetNumStarts(&gs->ss, 6);
 }
 
 /* (g) Two base-less teams split across the map: each team's members cluster

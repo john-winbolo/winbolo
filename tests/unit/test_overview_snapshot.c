@@ -545,7 +545,7 @@ int run_overview_snapshot_mirror(void) {
      * goes off the picture with it. */
     int dir = snapAwayFromEdge(f.tankMX);
     BYTE pillX = (BYTE)((int)f.tankMX + dir * 40);
-    f.gs->pb->numPills = 1;
+    pillsSetNumPills(&f.gs->pb, 1);
     f.gs->pb->item[0].owner  = f.me;
     f.gs->pb->item[0].armour = PILLBOX_15;
     f.gs->pb->item[0].inTank = FALSE;
@@ -884,6 +884,53 @@ int run_overview_snapshot_generation(void) {
     UT_ASSERT_MSG(overviewSnapshotMap(f.snap)->tile[farX][farY] == (BYTE)(was + 1),
                   "the copy that followed the generation change left the "
                   "corner square behind");
+
+    snapFixtureStop(&f);
+    return 0;
+}
+
+/* The label list names every pill and base on the map at its square. A pill
+ * or base a removal has taken off the map is not on it, whatever its slot
+ * still holds: the draw-time tile test would drop it anyway, but the number
+ * a square lookup gives for a removed item is nothing a label can draw. */
+int run_overview_snapshot_removed_item_has_no_label(void) {
+    SnapFixture f;
+    const char *err = snapFixtureStart(&f, "Labels");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    UT_ASSERT_MSG(pillsGetNumPills(&f.gs->pb) >= 1 && basesGetNumBases(&f.gs->bs) >= 1,
+                  "Everard Island should carry a pillbox and a base");
+    BYTE px = f.gs->pb->item[0].x;
+    BYTE py = f.gs->pb->item[0].y;
+    BYTE bx = f.gs->bs->item[0].x;
+    BYTE by = f.gs->bs->item[0].y;
+
+    clientSimDisplayTick(f.cs, false);
+    clientSimFillOverviewSnapshot(f.cs, f.snap);
+    int before = overviewSnapshotItemLabelCount(f.snap);
+    UT_ASSERT_MSG(before == pillsGetNumPills(&f.gs->pb) + basesGetNumBases(&f.gs->bs),
+                  "%d labels for %u pillboxes and %u bases", before,
+                  (unsigned)pillsGetNumPills(&f.gs->pb),
+                  (unsigned)basesGetNumBases(&f.gs->bs));
+
+    UT_ASSERT(pillsRemoveItem(&f.gs->pb, 1) == TRUE);
+    UT_ASSERT(basesRemoveItem(&f.gs->bs, 1) == TRUE);
+    clientSimDisplayTick(f.cs, false);
+    clientSimFillOverviewSnapshot(f.cs, f.snap);
+    int after = overviewSnapshotItemLabelCount(f.snap);
+    UT_ASSERT_MSG(after == before - 2,
+                  "%d labels after removing a pillbox and a base, wanted %d",
+                  after, before - 2);
+    const OverviewItemLabel *labels = overviewSnapshotItemLabels(f.snap);
+    int i;
+    for (i = 0; i < after; i++) {
+        UT_ASSERT_MSG(!(labels[i].isBase == false && labels[i].mapX == px && labels[i].mapY == py),
+                      "the removed pillbox still has a label at %u,%u",
+                      (unsigned)px, (unsigned)py);
+        UT_ASSERT_MSG(!(labels[i].isBase == true && labels[i].mapX == bx && labels[i].mapY == by),
+                      "the removed base still has a label at %u,%u",
+                      (unsigned)bx, (unsigned)by);
+    }
 
     snapFixtureStop(&f);
     return 0;

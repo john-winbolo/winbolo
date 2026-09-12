@@ -208,6 +208,11 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
      * kills off the map, and a spectator whose board never leaves zero looks
      * broken. */
     case CTRL_STATS_SEED:
+    /* A pillbox, base or start joining or leaving the map, and the liveness
+     * masks a client is handed with a map: a spectator draws the map and
+     * would otherwise keep drawing an item that has gone. */
+    case CTRL_ENTITY_CHANGE:
+    case CTRL_ENTITY_SYNC:
         allow = true;
         break;
     case CTRL_GAME_VOTE_STATE:

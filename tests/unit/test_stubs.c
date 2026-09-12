@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 #include "global.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"  /* clientSimGetBoundServerSim — the brain stub */
 #include "frontend.h"
 #include "server_sim.h"
 #include "../../src/winbolonet/winbolonet_server.h"
@@ -50,13 +51,73 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
  * link-time stubs are sufficient — and they let us avoid pulling
  * luabrainshandler.c (and its clientmutex.c / gamefront.c / lang.c
  * dependency closure) into the test binary. */
+/* The create stub doubles as a fixture brain. It refuses by default, which
+ * is what every test that never meant to build a bot wants and what the
+ * unit binary did before it could be armed. A test that drives a bot all
+ * the way through botManagerAddBot arms it, and it then reports success and
+ * writes down what its bot was made with: the init table, which is the last
+ * thing the sim does with that table before a real brain VM would read it,
+ * and the team the slot held at that moment, which is the team the add had
+ * already picked the slot's lobby start from. */
+static bool     s_brainStubArmed = false;
+static ScnTable s_brainStubInit[MAX_TANKS];
+static bool     s_brainStubMade[MAX_TANKS];
+static BYTE     s_brainStubTeam[MAX_TANKS];
+
+void ut_brain_stub_arm(bool succeed) {
+  s_brainStubArmed = succeed;
+  memset(s_brainStubInit, 0, sizeof(s_brainStubInit));
+  memset(s_brainStubMade, 0, sizeof(s_brainStubMade));
+  memset(s_brainStubTeam, 0, sizeof(s_brainStubTeam));
+}
+
+int ut_brain_stub_team(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return 0;
+  return (int)s_brainStubTeam[player_num];
+}
+
+bool ut_brain_stub_made(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return false;
+  return s_brainStubMade[player_num];
+}
+
+const ScnTable *ut_brain_stub_init(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return NULL;
+  if (!s_brainStubMade[player_num]) return NULL;
+  return &s_brainStubInit[player_num];
+}
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
-                            int player_num) {
-  (void)inst; (void)path; (void)name; (void)cs;
-  (void)aiMode; (void)debug_mode; (void)player_num;
-  return false;
+                            int player_num, const ScnTable *init) {
+  (void)path; (void)name; (void)aiMode; (void)debug_mode;
+  if (!s_brainStubArmed) {
+    (void)cs; (void)player_num; (void)init;
+    return false;
+  }
+  /* Zeroed the way the real create leaves an instance it is about to fill:
+   * bot_manager reads L, pathfinder and worldsim straight after this and
+   * skips each one when it is NULL. */
+  memset(inst, 0, sizeof(*inst));
+  if (player_num >= 0 && player_num < MAX_TANKS) {
+    struct ServerSim *sim = cs ? clientSimGetBoundServerSim(cs) : NULL;
+    s_brainStubMade[player_num] = true;
+    if (init != NULL) {
+      s_brainStubInit[player_num] = *init;
+    } else {
+      memset(&s_brainStubInit[player_num], 0, sizeof(s_brainStubInit[0]));
+    }
+    /* The team on the slot as the brain is made. serverSimAddBot has
+     * already run by this point in the add, so this is the team it wrote
+     * and picked the slot's lobby start from — a caller that sets the team
+     * after the add records 0 here. */
+    if (sim != NULL) {
+      const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, (BYTE)player_num);
+      s_brainStubTeam[player_num] = lp ? lp->teamNumber : 0;
+    }
+  }
+  return true;
 }
 
 bool luaBrainInstanceTick(LuaBrainInstance *inst) {
@@ -307,15 +368,41 @@ bool wbnStubLastLockReported = FALSE;
 int      wbnStubWinEventCalls = 0;
 uint16_t wbnStubWinEventMask  = 0;   /* bit i = a win credited to slot i */
 
+/* winbolonetAddEvent TANK_KILL spy: the tank-arm tests watch these to prove a
+ * scripted kill is reported the way any other kill is, and with which slots. */
+int  wbnStubKillEventCalls = 0;
+BYTE wbnStubLastKiller = 0xFF;
+BYTE wbnStubLastKilled = 0xFF;
+
+/* winbolonetAddEvent LGM_LOST / LGM_KILL spies: the builder-arm tests watch
+ * these to prove a scripted builder death is reported the way an explosion's
+ * is, and that a death nobody caused credits nobody with the kill. */
+int  wbnStubLgmLostCalls = 0;
+BYTE wbnStubLastLgmLost = 0xFF;
+int  wbnStubLgmKillCalls = 0;
+BYTE wbnStubLastLgmKiller = 0xFF;
+BYTE wbnStubLastLgmKilled = 0xFF;
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
-  (void)isServer; (void)playerB; (void)aIsBot; (void)bIsBot;
+  (void)isServer; (void)aIsBot; (void)bIsBot;
   if (eventType == WINBOLO_NET_EVENT_WIN) {
     wbnStubWinEventCalls++;
     if (playerA < MAX_TANKS) {
       wbnStubWinEventMask |= (uint16_t)(1u << playerA);
     }
+  } else if (eventType == WINBOLO_NET_EVENT_TANK_KILL) {
+    wbnStubKillEventCalls++;
+    wbnStubLastKiller = playerA;
+    wbnStubLastKilled = playerB;
+  } else if (eventType == WINBOLO_NET_EVENT_LGM_LOST) {
+    wbnStubLgmLostCalls++;
+    wbnStubLastLgmLost = playerA;
+  } else if (eventType == WINBOLO_NET_EVENT_LGM_KILL) {
+    wbnStubLgmKillCalls++;
+    wbnStubLastLgmKiller = playerA;
+    wbnStubLastLgmKilled = playerB;
   }
 }
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
