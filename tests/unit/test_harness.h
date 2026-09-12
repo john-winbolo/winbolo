@@ -630,6 +630,8 @@ int run_claim_resolve_free_ignores_holder_flag(void);
 /* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
  * (no phantom re-announce), and the last human leaving a running game
  * returns the server to the lobby. */
+int run_base_timer_cleared_on_leave(void);
+int run_base_timer_not_inherited_next_round(void);
 int run_remove_player_clears_slot(void);
 int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);

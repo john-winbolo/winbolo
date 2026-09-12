@@ -3436,6 +3436,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_maprotate_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
+    tests/unit/test_base_refuel_timers.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
