@@ -31,8 +31,8 @@
 
 #include "global.h"
 #include "client_enums.h"  /* sndEffects */
+#include "ping_sounds.h"   /* pingSoundResolve / pingSoundKindOf */
 #include "../gui/sound.h"
-#include "../gui/ping_sounds.h"
 
 #include <emscripten.h>
 #include <stdio.h>

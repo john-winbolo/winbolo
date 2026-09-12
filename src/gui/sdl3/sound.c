@@ -30,11 +30,11 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include "client_enums.h"  /* sndEffects */
+#include "ping_sounds.h"   /* pingSoundResolve / pingSoundKindOf */
 #include "../sound.h"
 #include "../lang.h"
 #include "skin_source.h"
 #include "sound_variants.h"
-#include "../ping_sounds.h"
 #include "../../common/wb_log.h"
 
 #define NUM_SOUNDS 38

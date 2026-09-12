@@ -28,10 +28,11 @@
  *  and of any backend, so the rule is the same one on the
  *  desktop and in the browser and can be tested on its own.
  *
- *  Add a kind in src/bolo/public/input_packet.h, a row in
- *  src/gui/ping_kinds.h, an effect id in
- *  src/bolo/public/client_enums.h and its two switch arms
- *  here, in the same change.
+ *  Add a kind in input_packet.h, a row in the style table
+ *  in src/gui/ping_kinds.h, an effect id in client_enums.h
+ *  and its two switch arms here, in the same change. Two of
+ *  those three are beside this file; the row is the only
+ *  part of a kind that lives under the GUI.
  *********************************************************/
 
 #ifndef WINBOLO_PING_SOUNDS_H

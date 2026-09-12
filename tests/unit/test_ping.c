@@ -48,8 +48,8 @@
 #include <string.h>
 
 #include "input_packet.h"
+#include "ping_sounds.h"
 #include "../../src/gui/ping_kinds.h"
-#include "../../src/gui/ping_sounds.h"
 #include "../../src/gui/sdl3/ping_binding.h"
 #include "../../src/gui/sdl3/ping_pie.h"
 #include "../../src/gui/sdl3/ping_edge.h"
