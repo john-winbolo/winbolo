@@ -4524,6 +4524,21 @@ void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
                           (uint16_t)segLen);
 }
 
+void transportUdpClientGetVoiceChannelStats(Transport *t, uint32_t *outSent,
+                                            uint32_t *outRingDropped,
+                                            uint32_t *outBudgetSkipped) {
+    TransportUdpClientCtx *c;
+
+    if (t == NULL || t->ctx == NULL) {
+        channelGetBestEffortStats(NULL, CHANNEL_VOICE, outSent, outRingDropped,
+                                  outBudgetSkipped);
+        return;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    channelGetBestEffortStats(&c->channelMux, CHANNEL_VOICE, outSent,
+                              outRingDropped, outBudgetSkipped);
+}
+
 int transportUdpClientReceiveVoice(Transport *t, uint8_t *fromPlayer,
                                    uint8_t *seq, uint8_t *flags,
                                    uint8_t *out, int outCap) {

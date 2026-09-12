@@ -343,8 +343,7 @@ typedef struct UdpServerState {
     /* Cumulative voice segments this server forwarded, meaning unpacked and
      * re-packed downstream, and segments pass 1 of serverPumpVoice drained
      * and did not forward.  A segment is dropped when voice is switched off
-     * for the server, when the sender is past VOICE_SEGMENTS_PER_TICK for
-     * the tick, when the sender's map download is not yet complete, when
+     * for the server, when the sender has no flood-control credit left, when the sender's map download is not yet complete, when
      * voiceSegmentUnpackUp rejects it, or when voiceSegmentPackDown fails.
      * The pre-download drop is expected: a client with voice on while still
      * taking the map produces a steady drop rate that indicates nothing
@@ -358,6 +357,32 @@ typedef struct UdpServerState {
      * voiceSegsDropped: those segments were refused on arrival and went
      * nowhere, these were accepted and forwarded to everyone else. */
     uint32_t voiceSegsTalkerCapped;
+
+    /* The same traffic again, per slot and with the drop reasons apart. The
+     * totals above answer "is this server dropping voice"; these answer
+     * "whose, and why", which is the question a player reporting that nobody
+     * could hear them actually asks. The five reasons share one counter above
+     * and mean five different things: a server with voice off, a sender past
+     * the per-tick cap, a sender still taking the map, a malformed segment,
+     * and a repack that failed — the last being the only one that means the
+     * server itself is at fault. forwarded and capped count this slot as a
+     * recipient rather than a sender. Cleared when the slot disconnects. */
+    struct {
+        uint32_t accepted;
+        uint32_t dropVoiceOff;
+        uint32_t dropPerTickCap;
+        uint32_t dropNotInGame;
+        uint32_t dropUnpack;
+        uint32_t dropRepack;
+        uint32_t forwarded;
+        uint32_t capped;
+    } voiceSlot[MAX_TANKS];
+
+    /* Voice flood-control credit per sender, in segments. Refilled a tick's
+     * worth per pump and spent one per segment accepted, so it bounds the
+     * sustained rate while letting a sender's bunched frames through — see
+     * VOICE_CREDIT_BURST. Cleared with the slot on disconnect. */
+    uint8_t  voiceCredits[MAX_TANKS];
 
     /* Per-slot voice arrival bookkeeping, in tickCount ticks, feeding the
      * concurrent-talker cap: the tick this slot's last voice frame landed on,

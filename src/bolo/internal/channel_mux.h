@@ -200,6 +200,18 @@ typedef struct ChannelMux {
     uint8_t  streamBuf[CHANNEL_STREAM_BUF];
     uint32_t streamHead;   /* ring read index                  */
     uint32_t streamCount;  /* bytes waiting to be segmentized   */
+
+    /* What became of each best-effort channel's traffic. Nothing acks these
+     * channels, so a segment that never reaches the wire leaves no trace in
+     * the protocol: the ring drops its oldest entry to make room, and a frame
+     * that runs out of packet budget leaves the rest behind. One frame's
+     * worth of the latter is caught up on the next frame, but voice is framed
+     * after every reliable channel, so a run of busy frames can starve it for
+     * longer than the ring is deep and the two become the same loss. Counted
+     * per channel because that is the only way to see it happen. */
+    uint32_t beSent[CHANNEL_COUNT];
+    uint32_t beRingDropped[CHANNEL_COUNT];
+    uint32_t beBudgetSkipped[CHANNEL_COUNT];
 } ChannelMux;
 
 /* Initialise a caller-owned ChannelMux: zero the reliability state and point
@@ -216,6 +228,14 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len);
  * signals overflow by failing: if the ring is full, the oldest pending segment
  * is dropped to make room. Returns false only on a usage error (not a
  * best-effort channel, bad id, oversized message). */
+/* Read back what became of one best-effort channel's traffic: segments framed
+ * onto the wire, segments the ring dropped to make room, and frames that ran
+ * out of packet budget before this channel's turn. Any out pointer may be
+ * NULL. A reliable channel or a bad id reports zeroes. */
+void channelGetBestEffortStats(const ChannelMux *m, uint8_t ch,
+                               uint32_t *outSent, uint32_t *outRingDropped,
+                               uint32_t *outBudgetSkipped);
+
 bool channelSendBestEffort(ChannelMux *m, uint8_t ch, const uint8_t *msg,
                            uint16_t len);
 

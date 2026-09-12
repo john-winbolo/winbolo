@@ -360,13 +360,17 @@ int main(int argc, char *argv[]) {
    * kept only the first non-empty token ("+connect") and dropped the address,
    * so a cold-launch join silently fell through to the main menu. Detect the
    * pair here and convert it to a winbolo:// URL — the form gameFrontStart
-   * already routes to the UDP join dialog. */
+   * already routes to the UDP join dialog. Consume the address and keep
+   * going rather than leaving the loop: the switches below are ordinary
+   * command-line flags and have to be read whichever side of +connect they
+   * are written on. */
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "+connect") == 0 && i + 1 < argc) {
       snprintf(connectArg, sizeof(connectArg), "winbolo://%s", argv[i + 1]);
       cmdLine = connectArg;
       joinedViaSteam = TRUE;
-      break;
+      i++;
+      continue;
     }
     /* Brains run in the restricted Lua sandbox by default; this flag opens the
      * full standard library for users who trust the brain they're loading.
