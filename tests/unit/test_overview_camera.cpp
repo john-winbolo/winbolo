@@ -1488,6 +1488,10 @@ static int camera_set_zoom_scale(void) {
     return 0;
 }
 
+/* Whole squares land on whole pixels and abut, at every rung and across
+ * half-pixel origins — and the square under a pixel is the square drawn
+ * there, first column to last. cx = 32.041667 at 0.75x is one of the samples:
+ * squares 11 and 12 rounded on their own once left a 1 px gap. */
 static int camera_tile_grid_has_no_seams(void) {
     OverviewCamera cam;
     overviewCameraInit(&cam);
@@ -1495,23 +1499,42 @@ static int camera_tile_grid_has_no_seams(void) {
         cam.zoomIndex = z;
         float tilePx = OVERVIEW_TILE_PX * overviewCameraZoomScale(&cam);
         for (int sample = 0; sample < 256; sample++) {
-            /* Half-pixel boundaries, including cx=32.041667 at 0.75x:
-             * independently rounded tiles 11 and 12 left a 1 px gap. */
             cam.cx = (sample * 12 + 0.5f) / tilePx;
             cam.cy = (sample * 12 + 0.5f) / tilePx;
             float originX, originY, prevX, prevY;
-            overviewCameraTileToScreen(&cam, 1000, 999, 0, 0, &originX, &originY);
+            overviewCameraWorldToScreen(&cam, 1000, 999, 0.0f, 0.0f, &originX, &originY);
+            UT_ASSERT_MSG(originX == roundf(originX) && originY == roundf(originY),
+                          "fractional origin at zoom %d sample %d", z, sample);
             prevX = originX;
             prevY = originY;
             for (int tile = 1; tile <= MAP_ARRAY_SIZE; tile++) {
                 float x, y;
-                overviewCameraTileToScreen(&cam, 1000, 999, tile, tile, &x, &y);
+                overviewCameraWorldToScreen(&cam, 1000, 999, (float)tile, (float)tile, &x, &y);
                 UT_ASSERT_MSG(x == prevX + tilePx && y == prevY + tilePx,
                               "tile gap/overlap at zoom %d sample %d tile %d", z, sample, tile);
                 UT_ASSERT_MSG(x == originX + tile * tilePx && y == originY + tile * tilePx,
                               "tile/fog misalignment at zoom %d sample %d tile %d", z, sample, tile);
                 UT_ASSERT_MSG(x == roundf(x) && y == roundf(y),
                               "fractional tile edge at zoom %d sample %d tile %d", z, sample, tile);
+                /* The pixel column just left of this edge belongs to the
+                 * square before; the edge itself and the last column before
+                 * the next edge belong to this square. */
+                int mx, my;
+                overviewCameraScreenToWorld(&cam, 1000, 999, x - 1.0f, y - 1.0f, &mx, &my);
+                UT_ASSERT_MSG(mx == tile - 1 && my == tile - 1,
+                              "pixel before the edge of square %d hit-tests to (%d,%d) at zoom %d sample %d",
+                              tile, mx, my, z, sample);
+                if (tile < MAP_ARRAY_SIZE) {
+                    overviewCameraScreenToWorld(&cam, 1000, 999, x, y, &mx, &my);
+                    UT_ASSERT_MSG(mx == tile && my == tile,
+                                  "first pixel of square %d hit-tests to (%d,%d) at zoom %d sample %d",
+                                  tile, mx, my, z, sample);
+                    overviewCameraScreenToWorld(&cam, 1000, 999,
+                                                x + tilePx - 1.0f, y + tilePx - 1.0f, &mx, &my);
+                    UT_ASSERT_MSG(mx == tile && my == tile,
+                                  "last pixel of square %d hit-tests to (%d,%d) at zoom %d sample %d",
+                                  tile, mx, my, z, sample);
+                }
                 prevX = x;
                 prevY = y;
             }

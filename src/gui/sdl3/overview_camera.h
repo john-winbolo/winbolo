@@ -106,18 +106,18 @@ int overviewCameraZoomCount(void);
 void overviewCameraSetZoomScale(OverviewCamera *cam, float scale);
 
 /* Top-left corner of map square (mapX,mapY) in view pixels. Fractional
- * coordinates are meaningful: pass mapX + 0.5f for the square's centre. */
+ * coordinates are meaningful: pass mapX + 0.5f for the square's centre. The
+ * corner of square 0,0 is snapped to a whole pixel and everything is placed
+ * from it, so whole squares land on whole pixels and abut exactly, and a
+ * sprite at a fractional square sits on the same grid the terrain does. */
 void overviewCameraWorldToScreen(const OverviewCamera *cam, int viewW, int viewH,
                                  float mapX, float mapY, float *outSX, float *outSY);
 
-/* Whole-pixel tile grid: snap the origin once so adjacent squares share
- * exactly the same edge, even at floating-point rounding boundaries. */
-void overviewCameraTileToScreen(const OverviewCamera *cam, int viewW, int viewH,
-                                int mapX, int mapY, float *outSX, float *outSY);
-
-/* The map square under a view pixel. Returns false when it falls outside
- * 0..MAP_ARRAY_SIZE-1, and still writes the out-of-range square so the
- * caller can see how far outside the map the pixel landed. */
+/* The map square under a view pixel: the exact inverse of
+ * overviewCameraWorldToScreen, so the answer is the square drawn under the
+ * pixel. Returns false when it falls outside 0..MAP_ARRAY_SIZE-1, and still
+ * writes the out-of-range square so the caller can see how far outside the
+ * map the pixel landed. */
 bool overviewCameraScreenToWorld(const OverviewCamera *cam, int viewW, int viewH,
                                  float sx, float sy, int *outMapX, int *outMapY);
 

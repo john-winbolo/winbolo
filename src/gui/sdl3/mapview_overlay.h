@@ -121,6 +121,53 @@ typedef struct MapViewOverlay {
   float            clipLeft, clipTop, clipRight, clipBottom;
 } MapViewOverlay;
 
+/* The overview's marker shapes, drawn below 1x in place of sprites: tank
+   triangles in this file, pill discs and base squares in overview_view.cpp.
+   One allegiance palette and one stroke for all of them, so a tank parked on
+   a base is outlined the same way the base is. The stroke is three layers:
+   an outline MAPVIEW_MARKER_STROKE_PX / 2 outside the shape at
+   MAPVIEW_MARKER_OUTLINE_ALPHA, the fill darkened by MAPVIEW_MARKER_DARKEN
+   over the inner half of the stroke, then the plain fill. The colours are the
+   replay viewer's. */
+#define MAPVIEW_MARKER_STROKE_PX     1.5f
+#define MAPVIEW_MARKER_OUTLINE_ALPHA 0.65f
+#define MAPVIEW_MARKER_DARKEN        0.35f
+
+/* Functions rather than header constants: a C file that includes this for
+   the tile tests alone would otherwise carry three unused statics. */
+static inline SDL_FColor mapViewMarkerGood(void) {
+  SDL_FColor c = { 88 / 255.0f, 216 / 255.0f, 88 / 255.0f, 1.0f };
+  return c;
+}
+
+static inline SDL_FColor mapViewMarkerEvil(void) {
+  SDL_FColor c = { 255 / 255.0f, 93 / 255.0f, 93 / 255.0f, 1.0f };
+  return c;
+}
+
+static inline SDL_FColor mapViewMarkerNeutral(void) {
+  SDL_FColor c = { 240 / 255.0f, 180 / 255.0f, 41 / 255.0f, 1.0f };
+  return c;
+}
+
+/* The three layers' colours, outermost first, for a marker filled `fill`. */
+static inline void mapViewMarkerShades(SDL_FColor fill, SDL_FColor out[3]) {
+  out[0].r = 0.0f;
+  out[0].g = 0.0f;
+  out[0].b = 0.0f;
+  out[0].a = MAPVIEW_MARKER_OUTLINE_ALPHA;
+  out[1].r = fill.r * MAPVIEW_MARKER_DARKEN;
+  out[1].g = fill.g * MAPVIEW_MARKER_DARKEN;
+  out[1].b = fill.b * MAPVIEW_MARKER_DARKEN;
+  out[1].a = fill.a;
+  out[2] = fill;
+}
+
+/* How far outside the shape layer `layer` (0..2) of the stroke reaches. */
+static inline float mapViewMarkerLayerGrow(int layer) {
+  return MAPVIEW_MARKER_STROKE_PX * 0.5f * (float)(1 - layer);
+}
+
 /* Whether the tile drawn on a square is a pillbox or a base: the test both
    views make before putting a number on the square. */
 static inline bool mapViewTileIsPill(BYTE tile) {

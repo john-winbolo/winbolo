@@ -29,8 +29,9 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Replay viewer's tank triangle and 1.5 px outline. Use the same sprite
-   positions and allegiance frames as the normal draw, including boats. */
+/* The replay viewer's tank triangle, in the shared marker palette and stroke.
+   Positioned from the same sprite positions and allegiance frames as the
+   normal draw, boats included. */
 static void overlayDrawTankMarkers(MapViewCtx *ctx, screenTanks *tks,
                                    float baseX, float baseY, float tileW, float tileH) {
   int mode = (int)gfxGetAnimSmoothness();
@@ -49,22 +50,22 @@ static void overlayDrawTankMarkers(MapViewCtx *ctx, screenTanks *tks,
     float cy = baseY + tileH / 2 + spritePositionOffset(mode, ctx->scale,
                                                        ctx->sheetScale, my, py, wy);
     /* The viewer faces north at frame 0, clockwise in sixteen steps. */
-    float turn = (float)(frame % 16) * 6.28318530718f / 16.0f;
+    float turn = (float)(frame % 16) * (2.0f * SDL_PI_F) / 16.0f;
     float cosine = SDL_cosf(turn), sine = SDL_sinf(turn);
     float radius = SDL_max(3.0f, tileW * 0.45f);
     SDL_FColor color = { 1, 1, 1, 1 };
-    if (frame >= TANK_EVIL_0) color = (SDL_FColor){ 1, 93 / 255.0f, 93 / 255.0f, 1 };
-    else if (frame >= TANK_GOOD_0) color = (SDL_FColor){ 88 / 255.0f, 216 / 255.0f, 88 / 255.0f, 1 };
+    if (frame >= TANK_EVIL_0) color = mapViewMarkerEvil();
+    else if (frame >= TANK_GOOD_0) color = mapViewMarkerGood();
     SDL_FPoint points[3] = { { 0, -radius * 1.2f },
                              { radius * 0.85f, radius }, { -radius * 0.85f, radius } };
     /* Scaling about the incenter offsets each edge equally, giving the
        same mitered stroke as Canvas rather than a thicker tip. */
     float inradius = radius * (0.85f * 2.2f) / (0.85f + SDL_sqrtf(0.85f * 0.85f + 2.2f * 2.2f));
     float incenterY = radius - inradius;
-    SDL_FColor shades[3] = { { 0, 0, 0, 0.7f },
-                             { color.r * 0.3f, color.g * 0.3f, color.b * 0.3f, 1 }, color };
+    SDL_FColor shades[3];
+    mapViewMarkerShades(color, shades);
     for (int layer = 0; layer < 3; layer++) {
-      float factor = 1 + 0.75f * (1 - layer) / inradius;
+      float factor = 1 + mapViewMarkerLayerGrow(layer) / inradius;
       SDL_Vertex vertices[3];
       for (int i = 0; i < 3; i++) {
         float x = points[i].x * factor;

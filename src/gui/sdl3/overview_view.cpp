@@ -96,6 +96,17 @@ extern "C" bool showBaseLabels;
  * turns into text. */
 #define OVERVIEW_LABEL_MIN_ZOOM 1.0f
 
+/* Zoom below which the view stops drawing sprites: the ground goes to one
+ * colour block a square and tanks, pills and bases to marker shapes, which
+ * read at sizes where an 8 px tile is a smudge. Both passes take their
+ * answer from overviewViewSimple, so the ground and the things on it cannot
+ * switch style on different rungs. */
+#define OVERVIEW_SPRITE_MIN_ZOOM 1.0f
+
+static inline bool overviewViewSimple(float zoomScale) {
+    return zoomScale < OVERVIEW_SPRITE_MIN_ZOOM;
+}
+
 /* The death blackout, drawn over the whole view from the tick the sim says a
  * death has stopped being watchable (clientSimIsMyTankDeathBlackout) through
  * to the respawn. The player watches their own explosion up to that point and
@@ -288,62 +299,172 @@ static bool overviewViewEnsureTarget(OverviewView *v, SDL_Renderer *r,
     return true;
 }
 
-static bool overviewViewItem(BYTE tile, bool *base, bool *friendly) {
-    *base = tile == BASE_GOOD || tile == BASE_EVIL || tile == BASE_NEUTRAL;
-    *friendly = tile == BASE_GOOD || (tile >= PILL_GOOD_15 && tile <= PILL_GOOD_0);
-    return *base || *friendly || tile == PILL_EVIL_15 ||
-           (tile >= PILL_EVIL_14 && tile <= PILL_EVIL_0);
-}
+/* A band between two circles, as one run of triangles: the ring is a narrow
+ * one in yellow, and the dim outside the spotlight is a pair of wide ones in
+ * black. The two alphas are the band's inner and outer edge, so a band can
+ * ramp from clear to solid across its width — which is the soft edge of the
+ * spotlight — or carry one alpha on both and come out flat.
+ *
+ * Not concentric one-pixel lines, which is how the item-view border below
+ * builds its weight out of rectangles. Lines a pixel apart leave hairlines
+ * through a band of any width, where the rasteriser steps a segment across a
+ * row, and closing those by overlapping the runs would blend the band onto
+ * itself at whatever alpha it is drawn at. Triangles cover the band once, and
+ * carry their own colour: SDL_RenderGeometry ignores the draw colour, so the
+ * fades ride on the vertices instead. */
+static void overviewViewDrawBand(SDL_Renderer *r, float cx, float cy,
+                                 float inner, float outer, int segments,
+                                 Uint8 red, Uint8 green, Uint8 blue,
+                                 Uint8 innerAlpha, Uint8 outerAlpha) {
+    SDL_Vertex verts[(OVERVIEW_RESPAWN_RING_MAX_SEG + 1) * 2];
+    int        indices[OVERVIEW_RESPAWN_RING_MAX_SEG * 6];
 
-static void overviewViewCircle(SDL_Renderer *r, float cx, float cy, float radius,
-                                SDL_FColor color) {
-    SDL_Vertex vertices[33];
-    int indices[96];
-    vertices[0] = { { cx, cy }, color, { 0, 0 } };
-    for (int i = 0; i < 32; i++) {
-        float angle = (float)i * 6.28318530718f / 32.0f;
-        vertices[i + 1] = { { cx + radius * SDL_cosf(angle),
-                              cy + radius * SDL_sinf(angle) }, color, { 0, 0 } };
-        indices[i * 3] = 0;
-        indices[i * 3 + 1] = i + 1;
-        indices[i * 3 + 2] = (i + 1) % 32 + 1;
+    if (inner < 0.0f) inner = 0.0f;
+    if (outer <= inner || segments < 3) return;
+
+    SDL_FColor colourIn  = { (float)red   / 255.0f, (float)green / 255.0f,
+                             (float)blue  / 255.0f, (float)innerAlpha / 255.0f };
+    SDL_FColor colourOut = { colourIn.r, colourIn.g, colourIn.b,
+                             (float)outerAlpha / 255.0f };
+
+    /* Inner and outer vertex per step round the circle, the pair adjacent so
+     * a segment's four corners are four consecutive entries. */
+    for (int s = 0; s <= segments; s++) {
+        float a  = (float)s * (2.0f * SDL_PI_F / (float)segments);
+        float dx = SDL_cosf(a);
+        float dy = SDL_sinf(a);
+        SDL_Vertex *vi = &verts[s * 2];
+        SDL_Vertex *vo = &verts[s * 2 + 1];
+
+        vi->position.x = cx + dx * inner;
+        vi->position.y = cy + dy * inner;
+        vo->position.x = cx + dx * outer;
+        vo->position.y = cy + dy * outer;
+        vi->color = colourIn;
+        vo->color = colourOut;
+        vi->tex_coord.x = 0.0f;
+        vi->tex_coord.y = 0.0f;
+        vo->tex_coord.x = 0.0f;
+        vo->tex_coord.y = 0.0f;
     }
-    SDL_RenderGeometry(r, NULL, vertices, 33, indices, 96);
+
+    /* Two triangles a segment, between this step's pair and the next one's. */
+    for (int s = 0; s < segments; s++) {
+        int i0 = s * 2;
+        indices[s * 6 + 0] = i0;
+        indices[s * 6 + 1] = i0 + 1;
+        indices[s * 6 + 2] = i0 + 2;
+        indices[s * 6 + 3] = i0 + 1;
+        indices[s * 6 + 4] = i0 + 3;
+        indices[s * 6 + 5] = i0 + 2;
+    }
+
+    SDL_RenderGeometry(r, NULL, verts, (segments + 1) * 2,
+                       indices, segments * 6);
 }
 
+/* Sides for a circle of this radius: see OVERVIEW_RESPAWN_RING_SIDE_PX. */
+static int overviewViewCircleSegments(float radiusPx) {
+    int segments = (int)(2.0f * SDL_PI_F * radiusPx /
+                         OVERVIEW_RESPAWN_RING_SIDE_PX);
+    if (segments < OVERVIEW_RESPAWN_RING_MIN_SEG) {
+        return OVERVIEW_RESPAWN_RING_MIN_SEG;
+    }
+    if (segments > OVERVIEW_RESPAWN_RING_MAX_SEG) {
+        return OVERVIEW_RESPAWN_RING_MAX_SEG;
+    }
+    return segments;
+}
+
+/* A filled disc, as the band with no hole. */
+static void overviewViewFillDisc(SDL_Renderer *r, float cx, float cy,
+                                 float radius, SDL_FColor c) {
+    Uint8 alpha = (Uint8)(c.a * 255.0f + 0.5f);
+    overviewViewDrawBand(r, cx, cy, 0.0f, radius,
+                         overviewViewCircleSegments(radius),
+                         (Uint8)(c.r * 255.0f + 0.5f),
+                         (Uint8)(c.g * 255.0f + 0.5f),
+                         (Uint8)(c.b * 255.0f + 0.5f), alpha, alpha);
+}
+
+/* What a pill or base square gets as a marker below OVERVIEW_SPRITE_MIN_ZOOM.
+ * The classifier is the one the item numbers use, so the number pass and the
+ * marker pass cannot disagree about which squares hold an item. */
+typedef enum {
+    OVERVIEW_ITEM_NONE = 0,
+    OVERVIEW_ITEM_PILL_GOOD,
+    OVERVIEW_ITEM_PILL_EVIL,
+    OVERVIEW_ITEM_BASE_GOOD,
+    OVERVIEW_ITEM_BASE_EVIL,
+    OVERVIEW_ITEM_BASE_NEUTRAL
+} OverviewItemKind;
+
+static OverviewItemKind overviewViewItemKind(BYTE tile) {
+    if (mapViewTileIsBase(tile)) {
+        if (tile == BASE_GOOD) return OVERVIEW_ITEM_BASE_GOOD;
+        if (tile == BASE_NEUTRAL) return OVERVIEW_ITEM_BASE_NEUTRAL;
+        return OVERVIEW_ITEM_BASE_EVIL;
+    }
+    if (mapViewTileIsPill(tile)) {
+        return (tile >= PILL_GOOD_15 && tile <= PILL_GOOD_0)
+               ? OVERVIEW_ITEM_PILL_GOOD : OVERVIEW_ITEM_PILL_EVIL;
+    }
+    return OVERVIEW_ITEM_NONE;
+}
+
+/* renderer.js draw_bases / draw_pills: a square for a base, a disc for a
+ * pill, at the same sizes, in the shared marker palette and stroke (see
+ * mapview_overlay.h). Neutral bases are amber, neutral pills red; every pill
+ * health state draws alike. */
 static void overviewViewDrawItem(SDL_Renderer *r, const SDL_FRect *dest,
-                                  bool base, bool friendly, bool neutralBase) {
-    /* renderer.js draw_bases/draw_pills: same sizes and 1.5 px dark outlines.
-     * Neutral bases are amber, neutral pills red; all pill health states draw alike. */
-    SDL_FColor color = friendly ? SDL_FColor{ 88 / 255.0f, 216 / 255.0f, 88 / 255.0f, 1 }
-                               : SDL_FColor{ 1, 93 / 255.0f, 93 / 255.0f, 1 };
-    if (neutralBase) color = { 240 / 255.0f, 180 / 255.0f, 41 / 255.0f, 1 };
+                                 OverviewItemKind kind) {
+    bool base = kind >= OVERVIEW_ITEM_BASE_GOOD;
+    SDL_FColor color = mapViewMarkerEvil();
+    if (kind == OVERVIEW_ITEM_PILL_GOOD || kind == OVERVIEW_ITEM_BASE_GOOD) {
+        color = mapViewMarkerGood();
+    } else if (kind == OVERVIEW_ITEM_BASE_NEUTRAL) {
+        color = mapViewMarkerNeutral();
+    }
     float radius = base ? SDL_max(2.5f, dest->w * 0.42f) : SDL_max(2.0f, dest->w * 0.36f);
     float cx = dest->x + dest->w / 2, cy = dest->y + dest->h / 2;
-    /* Layer the outer stroke, the fill darkened by the inner half of the
-     * stroke, then the unstroked centre. */
-    SDL_FColor shades[3] = { { 0, 0, 0, 0.65f },
-        { color.r * 0.35f, color.g * 0.35f, color.b * 0.35f, 1 }, color };
+    SDL_FColor shades[3];
+    mapViewMarkerShades(color, shades);
     for (int i = 0; i < 3; i++) {
-        float size = radius + 0.75f * (1 - i);
+        float size = radius + mapViewMarkerLayerGrow(i);
         if (base) {
             SDL_FRect rect = { cx - size, cy - size, size * 2, size * 2 };
             SDL_SetRenderDrawColorFloat(r, shades[i].r, shades[i].g, shades[i].b, shades[i].a);
             SDL_RenderFillRect(r, &rect);
         } else {
-            overviewViewCircle(r, cx, cy, size, shades[i]);
+            overviewViewFillDisc(r, cx, cy, size, shades[i]);
         }
     }
 }
 
+/* The colour block for a square below OVERVIEW_SPRITE_MIN_ZOOM, or false for
+ * a sprite the palette has no entry for (a tank frame, say), which is drawn
+ * from the sheet as at any other zoom.
+ *
+ * The snapshot holds sprite IDs, not terrain: what screenCalc chose to draw
+ * on the square, including the pill and base sprites the memory keeps. The
+ * plain terrains (BUILDING, RIVER, SWAMP, ... HALFBUILDING, 0..8 in global.h)
+ * come through as themselves — the sprite table's first entries are indexed
+ * by the raw terrain value — and everything with a shape variant comes
+ * through as a tilenum.h range. A pill or base is drawn as the ground under
+ * it here and gets its marker afterwards.
+ *
+ * The palette is the replay viewer's (winbolo_parser/viewer/renderer.js
+ * TERRAIN_COLORS), not minimapTerrainColor's: that one is the lobby's map
+ * preview, a whole map in 256 px where every terrain has to be told apart
+ * at a glance, so its greens and greys are loud. In play the same square is
+ * eight pixels or more and sits under markers, pings and the fog, and the
+ * viewer's darker set is the one those were drawn against. */
 static bool overviewViewTerrainColor(BYTE tile, SDL_Color *color) {
-    /* The snapshot holds sprite IDs, including remembered pillboxes and
-     * bases. Their markers are drawn separately over road/grass backgrounds.
-     * Palette from winbolo_parser/viewer/renderer.js TERRAIN_COLORS. */
     Uint32 rgb;
-    bool base, friendly;
-    if (overviewViewItem(tile, &base, &friendly)) {
-        rgb = base ? 0x000000 : 0x002806;
+    if (mapViewTileIsBase(tile)) {
+        rgb = 0x000000;
+    } else if (mapViewTileIsPill(tile)) {
+        rgb = 0x002806;
     } else if (tile >= ROAD_HORZ && tile <= ROAD_SIDE4) {
         rgb = 0x000000;
     } else if (tile >= BUILD_SINGLE && tile <= BUILD_MOST4) {
@@ -371,6 +492,24 @@ static bool overviewViewTerrainColor(BYTE tile, SDL_Color *color) {
     return true;
 }
 
+/* A pill or base square seen during the ground pass, held back so its marker
+ * goes on after the ground: a marker's minimum size can run a fraction past
+ * its square, and the next square's block would clip it. */
+typedef struct {
+    int              mx, my;
+    OverviewItemKind kind;
+} OverviewItemHit;
+
+static void overviewViewDrawItems(SDL_Renderer *r, const OverviewItemHit *hits,
+                                  int count, float originX, float originY,
+                                  float tilePx) {
+    for (int i = 0; i < count; i++) {
+        SDL_FRect dest = { originX + (float)hits[i].mx * tilePx,
+                           originY + (float)hits[i].my * tilePx, tilePx, tilePx };
+        overviewViewDrawItem(r, &dest, hits[i].kind);
+    }
+}
+
 /* Every square the view covers, all at full brightness — what the player can
  * see this instant and what they are only remembering alike. The fog pass
  * below takes the second kind back down; keeping the two apart is what lets
@@ -386,32 +525,58 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
 
     float zoomScale = overviewCameraZoomScale(cam);
     float tilePx = (float)OVERVIEW_TILE_PX * zoomScale;
-    bool simpleTerrain = zoomScale < 1.0f;
+    bool simple = overviewViewSimple(zoomScale);
     SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
                                         TILE_SIZE_X, TILE_SIZE_Y, ss);
+
+    /* The camera's snapped corner of square 0,0, once: every square is a
+     * whole number of tiles from it, exactly, so the grid has no seams and
+     * the fog and the sprites, placed from the same corner, sit on it. */
+    float originX = 0.0f, originY = 0.0f;
+    overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &originX, &originY);
+
+    /* The pill and base squares met on the way, drawn after the ground. The
+     * map holds MAX_PILLS + MAX_BASES items, but the memory can keep a moved
+     * item's old square as well as its new one, so a full list is drawn out
+     * and started again rather than trusted never to fill. */
+    OverviewItemHit hits[MAX_PILLS + MAX_BASES];
+    int hitCount = 0;
+
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    if (simple) {
+        SDL_GetRenderDrawBlendMode(r, &oldBlend);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    }
 
     /* x outer, y inner: the memory is [x][y], so the inner walk is
      * contiguous. */
     for (int mx = left; mx <= right; mx++) {
+        float sx = originX + (float)mx * tilePx;
         for (int my = top; my <= bottom; my++) {
             BYTE tile = om->tile[mx][my];
             if (tile == OVERVIEW_UNSEEN) continue;  /* the black clear shows */
 
             BYTE flags = om->flags[mx][my];
-            float sx = 0.0f, sy = 0.0f;
-            /* Independently rounding each world-to-screen result can put
-             * neighbours on opposite sides of a half-pixel due to float
-             * precision. Use one snapped grid for terrain, items and fog. */
-            overviewCameraTileToScreen(cam, viewW, viewH, mx, my, &sx, &sy);
-            SDL_FRect dest = { sx, sy, tilePx, tilePx };
+            SDL_FRect dest = { sx, originY + (float)my * tilePx, tilePx, tilePx };
             SDL_Color color;
-            if (simpleTerrain && overviewViewTerrainColor(tile, &color)) {
+            if (simple && overviewViewTerrainColor(tile, &color)) {
                 SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
                 SDL_RenderFillRect(r, &dest);
+                OverviewItemKind kind = overviewViewItemKind(tile);
+                if (kind != OVERVIEW_ITEM_NONE) {
+                    if (hitCount == (int)(MAX_PILLS + MAX_BASES)) {
+                        overviewViewDrawItems(r, hits, hitCount, originX, originY, tilePx);
+                        hitCount = 0;
+                    }
+                    hits[hitCount].mx   = mx;
+                    hits[hitCount].my   = my;
+                    hits[hitCount].kind = kind;
+                    hitCount++;
+                }
             } else {
                 SDL_FRect src = mapViewAtlasSrc(mapViewPosX[tile],
-                                             mapViewPosY[tile],
-                                             TILE_SIZE_X, TILE_SIZE_Y, ss);
+                                                mapViewPosY[tile],
+                                                TILE_SIZE_X, TILE_SIZE_Y, ss);
                 SDL_RenderTexture(r, tiles, &src, &dest);
             }
 
@@ -420,22 +585,9 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
             }
         }
     }
-    /* Minimum marker sizes can exceed a tile. Draw after all ground so the
-     * next square cannot paint over them, and before the usual fog pass. */
-    if (simpleTerrain) {
-        SDL_BlendMode oldBlend;
-        SDL_GetRenderDrawBlendMode(r, &oldBlend);
-        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-        for (int mx = left; mx <= right; mx++) {
-            for (int my = top; my <= bottom; my++) {
-                bool base, friendly;
-                if (!overviewViewItem(om->tile[mx][my], &base, &friendly)) continue;
-                float sx, sy;
-                overviewCameraTileToScreen(cam, viewW, viewH, mx, my, &sx, &sy);
-                SDL_FRect dest = { sx, sy, tilePx, tilePx };
-                overviewViewDrawItem(r, &dest, base, friendly, om->tile[mx][my] == BASE_NEUTRAL);
-            }
-        }
+
+    if (simple) {
+        overviewViewDrawItems(r, hits, hitCount, originX, originY, tilePx);
         SDL_SetRenderDrawBlendMode(r, oldBlend);
     }
 }
@@ -553,7 +705,7 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
 
     float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(cam);
     float sx = 0.0f, sy = 0.0f;
-    overviewCameraTileToScreen(cam, viewW, viewH, 0, 0, &sx, &sy);
+    overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &sx, &sy);
 
     SDL_FRect dst = { sx, sy,
                       tilePx * (float)MAP_ARRAY_SIZE,
@@ -593,83 +745,6 @@ static void overviewViewDrawDeathBlackout(OverviewView *v, SDL_Renderer *r,
     SDL_SetRenderDrawColor(r, 0, 0, 0, alpha);
     SDL_RenderFillRect(r, &dst);
     SDL_SetRenderDrawBlendMode(r, was);
-}
-
-/* A band between two circles, as one run of triangles: the ring is a narrow
- * one in yellow, and the dim outside the spotlight is a pair of wide ones in
- * black. The two alphas are the band's inner and outer edge, so a band can
- * ramp from clear to solid across its width — which is the soft edge of the
- * spotlight — or carry one alpha on both and come out flat.
- *
- * Not concentric one-pixel lines, which is how the item-view border below
- * builds its weight out of rectangles. Lines a pixel apart leave hairlines
- * through a band of any width, where the rasteriser steps a segment across a
- * row, and closing those by overlapping the runs would blend the band onto
- * itself at whatever alpha it is drawn at. Triangles cover the band once, and
- * carry their own colour: SDL_RenderGeometry ignores the draw colour, so the
- * fades ride on the vertices instead. */
-static void overviewViewDrawBand(SDL_Renderer *r, float cx, float cy,
-                                 float inner, float outer, int segments,
-                                 Uint8 red, Uint8 green, Uint8 blue,
-                                 Uint8 innerAlpha, Uint8 outerAlpha) {
-    SDL_Vertex verts[(OVERVIEW_RESPAWN_RING_MAX_SEG + 1) * 2];
-    int        indices[OVERVIEW_RESPAWN_RING_MAX_SEG * 6];
-
-    if (inner < 0.0f) inner = 0.0f;
-    if (outer <= inner || segments < 3) return;
-
-    SDL_FColor colourIn  = { (float)red   / 255.0f, (float)green / 255.0f,
-                             (float)blue  / 255.0f, (float)innerAlpha / 255.0f };
-    SDL_FColor colourOut = { colourIn.r, colourIn.g, colourIn.b,
-                             (float)outerAlpha / 255.0f };
-
-    /* Inner and outer vertex per step round the circle, the pair adjacent so
-     * a segment's four corners are four consecutive entries. */
-    for (int s = 0; s <= segments; s++) {
-        float a  = (float)s * (2.0f * SDL_PI_F / (float)segments);
-        float dx = SDL_cosf(a);
-        float dy = SDL_sinf(a);
-        SDL_Vertex *vi = &verts[s * 2];
-        SDL_Vertex *vo = &verts[s * 2 + 1];
-
-        vi->position.x = cx + dx * inner;
-        vi->position.y = cy + dy * inner;
-        vo->position.x = cx + dx * outer;
-        vo->position.y = cy + dy * outer;
-        vi->color = colourIn;
-        vo->color = colourOut;
-        vi->tex_coord.x = 0.0f;
-        vi->tex_coord.y = 0.0f;
-        vo->tex_coord.x = 0.0f;
-        vo->tex_coord.y = 0.0f;
-    }
-
-    /* Two triangles a segment, between this step's pair and the next one's. */
-    for (int s = 0; s < segments; s++) {
-        int i0 = s * 2;
-        indices[s * 6 + 0] = i0;
-        indices[s * 6 + 1] = i0 + 1;
-        indices[s * 6 + 2] = i0 + 2;
-        indices[s * 6 + 3] = i0 + 1;
-        indices[s * 6 + 4] = i0 + 3;
-        indices[s * 6 + 5] = i0 + 2;
-    }
-
-    SDL_RenderGeometry(r, NULL, verts, (segments + 1) * 2,
-                       indices, segments * 6);
-}
-
-/* Sides for a circle of this radius: see OVERVIEW_RESPAWN_RING_SIDE_PX. */
-static int overviewViewCircleSegments(float radiusPx) {
-    int segments = (int)(2.0f * SDL_PI_F * radiusPx /
-                         OVERVIEW_RESPAWN_RING_SIDE_PX);
-    if (segments < OVERVIEW_RESPAWN_RING_MIN_SEG) {
-        return OVERVIEW_RESPAWN_RING_MIN_SEG;
-    }
-    if (segments > OVERVIEW_RESPAWN_RING_MAX_SEG) {
-        return OVERVIEW_RESPAWN_RING_MAX_SEG;
-    }
-    return segments;
 }
 
 /* The spotlight: the map goes dark everywhere but a disc round the tank, and
@@ -937,10 +1012,12 @@ static void overviewViewDrawEntities(OverviewView *v,
      * lists were built from a rect starting at 0,0, so bbx is the offset from
      * map square 0,0 and the whole transform reduces to placing that square:
      * hand it the camera's answer for 0,0 as the origin and the rung as the
-     * scale, and every sprite lands where the camera would have put it. The
-     * origin stays a float all the way down, so the camera's fractional
-     * position is kept rather than rounded. tileW is also the size a tank
-     * sprite is drawn at, so it is one square at this zoom. */
+     * scale, and every sprite lands where the camera would have put it. That
+     * answer is the snapped corner the terrain and the fog were placed from,
+     * so a sprite on a whole square covers exactly that square's block and
+     * one at a fractional square sits between two on the same grid. tileW
+     * is also the size a tank sprite is drawn at, so it is one square at
+     * this zoom. */
     float zoomScale = overviewCameraZoomScale(cam);
     float o0x = 0.0f, o0y = 0.0f;
     overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &o0x, &o0y);
@@ -965,7 +1042,7 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.sprites    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
-    ov.simpleTanks = zoomScale < 1.0f;
+    ov.simpleTanks = overviewViewSimple(zoomScale);
 
     /* Where a build will land, from the same mouse_square sprite the main view
      * draws. Solid while cursor mode is on or the pointer is over the map (the
