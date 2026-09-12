@@ -99,9 +99,11 @@ typedef struct BOLO_PACK_ATTR {
   BYTE view_policies;     /* 2 bits per ViewCategory: pill = bits 0-1,    */
                           /* base = bits 2-3, ally = bits 4-5; bit 6 is   */
                           /* classic mode, bit 7 is allies in trees       */
+  BYTE view_policies2;    /* overviewWindow = bits 0-1, lineOfSight =     */
+                          /* bits 2-3; bits 4-7 spare                     */
 } INFO_PACKET;
 #pragma pack(pop)
-BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 112, INFO_PACKET_must_be_112_bytes);
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
 
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts
@@ -111,6 +113,11 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 112, INFO_PACKET_must_be_112_bytes);
 /* INFO_PACKET wire size before view_policies was appended. Discovery
  * accepts this length and reports the built-in view defaults for it. */
 #define INFO_PACKET_PRE_VIEWS_SIZE 111
+
+/* INFO_PACKET wire size before view_policies2 was appended. Discovery
+ * accepts this length, reads view_policies from it, and reports the
+ * built-in overview defaults for the byte it does not have. */
+#define INFO_PACKET_PRE_VIEWS2_SIZE 112
 
 /* Pack the three per-category policies, the classic-mode flag and the
  * allies-in-trees flag into INFO_PACKET.view_policies. Classic mode
@@ -129,8 +136,11 @@ static inline BYTE infoPacketPackViewPolicies(ViewPolicy pill,
 }
 
 /* Read the three policies, the classic-mode flag and the allies-in-trees
- * flag back out of a received INFO_PACKET. A packet shorter than the
- * full layout predates the byte, so it reports the built-in defaults
+ * flag back out of a received INFO_PACKET. INFO_PACKET_PRE_VIEWS2_SIZE
+ * is the shortest length that carries the byte, so that is what this
+ * needs rather than the full layout — a packet that stops before
+ * view_policies2 still reports everything it does carry. Anything
+ * shorter predates view_policies, so it reports the built-in defaults
  * (pill always, base off, ally always, classic mode off, allies in
  * trees off) instead of whatever the short read left in the struct. */
 static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
@@ -140,7 +150,7 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               ViewPolicy *ally,
                                               bool *classic,
                                               bool *alliesInTrees) {
-  if (info == NULL || len < sizeof(INFO_PACKET)) {
+  if (info == NULL || len < (size_t)INFO_PACKET_PRE_VIEWS2_SIZE) {
     if (pill) *pill = viewPolicyAlways;
     if (base) *base = viewPolicyOff;
     if (ally) *ally = viewPolicyAlways;
@@ -153,6 +163,39 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
   if (ally) *ally = (ViewPolicy)((info->view_policies >> 4) & 0x3u);
   if (classic) *classic = (info->view_policies & 0x40u) != 0;
   if (alliesInTrees) *alliesInTrees = (info->view_policies & 0x80u) != 0;
+}
+
+/* Pack the overview window and the line-of-sight mode into
+ * INFO_PACKET.view_policies2. Two bits each — the window at bits 0-1,
+ * line of sight at bits 2-3 — so bits 4-7 stay clear for whatever needs
+ * them next. Both are masked, so a value from a newer sender cannot
+ * reach the spare bits. */
+static inline BYTE infoPacketPackViewPolicies2(uint8_t overviewWindow,
+                                               uint8_t lineOfSight) {
+  return (BYTE)(((unsigned)overviewWindow & 0x3u)
+              | (((unsigned)lineOfSight & 0x3u) << 2));
+}
+
+/* Read the overview window and the line-of-sight mode back out of a
+ * received INFO_PACKET. A packet shorter than the full layout predates
+ * the byte, so it reports the built-in defaults — the expanded window
+ * with nothing blocking sight inside it. Two bits can also hold a value
+ * neither enum names; that reports the default as well, so a browser row
+ * never shows a mode this build cannot name. */
+static inline void infoPacketReadViewPolicies2(const INFO_PACKET *info,
+                                               size_t len,
+                                               uint8_t *overviewWindow,
+                                               uint8_t *lineOfSight) {
+  unsigned window = (unsigned)overviewWindowExpanded;
+  unsigned sight  = (unsigned)lineOfSightOff;
+  if (info != NULL && len >= sizeof(INFO_PACKET)) {
+    unsigned w = (unsigned)info->view_policies2 & 0x3u;
+    unsigned s = ((unsigned)info->view_policies2 >> 2) & 0x3u;
+    if (w < (unsigned)OVERVIEW_WINDOW_COUNT) window = w;
+    if (s < (unsigned)LINE_OF_SIGHT_COUNT) sight = s;
+  }
+  if (overviewWindow) *overviewWindow = (uint8_t)window;
+  if (lineOfSight) *lineOfSight = (uint8_t)sight;
 }
 #endif
 

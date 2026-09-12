@@ -135,13 +135,16 @@ struct ServerEntry {
                           * the flags/counts/md5 fields; gates the rich-only
                           * lines in the detail pane. */
     /* Server visibility rules. Defaults (pill always, base off, ally
-     * always, classic mode and allies in trees off) for a server whose
+     * always, classic mode and allies in trees off, the expanded overview
+     * window with nothing blocking sight) for a server whose
      * advertisement doesn't carry them. */
     ViewPolicy pillView;
     ViewPolicy baseView;
     ViewPolicy allyView;
     bool classicMode;
     bool alliesInTrees;
+    uint8_t overviewWindow;
+    uint8_t lineOfSight;
     /* Voice the server forwards. Unlike the fields above this one has a
      * true answer for a server that says nothing: both wires define an
      * absent value as serverVoiceOn. */
@@ -174,6 +177,21 @@ static std::string viewPolicyTag(const ServerEntry &e) {
     if (e.alliesInTrees) {
         if (!out.empty()) out += " ";
         out += langGetText(STR_DLGBROWSER_VIEWS_ALLYTREES);
+    }
+    /* The overview window and line of sight are server-wide rules like
+     * the two above rather than per-category, so they sit with them.
+     * Only the non-default value is worth a tag: every server runs the
+     * expanded window with sight off unless it says otherwise. The
+     * window is prefixed because its name is also the word the
+     * classic-mode tag uses, and the two are different settings. */
+    if (e.overviewWindow == (uint8_t)overviewWindowClassic) {
+        if (!out.empty()) out += " ";
+        out += "W=";
+        out += langGetText(STR_DLGLOBBY_WINDOW_CLASSIC);
+    }
+    if (e.lineOfSight != (uint8_t)lineOfSightOff) {
+        if (!out.empty()) out += " ";
+        out += langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB);
     }
     for (const auto &c : cats) {
         if (c.value == c.def) continue;
@@ -238,6 +256,8 @@ struct PingResult {
     ViewPolicy allyView;
     bool classicMode;
     bool alliesInTrees;
+    uint8_t overviewWindow;
+    uint8_t lineOfSight;
     ServerVoiceMode voiceMode;
 };
 
@@ -318,6 +338,8 @@ static PingResult pingServer(const PingWork &work) {
     res.allyView = viewPolicyAlways;
     res.classicMode = false;
     res.alliesInTrees = false;
+    res.overviewWindow = (uint8_t)overviewWindowExpanded;
+    res.lineOfSight = (uint8_t)lineOfSightOff;
     res.voiceMode = serverVoiceOn;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
@@ -346,6 +368,8 @@ static PingResult pingServer(const PingWork &work) {
         res.allyView        = dpr.allyView;
         res.classicMode     = dpr.classicMode;
         res.alliesInTrees   = dpr.alliesInTrees;
+        res.overviewWindow  = dpr.overviewWindow;
+        res.lineOfSight     = dpr.lineOfSight;
         res.voiceMode       = dpr.voiceMode;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
@@ -469,6 +493,8 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.allyView        = src->allyView;
     e.classicMode     = src->classicMode;
     e.alliesInTrees   = src->alliesInTrees;
+    e.overviewWindow  = src->overviewWindow;
+    e.lineOfSight     = src->lineOfSight;
     e.voiceMode       = src->voiceMode;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
@@ -789,6 +815,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.allyView = (ViewPolicy)w.allyView;
                         e.classicMode = w.classicMode;
                         e.alliesInTrees = w.alliesInTrees;
+                        /* The JSON carries no overview window or line of
+                         * sight, and the latency ping does not refill a
+                         * tracker row, so the zero-init above leaves both
+                         * on their defaults here. */
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
 
                         e.players.clear();
@@ -903,6 +933,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].allyView        = pr.allyView;
                         servers[pr.index].classicMode     = pr.classicMode;
                         servers[pr.index].alliesInTrees   = pr.alliesInTrees;
+                        servers[pr.index].overviewWindow  = pr.overviewWindow;
+                        servers[pr.index].lineOfSight     = pr.lineOfSight;
                         servers[pr.index].voiceMode       = pr.voiceMode;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));

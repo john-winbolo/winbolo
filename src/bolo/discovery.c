@@ -134,6 +134,8 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
   infoPacketReadViewPolicies(info, len,
                              &out->pillView, &out->baseView, &out->allyView,
                              &out->classicMode, &out->alliesInTrees);
+  infoPacketReadViewPolicies2(info, len,
+                              &out->overviewWindow, &out->lineOfSight);
   out->hasRichInfo = rich;
 }
 
@@ -304,6 +306,7 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
       }
       if (len == (int)INFO_PACKET_LEGACY_SIZE ||
           len == (int)INFO_PACKET_PRE_VIEWS_SIZE ||
+          len == (int)INFO_PACKET_PRE_VIEWS2_SIZE ||
           len == (int) sizeof(INFO_PACKET)) {
         /* Magic + type only — the INFO_RESPONSE is the universal
          * version-negotiation primitive, so we deliver mixed-version
@@ -480,6 +483,8 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     infoPacketReadViewPolicies(info, (size_t)len,
                                &out->pillView, &out->baseView, &out->allyView,
                                &out->classicMode, &out->alliesInTrees);
+    infoPacketReadViewPolicies2(info, (size_t)len,
+                                &out->overviewWindow, &out->lineOfSight);
     out->hasRichInfo = rich;
     WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
                  address, port, out->rttMs,
