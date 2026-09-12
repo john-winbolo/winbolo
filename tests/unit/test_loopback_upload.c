@@ -15,8 +15,8 @@
  * data itself is proven exhaustively off-socket by the bulk_transfer test
  * (burst loss + reorder, kind-agnostic plus the UPLOAD-kind case). The upload
  * handshake (BEGIN/ACK/DONE) rides plain unreliable datagrams with no
- * retransmit — out of scope for this migration — so driving the whole upload
- * under loss would flake on a dropped handshake packet, not on the bulk path.
+ * retransmit, so the timeout cases below drop one chosen reply and check
+ * recovery explicitly rather than requiring success under random loss.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -35,6 +35,7 @@
 #include "threads.h"
 #include "test_harness.h"
 #include "loopback_harness.h"
+#include "transport_udp_server_internal.h"
 
 #define CONNECT_MAX  2000
 #define UPLOAD_MAX   4000   /* handshake + bulk transfer convergence */
@@ -110,4 +111,99 @@ int run_loopback_map_upload(void) {
 
     loopbackHarnessStop(&h);
     return 0;
+}
+
+/* Drop a specific handshake reply while every liveness packet still flows.
+ * Advance only the watchdog clock, rather than sleeping through its timeout. */
+static int upload_timeout_recovery(bool lose_done, bool other_player, bool partial) {
+    LoopbackHarness h;
+    BYTE emap[6000] = E_MAP;
+    int slot;
+    ClientSim *retry_client;
+    int i;
+    UT_ASSERT(loopbackHarnessStart(&h, "Timeout", true, NULL, 0xC0FFEEu));
+    UT_ASSERT(loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL) > 0);
+    if (other_player) {
+        UT_ASSERT(loopbackHarnessAddClient(&h, "Retry"));
+        for (i = 0; i < CONNECT_MAX &&
+            clientSimGetConnectState(h.cs2) != CLIENT_CONNECT_CONNECTED; i++) {
+            loopbackHarnessPump(&h);
+        }
+        UT_ASSERT(clientSimGetConnectState(h.cs2) == CLIENT_CONNECT_CONNECTED);
+    }
+    serverSimSetOpenHost(h.sim, true);
+    slot = clientSimGetMyPlayerNum(h.cs);
+    transportUdpClientTestDropUploadReply(&h.cs->transport,
+        lose_done ? PACKET_LOBBY_MAP_UPLOAD_DONE : PACKET_LOBBY_MAP_UPLOAD_ACK);
+    UT_ASSERT(transportUdpClientStartLobbyMapUploadFromBytes(&h.cs->transport,
+        emap, EMAP_LEN, "timeout.map"));
+    for (i = 0; i < 400; i++) loopbackHarnessPump(&h);
+    UT_ASSERT(clientSimGetLobbyMapUploadStatus(h.cs) == (lose_done ? 2 : 1));
+    if (!lose_done) {
+        UT_ASSERT(udpServer.clientUploadActive[slot]);
+        /* Regular pings keep the player connected, not their upload alive. */
+        UT_ASSERT(udpServer.clients[slot].connected);
+        udpServerExpireUploads(SDL_GetTicks());
+        UT_ASSERT(udpServer.clientUploadActive[slot]);
+    }
+    if (partial) {
+        /* Model an ACK arriving but the bulk stream stalling before delivery.
+         * The pump below stages real stream segments into the send window,
+         * but nothing transmits them (frames are only built by the tick), so
+         * the watchdog then abandons them via channelResetSend. */
+        h.cs->lobbyMapUploadStatus = 2;
+    }
+    transportUdpClientTestUploadTimeout(&h.cs->transport);
+    UT_ASSERT(clientSimGetLobbyMapUploadStatus(h.cs) == 4);
+    UT_ASSERT(clientSimGetLobbyMapUploadRejectCode(h.cs) != 0);
+    if (partial) {
+        /* After channelResetSend the sender's ackedSeq == nextSeq, i.e. the
+         * boundary the retry's BEGIN will carry; the staged-but-unsent
+         * segments sit below it, above the server's expectedSeq. */
+        uint32_t client_acked_seq;
+        transportUdpClientChannelTestStats(&h.cs->transport, CHANNEL_BULK, NULL, &client_acked_seq, NULL);
+        UT_ASSERT_MSG(client_acked_seq > udpServer.channelMux[slot].ch[CHANNEL_BULK].expectedSeq,
+            "the abandoned stream must leave a sequence gap for the retry to repair");
+    }
+    udpServerExpireUploads(SDL_GetTicks() + SERVER_UPLOAD_IDLE_TIMEOUT_MS + 1);
+    UT_ASSERT(!udpServer.clientUploadActive[slot]);
+    UT_ASSERT(!lobbyAnyOtherUploadActive(udpServer.clientUploadActive, -1));
+    transportUdpClientTestDropUploadReply(&h.cs->transport, 0);
+    /* An approval arriving after the watchdog must not put the UI back into
+     * its in-flight state when there is no longer a buffer to send. */
+    {
+        uint8_t late_ack[PACKET_HEADER_SIZE + 1];
+        packHeader(late_ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+        late_ack[PACKET_HEADER_SIZE] = 0;
+        srvSendTo(late_ack, sizeof(late_ack), &udpServer.clients[slot].addr);
+    }
+    for (i = 0; i < 100; i++) loopbackHarnessPump(&h);
+    UT_ASSERT(clientSimGetLobbyMapUploadStatus(h.cs) == 4);
+    retry_client = other_player ? h.cs2 : h.cs;
+    UT_ASSERT(transportUdpClientStartLobbyMapUploadFromBytes(&retry_client->transport,
+        emap, EMAP_LEN, "retry.map"));
+    for (i = 0; i < UPLOAD_MAX && clientSimGetLobbyMapUploadStatus(retry_client) < 3; i++) {
+        loopbackHarnessPump(&h);
+    }
+    UT_ASSERT_MSG(clientSimGetLobbyMapUploadStatus(retry_client) == 3,
+        "retry failed: status=%d reject=%d", clientSimGetLobbyMapUploadStatus(retry_client),
+        clientSimGetLobbyMapUploadRejectCode(retry_client));
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+int run_upload_lost_ack_retry(void) {
+    return upload_timeout_recovery(false, false, false);
+}
+
+int run_upload_timeout_releases_other_player(void) {
+    return upload_timeout_recovery(false, true, false);
+}
+
+int run_upload_lost_done_retry(void) {
+    return upload_timeout_recovery(true, false, false);
+}
+
+int run_upload_partial_timeout_retry(void) {
+    return upload_timeout_recovery(false, false, true);
 }

@@ -39,6 +39,7 @@
 #define RECV_QUEUE_SIZE 1024
 
 #define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
+#define SERVER_UPLOAD_IDLE_TIMEOUT_MS 15000 /* outlasts both client watchdogs (5s BEGIN-ACK, 10s bulk stall) */
 
 /* Anonymous-fallback ceiling for a deferred WBN PLAYER_JOIN: how long
  * we wait for the joiner's rekey->reauth round-trip (two network hops
@@ -317,6 +318,7 @@ typedef struct UdpServerState {
      * UPLOAD_MAX_BYTES the bulk receiver reassembles into. */
     bool     clientUploadActive[MAX_TANKS];
     uint32_t clientUploadTotal[MAX_TANKS];
+    uint64_t upload_last_progress_ms[MAX_TANKS];
     uint8_t  clientUploadBuf[MAX_TANKS][UPLOAD_MAX_BYTES];
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
@@ -571,6 +573,7 @@ void serverInitMapDownload(int slot);
 void serverRebaseBulkAndRearmDownload(int i);
 void serverServiceMapTransfer(struct ServerSim *sim, int slot);
 void udpServerClearClientUploadState(int idx);
+void udpServerExpireUploads(uint64_t now_ms);
 void udpServerResetMapReaskLimit(int idx);
 
 /* Tankless spectator support. Owned by
