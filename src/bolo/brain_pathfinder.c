@@ -398,16 +398,15 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->estimate_samples = 60.0f;
   pf->danger_scale = 1.0f;
 
-  /* The classic movement rules, until a think pushes this sim's own. Taken
-     from the defaults table rather than from the constants, so there is one
-     place the classic numbers are written down. */
-  {
-    SimRules classic;
-    simRulesClassic(&classic);
-    pf->brake_rate = classic.tank_brake_rate;
-    pf->terrain_decel_rate = classic.tank_decel_rate;
-    pf->min_move = classic.tank_min_move;
-  }
+  /* The classic rules, until a think pushes this sim's own. Taken from the
+     defaults table rather than from the constants, so there is one place the
+     classic numbers are written down. Read again for the terrain speeds
+     below. */
+  SimRules classic;
+  simRulesClassic(&classic);
+  pf->brake_rate = classic.tank_brake_rate;
+  pf->terrain_decel_rate = classic.tank_decel_rate;
+  pf->min_move = classic.tank_min_move;
 
   /* Resource drain config */
   /* A tuned A* cost, not a copy of tank_water_ticks: ~85 ticks/tile at
@@ -462,19 +461,22 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->terrain_cost_boat_table[14] = 9999.0f;
   pf->terrain_cost_boat_table[15] = 9999.0f;
 
-  /* Default terrain speeds (matching constants.lua TERRAIN_SPEED) */
-  pf->terrain_speed_table[0]  = 0.0f;   /* building */
-  pf->terrain_speed_table[1]  = 3.0f;   /* river */
-  pf->terrain_speed_table[2]  = 3.0f;   /* swamp */
-  pf->terrain_speed_table[3]  = 3.0f;   /* crater */
-  pf->terrain_speed_table[4]  = 16.0f;  /* road */
-  pf->terrain_speed_table[5]  = 6.0f;   /* forest */
-  pf->terrain_speed_table[6]  = 3.0f;   /* rubble */
-  pf->terrain_speed_table[7]  = 12.0f;  /* grass */
-  pf->terrain_speed_table[8]  = 0.0f;   /* halfbuild */
-  pf->terrain_speed_table[9]  = 16.0f;  /* boat */
-  pf->terrain_speed_table[10] = 3.0f;   /* deepsea */
-  pf->terrain_speed_table[11] = 16.0f;  /* refbase */
+  /* Default terrain speeds. The ten a rule names come from the classic
+     table read above; the rest are the brain's own reading of a square the
+     engine has no cap for. A brain that pushes its own table through
+     cpf_set_terrain_speed overwrites every slot. */
+  pf->terrain_speed_table[0]  = 0.0f;                            /* building */
+  pf->terrain_speed_table[1]  = (float) classic.speed_river;
+  pf->terrain_speed_table[2]  = (float) classic.speed_swamp;
+  pf->terrain_speed_table[3]  = (float) classic.speed_crater;
+  pf->terrain_speed_table[4]  = (float) classic.speed_road;
+  pf->terrain_speed_table[5]  = (float) classic.speed_forest;
+  pf->terrain_speed_table[6]  = (float) classic.speed_rubble;
+  pf->terrain_speed_table[7]  = (float) classic.speed_grass;
+  pf->terrain_speed_table[8]  = 0.0f;                            /* halfbuild */
+  pf->terrain_speed_table[9]  = (float) classic.speed_boat;
+  pf->terrain_speed_table[10] = (float) classic.speed_deep_sea;
+  pf->terrain_speed_table[11] = (float) classic.speed_refuel_base;
   pf->terrain_speed_table[12] = 16.0f;  /* pillbox (dead = grass-like) */
   pf->terrain_speed_table[13] = 3.0f;   /* unknown */
   pf->terrain_speed_table[14] = 0.0f;

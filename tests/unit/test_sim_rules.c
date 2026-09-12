@@ -18,6 +18,14 @@
  *   sim_rules_copies_follow — a display copy and a brain copy report a rule
  *     that has been changed away from its classic value, rather than the
  *     number they used to hold.
+ *
+ *   sim_rules_terrain_caps_follow — mapGetSpeed and mapGetTurnRate return the
+ *     terrain rules this sim runs on, and moving one terrain's rule leaves the
+ *     others where they were.
+ *
+ *   sim_rules_river_cap_moves_drowning — the river cap is also the wading
+ *     test, so a tank driving a raised river at a speed the classic cap would
+ *     never have allowed still loses stock to the water.
  */
 
 #include <stdint.h>
@@ -27,6 +35,9 @@
 
 #include "global.h"
 #include "gametype.h"
+#include "server_sim.h"
+#include "server_sim_internal.h"
+#include "game_sim.h"
 #include "tank.h"
 #include "bolo_map.h"
 #include "shells.h"
@@ -310,11 +321,13 @@ int run_sim_rules_copies_follow(void) {
                   (unsigned) fullShells, (unsigned) fullMines,
                   (unsigned) fullArmour, (unsigned) fullTrees);
 
-    /* Three values nothing else in the engine holds, so a reading that matches
+    /* Values nothing else in the engine holds, so a reading that matches
      * cannot have come from a literal that happens to agree. */
     h.cs->sim.rules.tank_full_shells = 77;
     h.cs->sim.rules.tank_reload_ticks = 29;
     h.cs->sim.rules.tank_death_ticks = 900;
+    h.cs->sim.rules.speed_forest = 9;
+    h.cs->sim.rules.turn_forest = 0.125f;
 
     /* The display copy, through the accessor the HUD bars read. */
     clientSimGetTankFullStats(h.cs, &fullShells, &fullMines, &fullArmour,
@@ -341,6 +354,17 @@ int run_sim_rules_copies_follow(void) {
     UT_ASSERT_MSG(bi.rules.tank_full_mines == TANK_FULL_MINES,
                   "the brain view moved a rule nobody changed: mines reads %ld",
                   (long) bi.rules.tank_full_mines);
+    UT_ASSERT_MSG(bi.rules.speed_forest == 9,
+                  "the brain view reports a forest cap of %ld, not the rule's 9",
+                  (long) bi.rules.speed_forest);
+    UT_ASSERT_MSG(bi.rules.turn_forest == 0.125f,
+                  "the brain view reports a forest turn rate of %g, not the "
+                  "rule's 0.125", (double) bi.rules.turn_forest);
+    UT_ASSERT_MSG(bi.rules.speed_road == MAP_SPEED_TROAD &&
+                      bi.rules.turn_road == (float) MAP_TURN_TROAD,
+                  "the brain view moved a terrain nobody changed: road reads "
+                  "%ld at %g", (long) bi.rules.speed_road,
+                  (double) bi.rules.turn_road);
 
     /* brainDataMakeInfo allocates the variable-length members; this case only
      * reads them, so it frees them the way the headless loggers do. */
@@ -356,5 +380,129 @@ int run_sim_rules_copies_follow(void) {
     }
 
     loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ---- the terrain rules at their use sites ------------------------------- */
+
+/* Paint a patch of one terrain around a square, so what the engine reads
+ * there is what this case put there and a tank that drifts off the middle
+ * square is still on the same ground. */
+static void paintTerrain(ServerSim *sim, BYTE terrain, BYTE mx, BYTE my,
+                         int radius) {
+    int dx, dy;
+    for (dy = -radius; dy <= radius; dy++) {
+        for (dx = -radius; dx <= radius; dx++) {
+            mapSetPos(&sim->sim, &sim->sim.mp, (BYTE) (mx + dx),
+                      (BYTE) (my + dy), terrain, FALSE, FALSE);
+        }
+    }
+}
+
+static BYTE speedAt(ServerSim *sim, BYTE mx, BYTE my) {
+    return mapGetSpeed(&sim->sim, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
+                       mx, my, FALSE, 0);
+}
+
+static TURNTYPE turnAt(ServerSim *sim, BYTE mx, BYTE my) {
+    return mapGetTurnRate(&sim->sim, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
+                          mx, my, FALSE, 0);
+}
+
+/* The same square is read three times: as classic grass, as grass with both
+ * of its rules moved, and as road, which nothing here touched. One square
+ * throughout, so a reading cannot be about a base or a pillbox that happens
+ * to sit somewhere else on the map. */
+int run_sim_rules_terrain_caps_follow(void) {
+    ServerSim *sim = ut_make_running_sim("Rules");
+    UT_ASSERT(sim != NULL);
+
+    paintTerrain(sim, GRASS, 40, 40, 2);
+    UT_ASSERT_MSG(speedAt(sim, 40, 40) == MAP_SPEED_TGRASS,
+                  "classic grass caps at %u, not %d",
+                  (unsigned) speedAt(sim, 40, 40), MAP_SPEED_TGRASS);
+    UT_ASSERT_MSG(turnAt(sim, 40, 40) == (TURNTYPE) MAP_TURN_TGRASS,
+                  "classic grass turns at %g, not %g",
+                  (double) turnAt(sim, 40, 40), (double) MAP_TURN_TGRASS);
+
+    /* Neither value belongs to any terrain, so a reading that matches can
+       only have come from the rule. */
+    sim->sim.rules.speed_grass = 9;
+    sim->sim.rules.turn_grass = 0.125f;
+    UT_ASSERT_MSG(speedAt(sim, 40, 40) == 9,
+                  "grass caps at %u, not the rule's 9",
+                  (unsigned) speedAt(sim, 40, 40));
+    UT_ASSERT_MSG(turnAt(sim, 40, 40) == (TURNTYPE) 0.125f,
+                  "grass turns at %g, not the rule's 0.125",
+                  (double) turnAt(sim, 40, 40));
+
+    /* The same square as road: a grass rule moved no other terrain. */
+    paintTerrain(sim, ROAD, 40, 40, 2);
+    UT_ASSERT_MSG(speedAt(sim, 40, 40) == MAP_SPEED_TROAD,
+                  "road caps at %u after a grass rule moved, not %d",
+                  (unsigned) speedAt(sim, 40, 40), MAP_SPEED_TROAD);
+    UT_ASSERT_MSG(turnAt(sim, 40, 40) == (TURNTYPE) MAP_TURN_TROAD,
+                  "road turns at %g after a grass rule moved, not %g",
+                  (double) turnAt(sim, 40, 40), (double) MAP_TURN_TROAD);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The river cap is also the test for whether a tank is in the water rather
+ * than on top of it. Raise the cap and a tank driving faster than the classic
+ * 3 is still wading, which is the behaviour that would quietly disappear if
+ * the wading test kept reading the constant. */
+int run_sim_rules_river_cap_moves_drowning(void) {
+    ServerSim *sim = ut_make_running_sim("Rules");
+    BYTE shellsBefore = 0, minesBefore = 0, armour = 0, trees = 0;
+    BYTE shellsAfter = 0, minesAfter = 0;
+    int tick;
+    UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL);
+
+    sim->sim.rules.speed_river = 8;
+    paintTerrain(sim, RIVER, 40, 40, 2);
+    tankSetWorld(&sim->sim, &sim->sim.tanks[0],
+                 (WORLD) ((40 << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                 (WORLD) ((40 << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                 (TURNTYPE) 0, FALSE);
+    tankSetOnBoat(&sim->sim.tanks[0], FALSE);
+
+    /* Speed 6: faster than the classic river allowed, slower than this one
+       does. Autoslowdown off and no button held, so the speed stays put and
+       the only thing under test is what the wading check makes of it. A
+       residual step nothing can reach holds the tank on the square it
+       started on, because crossing tiles is not what this case is about. */
+    sim->sim.tanks[0]->autoSlowdown = FALSE;
+    sim->sim.rules.tank_min_move = 255;
+    tankSetSpeed(&sim->sim.tanks[0], (SPEEDTYPE) 6);
+
+    tankGetStats(&sim->sim.tanks[0], &shellsBefore, &minesBefore, &armour,
+                 &trees);
+    UT_ASSERT_MSG(shellsBefore > 1 && minesBefore > 1,
+                  "the tank spawned with %u shells and %u mines, too few to "
+                  "watch the water take any",
+                  (unsigned) shellsBefore, (unsigned) minesBefore);
+
+    /* Two full drain intervals, so the case does not turn on which tick the
+       count started from. */
+    for (tick = 0; tick < 2 * TANK_WATER_TIME; tick++) {
+        tankUpdate(&sim->sim, &sim->sim.tanks[0], TNONE, FALSE, FALSE);
+    }
+
+    UT_ASSERT_MSG(tankGetActualSpeed(&sim->sim.tanks[0]) >
+                      (SPEEDTYPE) MAP_SPEED_TRIVER,
+                  "the tank slowed to %g, so the drain below proves nothing "
+                  "about the raised cap",
+                  (double) tankGetActualSpeed(&sim->sim.tanks[0]));
+    tankGetStats(&sim->sim.tanks[0], &shellsAfter, &minesAfter, &armour,
+                 &trees);
+    UT_ASSERT_MSG(shellsAfter < shellsBefore && minesAfter < minesBefore,
+                  "a tank wading a raised river kept %u shells and %u mines "
+                  "of its %u and %u",
+                  (unsigned) shellsAfter, (unsigned) minesAfter,
+                  (unsigned) shellsBefore, (unsigned) minesBefore);
+
+    serverSimDestroy(sim);
     return 0;
 }

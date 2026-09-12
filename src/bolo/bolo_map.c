@@ -667,18 +667,20 @@ BYTE mapGetSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xValue
   BYTE terrain;     /* The current Terrain */
   bool done;        /* Are we done ? */
 
-  returnValue = MAP_SPEED_TDEEPSEA;
+  returnValue = (BYTE) sim->rules.speed_deep_sea;
   done = FALSE;
   if ((pillsExistPos(pb,xValue,yValue)) == TRUE) {
     /* Check for PB */
     if (pillsDeadPos(pb, xValue, yValue) == FALSE) {
+      /* A live pillbox is impassable because tankBuildingCollision tests the
+         terrain, not because its speed is zero, so it keeps its constant. */
       returnValue = MAP_SPEED_TPILLBOX;
       done = TRUE;
     }
   } else if ((basesExistPos(bs,xValue,yValue)) == TRUE) {
     /* Check for owned base */
     if (basesCantDrive(sim, xValue, yValue, playerNum) == FALSE) {
-      returnValue = MAP_MANSPEED_TREFBASE;
+      returnValue = (BYTE) sim->rules.speed_refuel_base;
     } else {
       returnValue = 0;
     }
@@ -691,41 +693,43 @@ BYTE mapGetSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xValue
     }
     /* On boat: use boat speed for all terrain (handles LeavingBoat on land) */
     if (onBoat == TRUE) {
-      returnValue = MAP_SPEED_TBOAT;
+      returnValue = (BYTE) sim->rules.speed_boat;
     } else
     switch (terrain) {
     case DEEP_SEA:
-      returnValue = MAP_SPEED_TDEEPSEA;
+      returnValue = (BYTE) sim->rules.speed_deep_sea;
       break;
     case BUILDING:
+      /* Building and half-building keep their constants for the same reason
+         a live pillbox does: the collision test is what stops a tank. */
       returnValue = MAP_SPEED_TBUILDING;
       break;
     case RIVER:
-      returnValue = MAP_SPEED_TRIVER;
+      returnValue = (BYTE) sim->rules.speed_river;
       break;
     case SWAMP:
-      returnValue = MAP_SPEED_TSWAMP;
+      returnValue = (BYTE) sim->rules.speed_swamp;
       break;
     case CRATER:
-      returnValue = MAP_SPEED_TCRATER;
+      returnValue = (BYTE) sim->rules.speed_crater;
       break;
     case ROAD:
-      returnValue = MAP_SPEED_TROAD;
+      returnValue = (BYTE) sim->rules.speed_road;
       break;
     case FOREST:
-      returnValue = MAP_SPEED_TFOREST;
+      returnValue = (BYTE) sim->rules.speed_forest;
       break;
     case RUBBLE:
-      returnValue = MAP_SPEED_TRUBBLE;
+      returnValue = (BYTE) sim->rules.speed_rubble;
       break;
     case GRASS:
-      returnValue = MAP_SPEED_TGRASS;
+      returnValue = (BYTE) sim->rules.speed_grass;
       break;
     case HALFBUILDING:
       returnValue = MAP_SPEED_THALFBUILDING;
       break;
     case BOAT:
-      returnValue = MAP_SPEED_TBOAT;
+      returnValue = (BYTE) sim->rules.speed_boat;
       break;
     default:
       /* Fall through */
@@ -840,18 +844,19 @@ TURNTYPE mapGetTurnRate(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE
   BYTE terrain;         /* The current Terrain */
   bool done;            /* Are we done ? */
 
-  returnValue = MAP_TURN_TDEEPSEA;
+  returnValue = (TURNTYPE) sim->rules.turn_deep_sea;
   done = FALSE;
   if ((pillsExistPos(pb,xValue,yValue)) == TRUE) {
     /* Check for PB */
     if ((pillsDeadPos(pb,xValue, yValue)) == FALSE) {
+      /* No rule, for the same reason the speed above has none. */
       returnValue = MAP_TURN_TPILLBOX;
       done = TRUE;
     }
   } else if ((basesExistPos(bs,xValue,yValue)) == TRUE) {
     /* Check for owned base */
     if (basesCantDrive(sim, xValue, yValue, playerNum) == FALSE) {
-      returnValue = MAP_TURN_TREFBASE;
+      returnValue = (TURNTYPE) sim->rules.turn_refuel_base;
     } else {
       returnValue = 0;
     }
@@ -864,43 +869,43 @@ TURNTYPE mapGetTurnRate(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE
     }
     switch (terrain) {
     case DEEP_SEA:
-      returnValue = MAP_TURN_TDEEPSEA;
+      returnValue = (TURNTYPE) sim->rules.turn_deep_sea;
       if (onBoat == TRUE) {
-        returnValue = MAP_TURN_TBOAT;
+        returnValue = (TURNTYPE) sim->rules.turn_boat;
       }
       break;
     case BUILDING:
       returnValue = MAP_TURN_TBUILDING;
       break;
     case RIVER:
-      returnValue = MAP_TURN_TRIVER;
+      returnValue = (TURNTYPE) sim->rules.turn_river;
       if (onBoat == TRUE) {
-        returnValue = MAP_TURN_TBOAT;
+        returnValue = (TURNTYPE) sim->rules.turn_boat;
       }
       break;
     case SWAMP:
-      returnValue = MAP_TURN_TSWAMP;
+      returnValue = (TURNTYPE) sim->rules.turn_swamp;
       break;
     case CRATER:
-      returnValue = MAP_TURN_TCRATER;
+      returnValue = (TURNTYPE) sim->rules.turn_crater;
       break;
     case ROAD:
-      returnValue = MAP_TURN_TROAD;
+      returnValue = (TURNTYPE) sim->rules.turn_road;
       break;
     case FOREST:
-      returnValue = MAP_TURN_TFOREST;
+      returnValue = (TURNTYPE) sim->rules.turn_forest;
       break;
     case RUBBLE:
-      returnValue = MAP_TURN_TRUBBLE;
+      returnValue = (TURNTYPE) sim->rules.turn_rubble;
       break;
     case GRASS:
-      returnValue = MAP_TURN_TGRASS;
+      returnValue = (TURNTYPE) sim->rules.turn_grass;
       break;
     case HALFBUILDING:
       returnValue = MAP_TURN_THALFBUILDING;
       break;
     case BOAT:
-      returnValue = MAP_TURN_TBOAT;
+      returnValue = (TURNTYPE) sim->rules.turn_boat;
       break;
     }
   }

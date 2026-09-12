@@ -23,6 +23,7 @@
  *********************************************************/
 
 #include "brain_worldsim.h"
+#include "sim_rules.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -174,25 +175,30 @@ static void wsim_apply_slide(BrainWorldSim *sim, WSimTank *tank) {
 
 BrainWorldSim *brainWorldSimCreate(void) {
   BrainWorldSim *sim = (BrainWorldSim *)calloc(1, sizeof(BrainWorldSim));
+  SimRules classic;
   if (!sim) return NULL;
   wsim_init_tables();
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
   sim->shell_damage = WSIM_SHELL_DAMAGE;
 
-  /* Default terrain speeds (matching cpathfinder.lua defaults) */
+  /* Default terrain speeds. The ten a rule names come from the classic
+     rules table, so the forward model starts on the same numbers the engine
+     does; a brain that pushes its own through wsim_set_terrain_speed
+     overwrites them. */
+  simRulesClassic(&classic);
   sim->terrain_speed[0]  =  0; /* BUILDING */
-  sim->terrain_speed[1]  =  3; /* RIVER */
-  sim->terrain_speed[2]  =  3; /* SWAMP */
-  sim->terrain_speed[3]  =  3; /* CRATER */
-  sim->terrain_speed[4]  = 16; /* ROAD */
-  sim->terrain_speed[5]  =  6; /* FOREST */
-  sim->terrain_speed[6]  =  3; /* RUBBLE */
-  sim->terrain_speed[7]  = 12; /* GRASS */
+  sim->terrain_speed[1]  = (float) classic.speed_river;
+  sim->terrain_speed[2]  = (float) classic.speed_swamp;
+  sim->terrain_speed[3]  = (float) classic.speed_crater;
+  sim->terrain_speed[4]  = (float) classic.speed_road;
+  sim->terrain_speed[5]  = (float) classic.speed_forest;
+  sim->terrain_speed[6]  = (float) classic.speed_rubble;
+  sim->terrain_speed[7]  = (float) classic.speed_grass;
   sim->terrain_speed[8]  =  0; /* HALFBUILD */
-  sim->terrain_speed[9]  = 16; /* BOAT */
-  sim->terrain_speed[10] =  3; /* DEEPSEA */
-  sim->terrain_speed[11] = 16; /* REFBASE */
+  sim->terrain_speed[9]  = (float) classic.speed_boat;
+  sim->terrain_speed[10] = (float) classic.speed_deep_sea;
+  sim->terrain_speed[11] = (float) classic.speed_refuel_base;
   sim->terrain_speed[12] = 16; /* PILLBOX */
   sim->terrain_speed[13] =  0;
   sim->terrain_speed[14] =  0;

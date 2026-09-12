@@ -400,19 +400,19 @@ int run_tank_mod_boat_exit_at_half_speed(void) {
     UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL);
 
     setMods(sim, 0, 0, 0, 0, 0, 0);
-    UT_ASSERT_MSG(tankBoatExitSpeed(sim->sim.tanks[0]) == MAP_SPEED_TBOAT,
+    UT_ASSERT_MSG(tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]) == MAP_SPEED_TBOAT,
                   "an unmodified tank leaves a boat at the classic speed");
 
     setMods(sim, 50, 0, 0, 0, 0, 0);
-    UT_ASSERT_MSG(tankBoatExitSpeed(sim->sim.tanks[0]) == 8,
+    UT_ASSERT_MSG(tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]) == 8,
                   "speed 50 gave a boat-exit speed of %d, expected 8",
-                  (int)tankBoatExitSpeed(sim->sim.tanks[0]));
+                  (int)tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]));
 
     /* The point of the row: a tank capped at 8 can reach its own exit speed,
        where the classic 16 would have held it on the river forever. */
     placeOn(sim, ROAD, 40, 40);
     setMods(sim, 50, 0, 0, 0, 0, 0);
-    UT_ASSERT_MSG(runToTopSpeed(sim, NULL) >= (SPEEDTYPE)tankBoatExitSpeed(sim->sim.tanks[0]),
+    UT_ASSERT_MSG(runToTopSpeed(sim, NULL) >= (SPEEDTYPE)tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]),
                   "a half-speed tank must be able to reach its exit speed");
 
     serverSimDestroy(sim);
@@ -455,7 +455,7 @@ int run_tank_mod_pill_leads_half_speed_boat(void) {
        tankBoatExitSpeed's contract, held by the boat-exit case above. */
     UT_ASSERT_MSG(classicThreshold >= 0 && ownThreshold >= 0,
                   "the lead helper returned no angle");
-    UT_ASSERT_MSG(tankBoatExitSpeed(sim->sim.tanks[0]) == MAP_SPEED_TBOAT,
+    UT_ASSERT_MSG(tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]) == MAP_SPEED_TBOAT,
                   "an unmodified target is led against the classic threshold");
 
     serverSimDestroy(sim);

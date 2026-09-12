@@ -148,6 +148,30 @@ typedef struct {
 	float   tank_decel_rate;
 	float   tank_brake_rate;
 	float   tank_autoslow_rate;
+	/* The cap a tank's speed clamps to on each terrain, and the bradians it
+	   turns per tick there. Building, half-building and pillbox have no rule:
+	   they are impassable because the collision test says so, not because
+	   their speed is zero. */
+	int32_t speed_road;
+	int32_t speed_grass;
+	int32_t speed_forest;
+	int32_t speed_river;
+	int32_t speed_swamp;
+	int32_t speed_crater;
+	int32_t speed_rubble;
+	int32_t speed_boat;
+	int32_t speed_deep_sea;
+	int32_t speed_refuel_base;
+	float   turn_road;
+	float   turn_grass;
+	float   turn_forest;
+	float   turn_river;
+	float   turn_swamp;
+	float   turn_crater;
+	float   turn_rubble;
+	float   turn_boat;
+	float   turn_deep_sea;
+	float   turn_refuel_base;
 } BrainRules;
 
 enum { GameType_open=1, GameType_tournament, GameType_strict_tment };

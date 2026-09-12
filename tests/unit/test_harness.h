@@ -1472,11 +1472,15 @@ int run_interp_respawn_no_death_flash(void);
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
 /* The per-simulation rules table (test_sim_rules.c). Defaults walked field
  * by field against the constants they replaced; the range checks for every
- * field this change converted, at both ends and inside; and the display and
- * brain copies reporting a rule that has been moved off its classic value. */
+ * field this change converted, at both ends and inside; the display and
+ * brain copies reporting a rule that has been moved off its classic value;
+ * the terrain speed and turn rules at the two map readers; and the river cap
+ * carrying the wading test with it. */
 int run_sim_rules_classic_defaults(void);
 int run_sim_rules_validate_ranges(void);
 int run_sim_rules_copies_follow(void);
+int run_sim_rules_terrain_caps_follow(void);
+int run_sim_rules_river_cap_moves_drowning(void);
 
 int run_snapshot_compaction(void);
 

@@ -612,7 +612,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
       if (foundTarget) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
-          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(*bestTank));
+          dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
           shellsAddItem(sim, shs, x, y, dir, (float) (PILLBOX_FIRE_DISTANCE), NEUTRAL, FALSE);
           (*value)->item[count].reload = 0;
           sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, (*value)->item[count].x, (*value)->item[count].y);

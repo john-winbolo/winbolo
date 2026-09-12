@@ -1943,7 +1943,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
        * road/halfbuilding (slow exit onto road still works) and for
        * BOAT (allows pickup of an adjacent parked boat). Skipped at
        * the tank's own boat-exit speed so deliberate fast exits work. */
-      if ((*value)->speed < tankBoatExitSpeed(*value) &&
+      if ((*value)->speed < tankBoatExitSpeed(sim, *value) &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == FALSE) {
         WORLD rMinX = ((WORLD)newbmx) << TANK_SHIFT_MAPSIZE;
         WORLD rMaxX = (((WORLD)newbmx + 1) << TANK_SHIFT_MAPSIZE) - 1;
@@ -1991,7 +1991,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
           (*value)->boatState = BoatState_NotOnBoat;
           (*value)->onBoat = FALSE;
           if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
-        } else if ((*value)->speed >= tankBoatExitSpeed(*value)) {
+        } else if ((*value)->speed >= tankBoatExitSpeed(sim, *value)) {
           /* Fast approach on soft terrain — instant exit.
            * Only drop boat if last river tile is adjacent (deep sea→land skip) */
           if (abs(newbmx - (*value)->lastBoatRiverX) + abs(newbmy - (*value)->lastBoatRiverY) <= 2) {
@@ -2082,8 +2082,10 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         }
       }
 
-      /* Check for tank in water */
-      if (terrain9 == RIVER && (*value)->speed <= MAP_SPEED_TRIVER && (*value)->boatState == BoatState_NotOnBoat) {
+      /* Check for tank in water. The wading test is the river's own cap:
+         one number answers both how fast a tank may cross a river and how
+         slow it has to be going to be in the water rather than on it. */
+      if (terrain9 == RIVER && (*value)->speed <= (SPEEDTYPE) sim->rules.speed_river && (*value)->boatState == BoatState_NotOnBoat) {
         if (basesExistPos(bs, newbmx, newbmy) == FALSE) {
           (*value)->waterCount++;
           if ((*value)->waterCount == sim->rules.tank_water_ticks) {
@@ -3615,14 +3617,16 @@ BYTE tankDamageAmount(GameSim *sim, BYTE base, BYTE owner, BYTE victim,
 *NAME:          tankBoatExitSpeed
 *PURPOSE:
 *  The speed at which this tank leaves a boat onto soft
-*  ground
+*  ground: the boat speed cap this sim runs on, scaled by
+*  the tank's speed modifier
 *
 *ARGUMENTS:
+*  sim   - The game the tank belongs to
 *  value - The tank structure
 *********************************************************/
-BYTE tankBoatExitSpeed(tank value) {
+BYTE tankBoatExitSpeed(GameSim *sim, tank value) {
   int pct = (value == NULL) ? 100 : tankModPct(value->mods.speed);
-  return (BYTE) ((MAP_SPEED_TBOAT * pct) / 100);
+  return (BYTE) ((sim->rules.speed_boat * pct) / 100);
 }
 
 

@@ -4480,6 +4480,8 @@ set(_unit_test_names
     sim_rules_classic_defaults
     sim_rules_validate_ranges
     sim_rules_copies_follow
+    sim_rules_terrain_caps_follow
+    sim_rules_river_cap_moves_drowning
     screen_bullets_build
     ping_smoother
     client_timing

@@ -688,6 +688,8 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_classic_defaults",              run_sim_rules_classic_defaults              },
     { "sim_rules_validate_ranges",               run_sim_rules_validate_ranges               },
     { "sim_rules_copies_follow",                 run_sim_rules_copies_follow                 },
+    { "sim_rules_terrain_caps_follow",           run_sim_rules_terrain_caps_follow           },
+    { "sim_rules_river_cap_moves_drowning",      run_sim_rules_river_cap_moves_drowning      },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },

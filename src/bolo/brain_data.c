@@ -214,6 +214,26 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->rules.tank_decel_rate    = gs->rules.tank_decel_rate;
   value->rules.tank_brake_rate    = gs->rules.tank_brake_rate;
   value->rules.tank_autoslow_rate = gs->rules.tank_autoslow_rate;
+  value->rules.speed_road         = gs->rules.speed_road;
+  value->rules.speed_grass        = gs->rules.speed_grass;
+  value->rules.speed_forest       = gs->rules.speed_forest;
+  value->rules.speed_river        = gs->rules.speed_river;
+  value->rules.speed_swamp        = gs->rules.speed_swamp;
+  value->rules.speed_crater       = gs->rules.speed_crater;
+  value->rules.speed_rubble       = gs->rules.speed_rubble;
+  value->rules.speed_boat         = gs->rules.speed_boat;
+  value->rules.speed_deep_sea     = gs->rules.speed_deep_sea;
+  value->rules.speed_refuel_base  = gs->rules.speed_refuel_base;
+  value->rules.turn_road          = gs->rules.turn_road;
+  value->rules.turn_grass         = gs->rules.turn_grass;
+  value->rules.turn_forest        = gs->rules.turn_forest;
+  value->rules.turn_river         = gs->rules.turn_river;
+  value->rules.turn_swamp         = gs->rules.turn_swamp;
+  value->rules.turn_crater        = gs->rules.turn_crater;
+  value->rules.turn_rubble        = gs->rules.turn_rubble;
+  value->rules.turn_boat          = gs->rules.turn_boat;
+  value->rules.turn_deep_sea      = gs->rules.turn_deep_sea;
+  value->rules.turn_refuel_base   = gs->rules.turn_refuel_base;
 
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */

@@ -1551,13 +1551,15 @@ BYTE tankDamageAmount(struct GameSim *sim, BYTE base, BYTE owner, BYTE victim,
 *NAME:          tankBoatExitSpeed
 *PURPOSE:
 *  The speed at which this tank leaves a boat onto soft
-*  ground, scaled by its speed modifier. A tank capped below
-*  the classic figure could never reach it otherwise.
+*  ground: the boat speed cap scaled by the tank's speed
+*  modifier. A tank capped below the cap could never reach
+*  it otherwise.
 *
 *ARGUMENTS:
+*  sim   - The game the tank belongs to
 *  value - The tank structure
 *********************************************************/
-BYTE tankBoatExitSpeed(tank value);
+BYTE tankBoatExitSpeed(struct GameSim *sim, tank value);
 
 void tankGetCarriedPillNum(tank *value, BYTE pillNum);
 
