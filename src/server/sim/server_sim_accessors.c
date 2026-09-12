@@ -809,6 +809,10 @@ void serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
     sim->viewDecaySecs[cat] = decaySecs;
 }
 
+/* The NULL-sim and out-of-range answers here, and in the two window /
+ * sight getters below, are meaning B in view_policy.h: what a reader
+ * assumes of a sender that named no policy, not what a sim starts on.
+ * They must not become the VIEW_POLICY_STOCK_* set. */
 ViewPolicy serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat) {
     if (sim == NULL) return viewPolicyAlways;
     if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return viewPolicyAlways;
@@ -822,7 +826,12 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
         /* Write the three classic values straight through the view-policy
          * setter, so the command-line switch and the lobby setting both
          * get the same result. Each category keeps its own decay seconds
-         * so the host's value survives a trip through classic mode. */
+         * so the host's value survives a trip through classic mode.
+         *
+         * These are classic mode's own set, spelled out on purpose. They
+         * match the VIEW_POLICY_STOCK_* set today, but they are a
+         * different statement — moving what a stock server runs must not
+         * silently redefine what classic mode means. */
         serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyKey,
                                sim->viewDecaySecs[viewCategoryPill]);
         serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff,

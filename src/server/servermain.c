@@ -1125,6 +1125,22 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
   cJSON_free(out);
 }
 
+/* The lower-case word -pillview / -baseview / -allyview accept for a
+ * policy. Only used to tell the operator what an unrecognised word fell
+ * back to, so the message names the same value the parse below does
+ * rather than a second copy of it. */
+static const char *viewPolicyArgWord(ViewPolicy policy) {
+  return (policy == viewPolicyAlways) ? "always"
+       : (policy == viewPolicyKey)    ? "key"
+       : (policy == viewPolicyDecay)  ? "decay"
+                                      : "off";
+}
+
+/* Same for -overviewwindow. */
+static const char *overviewWindowArgWord(OverviewWindow window) {
+  return (window == overviewWindowClassic) ? "classic" : "expanded";
+}
+
 int main(int argc, char **argv) {
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   {
@@ -1583,15 +1599,14 @@ int main(int argc, char **argv) {
       const char  *modeArg;
       const char  *decayArg;
       ViewCategory cat;
-      ViewPolicy   def;
-      const char  *defWord;   /* what the warning below prints */
+      ViewPolicy   stock;     /* meaning A in view_policy.h */
     } viewArgs[] = {
-      { "pillview", "pillviewdecay", viewCategoryPill, viewPolicyKey, "key" },
-      { "baseview", "baseviewdecay", viewCategoryBase, viewPolicyOff, "off" },
-      { "allyview", "allyviewdecay", viewCategoryAlly, viewPolicyOff, "off" },
+      { "pillview", "pillviewdecay", viewCategoryPill, VIEW_POLICY_STOCK_PILL },
+      { "baseview", "baseviewdecay", viewCategoryBase, VIEW_POLICY_STOCK_BASE },
+      { "allyview", "allyviewdecay", viewCategoryAlly, VIEW_POLICY_STOCK_ALLY },
     };
     for (int vi = 0; vi < (int)(sizeof(viewArgs) / sizeof(viewArgs[0])); vi++) {
-      ViewPolicy policy = viewArgs[vi].def;
+      ViewPolicy policy = viewArgs[vi].stock;
       int secs = VIEW_DECAY_DEFAULT_SECS;
       int modeNum = findArg(argc, argv, viewArgs[vi].modeArg);
       if (modeNum != ARG_NOT_FOUND) {
@@ -1609,8 +1624,9 @@ int main(int argc, char **argv) {
           policy = viewPolicyOff;
         } else {
           fprintf(stderr, "Unknown -%s '%s'; using %s\n",
-                  viewArgs[vi].modeArg, modeStr, viewArgs[vi].defWord);
-          policy = viewArgs[vi].def;
+                  viewArgs[vi].modeArg, modeStr,
+                  viewPolicyArgWord(viewArgs[vi].stock));
+          policy = viewArgs[vi].stock;
         }
       }
       int decayNum = findArg(argc, argv, viewArgs[vi].decayArg);
@@ -1640,10 +1656,10 @@ int main(int argc, char **argv) {
   }
 
   /* -overviewwindow <M>: which block of squares the map overview keeps
-   * live. An unrecognised word warns and falls back to classic, the
-   * same as the three view switches. */
+   * live. An unrecognised word warns and falls back to the stock
+   * window, the same as the three view switches. */
   {
-    OverviewWindow window = overviewWindowClassic;
+    OverviewWindow window = OVERVIEW_WINDOW_STOCK;
     int windowNum = findArg(argc, argv, "overviewwindow");
     if (windowNum != ARG_NOT_FOUND) {
       char modeStr[32];
@@ -1655,9 +1671,9 @@ int main(int argc, char **argv) {
       } else if (strcmp(modeStr, "classic") == 0) {
         window = overviewWindowClassic;
       } else {
-        fprintf(stderr, "Unknown -overviewwindow '%s'; using classic\n",
-                modeStr);
-        window = overviewWindowClassic;
+        fprintf(stderr, "Unknown -overviewwindow '%s'; using %s\n", modeStr,
+                overviewWindowArgWord(OVERVIEW_WINDOW_STOCK));
+        window = OVERVIEW_WINDOW_STOCK;
       }
     }
     serverSimSetOverviewWindow(serverSim, (uint8_t)window);

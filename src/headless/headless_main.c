@@ -142,11 +142,11 @@ static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
 /* Visibility rules for the fast-mode server sim, indexed by
- * ViewCategory. Defaults match serverSimInit: a pillbox shows only
- * while it is watched, bases and allied tanks not at all, 30-second
- * decay everywhere. */
+ * ViewCategory. The stock set from view_policy.h, the same one
+ * serverSimInit writes: a pillbox shows only while it is watched,
+ * bases and allied tanks not at all, 30-second decay everywhere. */
 static ViewPolicy optViewPolicy[VIEW_CATEGORY_COUNT] = {
-  viewPolicyKey, viewPolicyOff, viewPolicyOff
+  VIEW_POLICY_STOCK_PILL, VIEW_POLICY_STOCK_BASE, VIEW_POLICY_STOCK_ALLY
 };
 static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
   VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS
@@ -156,10 +156,13 @@ static bool optClassicMode = false;
 /* Send allied tanks standing in trees to their allies; off is classic. */
 static bool optAlliesInTrees = false;
 /* Which block of squares the map overview keeps live, and what blocks
- * sight inside it. Both match serverSimInit: the narrow window, with
- * nothing blocking sight inside it. */
-static OverviewWindow optOverviewWindow = overviewWindowClassic;
-static bool optLineOfSight = false;
+ * sight inside it. Both are the stock set from view_policy.h, the same
+ * one serverSimInit writes: the narrow window, with nothing blocking
+ * sight inside it. */
+static OverviewWindow optOverviewWindow = OVERVIEW_WINDOW_STOCK;
+/* A bool here because the switch is on/off, so it tracks the stock mode
+ * by asking whether that mode is the "nothing blocks sight" one. */
+static bool optLineOfSight = (LINE_OF_SIGHT_STOCK != lineOfSightOff);
 
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29

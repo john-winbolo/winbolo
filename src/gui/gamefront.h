@@ -1018,12 +1018,12 @@ void gameFrontSetHostingVoiceMode(int mode);
  * Read by gameFrontGetPrefs and pushed onto the sim with
  * serverSimSetViewPolicy in gameFrontSetupServer. Each policy global
  * holds a ViewPolicy value; the decay globals hold seconds in the
- * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Defaults match the
- * sim: a pillbox shows only while it is watched, bases and allied
- * tanks not at all. */
-extern int gameFrontViewPillPolicy;     /* default viewPolicyKey (1) */
-extern int gameFrontViewBasePolicy;     /* default viewPolicyOff (3) */
-extern int gameFrontViewAllyPolicy;     /* default viewPolicyOff (3) */
+ * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Each starts on the
+ * rules an unconfigured server runs, so hosting with an untouched INI
+ * leaves the sim as serverSimInit created it. */
+extern int gameFrontViewPillPolicy;     /* VIEW_POLICY_STOCK_PILL */
+extern int gameFrontViewBasePolicy;     /* VIEW_POLICY_STOCK_BASE */
+extern int gameFrontViewAllyPolicy;     /* VIEW_POLICY_STOCK_ALLY */
 extern int gameFrontViewPillDecaySecs;  /* 5-600, default 30 */
 extern int gameFrontViewBaseDecaySecs;
 extern int gameFrontViewAllyDecaySecs;
@@ -1034,11 +1034,11 @@ extern bool gameFrontClassicMode;
  * classic mode, which forces it back off. Default off. */
 extern bool gameFrontAlliesInTrees;
 /* Which block of squares the map overview keeps live. Holds an
- * OverviewWindow; default overviewWindowClassic (1). */
+ * OverviewWindow; starts on OVERVIEW_WINDOW_STOCK. */
 extern int gameFrontOverviewWindow;
 /* What stops the player seeing inside that block. Holds a
- * LineOfSightMode; default lineOfSightOff (0). Both are applied before
- * classic mode, which writes them itself. */
+ * LineOfSightMode; starts on LINE_OF_SIGHT_STOCK. Both are applied
+ * before classic mode, which writes them itself. */
 extern int gameFrontLineOfSight;
 
 void gameFrontSetViewPillPolicy(int policy);

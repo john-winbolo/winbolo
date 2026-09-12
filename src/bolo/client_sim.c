@@ -361,10 +361,13 @@ bool clientSimCreate(ClientSim *cs) {
    * Seeding Classic here would make a pre-fields payload visibly jump
    * Classic -> Expanded. The view policies have no such wire default to fall
    * back on — viewPolicyAlways is 0 only by historical accident — which is
-   * why they, and only they, are seeded from the server. */
-  cs->viewPolicy[viewCategoryPill] = viewPolicyKey;
-  cs->viewPolicy[viewCategoryBase] = viewPolicyOff;
-  cs->viewPolicy[viewCategoryAlly] = viewPolicyOff;
+   * why they, and only they, are seeded from the server.
+   *
+   * In the terms view_policy.h sets out: the three below are meaning A,
+   * the two above are meaning B. */
+  cs->viewPolicy[viewCategoryPill] = VIEW_POLICY_STOCK_PILL;
+  cs->viewPolicy[viewCategoryBase] = VIEW_POLICY_STOCK_BASE;
+  cs->viewPolicy[viewCategoryAlly] = VIEW_POLICY_STOCK_ALLY;
 
   /* Lobby state defaults (memset already zeroed, but be explicit) */
   memset(cs->lobbySlots, 0, sizeof(cs->lobbySlots));
@@ -2576,6 +2579,10 @@ bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
 
+/* The NULL-cs answers here and in the two getters below are meaning B in
+ * view_policy.h — what a reader assumes when nothing named a policy —
+ * not the VIEW_POLICY_STOCK_* set clientSimCreate seeds the real fields
+ * with. */
 ViewPolicy clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat) {
   if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
     return viewPolicyAlways;

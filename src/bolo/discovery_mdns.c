@@ -172,7 +172,8 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
    * seven — pill always, ally always, classic off, allies in trees off,
    * the expanded overview window, sight off — because each of those is
    * zero. The base view is not: viewPolicyOff is 3, so it is set here.
-   * A view key in the loop below overwrites all seven. */
+   * A view key in the loop below overwrites all seven. Meaning B in
+   * view_policy.h, not the VIEW_POLICY_STOCK_* set. */
   out->baseView = viewPolicyOff;
 
   if (r->haveAddr) {

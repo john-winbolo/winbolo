@@ -288,17 +288,20 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     /* Visibility rules. A server nobody has configured runs the classic
      * set: a pillbox shows only while the player is watching it, and
      * bases and allied tanks show not at all. memset would give every
-     * category viewPolicyAlways and a zero decay, so set all three. */
-    sim->viewPolicy[viewCategoryPill] = viewPolicyKey;
-    sim->viewPolicy[viewCategoryBase] = viewPolicyOff;
-    sim->viewPolicy[viewCategoryAlly] = viewPolicyOff;
+     * category viewPolicyAlways and a zero decay, so set all three.
+     * This is the authority for meaning A in view_policy.h. */
+    sim->viewPolicy[viewCategoryPill] = VIEW_POLICY_STOCK_PILL;
+    sim->viewPolicy[viewCategoryBase] = VIEW_POLICY_STOCK_BASE;
+    sim->viewPolicy[viewCategoryAlly] = VIEW_POLICY_STOCK_ALLY;
     for (count = 0; count < VIEW_CATEGORY_COUNT; count++) {
         sim->viewDecaySecs[count] = VIEW_DECAY_DEFAULT_SECS;
     }
     /* The map overview keeps the narrow window live, with nothing
-     * blocking sight inside it. overviewWindowClassic is 1, so it has to
-     * be written; lineOfSightOff is 0 and rides on the memset above. */
-    sim->overviewWindow = (uint8_t)overviewWindowClassic;
+     * blocking sight inside it. Both are written out rather than left to
+     * the memset: LINE_OF_SIGHT_STOCK happens to be zero today, and a
+     * later change to it must not quietly stop applying here. */
+    sim->overviewWindow = (uint8_t)OVERVIEW_WINDOW_STOCK;
+    sim->lineOfSight    = (uint8_t)LINE_OF_SIGHT_STOCK;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;

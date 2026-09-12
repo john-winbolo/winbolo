@@ -389,6 +389,9 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath) {
   return deathWait > 0 && deathWait <= overviewDeathBlackoutStart(lastDeath);
 }
 
+/* A permissive starting point for a caller that fills the rest in
+ * itself — meaning C in view_policy.h. Not what a stock server runs
+ * (the VIEW_POLICY_STOCK_* set) and not a wire fallback either. */
 void overviewViewInputsDefaults(OverviewViewInputs *in) {
   if (in == NULL) {
     return;

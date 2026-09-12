@@ -142,7 +142,12 @@ static inline BYTE infoPacketPackViewPolicies(ViewPolicy pill,
  * view_policies2 still reports everything it does carry. Anything
  * shorter predates view_policies, so it reports the built-in defaults
  * (pill always, base off, ally always, classic mode off, allies in
- * trees off) instead of whatever the short read left in the struct. */
+ * trees off) instead of whatever the short read left in the struct.
+ *
+ * Those are meaning B in view_policy.h — what a sender that named no
+ * rules is assumed to have meant. Not the VIEW_POLICY_STOCK_* set: a
+ * change to what a stock server runs must not move what an old
+ * advertisement is read as. */
 static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               size_t len,
                                               ViewPolicy *pill,
@@ -181,7 +186,8 @@ static inline BYTE infoPacketPackViewPolicies2(uint8_t overviewWindow,
  * the byte, so it reports the built-in defaults — the expanded window
  * with nothing blocking sight inside it. Two bits can also hold a value
  * neither enum names; that reports the default as well, so a browser row
- * never shows a mode this build cannot name. */
+ * never shows a mode this build cannot name. Meaning B in view_policy.h,
+ * so not the OVERVIEW_WINDOW_STOCK / LINE_OF_SIGHT_STOCK pair. */
 static inline void infoPacketReadViewPolicies2(const INFO_PACKET *info,
                                                size_t len,
                                                uint8_t *overviewWindow,

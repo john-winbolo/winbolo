@@ -159,12 +159,13 @@ struct ServerEntry {
  * all. Classic mode leads the list because it explains the policies
  * that follow it. Returns "" when the server is stock.
  *
- * The defaults compared against here are the rules a current
- * unconfigured server runs: pill Key, base Off, ally Off, the classic
- * overview window and sight off. That is deliberately not the same set
- * as the back-compatibility reading an advertisement missing the rules
- * gets (see ServerEntry above). A server old enough to leave them out
- * really does play differently from a stock one, so it gets tagged. */
+ * The values compared against here are the rules a current unconfigured
+ * server runs — the VIEW_POLICY_STOCK_* / OVERVIEW_WINDOW_STOCK /
+ * LINE_OF_SIGHT_STOCK set, meaning A in view_policy.h. That is
+ * deliberately not the same set as the back-compatibility reading an
+ * advertisement missing the rules gets (meaning B; see ServerEntry
+ * above). A server old enough to leave them out really does play
+ * differently from a stock one, so it gets tagged. */
 static std::string viewPolicyTag(const ServerEntry &e) {
     /* Same four policy words the lobby, the hosting tab and the game info
      * panel use, so one server's rules read the same wherever they show. */
@@ -174,10 +175,10 @@ static std::string viewPolicyTag(const ServerEntry &e) {
         langGetText(STR_DLGLOBBY_VIEW_DECAY),
         langGetText(STR_DLGLOBBY_VIEW_OFF),
     };
-    struct { const char *letter; ViewPolicy value; ViewPolicy def; } cats[] = {
-        { "P", e.pillView, viewPolicyKey },
-        { "B", e.baseView, viewPolicyOff },
-        { "A", e.allyView, viewPolicyOff },
+    struct { const char *letter; ViewPolicy value; ViewPolicy stock; } cats[] = {
+        { "P", e.pillView, VIEW_POLICY_STOCK_PILL },
+        { "B", e.baseView, VIEW_POLICY_STOCK_BASE },
+        { "A", e.allyView, VIEW_POLICY_STOCK_ALLY },
     };
     std::string out;
     if (e.classicMode) {
@@ -189,8 +190,11 @@ static std::string viewPolicyTag(const ServerEntry &e) {
     }
     /* The overview window and line of sight are server-wide rules like
      * the two above rather than per-category, so they sit with them.
-     * Only the non-default value is worth a tag: an unconfigured server
-     * runs the classic window with sight off. The window is prefixed to
+     * Only a value away from stock is worth a tag: an unconfigured
+     * server runs OVERVIEW_WINDOW_STOCK with LINE_OF_SIGHT_STOCK. Each
+     * test names the other value outright rather than saying "not the
+     * stock one", because the string it prints names that value too —
+     * the two have to move together. The window is prefixed to
      * match the P=/B=/A= form the categories below use, since a bare
      * "Expanded" in a list of tags names no setting in particular. */
     if (e.overviewWindow == (uint8_t)overviewWindowExpanded) {
@@ -203,7 +207,7 @@ static std::string viewPolicyTag(const ServerEntry &e) {
         out += langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB);
     }
     for (const auto &c : cats) {
-        if (c.value == c.def) continue;
+        if (c.value == c.stock) continue;
         int idx = (int)c.value;
         if (idx < 0 || idx > 3) continue;
         if (!out.empty()) out += " ";
@@ -342,6 +346,9 @@ static PingResult pingServer(const PingWork &work) {
     res.numBots = 0;
     res.timeLimit = 0;
     res.hasRichInfo = false;
+    /* What a server that answers with no view rules is read as —
+     * meaning B in view_policy.h, deliberately not the
+     * VIEW_POLICY_STOCK_* set the tag above compares against. */
     res.pillView = viewPolicyAlways;
     res.baseView = viewPolicyOff;
     res.allyView = viewPolicyAlways;

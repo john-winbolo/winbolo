@@ -98,6 +98,9 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->gameType = readIntField(src, "game_type");
     dst->ai       = readIntField(src, "ai");
 
+    /* A tracker row missing these fields is read the way an INFO packet
+     * missing them is — meaning B in view_policy.h, not the
+     * VIEW_POLICY_STOCK_* set. */
     dst->pillView = readIntFieldDef(src, "pillview", viewPolicyAlways);
     dst->baseView = readIntFieldDef(src, "baseview", viewPolicyOff);
     dst->allyView = readIntFieldDef(src, "allyview", viewPolicyAlways);
