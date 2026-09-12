@@ -237,6 +237,8 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+int gameFrontOverviewWindow    = overviewWindowClassic;
+int gameFrontLineOfSight       = lineOfSightOff;
 
 /* Server-authoritative state — the Transport handle itself now lives
  * inside humanSim; only high-level lifecycle gating is tracked here. */
@@ -934,6 +936,8 @@ void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs
 void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
 void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
 void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
+void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
+void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */
 void gameFrontSetSteamPresenceMenu(void)           { }

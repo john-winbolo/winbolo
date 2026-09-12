@@ -279,6 +279,12 @@ int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
 bool gameFrontAlliesInTrees    = FALSE;
+/* Which block of squares the map overview keeps live, and what stops the
+ * player seeing inside it. Ints rather than bools because each holds a
+ * named value — OverviewWindow and LineOfSightMode — the way the three
+ * policies above hold a ViewPolicy. */
+int gameFrontOverviewWindow    = overviewWindowClassic;
+int gameFrontLineOfSight       = lineOfSightOff;
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -2158,6 +2164,20 @@ static int viewPolicyFromPrefWord(const char *word, int fallback) {
   return fallback;
 }
 
+/* The overview window in the same word form, one of the two
+ * OverviewWindow names rather than its byte. */
+static const char *overviewWindowPrefWord(int window) {
+  return (window == overviewWindowClassic) ? "Classic" : "Expanded";
+}
+
+/* Reads back what overviewWindowPrefWord wrote. Any other word returns
+ * the caller's fallback, the same as viewPolicyFromPrefWord. */
+static int overviewWindowFromPrefWord(const char *word, int fallback) {
+  if (strcmp(word, "Expanded") == 0) return overviewWindowExpanded;
+  if (strcmp(word, "Classic")  == 0) return overviewWindowClassic;
+  return fallback;
+}
+
 static int viewDecayClamp(int secs) {
   if (secs < VIEW_DECAY_MIN_SECS) return VIEW_DECAY_MIN_SECS;
   if (secs > VIEW_DECAY_MAX_SECS) return VIEW_DECAY_MAX_SECS;
@@ -2208,6 +2228,18 @@ void gameFrontSetClassicMode(bool on) {
 void gameFrontSetAlliesInTrees(bool on) {
   gameFrontAlliesInTrees = on;
   prefsSetString("GAME OPTIONS", "Allies In Trees", TRUEFALSE_TO_STR(on));
+}
+
+void gameFrontSetOverviewWindow(int window) {
+  gameFrontOverviewWindow = window;
+  prefsSetString("GAME OPTIONS", "Overview Window",
+                 overviewWindowPrefWord(window));
+}
+
+void gameFrontSetLineOfSight(int mode) {
+  bool on = (mode != lineOfSightOff);
+  gameFrontLineOfSight = mode;
+  prefsSetString("GAME OPTIONS", "Line Of Sight", TRUEFALSE_TO_STR(on));
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -2791,6 +2823,11 @@ bool gameFrontSetupServer(void) {
   if (gameFrontAlliesInTrees) {
     serverSimSetAlliesInTrees(spServerSim, true);
   }
+  /* These two go on whatever they hold, not only when on: either value
+   * is a real choice, and the expanded window is not what the sim was
+   * created with. Still before classic mode, which writes both. */
+  serverSimSetOverviewWindow(spServerSim, (uint8_t)gameFrontOverviewWindow);
+  serverSimSetLineOfSight(spServerSim, (uint8_t)gameFrontLineOfSight);
   if (gameFrontClassicMode) {
     serverSimSetClassicMode(spServerSim, true);
   }
@@ -3448,6 +3485,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
     prefsGetString("GAME OPTIONS", "Allies In Trees", "No", buff, FILENAME_MAX);
     gameFrontAlliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+    prefsGetString("GAME OPTIONS", "Overview Window", "Classic", buff,
+                   FILENAME_MAX);
+    gameFrontOverviewWindow =
+        overviewWindowFromPrefWord(buff, overviewWindowClassic);
+    prefsGetString("GAME OPTIONS", "Line Of Sight", "No", buff, FILENAME_MAX);
+    gameFrontLineOfSight = YESNO_TO_TRUEFALSE(buff[0])
+                               ? lineOfSightBuildingsAndTrees
+                               : lineOfSightOff;
   }
 
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
@@ -3907,6 +3952,10 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gameFrontClassicMode));
   prefsSetString("GAME OPTIONS", "Allies In Trees",
                  TRUEFALSE_TO_STR(gameFrontAlliesInTrees));
+  prefsSetString("GAME OPTIONS", "Overview Window",
+                 overviewWindowPrefWord(gameFrontOverviewWindow));
+  prefsSetString("GAME OPTIONS", "Line Of Sight",
+                 TRUEFALSE_TO_STR((gameFrontLineOfSight != lineOfSightOff)));
 
   prefsSetString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp));
   prefsSetString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal));

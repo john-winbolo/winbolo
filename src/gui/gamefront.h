@@ -1033,6 +1033,13 @@ extern bool gameFrontClassicMode;
 /* Allied tanks standing in trees are sent to their allies. Applied before
  * classic mode, which forces it back off. Default off. */
 extern bool gameFrontAlliesInTrees;
+/* Which block of squares the map overview keeps live. Holds an
+ * OverviewWindow; default overviewWindowClassic (1). */
+extern int gameFrontOverviewWindow;
+/* What stops the player seeing inside that block. Holds a
+ * LineOfSightMode; default lineOfSightOff (0). Both are applied before
+ * classic mode, which writes them itself. */
+extern int gameFrontLineOfSight;
 
 void gameFrontSetViewPillPolicy(int policy);
 void gameFrontSetViewBasePolicy(int policy);
@@ -1042,5 +1049,7 @@ void gameFrontSetViewBaseDecaySecs(int secs);
 void gameFrontSetViewAllyDecaySecs(int secs);
 void gameFrontSetClassicMode(bool on);
 void gameFrontSetAlliesInTrees(bool on);
+void gameFrontSetOverviewWindow(int window);
+void gameFrontSetLineOfSight(int mode);
 
 #endif
