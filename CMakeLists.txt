@@ -4673,6 +4673,8 @@ set(_unit_test_names
     claim_resolve_free_ignores_holder_flag
     claim_resolve_unverified_preempts
     claim_resolve_verified_keeps_temp
+    base_timer_cleared_on_leave
+    base_timer_not_inherited_next_round
     autolock_locks_on_start_inplace
     autolock_locks_on_start_wire
     autolock_join_blocked_after_start
