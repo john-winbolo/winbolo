@@ -24,10 +24,16 @@
  *       table byte for byte across each of them
  *   run_scenario_rule_arm_records      — the record's bytes on disk, more
  *       records behind it, and both of the viewer's readers over them
+ *   run_scenario_rule_clamps_world     — a cap pulled under the records the
+ *       sim is holding brings them down to it, a rule that strands nothing
+ *       leaves both lists alone, and a cap put back up hands nothing back
+ *   run_scenario_rule_clamp_records    — what the clamp moved reaches the
+ *       replay, so the viewer holds the new armour rather than the old
  *
  * The byte-for-byte checks compare the whole table rather than the field the
  * op named: an arm that wrote its field and then refused would pass a check
- * that only looked at the field it was told about.
+ * that only looked at the field it was told about. The two clamp cases
+ * compare the whole pill and base lists for the same reason.
  */
 
 #include <stddef.h>
@@ -44,8 +50,10 @@
 #include "server_sim_scenario.h"
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled */
 #include "scenario_defs.h"         /* SCN_RULE_LIST, ScnRuleIndex */
-#include "game_sim.h"              /* GameSim.rules */
+#include "game_sim.h"              /* GameSim.rules, pb and bs */
 #include "sim_rules.h"             /* SimRules, simRulesClassic */
+#include "pillbox.h"               /* the pill list a lowered cap reaches */
+#include "bases.h"                 /* the base list a lowered cap reaches */
 #include "everard_map.h"           /* E_MAP */
 #include "log.h"                   /* log_RuleSet, the stream opcodes */
 #include "replay_harness.h"
@@ -70,6 +78,14 @@
  * leaves at 14. The two refusals therefore differ in the check that caught
  * them and not in how far outside anything the value is. */
 #define RA_GUNSIGHT_PAIR 20.0
+
+/* Caps under what the map's own pills and bases carry, and inside every row
+ * and pair that names them: pill_repair_amount is 4, so a pill cap of 8 sits
+ * above it, and base_min_shells is 0 with base_shells_give 1, so a shells cap
+ * of 40 leaves both of those alone. Each case checks the map really is
+ * carrying records above them rather than assuming it. */
+#define RA_PILL_ARMOUR_CAP 8
+#define RA_BASE_SHELLS_CAP 40
 
 /* ── Fixtures ─────────────────────────────────────────────────────────── */
 
@@ -531,6 +547,203 @@ int run_scenario_rule_arm_records(void) {
                   "expected at least %ums — the walk stopped at a record it "
                   "could not size", (unsigned)info.totalTimeMs,
                   RA_MIN_TOTAL_MS);
+
+    replayHarnessStop(&h);
+    return 0;
+}
+
+/* ================================================================
+ * 6. A cap the new table lowers, against the records the sim holds.
+ *
+ * Three questions, because the clamp is a shared pass called on every rule
+ * rather than on the ones that bear on a cap: a cap pulled under the map's
+ * own records brings each of them down to it and leaves the ones already
+ * below it where they are; a change that strands nothing moves neither list;
+ * and a cap put back up hands nothing back, because a clamp is a ceiling and
+ * not a setting.
+ *
+ * The untouched checks compare the whole pill and base lists rather than the
+ * two fields the caps name: a pass that wrote a field it was not asked about
+ * would walk past a check that only looked at armour and shells.
+ * ================================================================ */
+
+/* Both lists against the copies taken before the change. */
+static int raListsUnmoved(GameSim *gs, const struct pillsObj *pills,
+                          const struct basesObj *bases, const char *what) {
+    UT_ASSERT_MSG(memcmp(pills, gs->pb, sizeof(*pills)) == 0,
+                  "%s moved a pillbox record", what);
+    UT_ASSERT_MSG(memcmp(bases, gs->bs, sizeof(*bases)) == 0,
+                  "%s moved a base record", what);
+    return 0;
+}
+
+int run_scenario_rule_clamps_world(void) {
+    ServerSim      *sim = raSim();
+    GameSim        *gs;
+    struct pillsObj beforePills;
+    struct basesObj beforeBases;
+    BYTE            pillWas[MAX_PILLS];
+    BYTE            baseWas[MAX_BASES];
+    BYTE            numPills, numBases, i;
+    int32_t         pillCapWas;
+    int             pillsAbove = 0;
+    int             basesAbove = 0;
+    int             rc;
+
+    UT_ASSERT_MSG(sim != NULL, "raSim returned NULL");
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "the sim has no GameSim");
+
+    numPills   = pillsGetNumPills(&gs->pb);
+    numBases   = basesGetNumBases(&gs->bs);
+    pillCapWas = gs->rules.pill_max_armour;
+    UT_ASSERT_MSG(numPills > 0 && numBases > 0,
+                  "setup: the map carries %u pillbox(es) and %u base(s)",
+                  (unsigned)numPills, (unsigned)numBases);
+
+    for (i = 0; i < numPills; i++) {
+        pillWas[i] = (*gs->pb).item[i].armour;
+        if (pillWas[i] > RA_PILL_ARMOUR_CAP) pillsAbove++;
+    }
+    for (i = 0; i < numBases; i++) {
+        baseWas[i] = (*gs->bs).item[i].shells;
+        if (baseWas[i] > RA_BASE_SHELLS_CAP) basesAbove++;
+    }
+    UT_ASSERT_MSG(pillsAbove > 0,
+                  "setup: no pillbox on the map holds more than %d armour, so "
+                  "the cap below would strand nothing", RA_PILL_ARMOUR_CAP);
+    UT_ASSERT_MSG(basesAbove > 0,
+                  "setup: no base on the map holds more than %d shells, so the "
+                  "cap below would strand nothing", RA_BASE_SHELLS_CAP);
+
+    UT_ASSERT_MSG(raSetRule(sim, SCN_RULE_pill_max_armour,
+                            (double)RA_PILL_ARMOUR_CAP) == SCN_OP_OK,
+                  "a pill armour cap of %d is inside the row and above "
+                  "pill_repair_amount, so it must be accepted",
+                  RA_PILL_ARMOUR_CAP);
+    for (i = 0; i < numPills; i++) {
+        BYTE want = (pillWas[i] > RA_PILL_ARMOUR_CAP)
+                        ? (BYTE)RA_PILL_ARMOUR_CAP : pillWas[i];
+        BYTE got  = (*gs->pb).item[i].armour;
+        UT_ASSERT_MSG(got == want,
+                      "pillbox %u was at %u armour and is at %u under a cap of "
+                      "%d, expected %u — the table was committed without "
+                      "clamping the records it caps", (unsigned)i,
+                      (unsigned)pillWas[i], (unsigned)got, RA_PILL_ARMOUR_CAP,
+                      (unsigned)want);
+    }
+
+    UT_ASSERT_MSG(raSetRule(sim, SCN_RULE_base_full_shells,
+                            (double)RA_BASE_SHELLS_CAP) == SCN_OP_OK,
+                  "a base shells cap of %d is inside the row and above "
+                  "base_min_shells, so it must be accepted",
+                  RA_BASE_SHELLS_CAP);
+    for (i = 0; i < numBases; i++) {
+        BYTE want = (baseWas[i] > RA_BASE_SHELLS_CAP)
+                        ? (BYTE)RA_BASE_SHELLS_CAP : baseWas[i];
+        BYTE got  = (*gs->bs).item[i].shells;
+        UT_ASSERT_MSG(got == want,
+                      "base %u was holding %u shells and is holding %u under a "
+                      "cap of %d, expected %u", (unsigned)i,
+                      (unsigned)baseWas[i], (unsigned)got, RA_BASE_SHELLS_CAP,
+                      (unsigned)want);
+    }
+
+    /* Everything is now inside the caps, so from here nothing the set-rule op
+       does should reach a record. */
+    memcpy(&beforePills, gs->pb, sizeof(beforePills));
+    memcpy(&beforeBases, gs->bs, sizeof(beforeBases));
+
+    UT_ASSERT(raSetRule(sim, SCN_RULE_pill_max_armour,
+                        (double)RA_PILL_ARMOUR_CAP) == SCN_OP_OK);
+    rc = raListsUnmoved(gs, &beforePills, &beforeBases, "the same cap again");
+    if (rc != 0) return rc;
+
+    UT_ASSERT(raSetRule(sim, SCN_RULE_tank_reload_ticks,
+                        (double)RA_RELOAD_SET) == SCN_OP_OK);
+    rc = raListsUnmoved(gs, &beforePills, &beforeBases,
+                        "a rule no record answers to");
+    if (rc != 0) return rc;
+
+    UT_ASSERT(raSetRule(sim, SCN_RULE_pill_max_armour, (double)pillCapWas) ==
+              SCN_OP_OK);
+    rc = raListsUnmoved(gs, &beforePills, &beforeBases, "the cap put back up");
+    if (rc != 0) return rc;
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 7. What the clamp moved, in the recording.
+ *
+ * The pillbox is the half of this that only the clamp's own record can
+ * settle. Nothing else in a round of idle ticks writes a pill's armour — the
+ * paths that do are a shell landing on one and the builder patching one up —
+ * and a .wbv carries one snapshot, at its head, which states the armour the
+ * map gave the pill. So a viewer that ends up holding the new armour was told
+ * about the clamp. A base is weaker evidence and is here for the round trip
+ * rather than for the record: the periodic stock update restates every base
+ * within a regen period whatever the clamp writes.
+ * ================================================================ */
+
+#define RA_CLAMP_TAG "scnRuleClamp"
+
+int run_scenario_rule_clamp_records(void) {
+    ReplayHarness h;
+    GameSim      *gs;
+    BYTE          numPills, i;
+    int           stranded = -1;
+    BYTE          strandedWas = 0;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(replayHarnessStartRecording(&h, RA_CLAMP_TAG, RA_PLAYER),
+                  "could not start recording");
+
+    /* Let the round settle after the opening snapshot, which is what states
+       the armour the clamp is about to take off the pill. */
+    replayHarnessTick(&h, 4);
+
+    gs = serverSimGetGameSim(h.sim);
+    UT_ASSERT_MSG(gs != NULL, "the round has no GameSim");
+    numPills = pillsGetNumPills(&gs->pb);
+    for (i = 0; i < numPills; i++) {
+        if ((*gs->pb).item[i].armour > RA_PILL_ARMOUR_CAP) {
+            stranded    = (int)i;
+            strandedWas = (*gs->pb).item[i].armour;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(stranded >= 0,
+                  "setup: no pillbox on the map holds more than %d armour, so "
+                  "the cap below would strand nothing", RA_PILL_ARMOUR_CAP);
+
+    UT_ASSERT(raSetRule(h.sim, SCN_RULE_pill_max_armour,
+                        (double)RA_PILL_ARMOUR_CAP) == SCN_OP_OK);
+    UT_ASSERT(raSetRule(h.sim, SCN_RULE_base_full_shells,
+                        (double)RA_BASE_SHELLS_CAP) == SCN_OP_OK);
+    UT_ASSERT_MSG((*gs->pb).item[stranded].armour == RA_PILL_ARMOUR_CAP,
+                  "setup: pillbox %d was at %u armour and the sim left it at "
+                  "%u under a cap of %d, so there is nothing for the record to "
+                  "carry", stranded, (unsigned)strandedWas,
+                  (unsigned)(*gs->pb).item[stranded].armour,
+                  RA_PILL_ARMOUR_CAP);
+
+    /* Two recorded ticks, so the records reach the file. */
+    replayHarnessTick(&h, 4);
+    UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+    UT_ASSERT_MSG(replayHarnessDecode(&h), "could not decode the recording");
+    UT_ASSERT_MSG(h.replayed != NULL, "the decode captured no world");
+
+    UT_ASSERT_MSG(h.replayed->pills[stranded].armour == RA_PILL_ARMOUR_CAP,
+                  "the viewer holds %u armour for pillbox %d and the sim holds "
+                  "%u — the clamp moved the record and wrote nothing to say so",
+                  (unsigned)h.replayed->pills[stranded].armour, stranded,
+                  (unsigned)(*gs->pb).item[stranded].armour);
+
+    UT_ASSERT_MSG(replayHarnessCompare(&h),
+                  "the replay disagrees with the sim: %s",
+                  replayHarnessDiff(&h));
 
     replayHarnessStop(&h);
     return 0;

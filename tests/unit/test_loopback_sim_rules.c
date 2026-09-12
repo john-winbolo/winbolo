@@ -23,6 +23,8 @@
  *       is given the changed value, not the classic one
  *   run_loopback_sim_rules_reclamp — a table that caps lower than the
  *       records a client is already holding clamps them as it lands
+ *   run_loopback_sim_rules_agree   — a cap lowered by the op mid-round, and
+ *       both sides reading the same value afterwards
  *
  * The publish count comes from an in-process subscriber on the server's own
  * bus, so "published nothing" is an observation rather than an inference
@@ -73,9 +75,17 @@
  * tree capacity so the pair holds. */
 #define SR_LGM_ROAD_SET 3
 
-/* Caps below anything the map's own records carry. */
+/* Caps below anything the map's own records carry. Case 3 writes these into
+ * an event by hand, so neither has to pass the table's own check. */
 #define SR_BASE_SHELLS_CAP 5
 #define SR_PILL_ARMOUR_CAP 1
+
+/* The same two caps for a case that sets them through the op, which does
+ * check: a pill cap has to stay at or above pill_repair_amount, which is 4,
+ * and a shells cap above base_min_shells plus base_shells_give, which is 1.
+ * Both are still well under what the map's records carry. */
+#define SR_OP_PILL_ARMOUR_CAP 8
+#define SR_OP_BASE_SHELLS_CAP 40
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
@@ -108,6 +118,14 @@ typedef struct {
 static void srCountCb(void *ctx, const ControlEvent *evt) {
     SrPublishCount *c = (SrPublishCount *)ctx;
     if (evt->type == CTRL_SIM_RULES) c->count++;
+}
+
+static bool pred_client_caps(LoopbackHarness *h, void *user) {
+    GameSim *gs = clientSimGetGameSim(h->cs);
+    (void)user;
+    return gs != NULL &&
+           gs->rules.pill_max_armour == SR_OP_PILL_ARMOUR_CAP &&
+           gs->rules.base_full_shells == SR_OP_BASE_SHELLS_CAP;
 }
 
 static ScnOpResult srSetRule(ServerSim *sim, uint16_t rule, double value) {
@@ -302,6 +320,120 @@ int run_loopback_sim_rules_reclamp(void) {
                           "pillbox %u still holds %u armour against a cap of "
                           "%d", (unsigned)i, (unsigned)got,
                           SR_PILL_ARMOUR_CAP);
+        }
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ================================================================
+ * 4. A cap lowered through the op mid-round, and the two sides after it.
+ *
+ * The whole path this time rather than an event written by hand: the server
+ * commits the table, clamps its own records against it and publishes, and the
+ * client writes the table and clamps what it is holding. The case then pumps
+ * on past the arrival, so whatever the server goes on to say about those
+ * records — the next snapshot restating them — has been said before the two
+ * are compared.
+ *
+ * A server that committed the table and left its records alone fails the
+ * server-side cap below on its own, and would then undo the client's clamp
+ * with that snapshot.
+ *
+ * Pill armour is compared exactly: nothing in an idle round moves it. Base
+ * stocks are compared against the cap on both sides and not to each other —
+ * the round goes on refuelling and draining them, so the client's copy is
+ * allowed to be a snapshot behind the server's.
+ * ================================================================ */
+int run_loopback_sim_rules_agree(void) {
+    LoopbackHarness h;
+    GameSim        *cl;
+    GameSim        *sv;
+    BYTE            nBases, nPills, i;
+    bool            sawBaseAbove = false;
+    bool            sawPillAbove = false;
+    int             at;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "RuleAgree", false, NULL, 90413),
+                  "could not start the loopback harness");
+
+    at = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
+    UT_ASSERT_MSG(at > 0, "the client never finished connecting");
+    loopbackHarnessPumpUntil(&h, SETTLE_MAX, NULL, NULL);
+
+    cl = clientSimGetGameSim(h.cs);
+    sv = &h.sim->sim;
+    UT_ASSERT_MSG(cl != NULL && cl->bs != NULL && cl->pb != NULL,
+                  "the client has no world to compare");
+
+    nPills = pillsGetNumPills(&sv->pb);
+    nBases = basesGetNumBases(&sv->bs);
+    for (i = 0; i < nPills; i++) {
+        if ((*sv->pb).item[i].armour > SR_OP_PILL_ARMOUR_CAP) {
+            sawPillAbove = true;
+        }
+    }
+    for (i = 0; i < nBases; i++) {
+        if ((*sv->bs).item[i].shells > SR_OP_BASE_SHELLS_CAP) {
+            sawBaseAbove = true;
+        }
+    }
+    if (!sawPillAbove || !sawBaseAbove) {
+        loopbackHarnessStop(&h);
+        UT_ASSERT_MSG(sawPillAbove && sawBaseAbove,
+                      "setup: the server holds no pillbox above %d armour or "
+                      "no base above %d shells, so the caps below would strand "
+                      "nothing", SR_OP_PILL_ARMOUR_CAP, SR_OP_BASE_SHELLS_CAP);
+    }
+
+    UT_ASSERT_MSG(srSetRule(h.sim, SCN_RULE_pill_max_armour,
+                            (double)SR_OP_PILL_ARMOUR_CAP) == SCN_OP_OK,
+                  "the server refused a pill armour cap of %d",
+                  SR_OP_PILL_ARMOUR_CAP);
+    UT_ASSERT_MSG(srSetRule(h.sim, SCN_RULE_base_full_shells,
+                            (double)SR_OP_BASE_SHELLS_CAP) == SCN_OP_OK,
+                  "the server refused a base shells cap of %d",
+                  SR_OP_BASE_SHELLS_CAP);
+
+    at = loopbackHarnessPumpUntil(&h, CHANGE_MAX, pred_client_caps, NULL);
+    UT_ASSERT_MSG(at > 0, "neither cap reached the client's own table");
+    loopbackHarnessPumpUntil(&h, SETTLE_MAX, NULL, NULL);
+
+    for (i = 0; i < nPills; i++) {
+        BYTE onServer = (*sv->pb).item[i].armour;
+        BYTE onClient = (*cl->pb).item[i].armour;
+        if (onServer > SR_OP_PILL_ARMOUR_CAP || onServer != onClient) {
+            loopbackHarnessStop(&h);
+            UT_ASSERT_MSG(onServer <= SR_OP_PILL_ARMOUR_CAP,
+                          "pillbox %u still holds %u armour on the server "
+                          "against a cap of %d — the server committed the "
+                          "table without clamping its own records",
+                          (unsigned)i, (unsigned)onServer,
+                          SR_OP_PILL_ARMOUR_CAP);
+            UT_ASSERT_MSG(onServer == onClient,
+                          "pillbox %u holds %u armour on the server and %u on "
+                          "the client", (unsigned)i, (unsigned)onServer,
+                          (unsigned)onClient);
+        }
+    }
+    for (i = 0; i < nBases; i++) {
+        BYTE onServer = (*sv->bs).item[i].shells;
+        BYTE onClient = (*cl->bs).item[i].shells;
+        if (onServer > SR_OP_BASE_SHELLS_CAP ||
+            onClient > SR_OP_BASE_SHELLS_CAP) {
+            loopbackHarnessStop(&h);
+            UT_ASSERT_MSG(onServer <= SR_OP_BASE_SHELLS_CAP,
+                          "base %u still holds %u shells on the server against "
+                          "a cap of %d — the server committed the table "
+                          "without clamping its own records",
+                          (unsigned)i, (unsigned)onServer,
+                          SR_OP_BASE_SHELLS_CAP);
+            UT_ASSERT_MSG(onClient <= SR_OP_BASE_SHELLS_CAP,
+                          "base %u holds %u shells on the client against a cap "
+                          "of %d", (unsigned)i, (unsigned)onClient,
+                          SR_OP_BASE_SHELLS_CAP);
         }
     }
 

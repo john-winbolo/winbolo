@@ -4833,6 +4833,7 @@ set(_unit_test_names
     loopback_sim_rules_change
     loopback_sim_rules_join
     loopback_sim_rules_reclamp
+    loopback_sim_rules_agree
     scenario_map_set_tile
     scenario_map_fill_rect
     scenario_map_fill_paced
@@ -4873,6 +4874,8 @@ set(_unit_test_names
     scenario_rule_set_float
     scenario_rule_refusals
     scenario_rule_arm_records
+    scenario_rule_clamps_world
+    scenario_rule_clamp_records
     scenario_policy_choose_start
     scenario_policy_choose_start_out_of_range
     scenario_policy_allow_base_win

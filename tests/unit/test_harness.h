@@ -2048,10 +2048,12 @@ int run_loopback_entity_change(void);
 /* The rules table over the real loopback transport
  * (test_loopback_sim_rules.c): a mid-round change reaching a connected
  * client, a joiner arriving on the changed table, a server-only rule
- * publishing nothing, and a new table clamping what the client holds. */
+ * publishing nothing, a new table clamping what the client holds, and the two
+ * sides reading the same records after a cap drops. */
 int run_loopback_sim_rules_change(void);
 int run_loopback_sim_rules_join(void);
 int run_loopback_sim_rules_reclamp(void);
+int run_loopback_sim_rules_agree(void);
 
 int run_scenario_map_set_tile(void);
 int run_scenario_map_fill_rect(void);
@@ -2107,12 +2109,15 @@ int run_scenario_flow_arm_records(void);
 /* The rules op (test_scenario_rule_arms.c). The index list against the table
  * it indexes, a rule written and read back, a rate the op's double carries
  * and an int32 could not, the two refusals and the table each leaves
- * untouched, and the record the write puts in a recording. */
+ * untouched, the record the write puts in a recording, the records a lowered
+ * cap brings down to it, and what the clamp leaves in the replay. */
 int run_scenario_rule_index_matches_table(void);
 int run_scenario_rule_set(void);
 int run_scenario_rule_set_float(void);
 int run_scenario_rule_refusals(void);
 int run_scenario_rule_arm_records(void);
+int run_scenario_rule_clamps_world(void);
+int run_scenario_rule_clamp_records(void);
 
 /* The six lifecycle and lobby policy pointers
  * (test_scenario_policy_lifecycle.c). Where a tank starts, whether the base

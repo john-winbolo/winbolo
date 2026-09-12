@@ -2231,6 +2231,78 @@ static bool scenarioRuleIsCarried(uint16_t rule) {
     }
 }
 
+/* Bring the world back inside a table that has just changed. A new table
+ * that lowers a cap leaves the records standing above it — a pill at 15
+ * armour under a new pill_max_armour of 8, a base at 90 shells under a new
+ * base_full_shells of 40 — and the pass that caps them is the one a sim runs
+ * when it takes a map on, which is the same question asked the other way
+ * round. It is called whatever rule changed rather than behind a test of
+ * which rules bear on a cap: it is idempotent, it is sixteen pills and
+ * sixteen bases, and a list of the rules that matter is one more list that
+ * can drift from the clamp it guards.
+ *
+ * The records belong to this handler rather than to the pass. The pass is
+ * shared with the load path, which has its records from elsewhere, so what
+ * the clamp moved is read off either side of it here and stated with the
+ * records those fields already have. A clamp that moved nothing writes
+ * nothing.
+ *
+ * A removed slot is stated like any other. The viewer keeps a tombstone's
+ * record as the list does, so a slot the clamp moved and nothing stated
+ * would be the one place the two lists differ.
+ *
+ * A pill's speed and its cooldown have no record in the stream at all — no
+ * path writes one and the viewer holds no field for either — so the clamp
+ * can move those two and say nothing about them. That is how far the format
+ * reaches rather than something this handler drops. */
+static void scenarioClampWorldToRules(ServerSim *sim) {
+    BYTE    pillArmour[MAX_PILLS];
+    BYTE    baseArmour[MAX_BASES];
+    BYTE    baseShells[MAX_BASES];
+    BYTE    baseMines[MAX_BASES];
+    BYTE    numPills = pillsGetNumPills(&sim->sim.pb);
+    BYTE    numBases = basesGetNumBases(&sim->sim.bs);
+    BYTE    i;
+    pillbox pill;
+    base    item;
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        pillArmour[i] = pill.armour;
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        baseArmour[i] = item.armour;
+        baseShells[i] = item.shells;
+        baseMines[i]  = item.mines;
+    }
+
+    mapClampToRules(&sim->sim);
+
+    /* Both records name their item counting from zero, which is what every
+       other place that writes one passes. */
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        if (pill.armour != pillArmour[i]) {
+            logAddEvent(log_PillSetHealth, i, pill.armour, 0, 0, 0, NULL);
+        }
+    }
+    /* One record carries all three stocks, so a base whose clamp moved any of
+       them is stated once. */
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        if (item.armour != baseArmour[i] || item.shells != baseShells[i] ||
+            item.mines != baseMines[i]) {
+            logAddEvent(log_BaseSetStock, i, item.shells, item.mines,
+                        item.armour, 0, NULL);
+        }
+    }
+}
+
 /* Write one rule. The write lands in a copy of the sim's table, the copy is
  * checked whole, and only a copy that passes is committed: a refused op
  * leaves the sim's table byte for byte as it was rather than half-applied.
@@ -2238,6 +2310,15 @@ static bool scenarioRuleIsCarried(uint16_t rule) {
  * A committed change to a rule clients read is published, so their tables
  * follow the server's within the tick. A change to a server-only rule
  * publishes nothing.
+ *
+ * The three things a commit is followed by are in the order a reader of
+ * either channel wants them. The rule's own record goes first, so a replay
+ * reads the change before what it stranded rather than after it. The clamp
+ * comes next, which leaves the publish last: the event is the instruction to
+ * every client to run that same clamp, and sending it once this server's own
+ * records are already inside the table means a subscriber that reads the sim
+ * from its callback — which is what the entity publishes above promise it —
+ * never sees a world the event it is holding contradicts.
  *
  * No state check. A rule belongs to the simulation rather than to a round,
  * the way a pill belongs to the map, so a lobby setting its table up and a
@@ -2295,6 +2376,7 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
 
     sim->sim.rules = copy;
     scenarioRecordRuleSet(p->rule, written);
+    scenarioClampWorldToRules(sim);
     if (scenarioRuleIsCarried(p->rule)) {
         serverSimPublishSimRules(sim);
     }
