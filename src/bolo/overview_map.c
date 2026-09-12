@@ -79,75 +79,17 @@
 #include "viewport.h"
 
 /* ------------------------------------------------------------------
- * Fog experiment selector: which rule builds the block round the player's
- * own tank, and what stops the player seeing inside it. Process-global
- * and runtime-switchable, like the scroll mechanism selector, and not
- * saved - every launch starts on Expanded with sight off. */
+ * Which rule builds the block round the player's own tank, and what stops
+ * the player seeing inside it. Process-global, and not saved: every launch
+ * starts on Expanded with sight off, and the settings the server sends
+ * write both as they arrive. */
 static FogExperiment g_fogExperiment = fogExperimentExpanded;
 static FogSightMode  g_fogSightMode  = fogSightOff;
-/* Whether the live regions are drawn as outlines over the map, so the block an
- * experiment builds can be seen through the fog ramp that softens its edge. */
-static bool          g_fogShowRegions = FALSE;
 
 FogExperiment overviewFogExperimentGet(void) { return g_fogExperiment; }
 void overviewFogExperimentSet(FogExperiment e) { g_fogExperiment = e; }
 FogSightMode overviewFogSightGet(void) { return g_fogSightMode; }
 void overviewFogSightSet(FogSightMode m) { g_fogSightMode = m; }
-bool overviewFogShowRegionsGet(void) { return g_fogShowRegions; }
-void overviewFogShowRegionsSet(bool on) { g_fogShowRegions = on; }
-
-/* What each experiment is called and what it does, in enum order. Plain
- * English rather than lang.h ids for the same reason the keys that switch
- * them are hardcoded scancodes: this is a playtest readout, not shipped UI.
- * If one of them is kept the strings move to lang.h and the generator runs. */
-static const char *kFogExperimentNames[FOG_EXPERIMENT_COUNT] = {
-  "Expanded",
-  "Classic"
-};
-
-static const char *kFogExperimentBlurbs[FOG_EXPERIMENT_COUNT] = {
-  "Everything the classic view could scroll to",
-  "The classic window, moved by autoscroll and the scroll keys"
-};
-
-const char *overviewFogExperimentName(FogExperiment e) {
-  if ((int)e < 0 || (int)e >= FOG_EXPERIMENT_COUNT) {
-    return "Unknown";
-  }
-  return kFogExperimentNames[(int)e];
-}
-
-const char *overviewFogExperimentBlurb(FogExperiment e) {
-  if ((int)e < 0 || (int)e >= FOG_EXPERIMENT_COUNT) {
-    return "";
-  }
-  return kFogExperimentBlurbs[(int)e];
-}
-
-/* And what each sight mode is called, in enum order, for the same readout. */
-static const char *kFogSightNames[FOG_SIGHT_COUNT] = {
-  "Off",
-  "Buildings and trees"
-};
-
-static const char *kFogSightBlurbs[FOG_SIGHT_COUNT] = {
-  "Nothing blocks sight",
-  "A building stops you, and two trees deep is as far as you see"
-};
-
-const char *overviewFogSightName(FogSightMode m) {
-  if ((int)m < 0 || (int)m >= FOG_SIGHT_COUNT) {
-    return "Unknown";
-  }
-  return kFogSightNames[(int)m];
-}
-
-const char *overviewFogSightBlurb(FogSightMode m) {
-  if ((int)m < 0 || (int)m >= FOG_SIGHT_COUNT) {
-    return "";
-  }
-  return kFogSightBlurbs[(int)m];
-}
 
 bool overviewFogBlockFollowsView(FogExperiment e) {
   return e == fogExperimentClassic;

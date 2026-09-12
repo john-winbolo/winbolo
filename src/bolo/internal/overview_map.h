@@ -38,9 +38,8 @@ struct GameSim;
 /* Which rule decides the block of squares round the player's own tank.
  * Expanded is what the map has always drawn - everything the classic 15x15
  * view could scroll to - and Classic narrows it to the window that view is
- * actually showing. Both are client presentation: the server sends what it
- * always sent, and the point of having the pair is to find which one plays
- * best. */
+ * actually showing. Both are client presentation: the server picks which one
+ * and sends the same map data either way. */
 typedef enum {
   fogExperimentExpanded = 0,
   fogExperimentClassic,
@@ -49,41 +48,25 @@ typedef enum {
 
 /* Whether anything stops the player seeing inside that block: nothing, or
  * buildings and any stand of trees more than SIGHT_TREE_MAX_DEPTH deep. Held
- * as a selector rather than a bool so the readout names the rule a screenshot
- * was taken under, and so another rule can join it without a second toggle. */
+ * as a selector rather than a bool so another rule can join it without a
+ * second setting. */
 typedef enum {
   fogSightOff = 0,
   fogSightBuildingsAndTrees,
   FOG_SIGHT_COUNT
 } FogSightMode;
 
-/* The experiment in force and what blocks sight inside the block, with the name
- * and the one-line description each of them shows when it is picked. Process-
- * global and not saved, the way the scroll mechanism selector is: every launch
- * starts on Expanded with sight off. The name and the blurb live here so the
- * on-screen readout and anything else that lists them read one source; an index
- * outside either enum gives a placeholder string rather than a read off the end
- * of the table.
+/* The block in force and what blocks sight inside it. Both are process
+ * globals, not saved: every launch starts on Expanded with sight off, and
+ * the server's lobby settings write them as they arrive — the client applies
+ * what it is told rather than choosing for itself.
  *
- * Frontends reach all of these through the int-typed clientSim mirrors rather
- * than this header, which they may not include. */
+ * Frontends reach both through the int-typed clientSim mirrors rather than
+ * this header, which they may not include. */
 FogExperiment overviewFogExperimentGet(void);
 void          overviewFogExperimentSet(FogExperiment e);
 FogSightMode  overviewFogSightGet(void);
 void          overviewFogSightSet(FogSightMode m);
-const char   *overviewFogExperimentName(FogExperiment e);
-const char   *overviewFogExperimentBlurb(FogExperiment e);
-const char   *overviewFogSightName(FogSightMode m);
-const char   *overviewFogSightBlurb(FogSightMode m);
-
-/* Whether the map overview draws its live regions as coloured outlines. The
- * fog ramps out of a region over three squares, so where a rect actually ends
- * cannot be read off the picture and two rects at different alphas read as one
- * patch of fog; drawing the rects themselves says which block each experiment
- * is building and where it sits. Process-global and not saved, like the two
- * above: off every launch. */
-bool          overviewFogShowRegionsGet(void);
-void          overviewFogShowRegionsSet(bool on);
 
 /* Whether this experiment places the block round the tank from the classic
  * view rather than round the tank itself. The block builder and the camera the

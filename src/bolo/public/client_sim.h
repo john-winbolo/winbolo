@@ -1161,19 +1161,13 @@ void         clientSimSetAutoScrollOverride(ClientSim *cs, bool value);
 int          clientSimGetScrollMechanism(void);
 void         clientSimSetScrollMechanism(int mech);
 
-/* Fog-experiment selector for the map overview: which rule builds the block of
-   live squares round the player's own tank (0 = Expanded, the block the map has
-   always drawn; 1 = Classic, the window the classic view is showing). Values
-   match FogExperiment, exposed as int so GUI callers
-   needn't include the internal overview header, with the count so a caller
-   cycling through them doesn't hardcode it. Name and blurb are the plain
-   English a readout shows, and are safe for any int. Process-global, not
-   saved. */
+/* Which rule builds the block of live squares round the player's own tank
+   (0 = Expanded, the block the map has always drawn; 1 = Classic, the window
+   the classic view is showing). Values match FogExperiment, exposed as int so
+   GUI callers needn't include the internal overview header. The server chooses
+   it and the client applies it here; process-global, not saved. */
 int          clientSimGetFogExperiment(void);
 void         clientSimSetFogExperiment(int e);
-int          clientSimFogExperimentCount(void);
-const char  *clientSimFogExperimentName(int e);
-const char  *clientSimFogExperimentBlurb(int e);
 
 /* Whether the experiment running places that block from the classic view, as
    against centring it on the tank. It is the one thing a GUI caller has to know
@@ -1185,22 +1179,10 @@ bool         clientSimFogViewDrivesBlock(void);
 
 /* And what stops the player seeing inside that block: 0 = off, nothing blocks;
    1 = buildings, and no further than two trees deep into a stand of forest.
-   Values match FogSightMode, exposed the same way and with the same count,
-   name and blurb. Setting wraps, so a caller can step the selector on without
-   knowing where it ends. Process-global, not saved. */
+   Values match FogSightMode, exposed the same way and set the same way.
+   Process-global, not saved. */
 int          clientSimGetFogSight(void);
 void         clientSimSetFogSight(int m);
-int          clientSimFogSightCount(void);
-const char  *clientSimFogSightName(int m);
-const char  *clientSimFogSightBlurb(int m);
-
-/* Whether the map overview draws its live regions as coloured outlines. The
-   fog fades out of a region rather than stopping at its edge, so the picture
-   alone does not say which squares a block covers; the outlines do. A playtest
-   aid over the drawing and nothing else — no region moves for it. Process-
-   global and not saved, like the two above. */
-bool         clientSimGetFogShowRegions(void);
-void         clientSimSetFogShowRegions(bool on);
 
 /* The centre of the block of live squares round the player's own tank, in map
    squares and including the sub-square part, for a camera that has to follow

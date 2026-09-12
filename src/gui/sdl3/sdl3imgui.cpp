@@ -1991,73 +1991,6 @@ static void renderCtrlSendMsg(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
- * Fog experiment readout
- * ------------------------------------------------------- */
-/* What the last backtick press did and when it stops being shown. The text is
-   plain ASCII held here rather than a lang.h id, for the same reason the two
-   keys that write it are hardcoded scancodes rather than bindings: they drive
-   a playtest of the map overview's fog, not a shipped control. */
-#define FOG_READOUT_MS 2500
-static char   s_fogReadoutLine[96] = "";
-static char   s_fogReadoutBlurb[128] = "";
-static Uint64 s_fogReadoutUntil = 0;   /* SDL_GetTicks() value; 0 = nothing to show */
-
-static void fogReadoutShow(const char *line, const char *blurb) {
-    SDL_snprintf(s_fogReadoutLine, sizeof(s_fogReadoutLine), "%s", line);
-    SDL_snprintf(s_fogReadoutBlurb, sizeof(s_fogReadoutBlurb), "%s",
-                 blurb ? blurb : "");
-    s_fogReadoutUntil = SDL_GetTicks() + FOG_READOUT_MS;
-}
-
-/* What the zoom readouts append so a screenshot says what it was taken under.
-   Empty on the settings the map has always drawn — experiment 0 (Expanded)
-   with sight off — so the usual readout reads as it always has. The sight mode
-   is named rather than flagged, so a shot taken under one rule is not read as
-   having been taken under the other. */
-static void fogStatusSuffix(char *out, size_t outLen) {
-    int experiment = clientSimGetFogExperiment();
-    int sight      = clientSimGetFogSight();
-
-    if (experiment == 0 && sight == 0) {
-        out[0] = '\0';
-        return;
-    }
-    if (sight == 0) {
-        SDL_snprintf(out, outLen, " - %s",
-                     clientSimFogExperimentName(experiment));
-        return;
-    }
-    SDL_snprintf(out, outLen, " - %s, sight: %s",
-                 clientSimFogExperimentName(experiment),
-                 clientSimFogSightName(sight));
-}
-
-/* The last switch, over the top of whichever view is up. Drawn on the
-   foreground draw list rather than as a window of its own: the full screen
-   map, the classic window and the pop-out are each drawn differently, and the
-   foreground list is the one thing that sits over all three. */
-static void fogReadoutRender(void) {
-    if (s_fogReadoutUntil == 0 || SDL_GetTicks() >= s_fogReadoutUntil) return;
-
-    ImGuiViewport *vp    = ImGui::GetMainViewport();
-    ImVec2         sizeA = ImGui::CalcTextSize(s_fogReadoutLine);
-    ImVec2         sizeB = ImGui::CalcTextSize(s_fogReadoutBlurb);
-    const float    pad   = 6.0f;
-    float          boxW  = (sizeA.x > sizeB.x ? sizeA.x : sizeB.x) + pad * 2.0f;
-    float          boxH  = sizeA.y + sizeB.y + pad * 2.0f;
-    float          boxX  = vp->WorkPos.x + (vp->WorkSize.x - boxW) * 0.5f;
-    float          boxY  = vp->WorkPos.y + 8.0f;
-
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
-    dl->AddRectFilled(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
-                      IM_COL32(0, 0, 0, 160));
-    dl->AddText(ImVec2(boxX + pad, boxY + pad),
-                IM_COL32(230, 230, 230, 255), s_fogReadoutLine);
-    dl->AddText(ImVec2(boxX + pad, boxY + pad + sizeA.y),
-                IM_COL32(230, 230, 230, 255), s_fogReadoutBlurb);
-}
-
-/* -------------------------------------------------------
  * Map Overview pop-out
  * ------------------------------------------------------- */
 static void renderMapOverviewContent(ClientSim *cs) {
@@ -2111,16 +2044,11 @@ static void renderMapOverviewContent(ClientSim *cs) {
            image is exactly DisplaySize, so anything that added to the
            content would give the pop-out a scrollbar. %g keeps the ladder
            readable (0.5, 1, 1.5, 2) with no trailing zeros, and the text is
-           ASCII because this file is compiled without /utf-8. The fog
-           experiment joins it when it is off the setting the map has always
-           drawn, so a screenshot says which one it shows. */
+           ASCII because this file is compiled without /utf-8. */
         char status[96];
-        char fogTag[48];
-        fogStatusSuffix(fogTag, sizeof(fogTag));
-        SDL_snprintf(status, sizeof(status), "%gx - %s%s", (double)zoom,
+        SDL_snprintf(status, sizeof(status), "%gx - %s", (double)zoom,
                      langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                             : STR_OVERVIEW_FREE),
-                     fogTag);
+                                             : STR_OVERVIEW_FREE));
         const float pad = 4.0f;
         ImVec2 textSize = ImGui::CalcTextSize(status);
         ImVec2 boxMin(imgMin.x,
@@ -2279,19 +2207,14 @@ static void renderOverviewInWindow(ClientSim *cs) {
            the newswire goes. Drawn with the window draw list so it adds nothing
            to the window's content. %g keeps the ladder readable (0.5, 1, 1.5,
            2) with no trailing zeros, and the text is ASCII because this file is
-           compiled without /utf-8. The fog experiment joins it when it is off
-           the setting the map has always drawn, so a screenshot says which one
-           it shows. */
+           compiled without /utf-8. */
         OverviewCamera *cam = overviewViewCamera(view);
         if (cam) {
             char status[96];
-            char fogTag[48];
-            fogStatusSuffix(fogTag, sizeof(fogTag));
-            SDL_snprintf(status, sizeof(status), "%gx - %s%s",
+            SDL_snprintf(status, sizeof(status), "%gx - %s",
                          (double)overviewCameraZoomScale(cam),
                          langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
-                                                 : STR_OVERVIEW_FREE),
-                         fogTag);
+                                                 : STR_OVERVIEW_FREE));
             const float pad = 4.0f;
             ImVec2 textSize = ImGui::CalcTextSize(status);
             /* The corner belongs to the build strip, so the readout starts
@@ -5350,57 +5273,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-        /* Backtick steps the map overview's fog experiment on, Shift+backtick
-         * steps the sight mode on through off, buildings and buildings with
-         * trees, and the primary modifier draws the live regions as outlines. Read here rather than through the
-         * bindings because they switch a playtest rather than drive the tank —
-         * but backtick is a key a player may well have bound, so the binding
-         * wins and the experiment keys do without it. After the Key Setup
-         * capture above, so binding the key still gets the keystroke.
-         *
-         * The primary modifier is the one exception to the no-modifier rule:
-         * the other two of Ctrl, Cmd and Alt still hand the keystroke on. On
-         * non-macOS the primary is Ctrl, so the press also reaches the Cmd+key
-         * shortcut switch above, which has no backtick case and falls through
-         * to here. */
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
-            ev.key.windowID == SDL_GetWindowID(s_window) &&
-            ev.key.scancode == SDL_SCANCODE_GRAVE &&
-            (ev.key.mod & ((SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI) &
-                           ~KMOD_PRIMARY)) == 0 &&
-            cs != nullptr && clientSimIsRunning(cs) &&
-            !ImGui::GetIO().WantTextInput) {
-            keyItems keys;
-            windowGetKeys(&keys);
-            if (!keyIsClaimedByGame(&keys, SDL_SCANCODE_GRAVE)) {
-                char line[96];
-                if ((ev.key.mod & KMOD_PRIMARY) != 0) {
-                    bool on = !clientSimGetFogShowRegions();
-                    clientSimSetFogShowRegions(on);
-                    SDL_snprintf(line, sizeof(line), "Fog regions: %s",
-                                 on ? "on" : "off");
-                    fogReadoutShow(line,
-                                   on ? "Live blocks drawn as outlines"
-                                      : "Outlines hidden");
-                } else if ((ev.key.mod & SDL_KMOD_SHIFT) != 0) {
-                    int next = (clientSimGetFogSight() + 1) %
-                               clientSimFogSightCount();
-                    clientSimSetFogSight(next);
-                    SDL_snprintf(line, sizeof(line), "Line of sight: %s",
-                                 clientSimFogSightName(next));
-                    fogReadoutShow(line, clientSimFogSightBlurb(next));
-                } else {
-                    int next = (clientSimGetFogExperiment() + 1) %
-                               clientSimFogExperimentCount();
-                    clientSimSetFogExperiment(next);
-                    SDL_snprintf(line, sizeof(line), "Fog: %s",
-                                 clientSimFogExperimentName(next));
-                    fogReadoutShow(line, clientSimFogExperimentBlurb(next));
-                }
-                continue;
-            }
-        }
-
         /* Controller-tab binding capture for the in-game Key Setup popup.
          * While a controller row is armed, route a gamepad button-down or a
          * trigger crossing its threshold into the dialog; Escape cancels.
@@ -6320,11 +6192,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             }
             ImGui::End();
         }
-
-        /* The fog experiment the player has just switched to, for the couple of
-           seconds after they pressed the key. Only ever armed while a game is
-           running, and it takes itself away when the time is up. */
-        fogReadoutRender();
 
         /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);

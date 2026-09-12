@@ -3001,16 +3001,12 @@ int clientSimGetFogExperiment(void) {
   return (int)overviewFogExperimentGet();
 }
 
-/* Wrapped rather than cast straight through: the callers step the selector on
- * and pick rows out of a list, and neither should be able to leave it on a
- * value the name and blurb tables have no row for. */
+/* Wrapped rather than cast straight through: the caller passes an int, and it
+ * should not be able to leave the selector on a value the enum does not
+ * name. */
 void clientSimSetFogExperiment(int e) {
   e = ((e % FOG_EXPERIMENT_COUNT) + FOG_EXPERIMENT_COUNT) % FOG_EXPERIMENT_COUNT;
   overviewFogExperimentSet((FogExperiment)e);
-}
-
-int clientSimFogExperimentCount(void) {
-  return (int)FOG_EXPERIMENT_COUNT;
 }
 
 /* Which kind of experiment is running, for a frontend that cannot see the enum
@@ -3025,40 +3021,11 @@ int clientSimGetFogSight(void) {
   return (int)overviewFogSightGet();
 }
 
-/* Wrapped for the same reason clientSimSetFogExperiment is: the caller steps
- * the selector on, and stepping past the last mode belongs back at the start
- * rather than on a value with no name or blurb to show for it. */
+/* Wrapped for the same reason clientSimSetFogExperiment is: an int from a
+ * caller must not leave the selector on a value the enum does not name. */
 void clientSimSetFogSight(int m) {
   m = ((m % FOG_SIGHT_COUNT) + FOG_SIGHT_COUNT) % FOG_SIGHT_COUNT;
   overviewFogSightSet((FogSightMode)m);
-}
-
-int clientSimFogSightCount(void) {
-  return (int)FOG_SIGHT_COUNT;
-}
-
-bool clientSimGetFogShowRegions(void) {
-  return overviewFogShowRegionsGet();
-}
-
-void clientSimSetFogShowRegions(bool on) {
-  overviewFogShowRegionsSet(on);
-}
-
-const char *clientSimFogExperimentName(int e) {
-  return overviewFogExperimentName((FogExperiment)e);
-}
-
-const char *clientSimFogExperimentBlurb(int e) {
-  return overviewFogExperimentBlurb((FogExperiment)e);
-}
-
-const char *clientSimFogSightName(int m) {
-  return overviewFogSightName((FogSightMode)m);
-}
-
-const char *clientSimFogSightBlurb(int m) {
-  return overviewFogSightBlurb((FogSightMode)m);
 }
 
 /* Read from the same struct the overview places the block from, so the two
