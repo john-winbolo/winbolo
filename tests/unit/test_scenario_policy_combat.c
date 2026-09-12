@@ -545,8 +545,29 @@ int run_scenario_policy_invulnerable_tank(void) {
     UT_ASSERT_MSG(!tankIsDestroyed(&gs->tanks[PC_TARGET]),
                   "deep sea drowned a tank that may not die");
 
+    /* Surviving is not enough: a refused drowning falls through to the
+       movement arm, so the tank can still be driven. Sixty ticks of throttle
+       in deep sea, whose speed cap is three, must move it; a tank that only
+       sat in the water alive would be wedged there for the round. */
+    {
+        WORLD bx = 0, by = 0, ax = 0, ay = 0;
+        tankGetWorld(&gs->tanks[PC_TARGET], &bx, &by);
+        for (i = 0; i < 60; i++) {
+            tankUpdate(gs, &gs->tanks[PC_TARGET], TACCEL, FALSE, FALSE);
+        }
+        tankGetWorld(&gs->tanks[PC_TARGET], &ax, &ay);
+        UT_ASSERT_MSG(!tankIsDestroyed(&gs->tanks[PC_TARGET]),
+                      "driving in deep sea drowned a tank that may not die");
+        UT_ASSERT_MSG(ax != bx || ay != by,
+                      "a tank refused a drowning could not be driven: the "
+                      "deep-sea arm swallowed its movement");
+    }
+
     /* The same square, the same tick, with the answer turned round. */
     pc.die = true;
+    UT_ASSERT_MSG(mapGetPos(&gs->mp, tankGetMX(&gs->tanks[PC_TARGET]),
+                            tankGetMY(&gs->tanks[PC_TARGET])) == DEEP_SEA,
+                  "setup: the drive must have kept the tank in deep sea");
     tankUpdate(gs, &gs->tanks[PC_TARGET], TNONE, FALSE, FALSE);
     UT_ASSERT_MSG(tankIsDestroyed(&gs->tanks[PC_TARGET]),
                   "deep sea must drown the tank once the host allows it");

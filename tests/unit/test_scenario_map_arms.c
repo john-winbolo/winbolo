@@ -551,6 +551,146 @@ int run_scenario_map_fill_paced(void) {
     return 0;
 }
 
+/* ── Fill rect: the frame's map event buffer ─────────────────────── */
+
+/* A hook that first spends part of the frame's map event buffer on ordinary
+ * terrain writes — the world's own changes, which land before a scenario's —
+ * and then issues one oversized fill. What the fill may write this frame is
+ * whatever room the buffer has left, not the whole tile budget: a change the
+ * buffer cannot hold is dropped without a signal, and for a client that is
+ * not view-culled that is a permanent divergence, since its shadow map is
+ * advanced from this buffer alone and its checksum is taken over the shadow.
+ * So every square the fill counts as written must have an event behind it. */
+typedef struct {
+    ServerSim *sim;
+    BYTE       x0, y0, x1, y1;
+    int        prefill;      /* squares written before the fill, this frame */
+    int        calls;
+    uint16_t   baseEvents;   /* map events the half-steps had already queued */
+    ScnOpResult result;
+} MaBufferHook;
+
+static void maBufferHookTick(void *ctx) {
+    MaBufferHook *hk = (MaBufferHook *)ctx;
+    ScenarioOp op;
+    int n = 0;
+    BYTE x, y;
+    hk->calls++;
+    if (hk->calls != 1) return;
+
+    hk->baseEvents = hk->sim->mapEventCount;
+    /* Ordinary writes inside the rectangle, each a map event of its own.
+       The fill still has to change every one of them afterwards. */
+    for (y = hk->y0; y <= hk->y1 && n < hk->prefill; y++) {
+        for (x = hk->x0; x <= hk->x1 && n < hk->prefill; x++) {
+            mapSetPos(&hk->sim->sim, &hk->sim->sim.mp, x, y, ROAD, FALSE, FALSE);
+            n++;
+        }
+    }
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_MAP_FILL_RECT;
+    op.u.mapFillRect.x0 = hk->x0;
+    op.u.mapFillRect.y0 = hk->y0;
+    op.u.mapFillRect.x1 = hk->x1;
+    op.u.mapFillRect.y1 = hk->y1;
+    op.u.mapFillRect.terrain = CRATER;
+    hk->result = serverSimApplyScenarioOp(hk->sim, &op, NULL);
+}
+
+#define MA_BUF_PREFILL 100
+
+int run_scenario_map_fill_respects_event_buffer(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    MaBufferHook hk;
+    BYTE rx = 0, ry = 0;
+    int dx, dy, changed, room, ticks;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(maFindRect(sim, MA_FILL_W, MA_FILL_H, &rx, &ry),
+                  "map has no free %dx%d rectangle", MA_FILL_W, MA_FILL_H);
+    for (dy = 0; dy < MA_FILL_H; dy++) {
+        for (dx = 0; dx < MA_FILL_W; dx++) {
+            maPaint(sim, (BYTE)(rx + dx), (BYTE)(ry + dy), GRASS);
+        }
+    }
+
+    memset(&hk, 0, sizeof(hk));
+    hk.sim = sim;
+    hk.x0 = rx;
+    hk.y0 = ry;
+    hk.x1 = (BYTE)(rx + MA_FILL_W - 1);
+    hk.y1 = (BYTE)(ry + MA_FILL_H - 1);
+    hk.prefill = MA_BUF_PREFILL;
+    hk.result = SCN_OP_UNSUPPORTED;
+    serverSimSetScenarioTick(sim, maBufferHookTick, &hk);
+
+    /* First tick: the hook's writes take part of the buffer, the fill takes
+       the rest and queues what would not fit. */
+    serverSimTick(sim);
+    UT_ASSERT_MSG(hk.calls == 1, "the hook ran %d times", hk.calls);
+    UT_ASSERT_MSG(hk.result == SCN_OP_QUEUED,
+                  "a fill past the buffer answered %d, wanted SCN_OP_QUEUED",
+                  (int)hk.result);
+    UT_ASSERT_MSG(sim->scenarioFillPending,
+                  "a queued fill left nothing on the sim to carry");
+
+    room = MAX_MAP_EVENTS - (int)hk.baseEvents - MA_BUF_PREFILL;
+    UT_ASSERT_MSG(room > 0 && room < SCN_TILES_PER_TICK,
+                  "setup: %d squares of room is not a case the buffer bounds",
+                  room);
+    changed = 0;
+    for (dy = 0; dy < MA_FILL_H; dy++) {
+        for (dx = 0; dx < MA_FILL_W; dx++) {
+            if (mapGetPos(&sim->sim.mp, (BYTE)(rx + dx),
+                          (BYTE)(ry + dy)) == CRATER) {
+                changed++;
+            }
+        }
+    }
+    UT_ASSERT_MSG(changed == room,
+                  "the first tick changed %d squares with %d of buffer room "
+                  "(the fill wrote past the buffer, or short of it)",
+                  changed, room);
+    /* Every square written this frame has an event behind it: the buffer is
+       exactly full and nothing was dropped. */
+    UT_ASSERT_MSG(sim->mapEventCount == MAX_MAP_EVENTS,
+                  "the buffer holds %u events after the fill, wanted %d",
+                  (unsigned)sim->mapEventCount, MAX_MAP_EVENTS);
+    UT_ASSERT_MSG((int)hk.baseEvents + MA_BUF_PREFILL + changed ==
+                      (int)sim->mapEventCount,
+                  "%d writes this frame but %u events: a change was dropped",
+                  (int)hk.baseEvents + MA_BUF_PREFILL + changed,
+                  (unsigned)sim->mapEventCount);
+
+    /* The drain carries the rest over the frames after, never past the
+       buffer in any of them, until the rectangle is done. */
+    for (ticks = 0; ticks < 8 && sim->scenarioFillPending; ticks++) {
+        serverSimTick(sim);
+        UT_ASSERT_MSG(sim->mapEventCount <= MAX_MAP_EVENTS,
+                      "tick %d queued %u map events", ticks,
+                      (unsigned)sim->mapEventCount);
+    }
+    UT_ASSERT_MSG(!sim->scenarioFillPending,
+                  "the fill was still outstanding after %d more ticks", ticks);
+    changed = 0;
+    for (dy = 0; dy < MA_FILL_H; dy++) {
+        for (dx = 0; dx < MA_FILL_W; dx++) {
+            if (mapGetPos(&sim->sim.mp, (BYTE)(rx + dx),
+                          (BYTE)(ry + dy)) == CRATER) {
+                changed++;
+            }
+        }
+    }
+    UT_ASSERT_MSG(changed == MA_FILL_N,
+                  "%d of %d squares landed once the fill finished",
+                  changed, MA_FILL_N);
+
+    serverSimSetScenarioTick(sim, NULL, NULL);
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* ── Fill rect: a tick with no budget left ───────────────────────── */
 
 /* A fill that cannot write a single square says so. SCN_OP_QUEUED means the

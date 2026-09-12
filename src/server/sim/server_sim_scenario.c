@@ -877,13 +877,17 @@ static ScnOpResult scenarioOpMapSetTile(ServerSim *sim,
  * publish count are counted in squares changed rather than squares looked at:
  * painting grass over grass costs a scan and nothing else.
  *
- * The tile budget is the only thing that stops the walk. Reading the frame's
- * map event buffer as a second bound looked safer and was not: that counter is
- * only cleared on a running frame, so a round that ended with it full left
- * every lobby fill writing nothing, answering queued, and never releasing the
- * funnel — after which every later fill is refused behind it, for good. The
- * buffer has its own guard at the point events are recorded, and one producer
- * second-guessing it bought nothing.
+ * Two things stop the walk: the tile budget, and the room left in the frame's
+ * map event buffer. The second matters because simMapChangeCallback drops a
+ * change without a signal once the buffer is full, and a dropped change is a
+ * permanent divergence for any client that is not view-culled: its shadow map
+ * advances only from that buffer, the catch-up sweep runs for culled slots
+ * only, and the header checksum is taken over the shadow, so the stale copy
+ * matches itself and no resync is ever asked for. The world's own changes in
+ * the half-steps take the buffer first; the fill yields to a full one and the
+ * remainder waits, which is the safe direction. The counter is cleared at the
+ * world reset and at the top of a lobby tick as well as a running one, so it
+ * is never stale where this reads it.
  *
  * Returns whether the rectangle is finished, and through `wrote` how many
  * squares this call changed. */
@@ -896,7 +900,8 @@ static bool scenarioFillStep(ServerSim *sim, uint16_t *wrote) {
     while (y <= sim->scenarioFillY1) {
         bool budgetGone = false;
         while (x <= sim->scenarioFillX1) {
-            if (sim->scenarioFillSpent >= SCN_TILES_PER_TICK) {
+            if (sim->scenarioFillSpent >= SCN_TILES_PER_TICK ||
+                sim->mapEventCount >= MAX_MAP_EVENTS) {
                 budgetGone = true;
                 break;
             }
@@ -960,9 +965,11 @@ static ScnOpResult scenarioOpMapFillRect(ServerSim *sim,
         return SCN_OP_RATE;
     }
     /* The budget this frame is already gone — spent by a fill the same hook
-       finished earlier in it. Refused here, before anything is written down,
-       so there is no half-started rectangle to unwind. */
-    if (sim->scenarioFillSpent >= SCN_TILES_PER_TICK) {
+       finished earlier in it — or the frame's map event buffer is already
+       full. Refused here, before anything is written down, so there is no
+       half-started rectangle to unwind. */
+    if (sim->scenarioFillSpent >= SCN_TILES_PER_TICK ||
+        sim->mapEventCount >= MAX_MAP_EVENTS) {
         return SCN_OP_RATE;
     }
 
@@ -978,10 +985,9 @@ static ScnOpResult scenarioOpMapFillRect(ServerSim *sim,
         return SCN_OP_OK;
     }
     if (wrote == 0) {
-        /* The check above is the only way a first step writes nothing while
-           the budget is the only bound, so this cannot fire today. It stays
-           so that a bound added to the walk later cannot quietly leave a fill
-           on the sim that never moves. */
+        /* Both bounds were checked above, so a first step that writes nothing
+           cannot happen today. It stays so that a bound added to the walk
+           later cannot quietly leave a fill on the sim that never moves. */
         sim->scenarioFillPending = false;
         return SCN_OP_RATE;
     }
@@ -2101,8 +2107,10 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
 
     /* A policy callback is a question the engine asks mid-operation. It
      * answers and nothing else: an op from inside one would mutate state
-     * the caller is halfway through reading. */
-    if (sim->inScenarioPolicy) {
+     * the caller is halfway through reading. A depth, not a flag, so a
+     * question asked inside another does not open the funnel when the
+     * inner one returns. */
+    if (sim->inScenarioPolicy > 0) {
         return SCN_OP_IN_POLICY;
     }
 
@@ -2233,10 +2241,14 @@ void *serverSimGetScenarioState(const ServerSim *sim) {
 
 void serverSimScenarioPolicyEnter(ServerSim *sim) {
     if (sim == NULL) return;
-    sim->inScenarioPolicy = true;
+    assert(sim->inScenarioPolicy < UINT8_MAX);
+    sim->inScenarioPolicy++;
 }
 
 void serverSimScenarioPolicyLeave(ServerSim *sim) {
     if (sim == NULL) return;
-    sim->inScenarioPolicy = false;
+    assert(sim->inScenarioPolicy > 0);
+    if (sim->inScenarioPolicy > 0) {
+        sim->inScenarioPolicy--;
+    }
 }

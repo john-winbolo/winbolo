@@ -630,7 +630,9 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
     if (sim->inStartFind == FALSE) {
 	  tankDeath(sim, value);
     }
-  } else if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
+  } else {
+    bool drowned = FALSE;
+    if (!sim->isPredicting && (*value)->onBoat == FALSE && (mapGetPos(mp,bmx, bmy)) == DEEP_SEA) {
       /* Death by drowning — server-authoritative. The sink sound and the
          message belong to drowning; the death itself is tankKillNow, which a
          death ordered from outside the sim goes through too.
@@ -647,11 +649,16 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
           sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
         }
         tankKillNow(sim, value, drownedPlayer, LAST_DEATH_BY_DEEPSEA);
+        drowned = TRUE;
       }
-  } else {
-    /* Tank Movement (unified boat/land) */
-    (*value)->newTank = FALSE;
-    tankMoveUnified(sim, value, bmx, bmy, tb, inBrain);
+    }
+    if (!drowned) {
+      /* Tank Movement (unified boat/land). A tank the host would not let
+         drown reaches this too, so it can be driven back out of the water:
+         deep sea has a speed cap and a turn rate of its own. */
+      (*value)->newTank = FALSE;
+      tankMoveUnified(sim, value, bmx, bmy, tb, inBrain);
+    }
   }
 }
 

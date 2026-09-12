@@ -471,8 +471,8 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.timeLimit       = serverSimGetTimeLimit(sim) ? true : false;
     info.timeMinutes     = serverSimGetTimeMinutes(sim);
     info.lobbyLocks      = sim->serverLocks;
-    info.numBases        = basesGetNumBases(&sim->sim.bs);
-    info.numPills        = pillsGetNumPills(&sim->sim.pb);
+    info.numBases        = basesGetNumActive(&sim->sim.bs);
+    info.numPills        = pillsGetNumActive(&sim->sim.pb);
     info.freeBases       = serverSimGetNumNeutralBases(sim);
     info.freePills       = serverSimGetNumNeutralPills(sim);
     info.numHumans       = serverSimGetNumHumans(sim);
@@ -906,8 +906,12 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->sim.lagCompTicks = 0;
     memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
-    /* 6. Clear events */
+    /* 6. Clear events. The map event count too: a running frame clears it at
+       its top but a round that ended with the buffer full would otherwise
+       carry the count into the lobby, where the fill drain reads it as a
+       bound and would write nothing for as long as the lobby lasted. */
     sim->eventCount = 0;
+    sim->mapEventCount = 0;
     /* And any fill a scenario still had squares owing on. Its rectangle was
        aimed at the map that has just been replaced above, so carrying it on
        would paint the reloaded one. The roster changes it had queued name

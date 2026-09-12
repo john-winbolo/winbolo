@@ -493,6 +493,64 @@ int run_game_event_channel_control_only_subscriber(void) {
 }
 
 /* ================================================================
+ * 4b. The sim counts the slots with an event channel, so serverSimAddEvent
+ * can return before its scan when nobody is listening — which is every sim
+ * with no scenario attached. Taking the channel, handing it back and
+ * unregistering with it still held all keep the count right.
+ * ================================================================ */
+int run_game_event_channel_subscriber_count(void) {
+    ServerSim *sim = ut_make_running_sim("Holder");
+    GecSink a;
+    GecSink b;
+    SubscriberHandle ha;
+    SubscriberHandle hb;
+    int before;
+
+    UT_ASSERT(sim != NULL);
+    before = sim->numEventSubscribers;
+
+    ha = gecSubscribe(sim, &a, /*wantEvents*/ false);
+    UT_ASSERT(ha != SUBSCRIBER_HANDLE_INVALID);
+    UT_ASSERT_MSG(sim->numEventSubscribers == before,
+                  "a control-only subscriber moved the event count to %d",
+                  sim->numEventSubscribers);
+
+    UT_ASSERT(serverSimSetSubscriberEventDeliver(sim, ha, gecDeliverEvent));
+    UT_ASSERT_MSG(sim->numEventSubscribers == before + 1,
+                  "taking the channel left the count at %d",
+                  sim->numEventSubscribers);
+    /* Setting it again is not a second listener. */
+    UT_ASSERT(serverSimSetSubscriberEventDeliver(sim, ha, gecDeliverEvent));
+    UT_ASSERT_MSG(sim->numEventSubscribers == before + 1,
+                  "re-setting the channel counted it twice: %d",
+                  sim->numEventSubscribers);
+
+    hb = gecSubscribe(sim, &b, /*wantEvents*/ true);
+    UT_ASSERT(hb != SUBSCRIBER_HANDLE_INVALID);
+    UT_ASSERT_MSG(sim->numEventSubscribers == before + 2,
+                  "a second listener left the count at %d",
+                  sim->numEventSubscribers);
+
+    UT_ASSERT(serverSimSetSubscriberEventDeliver(sim, ha, NULL));
+    UT_ASSERT_MSG(sim->numEventSubscribers == before + 1,
+                  "handing the channel back left the count at %d",
+                  sim->numEventSubscribers);
+
+    serverSimUnregisterSubscriber(sim, hb);
+    UT_ASSERT_MSG(sim->numEventSubscribers == before,
+                  "unregistering a listener left the count at %d",
+                  sim->numEventSubscribers);
+
+    serverSimUnregisterSubscriber(sim, ha);
+    UT_ASSERT_MSG(sim->numEventSubscribers == before,
+                  "unregistering a control-only subscriber moved the count "
+                  "to %d", sim->numEventSubscribers);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ================================================================
  * 5. A ClientSim fires none of the three.
  * ================================================================ */
 

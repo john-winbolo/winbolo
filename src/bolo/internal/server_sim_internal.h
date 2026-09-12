@@ -565,15 +565,19 @@ struct ServerSim {
     ControlSubscriber subscribers[SUBSCRIBER_SLOT_COUNT];
     uint16_t          subscriberGen[SUBSCRIBER_SLOT_COUNT];
     int               numSubscribers;
-    bool              publishing;
+    int               numEventSubscribers; /* slots with a deliverEvent set */
+    bool              publishing;          /* inside serverSimPublishControl's deliver loop */
+    bool              publishingEvent;     /* inside serverSimAddEvent's deliver loop */
 
     /* Scenario attachment. scenario is the host's own state and the only
      * scenario data on any engine struct; everything else here is what
      * the sim needs to call back into it.
      *
-     * inScenarioPolicy is set around every policy call. A policy callback
-     * is a question asked mid-operation and must answer without changing
-     * anything, so the op funnel's prelude refuses an op while it is set.
+     * inScenarioPolicy counts the policy calls in progress. A policy
+     * callback is a question asked mid-operation and must answer without
+     * changing anything, so the op funnel's prelude refuses an op while
+     * the count is above zero. A depth rather than a flag so a question
+     * asked inside another does not open the funnel when it returns.
      *
      * startInProgress is set for the duration of both start functions.
      * A start publishes while the state is still lobby, and a subscriber
@@ -583,7 +587,7 @@ struct ServerSim {
      * detector returns at its first line while this is set. */
     void                  *scenario;
     const ScenarioPolicy  *scenarioPolicy;
-    bool                   inScenarioPolicy;
+    uint8_t                inScenarioPolicy;
     bool                   startInProgress;
     void                 (*scenarioTick)(void *ctx);
     void                  *scenarioTickCtx;

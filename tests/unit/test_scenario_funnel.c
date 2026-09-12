@@ -256,6 +256,32 @@ int run_scenario_op_refused_in_policy(void) {
     return 0;
 }
 
+/* A question asked from inside another leaves the funnel shut until the
+ * outer one has returned too: the state is a depth, not a flag, so the inner
+ * leave cannot open a door the outer caller is still standing in. */
+int run_scenario_op_refused_in_nested_policy(void) {
+    ServerSim *sim = makeLobbySim();
+    ScenarioOp op;
+    UT_ASSERT(sim != NULL);
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_TANK_KILL;
+
+    serverSimScenarioPolicyEnter(sim);
+    serverSimScenarioPolicyEnter(sim);
+    serverSimScenarioPolicyLeave(sim);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_IN_POLICY,
+                  "the inner leave opened the funnel while the outer policy "
+                  "call was still running");
+
+    serverSimScenarioPolicyLeave(sim);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) != SCN_OP_IN_POLICY,
+                  "the outer leave must let ops through again");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* A start rebuilds the roster, the tanks and the state, so nothing may
  * be written until it finishes.
  *

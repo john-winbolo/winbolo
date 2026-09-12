@@ -1140,6 +1140,10 @@ void serverSimTick(ServerSim *sim) {
          * so there is nothing to apply on that branch. */
         serverSimShadowTick(sim);
     } else {
+        /* No map event is recorded on this branch, but the fill drain below
+           reads the count as a bound, so it starts each tick at zero here as
+           it does on a running frame. */
+        sim->mapEventCount = 0;
         simRunHalfStep(sim);
         if (sim->scenarioTick != NULL) {
             sim->scenarioTick(sim->scenarioTickCtx);

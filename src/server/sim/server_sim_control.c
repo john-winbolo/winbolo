@@ -117,22 +117,34 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
      * what the snapshot stream sends to a remote client, and a full one is a
      * wire-side drop rather than a fact that did not happen.
      *
+     * Nothing to do for the common case of a sim with no such subscriber, so
+     * that case returns before the slot scan: this runs for every sound,
+     * shell and per-tick update the engine raises.
+     *
      * Walked off a snapshot of the active list, as the control fan-out is, so
-     * a callback that registers or unregisters cannot corrupt the walk. */
-    {
+     * a callback that registers or unregisters cannot corrupt the walk. And
+     * guarded as the control fan-out is: this runs inside shared-code
+     * mutation with the state half-written, so a subscriber that raises an
+     * event or publishes a control event from here is a design error, and
+     * the assert says so in Debug. A subscriber that wants to act on an event
+     * queues it and acts later, which is what the scenario host does. */
+    if (sim->numEventSubscribers > 0) {
         ControlSubscriber snapshot[SUBSCRIBER_SLOT_COUNT];
         int snapCount = 0;
         int i;
 
+        assert(!sim->publishingEvent);
         for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
             if (sim->subscribers[i].deliver != NULL &&
                 sim->subscribers[i].deliverEvent != NULL) {
                 snapshot[snapCount++] = sim->subscribers[i];
             }
         }
+        sim->publishingEvent = true;
         for (i = 0; i < snapCount; i++) {
             snapshot[i].deliverEvent(snapshot[i].ctx, event);
         }
+        sim->publishingEvent = false;
     }
 }
 
@@ -869,6 +881,14 @@ bool serverSimSetSubscriberEventDeliver(
         sim->subscribers[slot].generation != gen) {
         return false;
     }
+    /* Keep the count of slots with a channel, so serverSimAddEvent can skip
+       its scan when nobody is listening. */
+    if (sim->subscribers[slot].deliverEvent == NULL && deliverEvent != NULL) {
+        sim->numEventSubscribers++;
+    } else if (sim->subscribers[slot].deliverEvent != NULL &&
+               deliverEvent == NULL && sim->numEventSubscribers > 0) {
+        sim->numEventSubscribers--;
+    }
     sim->subscribers[slot].deliverEvent = deliverEvent;
     return true;
 }
@@ -937,6 +957,10 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
         sim->subscribers[slot].generation != gen) {
         return;
     }
+    if (sim->subscribers[slot].deliverEvent != NULL &&
+        sim->numEventSubscribers > 0) {
+        sim->numEventSubscribers--;
+    }
     sim->subscribers[slot].deliver      = NULL;
     sim->subscribers[slot].deliverEvent = NULL;
     sim->subscribers[slot].ctx          = NULL;
@@ -967,8 +991,10 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
     }
 
     /* Reentrancy guard: a deliver callback that triggers another publish
-     * is a design error. */
+     * is a design error, on either channel — a game-event subscriber that
+     * publishes a control event from its deliver is the same mistake. */
     assert(!sim->publishing);
+    assert(!sim->publishingEvent);
 
     /* Server is not a subscriber: double-mutating sim itself would corrupt
      * already-applied state. */

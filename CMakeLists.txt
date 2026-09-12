@@ -4741,6 +4741,7 @@ set(_unit_test_names
     scenario_op_every_type_unsupported
     scenario_policy_register_replace_clear
     scenario_op_refused_in_policy
+    scenario_op_refused_in_nested_policy
     scenario_op_refused_during_start
     scenario_tick_called_both_branches
     scenario_start_flag_set_during_start
@@ -4790,6 +4791,7 @@ set(_unit_test_names
     scenario_map_fill_no_budget_refused
     scenario_map_fill_dropped_at_round_start
     scenario_map_fill_dropped_at_map_swap
+    scenario_map_fill_respects_event_buffer
     scenario_map_place_mine
     scenario_map_remove_mine
     scenario_map_arm_records
@@ -4843,6 +4845,7 @@ set(_unit_test_names
     game_event_channel_capture_wire_bytes
     game_event_channel_neutralised_no_client_line
     game_event_channel_capture_attribution
+    game_event_channel_subscriber_count
     game_events_tank_spawned
     game_events_lgm_landed
     game_events_pill_placed
