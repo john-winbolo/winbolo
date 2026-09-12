@@ -134,10 +134,12 @@ struct ServerEntry {
     bool hasRichInfo;    /* false for a legacy 76-byte server that can't report
                           * the flags/counts/md5 fields; gates the rich-only
                           * lines in the detail pane. */
-    /* Server visibility rules. Defaults (pill always, base off, ally
-     * always, classic mode and allies in trees off, the expanded overview
-     * window with nothing blocking sight) for a server whose
-     * advertisement doesn't carry them. */
+    /* Server visibility rules. An advertisement that doesn't carry them
+     * predates them, so it reads as the behaviour of the day: pill
+     * always, base off, ally always, classic mode and allies in trees
+     * off, the expanded overview window with nothing blocking sight.
+     * That back-compatibility reading is not what an unconfigured
+     * server runs today - see viewPolicyTag below. */
     ViewPolicy pillView;
     ViewPolicy baseView;
     ViewPolicy allyView;
@@ -155,7 +157,14 @@ struct ServerEntry {
 /* Compact "Views:" tag for the detail pane. Lists only the categories
  * that differ from the defaults, so a stock server shows nothing at
  * all. Classic mode leads the list because it explains the policies
- * that follow it. Returns "" when the server is stock. */
+ * that follow it. Returns "" when the server is stock.
+ *
+ * The defaults compared against here are the rules a current
+ * unconfigured server runs: pill Key, base Off, ally Off, the classic
+ * overview window and sight off. That is deliberately not the same set
+ * as the back-compatibility reading an advertisement missing the rules
+ * gets (see ServerEntry above). A server old enough to leave them out
+ * really does play differently from a stock one, so it gets tagged. */
 static std::string viewPolicyTag(const ServerEntry &e) {
     /* Same four policy words the lobby, the hosting tab and the game info
      * panel use, so one server's rules read the same wherever they show. */
@@ -166,9 +175,9 @@ static std::string viewPolicyTag(const ServerEntry &e) {
         langGetText(STR_DLGLOBBY_VIEW_OFF),
     };
     struct { const char *letter; ViewPolicy value; ViewPolicy def; } cats[] = {
-        { "P", e.pillView, viewPolicyAlways },
-        { "B", e.baseView, viewPolicyOff    },
-        { "A", e.allyView, viewPolicyAlways },
+        { "P", e.pillView, viewPolicyKey },
+        { "B", e.baseView, viewPolicyOff },
+        { "A", e.allyView, viewPolicyOff },
     };
     std::string out;
     if (e.classicMode) {
@@ -180,14 +189,14 @@ static std::string viewPolicyTag(const ServerEntry &e) {
     }
     /* The overview window and line of sight are server-wide rules like
      * the two above rather than per-category, so they sit with them.
-     * Only the non-default value is worth a tag: every server runs the
-     * expanded window with sight off unless it says otherwise. The
-     * window is prefixed because its name is also the word the
-     * classic-mode tag uses, and the two are different settings. */
-    if (e.overviewWindow == (uint8_t)overviewWindowClassic) {
+     * Only the non-default value is worth a tag: an unconfigured server
+     * runs the classic window with sight off. The window is prefixed to
+     * match the P=/B=/A= form the categories below use, since a bare
+     * "Expanded" in a list of tags names no setting in particular. */
+    if (e.overviewWindow == (uint8_t)overviewWindowExpanded) {
         if (!out.empty()) out += " ";
         out += "W=";
-        out += langGetText(STR_DLGLOBBY_WINDOW_CLASSIC);
+        out += langGetText(STR_DLGLOBBY_WINDOW_EXPANDED);
     }
     if (e.lineOfSight != (uint8_t)lineOfSightOff) {
         if (!out.empty()) out += " ";
