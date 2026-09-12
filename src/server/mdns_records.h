@@ -43,10 +43,10 @@
  *   lobby=<0|1> locked=<0|1>
  *   md5=<32 hex chars|empty> newp=<0|1> spec=<0|1> nspec=<n>
  *   ranked=<0|1> rnd=<0|1> tlim=<game length, 0 if none>
- *   humans=<n> bots=<n> max=<n>
+ *   humans=<n> bots=<n> max=<n> view=<4 hex chars>
  * Count is fixed at MDNS_WINBOLO_TXT_COUNT; with PTR + SRV + A that is
  * MDNS_WINBOLO_RECORD_COUNT records total. */
-#define MDNS_WINBOLO_TXT_COUNT 21
+#define MDNS_WINBOLO_TXT_COUNT 22
 #define MDNS_WINBOLO_RECORD_COUNT (3 + MDNS_WINBOLO_TXT_COUNT)
 
 /* Plain-data snapshot of the server state advertised in one answer. The
@@ -78,6 +78,13 @@ typedef struct {
   BYTE           numHumans;       /* humans among numPlayers */
   BYTE           numBots;         /* bots among numPlayers */
   BYTE           maxPlayers;      /* join-slot cap; MAX_TANKS when unset */
+  /* The server's visibility rules, packed exactly as the INFO packet
+   * carries them: the three view policies with the classic-mode and
+   * allies-in-trees flags in one byte, the overview window and line of
+   * sight in the other. Two bytes rather than seven fields, so the POD
+   * carries what the wire carries. */
+  BYTE           viewPolicies;    /* infoPacketPackViewPolicies output */
+  BYTE           viewPolicies2;   /* infoPacketPackViewPolicies2 output */
 } MdnsServerInfo;
 
 /* Fill records[] with the PTR / SRV / A / TXT answer set for info and

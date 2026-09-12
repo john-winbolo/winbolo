@@ -48,6 +48,7 @@ void discoveryAbortMdnsSearch(void) {}
 
 #include "platform_net.h"     /* bolo_net_init / sockets / inet_ntoa */
 #include "discovery_mdns.h"   /* parse seam (pulls mdns.h) */
+#include "netpacks.h"         /* INFO_PACKET + infoPacketReadViewPolicies / ...2 */
 #include "../common/wb_log.h"
 
 /* DNS-SD service the host advertises — the contract mirrored from the
@@ -166,14 +167,13 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
   /* The mDNS responder is always our current producer, so the rich
    * flags/counts/md5 keys are present in the TXT record. */
   out->hasRichInfo = true;
-  /* The TXT record set carries no view-policy keys, so report the same
-   * defaults an INFO packet without the view byte reports. memset alone
-   * would leave the base view reading "always". There is no classic-mode
-   * or allies-in-trees key either, and for those memset gives the right
-   * answer — both off. */
-  out->pillView = viewPolicyAlways;
+  /* A record with no view key means the rules an INFO packet without the
+   * view bytes reports. The memset above is that answer for six of the
+   * seven — pill always, ally always, classic off, allies in trees off,
+   * the expanded overview window, sight off — because each of those is
+   * zero. The base view is not: viewPolicyOff is 3, so it is set here.
+   * A view key in the loop below overwrites all seven. */
   out->baseView = viewPolicyOff;
-  out->allyView = viewPolicyAlways;
 
   if (r->haveAddr) {
     a = r->addr;
@@ -233,6 +233,25 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
       out->numBots = (BYTE)atoi(val);
     } else if (strcmp(key, "max") == 0) {
       out->maxPlayers = (BYTE)atoi(val);
+    } else if (strcmp(key, "view") == 0) {
+      /* Two packed bytes as four hex digits. They are read back through
+       * the INFO packet's own accessors rather than unpacked here, so
+       * both discovery paths agree on what the bits mean — including
+       * what an unnamed value reads as. A value that is not four hex
+       * digits leaves the defaults set above in place. */
+      unsigned v1 = 0, v2 = 0;
+      if (sscanf(val, "%2X%2X", &v1, &v2) == 2) {
+        INFO_PACKET viewBytes;
+        memset(&viewBytes, 0, sizeof(viewBytes));
+        viewBytes.view_policies  = (BYTE)v1;
+        viewBytes.view_policies2 = (BYTE)v2;
+        infoPacketReadViewPolicies(&viewBytes, sizeof(viewBytes),
+                                   &out->pillView, &out->baseView,
+                                   &out->allyView, &out->classicMode,
+                                   &out->alliesInTrees);
+        infoPacketReadViewPolicies2(&viewBytes, sizeof(viewBytes),
+                                    &out->overviewWindow, &out->lineOfSight);
+      }
     }
   }
   return true;

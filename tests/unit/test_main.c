@@ -740,6 +740,7 @@ static const UnitTestEntry s_tests[] = {
                                                  run_screencalc_river_arms_of_road_centred_cross },
     { "screencalc_river_copies_agree",           run_screencalc_river_copies_agree           },
     { "mdns_discovery",                          run_mdns_discovery                          },
+    { "mdns_view_txt_roundtrip",                 run_mdns_view_txt_roundtrip                 },
     { "client_type_matches_platform",            run_client_type_matches_platform            },
     { "client_type_name_round_trips",            run_client_type_name_round_trips            },
     { "map_load_clamps_base_fields",             run_map_load_clamps_base_fields             },

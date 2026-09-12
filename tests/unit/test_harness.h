@@ -1683,6 +1683,11 @@ int run_lang_name_table(void);
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
 
+/* The mDNS view TXT key (test_mdns_view_txt.c): the server's visibility
+ * rules through the browser's parse seam, and what an absent or
+ * malformed value reports. */
+int run_mdns_view_txt_roundtrip(void);
+
 /* Self-reported client platform pin (test_client_type.c): the JOIN-time
  * bolo_detect_client_type() resolves to the build host's CLIENT_TYPE_*
  * (the baseline harness normalizes this field away, so it's pinned here),

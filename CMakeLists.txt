@@ -3463,6 +3463,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # mDNS discovery: unicast-loopback round-trip through the real advertiser
     # builder + browser parse path (no multicast socket).
     tests/unit/test_mdns_discovery.c
+    tests/unit/test_mdns_view_txt.c
     # Wire-codec corpus: the tap sink, the fast differential test (reads
     # committed fixtures), and the on-demand capture generator (uses the
     # loopback harness above).
@@ -4495,6 +4496,7 @@ set(_unit_test_names
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
     mdns_discovery
+    mdns_view_txt_roundtrip
     client_type_matches_platform
     client_type_name_round_trips
     map_load_clamps_base_fields
