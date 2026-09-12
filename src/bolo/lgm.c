@@ -835,7 +835,7 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   /* Check for achieved goal */
   if (((*lgman)->x - (*lgman)->destX) >= LGM_MIN_GOAL  && ((*lgman)->x - (*lgman)->destX) <= LGM_MAX_GOAL && ((*lgman)->y - (*lgman)->destY) >= LGM_MIN_GOAL && ((*lgman)->y - (*lgman)->destY) <= LGM_MAX_GOAL) {
     /* Arrived */
-    (*lgman)->waitTime = LGM_BUILD_TIME;
+    (*lgman)->waitTime = (BYTE) sim->rules.lgm_build_ticks;
     (*lgman)->state = LGM_STATE_RETURN;
     lgmDoWork(sim, lgman, tnk);
   }
@@ -1120,14 +1120,14 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
 
   switch ((*lgman)->action) {
   case LGM_TREE_REQUEST:
-    minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+    minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
     if (terrain == FOREST && isBase == FALSE && isPill == FALSE) {
       if (isMine == TRUE) {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (GRASS+MINE_SUBTRACT), TRUE, FALSE);
       } else {
         mapSetPos(sim, mp, bmx, bmy, GRASS, TRUE, FALSE);
       }
-      (*lgman)->numTrees = LGM_GATHER_TREE;
+      (*lgman)->numTrees = (BYTE) sim->rules.lgm_gather_trees;
       sim->callbacks.soundDist(sim->callbacks.ctx, farmingTreeNear, bmx, bmy);
       if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_FARM, bmx, bmy);
       if (isServer && sim->callbacks.built) {
@@ -1167,7 +1167,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
                                (*lgman)->action, bmx, bmy);
         }
       } else {
-        minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+        minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
       }
       (*lgman)->numTrees = 0;
       sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
@@ -1189,7 +1189,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
   case LGM_MINE_REQUEST:
     if ((isPill == FALSE && isBase == FALSE) && (terrain == SWAMP || terrain == CRATER || terrain == ROAD || terrain == FOREST || terrain == RUBBLE || terrain == GRASS)) {
       if (isMine == TRUE) {
-        minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+        minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
       } else {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
         minesAddItem(&sim->mns, bmx, bmy);
@@ -1224,7 +1224,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     } else {
       if (isPill == FALSE && isBase == FALSE && minesExistPos(&sim->mns, &sim->mp, bmx, bmy) == FALSE && terrain != BUILDING && terrain != HALFBUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA) {
         if (isMine == TRUE) {
-          minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+          minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
           floodAddItem(&sim->ff, bmx, bmy);
           lgmDeathCheck(sim, lgman, (WORLD) ((bmx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((bmy<< M_W_SHIFT_SIZE)+MAP_SQUARE_MIDDLE), NEUTRAL, tnk);
           sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
@@ -1484,7 +1484,7 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
     mx = (BYTE) (wx >> 8);
     my = (BYTE) (wy >> 8);
 
-    utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, PILLBOX_RANGE, &distance);
+    utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
     pos = mapGetPos(mp, mx, my);
     solid = FALSE;
     if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
@@ -1686,7 +1686,7 @@ void lgmParchutingIn(GameSim *sim, lgm *lgman) {
 
 
   angle = utilCalcAngle((*lgman)->x, (*lgman)->y, (*lgman)->destX, (*lgman)->destY);
-  utilCalcDistance(&xAdd, &yAdd, angle, LGM_HELICOPTER_SPEED);
+  utilCalcDistance(&xAdd, &yAdd, angle, sim->rules.lgm_helicopter_speed);
   (*lgman)->x = (WORLD) ((*lgman)->x + xAdd);
   (*lgman)->y = (WORLD) ((*lgman)->y + yAdd);
 

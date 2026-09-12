@@ -55,7 +55,7 @@
 *********************************************************/
 void treeGrowCreate(GameSim *sim) {
   sim->treeGrowSeed = (WORD)(bolo_rand() | 1);
-  sim->treeGrowTime = TREEGROW_INITIAL_TIME;
+  sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
   sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
   sim->treeGrowX = 0;
   sim->treeGrowY = 0;
@@ -74,7 +74,7 @@ void treeGrowCreate(GameSim *sim) {
 *
 *********************************************************/
 void treeGrowDestroy(GameSim *sim) {
-  sim->treeGrowTime = TREEGROW_INITIAL_TIME;
+  sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
 }
 
 /*********************************************************
@@ -92,7 +92,7 @@ void treeGrowDestroy(GameSim *sim) {
 *  sim - Pointer to the game simulation
 *********************************************************/
 void treeGrowReset(GameSim *sim) {
-  sim->treeGrowTime = TREEGROW_INITIAL_TIME;
+  sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
   sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
   sim->treeGrowX = 0;
   sim->treeGrowY = 0;
@@ -118,7 +118,7 @@ void treeGrowAddItem(GameSim *sim, BYTE x, BYTE y, int score) {
     sim->treeGrowScore = score;
     sim->treeGrowX = x;
     sim->treeGrowY = y;
-    sim->treeGrowTime = TREEGROW_TIME;
+    sim->treeGrowTime = sim->rules.tree_grow_ticks;
   }
 }
 
@@ -226,7 +226,7 @@ void treeGrowCheckGrowTree(GameSim *sim) {
     /* Check for fill and remove from data structure */
   if (sim->treeGrowTime <= 0) {
     sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
-    sim->treeGrowTime = TREEGROW_INITIAL_TIME;
+    sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
     pos = mapGetPos(mp, sim->treeGrowX, sim->treeGrowY);
     if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pos != DEEP_SEA && pos != BOAT && pillsExistPos(pb, sim->treeGrowX, sim->treeGrowY) == FALSE && basesExistPos(bs, sim->treeGrowX, sim->treeGrowY) == FALSE) {
       newPos = FOREST;
@@ -276,52 +276,52 @@ int treeGrowCalcSquare(GameSim *sim, BYTE mx, BYTE my) {
 
   returnValue = 0; //TREE_GROW_ROAD;
   if (pillsExistPos(pb, mx, my) == TRUE) {
-    returnValue = TREE_GROW_ROAD;
+    returnValue = sim->rules.tree_weight_road;
   } else if (basesExistPos(bs, mx, my) == TRUE) {
-      returnValue = TREE_GROW_ROAD;
+      returnValue = sim->rules.tree_weight_road;
   } else {
     terrain = mapGetPos(mp, mx, my);
     if (terrain >= MINE_START && terrain <= MINE_END) {
-      returnValue = TREE_GROW_MINE;
+      returnValue = sim->rules.tree_weight_mine;
       terrain -= MINE_START;
     }
-     
+
     switch (terrain) {
       case FOREST:
-        returnValue += TREE_GROW_FOREST;
+        returnValue += sim->rules.tree_weight_forest;
         break;
       case GRASS:
-        returnValue +=  TREE_GROW_GRASS;
+        returnValue +=  sim->rules.tree_weight_grass;
         break;
       case RIVER:
-        returnValue += TREE_GROW_RIVER; 
+        returnValue += sim->rules.tree_weight_river;
         break;
-      case BOAT:  
-        returnValue += TREE_GROW_BOAT;
+      case BOAT:
+        returnValue += sim->rules.tree_weight_boat;
         break;
       case DEEP_SEA:
-        returnValue += TREE_GROW_DEEP_SEA;
+        returnValue += sim->rules.tree_weight_deep_sea;
         break;
-      case SWAMP:  
-        returnValue += TREE_GROW_DEEP_SWAMP;
+      case SWAMP:
+        returnValue += sim->rules.tree_weight_swamp;
         break;
       case RUBBLE:
-        returnValue += TREE_GROW_DEEP_RUBBLE;  
+        returnValue += sim->rules.tree_weight_rubble;
         break;
-      case BUILDING:  
-        returnValue += TREE_GROW_BUILDING;  
+      case BUILDING:
+        returnValue += sim->rules.tree_weight_building;
         break;
-      case HALFBUILDING:  
-        returnValue += TREE_GROW_HALF_BUILDING;  
+      case HALFBUILDING:
+        returnValue += sim->rules.tree_weight_half_building;
         break;
       case CRATER:
-        returnValue += TREE_GROW_CRATER;
+        returnValue += sim->rules.tree_weight_crater;
         break;
       case ROAD:
-        returnValue +=  TREE_GROW_ROAD;
+        returnValue +=  sim->rules.tree_weight_road;
         break;
       default:
-        returnValue +=  TREE_GROW_ROAD;
+        returnValue +=  sim->rules.tree_weight_road;
         break;
     }
   }

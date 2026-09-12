@@ -4482,6 +4482,8 @@ set(_unit_test_names
     sim_rules_copies_follow
     sim_rules_terrain_caps_follow
     sim_rules_river_cap_moves_drowning
+    sim_rules_base_regen_seed_follows
+    sim_rules_terrain_life_follows
     screen_bullets_build
     ping_smoother
     client_timing

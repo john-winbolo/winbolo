@@ -768,10 +768,11 @@ BYTE basesGetBaseNetData(bases *value, BYTE *buff);
 * armour from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveArmour(bases *bs, BYTE baseNum);
+void basesNetGiveArmour(struct GameSim *sim, bases *bs, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesNetGiveShells
@@ -783,10 +784,11 @@ void basesNetGiveArmour(bases *bs, BYTE baseNum);
 * shells from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveShells(bases *value, BYTE baseNum);
+void basesNetGiveShells(struct GameSim *sim, bases *value, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesNetGiveMines
@@ -798,10 +800,11 @@ void basesNetGiveShells(bases *value, BYTE baseNum);
 * mines from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveMines(bases *value, BYTE baseNum);
+void basesNetGiveMines(struct GameSim *sim, bases *value, BYTE baseNum);
 
 /*********************************************************
 *NAME:          basesSetNeutralOwner
@@ -1011,9 +1014,10 @@ BYTE basesGetNumberOwnedByPlayer(bases *value, BYTE playerNum);
 * calculate what to return to average out half ticks
 *
 *ARGUMENTS:
+*  sim          - The game the base belongs to
 *  typeSelector - tells us what type of number to return.
 *********************************************************/
-int basesHalfTickCalulator(int typeSelector);
+int basesHalfTickCalulator(struct GameSim *sim, int typeSelector);
 
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen);
 /* Clamps every base field a map can supply to the range the rest of the

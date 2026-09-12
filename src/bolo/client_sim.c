@@ -322,7 +322,7 @@ bool clientSimCreate(ClientSim *cs) {
     for (i = 0; i < MAX_TANKS; i++) {
       cs->sim.baseTimer[i] = 30000;
     }
-    cs->sim.baseTimer[cs->myPlayerNum] = BASE_TICKS_BETWEEN_REFUEL;
+    cs->sim.baseTimer[cs->myPlayerNum] = cs->sim.rules.base_regen_ticks;
   }
   pillsCreate(&cs->sim.pb);
   screenBrainMapCreate(cs);
@@ -392,7 +392,7 @@ void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
         lgmSetPlayerNum(&cs->sim.lgmen[playerNum], playerNum);
     }
     if (playerNum != 0) {
-        cs->sim.baseTimer[playerNum] = BASE_TICKS_BETWEEN_REFUEL;
+        cs->sim.baseTimer[playerNum] = cs->sim.rules.base_regen_ticks;
     }
 }
 

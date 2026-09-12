@@ -31,6 +31,8 @@
 
 #include "global.h"
 
+struct GameSim;
+
 /* Empty / Non Empty / Head / Tail Macros */
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -97,10 +99,11 @@ void swampDestroy(swamp *swmp);
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim   - The game the swamp belongs to
 *  x     - X co-ord
 *  y     - Y co-ord
 *********************************************************/
-BYTE swampAddItem(swamp *swmp, BYTE x, BYTE y);
+BYTE swampAddItem(struct GameSim *sim, swamp *swmp, BYTE x, BYTE y);
 
 /*********************************************************
 *NAME:          swampDeleteItem

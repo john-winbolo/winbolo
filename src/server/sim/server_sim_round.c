@@ -1069,7 +1069,7 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
     if (numConnected == 0) return;
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        sim->sim.baseTimer[i] = (BASE_TICKS_BETWEEN_REFUEL * (orderIdx + 1)) / numConnected;
+        sim->sim.baseTimer[i] = (sim->sim.rules.base_regen_ticks * (orderIdx + 1)) / numConnected;
         orderIdx++;
     }
 }

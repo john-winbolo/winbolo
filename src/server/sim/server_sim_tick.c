@@ -839,7 +839,7 @@ static void simRunHalfStep(ServerSim *sim) {
                         basesRefueling(&sim->sim, &sim->sim.tanks[count], baseNum);
                     } else {
                         (*sim->sim.bs).item[baseNum - 1].justStopped = FALSE;
-                        (*sim->sim.bs).item[baseNum - 1].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+                        (*sim->sim.bs).item[baseNum - 1].refuelTime = basesHalfTickCalulator(&sim->sim, BASES_HALFTICK_TYPE_ARMOUR);
                     }
                 }
             }

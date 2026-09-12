@@ -400,7 +400,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         for (i = 0; i < MAX_TANKS; i++) {
             sim->sim.baseTimer[i] = 30000;
         }
-        sim->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
+        sim->sim.baseTimer[0] = sim->sim.rules.base_regen_ticks;
     }
 
     /* Bind every slot's copy of the terrain to the map just created. The

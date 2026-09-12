@@ -44,7 +44,7 @@
 #include "server_sim.h"
 
 void basesUpdateTimer(GameSim *sim, int playerNumber){
-	sim->baseTimer[playerNumber]=BASE_TICKS_BETWEEN_REFUEL;
+	sim->baseTimer[playerNumber]=sim->rules.base_regen_ticks;
 }
 
 
@@ -535,7 +535,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 					count++;
 				}
 			}
-			sim->baseTimer[secondCounter]=BASE_TICKS_BETWEEN_REFUEL;
+			sim->baseTimer[secondCounter]=sim->rules.base_regen_ticks;
 		  }
 	  }
 
@@ -567,7 +567,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
         basesRefueling(sim, tnk, baseNum);
       } else {
         (*value)->item[baseNum-1].justStopped = FALSE;
-        (*value)->item[baseNum-1].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+        (*value)->item[baseNum-1].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_ARMOUR);
       }
     }
   } else if (tnk != NULL) {
@@ -1218,21 +1218,21 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
       if (!tankIsDestroyed(tnk) && armour < sim->rules.tank_full_armour && ((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
         (*value)->item[baseNum].armour -= BASE_ARMOUR_GIVE;
         tankAddArmour(sim, tnk, BASE_ARMOUR_GIVE);
-        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_ARMOUR);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (shellsAmount < sim->rules.tank_full_shells && ((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
         (*value)->item[baseNum].shells -= BASE_SHELLS_GIVE;
         tankAddShells(sim, tnk, BASE_SHELLS_GIVE);
-        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_SHELL);
+        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_SHELL);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (mines < sim->rules.tank_full_mines && ((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
         (*value)->item[baseNum].mines -= BASE_MINES_GIVE;
         tankAddMines(sim, tnk, BASE_MINES_GIVE);
-        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_MINE);
+        (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_MINE);
         if (isServer == FALSE) {
           frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
@@ -1786,13 +1786,14 @@ BYTE basesGetBaseNetData(bases *value, BYTE *buff) {
 * armour from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveArmour(bases *value, BYTE baseNum) {
+void basesNetGiveArmour(GameSim *sim, bases *value, BYTE baseNum) {
   if (((*value)->item[baseNum].armour - BASE_ARMOUR_GIVE) >= BASE_MIN_ARMOUR) {
     (*value)->item[baseNum].armour -= BASE_ARMOUR_GIVE;
-    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
+    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_ARMOUR);
     logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
   }
 }
@@ -1807,13 +1808,14 @@ void basesNetGiveArmour(bases *value, BYTE baseNum) {
 * shells from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveShells(bases *value, BYTE baseNum) {
+void basesNetGiveShells(GameSim *sim, bases *value, BYTE baseNum) {
   if (((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
     (*value)->item[baseNum].shells -= BASE_SHELLS_GIVE;
-    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_SHELL);
+    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_SHELL);
     logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
   }
 }
@@ -1828,13 +1830,14 @@ void basesNetGiveShells(bases *value, BYTE baseNum) {
 * mines from a base. Remove it and update the screen here
 *
 *ARGUMENTS:
+*  sim     - The game the base belongs to
 *  value   - Pointer to the bases structure
 *  baseNum - Basenum it is happening to
 *********************************************************/
-void basesNetGiveMines(bases *value, BYTE baseNum) {
+void basesNetGiveMines(GameSim *sim, bases *value, BYTE baseNum) {
   if (((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
     (*value)->item[baseNum].mines -= BASE_MINES_GIVE;
-    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_MINE);
+    (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(sim, BASES_HALFTICK_TYPE_MINE);
     logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
   }
 }
@@ -2307,9 +2310,10 @@ BYTE basesGetNumberOwnedByPlayer(bases *value, BYTE playerNum) {
 * calculate what to return to average out half ticks
 *
 *ARGUMENTS:
+*  sim          - The game the base belongs to
 *  typeSelector - tells us what type of number to return.
 *********************************************************/
-int basesHalfTickCalulator(int typeSelector) {
+int basesHalfTickCalulator(GameSim *sim, int typeSelector) {
 	static double lastShell;
 	static double lastMine;
 	double tempShell = 0;
@@ -2317,37 +2321,37 @@ int basesHalfTickCalulator(int typeSelector) {
 
 	switch(typeSelector)
 	{
-	case BASES_HALFTICK_TYPE_SHELL: 
-	  if(floor(BASE_REFUEL_SHELLS) != BASE_REFUEL_SHELLS){
+	case BASES_HALFTICK_TYPE_SHELL:
+	  if(floor(sim->rules.base_refuel_shells_ticks) != sim->rules.base_refuel_shells_ticks){
 	  	if(lastShell == 0){
-			lastShell = BASE_REFUEL_SHELLS-floor(BASE_REFUEL_SHELLS);
-			tempShell = floor(BASE_REFUEL_SHELLS);
+			lastShell = sim->rules.base_refuel_shells_ticks-floor(sim->rules.base_refuel_shells_ticks);
+			tempShell = floor(sim->rules.base_refuel_shells_ticks);
 			return (int) tempShell;
 		} else {
-			tempShell = BASE_REFUEL_SHELLS+lastShell;
+			tempShell = sim->rules.base_refuel_shells_ticks+lastShell;
 			lastShell = 0;
 			return (int) floor(tempShell);
 		}
 	  } else {
-	    return BASE_REFUEL_SHELLS;
+	    return sim->rules.base_refuel_shells_ticks;
 	  }
 	  break;
-	case BASES_HALFTICK_TYPE_MINE: 
-	  if(floor(BASE_REFUEL_MINES) != BASE_REFUEL_MINES){
+	case BASES_HALFTICK_TYPE_MINE:
+	  if(floor(sim->rules.base_refuel_mines_ticks) != sim->rules.base_refuel_mines_ticks){
 	  	if(lastMine == 0){
-			lastMine = BASE_REFUEL_MINES-floor(BASE_REFUEL_MINES);
-			return (int) floor(BASE_REFUEL_MINES);
+			lastMine = sim->rules.base_refuel_mines_ticks-floor(sim->rules.base_refuel_mines_ticks);
+			return (int) floor(sim->rules.base_refuel_mines_ticks);
 		} else {
-			tempMine = BASE_REFUEL_MINES+lastMine;
+			tempMine = sim->rules.base_refuel_mines_ticks+lastMine;
 			lastMine = 0;
 			return (int) floor(tempMine);
 		}
 	  } else {
-	    return BASE_REFUEL_MINES;
+	    return sim->rules.base_refuel_mines_ticks;
 	  }
 	  break;
-	case BASES_HALFTICK_TYPE_ARMOUR: 
-	  return BASE_REFUEL_ARMOUR;
+	case BASES_HALFTICK_TYPE_ARMOUR:
+	  return sim->rules.base_refuel_armour_ticks;
 	  break;
 	default:
 	  return 0;

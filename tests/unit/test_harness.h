@@ -1481,6 +1481,8 @@ int run_sim_rules_validate_ranges(void);
 int run_sim_rules_copies_follow(void);
 int run_sim_rules_terrain_caps_follow(void);
 int run_sim_rules_river_cap_moves_drowning(void);
+int run_sim_rules_base_regen_seed_follows(void);
+int run_sim_rules_terrain_life_follows(void);
 
 int run_snapshot_compaction(void);
 

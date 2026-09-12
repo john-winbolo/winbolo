@@ -28,6 +28,7 @@
 
 #include "global.h"
 #include "swamp.h"
+#include "game_sim.h"
 
 /*********************************************************
 *NAME:          swampCreate
@@ -76,10 +77,11 @@ void swampDestroy(swamp *swmp) {
 *  item and decrements its lifetime.
 *
 *ARGUMENTS:
+*  sim   - The game the swamp belongs to
 *  x     - X co-ord
 *  y     - Y co-ord
 *********************************************************/
-BYTE swampAddItem(swamp *swmp, BYTE x, BYTE y) {
+BYTE swampAddItem(GameSim *sim, swamp *swmp, BYTE x, BYTE y) {
   BYTE returnValue; /* Value to return */
   bool found;       /* Is the item found */
   int count;        /* Looping Variable */
@@ -112,7 +114,7 @@ BYTE swampAddItem(swamp *swmp, BYTE x, BYTE y) {
     New (q);
     q->x = x;
     q->y = y;
-    q->life = SWAMP_LIFE;
+    q->life = (BYTE) sim->rules.swamp_life;
     q->next = *swmp;
     *swmp = q;
   }

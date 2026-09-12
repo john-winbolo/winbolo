@@ -1430,7 +1430,7 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 		}
 
 		if (wasDestroyed) {
-			if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
+			if (((*value)->shells + (*value)->mines) > sim->rules.big_explosion_threshold) {
 				returnValue = TH_KILL_BIG;
 			} else {
 				returnValue = TH_KILL_SMALL;
@@ -2003,7 +2003,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
           (*value)->onBoat = FALSE;
           if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
           if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
-            minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
+            minesExpAddItem(sim, &sim->minesExplosions, mp, newbmx, newbmy);
           }
         } else {
           /* Soft terrain, slow approach — per-axis position revert.
@@ -2057,7 +2057,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         (*value)->lastBoatRiverY = newbmy;
       } else if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
         /* Mine on current land tile — explode and lose boat */
-        minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
+        minesExpAddItem(sim, &sim->minesExplosions, mp, newbmx, newbmy);
         (*value)->boatState = BoatState_NotOnBoat;
         (*value)->onBoat = FALSE;
         if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
@@ -2078,7 +2078,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
       /* Check for hit mine */
       if (newbmx != bmx || newbmy != bmy) {
         if (mapIsMine(mp, newbmx, newbmy) == TRUE) {
-          minesExpAddItem(&sim->minesExplosions, mp, newbmx, newbmy);
+          minesExpAddItem(sim, &sim->minesExplosions, mp, newbmx, newbmy);
         }
       }
 
@@ -2942,7 +2942,7 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
     }
     if (wasDestroyed) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
-      if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
+      if (((*value)->shells + (*value)->mines) > sim->rules.big_explosion_threshold) {
         tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_BIG, dyingPlayer);
       } else {
         tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_SMALL, dyingPlayer);
@@ -3931,7 +3931,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 		}
 
 		if (wasDestroyed) {
-			if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
+			if (((*value)->shells + (*value)->mines) > sim->rules.big_explosion_threshold) {
 				returnValue = TH_KILL_BIG;
 			} else {
 				returnValue = TH_KILL_SMALL;

@@ -596,7 +596,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
           continue;
         }
 
-        if ((utilIsItemInRange(x, y, tankX, tankY, PILLBOX_RANGE, &amount)) == TRUE) {
+        if ((utilIsItemInRange(x, y, tankX, tankY, (WORLD) sim->rules.pill_range, &amount)) == TRUE) {
           if (amount < bestDist) {
             bestDist = amount;
             bestTankX = tankX;

@@ -364,7 +364,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				 * at the true position. Reached once per shell (collision path);
 				 * NULL on the client, which is not authoritative over shell death. */
 				if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, newX, newY, shellOutcome);
-				minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+				minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
 					/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
@@ -448,7 +448,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			 * Reached once per shell (expiry path); same owner-closure as the
 			 * collision branch but with the shell's own end-of-life position. */
 			if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, position->x, position->y, SHELL_OUTCOME_EXPIRED);
-			minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
+			minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {
 				/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
@@ -797,7 +797,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 			switch (terrain)
 			{
 				case BUILDING:
-					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(&sim->blds, mapX, mapY)), FALSE, FALSE);
+					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY)), FALSE, FALSE);
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case FOREST:
@@ -809,7 +809,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotTreeNear, mapX, mapY);
 					break;
 				case HALFBUILDING:
-					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(&sim->blds, mapX, mapY)), FALSE, FALSE);
+					mapSetPos(sim, mp, mapX, mapY, (buildingAddItem(sim, &sim->blds, mapX, mapY)), FALSE, FALSE);
 					sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 					break;
 				case BOAT:
@@ -820,7 +820,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, GRASS+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
-						newTerrain = grassAddItem(&sim->grs, mapX, mapY);
+						newTerrain = grassAddItem(sim, &sim->grs, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
 							floodAddItem(&sim->ff, mapX, mapY);
@@ -831,7 +831,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, SWAMP+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
-						newTerrain = swampAddItem(&sim->swp, mapX, mapY);
+						newTerrain = swampAddItem(sim, &sim->swp, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
 							floodAddItem(&sim->ff, mapX, mapY);
@@ -842,7 +842,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					if (isMine == TRUE) {
 						mapSetPos(sim, mp, mapX, mapY, RUBBLE+MINE_SUBTRACT, FALSE, FALSE);
 					} else {
-						newTerrain = rubbleAddItem(&sim->rbl, mapX, mapY);
+						newTerrain = rubbleAddItem(sim, &sim->rbl, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
 							floodAddItem(&sim->ff, mapX, mapY);

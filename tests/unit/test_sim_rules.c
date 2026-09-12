@@ -26,6 +26,12 @@
  *   sim_rules_river_cap_moves_drowning — the river cap is also the wading
  *     test, so a tank driving a raised river at a speed the classic cap would
  *     never have allowed still loses stock to the water.
+ *
+ *   sim_rules_base_regen_seed_follows — the base regeneration timer is seeded
+ *     from its rule, one player's slot at a time.
+ *
+ *   sim_rules_terrain_life_follows — how many hits a building takes before it
+ *     is rubble follows its life rule.
  */
 
 #include <stdint.h>
@@ -502,6 +508,84 @@ int run_sim_rules_river_cap_moves_drowning(void) {
                   "of its %u and %u",
                   (unsigned) shellsAfter, (unsigned) minesAfter,
                   (unsigned) shellsBefore, (unsigned) minesBefore);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ---- the timings and counts -------------------------------------------- */
+
+/* The timer a base's regeneration runs on is seeded from the rule wherever it
+ * is set, so a sim that was given a different one counts from that. */
+int run_sim_rules_base_regen_seed_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Rules");
+    UT_ASSERT(sim != NULL);
+
+    /* Classic first, so the change below is what moves the reading. */
+    basesUpdateTimer(&sim->sim, 0);
+    UT_ASSERT_MSG(sim->sim.baseTimer[0] == BASE_TICKS_BETWEEN_REFUEL,
+                  "a classic sim seeds the base timer at %d, not %d",
+                  sim->sim.baseTimer[0], BASE_TICKS_BETWEEN_REFUEL);
+
+    /* A value no other timer in the engine holds. */
+    sim->sim.rules.base_regen_ticks = 777;
+    basesUpdateTimer(&sim->sim, 0);
+    UT_ASSERT_MSG(sim->sim.baseTimer[0] == 777,
+                  "the base timer seeded at %d, not the rule's 777",
+                  sim->sim.baseTimer[0]);
+
+    /* One player's timer is not every player's. */
+    basesUpdateTimer(&sim->sim, 1);
+    sim->sim.rules.base_regen_ticks = BASE_TICKS_BETWEEN_REFUEL;
+    basesUpdateTimer(&sim->sim, 2);
+    UT_ASSERT_MSG(sim->sim.baseTimer[1] == 777 &&
+                      sim->sim.baseTimer[2] == BASE_TICKS_BETWEEN_REFUEL,
+                  "seeding one slot moved another: slots read %d and %d",
+                  sim->sim.baseTimer[1], sim->sim.baseTimer[2]);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* How many hits a building takes before it is rubble is the life rule plus
+ * the hit that puts it on the list. Counted here through buildingAddItem,
+ * which is where a shell landing on a building ends up. */
+static int hitsToRubble(ServerSim *sim, BYTE mx, BYTE my) {
+    int hits = 0;
+    while (hits < 64) {
+        BYTE terrain = buildingAddItem(&sim->sim, &sim->sim.blds, mx, my);
+        hits++;
+        if (terrain == RUBBLE) {
+            return hits;
+        }
+    }
+    return -1;
+}
+
+int run_sim_rules_terrain_life_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Rules");
+    int classicHits, shortHits;
+    UT_ASSERT(sim != NULL);
+
+    /* Two squares, because the first is spent once it turns to rubble and
+       the count is about how long a fresh building lasts. */
+    classicHits = hitsToRubble(sim, 40, 40);
+    UT_ASSERT_MSG(classicHits == BUILDING_LIFE + 1,
+                  "a classic building took %d hits to rubble, expected %d",
+                  classicHits, BUILDING_LIFE + 1);
+
+    sim->sim.rules.building_life = 1;
+    shortHits = hitsToRubble(sim, 42, 40);
+    UT_ASSERT_MSG(shortHits == 2,
+                  "a building with a life of 1 took %d hits to rubble, "
+                  "expected 2", shortHits);
+
+    /* The other three life rules are read at the same point in their own
+       add paths; changing the building's moved none of them. */
+    UT_ASSERT_MSG(sim->sim.rules.rubble_life == RUBBLE_LIFE &&
+                      sim->sim.rules.grass_life == GRASS_LIFE &&
+                      sim->sim.rules.swamp_life == SWAMP_LIFE,
+                  "changing the building life moved another terrain's");
 
     serverSimDestroy(sim);
     return 0;
