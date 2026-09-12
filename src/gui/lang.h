@@ -1746,6 +1746,11 @@
 #define STR_PLAYER_TIP_VOICE_SELF_NOMIC         2050
 #define STR_PLAYER_TIP_VOICE_SELF_MUTED         2051
 
+/* Players panel — per-player smart-ping mute toggle (independent of the
+   voice/chat mute above) */
+#define STR_PLAYER_TIP_PING_SHOWN               2162
+#define STR_PLAYER_TIP_PING_MUTED               2163
+
 /* Players panel — per-player playback volume slider */
 #define STR_PLAYER_TIP_VOICE_VOLUME             2090
 

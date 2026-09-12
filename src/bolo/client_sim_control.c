@@ -1043,6 +1043,19 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
                          pNum, FALSE,
                          evt->u.playerLeave.quiet == 0 && !cs->inLobby);
+        /* Forget what this client held about the departing slot's smart
+         * pings. A ping mute is on the player, not the slot, and slots are
+         * recycled: the bit left set would show the next joiner as "pings
+         * hidden" in the players panel while their pings arrived anyway —
+         * the server swept its own copy of the mute in both directions when
+         * the slot was released (server_sim_players.c) — and the first click
+         * on them would spend itself sending a no-op unmute. The render
+         * limiter's ring goes for the same reason: a slot vacated by a
+         * spammer would otherwise start the next occupant off already over
+         * the cap. Same argument as voiceForgetPlayer on the voice mute. */
+        clientSimSetPingMuted(cs, pNum, false);
+        memset(cs->pingRenderMs[pNum], 0, sizeof(cs->pingRenderMs[pNum]));
+        cs->pingRenderIdx[pNum] = 0;
         if (cs->inLobby && evt->u.playerLeave.quiet == 0) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);

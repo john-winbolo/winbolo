@@ -1726,8 +1726,12 @@ int run_ping_binding_format(void);
 int run_ping_pie_slices(void);
 int run_ping_edge_sides(void);
 int run_ping_edge_corner(void);
+int run_ping_edge_size_from_distance(void);
+int run_ping_edge_name_anchor(void);
 int run_ping_rect_inset(void);
 int run_ping_event_wire(void);
+int run_ping_sound_fallback(void);
+int run_ping_name_truncate(void);
 
 /* Server side of the smart ping (test_ping_dispatch.c): the CMD_PING arm's
  * running-game / occupied-slot / known-kind gates, the per-player rate limit
@@ -1740,8 +1744,12 @@ int run_ping_dispatch_rejects_empty_slot_and_out_of_range(void);
 int run_ping_dispatch_map_range_bound(void);
 int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
+int run_ping_dispatch_spam_30s_window(void);
 int run_ping_dispatch_new_round_clears_rate_limit(void);
 int run_ping_reaches_team_only(void);
+int run_ping_mute_relay_skip(void);
+int run_ping_mute_client_mirror_cleared_on_leave(void);
+int run_ping_sender_name_empty_for_unused_slot(void);
 
 /* Smart ping across the wire (test_ping_network.c): the full client -> server
  * -> client path over the real loopback UDP transport, driven through

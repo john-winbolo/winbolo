@@ -94,9 +94,39 @@ static void pmStrokeRect(SDL_Renderer *renderer, float x0, float y0,
     }
 }
 
+/* The sender's name under the square, centred on it. Nothing to place around:
+ * every view that draws a marker clips to its own map area, so a name that
+ * runs past the edge is cut there rather than smeared over the panels — the
+ * same treatment a tank label at the edge of the view gets. */
+static void pmDrawName(SDL_Renderer *renderer, const PingMarkerLabel *label,
+                       float cx, float cy, float tileH, float alpha) {
+    float scale;
+    char  shown[PING_NAME_DISPLAY_MAX];
+    if (label == NULL || label->cache == NULL || label->font == NULL) return;
+    if (label->name == NULL || label->name[0] == '\0') return;
+    /* Smaller than the tank labels around it, at PING_NAME_SCALE of whatever
+     * size the host asked for: the scale is a draw-time multiplier on the
+     * cached texture, not part of what the cache is keyed on, so this costs
+     * nothing and cannot make the ping names and the tank labels rebuild each
+     * other's texture. */
+    scale = (label->scale > 0.0f) ? label->scale : 1.0f;
+    scale *= PING_NAME_SCALE;
+    /* Shortened to PING_NAME_MAX_CHARS with a real U+2026: these faces are the
+     * Sarasa TTFs and every one of them carries that glyph. The cache below is
+     * keyed on the slot and rebuilds when the string changes, so it has to be
+     * handed the shortened form every frame, not the full one. */
+    pingDisplayName(label->name, PING_NAME_ELLIPSIS, shown, sizeof(shown));
+    if (shown[0] == '\0') return;
+    tankLabelDrawNameCentred(label->cache, renderer, label->font, shown,
+                             (BYTE)label->slot, cx,
+                             cy + tileH * (0.5f + PING_MARKER_NAME_GAP),
+                             scale, alpha, (Uint8)PING_NAME_GREY);
+}
+
 void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
                     float cx, float cy, float tileW, float tileH,
-                    unsigned int ageMs, float alpha) {
+                    unsigned int ageMs, float alpha,
+                    const PingMarkerLabel *label) {
     const PingKindStyle *style = pingKindStyle(kind);
     float hx = tileW * 0.5f, hy = tileH * 0.5f;
     int   line = (tileW >= 24.0f) ? 2 : 1;
@@ -147,4 +177,10 @@ void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
         pmFillCircle(renderer, cx, cy, tileW * 0.2f,
                      style->r, style->g, style->b, pmAlpha(a));
     }
+
+    /* The name at the marker's own fade rather than the dimmed PING_MARKER_ALPHA
+       the square and the icon are drawn at: a name is only worth putting on
+       the map if it can be read, and it is text over its own shadow, not a
+       wash of colour over the ground. */
+    pmDrawName(renderer, label, cx, cy, tileH, alpha);
 }

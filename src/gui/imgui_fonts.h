@@ -83,6 +83,13 @@ static inline const ImWchar *imguiBoloGlyphRanges() {
     builder.AddRanges(kLatinExtA);
     builder.AddRanges(kLatinExtB);
 
+    /* U+2026 HORIZONTAL ELLIPSIS: the smart-ping edge bars shorten a long
+     * sender name to PING_NAME_MAX_CHARS characters plus "…" (ping_kinds.h),
+     * and they draw from this atlas. Inter carries the glyph; it just sits in
+     * General Punctuation, outside every range above. */
+    static const ImWchar kEllipsis[] = { 0x2026, 0x2026, 0 };
+    builder.AddRanges(kEllipsis);
+
     builder.AddRanges(atlas->GetGlyphRangesCyrillic());
     builder.AddRanges(atlas->GetGlyphRangesGreek());
     builder.AddRanges(atlas->GetGlyphRangesVietnamese());

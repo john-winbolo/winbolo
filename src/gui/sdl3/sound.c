@@ -30,16 +30,23 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include "client_enums.h"  /* sndEffects */
+#include "ping_sounds.h"   /* pingSoundResolve / pingSoundKindOf */
 #include "../sound.h"
 #include "../lang.h"
 #include "skin_source.h"
 #include "sound_variants.h"
 #include "../../common/wb_log.h"
 
-#define NUM_SOUNDS 31
+#define NUM_SOUNDS 38
 #define MAX_SOUND_SLOTS 16  /* Maximum simultaneous sounds */
 #define RESERVED_SHOOT_SELF_SLOT 0  /* Slot 0 reserved for player shooting */
 #define SHOOT_SELF_INDEX 6  /* Index of shooting_self.wav in sounds[] */
+
+/* The ping sounds sit at the end of soundFiles[] in one run: the default
+ * first, then one per PING_KIND_* in kind order, which is what lets the mask
+ * pingSoundResolve reads be built with a loop rather than a table. */
+#define PING_DEFAULT_INDEX 31
+#define PING_KIND_FIRST_INDEX 32
 
 /* Sound data structure for each effect - stores converted data */
 typedef struct {
@@ -146,7 +153,32 @@ static const char *soundFiles[NUM_SOUNDS] = {
     "lobby_game_start.wav",    /* 28 */
     "lobby_player_join.wav",   /* 29 */
     "lobby_player_leave.wav",  /* 30 */
+    /* Smart pings. Named after the same keys the icons use (data/ui/ping/
+     * <kind>.svg), so the sound and the picture for a kind are found by the
+     * same word. Only the default and the caution ping ship with the game;
+     * the other five are looked for all the same, so dropping one in — here
+     * or in a skin — is all it takes to give that kind its own sound.
+     * PING_DEFAULT_INDEX / PING_KIND_FIRST_INDEX name where this run starts;
+     * the six after the default are in PING_KIND_* order. */
+    "ping_default.wav",        /* 31 */
+    "ping_standard.wav",       /* 32 */
+    "ping_caution.wav",        /* 33 */
+    "ping_assist.wav",         /* 34 */
+    "ping_attack.wav",         /* 35 */
+    "ping_onmyway.wav",        /* 36 */
+    "ping_botcommand.wav",     /* 37 */
 };
+BOLO_STATIC_ASSERT(PING_KIND_FIRST_INDEX + PING_KIND_COUNT == NUM_SOUNDS,
+                   every_ping_kind_needs_a_sound_file_name);
+
+/* The per-kind ping sounds, and only those: a game or a skin that does not
+ * hold one is the normal case, not a fault, so a file missing here is not
+ * warned about and is not counted among the members that would not decode.
+ * ping_default is not one of them — it is what the others fall back to, and
+ * a game missing it is worth the usual warning. */
+static bool soundIsOptional(int index) {
+    return index >= PING_KIND_FIRST_INDEX && index < NUM_SOUNDS;
+}
 
 /*********************************************************
 *NAME:          convertAudioData
@@ -278,6 +310,8 @@ typedef struct {
                               answer by name shape and open nothing */
     int         index;     /* which row of sounds[] is being filled */
     int         failures;  /* members that would not decode */
+    bool        optional;  /* the game need not hold this one; see
+                              soundIsOptional */
 } SoundPoolCtx;
 
 /*********************************************************
@@ -394,9 +428,15 @@ static bool builtinLoadMember(void *ctx, const char *relName, int slot) {
                  relName);
     if (!SDL_LoadWAV(fullPath, &wavSpec, &wavData, &wavLength) ||
         !storeSoundData(&sounds[c->index][slot], &wavSpec, wavData, wavLength)) {
-        c->failures++;
-        WB_LOG_WARN(WB_LOG_CAT_AUDIO, "soundSetup: %s: %s", fullPath,
-                    SDL_GetError());
+        /* builtinHasMember answers by name shape, so this is also the path a
+         * file the game simply does not ship takes. For an optional sound
+         * that is the expected outcome: soundSetup says so once, in its own
+         * line, and it is not one of the members that would not decode. */
+        if (!c->optional) {
+            c->failures++;
+            WB_LOG_WARN(WB_LOG_CAT_AUDIO, "soundSetup: %s: %s", fullPath,
+                        SDL_GetError());
+        }
         return false;
     }
     return true;
@@ -583,6 +623,7 @@ bool soundSetup(void) {
         int maxVariants = 0;
         int membersUnreadable = 0;
         int fellBack = 0;
+        int optionalMissing = 0;
         if (!basePath) basePath = "./";
         if (skinLabel == NULL || skinLabel[0] == '\0') skinLabel = "none";
 
@@ -599,6 +640,7 @@ bool soundSetup(void) {
             ctx.baseName = soundFiles[i];
             ctx.index = i;
             ctx.failures = 0;
+            ctx.optional = soundIsOptional(i);
 
             if (skin != NULL) {
                 n = soundVariantLoad(soundFiles[i], skinHasMember,
@@ -620,15 +662,25 @@ bool soundSetup(void) {
             }
             variantCount[i] = (unsigned char)n;
 
+            /* Said once here, at load, rather than every time that kind is
+             * pinged. The count goes in the summary line below so a reader
+             * knows how many of these to expect. */
+            if (n == 0 && ctx.optional) {
+                optionalMissing++;
+                WB_LOG_INFO(WB_LOG_CAT_AUDIO,
+                            "soundSetup: no %s in the game data or the skin; that ping kind plays %s",
+                            soundFiles[i], soundFiles[PING_DEFAULT_INDEX]);
+            }
+
             if (n > 0) loadedCount++;
             if (n > 1) withVariants++;
             if (n > maxVariants) maxVariants = n;
         }
 
         WB_LOG_INFO(WB_LOG_CAT_AUDIO,
-                    "soundSetup: %d effects, %d from skin=%s, %d with variants (max %d), %d members unreadable, %d fell back to the built-in",
+                    "soundSetup: %d effects, %d from skin=%s, %d with variants (max %d), %d members unreadable, %d fell back to the built-in, %d ping kinds on the default sound",
                     loadedCount, fromSkin, skinLabel, withVariants, maxVariants,
-                    membersUnreadable, fellBack);
+                    membersUnreadable, fellBack, optionalMissing);
 
         if (loadedCount == 0) {
             imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_SOUND_LOAD_FAILED),
@@ -854,6 +906,40 @@ static void playSound(int index) {
 }
 
 /*********************************************************
+*NAME:          soundPingFoundMask
+*PURPOSE:
+*  Which ping kinds have a sound of their own to play: bit
+*  PING_KIND_x set when that kind's pool holds at least one
+*  member, whether it came from the game's data or from the
+*  active skin.  That is the loader's own record of a file
+*  that resolved — an empty or undecodable file leaves the
+*  pool at zero the same way a missing one does — and it is
+*  all pingSoundResolve needs to make the fallback decision.
+*
+*  Read under the slots mutex, like every other reader of
+*  variantCount, so a skin reload cannot be seen half done.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static unsigned int soundPingFoundMask(void) {
+    unsigned int mask = 0;
+    int k;
+
+    if (!slotsMutex) return 0;
+
+    SDL_LockMutex(slotsMutex);
+    for (k = 0; k < PING_KIND_COUNT; k++) {
+        if (variantCount[PING_KIND_FIRST_INDEX + k] > 0) {
+            mask |= 1u << k;
+        }
+    }
+    SDL_UnlockMutex(slotsMutex);
+
+    return mask;
+}
+
+/*********************************************************
 *NAME:          soundPlayEffect
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/12/98
@@ -866,6 +952,14 @@ static void playSound(int index) {
 *********************************************************/
 void soundPlayEffect(sndEffects value) {
     int index;
+    unsigned char pingKind = pingSoundKindOf(value);
+
+    /* A ping kind with no sound file of its own plays the default ping
+     * instead.  The rule is pingSoundResolve's and lives nowhere else; this
+     * only hands it what actually loaded. */
+    if (pingKind < PING_KIND_COUNT) {
+        value = pingSoundResolve(pingKind, soundPingFoundMask());
+    }
 
     switch (value) {
     case shootSelf:
@@ -957,6 +1051,29 @@ void soundPlayEffect(sndEffects value) {
         break;
     case lobbyPlayerLeave:
         index = 30; /* lobby_player_leave */
+        break;
+    /* The ping sounds. Everything the fallback could turn into arrives here,
+     * so each kind needs its own arm as well as the default. */
+    case pingDefault:
+        index = PING_DEFAULT_INDEX;
+        break;
+    case pingStandard:
+        index = PING_KIND_FIRST_INDEX + PING_KIND_STANDARD;
+        break;
+    case pingCaution:
+        index = PING_KIND_FIRST_INDEX + PING_KIND_CAUTION;
+        break;
+    case pingAssist:
+        index = PING_KIND_FIRST_INDEX + PING_KIND_ASSIST;
+        break;
+    case pingAttack:
+        index = PING_KIND_FIRST_INDEX + PING_KIND_ATTACK;
+        break;
+    case pingOnMyWay:
+        index = PING_KIND_FIRST_INDEX + PING_KIND_ON_MY_WAY;
+        break;
+    case pingBotCommand:
+        index = PING_KIND_FIRST_INDEX + PING_KIND_BOT_COMMAND;
         break;
     default:
         /* shootFar */

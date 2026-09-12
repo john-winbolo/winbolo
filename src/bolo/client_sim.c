@@ -2196,6 +2196,22 @@ void clientSimAddPing(ClientSim *cs, uint8_t sender, uint8_t kind,
   slot->worldX = worldX;
   slot->worldY = worldY;
   slot->recvMs = nowMs;
+  /* The sender's name, taken now — see ClientPing. The players object is
+     gone between games, and a ping cannot arrive then; the NULL guard is for
+     the order teardown happens in, not for a case that has a name to find.
+
+     Asked only for a slot that is in use and in range, because
+     playersGetPlayerName answers NO_TANK — "???" — for one that is not, and
+     ClientPing promises an empty name there. Both drawers skip an empty name
+     and neither has a reason to distrust one that is not, so a "???" would go
+     on the map as a sender. The sender is server-validated, so this is the
+     belt and not the braces. */
+  slot->senderName[0] = '\0';
+  if (clientSimGetGameSim(cs)->plyrs != NULL && sender < MAX_TANKS &&
+      playersIsInUse(&clientSimGetGameSim(cs)->plyrs, sender) == TRUE) {
+    playersGetPlayerName(&clientSimGetGameSim(cs)->plyrs, sender,
+                         slot->senderName, sizeof(slot->senderName), FALSE);
+  }
   cs->pingWriteIdx = (cs->pingWriteIdx + 1) % MAX_CLIENT_PINGS;
 }
 
@@ -2219,6 +2235,24 @@ int clientSimGetPings(const ClientSim *cs, uint32_t nowMs,
     out[count++] = *p;
   }
   return count;
+}
+
+void clientSimSetPingMuted(ClientSim *cs, uint8_t player, bool muted) {
+  if (cs == NULL || player >= MAX_TANKS) {
+    return;
+  }
+  if (muted) {
+    cs->pingMutedByMe |= (PlayerBitMap)1u << player;
+  } else {
+    cs->pingMutedByMe &= ~((PlayerBitMap)1u << player);
+  }
+}
+
+bool clientSimIsPingMuted(const ClientSim *cs, uint8_t player) {
+  if (cs == NULL || player >= MAX_TANKS) {
+    return false;
+  }
+  return (cs->pingMutedByMe & ((PlayerBitMap)1u << player)) != 0;
 }
 
 const OverviewMap *clientSimGetOverviewMap(const ClientSim *cs) {
