@@ -593,8 +593,13 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt3;
     break;
   case log_PillSetHealth:
+    /* The index and the armour in a byte each: armour outgrew a nibble. */
+    out[off++] = log_PillSetHealth;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
   case log_PillSetInTank:
-    out[off++] = itemNum;
+    out[off++] = log_PillSetInTank;
     out[off++] = opt1;
     break;
   case log_SoundBuild:

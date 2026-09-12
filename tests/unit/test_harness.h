@@ -846,6 +846,12 @@ int run_replay_roundtrip_world(void);
 /* Same fixture: a base moved by basesMigrate (its owner left the game) is on
  * the same base, with the same new owner, after replay. */
 int run_replay_roundtrip_base_migrate(void);
+/* Same fixture: a pillbox's armour and square change together, so the health
+ * record has two more records behind it in the same stream. A viewer that
+ * takes the wrong number of bytes for the health record reads the ones after
+ * it off their boundaries, which shows up as a pill on the wrong square rather
+ * than as an armour that happens to match. */
+int run_replay_roundtrip_pill_health(void);
 
 /* Viewer-side decode of per-tank stocks (test_lv_tank_stocks.c): hand-built
  * snapshot bodies and forward records through lv_specSeedLoad /

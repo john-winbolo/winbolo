@@ -936,7 +936,8 @@ static void simRunHalfStep(ServerSim *sim) {
                 ev.data[1] = currentPills[p].x;
                 ev.data[2] = currentPills[p].y;
                 ev.data[3] = currentPills[p].owner;
-                ev.data[4] = currentPills[p].armourInTank;
+                ev.data[4] = currentPills[p].pillFlags;
+                ev.data[5] = currentPills[p].armour;
                 serverSimAddEvent(sim, &ev);
             }
         }

@@ -86,7 +86,9 @@ Selected event types (see the `logitem` enum for the complete list):
 | 21 | `log_ChangeName` | player + Pascal name |
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |
-| 27–30 | `log_Pill*` | pillbox owner / health / placement / in-tank |
+| 27 | `log_PillSetOwner` | pillbox owner |
+| 28 | `log_PillSetHealth` | pillbox index, then its armour — one byte each |
+| 29–30 | `log_PillSetPlace`, `log_PillSetInTank` | pillbox placement / in-tank |
 | 31 | `log_SaveMap` | the host saved the map mid-game |
 | 32–33 | `log_LostMan`, `log_KillPlayer` | man lost / player killed |
 | 53 | `log_GameSettings` | Pascal-form blob of every lobby setting (below) |

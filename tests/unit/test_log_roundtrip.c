@@ -74,7 +74,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_BaseSetOwner:     return 3;
         case log_BaseSetStock:     return 4;
         case log_PillSetOwner:     return 3;
-        case log_PillSetHealth:    return 1;
+        case log_PillSetHealth:    return 2;   /* index, armour */
         case log_PillSetPlace:     return 3;
         case log_PillSetInTank:    return 1;
         case log_SaveMap:          return 0;
@@ -441,8 +441,8 @@ int run_log_roundtrip_basic(void) {
 
     logAddEvent(log_LobbyExit,       0, 0, 0, 0, 0, NULL);
     logAddEvent(log_BaseSetOwner,    2, 5, 1, 0, 0, NULL);
-    logAddEvent(log_PillSetHealth,   0x3A /* pillNum=3,armour=10 */,
-                                     0, 0, 0, 0, NULL);
+    logAddEvent(log_PillSetHealth,   3 /* pillNum */, 10 /* armour */,
+                                     0, 0, 0, NULL);
     logAddEvent(log_Shell,           42, 64, 0x42, 3, 0, NULL);
     logAddEvent(log_GameSettings,    0, 0, 0, 0, 0, settingsBlob);
     logWriteTick();
@@ -587,7 +587,7 @@ int run_log_roundtrip_snapshot_keeps_chain_synced(void) {
     /* Queue several events (mixed types so logKey rotates through
      * different values before the snapshot). */
     logAddEvent(log_BaseSetOwner,   1, 3, 1, 0, 0, NULL);
-    logAddEvent(log_PillSetHealth,  0x21, 0, 0, 0, 0, NULL);
+    logAddEvent(log_PillSetHealth,  2, 1, 0, 0, 0, NULL);
     logAddEvent(log_Shell,          10, 20, 0x33, 1, 0, NULL);
 
     /* Fire a snapshot WITH the events still in logMem. This is the
@@ -739,7 +739,7 @@ int run_log_roundtrip_lobby_mode_drops_world_events(void) {
     logAddEvent(log_LobbyEnter,     0, 0, 0, 0, 0, NULL);
     logAddEvent(log_MapChange,      10, 20, 5, 0, 0, NULL);    /* dropped */
     logAddEvent(log_TeamSet,        2, 1, 0, 0, 0, NULL);
-    logAddEvent(log_PillSetHealth,  0x21, 0, 0, 0, 0, NULL);   /* dropped */
+    logAddEvent(log_PillSetHealth,  2, 1, 0, 0, 0, NULL);   /* dropped */
     logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
     logAddEvent(log_Shell,          42, 64, 0x42, 3, 0, NULL); /* dropped */
     logAddEvent(log_AllyAccept,     1, 2, 0, 0, 0, NULL);

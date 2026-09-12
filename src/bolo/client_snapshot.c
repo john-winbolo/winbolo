@@ -658,7 +658,7 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         csPtr->hasAnyPillCaptured = true;
         break;
       case EVENT_PILL_UPDATE:
-        /* data: [pillIndex, x, y, owner, armourInTank] */
+        /* data: [pillIndex, x, y, owner, pillFlags, armour] */
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
@@ -675,7 +675,7 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
             (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
             (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
             (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
-            (*csPtr->sim.pb).item[idx].armour = pillArmourFromByte(events[i].data[4]);
+            (*csPtr->sim.pb).item[idx].armour = events[i].data[5];
             (*csPtr->sim.pb).item[idx].inTank = pillInTankFromByte(events[i].data[4]) ? TRUE : FALSE;
           }
         }
@@ -1424,16 +1424,16 @@ void clientApplySnapshot(ClientSim *csPtr,
        * held: a pill that was in a tank and is not any more, arriving without
        * its square, has been put down somewhere we were never told about. */
       pillsUpdatePosState(&csPtr->sim.pb, (BYTE)i,
-                          pillPosCurrentFromByte(pillSnaps[i].armourInTank),
-                          pillInTankFromByte(pillSnaps[i].armourInTank));
+                          pillPosCurrentFromByte(pillSnaps[i].pillFlags),
+                          pillInTankFromByte(pillSnaps[i].pillFlags));
       /* The square is written as sent — for a pill we cannot see it is the one
        * the server has us holding, which is what the checksum is taken over.
        * The bit says whether the pill is on it now. */
       (*csPtr->sim.pb).item[i].x      = pillSnaps[i].x;
       (*csPtr->sim.pb).item[i].y      = pillSnaps[i].y;
       (*csPtr->sim.pb).item[i].owner  = pillSnaps[i].owner;
-      (*csPtr->sim.pb).item[i].armour = pillArmourFromByte(pillSnaps[i].armourInTank);
-      (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].armourInTank) ? TRUE : FALSE;
+      (*csPtr->sim.pb).item[i].armour = pillSnaps[i].armour;
+      (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].pillFlags) ? TRUE : FALSE;
     }
   }
 

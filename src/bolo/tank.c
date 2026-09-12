@@ -3769,12 +3769,12 @@ int tankGetLastTankDeath(tank *value) {
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
 *********************************************************/
-int tankGetDeathWait(tank *value) {
+uint16_t tankGetDeathWait(tank *value) {
 	return (*value)->deathWait;
 }
 
-void tankSetDeathWait(tank *value, int wait) {
-	(*value)->deathWait = (BYTE)wait;
+void tankSetDeathWait(tank *value, uint16_t wait) {
+	(*value)->deathWait = wait;
 }
 
 tank tankDeepCopy(tank src) {

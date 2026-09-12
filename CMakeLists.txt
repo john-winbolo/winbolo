@@ -4244,6 +4244,7 @@ set(_unit_test_names
     log_roundtrip_tank_stock_record
     replay_roundtrip_world
     replay_roundtrip_base_migrate
+    replay_roundtrip_pill_health
     lv_tank_stocks_from_snapshot
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record

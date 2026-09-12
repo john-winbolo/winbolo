@@ -316,8 +316,8 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
         out[count].x = (*sim->sim.pb).item[p].x;
         out[count].y = (*sim->sim.pb).item[p].y;
         out[count].owner = (*sim->sim.pb).item[p].owner;
-        out[count].armourInTank = pillPackArmourInTank((*sim->sim.pb).item[p].armour,
-                                                       (*sim->sim.pb).item[p].inTank);
+        out[count].pillFlags = pillSetInTank(0, (*sim->sim.pb).item[p].inTank);
+        out[count].armour = (*sim->sim.pb).item[p].armour;
         count++;
     }
     return count;
@@ -525,8 +525,8 @@ void serverSimFogPillUpdateEvent(ServerSim *sim, BYTE slot, GameEvent *ev,
         ev->data[4] = pillSetPosCurrent(ev->data[4], true);
         return;
     }
-    /* Owner and armourInTank's own bits are left as they are: they are public
-     * and have to keep arriving for a pill nobody can see. */
+    /* Owner, armour and the flags byte's in-tank bit are left as they are: they
+     * are public and have to keep arriving for a pill nobody can see. */
     ev->data[1] = sim->clientKnownPillX[slot][p];
     ev->data[2] = sim->clientKnownPillY[slot][p];
     ev->data[4] = pillSetPosCurrent(ev->data[4], false);
@@ -1292,7 +1292,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->mines = tankGetMines(&sim->sim.tanks[i]);
             ts->trees = tankGetTrees(&sim->sim.tanks[i]);
             ts->gunsightLen = tankGetGunsightLength(&sim->sim.tanks[i]);
-            ts->deathWait = (uint8_t)tankGetDeathWait(&sim->sim.tanks[i]);
+            ts->deathWait = tankGetDeathWait(&sim->sim.tanks[i]);
             ts->reload = tankGetReloadTime(&sim->sim.tanks[i]);
             {
                 /* The owning client predicts with these, so they ride the
@@ -1391,8 +1391,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         for (i = 0; i < hdr->pillCount && i < MAX_PILLS; i++) {
             if (serverSimPillPosVisible(sim, clientIdx, (BYTE)i, viewports,
                                         numViewports)) {
-                pillsOut[i].armourInTank =
-                    pillSetPosCurrent(pillsOut[i].armourInTank, true);
+                pillsOut[i].pillFlags =
+                    pillSetPosCurrent(pillsOut[i].pillFlags, true);
             } else {
                 pillsOut[i].x = sim->clientKnownPillX[clientIdx][i];
                 pillsOut[i].y = sim->clientKnownPillY[clientIdx][i];

@@ -49,14 +49,16 @@ struct ClientSim;
 
 #define PILLS_MAX_ARMOUR 15
 
-/* Pill armour (0..PILLS_MAX_ARMOUR) and the inTank flag share one wire byte:
- * armour in the low nibble, inTank in bit 4. */
-static inline uint8_t pillPackArmourInTank(uint8_t armour, bool inTank) {
-    assert(armour <= PILLS_MAX_ARMOUR);
-    return (uint8_t)((armour & 0x0F) | (inTank ? 0x10 : 0x00));
+/* A pill's flags byte. Armour travels in a byte of its own; this byte carries
+ * the two flags below and nothing else.
+ *
+ * Bit 4: the pill is inside a tank rather than on the map. */
+#define PILL_IN_TANK 0x10
+static inline uint8_t pillSetInTank(uint8_t b, bool inTank) {
+    return (uint8_t)(inTank ? (b | PILL_IN_TANK)
+                            : (b & (uint8_t)~PILL_IN_TANK));
 }
-static inline uint8_t pillArmourFromByte(uint8_t b) { return (uint8_t)(b & 0x0F); }
-static inline bool    pillInTankFromByte(uint8_t b) { return (b & 0x10) != 0; }
+static inline bool    pillInTankFromByte(uint8_t b) { return (b & PILL_IN_TANK) != 0; }
 
 /* Bit 5 of the same byte: the x/y sent with this pill are its square right
  * now. Clear means the recipient was not told — the square is the last one it

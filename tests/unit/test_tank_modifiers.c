@@ -154,7 +154,7 @@ int run_tank_modifiers_wire_roundtrip(void) {
     filled.armour = 0x31; filled.shells = 0x32; filled.mines = 0x33;
     filled.trees = 0x34;  filled.gunsightLen = 0x35;
     filled.reload = 0x41;
-    filled.deathWait = 0x51;
+    filled.deathWait = 0x5152;   /* past a byte: the group carries two */
     filled.lgmFrame = 0x61; filled.lgmMX = 0x62; filled.lgmMY = 0x63;
     filled.lgmPX = 0x64;    filled.lgmPY = 0x65;
     filled.firstLeft = 0x71; filled.firstRight = 0x72;

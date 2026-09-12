@@ -173,6 +173,70 @@ int run_replay_roundtrip_world(void) {
     return 0;
 }
 
+/* The pill health record names the pillbox and its armour in a byte each, and
+ * the writer and the viewer have to agree on that length. A reader that takes
+ * one byte where two were written treats the armour as the next record's event
+ * code and reads everything after it off its boundaries, so the damage is not
+ * to the armour but to whatever follows.
+ *
+ * The round therefore changes a pillbox's armour and its square in the one
+ * call, which writes the health record with two more behind it in the same
+ * stream. A length mistake comes back as a pill on the wrong square rather
+ * than as an armour value that happens to match.
+ *
+ * pillsSetPill is the sim's own function for this and writes four records —
+ * owner, health, in-tank, placement — so nothing here is a hand-built log. */
+int run_replay_roundtrip_pill_health(void) {
+    ReplayHarness h;
+    GameSim *gs;
+    pillbox firstPill;
+    BYTE pillX = 0;
+    BYTE pillY = 0;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "pillhealth", "Tester"),
+                  "could not start recording");
+    gs = serverSimGetGameSim(h.sim);
+    UT_ASSERT_MSG(gs != NULL, "no GameSim");
+
+    replayHarnessTick(&h, 4);
+
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1, "fixture map has no pills");
+    UT_ASSERT_MSG(findPlainGrassCell(gs, &pillX, &pillY),
+                  "fixture map has no free grass cell to move a pill onto");
+
+    memset(&firstPill, 0, sizeof(firstPill));
+    pillsGetPill(&gs->pb, &firstPill, 1);
+    UT_ASSERT_MSG(firstPill.armour != 6,
+                  "pill 1 already sits at armour 6, so setting it there would "
+                  "record nothing to read back");
+    UT_ASSERT_MSG(firstPill.x != pillX || firstPill.y != pillY,
+                  "pill 1 is already on the free cell this case moves it to");
+    firstPill.armour = 6;
+    firstPill.x = pillX;
+    firstPill.y = pillY;
+    pillsSetPill(&gs->pb, &firstPill, 1);
+
+    memset(&firstPill, 0, sizeof(firstPill));
+    pillsGetPill(&gs->pb, &firstPill, 1);
+    UT_ASSERT_MSG(firstPill.armour == 6, "pill 1 armour is %d, expected 6",
+                  firstPill.armour);
+    UT_ASSERT_MSG(firstPill.x == pillX && firstPill.y == pillY,
+                  "pill 1 sits at %d,%d, expected %d,%d",
+                  firstPill.x, firstPill.y, pillX, pillY);
+
+    replayHarnessTick(&h, 6);
+
+    UT_ASSERT_MSG(replayHarnessStopRecording(&h), "could not stop recording");
+    UT_ASSERT_MSG(replayHarnessDecode(&h),
+                  "replay did not decode to end-of-log");
+    UT_ASSERT_MSG(replayHarnessCompare(&h), "replayed world differs: %s",
+                  replayHarnessDiff(&h));
+
+    replayHarnessStop(&h);
+    return 0;
+}
+
 /* A base that changes hands because its owner left the game goes through
  * basesMigrate, which writes log_BaseSetOwner for each base it moves. The
  * record has to name the base and the new owner in that order; a record

@@ -1005,8 +1005,8 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
             f->snapPills[i].x      = ps.x;
             f->snapPills[i].y      = ps.y;
             f->snapPills[i].owner  = ps.owner;
-            f->snapPills[i].armour = (uint8_t)(ps.armourInTank & 0x0F);
-            f->snapPills[i].inTank = (uint8_t)((ps.armourInTank >> 4) & 0x01);
+            f->snapPills[i].armour = ps.armour;
+            f->snapPills[i].inTank = (uint8_t)(pillInTankFromByte(ps.pillFlags) ? 1 : 0);
             f->snapPills[i].speed  = 0;
         }
 

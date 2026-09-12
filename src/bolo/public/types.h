@@ -202,7 +202,7 @@ struct tankObj {
   BYTE sightLen;      /* Length of the gunsight measured in map units */
   int32_t numKills;   /* Number of kills the tank has had — was int, fixed to 32-bit */
   int32_t numDeaths;  /* Number of deaths the tank has had — was int, fixed to 32-bit */
-  BYTE deathWait;     /* How long it is going to be on the screen till it refreshes */
+  uint16_t deathWait; /* How long it is going to be on the screen till it refreshes */
   BYTE waterCount;    /* Count for bubbles */
   bool obstructed;    /* Used by brains. Did the tank hit anything */
   bool newTank;       /* Is this a new tank or not (ie just died */

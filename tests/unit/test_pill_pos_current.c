@@ -68,12 +68,13 @@ static PillSnapshot pc_pill_snap(BYTE x, BYTE y, BYTE owner, BYTE armour,
     snap.x = x;
     snap.y = y;
     snap.owner = owner;
-    snap.armourInTank =
-        pillSetPosCurrent(pillPackArmourInTank(armour, inTank), posCurrent);
+    snap.armour = armour;
+    snap.pillFlags =
+        pillSetPosCurrent(pillSetInTank(0, inTank), posCurrent);
     return snap;
 }
 
-/* An EVENT_PILL_UPDATE carrying the same five fields. */
+/* An EVENT_PILL_UPDATE carrying the same fields. */
 static GameEvent pc_pill_event(BYTE idx, BYTE x, BYTE y, BYTE owner,
                                BYTE armour, bool inTank, bool posCurrent) {
     GameEvent ev;
@@ -85,7 +86,8 @@ static GameEvent pc_pill_event(BYTE idx, BYTE x, BYTE y, BYTE owner,
     ev.data[2] = y;
     ev.data[3] = owner;
     ev.data[4] =
-        pillSetPosCurrent(pillPackArmourInTank(armour, inTank), posCurrent);
+        pillSetPosCurrent(pillSetInTank(0, inTank), posCurrent);
+    ev.data[5] = armour;
     return ev;
 }
 

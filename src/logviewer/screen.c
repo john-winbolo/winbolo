@@ -1006,8 +1006,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PillSetHealth:
       logReadBytes(&opt1, 1);
-      lv_utilGetNibbles(opt1, &opt2, &opt3);
-      lv_pillsSetHealth(&g_lv->pb, opt2, opt3);
+      logReadBytes(&opt2, 1);
+      lv_pillsSetHealth(&g_lv->pb, opt1, opt2);
       break;
     case log_PillSetInTank:
       logReadBytes(&opt1, 1);
@@ -1836,7 +1836,6 @@ static int walkSkipEventBody(BYTE code) {
     case log_PlayerQuit:
     case log_LostMan:
     case log_AllyLeave:
-    case log_PillSetHealth:
     case log_PillSetInTank:
     case log_PlayerRejoin:
     case log_PlayerLeaving:
@@ -1850,6 +1849,7 @@ static int walkSkipEventBody(BYTE code) {
     case log_AllyRequest:
     case log_AllyAccept:
     case log_KillPlayer:
+    case log_PillSetHealth:
     case log_TeamSet:
     case log_SoundBuild:
     case log_SoundFarm:

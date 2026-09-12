@@ -187,7 +187,7 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
     (((*value)->item[pillNum]).inTank) = item->inTank;
     (((*value)->item[pillNum]).justSeen) = item->justSeen;
     logAddEvent(log_PillSetOwner, pillNum, item->owner, TRUE, 0, 0, NULL);
-    logAddEvent(log_PillSetHealth, utilPutNibble(pillNum, item->armour), 0, 0, 0, 0, NULL);
+    logAddEvent(log_PillSetHealth, pillNum, item->armour, 0, 0, 0, NULL);
     logAddEvent(log_PillSetInTank, utilPutNibble(pillNum, FALSE), 0, 0, 0, 0, NULL);
     logAddEvent(log_PillSetPlace, pillNum, item->x, item->y, 0, 0, NULL);
   }
@@ -709,7 +709,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
                                     (uint16_t)(before - after), destroyed,
                                     (*value)->item[count].x, (*value)->item[count].y);
       }
-      logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+      logAddEvent(log_PillSetHealth, count, (*value)->item[count].armour, 0, 0, 0, NULL);
       if ((*value)->item[count].armour == 0) {
         returnValue = TRUE;
         /* The entry test above required armour > 0, so reaching zero here is
@@ -1431,7 +1431,7 @@ void pillsGetDamagePos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue,
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), pillDead);
         }
       }
-      logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+      logAddEvent(log_PillSetHealth, count, (*value)->item[count].armour, 0, 0, 0, NULL);
 
       count = (*value)->numPills;
     }
@@ -1520,7 +1520,7 @@ BYTE pillsRepairPos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BY
         if (sim->isServer == FALSE) {
           frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), (pillsGetAllianceNum(sim, value, (BYTE) (count+1))));
         }
-        logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+        logAddEvent(log_PillSetHealth, count, (*value)->item[count].armour, 0, 0, 0, NULL);
       }
       count = (*value)->numPills;
 

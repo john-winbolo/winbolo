@@ -1664,8 +1664,8 @@ int tankGetLastTankDeath(tank *value);
 *ARGUMENTS:
 *  value  - Pointer to the tank structure
 *********************************************************/
-int tankGetDeathWait(tank *value);
-void tankSetDeathWait(tank *value, int wait);
+uint16_t tankGetDeathWait(tank *value);
+void tankSetDeathWait(tank *value, uint16_t wait);
 
 void tankResetHitCount(tank *value);
 void tankAddHit(tank *value, int amount);
