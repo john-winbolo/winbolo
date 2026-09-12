@@ -116,6 +116,21 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
      * which is what every server did before the field existed. */
     dst->voiceMode = readIntFieldDef(src, "voice", serverVoiceOn);
 
+    /* Same for these two: a tracker that has not learned them leaves the
+     * expanded overview window with nothing blocking sight. readIntFieldDef
+     * hands back whatever number it finds, so each is clamped here — a row
+     * must not carry a mode this build has no name for, the same rule the
+     * INFO packet and the LAN record apply to their own copies. */
+    dst->overviewWindow = readIntFieldDef(src, "overviewwindow",
+                                          overviewWindowExpanded);
+    if (dst->overviewWindow < 0 || dst->overviewWindow >= OVERVIEW_WINDOW_COUNT) {
+        dst->overviewWindow = overviewWindowExpanded;
+    }
+    dst->lineOfSight = readIntFieldDef(src, "lineofsight", lineOfSightOff);
+    if (dst->lineOfSight < 0 || dst->lineOfSight >= LINE_OF_SIGHT_COUNT) {
+        dst->lineOfSight = lineOfSightOff;
+    }
+
     dst->mines           = readBoolField(src, "mines");
     dst->password        = readBoolField(src, "password");
     dst->randomMap       = readBoolField(src, "random_map");

@@ -815,10 +815,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.allyView = (ViewPolicy)w.allyView;
                         e.classicMode = w.classicMode;
                         e.alliesInTrees = w.alliesInTrees;
-                        /* The JSON carries no overview window or line of
-                         * sight, and the latency ping does not refill a
-                         * tracker row, so the zero-init above leaves both
-                         * on their defaults here. */
+                        e.overviewWindow = (uint8_t)w.overviewWindow;
+                        e.lineOfSight = (uint8_t)w.lineOfSight;
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
 
                         e.players.clear();
