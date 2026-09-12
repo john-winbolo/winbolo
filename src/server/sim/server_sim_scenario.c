@@ -2167,8 +2167,19 @@ static ScnOpResult scenarioOpSetGameTime(ServerSim *sim,
 
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out) {
+    /* Loud in a development build, because either of these is a caller bug
+     * and the host that made it should hear about it at once. */
     assert(sim != NULL);
     assert(op != NULL);
+    /* And survivable in a shipped one, where the asserts above are gone:
+     * RelWithDebInfo carries -DNDEBUG. This is the call an out-of-process
+     * scenario host makes most, and a host that hands over a pointer it
+     * failed to resolve would otherwise take the whole server down and every
+     * player in the round with it. The other entry points below answer a
+     * NULL sim the same way. */
+    if (sim == NULL || op == NULL) {
+        return SCN_OP_BAD_CALL;
+    }
 
     /* A policy callback is a question the engine asks mid-operation. It
      * answers and nothing else: an op from inside one would mutate state

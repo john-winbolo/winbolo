@@ -532,7 +532,8 @@ typedef enum {
     SCN_OP_TOO_BIG,         /* a list or text exceeds its buffer */
     SCN_OP_RATE,            /* a second panel update in one tick, or a budget */
     SCN_OP_NOT_FOUND,       /* brain path or package name that does not resolve */
-    SCN_OP_NO_STOCK         /* a builder order the tank cannot pay for */
+    SCN_OP_NO_STOCK,        /* a builder order the tank cannot pay for */
+    SCN_OP_BAD_CALL         /* no sim or no op: the call itself is malformed */
 } ScnOpResult;
 
 /* What an add or a spawn chose. */
