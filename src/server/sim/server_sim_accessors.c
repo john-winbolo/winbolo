@@ -579,6 +579,8 @@ uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
         case LST_CLASSIC_MODE:      return LOBBY_LOCK_CLASSIC_MODE;
         case LST_ALLIES_IN_TREES:   return LOBBY_LOCK_ALLIES_IN_TREES;
+        case LST_OVERVIEW_WINDOW:   return LOBBY_LOCK_OVERVIEW_WINDOW;
+        case LST_LINE_OF_SIGHT:     return LOBBY_LOCK_LINE_OF_SIGHT;
         default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }

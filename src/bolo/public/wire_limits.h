@@ -116,13 +116,22 @@ typedef enum {
                                  * ally view to off, and refuses an
                                  * edit to any of those three while it
                                  * stays on. */
-    LST_ALLIES_IN_TREES   = 12  /* 1 byte bool. When true an allied
+    LST_ALLIES_IN_TREES   = 12, /* 1 byte bool. When true an allied
                                  * tank standing in trees is sent to
                                  * its allies instead of being
                                  * withheld. Off is the classic
                                  * behaviour, and classic mode forces
                                  * it off and refuses an edit while it
                                  * stays on. */
+    LST_OVERVIEW_WINDOW   = 13, /* 1 byte OverviewWindow. Which block of
+                                 * squares the map overview keeps live
+                                 * round the player's own tank. Classic
+                                 * mode forces the narrow window and
+                                 * refuses an edit while it stays on. */
+    LST_LINE_OF_SIGHT     = 14  /* 1 byte LineOfSightMode. What stops the
+                                 * player seeing inside that block.
+                                 * Classic mode forces it off and refuses
+                                 * an edit while it stays on. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

@@ -3,7 +3,7 @@
  * classic mode forces onto them, their lock bits and their trip through
  * the lobby snapshot.
  *
- * Four things are pinned here:
+ * Five things are pinned here:
  *
  *   1. A fresh sim keeps the live block expanded with nothing blocking
  *      sight inside it, which is what the game did before the settings
@@ -28,6 +28,13 @@
  *      host's change is undone when the last human leaves and
  *      serverSimResetLobbyToDefaults restores the operator's startup
  *      configuration.
+ *
+ *   5. The lobby's own path takes a one-byte payload for each, refuses a
+ *      wrong length and refuses a byte neither enum has a name for, and
+ *      refuses any edit at all while classic mode is on. Each code maps
+ *      to its own lock bit; without that the command dispatcher reads the
+ *      unknown sentinel and drops the edit, so the lobby control would
+ *      look live and do nothing.
  */
 
 #include <stdint.h>
@@ -125,6 +132,29 @@ int run_fog_settings_classic_mode_preset(void) {
                   "classic mode left line of sight at %u, want off",
                   (unsigned)serverSimGetLineOfSight(sim));
 
+    /* While it is on, both settings refuse a lobby edit, the same way the
+     * three view policies do. */
+    {
+        uint8_t value[1];
+        value[0] = (uint8_t)overviewWindowExpanded;
+        UT_ASSERT_MSG(!serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW,
+                                                  value, 1),
+                      "an overview-window edit should be refused under "
+                      "classic mode");
+        value[0] = (uint8_t)lineOfSightBuildingsAndTrees;
+        UT_ASSERT_MSG(!serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT,
+                                                  value, 1),
+                      "a line-of-sight edit should be refused under "
+                      "classic mode");
+        UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
+                          (uint8_t)overviewWindowClassic &&
+                      serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff,
+                      "a refused edit still moved a value "
+                      "(window %u, sight %u)",
+                      (unsigned)serverSimGetOverviewWindow(sim),
+                      (unsigned)serverSimGetLineOfSight(sim));
+    }
+
     /* Turning it off clears the flag and nothing else: both stay where
      * classic mode put them, which is the consequence of writing the
      * values rather than masking them at read time. */
@@ -143,6 +173,28 @@ int run_fog_settings_classic_mode_preset(void) {
     UT_ASSERT_MSG(serverSimGetLineOfSight(sim) ==
                       (uint8_t)lineOfSightBuildingsAndTrees,
                   "line of sight is not editable with classic mode off");
+
+    /* And through the lobby, which is the path a host's click takes. */
+    {
+        uint8_t value[1];
+        value[0] = (uint8_t)overviewWindowExpanded;
+        UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW,
+                                                 value, 1),
+                      "an overview-window edit should be allowed once "
+                      "classic mode is off");
+        UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
+                          (uint8_t)overviewWindowExpanded,
+                      "the accepted overview-window edit left the value "
+                      "at %u", (unsigned)serverSimGetOverviewWindow(sim));
+        value[0] = (uint8_t)lineOfSightOff;
+        UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT,
+                                                 value, 1),
+                      "a line-of-sight edit should be allowed once classic "
+                      "mode is off");
+        UT_ASSERT_MSG(serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff,
+                      "the accepted line-of-sight edit left the value at %u",
+                      (unsigned)serverSimGetLineOfSight(sim));
+    }
 
     serverSimDestroy(sim);
     return 0;
@@ -202,6 +254,88 @@ int run_fog_settings_lock_implied(void) {
                       "lock 0x%08X must also lock classic mode",
                       (unsigned)in);
     }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_fog_settings_lobby_edits(void) {
+    ServerSim *sim = make_fog_sim();
+    uint8_t value[3];
+    UT_ASSERT(sim != NULL);
+
+    /* A good payload of each is accepted and moves the value. */
+    value[0] = (uint8_t)overviewWindowClassic;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW,
+                                             value, 1),
+                  "a valid overview-window payload was refused");
+    UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
+                      (uint8_t)overviewWindowClassic,
+                  "overview window after the edit = %u, want classic",
+                  (unsigned)serverSimGetOverviewWindow(sim));
+    value[0] = (uint8_t)lineOfSightBuildingsAndTrees;
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT,
+                                             value, 1),
+                  "a valid line-of-sight payload was refused");
+    UT_ASSERT_MSG(serverSimGetLineOfSight(sim) ==
+                      (uint8_t)lineOfSightBuildingsAndTrees,
+                  "line of sight after the edit = %u, want buildings and "
+                  "trees", (unsigned)serverSimGetLineOfSight(sim));
+
+    /* Both settings are one byte wide, so a payload of any other length
+     * is refused and changes nothing. */
+    value[0] = (uint8_t)overviewWindowExpanded;
+    value[1] = 0;
+    value[2] = 0;
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW, value, 0));
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW, value, 2));
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW, value, 3));
+    value[0] = (uint8_t)lineOfSightOff;
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT, value, 0));
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT, value, 2));
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT, value, 3));
+    UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
+                      (uint8_t)overviewWindowClassic &&
+                  serverSimGetLineOfSight(sim) ==
+                      (uint8_t)lineOfSightBuildingsAndTrees,
+                  "a wrong-length payload still moved a value "
+                  "(window %u, sight %u)",
+                  (unsigned)serverSimGetOverviewWindow(sim),
+                  (unsigned)serverSimGetLineOfSight(sim));
+
+    /* A byte at or above the enum's count is refused rather than quietly
+     * ignored: the lobby offers a fixed set of choices, so anything else
+     * is a malformed command. */
+    value[0] = (uint8_t)OVERVIEW_WINDOW_COUNT;
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW, value, 1));
+    value[0] = 200;
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_OVERVIEW_WINDOW, value, 1));
+    value[0] = (uint8_t)LINE_OF_SIGHT_COUNT;
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT, value, 1));
+    value[0] = 200;
+    UT_ASSERT(!serverSimApplyLobbySetting(sim, LST_LINE_OF_SIGHT, value, 1));
+    UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
+                      (uint8_t)overviewWindowClassic &&
+                  serverSimGetLineOfSight(sim) ==
+                      (uint8_t)lineOfSightBuildingsAndTrees,
+                  "an out-of-range payload still moved a value "
+                  "(window %u, sight %u)",
+                  (unsigned)serverSimGetOverviewWindow(sim),
+                  (unsigned)serverSimGetLineOfSight(sim));
+
+    /* Each code maps to its own lock bit. Without the mapping the command
+     * dispatcher reads the unknown sentinel and drops the edit, so the
+     * lobby control would look live and do nothing. */
+    UT_ASSERT_MSG(serverSimGetSettingLockBit(LST_OVERVIEW_WINDOW) ==
+                      LOBBY_LOCK_OVERVIEW_WINDOW,
+                  "LST_OVERVIEW_WINDOW maps to 0x%08X, want 0x%08X",
+                  (unsigned)serverSimGetSettingLockBit(LST_OVERVIEW_WINDOW),
+                  (unsigned)LOBBY_LOCK_OVERVIEW_WINDOW);
+    UT_ASSERT_MSG(serverSimGetSettingLockBit(LST_LINE_OF_SIGHT) ==
+                      LOBBY_LOCK_LINE_OF_SIGHT,
+                  "LST_LINE_OF_SIGHT maps to 0x%08X, want 0x%08X",
+                  (unsigned)serverSimGetSettingLockBit(LST_LINE_OF_SIGHT),
+                  (unsigned)LOBBY_LOCK_LINE_OF_SIGHT);
 
     serverSimDestroy(sim);
     return 0;

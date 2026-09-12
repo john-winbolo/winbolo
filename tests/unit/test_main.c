@@ -249,6 +249,7 @@ static const UnitTestEntry s_tests[] = {
     { "fog_settings_defaults",                   run_fog_settings_defaults                   },
     { "fog_settings_classic_mode_preset",        run_fog_settings_classic_mode_preset        },
     { "fog_settings_lock_implied",               run_fog_settings_lock_implied               },
+    { "fog_settings_lobby_edits",                run_fog_settings_lobby_edits                },
     { "fog_settings_lobby_reset",                run_fog_settings_lobby_reset                },
     { "info_packet_view_policy_layout",          run_info_packet_view_policy_layout          },
     { "info_packet_view_policy_length_tier",     run_info_packet_view_policy_length_tier     },

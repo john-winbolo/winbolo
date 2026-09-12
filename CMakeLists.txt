@@ -4063,6 +4063,7 @@ set(_unit_test_names
     fog_settings_defaults
     fog_settings_classic_mode_preset
     fog_settings_lock_implied
+    fog_settings_lobby_edits
     fog_settings_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier

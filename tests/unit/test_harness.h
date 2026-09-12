@@ -270,6 +270,7 @@ int run_allies_in_trees_classic_mode(void);
 int run_fog_settings_defaults(void);
 int run_fog_settings_classic_mode_preset(void);
 int run_fog_settings_lock_implied(void);
+int run_fog_settings_lobby_edits(void);
 int run_fog_settings_lobby_reset(void);
 int run_info_packet_view_policy_layout(void);
 int run_info_packet_view_policy_length_tier(void);
