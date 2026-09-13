@@ -66,6 +66,7 @@ extern "C" {
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "ping_marker.h"     /* pingMarkerDraw — the on-map ping pass */
 #include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
+#include "ring_band.h"       /* the respawn ring's band, sides and curve */
 }
 #include "sdl3draw_status.h" /* sdl3DrawGetMessageFont, sdl3DrawGetLabelFont,
                                 sdl3DrawGetTinyFont — the main window's faces */
@@ -125,14 +126,11 @@ extern "C" bool showBaseLabels;
 #define OVERVIEW_RESPAWN_RING_PULSE_MS 200    /* the pulse, and the fade with it */
 #define OVERVIEW_RESPAWN_RING_WEIGHT   6.0f   /* px of stroke, across the band */
 
-/* Sides of the drawn circle, from its radius: enough of them that a side is
- * about this many pixels long, so the ring stays round when it opens at 4x
- * zoom instead of turning into a polygon, and does not spend a hundred
- * segments on the small one it ends as. The ends are a floor that keeps a
- * tiny ring from going lumpy and a ceiling on the vertex array below. */
-#define OVERVIEW_RESPAWN_RING_SIDE_PX  4.0f
-#define OVERVIEW_RESPAWN_RING_MIN_SEG  24
-#define OVERVIEW_RESPAWN_RING_MAX_SEG  128
+/* How many sides the drawn circle has is ring_band.h's business now
+ * (RING_BAND_SIDE_PX / MIN_SEG / MAX_SEG), along with the band itself and the
+ * two-stage curve above: the smart ping's world marker closes a ring of its
+ * own in the same way, so the drawing is shared and only the numbers here are
+ * this view's. */
 
 /* The spotlight the ring arrives in: the map dark everywhere but a disc round
  * the tank, lifting over the moment after. The lit disc is wider than the ring
@@ -493,82 +491,12 @@ static void overviewViewDrawDeathBlackout(OverviewView *v, SDL_Renderer *r,
     SDL_SetRenderDrawBlendMode(r, was);
 }
 
-/* A band between two circles, as one run of triangles: the ring is a narrow
- * one in yellow, and the dim outside the spotlight is a pair of wide ones in
- * black. The two alphas are the band's inner and outer edge, so a band can
- * ramp from clear to solid across its width — which is the soft edge of the
- * spotlight — or carry one alpha on both and come out flat.
- *
- * Not concentric one-pixel lines, which is how the item-view border below
- * builds its weight out of rectangles. Lines a pixel apart leave hairlines
- * through a band of any width, where the rasteriser steps a segment across a
- * row, and closing those by overlapping the runs would blend the band onto
- * itself at whatever alpha it is drawn at. Triangles cover the band once, and
- * carry their own colour: SDL_RenderGeometry ignores the draw colour, so the
- * fades ride on the vertices instead. */
-static void overviewViewDrawBand(SDL_Renderer *r, float cx, float cy,
-                                 float inner, float outer, int segments,
-                                 Uint8 red, Uint8 green, Uint8 blue,
-                                 Uint8 innerAlpha, Uint8 outerAlpha) {
-    SDL_Vertex verts[(OVERVIEW_RESPAWN_RING_MAX_SEG + 1) * 2];
-    int        indices[OVERVIEW_RESPAWN_RING_MAX_SEG * 6];
-
-    if (inner < 0.0f) inner = 0.0f;
-    if (outer <= inner || segments < 3) return;
-
-    SDL_FColor colourIn  = { (float)red   / 255.0f, (float)green / 255.0f,
-                             (float)blue  / 255.0f, (float)innerAlpha / 255.0f };
-    SDL_FColor colourOut = { colourIn.r, colourIn.g, colourIn.b,
-                             (float)outerAlpha / 255.0f };
-
-    /* Inner and outer vertex per step round the circle, the pair adjacent so
-     * a segment's four corners are four consecutive entries. */
-    for (int s = 0; s <= segments; s++) {
-        float a  = (float)s * (2.0f * SDL_PI_F / (float)segments);
-        float dx = SDL_cosf(a);
-        float dy = SDL_sinf(a);
-        SDL_Vertex *vi = &verts[s * 2];
-        SDL_Vertex *vo = &verts[s * 2 + 1];
-
-        vi->position.x = cx + dx * inner;
-        vi->position.y = cy + dy * inner;
-        vo->position.x = cx + dx * outer;
-        vo->position.y = cy + dy * outer;
-        vi->color = colourIn;
-        vo->color = colourOut;
-        vi->tex_coord.x = 0.0f;
-        vi->tex_coord.y = 0.0f;
-        vo->tex_coord.x = 0.0f;
-        vo->tex_coord.y = 0.0f;
-    }
-
-    /* Two triangles a segment, between this step's pair and the next one's. */
-    for (int s = 0; s < segments; s++) {
-        int i0 = s * 2;
-        indices[s * 6 + 0] = i0;
-        indices[s * 6 + 1] = i0 + 1;
-        indices[s * 6 + 2] = i0 + 2;
-        indices[s * 6 + 3] = i0 + 1;
-        indices[s * 6 + 4] = i0 + 3;
-        indices[s * 6 + 5] = i0 + 2;
-    }
-
-    SDL_RenderGeometry(r, NULL, verts, (segments + 1) * 2,
-                       indices, segments * 6);
-}
-
-/* Sides for a circle of this radius: see OVERVIEW_RESPAWN_RING_SIDE_PX. */
-static int overviewViewCircleSegments(float radiusPx) {
-    int segments = (int)(2.0f * SDL_PI_F * radiusPx /
-                         OVERVIEW_RESPAWN_RING_SIDE_PX);
-    if (segments < OVERVIEW_RESPAWN_RING_MIN_SEG) {
-        return OVERVIEW_RESPAWN_RING_MIN_SEG;
-    }
-    if (segments > OVERVIEW_RESPAWN_RING_MAX_SEG) {
-        return OVERVIEW_RESPAWN_RING_MAX_SEG;
-    }
-    return segments;
-}
+/* The band between two circles this view draws its ring and the soft edge of
+ * its spotlight out of, and the sides it builds one from, are ringBandDraw and
+ * ringBandSegments in ring_band.h. They used to be here; they moved out
+ * unchanged when the smart-ping world marker started closing a ring of its
+ * own. Note that neither touches the blend mode — the caller below sets
+ * SDL_BLENDMODE_BLEND once around the whole effect. */
 
 /* The spotlight: the map goes dark everywhere but a disc round the tank, and
  * the dark lifts over the moment after. What it is for is the frame the map
@@ -612,12 +540,12 @@ static void overviewViewDrawRespawnDim(SDL_Renderer *r, float cx, float cy,
     float dy    = (cy > (float)viewH * 0.5f) ? cy : (float)viewH - cy;
     float reach = SDL_sqrtf(dx * dx + dy * dy) * 1.5f + hole + feather;
 
-    int segments = overviewViewCircleSegments(hole + feather);
+    int segments = ringBandSegments(hole + feather);
 
-    overviewViewDrawBand(r, cx, cy, hole, hole + feather, segments,
-                         0, 0, 0, 0, alpha);
-    overviewViewDrawBand(r, cx, cy, hole + feather, reach, segments,
-                         0, 0, 0, alpha, alpha);
+    ringBandDraw(r, cx, cy, hole, hole + feather, segments,
+                 0, 0, 0, 0, alpha);
+    ringBandDraw(r, cx, cy, hole + feather, reach, segments,
+                 0, 0, 0, alpha, alpha);
 }
 
 /* The dead-to-alive edge, and what the camera does about it.
@@ -703,39 +631,33 @@ static void overviewViewDrawRespawn(OverviewView *v, SDL_Renderer *r,
      * than through it. */
     overviewViewDrawRespawnDim(r, cx, cy, viewW, viewH, zoomScale, elapsed);
 
+    /* The close and the pulse, from the shared curve (ring_band.h). The
+     * radii stay here in map squares, so the ring opens seven squares across
+     * at every rung of the zoom ladder whatever the ping marker's ring is
+     * doing with the same arithmetic.
+     *
+     * The defaults are what a finished ring would leave, which the guard at
+     * the top of this function already means cannot happen — kept so it stays
+     * right if that guard changes. */
+    const RingAnim ring = { OVERVIEW_RESPAWN_RING_START_SQ,
+                            OVERVIEW_RESPAWN_RING_END_SQ,
+                            OVERVIEW_RESPAWN_RING_PULSE_SQ,
+                            OVERVIEW_RESPAWN_RING_MS,
+                            OVERVIEW_RESPAWN_RING_PULSE_MS };
     float radiusSq = OVERVIEW_RESPAWN_RING_END_SQ;
-    Uint8 alpha    = 255;
-    if (elapsed < OVERVIEW_RESPAWN_RING_MS) {
-        /* The close, eased out: away quickly and settling onto the tank,
-         * rather than arriving at the speed it left. */
-        float t = (float)elapsed / (float)OVERVIEW_RESPAWN_RING_MS;
-        float u = 1.0f - t;
-        float e = 1.0f - u * u * u;
-        radiusSq = OVERVIEW_RESPAWN_RING_START_SQ +
-                   (OVERVIEW_RESPAWN_RING_END_SQ -
-                    OVERVIEW_RESPAWN_RING_START_SQ) * e;
-    } else if (elapsed < OVERVIEW_RESPAWN_RING_MS +
-                         OVERVIEW_RESPAWN_RING_PULSE_MS) {
-        /* The pulse: out and back on a half sine, so it opens and shuts
-         * without a corner at the top, and fades as it goes. */
-        float t = (float)(elapsed - OVERVIEW_RESPAWN_RING_MS) /
-                  (float)OVERVIEW_RESPAWN_RING_PULSE_MS;
-        float s = SDL_sinf(t * SDL_PI_F);
-        radiusSq = OVERVIEW_RESPAWN_RING_END_SQ +
-                   (OVERVIEW_RESPAWN_RING_PULSE_SQ -
-                    OVERVIEW_RESPAWN_RING_END_SQ) * s;
-        alpha = (Uint8)(255.0f * (1.0f - t));
-    }
+    float fade     = 1.0f;
+    ringAnimAt(&ring, elapsed, &radiusSq, &fade);
+    Uint8 alpha = (Uint8)(255.0f * fade);
 
     float radiusPx = radiusSq * (float)OVERVIEW_TILE_PX * zoomScale;
     if (radiusPx >= 1.0f) {
         /* The yellow the item-view border is drawn in — the view's one
          * accent — at one alpha across the band, so it fades flat. */
-        overviewViewDrawBand(r, cx, cy,
-                             radiusPx - OVERVIEW_RESPAWN_RING_WEIGHT * 0.5f,
-                             radiusPx + OVERVIEW_RESPAWN_RING_WEIGHT * 0.5f,
-                             overviewViewCircleSegments(radiusPx),
-                             255, 205, 40, alpha, alpha);
+        ringBandDraw(r, cx, cy,
+                     radiusPx - OVERVIEW_RESPAWN_RING_WEIGHT * 0.5f,
+                     radiusPx + OVERVIEW_RESPAWN_RING_WEIGHT * 0.5f,
+                     ringBandSegments(radiusPx),
+                     255, 205, 40, alpha, alpha);
     }
     SDL_SetRenderDrawBlendMode(r, was);
 }
@@ -1159,6 +1081,9 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             label.scale = nameZoom / (float)mainZoom;
             for (int i = 0; i < np; i++) {
                 Uint32 ageMs = nowMs - pl[i].recvMs;
+                /* Expiry only -- pingMarkerDraw decides the blink and the
+                   name's fade, the same way for every view that draws the
+                   world marker. */
                 float  alpha = pingDisplayAlpha((int)ageMs);
                 float  sx = 0.0f, sy = 0.0f;
                 if (nowMs < pl[i].recvMs || alpha <= 0.0f) continue;
@@ -1169,7 +1094,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                 label.name = pl[i].senderName;
                 label.slot = pl[i].sender;
                 pingMarkerDraw(r, pl[i].kind, sx, sy, tilePx, tilePx,
-                               ageMs, alpha, &label);
+                               ageMs, &label);
             }
         }
 

@@ -259,6 +259,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/ping_overlay.cpp
     ${SRC_ROOT}/gui/sdl3/ping_icons.c
     ${SRC_ROOT}/gui/sdl3/ping_marker.c
+    ${SRC_ROOT}/gui/sdl3/ring_band.c
     ${SRC_ROOT}/gui/sdl3/build_cursor.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/lang.c

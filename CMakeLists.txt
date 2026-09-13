@@ -834,6 +834,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/ping_overlay.cpp
     src/gui/sdl3/ping_icons.c
     src/gui/sdl3/ping_marker.c
+    src/gui/sdl3/ring_band.c
     src/gui/sdl3/flags.c
     src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/input.c
@@ -1482,6 +1483,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_overlay.cpp
     src/gui/sdl3/ping_icons.c
     src/gui/sdl3/ping_marker.c
+    src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
@@ -2281,6 +2283,7 @@ add_executable(LogViewer
     # same loose files.
     src/gui/sdl3/ping_icons.c
     src/gui/sdl3/ping_marker.c
+    src/gui/sdl3/ring_band.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
