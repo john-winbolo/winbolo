@@ -1553,8 +1553,9 @@ static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
     return SCN_OP_OK;
 }
 
-/* The brain a new bot runs: the one the op names, or the server's own
- * configured brain when it names none.
+/* The brain a new bot runs: the one the op names; failing that the one the
+ * seat was written with, which is how a seat held for a team gets that
+ * team's brain when something fields it; and failing both the server's own.
  *
  * A "package:NAME" brain is one carried by a scenario's package. Nothing on
  * the sim opens a package, so the name is refused here rather than handed to
@@ -1562,14 +1563,21 @@ static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
  * meant. The host that unpacks a scenario is what resolves these, and it
  * will resolve the name to a path before the op reaches this funnel. */
 static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
-                                     const char **out) {
+                                     BYTE slot, const char **out) {
     const char *path;
     SDL_PathInfo info;
 
     if (!scenarioTextTerminated(asked, SCN_PATH_MAX)) {
         return SCN_OP_TOO_BIG;
     }
-    path = (asked[0] != '\0') ? asked : serverSimGetBotBrainPath(sim);
+    path = NULL;
+    if (asked[0] != '\0') {
+        path = asked;
+    } else if (slot < MAX_TANKS && sim->seatBrain[slot][0] != '\0') {
+        path = sim->seatBrain[slot];
+    } else {
+        path = serverSimGetBotBrainPath(sim);
+    }
     if (path == NULL || path[0] == '\0') {
         return SCN_OP_NOT_FOUND;
     }
@@ -1682,13 +1690,175 @@ static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
 static void scenarioTakeBotOut(ServerSim *sim, BYTE slot) {
     if (sim->lobbyPlayers[slot].keepSeat && sim->lobbyPlayers[slot].fielded) {
         char name[PLAYER_NAME_LEN];
+        char brain[SCN_PATH_MAX];
         BYTE team = sim->lobbyPlayers[slot].teamNumber;
         playersGetPlayerName(&sim->sim.plyrs, slot, name, sizeof(name), TRUE);
+        /* The seat keeps what it was written to run, so the next thing to
+           field it starts the same bot the last one did. */
+        SDL_strlcpy(brain, sim->seatBrain[slot], sizeof(brain));
         serverSimRemoveBot(sim, slot);
         serverSimAddUnfieldedSeat(sim, slot, name, team);
+        SDL_strlcpy(sim->seatBrain[slot], brain, sizeof(sim->seatBrain[slot]));
         return;
     }
     serverSimRemoveBot(sim, slot);
+}
+
+/* ── The lobby template ───────────────────────────────────────────────── */
+
+/* The seats a scenario asked for, which are the ones keepSeat marks: the
+ * template seeded them, or a script asked for one by hand, and either way
+ * they belong to the scenario and not to the host. A seat the script has
+ * since fielded still carries the mark, so this finds it too. */
+static bool scenarioSeatIsTemplates(const ServerSim *sim, BYTE slot) {
+    return sim->playerConnected[slot] && sim->lobbyPlayers[slot].keepSeat;
+}
+
+static BYTE scenarioSeatsOnTeam(const ServerSim *sim, BYTE team) {
+    BYTE i;
+    BYTE n = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (scenarioSeatIsTemplates(sim, i) &&
+            sim->lobbyPlayers[i].teamNumber == team) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Empty every seat the scenario put there. The host's own seats and every
+ * human are left alone. */
+void serverSimScenarioClearSeats(ServerSim *sim) {
+    BYTE i;
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (scenarioSeatIsTemplates(sim, i)) {
+            serverSimRemoveBot(sim, i);
+        }
+    }
+}
+
+/* Seat one of a team's bots. An unfielded team gets the seat and no bot; a
+ * fielded one gets both. Answers false when there was nowhere to put it,
+ * which stops the team's loop rather than spinning on a full roster. */
+static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
+    char name[PLAYER_NAME_LEN];
+    int  slot;
+
+    /* The seat rule the lobby's Add Bot and both spawn handlers already
+       share, so a bot seats above the human cap here exactly as it does
+       there and there is no second rule to drift from it. */
+    slot = serverSimFindFreeSlot(sim, true);
+    if (slot < 0) return false;
+    if (scenarioBotName("", (BYTE)slot, name, sizeof(name)) != SCN_OP_OK) {
+        return false;
+    }
+
+    if (!team->fielded) {
+        if (!serverSimAddUnfieldedSeat(sim, (BYTE)slot, name, team->id)) {
+            return false;
+        }
+    } else {
+        const char *brain = (team->brain[0] != '\0')
+                          ? team->brain : serverSimGetBotBrainPath(sim);
+        if (brain == NULL || brain[0] == '\0') return false;
+        if (!serverSimCreateBot(sim, (BYTE)slot, brain, name,
+                                serverSimGetBotAiType(sim),
+                                gameTypeGet(&sim->sim.game),
+                                sim->sim.hiddenMines, team->id, NULL)) {
+            return false;
+        }
+        sim->lobbyPlayers[slot].keepSeat = true;
+    }
+    /* Recorded whether the seat holds a bot yet or not: an unfielded seat is
+       fielded later by a spawn that names no brain of its own, and this is
+       where that spawn finds the one its team was written with. */
+    SDL_strlcpy(sim->seatBrain[slot], team->brain,
+                sizeof(sim->seatBrain[slot]));
+    if (team->id > 0 && team->id < MAX_TANKS && !sim->teams[team->id].in_use) {
+        sim->teams[team->id].in_use = 1;
+        if (sim->teams[team->id].name[0] == '\0') {
+            SDL_snprintf(sim->teams[team->id].name, LOBBY_TEAM_NAME_LEN,
+                         "Team %d", (int)team->id);
+        }
+    }
+    return true;
+}
+
+/* Build the lobby the attached scenario asks for, from whatever is there
+ * now. Every seat the previous scenario left goes first, so committing a
+ * plain map over a scenario one leaves no horde behind, and a scenario with
+ * no template of its own leaves an ordinary lobby. */
+void serverSimScenarioSeatLobby(ServerSim *sim) {
+    BYTE t;
+    if (sim == NULL) return;
+    serverSimScenarioClearSeats(sim);
+    if (!sim->scenarioLobbyValid) return;
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
+        BYTE n;
+        if (team->id == 0 || team->id >= MAX_TANKS) continue;
+        for (n = 0; n < team->bots; n++) {
+            if (!scenarioSeatOne(sim, team)) break;
+        }
+    }
+}
+
+/* Bring a lobby that has just come back from a round into line with the
+ * template, keeping what the host did to it in between.
+ *
+ * bots is how many the engine seeds and not a number it keeps re-imposing:
+ * a host who trimmed a horde of ten to six gets six back, because the point
+ * of seating them where the host can see them is that the host may trim
+ * them. maxBots is the one that still binds, so a host who added past it is
+ * cut back to it. A team the host emptied altogether stays empty — that is
+ * the same edit as the trim to six, only further, and a floor that appeared
+ * only at zero would let a host reduce a horde to one but not to none.
+ *
+ * Then the other half: a seat the script fielded during the round goes back
+ * to being held, so the next round starts from the lobby the template
+ * describes rather than from wherever the last round's waves left it. */
+void serverSimScenarioReconcileLobby(ServerSim *sim) {
+    BYTE t, i;
+    if (sim == NULL || !sim->scenarioLobbyValid) return;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!scenarioSeatIsTemplates(sim, i)) continue;
+        if (!sim->lobbyPlayers[i].fielded) continue;
+        scenarioTakeBotOut(sim, i);
+    }
+
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
+        BYTE have;
+        if (team->id == 0 || team->id >= MAX_TANKS) continue;
+        if (team->maxBots == 0) continue;
+        have = scenarioSeatsOnTeam(sim, team->id);
+        /* Highest seat first, so the seats the host has had longest are the
+           ones that survive the trim. */
+        for (i = MAX_TANKS; i > 0 && have > team->maxBots; i--) {
+            BYTE slot = (BYTE)(i - 1);
+            if (!scenarioSeatIsTemplates(sim, slot)) continue;
+            if (sim->lobbyPlayers[slot].teamNumber != team->id) continue;
+            serverSimRemoveBot(sim, slot);
+            have--;
+        }
+    }
+}
+
+/* A different map has been committed. Whoever owns the scenario is told
+ * first, so it can drop the one the previous map had and look for one beside
+ * the new file; the template it leaves behind is what the seating below
+ * reads. A map with no scenario clears the template, and the seating then
+ * empties the seats the previous one left rather than carrying them into a
+ * map that knows nothing about them. */
+void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
+    if (sim == NULL) return;
+    if (sim->scenarioMapChanged != NULL) {
+        sim->scenarioMapChanged(sim->scenarioMapChangedCtx, sim,
+                                mapPath != NULL ? mapPath : "");
+    }
+    serverSimScenarioSeatLobby(sim);
 }
 
 /* Put one change on the queue. The one past the last is refused rather than
@@ -1765,7 +1935,7 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
     r = scenarioBotName(p->name, slot, name, sizeof(name));
     if (r != SCN_OP_OK) return r;
-    r = scenarioBrainPath(sim, p->brain, &brain);
+    r = scenarioBrainPath(sim, p->brain, slot, &brain);
     if (r != SCN_OP_OK) return r;
 
     memset(&entry, 0, sizeof(entry));
@@ -1857,7 +2027,9 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     /* A seat held without a bot in it loads no brain, so there is no path to
        resolve here: the spawn that fields the seat brings one. */
     if (p->fielded) {
-        r = scenarioBrainPath(sim, p->brain, &brain);
+        /* No seat yet, so no seat brain to prefer — the op's or the
+           server's. */
+        r = scenarioBrainPath(sim, p->brain, SCN_NONE, &brain);
         if (r != SCN_OP_OK) return r;
     }
     /* The seat the op names, or the first free one, by the rule the spawn
@@ -1943,7 +2115,7 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
     BYTE slot = 0;
 
     if (scenarioSpawnSeat(sim, p->slot, &slot) != SCN_OP_OK ||
-        scenarioBrainPath(sim, p->brain, &brain) != SCN_OP_OK ||
+        scenarioBrainPath(sim, p->brain, slot, &brain) != SCN_OP_OK ||
         scenarioBotName(p->name, slot, name, sizeof(name)) != SCN_OP_OK) {
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                     "scenario: queued bot spawn dropped, its seat or brain is gone");
@@ -2676,6 +2848,31 @@ void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx
     if (sim == NULL) return;
     sim->scenarioRoundStart = roundStart;
     sim->scenarioRoundStartCtx = ctx;
+}
+
+void serverSimSetScenarioMapChanged(ServerSim *sim,
+                                    void (*mapChanged)(void *ctx,
+                                                       ServerSim *sim,
+                                                       const char *mapPath),
+                                    void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioMapChanged = mapChanged;
+    sim->scenarioMapChangedCtx = ctx;
+}
+
+void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
+                                       const ScnLobbyTemplate *t) {
+    if (sim == NULL) return;
+    if (t == NULL) {
+        memset(&sim->scenarioLobby, 0, sizeof(sim->scenarioLobby));
+        sim->scenarioLobbyValid = false;
+        return;
+    }
+    sim->scenarioLobby = *t;
+    if (sim->scenarioLobby.numTeams > MAX_TANKS) {
+        sim->scenarioLobby.numTeams = MAX_TANKS;
+    }
+    sim->scenarioLobbyValid = true;
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

@@ -2345,6 +2345,7 @@ static int runFastMode(void) {
       fprintf(stderr, "%s\n", scenarioErr);
     }
   }
+  scenarioHostFollowMap(fastServerSim, &scenarioHost);
 
   /* Cache compressed map for fast resets */
   {

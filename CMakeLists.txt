@@ -3362,6 +3362,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The unfielded seat: what a seat held without a bot in it counts for, the
     # start sequence walking past it, the spawn that fields it and the removal
     # that gives it back, and the byte that carries it to clients.
+    # The lobby template: the engine seating a scenario's teams at a map
+    # commit, reconciling them when a round comes back, re-seating them when
+    # an emptied lobby resets, and leaving a preview and a plain map alone.
+    tests/unit/test_lobby_template.c
     tests/unit/test_unfielded_seat.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
@@ -4936,6 +4940,13 @@ set(_unit_test_names
     scenario_lobby_set_team
     scenario_roster_bots_seat_past_the_human_cap
     scenario_roster_spawn_named_start
+    lobby_template_map_commit_seats
+    lobby_template_return_reconciles
+    lobby_template_return_unfields
+    lobby_template_reset_reseats
+    lobby_template_preview_is_inert
+    lobby_template_plain_map_clears
+    lobby_template_caps_humans_only
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready

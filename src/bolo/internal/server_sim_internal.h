@@ -261,6 +261,17 @@ struct ServerSim {
     BYTE        *previousMapData;
     int          previousMapDataLen;
     char         previousMapName[MAP_STR_SIZE];
+    /* The file the previous committed map was read from, beside the name,
+     * so cancelling a preview can look for a scenario beside it again.
+     * Empty when that map came from bytes rather than a file. */
+    char         previousMapPath[FILENAME_MAX];
+
+    /* The file the live map was read from, kept because a scenario is
+     * discovered beside its .map and the display name is not enough to find
+     * it. Set by the loaders handed a path and cleared by the ones that are
+     * not — an upload, a generated random map, a preview rolled back — so it
+     * is either the live map's own file or empty, never a stale one. */
+    char         mapFilePath[FILENAME_MAX];
 
     /* Info packet fields — stored at creation for server browser responses */
     char         mapName[MAP_STR_SIZE];
@@ -638,8 +649,21 @@ struct ServerSim {
     void                  *scenarioTickCtx;
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
+    void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
+                                               const char *mapPath);
+    void                  *scenarioMapChangedCtx;
     bool                   scenarioSetupWindow;
     bool                   scenarioActing;
+
+    /* The lobby the attached scenario asks for, copied off whoever read it so
+     * the sim owns seating and reconciling it and never calls back out.
+     * scenarioLobbyValid false means an ordinary lobby. */
+    ScnLobbyTemplate       scenarioLobby;
+    bool                   scenarioLobbyValid;
+    /* The brain a seat was seeded with, so a seat held without a bot in it
+     * still knows what to run when something fields it. Empty means the
+     * server's own. */
+    char                   seatBrain[MAX_TANKS][SCN_PATH_MAX];
 
     /* What is left of a fill-rect that did not fit in one tick, and how
      * much of this tick's tile budget has been spent on one. The

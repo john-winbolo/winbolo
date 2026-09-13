@@ -123,6 +123,9 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
     serverSimConsoleMessage(msg);
 
+    /* Generated, not read — nothing to look beside. */
+    sim->mapFilePath[0] = '\0';
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -461,6 +464,8 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
             sim->previousMapDataLen = sim->cachedMapDataLen;
             memcpy(sim->previousMapName, sim->mapName,
                    sizeof(sim->previousMapName));
+            memcpy(sim->previousMapPath, sim->mapFilePath,
+                   sizeof(sim->previousMapPath));
         }
     }
 
@@ -558,6 +563,10 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimReloadMap: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
+
+    /* Kept because a scenario is discovered beside its .map and the display
+       name cannot find the file again. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
 
     serverSimApplyMapChange(sim);
     return TRUE;
@@ -710,6 +719,9 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    /* Bytes, not a file — nothing to look beside. */
+    sim->mapFilePath[0] = '\0';
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -832,10 +844,17 @@ bool serverSimRevertPreview(ServerSim *sim) {
         sim->cachedMapDataLen = 0;
     }
 
+    /* The map that was displaced is back, so the file it was read from is
+       the live one again and a scenario can be found beside it. Empty when
+       that map came from bytes, which is the same answer as before. */
+    SDL_strlcpy(sim->mapFilePath, sim->previousMapPath,
+                sizeof(sim->mapFilePath));
+
     free(sim->previousMapData);
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
@@ -849,6 +868,7 @@ void serverSimCommitPreview(ServerSim *sim) {
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimCommitPreview: committed '%s'", sim->mapName);
 }
@@ -1135,6 +1155,13 @@ static void serverSimApplyMapChange(ServerSim *sim) {
             }
         }
     }
+
+    /* The map is loaded and the starts are reconciled, so this is the first
+       point a seat can be given one on the new map. Whoever owns the
+       scenario is told about the file first and the seating reads whatever
+       template they leave; the settings publish below then carries a lobby
+       that is already the new map's. */
+    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
 
     transportUdpServerOnLobbyMapChange(sim);
     {

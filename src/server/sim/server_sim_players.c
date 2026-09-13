@@ -100,6 +100,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
        has its own constructor and never comes through here. */
     sim->lobbyPlayers[playerNum].fielded = TRUE;
     sim->lobbyPlayers[playerNum].keepSeat = FALSE;
+    sim->seatBrain[playerNum][0] = '\0';
     sim->soundSquares[playerNum] = false;
     /* A recycled slot must not inherit the previous occupant's ping mutes. */
     sim->pingMuteMask[playerNum] = 0;
@@ -243,6 +244,11 @@ int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
     limit = (BYTE)MAX_TANKS;
     if (!forBot && sim->maxPlayers > 0) {
         limit = sim->maxPlayers;
+    }
+    if (!forBot && sim->scenarioLobbyValid &&
+        sim->scenarioLobby.maxPlayers > 0 &&
+        sim->scenarioLobby.maxPlayers < limit) {
+        limit = sim->scenarioLobby.maxPlayers;
     }
     if (!forBot && sim->scenarioPolicy != NULL &&
         sim->scenarioPolicy->maxPlayers != NULL) {
@@ -544,6 +550,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
        has its own constructor and never comes through here. */
     sim->lobbyPlayers[playerNum].fielded = TRUE;
     sim->lobbyPlayers[playerNum].keepSeat = FALSE;
+    sim->seatBrain[playerNum][0] = '\0';
     sim->mapSkipVotes[playerNum] = false;
     sim->soundSquares[playerNum] = false;
     /* Smart-ping mutes, both directions, exactly as a voice mute is swept on

@@ -2169,6 +2169,18 @@ int run_scenario_lobby_set_team(void);
 int run_scenario_roster_bots_seat_past_the_human_cap(void);
 int run_scenario_roster_spawn_named_start(void);
 
+/* The lobby template (test_lobby_template.c): the engine seating a
+ * scenario's teams where a lobby is built or rebuilt, reconciling one that
+ * comes back from a round against what the host did to it, and leaving a
+ * preview and a plain map alone. */
+int run_lobby_template_map_commit_seats(void);
+int run_lobby_template_return_reconciles(void);
+int run_lobby_template_return_unfields(void);
+int run_lobby_template_reset_reseats(void);
+int run_lobby_template_preview_is_inert(void);
+int run_lobby_template_plain_map_clears(void);
+int run_lobby_template_caps_humans_only(void);
+
 /* The unfielded seat (test_unfielded_seat.c): a seat a bot holds with no
  * bot manager entry, no ClientSim and no tank behind it. What it counts for,
  * what the start sequence does with it, the two ops that field and unfield

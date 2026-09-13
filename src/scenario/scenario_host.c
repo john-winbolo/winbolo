@@ -1659,6 +1659,35 @@ static void scnTick(void *ctx) {
     scnLockLeave(&h->lock);
 }
 
+/* The lobby out of the manifest and into the shape the sim reads. A straight
+ * copy of the four numbers and the brain, dropping the teams the sim has no
+ * seat for: the manifest holds what the file said and this holds what the
+ * roster can hold.
+ *
+ * extra_teams is not here — the sim asks that one through the policy, as a
+ * question about what a host may do rather than a description of the lobby
+ * to build. */
+static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
+                                 ScnLobbyTemplate *out) {
+    uint8_t i;
+
+    memset(out, 0, sizeof(*out));
+    if (lob == NULL) return;
+    out->maxPlayers = lob->maxPlayers;
+    for (i = 0; i < lob->numTeams && out->numTeams < MAX_TANKS; i++) {
+        const ScnManifestTeam *src = &lob->teams[i];
+        ScnLobbyTeam          *dst;
+        if (src->id == 0 || src->id >= MAX_TANKS) continue;
+        dst = &out->teams[out->numTeams];
+        out->numTeams++;
+        dst->id      = src->id;
+        dst->bots    = src->bots;
+        dst->maxBots = src->maxBots;
+        dst->fielded = src->fielded;
+        SDL_strlcpy(dst->brain, src->brain, sizeof(dst->brain));
+    }
+}
+
 /* ── The policy ───────────────────────────────────────────────────── */
 
 /* May a slot be put on a team that no other slot is on? The lobby asks this
@@ -1949,6 +1978,15 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);
     serverSimSetScenarioTick(sim, scnTick, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
+    /* The lobby goes over as data rather than as another callback: the sim
+       seats and reconciles it at every point a lobby is built, and a question
+       asked from inside the sim's own map change would otherwise have to
+       reach back into a host that is being replaced at that moment. */
+    {
+        ScnLobbyTemplate t;
+        scnFillLobbyTemplate(&m.lobby, &t);
+        serverSimSetScenarioLobbyTemplate(sim, &t);
+    }
 
     /* The bus, in three steps and in this order. Registration hands the new
        subscriber the whole of the current server state through the control
@@ -2067,6 +2105,37 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     return true;
 }
 
+/* The sim's map change, answered. The caller's own pointer is the context
+ * because the host it names is the one being replaced here. */
+static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
+    ScenarioHost **slot = (ScenarioHost **)ctx;
+    char           err[512];
+
+    if (slot == NULL) return;
+    scenarioHostDetach(*slot);
+    *slot = NULL;
+    /* A map that came from bytes rather than a file has nothing beside it to
+       read, so the map is played plainly and the detach above is the whole
+       of the work. */
+    if (sim == NULL || mapPath == NULL || mapPath[0] == '\0') return;
+
+    err[0] = '\0';
+    *slot = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    if (*slot == NULL && err[0] != '\0') {
+        /* Said rather than returned: a map commit has nobody to answer. */
+        scnSay(NULL, 0, "%s", err);
+    }
+}
+
+void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {
+    if (sim == NULL) return;
+    if (slot == NULL) {
+        serverSimSetScenarioMapChanged(sim, NULL, NULL);
+        return;
+    }
+    serverSimSetScenarioMapChanged(sim, scnMapChanged, slot);
+}
+
 void scenarioHostDetach(ScenarioHost *h) {
     if (h == NULL) {
         return;
@@ -2079,6 +2148,13 @@ void scenarioHostDetach(ScenarioHost *h) {
         serverSimSetScenarioRoundStart(h->sim, NULL, NULL);
         serverSimSetScenarioTick(h->sim, NULL, NULL);
         serverSimSetScenarioPolicy(h->sim, NULL);
+        /* The lobby goes with them. What is already seated is left where it
+           is — emptying the roster is the map change's business, and a
+           detach at shutdown has no lobby left to tidy. The map-change
+           registration is not cleared here: it belongs to whoever owns this
+           host, not to the host, and it is the thing that will attach the
+           next one. */
+        serverSimSetScenarioLobbyTemplate(h->sim, NULL);
         /* Both channels go with the slot, and an invalid handle is a
            no-op, so this needs no test of its own. */
         serverSimUnregisterSubscriber(h->sim, h->sub);

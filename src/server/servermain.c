@@ -1510,6 +1510,9 @@ int main(int argc, char **argv) {
       serverMessageConsoleMessage(serverSim, scenarioErr);
     }
   }
+  /* And from here on the sim says when a map is committed, so the scenario
+     follows the map without this file knowing how. */
+  scenarioHostFollowMap(serverSim, &scenarioHost);
 
   useAddr = NULL;
   httpSetAltIpAddress("");

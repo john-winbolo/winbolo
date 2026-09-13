@@ -49,6 +49,35 @@
 /* Buffer for a brain path or a "package:NAME" reference. */
 #define SCN_PATH_MAX 256
 
+/* One team a scenario's lobby seats, as the sim reads it.
+ *
+ * bots is how many seats the engine creates when it seats the template;
+ * maxBots is the most a host may leave on the team, which is the only one of
+ * the two that binds again once the seats exist. fielded false asks for the
+ * seats without the bots — roster entries the start sequence skips until a
+ * spawn names one. brain is the path those bots run, or "" for the server's
+ * own. */
+typedef struct {
+    uint8_t id;                   /* team number, 1-16 */
+    uint8_t bots;
+    uint8_t maxBots;
+    bool    fielded;
+    char    brain[SCN_PATH_MAX];
+} ScnLobbyTeam;
+
+/* The lobby a scenario asks for. The host reads this out of its manifest and
+ * hands the sim a copy, so the engine seats and reconciles it without calling
+ * back into the host — the dependency points one way and the sim needs no
+ * notion of a manifest, a sidecar or Lua.
+ *
+ * maxPlayers is a cap on humans only; bots seat above it. 0 leaves the
+ * server's own cap alone. */
+typedef struct {
+    uint8_t      maxPlayers;
+    uint8_t      numTeams;
+    ScnLobbyTeam teams[MAX_TANKS];
+} ScnLobbyTemplate;
+
 /* How many roster changes may be outstanding at once. Spawns and
  * removals share one first-in first-out queue and the sim drains one of
  * them a tick, so a script that asks for ten bots gets them over ten

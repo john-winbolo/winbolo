@@ -1692,6 +1692,8 @@ bool gameFrontSetDlgState(openingStates newState) {
               WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
             }
           }
+          /* And from here on the scenario follows the committed map. */
+          scenarioHostFollowMap(spServerSim, &spScenarioHost);
           /* Tutorial: mark the freshly-created sim authoritative-tutorial and
              reset the respawn start to 0 (sea) BEFORE the host player is added
              in gameFrontStartServerSim below.  startsGetStart only takes the
@@ -2836,6 +2838,8 @@ bool gameFrontSetupServer(void) {
       WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
     }
   }
+  /* And from here on the scenario follows the committed map. */
+  scenarioHostFollowMap(spServerSim, &spScenarioHost);
 
   /* Visibility rules from the [GAME OPTIONS] prefs, pushed onto the sim
    * after create rather than through ServerInstanceConfig. */

@@ -170,6 +170,29 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen);
 void scenarioHostDetach(ScenarioHost *h);
 
 /*********************************************************
+ *NAME:          scenarioHostFollowMap
+ *PURPOSE:
+ *  Keeps *slot pointing at whichever scenario the sim's
+ *  committed map has. Each time a map is committed the sim
+ *  calls in here: the scenario the previous map had is
+ *  detached, a sidecar beside the new file is looked for,
+ *  and *slot is set to the result or to NULL when the map
+ *  has none. The lobby the new scenario asks for is handed
+ *  to the sim as part of that, and the sim seats it.
+ *
+ *  slot is the caller's own pointer and must outlive the
+ *  sim — it is read and written from inside the map change,
+ *  which is why it cannot be the scenario itself. Call it
+ *  once, after the first attach; pass a NULL slot to stop.
+ *
+ *  A sidecar that cannot be used is logged rather than
+ *  returned: there is nobody to answer at the point a map
+ *  is committed, and a bad sidecar still leaves a playable
+ *  map.
+ *********************************************************/
+void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot);
+
+/*********************************************************
  *NAME:          scenarioHostIsActive
  *PURPOSE:
  *  Whether a scenario is attached and running. False for a

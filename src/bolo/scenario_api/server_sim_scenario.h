@@ -81,6 +81,50 @@ void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx
                                     void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioLobbyTemplate
+ *PURPOSE:
+ *  Hands the sim the lobby a scenario asks for. The sim
+ *  copies it, so the caller's struct need not outlive the
+ *  call, and then owns seating and reconciling it at every
+ *  point a lobby is built or rebuilt — with no call back
+ *  into whoever read it. NULL clears it, which returns the
+ *  lobby to an ordinary one.
+ *
+ *  Setting it does not seat anything by itself. The map
+ *  commit seats it; a caller that wants the seats without a
+ *  map change asks for them.
+ *********************************************************/
+void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
+                                       const ScnLobbyTemplate *t);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioMapChanged
+ *PURPOSE:
+ *  Registers the callback a committed map change invokes,
+ *  with the new map's file path, before the sim seats the
+ *  lobby. Whoever registers it is expected to drop the
+ *  scenario the previous map had, look for one beside the
+ *  new map, and set or clear the lobby template accordingly;
+ *  the sim reads the template again the moment the call
+ *  returns. NULL clears it.
+ *
+ *  mapPath is "" when the new map came from bytes rather
+ *  than a file — an upload, a generated random map, or a
+ *  preview rolled back — which is the case where there is
+ *  nothing to look beside.
+ *
+ *  The sim goes down the call beside the path so the
+ *  context can be something that outlives any one scenario:
+ *  the callback is where a scenario is torn down and
+ *  replaced, so it cannot be the scenario itself.
+ *********************************************************/
+void serverSimSetScenarioMapChanged(ServerSim *sim,
+                                    void (*mapChanged)(void *ctx,
+                                                       ServerSim *sim,
+                                                       const char *mapPath),
+                                    void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioState
  *PURPOSE:
  *  Stores the host's opaque state pointer on the sim. The

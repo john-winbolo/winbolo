@@ -118,6 +118,12 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
      * human just left, so no control-event subscribers remain to receive the
      * reset; the next joiner picks up the full lobby state (settings, team
      * metadata, bot configs) via the join-time sync replay. */
+    /* The reset above emptied the lobby, seats a scenario put there
+       included. Seat them again at the end of it, so the next joiner opens
+       the map's own lobby rather than a bare one — the scenario is still
+       attached, only its lobby was swept. */
+    serverSimScenarioSeatLobby(sim);
+
     serverSimPublishLobbySettings(sim);
     serverSimWbnLobbyUpdate(sim, FALSE);
 }
@@ -681,6 +687,13 @@ void serverSimReturnToLobby(ServerSim *sim) {
             sim->lobbyPlayers[i].ready = TRUE;
         }
     }
+
+    /* The roster the round ended with is back, so this is where the lobby a
+       scenario asks for is brought into line with it: what the host changed
+       between rounds stands, a team grown past its ceiling is cut back, and
+       the seats the script fielded during the round go back to being held so
+       the next round starts where the last one did. */
+    serverSimScenarioReconcileLobby(sim);
 
     /* Reconcile the players table against the restored connection state:
      * clear any slot still marked inUse but no longer connected. The leave
@@ -1491,6 +1504,11 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
     /* Hash the canonical BMAPBOLO file so WBN can match it. */
     serverSimCacheMapMd5FromFile(sim, mapFileName);
+
+    /* And keep the file itself: a scenario is discovered beside its .map and
+       the display name cannot find it again. The rotation reaches the map
+       change through here. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
 
     basesClearMines(&sim->sim);
 

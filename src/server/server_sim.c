@@ -435,6 +435,10 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         return NULL;
     }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
+    /* The file the live map came from, kept so a scenario can be looked for
+       beside it. Every other loader either sets this or clears it. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName ? mapFileName : "",
+                sizeof(sim->mapFilePath));
 
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
