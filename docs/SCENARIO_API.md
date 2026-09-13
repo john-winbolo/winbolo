@@ -22,6 +22,7 @@ bug worth reporting.
 - [Hooks](#hooks)
 - [How the `game` table behaves](#how-the-game-table-behaves)
 - [Reading the world](#reading-the-world)
+  - [Three clocks](#three-clocks)
 - [Timers](#timers)
 - [Tags and regions](#tags-and-regions)
 - [Changing the world](#changing-the-world)
@@ -234,7 +235,7 @@ leave out the rest; a hook you do not declare costs nothing.
 |---|---|
 | `on_setup()` | Once, after the scenario's rules are applied and before the round's first tick. Every write is available except the ones that add or remove a seat. This is where the map gets ready. |
 | `on_start()` | The round's first running tick. The tanks exist and the roster has settled, so this is the first moment a scenario can ask who is playing. |
-| `on_tick(tick)` | Every running tick. **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs a hundred times a second is a handler that has to be cheap. |
+| `on_tick(tick)` | Once per frame, fifty times a second. The `tick` it is handed goes up by **2** each time, not by 1 — see [Three clocks](#three-clocks). **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs fifty times a second is a handler that has to be cheap. |
 | `on_end()` | The round has just ended, for any reason. |
 
 ### The roster and the lobby
@@ -350,12 +351,75 @@ detail, never cut short.
 
 | Call | Answers |
 |---|---|
-| `game.tick()` | The tick the round is on. |
+| `game.tick()` | The tick the round is on. It counts at 100 a second and goes up by 2 between one `on_tick` and the next. |
 | `game.max_tanks()` | How many seats a game has. |
 | `game.num_players()` | How many seats are playing the round, bots included. |
 | `game.num_humans()` | How many of those are people. |
 | `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. |
 | `game.game_type()` | The rules the humans play under: `"open"`, `"tournament"` or `"strict"`. |
+
+### Three clocks
+
+The word "tick" means three different things, and a scenario meets all three.
+They are worth twenty seconds of your time now.
+
+**The simulation runs 50 frames a second.** Every frame is 20 milliseconds of
+play. Everything below is counted against that.
+
+**1. `game.tick()` counts twice a frame — 100 a second.** A frame is two
+half-steps and the counter goes up on each, so between one `on_tick` and the
+next it has moved by 2. It is always even or always odd for the whole of a
+round, never both.
+
+That matters the moment you test it for a multiple. Half the values never
+arrive, so a test for one of them lands on half the multiples it reads as, or
+on none:
+
+```lua
+function on_tick(tick)
+  -- 100 is even, and this round's ticks may all be odd, in which case this
+  -- is never true. Where they are even it is true once a second.
+  if tick % 100 == 0 then ... end
+
+  -- Every other multiple of 99 is odd, so whichever parity the round has,
+  -- this fires half as often as it looks like it will.
+  if tick % 99 == 0 then ... end
+end
+```
+
+Compare against a count of your own, or use `game.timer`, which takes seconds
+and sidesteps the question:
+
+```lua
+game.timer(1, every_second)         -- and set it again from inside itself
+```
+
+**2. Your hooks run once a frame — 50 a second.** `on_tick` is called after
+both half-steps, so a handler sees every second value of `game.tick()`.
+Timers, the event hooks and the region hooks are all on this clock too: a
+timer set for 3 seconds comes due 150 frames later, and it is checked once a
+frame, so a delay shorter than 20 milliseconds still waits a whole frame.
+
+**3. A rule whose name ends `_ticks` is on neither of those.** Those counters
+belong to the thing they are counting for. A pillbox's step once a frame. A
+tank's step once per input the server applies to it, and of the two a client
+sends each frame only one moves the tank. Either way it comes out at about 50
+a second, and **not** at the rate `game.tick()` moves. Read a `_ticks` rule as
+roughly **fifty to the second**:
+
+| Value | About |
+|---|---|
+| 50 | 1 second |
+| 255 | 5 seconds — the classic `tank_death_ticks` |
+| 1500 | 30 seconds |
+
+So `tank_death_ticks = 1500` keeps a dead tank waiting half a minute, and
+`tank_death_ticks = 150` — the value Wave Defense sets — is about three
+seconds.
+
+**The game clock is the exception.** `set_game_time` and `add_game_time` are
+counted in `game.tick()`'s own units, 100 a second, because the round's time
+limit comes down on every half-step. A minute is 6000, not 3000.
 
 ### The map
 
@@ -408,8 +472,8 @@ end
 
 At most 64 timers wait at a time, and none outlives its round.
 
-A timer that sets another timer moves one call per tick however short the
-delay: a run that feeds itself cannot spin inside a single tick.
+A timer that sets another timer moves one call per frame however short the
+delay: a run that feeds itself cannot spin inside a single frame.
 
 Ids are never reused, so a stale id is safe to cancel — it matches nothing
 rather than matching whatever has since taken its place.
@@ -471,7 +535,7 @@ script cannot be told it is inside a region the hook disagrees about.
 |---|---|
 | `game.set_pill_owner(n, p)` | Hands a pillbox to a seat, or to nobody with `game.NEUTRAL`. A pillbox in a tank answers to whoever is carrying it, so this is refused with `SCN_OP_CARRIED` until it is dropped. |
 | `game.set_pill_armour(n, a)` | How much a pillbox has left. 0 is a dead pillbox on the ground. |
-| `game.set_pill_speed(n, s)` | The ticks between a pillbox's shots. |
+| `game.set_pill_speed(n, s)` | The ticks between a pillbox's shots, counted the way a `_ticks` rule is — about fifty to the second, so 50 is a shot a second. |
 | `game.move_pill(n, x, y)` | Puts a pillbox on another square. |
 | `game.set_base_owner(n, p[, keep_stock])` | Hands a base to a seat, or to nobody with `game.NEUTRAL`. `keep_stock` leaves what it holds; without it a base changing hands is emptied, as it is in play. |
 | `game.set_base_stock(n, armour, shells, mines)` | What a base holds. A stock left out is left alone, and one past the cap is held there. |
@@ -503,7 +567,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | Call | What it does |
 |---|---|
 | `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. |
-| `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a tick's budget answers `true, "queued"` and finishes over the ticks after it. |
+| `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a frame's budget answers `true, "queued"` and finishes over the frames after it. |
 | `game.place_mine(x, y[, owner[, visible]])` | Lays a mine on a square. `visible` shows it to everyone rather than to its owner's side. |
 | `game.remove_mine(x, y)` | Takes a mine off a square without setting it off. |
 
@@ -553,8 +617,8 @@ machinery that is building it. Field your first wave from `on_start`.
 | `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
-| `game.set_game_time(ticks)` | How long the round has left. |
-| `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative. A round with no time limit has nothing to add to, so give it a length first. |
+| `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
+| `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
 
 `end_round` is how a scenario wins or loses a round. It stops play there and
 then, and the line it carries is shown in the lobby exactly as written — the
@@ -583,6 +647,10 @@ Two things a rule value can be refused for:
 
 A pair can be broken across two rules that are each fine alone, so a `rules`
 block is checked as a whole and not one line at a time.
+
+**A rule whose name ends `_ticks` counts at about fifty to the second**, which
+is not the rate `game.tick()` moves at. 50 is a second, 255 is five, 1500 is
+half a minute. [Three clocks](#three-clocks) says why.
 
 ---
 
@@ -669,7 +737,7 @@ The `code` a refused write answers, as a string.
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
 | A bot's `init` table | 16 pairs |
-| Events queued for one tick | 256 |
+| Events queued for one frame | 256 |
 
 Going past one of these is reported and refused, never silently cut.
 
