@@ -1758,6 +1758,19 @@ uint8_t     serverSimGetOverviewWindow(const ServerSim *sim);
 void        serverSimSetLineOfSight(ServerSim *sim, uint8_t mode);
 uint8_t     serverSimGetLineOfSight(const ServerSim *sim);
 
+/* Smart pings — whether a client may drop a ping marker on the map. The
+ * host owns it from the lobby (LST_SMART_PINGS_OFF), and the server
+ * refuses CMD_PING outright while it is set, so a modified client gains
+ * nothing by ignoring the setting.
+ *
+ * Named and stored in the negative sense on purpose: false means pings
+ * are ALLOWED. That is what every build before the setting existed did,
+ * and it is what a zeroed sim, an absent wire byte and a NULL sim all
+ * read as. The lobby UI reads it through the positive accessor
+ * clientSimIsLobbyAllowSmartPings, so no display code deals in negatives. */
+void        serverSimSetSmartPingsOff(ServerSim *sim, bool off);
+bool        serverSimGetSmartPingsOff(const ServerSim *sim);
+
 /* Voice mode — how the server handles the voice its clients send it.
  * serverVoiceOff forwards nothing; serverVoiceProximity is not
  * implemented and forwards like serverVoiceOn. Set once from

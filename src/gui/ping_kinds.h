@@ -255,14 +255,74 @@ static inline const char *pingDisplayName(const char *name,
     return out;
 }
 
+/* The blink. A ping sits on top of the map, and the map is what the player
+ * needs to keep reading — the tile it names, and whatever is moving over it.
+ * So the marker is off for most of each cycle rather than covering that tile
+ * for its whole five seconds.
+ *
+ * One part on to three parts off. Written as a period and an on-time rather
+ * than as a ratio so the two can be tuned apart.
+ *
+ * Not in game ticks, though the ratio came from thinking in them: a tick is
+ * 20 ms (GAME_NUMGAMETICKS_SEC), so one on and three off would be an 80 ms
+ * cycle — a flicker rather than a blink, and at that rate a player reads it
+ * as a dim marker instead of a blinking one. A quarter second on, three
+ * quarters off, is the same ratio at a rate the eye resolves. */
+#define PING_BLINK_PERIOD_MS 1000
+#define PING_BLINK_ON_MS      250
+
+/* How many times the world marker flashes before it gives the tile back for
+ * good. Three says "look here" and then stops asking.
+ *
+ * This ends the WORLD marker early, at three periods, where the ping itself
+ * lives PING_DISPLAY_MS. The steady markers — the off-screen edge one and
+ * the overview's dot — run the full life as before. Neither of those covers
+ * anything, so there is no reason to take them away sooner, and the edge
+ * marker is the one still pointing at a ping that is off the screen. */
+#define PING_BLINK_COUNT        3
+
 /* 0..1 opacity for a ping `ageMs` old: solid until the fade window, then a
  * straight ramp to nothing. Returns 0 once the ping has expired, so a caller
- * that draws whatever this returns needs no separate expiry test. */
+ * that draws whatever this returns needs no separate expiry test.
+ *
+ * Steady. Every marker but the one on the ground uses this: the off-screen
+ * edge marker and the overview's dot sit on the border and on a map the
+ * player is reading deliberately, where nothing is hidden by them and a
+ * blink would only be noise. */
 static inline float pingDisplayAlpha(int ageMs) {
     if (ageMs < 0) return 0.0f;
     if (ageMs >= PING_DISPLAY_MS) return 0.0f;
     if (ageMs <= PING_DISPLAY_MS - PING_FADE_MS) return 1.0f;
     return (float)(PING_DISPLAY_MS - ageMs) / (float)PING_FADE_MS;
+}
+
+/* The same, blinking. For the WORLD MARKER alone — the one drawn on the
+ * ground in the game view, over the tile it names and over whatever is moving
+ * across it. That marker is the only one that hides anything the player needs
+ * to keep reading, so it is the only one that gets out of the way.
+ *
+ * Returns a hard 0 in the gaps rather than a low alpha: a marker drawn at any
+ * opacity still obscures, and every caller already skips on `alpha <= 0`, so
+ * zero means the tile is drawn untouched for three quarters of each cycle.
+ *
+ * The phase comes from the ping's own age, so each ping blinks on its own
+ * clock from the moment it arrived. Two pings a moment apart therefore blink
+ * out of step, which keeps them apart rather than pulsing as one. It also
+ * needs no wall clock, so a recording replays the blink it showed live.
+ *
+ * The first phase is an ON one, so a ping is visible the instant it lands.
+ * The end-of-life fade still applies, so the last second blinks and dims. */
+static inline float pingWorldMarkerAlpha(int ageMs) {
+    if (ageMs < 0) return 0.0f;
+    /* Done flashing: the tile is the player's again for the rest of the
+     * ping's life. Tested before the phase so the marker cannot come back
+     * for a fourth time. */
+    if (ageMs >= PING_BLINK_COUNT * PING_BLINK_PERIOD_MS) return 0.0f;
+    if ((ageMs % PING_BLINK_PERIOD_MS) >= PING_BLINK_ON_MS) return 0.0f;
+    /* Through pingDisplayAlpha for the expiry and the end-of-life ramp. With
+     * the count above ending this marker first, that ramp is unreachable
+     * here unless the constants change — kept so it stays right if they do. */
+    return pingDisplayAlpha(ageMs);
 }
 
 #ifdef __cplusplus

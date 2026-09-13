@@ -1417,6 +1417,7 @@ static const LangEntry langTable[] = {
     {2157, "Buildings and stands of trees stop you seeing further into\nthe live block. Off is the classic rule, and classic mode\nforces it off. The server sends the same map data either\nway, so this is a convenience rule, not a guarantee about a\nmodified client."},
     {2158, "Expanded"},
     {2159, "Classic"},
+    {2164, "Allow smart pings"},
     /* Settings > Display & Sound > Full Screen */
     {2013, "Full Screen"},
     {2014, "Newswire transparency"},

@@ -3016,7 +3016,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         int nPings = clientSimGetPings(cs, nowMs, pings, MAX_CLIENT_PINGS);
         int pi;
         for (pi = 0; pi < nPings; pi++) {
-          float alpha = pingDisplayAlpha((int)(nowMs - pings[pi].recvMs));
+          /* The world marker blinks; see pingWorldMarkerAlpha. It is the
+             one ping marker drawn over live map, so it is the one that has
+             to let the tile under it be read. */
+          float alpha = pingWorldMarkerAlpha((int)(nowMs - pings[pi].recvMs));
           float cx, cy;
           if (alpha <= 0.0f) continue;
           cx = (float)originX

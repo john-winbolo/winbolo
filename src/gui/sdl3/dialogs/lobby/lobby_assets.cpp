@@ -220,6 +220,24 @@ static SDL_Texture *loadWhiteIcon(SDL_Renderer *renderer, const char *relPath,
     return tex;
 }
 
+/* The default ping marker — the icon half of the header summary's
+ * smart-ping entry. An authored white alpha mask (see PingKindStyle in
+ * src/gui/ping_kinds.h: every drawer tints it), so it loads through
+ * loadWhiteIcon rather than loadLobbyPng.
+ *
+ * Rasterised at a fixed 32 px because the lazy getters take no scale: the
+ * summary draws it at 16 logical px, so 32 still reads on a 2x display and
+ * scales down cleanly below that. */
+SDL_Texture *lobbyGetPingStandardTexture(SDL_Renderer *renderer) {
+    if (s_icons.pingStandardAttempted) return s_icons.pingStandard;
+    s_icons.pingStandardAttempted = true;
+    s_icons.pingStandard = loadWhiteIcon(renderer, "data/ui/ping/standard.svg", 32);
+    if (s_icons.pingStandard) {
+        SDL_SetTextureScaleMode(s_icons.pingStandard, SDL_SCALEMODE_LINEAR);
+    }
+    return s_icons.pingStandard;
+}
+
 void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* If we've loaded against this exact renderer already, nothing
      * to do. If the renderer pointer differs (game→lobby may have
@@ -246,12 +264,14 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.pillbox15)   { SDL_DestroyTexture(s_icons.pillbox15);   s_icons.pillbox15   = nullptr; }
         if (s_icons.baseGood)    { SDL_DestroyTexture(s_icons.baseGood);    s_icons.baseGood    = nullptr; }
         if (s_icons.forest)      { SDL_DestroyTexture(s_icons.forest);      s_icons.forest      = nullptr; }
+        if (s_icons.pingStandard){ SDL_DestroyTexture(s_icons.pingStandard);s_icons.pingStandard= nullptr; }
         s_icons.tankSelfAttempted  = false;
         s_icons.tankEvilAttempted  = false;
         s_icons.tankGoodAttempted  = false;
         s_icons.pillbox15Attempted = false;
         s_icons.baseGoodAttempted  = false;
         s_icons.forestAttempted    = false;
+        s_icons.pingStandardAttempted = false;
     }
     s_icons.attempted = true;
     s_icons.renderer  = renderer;

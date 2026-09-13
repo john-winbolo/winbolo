@@ -258,6 +258,7 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   MDNS_TXT_ADD("locked",  "%d", info->locked ? 1 : 0);
   MDNS_TXT_ADD("md5",     "%s", info->mapMd5Hex);
   MDNS_TXT_ADD("newp",    "%d", info->allowNewPlayers ? 1 : 0);
+  MDNS_TXT_ADD("spingoff","%d", info->smartPingsOff ? 1 : 0);
   MDNS_TXT_ADD("spec",    "%d", info->allowSpectators ? 1 : 0);
   MDNS_TXT_ADD("nspec",   "%u", (unsigned)info->spectatorCount);
   MDNS_TXT_ADD("ranked",  "%d", info->ranked ? 1 : 0);
@@ -322,6 +323,7 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
     }
   }
   out->allowNewPlayers = serverSimIsAcceptingJoins(sim);
+  out->smartPingsOff   = serverSimGetSmartPingsOff(sim);
   out->allowSpectators = false;  /* future work */
   out->spectatorCount  = 0;      /* future work */
   out->ranked          = serverSimGetRanked(sim);

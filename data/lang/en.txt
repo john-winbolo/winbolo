@@ -1513,6 +1513,9 @@ STR_DLGLOBBY_LINE_OF_SIGHT_TIP=Buildings and stands of trees stop you seeing fur
 STR_DLGLOBBY_WINDOW_EXPANDED=Expanded
 STR_DLGLOBBY_WINDOW_CLASSIC=Classic
 
+# Lobby "Other" column — host switch for smart pings
+STR_DLGLOBBY_SMART_PINGS_CB=Allow smart pings
+
 # Settings > Display & Sound > Full Screen
 STR_DLGSETTINGS_FULLSCREEN=Full Screen
 STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire transparency

@@ -37,6 +37,8 @@ typedef struct {
   bool alliesInTrees;                        /* "alliesintrees"; absent = off */
   int  overviewWindow;                       /* "overviewwindow"; absent = expanded */
   int  lineOfSight;                          /* "lineofsight"; absent = off */
+  bool smartPingsOff;                        /* "smartpingsoff"; absent = false,
+                                                meaning smart pings ALLOWED */
   int  pillViewDecay;                        /* "pillviewdecay" secs; absent = 30 */
   int  baseViewDecay;                        /* "baseviewdecay" secs; absent = 30 */
   int  allyViewDecay;                        /* "allyviewdecay" secs; absent = 30 */

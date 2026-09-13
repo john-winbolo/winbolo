@@ -2020,6 +2020,10 @@ bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAv
 bool clientSimIsLobbyAvailable(const ClientSim *cs)       { return cs->lobbyAvailable; }
 bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
 bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
+/* The one place the stored negative is turned back into the positive
+ * question every caller actually asks. A server that never sends the byte
+ * leaves lobbySmartPingsOff false, so it reads as allowed. */
+bool clientSimIsLobbyAllowSmartPings(const ClientSim *cs) { return cs ? !cs->lobbySmartPingsOff : true; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
 uint64_t clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs) {
     return cs ? cs->lastBalanceProposalArrivedMs : 0;

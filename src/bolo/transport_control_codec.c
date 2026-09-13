@@ -487,7 +487,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
- *   [overviewWindow 1] [lineOfSight 1]
+ *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1]
  *
  * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
@@ -500,9 +500,10 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
  * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
- * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1). */
+ * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
+ * + smartPingsOff(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1 + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -553,6 +554,10 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = (uint8_t)evt->u.lobbySettings.voiceMode;
     buf[pos++] = evt->u.lobbySettings.lobbyOverviewWindow;
     buf[pos++] = evt->u.lobbySettings.lobbyLineOfSight;
+    /* Negative sense on the wire: 1 bans smart pings, 0 allows them. The
+     * tail is append-only and a decoder leaves zero for a byte the sender
+     * never wrote, so allowing them has to be the zero. */
+    buf[pos++] = evt->u.lobbySettings.lobbySmartPingsOff ? 1 : 0;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -2252,6 +2257,12 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyLineOfSight = buf[pos++];
+    }
+    /* Absent means the sender predates the setting, and every such server
+     * accepted smart pings — so the zero this arm leaves in place is the
+     * right answer, not a guess. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbySmartPingsOff = buf[pos++] ? true : false;
     }
     return true;
 }

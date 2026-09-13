@@ -431,6 +431,12 @@ typedef struct ControlEvent {
                                          * send voice, so it captures none. */
             uint8_t  lobbyOverviewWindow;  /* OverviewWindow */
             uint8_t  lobbyLineOfSight;     /* LineOfSightMode */
+            bool     lobbySmartPingsOff;   /* server refuses CMD_PING. Held in
+                                            * the negative sense so the zero a
+                                            * decoder leaves for an absent byte
+                                            * reads as "pings allowed" — what
+                                            * every server did before the field
+                                            * existed. */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

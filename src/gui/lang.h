@@ -1585,6 +1585,9 @@
 #define STR_DLGLOBBY_LINE_OF_SIGHT_TIP      2157
 #define STR_DLGLOBBY_WINDOW_EXPANDED        2158
 #define STR_DLGLOBBY_WINDOW_CLASSIC         2159
+/* Lobby "Other" column — host switch for smart pings. One label, used by
+   the checkbox, the header summary's tooltip and the browser detail row. */
+#define STR_DLGLOBBY_SMART_PINGS_CB         2164
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014

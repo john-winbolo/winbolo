@@ -145,6 +145,9 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->allowSpectators = readBoolField(src, "allow_spectators");
     dst->classicMode     = readBoolField(src, "classicmode");
     dst->alliesInTrees   = readBoolField(src, "alliesintrees");
+    /* Absent reads as false, which here means smart pings are allowed —
+     * the behaviour of every server that predates the key. */
+    dst->smartPingsOff   = readBoolField(src, "smartpingsoff");
     dst->spectatorCount  = readIntField(src, "spectator_count");
 
     dst->timeLimit   = readBoolField(src, "time_limit");

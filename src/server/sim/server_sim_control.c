@@ -289,6 +289,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.voiceMode = sim->voiceMode;
     evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
     evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
+    evt->u.lobbySettings.lobbySmartPingsOff  = sim->smartPingsOff;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
