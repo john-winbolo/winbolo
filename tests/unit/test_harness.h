@@ -2343,6 +2343,22 @@ int run_scenario_host_vm_lock_same_thread(void);
 int run_scenario_host_vm_lock_second_thread(void);
 int run_scenario_host_audit_human_lost(void);
 
+/* The validator (test_scenario_validate.c): a sidecar read in a stub VM and
+ * checked against the map, the lobby template and the rule catalogue, each
+ * problem carrying the key it is against and the line it is on. */
+int run_scenario_validate_clean(void);
+int run_scenario_validate_api_too_new(void);
+int run_scenario_validate_lobby_shape(void);
+int run_scenario_validate_unknown_rule(void);
+int run_scenario_validate_rule_out_of_range(void);
+int run_scenario_validate_rule_pair(void);
+int run_scenario_validate_tag_past_map(void);
+int run_scenario_validate_fifth_tag(void);
+int run_scenario_validate_region_off_map(void);
+int run_scenario_validate_bound_false_with_tags(void);
+int run_scenario_validate_syntax_error_line(void);
+int run_scenario_validate_lines_point_at_the_key(void);
+
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
  * as, the whole-map string, a shape error against the error limit, and

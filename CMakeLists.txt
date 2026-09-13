@@ -3321,6 +3321,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
     tests/unit/test_scenario_host.c
+    # The validator: a sidecar read in a stub VM and checked against the map,
+    # the lobby template and the rule catalogue, without a round being run.
+    tests/unit/test_scenario_validate.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5042,6 +5045,18 @@ set(_unit_test_names
     scenario_host_vm_lock_same_thread
     scenario_host_vm_lock_second_thread
     scenario_host_audit_human_lost
+    scenario_validate_clean
+    scenario_validate_api_too_new
+    scenario_validate_lobby_shape
+    scenario_validate_unknown_rule
+    scenario_validate_rule_out_of_range
+    scenario_validate_rule_pair
+    scenario_validate_tag_past_map
+    scenario_validate_fifth_tag
+    scenario_validate_region_off_map
+    scenario_validate_bound_false_with_tags
+    scenario_validate_syntax_error_line
+    scenario_validate_lines_point_at_the_key
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

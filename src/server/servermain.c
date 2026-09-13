@@ -65,6 +65,7 @@
 #include "server_console.h"
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
+#include "../scenario/scenario_validate.h"
 #include "cJSON.h"
 
 /* Constants previously from backend.h */
@@ -589,6 +590,10 @@ void printArgs() {
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-validate <File> - Check the scenario sidecar beside a map and exit without\n");
+  fprintf(stderr, "                starting a server. Each problem is printed as\n");
+  fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
+  fprintf(stderr, "                playable, 1 when it is not.\n");
 
   fprintf(stderr, "\nGame rules:\n");
   fprintf(stderr, "-gametype <T> - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
@@ -1173,6 +1178,68 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
   return (window == overviewWindowClassic) ? "classic" : "expanded";
 }
 
+/* One map's scenario sidecar, checked and reported, for -validate. Returns
+   what the process exits with: 0 for a map that is playable, 1 for one that is
+   not. Nothing else in the server is running by the time this is called, and
+   nothing it does starts anything. */
+static int validateMapAndReport(const char *mapPath) {
+  ServerSim *sim;
+  ScnValidateResult result;
+  char sidecar[SCN_SIDECAR_PATH_MAX];
+  bool ok;
+  uint16_t i;
+
+#ifdef USING_SDL
+  /* The sim builds its locks through SDL. Nothing here needs a subsystem. */
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
+    return 1;
+  }
+#endif
+  /* The debug file the server opens is a server's; a check writes nothing to
+     it. */
+  setWriteToDebugFileStream(-1);
+
+  /* What the issues are printed against. A path with no room for a sidecar
+     name is reported against the map's own name. */
+  if (scnSidecarPath(mapPath, sidecar, sizeof(sidecar)) == FALSE) {
+    snprintf(sidecar, sizeof(sidecar), "%s", mapPath);
+  }
+
+  sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
+  if (sim == NULL) {
+    fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
+    return 1;
+  }
+
+  ok = scenarioValidateMap(sim, mapPath, &result);
+
+  for (i = 0; i < result.count; i++) {
+    const ScnValidateIssue *issue = &result.issues[i];
+    if (issue->line > 0) {
+      fprintf(stderr, "%s:%d: %s: %s\n", sidecar, issue->line, issue->key,
+              issue->message);
+    } else {
+      fprintf(stderr, "%s: %s: %s\n", sidecar, issue->key, issue->message);
+    }
+  }
+
+  if (result.haveManifest == FALSE && result.count == 0) {
+    fprintf(stderr, "%s: no scenario sidecar beside it\n", mapPath);
+  } else if (ok == TRUE) {
+    fprintf(stderr, "%s: no problems\n", sidecar);
+  } else if (result.dropped > 0) {
+    fprintf(stderr, "%s: %u problems, and %u more than the list holds\n",
+            sidecar, (unsigned)result.count, (unsigned)result.dropped);
+  } else {
+    fprintf(stderr, "%s: %u problem%s\n", sidecar, (unsigned)result.count,
+            (result.count == 1) ? "" : "s");
+  }
+
+  serverSimDestroy(sim);
+  return (ok == TRUE) ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   {
@@ -1185,6 +1252,17 @@ int main(int argc, char **argv) {
   atexit(sentryClose);
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
   atexit(wb_log_shutdown);
+
+  /* -validate <map> checks a map's scenario sidecar and exits. It is answered
+     here, ahead of the argument checks a server start needs, so a map can be
+     checked without a port and a game type to go with it — and before any of
+     the network, the tracker, mDNS or a window is brought up. */
+  {
+    int validateArg = findArg(argc, argv, "validate");
+    if (validateArg != ARG_NOT_FOUND) {
+      return validateMapAndReport((const char *)argv[validateArg]);
+    }
+  }
 
 #ifdef _WIN32
   // Show the console w/o activation if we were started hidden by WinBolo.exe

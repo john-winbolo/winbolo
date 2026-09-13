@@ -6,7 +6,9 @@
 #                     from the sim's round-start callback, holds the bus
 #                     events a round raises until the tick that drains them,
 #                     and puts the game table a script reads the sim through
-#                     on every state it boots.
+#                     on every state it boots. It also checks a sidecar
+#                     without running one: the same parse against a stub game
+#                     table, reported as a list of keys, lines and messages.
 #
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
@@ -24,6 +26,7 @@ add_library(scenario_static STATIC
     scenario_host.c
     scenario_events.c
     scenario_lua.c
+    scenario_validate.c
 )
 
 bolo_apply_include_rules(scenario_static scenario_host)

@@ -93,6 +93,8 @@
 #include "scenario_manifest.h"
 #include "scenario_events.h"
 #include "scenario_lua.h"
+#include "scenario_validate.h"     /* ScnParseReport, and the parse this file
+                                    * shares with the validator */
 
 /* One operator line. Long enough for a Lua error, which carries the file
  * path and the line number ahead of its message. */
@@ -170,6 +172,34 @@ static void scnSay(char *buf, size_t len, const char *fmt, ...) {
     serverSimConsoleMessage(line);
     if (buf != NULL && len > 0) {
         snprintf(buf, len, "%s", line);
+    }
+}
+
+/* Say one line about the table being read. The operator and the soft buffer
+ * hear it as they always have; a validator collecting problems gets it as an
+ * issue under key, which is the dotted path of the thing at fault.
+ *
+ * The three readers below go through here rather than through scnSay, because
+ * what they complain about is the file's own content and that is exactly what
+ * an author asking for a check wants listed. */
+static void scnReport(ScnParseReport *rep, const char *key,
+                      const char *fmt, ...) {
+    char    line[SCN_ERR_LEN];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+
+    serverSimConsoleMessage(line);
+    if (rep == NULL) {
+        return;
+    }
+    if (rep->soft != NULL && rep->softLen > 0) {
+        snprintf(rep->soft, rep->softLen, "%s", line);
+    }
+    if (rep->sink != NULL) {
+        scnIssueAdd(rep->sink, key, "%s", line);
     }
 }
 
@@ -395,7 +425,7 @@ struct ScenarioHost {
 /* .../X.map is accompanied by .../X.scenario.lua. A path that does not end
  * in .map keeps its whole name and takes the suffix as it is, so a caller
  * that hands over a name without an extension still resolves. */
-static bool scnSidecarPath(const char *mapPath, char *out, size_t outLen) {
+bool scnSidecarPath(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     size_t base = n;
     size_t suffix = strlen(SCN_SIDECAR_SUFFIX);
@@ -424,8 +454,8 @@ static bool scnSidecarPath(const char *mapPath, char *out, size_t outLen) {
  * Read in one go rather than streamed: a sidecar is a script, the cap below
  * is what says so, and a file above it is refused before a byte of it is
  * kept. */
-static bool scnReadFile(const char *path, char **out, size_t *outLen,
-                        char *err, size_t errLen) {
+bool scnReadFile(const char *path, char **out, size_t *outLen,
+                 char *err, size_t errLen) {
     FILE  *f;
     long   size;
     char  *buf;
@@ -520,7 +550,7 @@ static void scnSeedRandom(lua_State *L) {
     lua_pop(L, 1);               /* math, or whatever the global held */
 }
 
-static lua_State *scnNewVm(void) {
+lua_State *scnNewVm(void) {
     lua_State *L = luaL_newstate();
     if (L == NULL) {
         return NULL;
@@ -567,8 +597,8 @@ static const char *scnLuaError(lua_State *L) {
  * chunkName carries the leading '@' that tells Lua the name is a file, so
  * an error reads as path:line: message — the same text a chunk loaded
  * straight from the file produces. */
-static bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
-                        const char *chunkName, char *err, size_t errLen) {
+bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
+                 const char *chunkName, char *err, size_t errLen) {
     if (luaL_loadbuffer(L, src, srcLen, chunkName) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
@@ -659,7 +689,7 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
  * still applies: one bad line in a sidecar should not cost an author every
  * other line in it. */
 static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
-                         char *soft, size_t softLen) {
+                         ScnParseReport *rep) {
     int rules;
 
     lua_getfield(L, tbl, "rules");
@@ -678,11 +708,13 @@ static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
             const char *key = lua_tostring(L, -2);
             int         idx = scenarioLuaRuleIndex(key);
             if (idx < 0) {
-                scnSay(soft, softLen, "scenario: no rule is named '%s'", key);
+                char where[SCN_VALIDATE_KEY_LEN];
+                snprintf(where, sizeof(where), "rules.%s", key);
+                scnReport(rep, where, "scenario: no rule is named '%s'", key);
             } else if (m->numRules >= SCN_MANIFEST_RULES_MAX) {
-                scnSay(soft, softLen,
-                       "scenario: more than %d rules; '%s' dropped",
-                       SCN_MANIFEST_RULES_MAX, key);
+                scnReport(rep, "rules",
+                          "scenario: more than %d rules; '%s' dropped",
+                          SCN_MANIFEST_RULES_MAX, key);
             } else {
                 m->rules[m->numRules].rule  = (uint16_t)idx;
                 m->rules[m->numRules].value = (double)lua_tonumber(L, -1);
@@ -695,13 +727,13 @@ static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
 }
 
 static void scnAddTag(ScnManifestTags *out, const char *s, const char *kind,
-                      int entity, char *soft, size_t softLen) {
+                      int entity, const char *where, ScnParseReport *rep) {
     size_t n;
 
     if (out->count >= SCN_TAGS_PER_ENTITY) {
-        scnSay(soft, softLen,
-               "scenario: %s %d already carries %d tags; '%s' dropped",
-               kind, entity, SCN_TAGS_PER_ENTITY, s);
+        scnReport(rep, where,
+                  "scenario: %s %d already carries %d tags; '%s' dropped",
+                  kind, entity, SCN_TAGS_PER_ENTITY, s);
         return;
     }
     n = strlen(s);
@@ -718,7 +750,7 @@ static void scnAddTag(ScnManifestTags *out, const char *s, const char *kind,
  * them, so entry 3 in the file is entry 3 here. */
 static void scnReadTagKind(lua_State *L, int tags, const char *key,
                            ScnManifestTags *arr, int maxEntity,
-                           const char *kind, char *soft, size_t softLen) {
+                           const char *kind, ScnParseReport *rep) {
     int kt;
 
     lua_getfield(L, tags, key);
@@ -731,13 +763,15 @@ static void scnReadTagKind(lua_State *L, int tags, const char *key,
     lua_pushnil(L);
     while (lua_next(L, kt) != 0) {
         if (lua_type(L, -2) == LUA_TNUMBER) {
-            int e = (int)lua_tointeger(L, -2);
+            int  e = (int)lua_tointeger(L, -2);
+            char where[SCN_VALIDATE_KEY_LEN];
+            snprintf(where, sizeof(where), "tags.%s[%d]", key, e);
             if (e < 1 || e > maxEntity) {
-                scnSay(soft, softLen,
-                       "scenario: %s %d is not an index this map can hold",
-                       kind, e);
+                scnReport(rep, where,
+                          "scenario: %s %d is not an index this map can hold",
+                          kind, e);
             } else if (lua_type(L, -1) == LUA_TSTRING) {
-                scnAddTag(&arr[e], lua_tostring(L, -1), kind, e, soft, softLen);
+                scnAddTag(&arr[e], lua_tostring(L, -1), kind, e, where, rep);
             } else if (lua_istable(L, -1)) {
                 int list = lua_gettop(L);
                 int n    = (int)lua_rawlen(L, list);
@@ -746,7 +780,7 @@ static void scnReadTagKind(lua_State *L, int tags, const char *key,
                     lua_rawgeti(L, list, i);
                     if (lua_type(L, -1) == LUA_TSTRING) {
                         scnAddTag(&arr[e], lua_tostring(L, -1), kind, e,
-                                  soft, softLen);
+                                  where, rep);
                     }
                     lua_pop(L, 1);
                 }
@@ -758,7 +792,7 @@ static void scnReadTagKind(lua_State *L, int tags, const char *key,
 }
 
 static void scnReadTags(lua_State *L, int tbl, ScenarioManifest *m,
-                        char *soft, size_t softLen) {
+                        ScnParseReport *rep) {
     int tags;
 
     lua_getfield(L, tbl, "tags");
@@ -767,12 +801,9 @@ static void scnReadTags(lua_State *L, int tbl, ScenarioManifest *m,
         return;
     }
     tags = lua_gettop(L);
-    scnReadTagKind(L, tags, "pills",  m->pillTags,  MAX_PILLS,  "pill",
-                   soft, softLen);
-    scnReadTagKind(L, tags, "bases",  m->baseTags,  MAX_BASES,  "base",
-                   soft, softLen);
-    scnReadTagKind(L, tags, "starts", m->startTags, MAX_STARTS, "start",
-                   soft, softLen);
+    scnReadTagKind(L, tags, "pills",  m->pillTags,  MAX_PILLS,  "pill",  rep);
+    scnReadTagKind(L, tags, "bases",  m->baseTags,  MAX_BASES,  "base",  rep);
+    scnReadTagKind(L, tags, "starts", m->startTags, MAX_STARTS, "start", rep);
     lua_pop(L, 1);
 }
 
@@ -780,7 +811,7 @@ static void scnReadTags(lua_State *L, int tbl, ScenarioManifest *m,
  * iterates in — which differs between the two Lua builds. A reader looks a
  * region up by name rather than by position. */
 static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
-                           char *soft, size_t softLen) {
+                           ScnParseReport *rep) {
     int rt;
 
     lua_getfield(L, tbl, "regions");
@@ -795,9 +826,11 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
         if (lua_type(L, -2) == LUA_TSTRING && lua_istable(L, -1)) {
             const char *name = lua_tostring(L, -2);
             if (m->numRegions >= SCN_REGIONS_MAX) {
-                scnSay(soft, softLen,
-                       "scenario: more than %d regions; '%s' dropped",
-                       SCN_REGIONS_MAX, name);
+                char where[SCN_VALIDATE_KEY_LEN];
+                snprintf(where, sizeof(where), "regions.%s", name);
+                scnReport(rep, where,
+                          "scenario: more than %d regions; '%s' dropped",
+                          SCN_REGIONS_MAX, name);
             } else {
                 int                r   = lua_gettop(L);
                 ScnManifestRegion *reg = &m->regions[m->numRegions];
@@ -824,9 +857,9 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
  *
  * triggers is not read. Its schema is not settled, so a sidecar that
  * carries one is neither parsed nor refused for it. */
-static bool scnReadManifest(lua_State *L, ScenarioManifest *m,
-                            const char *path, char *err, size_t errLen,
-                            char *soft, size_t softLen) {
+bool scnReadManifest(lua_State *L, ScenarioManifest *m,
+                     const char *path, char *err, size_t errLen,
+                     ScnParseReport *rep) {
     int tbl;
 
     memset(m, 0, sizeof(*m));
@@ -846,9 +879,9 @@ static bool scnReadManifest(lua_State *L, ScenarioManifest *m,
     m->bound = scnReadBool(L, tbl, "bound", true);
 
     scnReadLobby(L, tbl, &m->lobby);
-    scnReadRules(L, tbl, m, soft, softLen);
-    scnReadTags(L, tbl, m, soft, softLen);
-    scnReadRegions(L, tbl, m, soft, softLen);
+    scnReadRules(L, tbl, m, rep);
+    scnReadTags(L, tbl, m, rep);
+    scnReadRegions(L, tbl, m, rep);
 
     lua_pop(L, 1);
     return true;
@@ -1774,6 +1807,7 @@ static void scnSeedTeams(ScenarioHost *h) {
 static void scnRoundStartLocked(ScenarioHost *h) {
     lua_State       *L;
     ScenarioManifest fresh;
+    ScnParseReport   rep;
     char             err[SCN_ERR_LEN];
     bool             humans[MAX_TANKS];
 
@@ -1794,9 +1828,11 @@ static void scnRoundStartLocked(ScenarioHost *h) {
         scnRoundWithoutScenario(h);
         return;
     }
+    rep.soft    = h->lastError;
+    rep.softLen = sizeof(h->lastError);
+    rep.sink    = NULL;
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
-        !scnReadManifest(L, &fresh, h->sidecar, err, sizeof(err),
-                         h->lastError, sizeof(h->lastError))) {
+        !scnReadManifest(L, &fresh, h->sidecar, err, sizeof(err), &rep)) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
         lua_close(L);
         scnRoundWithoutScenario(h);
@@ -1873,6 +1909,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     char             chunkName[SCN_SIDECAR_PATH_MAX + 2];
     char             soft[SCN_ERR_LEN];
     ScenarioManifest m;
+    ScnParseReport   rep;
     ScenarioHost    *h;
     lua_State       *L;
     char            *src    = NULL;
@@ -1941,9 +1978,12 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         return NULL;
     }
 
-    soft[0] = '\0';
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, sidecar, err, errLen, soft, sizeof(soft))) {
+        !scnReadManifest(L, &m, sidecar, err, errLen, &rep)) {
         lua_close(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -2017,6 +2057,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
 bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             soft[SCN_ERR_LEN];
     ScenarioManifest m;
+    ScnParseReport   rep;
     ScnLuaCtx        check;
     lua_State       *L;
     char            *src    = NULL;
@@ -2069,9 +2110,12 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         return false;
     }
 
-    soft[0] = '\0';
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, h->chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, h->sidecar, err, errLen, soft, sizeof(soft))) {
+        !scnReadManifest(L, &m, h->sidecar, err, errLen, &rep)) {
         lua_close(L);
         free(src);
         return false;

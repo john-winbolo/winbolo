@@ -2420,15 +2420,63 @@ BOLO_STATIC_ASSERT(sizeof(SimRules) == SCN_RULE_COUNT * sizeof(int32_t),
 
 /* One switch arm per rule, generated from the list the index enum is
  * generated from, so the two cannot name different fields. The assignment
- * converts the op's double to whatever the field is declared as — an integer
- * rule takes the whole part of it, a float rule takes the value — and reading
- * it straight back out says what the field ended up holding, which is what is
- * checked below and what the record carries. */
+ * converts the caller's double to whatever the field is declared as — an
+ * integer rule takes the whole part of it, a float rule takes the value — and
+ * reading it straight back out says what the field ended up holding, which is
+ * what is checked below and what the record carries. */
 #define SCN_RULE_WRITE_CASE(name)                                            \
     case SCN_RULE_##name:                                                    \
-        copy.name = p->value;                                                \
-        written   = (double)copy.name;                                       \
+        copy->name = value;                                                  \
+        *written   = (double)copy->name;                                     \
         break;
+
+/* One rule into a table the caller owns, with the refusals a write can answer
+ * on its own. The op that sets a rule and the call that asks what a set would
+ * do both come through here, so a value becomes a field the same way whichever
+ * of them is asking.
+ *
+ * A NaN, and anything past the int32 window, cannot be converted to a field's
+ * type at all — that conversion is undefined rather than wrong — so both are
+ * refused before the write instead of checked after it. Written as a negated
+ * in-range test so a NaN fails it. No row's range comes near either end; every
+ * bound a row actually has is stated by simRulesCheck and by nothing here. */
+static ScnOpResult scenarioRuleWrite(SimRules *copy, uint16_t rule,
+                                     double value, double *written) {
+    /* An index past the end of the list names no rule, which is what every
+       other arm answers SCN_OP_NO_SUCH_ITEM for. */
+    if (rule >= SCN_RULE_COUNT) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    if (!(value >= -2147483648.0 && value <= 2147483647.0)) {
+        return SCN_OP_RANGE;
+    }
+
+    switch (rule) {
+        SCN_RULE_LIST(SCN_RULE_WRITE_CASE)
+        default:
+            /* Unreachable: the bounds check above has already passed, and
+               the cases come from the list the enum comes from. */
+            return SCN_OP_NO_SUCH_ITEM;
+    }
+    return SCN_OP_OK;
+}
+
+/* What a fault the check answered is refused as. No table is not reachable
+ * from either caller — the one checked is on the caller's own stack — and
+ * there is no result code for it, so it answers as the range refusal it would
+ * have to be reported as anyway. */
+static ScnOpResult scenarioRuleFaultResult(SimRulesFault fault) {
+    switch (fault) {
+        case SIM_RULES_OK:
+            return SCN_OP_OK;
+        case SIM_RULES_FAULT_PAIR:
+            return SCN_OP_PAIR;
+        case SIM_RULES_FAULT_RANGE:
+        case SIM_RULES_FAULT_NO_TABLE:
+            return SCN_OP_RANGE;
+    }
+    return SCN_OP_RANGE;
+}
 
 /* The record: which rule, and the value the field ended up holding. */
 BOLO_STATIC_ASSERT(sizeof(double) == 8, scn_rule_value_is_eight_bytes);
@@ -2562,29 +2610,12 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
     SimRules      copy    = sim->sim.rules;
     double        written = 0.0;
     SimRulesFault fault;
+    ScnOpResult   r;
     char          why[SIM_RULES_WHY_LEN];
 
-    /* An index past the end of the list names no rule, which is what every
-       other arm answers SCN_OP_NO_SUCH_ITEM for. */
-    if (p->rule >= SCN_RULE_COUNT) {
-        return SCN_OP_NO_SUCH_ITEM;
-    }
-    /* A NaN, and anything past the int32 window, cannot be converted to a
-       field's type at all — that conversion is undefined rather than wrong —
-       so both are refused before the write instead of checked after it.
-       Written as a negated in-range test so a NaN fails it. No row's range
-       comes near either end; every bound a row actually has is stated by the
-       check below and by nothing here. */
-    if (!(p->value >= -2147483648.0 && p->value <= 2147483647.0)) {
-        return SCN_OP_RANGE;
-    }
-
-    switch (p->rule) {
-        SCN_RULE_LIST(SCN_RULE_WRITE_CASE)
-        default:
-            /* Unreachable: the bounds check above has already passed, and
-               the cases come from the list the enum comes from. */
-            return SCN_OP_NO_SUCH_ITEM;
+    r = scenarioRuleWrite(&copy, p->rule, p->value, &written);
+    if (r != SCN_OP_OK) {
+        return r;
     }
 
     fault = simRulesCheck(&copy, why, sizeof(why));
@@ -2595,18 +2626,7 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
         char line[SIM_RULES_WHY_LEN + 32];
         SDL_snprintf(line, sizeof(line), "rule refused: %s", why);
         serverSimConsoleMessage(line);
-    }
-    switch (fault) {
-        case SIM_RULES_OK:
-            break;
-        case SIM_RULES_FAULT_PAIR:
-            return SCN_OP_PAIR;
-        case SIM_RULES_FAULT_RANGE:
-        /* No table is not reachable from here — the one checked is on this
-           stack — and there is no result code for it, so it answers as the
-           range refusal it would have to be reported as anyway. */
-        case SIM_RULES_FAULT_NO_TABLE:
-            return SCN_OP_RANGE;
+        return scenarioRuleFaultResult(fault);
     }
 
     sim->sim.rules = copy;
@@ -2621,6 +2641,47 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
         serverSimPublishSimRules(sim);
     }
     return SCN_OP_OK;
+}
+
+/* The same question the arm asks, without the answer landing anywhere. The
+ * whole set is written into the copy before the check reads it, so a pair two
+ * of the values break together is found although each of them passes alone —
+ * which is what a sidecar's rules table needs asking of it before a round is
+ * ever started on it. */
+ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
+                                        const uint16_t *rules,
+                                        const double *values,
+                                        uint16_t count,
+                                        char *why, size_t whyLen) {
+    SimRules      copy;
+    SimRulesFault fault;
+    uint16_t      i;
+    char          reason[SIM_RULES_WHY_LEN];
+
+    if (why != NULL && whyLen > 0) {
+        why[0] = '\0';
+    }
+    if (sim == NULL) {
+        return SCN_OP_BAD_CALL;
+    }
+    if (count > 0 && (rules == NULL || values == NULL)) {
+        return SCN_OP_BAD_CALL;
+    }
+
+    copy = sim->sim.rules;
+    for (i = 0; i < count; i++) {
+        double      written = 0.0;
+        ScnOpResult r = scenarioRuleWrite(&copy, rules[i], values[i], &written);
+        if (r != SCN_OP_OK) {
+            return r;
+        }
+    }
+
+    fault = simRulesCheck(&copy, reason, sizeof(reason));
+    if (fault != SIM_RULES_OK && why != NULL && whyLen > 0) {
+        SDL_snprintf(why, whyLen, "%s", reason);
+    }
+    return scenarioRuleFaultResult(fault);
 }
 
 #undef SCN_RULE_WRITE_CASE

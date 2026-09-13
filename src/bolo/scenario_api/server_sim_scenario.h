@@ -47,6 +47,34 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out);
 
 /*********************************************************
+ *NAME:          serverSimCheckScenarioRules
+ *PURPOSE:
+ *  Answers what setting these rules would do, without
+ *  setting any of them. Each (rule, value) pair is written
+ *  into a copy of the sim's table through the same write
+ *  cases the set-rule op uses, and the copy is checked once
+ *  when they are all in: SCN_OP_OK for a table that stands,
+ *  SCN_OP_RANGE for a value outside its row's bounds,
+ *  SCN_OP_PAIR for one that breaks a pair, SCN_OP_NO_SUCH_ITEM
+ *  for an index that names no rule, and SCN_OP_BAD_CALL for a
+ *  NULL sim or a count with no arrays behind it.
+ *
+ *  Several at once is the point: two values that each pass on
+ *  their own can break the pair they share, and the whole set
+ *  is written before the check reads it.
+ *
+ *  The sim is not touched. Nothing is published, nothing is
+ *  recorded and no operator line is written. why takes the
+ *  reason the check gave on a fault and "" otherwise; it may
+ *  be NULL only when whyLen is 0.
+ *********************************************************/
+ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
+                                        const uint16_t *rules,
+                                        const double *values,
+                                        uint16_t count,
+                                        char *why, size_t whyLen);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioPolicy
  *PURPOSE:
  *  Registers the vtable the sim asks its scenario decisions
