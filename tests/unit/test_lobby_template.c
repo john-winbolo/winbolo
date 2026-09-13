@@ -27,6 +27,14 @@
  * run_lobby_template_preview_is_inert   — a preview changes no seat
  * run_lobby_template_plain_map_clears   — a map with no scenario keeps none
  * run_lobby_template_caps_humans_only   — max_players binds humans, not bots
+ * run_lobby_template_cap_seats_human_above_bots
+ *                                       — bots in the lowest slots take no
+ *                                         human's place
+ * run_lobby_template_cap_refuses_extra_human
+ *                                       — the cap still binds once that many
+ *                                         people are in
+ * run_lobby_template_cap_never_binds_bots
+ *                                       — and never binds a bot
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -52,6 +60,9 @@
 /* The two teams every case templates, unless it says otherwise. */
 #define LT_HORDE  3     /* unfielded, the Survival shape */
 #define LT_GUARD  4     /* fielded */
+
+/* The human cap the three cases at the foot of this file work against. */
+#define LT_CAP    4
 
 static char ltBrainPath[128];
 
@@ -85,6 +96,29 @@ static ServerSim *ltLobbySim(void) {
     serverSimSetBotAiType(sim, aiFull);
     serverSimSetBotBrainPath(sim, ltBrainPath);
     return sim;
+}
+
+/* A lobby with nobody in it, for the cases that write the roster by hand.
+ * Those never seat a real bot, so there is no brain for this one to name. */
+static ServerSim *ltBareSim(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097,
+                                               "Everard Island",
+                                               gameOpen, false, 0, -1);
+    if (sim == NULL) return NULL;
+    serverSimSetLobbyEnabled(sim, true);
+    return sim;
+}
+
+/* Seats written straight onto the roster. A bot seat is spelled the way an
+ * unfielded one is — connected, marked a bot, and nothing behind it in the
+ * bot manager — because that is the seat that used to take a human's place. */
+static void ltFillSeats(ServerSim *sim, BYTE n, bool bots) {
+    BYTE i;
+    for (i = 0; i < n; i++) {
+        sim->playerConnected[i]    = TRUE;
+        sim->lobbyPlayers[i].isBot = bots;
+    }
 }
 
 /* One unfielded team of `horde` seats and one fielded team of `guard`. */
@@ -472,5 +506,79 @@ int run_lobby_template_caps_humans_only(void) {
 
     serverSimDestroy(sim);
     ltDropBrainFile();
+    return 0;
+}
+
+/* ── The cap is a headcount, not a ceiling on the slot ────────────── */
+
+/* A horde seats before anybody joins, so it holds the lowest slots. Those
+ * seats are bots and the cap is on people, so the first human to arrive is
+ * owed a place above them — under the operator's cap and under a scenario's
+ * alike. */
+int run_lobby_template_cap_seats_human_above_bots(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              seat;
+
+    sim = ltBareSim();
+    UT_ASSERT(sim != NULL);
+    ltFillSeats(sim, LT_CAP, true);
+
+    sim->maxPlayers = LT_CAP;
+    seat = serverSimFindFreeSlot(sim, false);
+    UT_ASSERT_MSG(seat == LT_CAP,
+                  "under an operator cap of %d with %d bots below it a human "
+                  "seated at %d, expected %d",
+                  LT_CAP, LT_CAP, seat, LT_CAP);
+
+    /* The same question of a scenario's own cap, which is where this shows
+       up: a lobby seats its horde before anyone has joined. */
+    sim->maxPlayers = 0;
+    memset(&t, 0, sizeof(t));
+    t.maxPlayers = LT_CAP;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+
+    seat = serverSimFindFreeSlot(sim, false);
+    UT_ASSERT_MSG(seat == LT_CAP,
+                  "under a scenario cap of %d with %d bots below it a human "
+                  "seated at %d, expected %d",
+                  LT_CAP, LT_CAP, seat, LT_CAP);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The other half of the same rule: once that many people are in, the cap
+ * binds, wherever they are sitting. */
+int run_lobby_template_cap_refuses_extra_human(void) {
+    ServerSim *sim = ltBareSim();
+
+    UT_ASSERT(sim != NULL);
+    ltFillSeats(sim, LT_CAP, false);
+    sim->maxPlayers = LT_CAP;
+
+    UT_ASSERT_MSG(serverSimFindFreeSlot(sim, false) < 0,
+                  "a %dth person seated under a cap of %d",
+                  LT_CAP + 1, LT_CAP);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* And a bot is not a person, so a roster full of people has seats for it. */
+int run_lobby_template_cap_never_binds_bots(void) {
+    ServerSim *sim = ltBareSim();
+    int        seat;
+
+    UT_ASSERT(sim != NULL);
+    ltFillSeats(sim, LT_CAP, false);
+    sim->maxPlayers = LT_CAP;
+
+    seat = serverSimFindFreeSlot(sim, true);
+    UT_ASSERT_MSG(seat == LT_CAP,
+                  "a bot seated at %d with %d people in and a cap of %d, "
+                  "expected %d", seat, LT_CAP, LT_CAP, LT_CAP);
+
+    serverSimDestroy(sim);
     return 0;
 }

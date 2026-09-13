@@ -2180,6 +2180,9 @@ int run_lobby_template_reset_reseats(void);
 int run_lobby_template_preview_is_inert(void);
 int run_lobby_template_plain_map_clears(void);
 int run_lobby_template_caps_humans_only(void);
+int run_lobby_template_cap_seats_human_above_bots(void);
+int run_lobby_template_cap_refuses_extra_human(void);
+int run_lobby_template_cap_never_binds_bots(void);
 
 /* The unfielded seat (test_unfielded_seat.c): a seat a bot holds with no
  * bot manager entry, no ClientSim and no tank behind it. What it counts for,

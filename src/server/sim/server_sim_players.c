@@ -235,12 +235,13 @@ int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
     int  i;
     BYTE limit;
     if (sim == NULL) return -1;
-    /* Both caps count people. The operator's -maxplayers and a scenario's
-       max_players are how many humans a round is meant for; a scenario may
-       hold the round to fewer than the operator configured and never widens
-       it, so both bind and the tighter one wins. A bot seats anywhere below
-       MAX_TANKS whichever way it arrives — a host's Add Bot, a scripted
-       spawn, a lobby add — so a six-human map keeps its ten bot seats. */
+    /* Every cap counts people. The operator's -maxplayers, a scenario's
+       max_players and a scenario policy's answer are all how many humans a
+       round is meant for; a scenario may hold the round to fewer than the
+       operator configured and never widens it, so each binds and the tightest
+       one wins. A bot seats anywhere below MAX_TANKS whichever way it arrives
+       — a host's Add Bot, a scripted spawn, a lobby add — so a six-human map
+       keeps its ten bot seats. */
     limit = (BYTE)MAX_TANKS;
     if (!forBot && sim->maxPlayers > 0) {
         limit = sim->maxPlayers;
@@ -260,7 +261,17 @@ int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
             limit = (BYTE)cap;
         }
     }
-    for (i = 0; i < limit; i++) {
+    /* Is there room for another person? A headcount, asked before any slot is
+       looked at, because the cap is on how many people are in the round and
+       not on where in the roster they sit. A bot in a low slot is not a
+       person and takes nobody's place: an unfielded seat counts as a bot
+       here, which is what the roster-level test answers. */
+    if (!forBot && serverSimGetNumHumans(sim) >= limit) {
+        return -1;
+    }
+
+    /* And which slot: the first one nobody is in. */
+    for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i] && !botManagerIsBot(sim, (BYTE)i)) {
             return i;
         }

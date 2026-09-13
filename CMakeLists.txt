@@ -4954,6 +4954,9 @@ set(_unit_test_names
     lobby_template_preview_is_inert
     lobby_template_plain_map_clears
     lobby_template_caps_humans_only
+    lobby_template_cap_seats_human_above_bots
+    lobby_template_cap_refuses_extra_human
+    lobby_template_cap_never_binds_bots
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready
