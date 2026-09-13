@@ -137,9 +137,17 @@ struct ServerSim {
      * whatever brain the new bot actually runs, and a key that brain has
      * never heard of is simply dropped.
      *
-     * Empty strings mean "nothing chosen yet this lobby" — a fresh server
-     * adds bots at the ordinary default. Lobby state, so it persists across
-     * rounds with the rest and is cleared with it. */
+     * Empty strings mean "nothing chosen yet this lobby session" — bots are
+     * added at the ordinary default. The lifetime is one lobby session: the
+     * pick is remembered from entering the lobby until the game starts, and
+     * is cleared at every NEW lobby, which is exactly three places —
+     *   - the server is created (the memset in serverSimCreate),
+     *   - the last human leaves the lobby (serverSimResetLobbyToDefaults),
+     *   - every return to the lobby after a round, humans remaining or not
+     *     (serverSimReturnToLobby).
+     * A map change within one lobby session is NOT a new lobby: the pick
+     * survives it. Unlike the rest of the lobby state, this does not persist
+     * across rounds. */
     char            lastBotModeKey[BRAIN_MODE_KEY_LEN];
     char            lastBotLevelKey[BRAIN_MODE_KEY_LEN];
 

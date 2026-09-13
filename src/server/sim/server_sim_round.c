@@ -727,6 +727,26 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
 
+    /* Forget the host's manual bot mode/difficulty pick on EVERY return to
+     * the lobby, whether or not anyone stayed. The pick belongs to one lobby
+     * session — from entering the lobby until the game starts — and a round
+     * ending starts a new one, so the host who set a bot to Survival last
+     * game does not find the next lobby's Add Bot already in Survival. The
+     * empty-lobby branch below calls serverSimResetLobbyToDefaults, which
+     * clears these again; clearing twice costs nothing and keeps the two
+     * paths honest on their own.
+     *
+     * A map change WITHIN one lobby session is deliberately not a new lobby:
+     * the pick survives it. That is an assumption about what the host means
+     * by picking a difficulty, not a constraint — clear it in
+     * serverSimApplyMapChange too if it turns out hosts expect otherwise.
+     *
+     * The map's own rule — a scenario that fixes a team's mode — is applied
+     * by serverSimResolveNewBotConfig regardless of what is remembered here,
+     * so it is unaffected either way. */
+    sim->lastBotModeKey[0]  = '\0';
+    sim->lastBotLevelKey[0] = '\0';
+
     /* Auto-lock only closes the server while a round is running, so coming
      * back to the lobby must lift it. When a round that had human players ends
      * with none of them left, wipe the slate the way the last-human-leaves-in-

@@ -26,7 +26,8 @@
 #include "server_sim_internal.h"   /* lastBotModeKey / botConfigs / botMgr —
                                     * seeded and read directly; the feature
                                     * is entirely about them */
-#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled */
+#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled, StartGame,
+                                    * ReturnToLobby, ReloadCompressedInMemory */
 #include "brain_list.h"            /* BrainModes — to name the expected indices */
 #include "test_harness.h"
 
@@ -193,6 +194,87 @@ int run_lobby_bot_config_memory_manual_only(void) {
     /* No bot was really created in this slot; do not leave the manager
      * thinking one has a brain. */
     sim->botMgr.bots[TEST_SLOT].brainPath[0] = '\0';
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The pick lives for ONE lobby session. A round ending starts a new one, so
+ * returning to the lobby forgets it even when the host never left — the bug
+ * was that a host who stayed through a game found the next lobby's Add Bot
+ * still in the mode they picked last game. A map change within the same
+ * lobby session is not a new lobby and must NOT forget it. */
+int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim;
+    int wantMode = 0, wantLevel = 0;
+    uint8_t mode = 0, level = BOT_DIFFICULTY_HARD;
+    bool mapChanged;
+
+    if (!expected_indices("survival", "easy", &wantMode, &wantLevel)) {
+        SKIP_NO_MANIFEST();
+    }
+    sim = make_lobby_sim();
+    UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed");
+
+    /* A human host, so the return below takes the "someone stayed" branch —
+     * the one that used to keep the pick. serverSimResetLobbyToDefaults (the
+     * empty-lobby branch) already cleared it and is not what we are testing. */
+    serverSimAddPlayer(sim, 0, "Host", false);
+
+    /* The host picks survival/easy by hand on one bot, through the same path
+     * the gear popup's command handler uses. */
+    SDL_strlcpy(sim->botMgr.bots[TEST_SLOT].brainPath, TEST_BRAIN,
+                sizeof(sim->botMgr.bots[TEST_SLOT].brainPath));
+    serverSimSetBotConfig(sim, TEST_SLOT, (uint8_t)wantMode,
+                          (uint8_t)wantLevel, 0, NULL);
+    serverSimRememberManualBotPick(sim, TEST_SLOT);
+    UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "survival") == 0 &&
+                  strcmp(sim->lastBotLevelKey, "easy") == 0,
+                  "setup: the manual pick must be remembered first (got "
+                  "'%s'/'%s')", sim->lastBotModeKey, sim->lastBotLevelKey);
+    /* No bot really runs in this slot; don't let the manager start one for
+     * the round below. */
+    sim->botMgr.bots[TEST_SLOT].brainPath[0] = '\0';
+
+    /* A map change inside the lobby session keeps the pick. The reload wants
+     * a writable data/maps beside the test binary; when there isn't one it
+     * returns false and this assertion is simply not made. */
+    mapChanged = serverSimReloadCompressedInMemory(sim, emap, 5097,
+                                                   "Everard Island B");
+    if (mapChanged) {
+        UT_ASSERT_MSG(strcmp(sim->lastBotModeKey, "survival") == 0 &&
+                      strcmp(sim->lastBotLevelKey, "easy") == 0,
+                      "a map change is not a new lobby: the pick must survive "
+                      "it (got '%s'/'%s')",
+                      sim->lastBotModeKey, sim->lastBotLevelKey);
+    } else {
+        fprintf(stderr, "NOTE: no writable map dir beside the test binary — "
+                        "the map-change half of this case was not exercised\n");
+    }
+
+    /* Play a round and come back with the host still here. */
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "setup: the game must actually start");
+    serverSimReturnToLobby(sim);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,
+                  "setup: the return must actually land in the lobby");
+    UT_ASSERT_MSG(serverSimGetNumHumans(sim) > 0,
+                  "setup: the host must still be here, or this is the "
+                  "empty-lobby path instead");
+
+    UT_ASSERT_MSG(sim->lastBotModeKey[0] == '\0' &&
+                  sim->lastBotLevelKey[0] == '\0',
+                  "returning to the lobby must forget the pick (got "
+                  "'%s'/'%s')", sim->lastBotModeKey, sim->lastBotLevelKey);
+
+    /* ...and the next Add Bot therefore starts at the brain's defaults. */
+    UT_ASSERT(serverSimResolveNewBotConfig(sim, TEST_TEAM, TEST_BRAIN, true,
+                                           &mode, &level));
+    UT_ASSERT_MSG(mode == 0 && level == BOT_DIFFICULTY_HARD,
+                  "the first bot of the new lobby must start at the defaults "
+                  "(got %d/%d)", (int)mode, (int)level);
+
     serverSimDestroy(sim);
     return 0;
 }
