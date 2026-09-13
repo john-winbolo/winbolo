@@ -71,6 +71,12 @@ extern "C" {
 #include "../../../bolo/public/client_mappreview.h"
 }
 
+/* The lobby's visibility value renderer and the preset table, so a listed
+ * game names its rules in exactly the words and shapes the lobby uses.
+ * At file scope, never inside the extern "C" block above: the header
+ * pulls in imgui.h, whose templates do not compile with C linkage. */
+#include "lobby/lobby_internal.h"
+
 #include "../map_preview_fetch.h"
 
 static const int DIALOG_W = 1024;
@@ -139,7 +145,7 @@ struct ServerEntry {
      * always, base off, ally always, classic mode and allies in trees
      * off, the expanded overview window with nothing blocking sight.
      * That back-compatibility reading is not what an unconfigured
-     * server runs today - see viewPolicyTag below. */
+     * server runs today - see serverEntryPresetName below. */
     ViewPolicy pillView;
     ViewPolicy baseView;
     ViewPolicy allyView;
@@ -147,6 +153,11 @@ struct ServerEntry {
     bool alliesInTrees;
     uint8_t overviewWindow;
     uint8_t lineOfSight;
+    /* Whether the game said anything about the seven fields above. They
+     * always hold something - an advertisement that stops short of them
+     * is read as the back-compatibility set - so this says whether that
+     * is the game's answer or a stand-in for one it never gave. */
+    bool hasViewInfo;
     /* Voice the server forwards. Unlike the fields above this one has a
      * true answer for a server that says nothing: both wires define an
      * absent value as serverVoiceOn. */
@@ -166,57 +177,115 @@ struct ServerEntry {
  * advertisement missing the rules gets (meaning B; see ServerEntry
  * above). A server old enough to leave them out really does play
  * differently from a stock one, so it gets tagged. */
-static std::string viewPolicyTag(const ServerEntry &e) {
-    /* Same four policy words the lobby, the hosting tab and the game info
-     * panel use, so one server's rules read the same wherever they show. */
-    const char *kModeStr[] = {
-        langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
-        langGetText(STR_DLGLOBBY_VIEW_KEY),
-        langGetText(STR_DLGLOBBY_VIEW_DECAY),
-        langGetText(STR_DLGLOBBY_VIEW_OFF),
-    };
-    struct { const char *letter; ViewPolicy value; ViewPolicy stock; } cats[] = {
-        { "P", e.pillView, VIEW_POLICY_STOCK_PILL },
-        { "B", e.baseView, VIEW_POLICY_STOCK_BASE },
-        { "A", e.allyView, VIEW_POLICY_STOCK_ALLY },
-    };
+/* A listed game's advertised rules in the shape the preset table matches.
+ * Every field the match needs rides both wires: the tracker row carries
+ * pillview / baseview / allyview / classicmode / alliesintrees /
+ * overviewwindow / lineofsight, and the INFO packet carries the same seven
+ * across its two view bytes. So the browser names a preset exactly the way
+ * the lobby does rather than guessing from a subset.
+ *
+ * Decay seconds are left at zero: a browser row does not carry them, the
+ * match ignores them, and no preset uses the Decay policy. A row showing
+ * Decay therefore names the policy without the seconds. */
+static VisibilitySettings serverEntryVisibility(const ServerEntry &e) {
+    VisibilitySettings v;
+    memset(&v, 0, sizeof(v));
+    v.policy[viewCategoryPill] = (uint8_t)e.pillView;
+    v.policy[viewCategoryBase] = (uint8_t)e.baseView;
+    v.policy[viewCategoryAlly] = (uint8_t)e.allyView;
+    v.classicMode    = e.classicMode;
+    v.overviewWindow = e.overviewWindow;
+    v.lineOfSight    = e.lineOfSight;
+    v.alliesInTrees  = e.alliesInTrees;
+    return v;
+}
+
+/* The name of the set a listed game is running - the same word the lobby's
+ * dropdown shows, from the same table.
+ *
+ * A game that advertised no rules at all is named Classic rather than run
+ * through the match. The back-compatibility set the decoders leave behind
+ * for such a game is a statement about bytes, not about play: it matches
+ * no preset, so the match would call an old server "Custom", which reads
+ * as a host having chosen something. Classic is what an old server
+ * actually plays like, and the hover says the rules were not reported. */
+static const char *serverEntryPresetName(const ServerEntry &e) {
+    VisibilitySettings v;
+    if (!e.hasViewInfo) {
+        return langGetText(visibilityPresetNameId(visibilityPresetClassic));
+    }
+    v = serverEntryVisibility(e);
+    return langGetText(visibilityPresetNameId(visibilityPresetMatch(&v)));
+}
+
+/* Cuts a string down to maxW with an ellipsis, longest prefix that fits.
+ * Two lines of every row need it now - the name stops before the ping, and
+ * the map name stops before the visibility label - so it is one function
+ * rather than the same binary search written twice. A width at or below
+ * zero empties the string: there is no room for even the ellipsis. */
+static void browserClampText(char *buf, size_t bufSize, float maxW) {
+    const char *kEll = "...";
+    if (buf == NULL || bufSize == 0) return;
+    if (maxW <= 0.0f) { buf[0] = '\0'; return; }
+    if (ImGui::CalcTextSize(buf).x <= maxW) return;
+    float budget = maxW - ImGui::CalcTextSize(kEll).x;
+    if (budget <= 0.0f) { buf[0] = '\0'; return; }
+    int lo = 0, hi = (int)SDL_strlen(buf), best = 0;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        char saved = buf[mid]; buf[mid] = '\0';
+        float w = ImGui::CalcTextSize(buf).x;
+        buf[mid] = saved;
+        if (w <= budget) { best = mid; lo = mid + 1; }
+        else             { hi = mid - 1; }
+    }
+    buf[best] = '\0';
+    SDL_strlcat(buf, kEll, bufSize);
+}
+
+/* What the name of a game's visibility set means, for the hover beside it:
+ * the same sentence the lobby's dropdown puts on the entry for that set,
+ * then the six settings behind it in words. This and the name replaced a
+ * compact "Views: W=.. P=.. B=.. A=.." tag that spelled out only what a
+ * server had moved away from stock - the name of the set says more in less
+ * room, and it is the word the player will see again in the lobby. */
+static std::string visibilityHoverText(const ServerEntry &e) {
+    VisibilitySettings v;
+    VisibilityPreset   p;
     std::string out;
-    if (e.classicMode) {
-        out += langGetText(STR_DLGBROWSER_VIEWS_CLASSIC);
+    char line[192];
+
+    /* Nothing advertised: the heading reads Classic, which is what such a
+     * server plays like, so the hover leads with what Classic means and
+     * then says why there is nothing behind the name. No list of six
+     * values, because the game never gave them. */
+    if (!e.hasViewInfo) {
+        return std::string(
+                   langGetText(visibilityPresetDescId(visibilityPresetClassic)))
+               + "\n" + langGetText(STR_DLGBROWSER_VIEWS_UNKNOWN);
     }
-    if (e.alliesInTrees) {
-        if (!out.empty()) out += " ";
-        out += langGetText(STR_DLGBROWSER_VIEWS_ALLYTREES);
+    v = serverEntryVisibility(e);
+    p = visibilityPresetMatch(&v);
+
+    /* A named set is explained by its own description. A set that is none
+     * of them has no description to give, so it is described by what it
+     * holds, the way the lobby's Custom row is. */
+    if (p != visibilityPresetCustom) {
+        out = langGetText(visibilityPresetDescId(p));
+    } else {
+        lobbyVisibilityDetailsLine(&v, line, sizeof(line));
+        out = line;
     }
-    /* The overview window and line of sight are server-wide rules like
-     * the two above rather than per-category, so they sit with them.
-     * Only a value away from stock is worth a tag: an unconfigured
-     * server runs OVERVIEW_WINDOW_STOCK with LINE_OF_SIGHT_STOCK. Each
-     * test names the other value outright rather than saying "not the
-     * stock one", because the string it prints names that value too —
-     * the two have to move together. The window is prefixed to
-     * match the P=/B=/A= form the categories below use, since a bare
-     * "Expanded" in a list of tags names no setting in particular. */
-    if (e.overviewWindow == (uint8_t)overviewWindowExpanded) {
-        if (!out.empty()) out += " ";
-        out += "W=";
-        out += langGetText(STR_DLGLOBBY_WINDOW_EXPANDED);
+    /* Then every setting spelled out, in the order the lobby's Details
+     * table reads them, so nothing is left to the name alone. */
+    for (int c = 0; c < LOBBY_VIS_COLUMN_COUNT; c++) {
+        lobbyVisibilityColumnText(&v, c, line, sizeof(line));
+        out += "\n";
+        out += langGetText(lobbyVisibilityColumnLabelId(c));
+        out += ": ";
+        out += line;
     }
-    if (e.lineOfSight != (uint8_t)lineOfSightOff) {
-        if (!out.empty()) out += " ";
-        out += langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB);
-    }
-    for (const auto &c : cats) {
-        if (c.value == c.stock) continue;
-        int idx = (int)c.value;
-        if (idx < 0 || idx > 3) continue;
-        if (!out.empty()) out += " ";
-        out += c.letter;
-        out += "=";
-        out += kModeStr[idx];
-    }
-    if (out.empty()) return out;
-    return std::string(langGetText(STR_DLGBROWSER_VIEWS_LBL)) + " " + out;
+    return out;
 }
 
 static const char *gameTypeStr(gameType g) {
@@ -271,6 +340,7 @@ struct PingResult {
     bool alliesInTrees;
     uint8_t overviewWindow;
     uint8_t lineOfSight;
+    bool hasViewInfo;
     ServerVoiceMode voiceMode;
 };
 
@@ -356,6 +426,7 @@ static PingResult pingServer(const PingWork &work) {
     res.alliesInTrees = false;
     res.overviewWindow = (uint8_t)overviewWindowExpanded;
     res.lineOfSight = (uint8_t)lineOfSightOff;
+    res.hasViewInfo = false;
     res.voiceMode = serverVoiceOn;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
@@ -386,6 +457,7 @@ static PingResult pingServer(const PingWork &work) {
         res.alliesInTrees   = dpr.alliesInTrees;
         res.overviewWindow  = dpr.overviewWindow;
         res.lineOfSight     = dpr.lineOfSight;
+        res.hasViewInfo     = dpr.hasViewInfo;
         res.voiceMode       = dpr.voiceMode;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
@@ -511,6 +583,7 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.alliesInTrees   = src->alliesInTrees;
     e.overviewWindow  = src->overviewWindow;
     e.lineOfSight     = src->lineOfSight;
+    e.hasViewInfo     = src->hasViewInfo;
     e.voiceMode       = src->voiceMode;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
@@ -833,6 +906,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.alliesInTrees = w.alliesInTrees;
                         e.overviewWindow = (uint8_t)w.overviewWindow;
                         e.lineOfSight = (uint8_t)w.lineOfSight;
+                        e.hasViewInfo = w.hasViewInfo;
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
 
                         e.players.clear();
@@ -949,6 +1023,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].alliesInTrees   = pr.alliesInTrees;
                         servers[pr.index].overviewWindow  = pr.overviewWindow;
                         servers[pr.index].lineOfSight     = pr.lineOfSight;
+                        servers[pr.index].hasViewInfo     = pr.hasViewInfo;
                         servers[pr.index].voiceMode       = pr.voiceMode;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
@@ -1421,28 +1496,46 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 } else {
                     SDL_snprintf(name, sizeof(name), "%s:%u", e.address, e.port);
                 }
-                float nameMaxW = pingLeft - (8.0f * s) - textX;
-                if (nameMaxW > 0.0f && ImGui::CalcTextSize(name).x > nameMaxW) {
-                    const char *kEll = "...";
-                    float budget = nameMaxW - ImGui::CalcTextSize(kEll).x;
-                    if (budget <= 0.0f) {
-                        name[0] = '\0';
-                    } else {
-                        int lo = 0, hi = (int)SDL_strlen(name), best = 0;
-                        while (lo <= hi) {
-                            int mid = (lo + hi) / 2;
-                            char saved = name[mid]; name[mid] = '\0';
-                            float w = ImGui::CalcTextSize(name).x;
-                            name[mid] = saved;
-                            if (w <= budget) { best = mid; lo = mid + 1; }
-                            else             { hi = mid - 1; }
-                        }
-                        name[best] = '\0';
-                        SDL_strlcat(name, kEll, sizeof(name));
-                    }
-                }
+                browserClampText(name, sizeof(name),
+                                 pingLeft - (8.0f * s) - textX);
                 dl->AddText(ImVec2(textX, p0.y + pad),
                             ImGui::GetColorU32(ImGuiCol_Text), name);
+
+                /* Game-type abbreviation, right-aligned under the ping, and
+                   the name of the visibility set just left of it. The set is
+                   what a player picks a game by as much as the map is, so it
+                   goes on the row rather than only in the detail pane - the
+                   same word the lobby's dropdown shows, worked out from the
+                   game's own advertised rules. Laid out before the map line
+                   so that line can be stopped short of it. */
+                const char *gt = gameTypeAbbr(e.game);
+                float gtW = ImGui::CalcTextSize(gt).x;
+                float visLeft = textRight - gtW;
+                char visLbl[96];
+                SDL_snprintf(visLbl, sizeof(visLbl), "%s",
+                             serverEntryPresetName(e));
+                /* Never more than a third of the row: a long set name must
+                   not push the map name off its own line. */
+                browserClampText(visLbl, sizeof(visLbl), rowW * 0.33f);
+                if (visLbl[0] != '\0') {
+                    float visW = ImGui::CalcTextSize(visLbl).x;
+                    visLeft -= (8.0f * s) + visW;
+                    dl->AddText(ImVec2(visLeft, p0.y + pad + lineH),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                                visLbl);
+                    /* The label is painted into the row's draw list rather
+                       than laid out as an item, so the hover is asked of its
+                       own rectangle. The row's Selectable covers everything,
+                       and a tooltip hung off that would follow the mouse
+                       across the ping and the map name too. */
+                    ImVec2 vMin(visLeft, p0.y + pad + lineH);
+                    ImVec2 vMax(visLeft + visW, vMin.y + lineH);
+                    if (ImGui::IsWindowHovered() &&
+                        ImGui::IsMouseHoveringRect(vMin, vMax)) {
+                        ImGui::SetTooltip("%s",
+                                          visibilityHoverText(e).c_str());
+                    }
+                }
 
                 /* Map line with ranked (*) / random (rnd) markers */
                 char mapLine[MAP_STR_SIZE + 32];
@@ -1452,6 +1545,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                  langGetText(STR_DLGBROWSER_RND_ABBR));
                 SDL_snprintf(mapLine, sizeof(mapLine), "%s%s%s", e.mapName,
                              e.ranked ? " *" : "", rndMark);
+                browserClampText(mapLine, sizeof(mapLine),
+                                 visLeft - (8.0f * s) - textX);
                 dl->AddText(ImVec2(textX, p0.y + pad + lineH),
                             ImGui::GetColorU32(ImGuiCol_TextDisabled), mapLine);
 
@@ -1470,13 +1565,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), pc);
                 }
 
-                /* Game-type abbreviation, right-aligned under the ping */
-                {
-                    const char *gt = gameTypeAbbr(e.game);
-                    ImVec2 gsz = ImGui::CalcTextSize(gt);
-                    dl->AddText(ImVec2(textRight - gsz.x, p0.y + pad + lineH),
-                                ImGui::GetColorU32(ImGuiCol_TextDisabled), gt);
-                }
+                dl->AddText(ImVec2(textRight - gtW, p0.y + pad + lineH),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled), gt);
 
                 ImGui::SetCursorScreenPos(pEnd);
                 ImGui::PopID();
@@ -1746,6 +1836,29 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::TextUnformatted(langGetText(voiceStr));
                     }
 
+                    /* Visibility - the name of the rule set the game runs,
+                     * the same word the lobby's dropdown shows. Last in the
+                     * block because it is the newest row and nothing above
+                     * groups with it. Drawn for every server, not only
+                     * rich-info ones: a game that advertised nothing is named
+                     * Classic, which is what it plays like, and the hover
+                     * says the rules were not reported. */
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        label(langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
+                        bool visHovered = ImGui::IsItemHovered();
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(serverEntryPresetName(sel));
+                        /* Either cell answers for the row: the label and the
+                         * value are separate items, so the hover is asked of
+                         * both rather than of a row, which is not an item. */
+                        if (visHovered || ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s",
+                                              visibilityHoverText(sel).c_str());
+                        }
+                    }
+
                     ImGui::EndTable();
                 }
 
@@ -1761,8 +1874,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         if (sel.ranked)    addBadge(langGetText(STR_DLGLOBBY_RANKED));
                         if (sel.randomMap) addBadge(langGetText(STR_MAPCHOOSER_RANDOMMAP));
                         if (sel.autoLock)  addBadge(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
-                        std::string views = viewPolicyTag(sel);
-                        if (!views.empty()) addBadge(views.c_str());
                     }
                     if (!badges.empty()) {
                         ImGui::TextDisabled("%s", badges.c_str());

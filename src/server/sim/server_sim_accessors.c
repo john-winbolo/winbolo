@@ -840,9 +840,10 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryAlly]);
         /* Classic mode hides allies in trees, so it owns this value too. */
         serverSimSetAlliesInTrees(sim, false);
-        /* Classic mode is the classic overview too: the narrow window,
-         * with nothing blocking sight inside it. */
-        serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowClassic);
+        /* Classic mode offers no overview at all - no pop-out map and no
+         * full screen map - with nothing blocking sight in the framed view
+         * it leaves the player. */
+        serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowNone);
         serverSimSetLineOfSight(sim, (uint8_t)lineOfSightOff);
     }
 }

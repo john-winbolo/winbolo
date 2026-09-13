@@ -33,6 +33,7 @@
 #include "server_sim.h"
 #include "input.h"
 #include "winbolo.h"
+#include "visibility_presets.h"  /* VisibilitySettings / VisibilityPreset */
 #include "../winbolonet/winbolonet_client.h"  /* WbnStats */
 
 
@@ -1051,5 +1052,25 @@ void gameFrontSetClassicMode(bool on);
 void gameFrontSetAlliesInTrees(bool on);
 void gameFrontSetOverviewWindow(int window);
 void gameFrontSetLineOfSight(int mode);
+
+/* Which named visibility set the host last chose, and the hand-made set
+ * to go back to when that choice is Custom. The globals above hold the
+ * values a hosted game starts with; these two hold the choice behind
+ * them, so picking a preset and picking Custom again lands the host back
+ * where they were. gameFrontVisibilityCustomSaved is false until a custom
+ * set has been written at least once — the lobby leaves its Custom row
+ * blank rather than offering a set nobody made. */
+extern int                gameFrontVisibilityPreset; /* VisibilityPreset */
+extern VisibilitySettings gameFrontVisibilityCustom;
+extern bool               gameFrontVisibilityCustomSaved;
+
+void gameFrontSetVisibilityPreset(int preset);
+void gameFrontSetVisibilityCustom(const VisibilitySettings *v);
+/* The seven visibility globals above as one set. */
+void gameFrontGetVisibilitySettings(VisibilitySettings *out);
+/* Records a set as the host's choice: the seven globals, which named set
+ * it is, and — when it is none of them — the set itself. Call it wherever
+ * a host changes visibility, rather than writing the three separately. */
+void gameFrontRememberVisibility(const VisibilitySettings *v);
 
 #endif

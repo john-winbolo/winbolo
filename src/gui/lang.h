@@ -1585,6 +1585,38 @@
 #define STR_DLGLOBBY_LINE_OF_SIGHT_TIP      2157
 #define STR_DLGLOBBY_WINDOW_EXPANDED        2158
 #define STR_DLGLOBBY_WINDOW_CLASSIC         2159
+/* Visibility presets: the named sets the lobby dropdown offers, the row
+ * each one draws in the Details table, and the words the row that is not
+ * a preset needs. */
+#define STR_DLGLOBBY_PRESET_CLASSIC              2164
+#define STR_DLGLOBBY_PRESET_CLASSIC_DESC         2165
+#define STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW     2166
+#define STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW_DESC 2167
+#define STR_DLGLOBBY_PRESET_EXPANDED             2168
+#define STR_DLGLOBBY_PRESET_EXPANDED_DESC        2169
+#define STR_DLGLOBBY_PRESET_MAXVIEW              2170
+#define STR_DLGLOBBY_PRESET_MAXVIEW_DESC         2171
+#define STR_DLGLOBBY_PRESET_SIGHT                2172
+#define STR_DLGLOBBY_PRESET_SIGHT_DESC           2173
+#define STR_DLGLOBBY_PRESET_CUSTOM               2174
+#define STR_DLGLOBBY_PRESET_CUSTOM_DESC          2175
+#define STR_DLGLOBBY_VIS_DETAILS_BTN             2176
+#define STR_DLGLOBBY_VIS_DETAILS_TIP             2178
+#define STR_DLGLOBBY_VIS_PRESET_LOCKED_TIP       2179
+#define STR_DLGLOBBY_VIS_SHORT_PILLS             2180
+#define STR_DLGLOBBY_VIS_SHORT_BASES             2181
+#define STR_DLGLOBBY_VIS_SHORT_ALLIES            2182
+#define STR_DLGLOBBY_VIS_SHORT_OVERVIEW          2183
+#define STR_DLGLOBBY_VIEW_POLICY_TIP             2184
+/* The third overview window: no map overview and no full screen map. Its
+ * own id rather than a shared "None", the way every other value word here
+ * belongs to the setting it names. */
+#define STR_DLGLOBBY_WINDOW_NONE                 2185
+/* What a server browser row says when the game never advertised its
+ * visibility rules at all - an old server, or a tracker that has not
+ * learned the fields. Such a game is named Classic, which is what it
+ * plays like, and this says why there is nothing behind the name. */
+#define STR_DLGBROWSER_VIEWS_UNKNOWN             2186
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014

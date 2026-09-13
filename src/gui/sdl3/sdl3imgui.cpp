@@ -81,6 +81,11 @@ extern "C" {
 #include "glyphs.h"
 #include "ping_overlay.h"
 #include "dialogs/imgui_keycap.h"
+/* The lobby's visibility value renderer and the preset table, so the
+ * in-game info panel names a server's rules in the same words and
+ * shapes the lobby does. At file scope: it pulls in imgui.h, whose
+ * templates do not compile with C linkage. */
+#include "dialogs/lobby/lobby_internal.h"
 
 extern "C" {
 #include "client_net.h"
@@ -996,14 +1001,20 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint
     }
 }
 
-/* Classic mode as last seen from the connected server, refreshed once a
- * frame in sdl3ImguiPumpAndRender. A file static rather than a ClientSim
- * read at each site because the two suppression points below are reached
- * from callers that have no ClientSim in hand. Spectators are exempt: they
- * are on the delayed god-view stream and are not competing. */
-static bool s_classicMode = false;
+/* Whether the server is withholding the map overview and the full screen
+ * map, as last seen from the connected server and refreshed once a frame in
+ * sdl3ImguiPumpAndRender. A file static rather than a ClientSim read at each
+ * site because the suppression points below are reached from callers that
+ * have no ClientSim in hand. Spectators are exempt: they are on the delayed
+ * god-view stream and are not competing.
+ *
+ * Two things turn it on. The overview window set to None says so directly,
+ * which is what a current server sends. Classic mode is read as well,
+ * because a server built before None existed answers classic mode with the
+ * Classic window and would otherwise hand the overview straight back. */
+static bool s_noOverview = false;
 
-static bool classicModeActive(void) { return s_classicMode; }
+static bool overviewSuppressed(void) { return s_noOverview; }
 
 /* The overview is the one pop-out whose geometry is remembered, so every
  * place that opens it comes through here rather than calling popOutCreate
@@ -1027,11 +1038,11 @@ static void mapOverviewOpen(void) {
        alone: a player who had the pop-out flagged to reopen gets it back the
        moment they are back in classic mode. */
     if (gameFrontFullScreen) return;
-    /* The server is holding the player in the classic framed view, so the
-       pop-out does not open while that lasts. gameFrontShowMapOverview is
+    /* The server is not offering the overview, so the pop-out does not
+       open while that lasts. gameFrontShowMapOverview is
        left alone for the same reason as above: it is the player's own
        preference and it hands the pop-out back on the next server. */
-    if (classicModeActive()) return;
+    if (overviewSuppressed()) return;
     bool firstCreate = (s_popMapOverview.window == nullptr);
     int w = gameFrontOverviewW;
     int h = gameFrontOverviewH;
@@ -1108,11 +1119,12 @@ static void overviewInWindowSet(bool on) {
  * first because overviewInWindowSet reads it — turning the mode off in game
  * has to clear it before the call or the window never leaves full screen. */
 static void overviewInWindowChoose(bool on) {
-    /* Classic mode refuses entry only. Leaving still has to work, or a
-       player already in the map view when they joined would be stuck in it.
+    /* A server withholding the overview refuses entry only. Leaving still
+       has to work, or a player already in the map view when they joined
+       would be stuck in it.
        Ahead of the assignment below on purpose: gameFrontFullScreen is the
-       player's own preference and must survive a classic-mode server. */
-    if (on && classicModeActive()) return;
+       player's own preference and must survive such a server. */
+    if (on && overviewSuppressed()) return;
     gameFrontFullScreen = on;
     overviewInWindowSet(on);
     /* The two views of the map never share the screen, so the pop-out swaps
@@ -1608,60 +1620,54 @@ static void renderGameInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
     }
 
-    /* Server visibility rules, one row per category. Read-only mirror of
-     * the lobby's pill / base / ally rows, shown so a player can check
-     * them without opening the lobby. The row labels come from the lobby
-     * form and carry no punctuation, so the colon is supplied here. */
+    /* The server's visibility rules: the name of the set they add up to,
+     * then the six settings behind it, each drawn by the same helper the
+     * lobby's header line and its Details table use. Read-only, and shown
+     * here so a player can check them without opening the lobby. The row
+     * labels come from the lobby form and carry no punctuation, so the
+     * colon is supplied here. */
     {
-        static const struct {
-            langid       label;
-            ViewCategory cat;
-        } viewRows[] = {
-            { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill },
-            { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase },
-            { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly },
-        };
-        const char *modes[] = {
-            langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
-            langGetText(STR_DLGLOBBY_VIEW_KEY),
-            langGetText(STR_DLGLOBBY_VIEW_DECAY),
-            langGetText(STR_DLGLOBBY_VIEW_OFF),
-        };
-        for (int r = 0; r < 3; r++) {
+        VisibilitySettings vis;
+        memset(&vis, 0, sizeof(vis));
+        for (int c = 0; c < (int)VIEW_CATEGORY_COUNT; c++) {
             /* The lobby-settings decoder mirrors the policy byte as it
              * arrives, so a value outside the enum can reach here. Fall
-             * back to the wire default rather than index past modes[]. */
-            int policy = (int)clientSimGetViewPolicy(cs, viewRows[r].cat);
+             * back to the wire default rather than name a mode this build
+             * has no word for. */
+            int policy = (int)clientSimGetViewPolicy(cs, (ViewCategory)c);
             if (policy < (int)viewPolicyAlways || policy > (int)viewPolicyOff) {
                 policy = (int)viewPolicyAlways;
             }
-            const char *label = langGetText(viewRows[r].label);
-            if (policy == (int)viewPolicyDecay) {
-                int secs = (int)clientSimGetViewDecaySecs(cs, viewRows[r].cat);
-                ImGui::Text("%s: %s %d %s", label, modes[policy], secs,
-                            langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+            vis.policy[c]    = (uint8_t)policy;
+            vis.decaySecs[c] = clientSimGetViewDecaySecs(cs, (ViewCategory)c);
+        }
+        vis.classicMode    = clientSimGetClassicMode(cs);
+        vis.overviewWindow = clientSimGetOverviewWindow(cs);
+        vis.lineOfSight    = clientSimGetLineOfSight(cs);
+        vis.alliesInTrees  = clientSimGetAlliesInTrees(cs);
+
+        VisibilityPreset preset = visibilityPresetMatch(&vis);
+        ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_VISIBILITY_LBL),
+                    langGetText(visibilityPresetNameId(preset)));
+        /* What the name means, the same sentence the lobby's dropdown puts
+         * on its entry for that set. A set that is none of them has no
+         * sentence to give, so it is described by what it holds. */
+        if (ImGui::IsItemHovered()) {
+            if (preset != visibilityPresetCustom) {
+                ImGui::SetTooltip("%s",
+                                  langGetText(visibilityPresetDescId(preset)));
             } else {
-                ImGui::Text("%s: %s", label, modes[policy]);
+                char line[192];
+                lobbyVisibilityDetailsLine(&vis, line, sizeof(line));
+                ImGui::SetTooltip("%s", line);
             }
         }
+        for (int vc = 0; vc < LOBBY_VIS_COLUMN_COUNT; vc++) {
+            ImGui::Text("%s:", langGetText(lobbyVisibilityColumnLabelId(vc)));
+            ImGui::SameLine();
+            lobbyRenderVisibilityColumn(&vis, vc, s_uiScale);
+        }
     }
-
-    /* Classic mode, the allies-in-trees rule, what the map overview keeps
-     * live round the tank and what blocks sight inside it — read-only
-     * mirrors of the lobby's visibility dialog. */
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
-                clientSimGetClassicMode(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
-                clientSimGetAlliesInTrees(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW),
-                langGetText(clientSimGetOverviewWindow(cs) ==
-                                    (uint8_t)overviewWindowClassic
-                                ? STR_DLGLOBBY_WINDOW_CLASSIC
-                                : STR_DLGLOBBY_WINDOW_EXPANDED));
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),
-                langGetText(clientSimGetLineOfSight(cs) !=
-                                    (uint8_t)lineOfSightOff
-                                ? STR_YES : STR_NO));
 }
 
 static void renderGameInfoPanel(ClientSim *cs) {
@@ -4002,19 +4008,19 @@ static void renderMenuBar(ClientSim *cs) {
                Classic mode greys both out as well, and that is the one
                reason worth a tooltip: waiting for a game to start explains
                itself, a server rule does not. */
-            const bool classicMenu = classicModeActive();
+            const bool noOverviewMenu = overviewSuppressed();
             if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
-                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen && !classicMenu)) {
+                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen && !noOverviewMenu)) {
                 if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
             }
-            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            if (noOverviewMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
             if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
                                 sdl3DrawIsOverviewInWindow(),
-                                cs != nullptr && clientSimIsRunning(cs) && !classicMenu)) {
+                                cs != nullptr && clientSimIsRunning(cs) && !noOverviewMenu)) {
                 overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
             }
-            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            if (noOverviewMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
         } else {
 #endif
@@ -5693,10 +5699,10 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
     s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
     s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
-                             !gameFrontFullScreen && !classicModeActive());
+                             !gameFrontFullScreen && !overviewSuppressed());
     s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
     s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
-                                  !classicModeActive());
+                                  !overviewSuppressed());
     s->fullScreenOn            = gameFrontFullScreen;
 
     int dispW = 99999, dispH = 99999;
@@ -5850,8 +5856,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* One read a frame, ahead of the menu bars and the suppression points
        below. A frame of staleness costs nothing: the setting is lobby-only
        and cannot change while a game runs. */
-    s_classicMode = (cs != nullptr && !clientSimIsSpectator(cs) &&
-                     clientSimGetClassicMode(cs));
+    s_noOverview = (cs != nullptr && !clientSimIsSpectator(cs) &&
+                    (clientSimGetClassicMode(cs) ||
+                     clientSimGetOverviewWindow(cs) ==
+                         (uint8_t)overviewWindowNone));
 
 #if defined(WINBOLO_VOICE)
     /* Which slot is ours, for the drawers that have no ClientSim of their own

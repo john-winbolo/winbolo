@@ -607,7 +607,7 @@ void printArgs() {
   fprintf(stderr, "-alliesintrees- Allied tanks standing in trees are sent to their allies\n");
   fprintf(stderr, "                instead of being withheld (fog of war still applies).\n");
   fprintf(stderr, "                Off by default, and off under -classicmode.\n");
-  fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded, classic (default)\n");
+  fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded, classic (default), none\n");
   fprintf(stderr, "-lineofsight  - Buildings and stands of trees block sight inside the live\n");
   fprintf(stderr, "                block. Off by default, and off under -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
@@ -1138,7 +1138,9 @@ static const char *viewPolicyArgWord(ViewPolicy policy) {
 
 /* Same for -overviewwindow. */
 static const char *overviewWindowArgWord(OverviewWindow window) {
-  return (window == overviewWindowClassic) ? "classic" : "expanded";
+  return (window == overviewWindowNone)    ? "none"
+       : (window == overviewWindowClassic) ? "classic"
+                                           : "expanded";
 }
 
 int main(int argc, char **argv) {
@@ -1670,6 +1672,8 @@ int main(int argc, char **argv) {
         window = overviewWindowExpanded;
       } else if (strcmp(modeStr, "classic") == 0) {
         window = overviewWindowClassic;
+      } else if (strcmp(modeStr, "none") == 0) {
+        window = overviewWindowNone;
       } else {
         fprintf(stderr, "Unknown -overviewwindow '%s'; using %s\n", modeStr,
                 overviewWindowArgWord(OVERVIEW_WINDOW_STOCK));

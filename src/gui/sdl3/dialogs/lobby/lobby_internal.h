@@ -94,6 +94,9 @@ extern "C" {
 #include "client_net.h"
 #include "types.h"
 #include "imgui_mapchooser.h"
+/* VisibilitySettings, named by the value renderer the server browser and
+ * the in-game info panel share with the lobby. */
+#include "../../../visibility_presets.h"
 #ifdef __cplusplus
 }
 #endif
@@ -519,6 +522,36 @@ void lobbyRenderGameSettingsPanel(ClientSim *cs,
 void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 /* Read-only one-line summary of the three view policies. */
 void lobbyRenderVisibilitySummary(ClientSim *cs, float s);
+
+/* ── One visibility value, drawn the one way ──────────────────
+ * The lobby's header line, the Details table, the server browser and the
+ * in-game info panel all show the same seven settings, so they all draw a
+ * value through this: the setting's sprite and the word it is on, faint
+ * together when it is off, with the seconds added under Decay.
+ *
+ * column runs 0..LOBBY_VIS_COLUMN_COUNT-1 in the order the Details table
+ * reads: pill view, base view, allied tank view, allies in trees, the
+ * overview window, line of sight. The last two have no sprite and come
+ * back as the word alone. The whole thing is one item, so the caller's
+ * IsItemHovered covers it.
+ *
+ * lobbyVisibilityColumnLabelId names the setting, for a caller that lays
+ * out its own label — the browser's detail pane does, the header line
+ * does not. */
+#define LOBBY_VIS_COLUMN_COUNT 6
+void lobbyRenderVisibilityColumn(const VisibilitySettings *v, int column,
+                                 float s);
+int  lobbyVisibilityColumnLabelId(int column);
+/* The same value as words, for a caller with no room to draw a sprite —
+ * a tooltip, or a line of running text. Seconds included under Decay. */
+void lobbyVisibilityColumnText(const VisibilitySettings *v, int column,
+                               char *out, size_t outSize);
+/* A whole set on one line: "Pills Key · Bases Off · ...", short labels and
+ * the same value words, with the two on/off rules named only while they
+ * are on. What the lobby's Custom row is described by, and what a server
+ * browser row's hover says a game running no named set is doing. */
+void lobbyVisibilityDetailsLine(const VisibilitySettings *v, char *out,
+                                size_t outSize);
 
 /* ── State accessors ──────────────────────────────────────────────
  * The lobby's state lives in per-cluster structs, each private to the source
