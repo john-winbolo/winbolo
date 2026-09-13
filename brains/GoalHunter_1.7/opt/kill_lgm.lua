@@ -501,4 +501,56 @@ end
 
 M.SPLASH_WU = SPLASH_WU
 
+-- --------------------------------------------------------------------------
+-- M.tuning() — the ONE place that reads the LGM-kill master switch.
+--
+-- C.LGM_KILL_IMPROVED gates the whole 2026-09-13 package: the wider fire gate,
+-- the 10-tile candidate track radius, the nearest-to-pill pick and the sight
+-- that follows the candidate from admission.  OFF (and PRESETS.keel sets it
+-- off) every value below is the pre-package one, so the brain plays exactly as
+-- it did before: fire gate 64 wu, candidate admission by the old along-the-ray
+-- test, min-perp ranking, a held range key from 2 steps out.
+--
+-- The individual knobs stay the VALUES; the master decides whether they are
+-- read at all.  Callers take ONE table and test one field, instead of asking
+-- `if C.LGM_KILL_IMPROVED` at every gate.
+--
+-- The table is built once and cached: preset= / cfg= / level overrides are all
+-- applied at chunk load (init.lua, right after require("constants")), long
+-- before the first think, so nothing can change under us afterwards.  Each bot
+-- has its own lua_State, so this cache is this bot's alone.
+-- --------------------------------------------------------------------------
+local _tuning
+
+function M.tuning()
+  if _tuning then return _tuning end
+  local on = C.LGM_KILL_IMPROVED and true or false
+  local fire_wu = on and (C.LGM_KILL_FIRE_WU or 256) or 64
+  -- Capture-hunt shot: its own override when set (>= 0), else the shared gate.
+  local cap_wu = fire_wu
+  if on then
+    local o = C.CAPTURE_LGM_HUNT_FIRE_WU or -1
+    if o >= 0 then cap_wu = o end
+  end
+  -- Open-ground "can this heading kill him at all" test (perp distance from the
+  -- shell ray to the man).  Never TIGHTER than the old 128: with the package off
+  -- it is exactly 128, and with a wider fire gate it opens to match the gate, so
+  -- the perp test can never refuse a shot the fire gate would have taken.
+  local perp_wu = 128
+  if on and fire_wu > perp_wu then perp_wu = fire_wu end
+  _tuning = {
+    on              = on,
+    fire_wu         = fire_wu,
+    capture_fire_wu = cap_wu,
+    perp_wu         = perp_wu,
+    engine_kill_wu  = C.LGM_ENGINE_KILL_WU or 128,
+    -- Candidate admission: with the package ON, a straight-line radius from the
+    -- TANK in wu; nil means the old along-the-ray admission (see init.lua).
+    track_wu        = on and ((C.CAPTURE_LGM_HUNT_TRACK_TILES or 10) * 256) or nil,
+    pick_near_pill  = on and (C.CAPTURE_LGM_HUNT_PICK_NEAREST_PILL and true or false) or false,
+    hold_min_steps  = on and (C.CAPTURE_SIGHT_HOLD_MIN_STEPS or 2) or 2,
+  }
+  return _tuning
+end
+
 return M

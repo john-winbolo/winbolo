@@ -4890,18 +4890,27 @@ local function steer_core(state, world, info, goal)
       -- ALWAYS-ON reference rings on the swept pill, EVERY capture_pill tick
       -- (not just while the hunt is engaged): the OUTER ring is the shoot/search
       -- radius (CAPTURE_LGM_HUNT_RADIUS) -- a hostile LGM inside it counts as on
-      -- this pill; the INNER ring is the fire distance (CAPTURE_LGM_HUNT_FIRE_WU,
-      -- in wu -> tiles).  NOTE the fire GATE in code is measured impact-to-MAN
-      -- (and exact-tile when he stands on a solid square), so this inner ring is
-      -- a distance REFERENCE drawn on the pill, not the literal gate centre.
+      -- this pill; the MIDDLE ring is the fire distance (the LGM-kill fire gate
+      -- in force: CAPTURE_LGM_HUNT_FIRE_WU when it overrides, else the shared
+      -- C.LGM_KILL_FIRE_WU); the INNERMOST ring is the engine's real kill radius
+      -- (C.LGM_ENGINE_KILL_WU, lgm.c MAP_SQUARE_MIDDLE = 128 wu), so the picture
+      -- shows what we shoot at AND what would actually kill.  NOTE the fire GATE
+      -- in code is measured impact-to-MAN (and exact-tile when he stands on a
+      -- solid square), so these are distance REFERENCES drawn on the pill, not
+      -- the literal gate centre.
       if BRAIN_DEBUG_MODE and goal.kind == "capture_pill" and goal.mx and goal.my then
         local _cx, _cy = goal.mx + 0.5, goal.my + 0.5
+        local _kt = KL.tuning()
+        local _fire_wu = _kt.capture_fire_wu
         viz.circle("kill_lgm_status", _cx, _cy,
                    (C.CAPTURE_LGM_HUNT_RADIUS or 2.5),
                    120, 180, 255, 110, false, false)          -- search radius (blue)
         viz.circle("kill_lgm_status", _cx, _cy,
-                   (C.CAPTURE_LGM_HUNT_FIRE_WU or 100) / 256.0,
+                   _fire_wu / 256.0,
                    255, 120, 120, 150, false, false)          -- fire distance (red)
+        viz.circle("kill_lgm_status", _cx, _cy,
+                   _kt.engine_kill_wu / 256.0,
+                   255, 200, 120, 130, false, false)          -- engine kill radius (amber)
       end
     end
 

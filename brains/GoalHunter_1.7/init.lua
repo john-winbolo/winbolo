@@ -1896,6 +1896,25 @@ function Brain.think(info)
       end
       print2(string.format("[refuel] cost mult x%.2f (%s)",
                            goals.refuel_mult(), goals.refuel_mult_source))
+      -- The LGM-kill fire gate actually in force for this bot: the shared knob,
+      -- the capture-hunt override (-1 = follow the shared knob), and the engine's
+      -- own kill radius for reference.  One line so a -brain-debug log states
+      -- which gate produced (or refused) every LGM shot in the run.
+      do
+        local _kt = kill_lgm.tuning()
+        print2(string.format(
+          "[kill_lgm] improved=%s (mode=%s difficulty=%s) fire gate %d wu,"
+          .. " capture gate %d wu (engine kills within %d wu)",
+          tostring(_kt.on), tostring(C.MODE), tostring(C.DIFFICULTY),
+          _kt.fire_wu, _kt.capture_fire_wu, _kt.engine_kill_wu))
+        print2(string.format(
+          "[kill_lgm] track %s, pick=%s, sight holds from %d steps",
+          _kt.track_wu and string.format("%.1f tiles from the tank",
+                                         _kt.track_wu / 256.0)
+                        or "along the heading (old admission)",
+          _kt.pick_near_pill and "nearest the pill" or "nearest the shell ray",
+          _kt.hold_min_steps))
+      end
       if state.ally_claim_dead_off then
         print2("[claims] claims_dead=off (init_arg) — pool 4 ignores allies' capture_pill claims on dead pills (no ally_claimed reject); pool 6 + refuel unchanged")
       end
@@ -7705,13 +7724,18 @@ function Brain.think(info)
             los_cache[cache_key] = { tick = now, blocked = los_blocked }
           end
           _ev.los_blocked = los_blocked
-          -- Fire-gate: shell explosion point must land inside a
-          -- ½-tile-diameter circle (radius 64 wu) around the predicted
-          -- LGM center.  Engine's kill radius is the full 128 wu
-          -- (lgm.c:1321) but we tighten by half so we don't lean on
-          -- splash — small prediction error still kills.  Shell
-          -- explodes at tank + 128*sl wu in the firing direction
-          -- (sl in half-tiles, so 128 wu/unit).
+          -- Fire-gate: the shell explosion point must land inside a
+          -- circle of radius kill_lgm.tuning().fire_wu around the predicted
+          -- LGM center -- C.LGM_KILL_FIRE_WU while the LGM-kill package is on
+          -- (C.LGM_KILL_IMPROVED), the old 64 wu while it is off.
+          -- The engine kills on open ground within 128 wu
+          -- (lgm.c MAP_SQUARE_MIDDLE); the knob defaults WIDER (256, one
+          -- tile) because both points here are PREDICTED — a shot allowed
+          -- at a tile of predicted offset still lands in the killing
+          -- half-tile whenever the prediction was half right, and a
+          -- reload is cheap.  KEEL is 64.  Shell explodes at
+          -- tank + 128*sl wu in the firing direction (sl in half-tiles,
+          -- so 128 wu/unit).
           local cur_sl = info.gunrange or 14
           local shell_travel_wu = 128 * cur_sl
           local rad = (info.direction or 0) * C.TWO_PI / 256
@@ -7723,7 +7747,7 @@ function Brain.think(info)
           _ev.gunrange     = cur_sl
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
           _ev.land_off_wu  = impact_off
-          local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
+          local KILL_WU = kill_lgm.tuning().fire_wu  -- circle around predicted LGM center
           if los_blocked then
             _ev.status = "los_blocked"
           elseif impact_off > KILL_WU then
@@ -7960,8 +7984,16 @@ function Brain.think(info)
       if L < 2 then L = 2 elseif L > 14 then L = 14 end
       if L == G then return 0, 0 end                                -- settled
       local key = (L > G) and KEY_MORERANGE or KEY_LESSRANGE
-      if math.abs(L - G) == 1 then return 0, key end                -- final unit: TAP
-      return key, 0                                                 -- >1 unit away: HELD
+      -- HOLD vs TAP.  A held key steps the engine every ENGINE tick while we
+      -- think every second tick and the engine applies our packet 2-3 ticks
+      -- late, so a hold always overshoots by a few units and the sight has to
+      -- come back.  C.CAPTURE_SIGHT_HOLD_MIN_STEPS is the gap at which we still
+      -- accept that trade; below it we TAP (one packet = one unit).  =2 is the
+      -- old behaviour (tap only the final unit); a big number never holds.
+      if math.abs(L - G) < (kill_lgm.tuning().hold_min_steps or 2) then
+        return 0, key                                               -- close: TAP
+      end
+      return key, 0                                                 -- far: HELD
     end
     -- A man is "solid" to lgm.c's death check (in-tile-only kill, no splash) when
     -- he stands on a building, a half-build, a base, OR ANY DEPLOYED PILL.  The
@@ -8037,17 +8069,41 @@ function Brain.think(info)
         -- candidate man, drive the sight onto him, and fire opportunistically.
 
         -- ── STEP 4: candidate selection ──────────────────────────────────
-        -- t = tank, h = heading unit.  For each hostile LGM within the shoot
-        -- radius (CAPTURE_LGM_HUNT_RADIUS) of the pill: along = (p-t).h (must be
-        -- ahead and within max shell travel = 7 tiles), perp = |h x (p-t)|.  Pick
-        -- MIN perp, tie-break smaller along.  p = the man's lead-predicted
+        -- t = tank, h = heading unit.  For every hostile LGM inside the shoot
+        -- radius (CAPTURE_LGM_HUNT_RADIUS) of the PILL we work out along =
+        -- (p-t).h and perp = |h x (p-t)|, where p is the man's lead-predicted
         -- position (perception's predict_aim output; one think of lag is fine).
+        -- Both are still needed below -- along drives the sight, perp is the
+        -- open-ground kill test -- but WHICH men are admitted, and which one
+        -- wins, now depend on the LGM-kill master switch (kill_lgm.tuning()):
+        --
+        --   package ON  : admitted when he is within KT.track_wu of the TANK,
+        --                 measured STRAIGHT.  The nose may point anywhere.  The
+        --                 old test was along-the-heading only, so while the nose
+        --                 was still swinging onto him he dropped out, the sight
+        --                 fell back to the pill hover, and the gunsight yo-yoed
+        --                 between two targets -- one for the nose, one for the
+        --                 sight.  A straight radius keeps ONE target through the
+        --                 whole turn.
+        --   package OFF : the old admission -- ahead of us (along > 0) and no
+        --                 further than max shell travel (7 tiles) along it.
+        --
+        -- RANKING with KT.pick_near_pill: the man whose PREDICTED point is
+        -- nearest the TARGET PILL, tie-break smaller perp.  The prediction, not
+        -- the live position, is what separates the two men who matter: one just
+        -- passing by is predicted AWAY from the pill, while one a little further
+        -- out but walking in to repair is predicted ONTO it.  The pill is what
+        -- the capture is for, so the man nearest it is the one about to rebuild
+        -- it out from under us.  Otherwise the old rank: MIN perp, then along.
+        local KT = kill_lgm.tuning()
         local rad  = (info.direction or 0) * C.TWO_PI / 256
         local hx, hy = math.sin(rad), -math.cos(rad)
         local MAX_ALONG = 14 * 128            -- sightLen 14 -> impact 7 tiles ahead
         local R = C.CAPTURE_LGM_HUNT_RADIUS or 2
         local CIRCLE = C.CAPTURE_LGM_HUNT_CIRCLE
         local cand, cand_perp, cand_along = nil, math.huge, math.huge
+        local cand_pilld = math.huge          -- predicted point -> pill, wu (rank only)
+        local pcx, pcy = clh.pmx * 256 + 128, clh.pmy * 256 + 128
         if state.perc and state.perc.enemy_lgms then
           for _, elm in ipairs(state.perc.enemy_lgms) do
             local rdx = elm.mx - clh.pmx; if rdx < 0 then rdx = -rdx end
@@ -8064,17 +8120,37 @@ function Brain.think(info)
               local rx, ry = pwx - info.tankx, pwy - info.tanky
               local along = rx * hx + ry * hy
               local perp  = math.abs(hx * ry - hy * rx)
-              if along > 0 and along <= MAX_ALONG
-                 and (perp < cand_perp or (perp == cand_perp and along < cand_along)) then
-                cand, cand_perp, cand_along = elm, perp, along
+              local admit
+              if KT.track_wu then
+                admit = (rx * rx + ry * ry) <= KT.track_wu * KT.track_wu
+              else
+                admit = (along > 0 and along <= MAX_ALONG)
+              end
+              if admit then
+                local better
+                if KT.pick_near_pill then
+                  local qx, qy = pwx - pcx, pwy - pcy
+                  local pilld = math.sqrt(qx * qx + qy * qy)
+                  better = (pilld < cand_pilld)
+                           or (pilld == cand_pilld and perp < cand_perp)
+                  if better then cand_pilld = pilld end
+                else
+                  better = (perp < cand_perp)
+                           or (perp == cand_perp and along < cand_along)
+                end
+                if better then
+                  cand, cand_perp, cand_along = elm, perp, along
+                end
               end
             end
           end
         end
-        -- KILLABLE from this heading?  Open ground: within 128 wu of the ray
-        -- (splash reaches).  Solid square (live pill/base/building): the ray must
-        -- actually cross his tile -- splash won't kill there, only an in-tile hit.
-        -- Otherwise fall back to hovering the sight on the pill centre.
+        -- KILLABLE from this heading?  Open ground: within KT.perp_wu of the ray
+        -- (splash reaches).  That is 128 wu with the package off, and it opens to
+        -- the fire gate when the gate is wider, so this test can never refuse a
+        -- shot the fire gate would take.  Solid square (live pill/base/building):
+        -- the ray must actually cross his tile -- splash won't kill there, only
+        -- an in-tile hit.  This gates the SHOT, not the tracking.
         local killable = false
         local cmx, cmy
         if cand then
@@ -8082,13 +8158,18 @@ function Brain.think(info)
           if lgm_on_solid(cmx, cmy) then
             killable = ray_crosses_tile(info.tankx, info.tanky, hx, hy, cmx, cmy, MAX_ALONG)
           else
-            killable = (cand_perp <= 128)
+            killable = (cand_perp <= KT.perp_wu)
           end
         end
 
         -- ── STEP 4: sight drive (yield to any earlier range key this think) ─
+        -- With the package ON the sight follows the candidate from the moment he
+        -- is admitted, killable or not: he is the one target, and the sight and
+        -- the nose close on him together.  The pill hover is the fallback for NO
+        -- candidate at all.  With the package OFF, the old rule -- only a
+        -- killable man takes the sight.
         local tgt_wx, tgt_wy
-        if cand and killable then
+        if cand and (KT.on or killable) then
           tgt_wx, tgt_wy = (cand.predicted_wx or cand.wx), (cand.predicted_wy or cand.wy)
           clh.lgm_id = cand.idnum          -- so the debug gate line tracks this man
         else
@@ -8108,9 +8189,10 @@ function Brain.think(info)
         end
 
         -- ── STEP 5: opportunistic capture-target shot ─────────────────────
-        -- Fire when the predicted impact lands within CAPTURE_LGM_HUNT_FIRE_WU of
-        -- the man (open ground) or IN HIS EXACT TILE (solid square).  This is
-        -- capture-only and does NOT touch the shared kill_lgm 64-wu evaluator.
+        -- Fire when the predicted impact lands within the LGM-kill fire gate of
+        -- the man (open ground) or IN HIS EXACT TILE (solid square).  The gate is
+        -- the SHARED C.LGM_KILL_FIRE_WU unless CAPTURE_LGM_HUNT_FIRE_WU overrides
+        -- it (>= 0); -1, the default, means "follow the shared knob".
         -- Refire every reload-available tick, but cap consecutive misses.
         -- Refire identity is keyed on cand.seen_since, NOT idnum: perception's
         -- idnum churns frame-to-frame (identity is tracked by position match), so
@@ -8162,7 +8244,7 @@ function Brain.think(info)
             hit = (imx == cmx and imy == cmy)           -- exact-tile only
           else
             local ddx, ddy = ex_wx - tgt_wx, ex_wy - tgt_wy
-            hit = (math.sqrt(ddx * ddx + ddy * ddy) <= (C.CAPTURE_LGM_HUNT_FIRE_WU or 64))
+            hit = (math.sqrt(ddx * ddx + ddy * ddy) <= KT.capture_fire_wu)
           end
           if hit then
             -- LANE CHECK: shell path clear of friendly tanks/builders (mirror the
@@ -8306,14 +8388,15 @@ function Brain.think(info)
            and (bit.band(taps, KEY_SHOOT)) == 0
            and lane_ok
            and clh.dist_wu <= C.KILL_LGM_SHOOT_RANGE * 256 then
-          -- Same impact-point gate the kill-LGM block uses: half a tile.
+          -- Same impact-point gate the kill-LGM block uses (kill_lgm.tuning()).
+          local _kt = kill_lgm.tuning()
           local cur_sl = info.gunrange or 14
           local rad    = (info.direction or 0) * C.TWO_PI / 256
           local ex_wx  = info.tankx + math.sin(rad) * 128 * cur_sl
           local ex_wy  = info.tanky - math.cos(rad) * 128 * cur_sl
           local ddx    = ex_wx - clh.aim_wx
           local ddy    = ex_wy - clh.aim_wy
-          if math.sqrt(ddx * ddx + ddy * ddy) <= 64 then
+          if math.sqrt(ddx * ddx + ddy * ddy) <= _kt.fire_wu then
             taps = bit.bor(taps, KEY_SHOOT)
             _already_fired = true
             clh.verdict = "fire"
@@ -8328,6 +8411,18 @@ function Brain.think(info)
       -- silently does half its job.  The whole thing lives inside the
       -- BRAIN_DEBUG_MODE guard so lua_strip takes the eval scan out of the
       -- production copy with the print.
+      -- The candidate TRACK RADIUS, drawn around the tank on every hunt tick so
+      -- the picture is the admission test the code just ran: a man inside this
+      -- circle (and inside the pill's hunt radius) is trackable whatever way the
+      -- nose points.  Nothing is drawn while the package is off, because then
+      -- admission is the along-the-ray test and a circle would be a lie.
+      if BRAIN_DEBUG_MODE then
+        local _ktv = kill_lgm.tuning()
+        if _ktv.track_wu then
+          viz.circle("capture_lgm_track", info.tankx / 256.0, info.tanky / 256.0,
+                     _ktv.track_wu / 256.0, 120, 200, 160, 90, false, false)
+        end
+      end
       if BRAIN_DEBUG_MODE then
         local gate = "-"
         if clh.lgm_id and state._kill_lgm_eval then
@@ -9004,7 +9099,14 @@ function Brain.think(info)
           cr, cg, cb, label = 220, 80, 220, "APPROACH"
         end
         viz.line("kill_lgm_engage", twx, twy, sx, sy, cr, cg, cb, 200)
-        viz.circle("kill_lgm_engage", sx, sy, 0.45, cr, cg, cb, 230)
+        -- Rings sized from the live tuning, not a magic 0.45: outer = the fire
+        -- gate we shoot at (kill_lgm.tuning().fire_wu), inner = what the engine
+        -- actually kills inside (engine_kill_wu, lgm.c MAP_SQUARE_MIDDLE).
+        local _kt = kill_lgm.tuning()
+        viz.circle("kill_lgm_engage", sx, sy, _kt.fire_wu / 256.0,
+                   cr, cg, cb, 230)
+        viz.circle("kill_lgm_engage", sx, sy, _kt.engine_kill_wu / 256.0,
+                   cr, cg, cb, 150)
         viz.circle("kill_lgm_engage", sx, sy, 0.08, cr, cg, cb, 255)
         viz.text("kill_lgm_engage", sx, sy + 0.6, label,
                  "center", cr, cg, cb, 255, 0.4)
@@ -9071,7 +9173,8 @@ function Brain.think(info)
         -- "—" when we never got far enough to compute (e.g. off_aim
         -- quick-reject).
         local off_str = ev.land_off_wu
-                        and string.format(" off=%.0f/%d", ev.land_off_wu, 64)
+                        and string.format(" off=%.0f/%d", ev.land_off_wu,
+                                          kill_lgm.tuning().fire_wu)
                         or ""
         label = string.format("%s d=%.1f aim=%+d%s%s",
                               ev.status, ev.dist or -1,
@@ -9103,7 +9206,14 @@ function Brain.think(info)
           local col = TIER_COL[elm.predict_tier or "linear"] or TIER_COL.linear
           local cr, cg, cb = col[1], col[2], col[3]
           viz.line("kill_lgm_predict", lx, ly, px, py, cr, cg, cb, 200)
-          viz.circle("kill_lgm_predict", px, py, 0.45, cr, cg, cb, 220)
+          -- The predicted point IS the centre of the fire gate, so draw the
+          -- gate here: outer ring = C.LGM_KILL_FIRE_WU (the impact offset we
+          -- will take a shot at), inner ring = C.LGM_ENGINE_KILL_WU (what the
+          -- engine actually kills inside, lgm.c MAP_SQUARE_MIDDLE = 128 wu).
+          viz.circle("kill_lgm_predict", px, py, kill_lgm.tuning().fire_wu / 256.0,
+                     cr, cg, cb, 220)
+          viz.circle("kill_lgm_predict", px, py, kill_lgm.tuning().engine_kill_wu / 256.0,
+                     cr, cg, cb, 150)
           viz.circle("kill_lgm_predict", px, py, 0.10, cr, cg, cb, 255)
           viz.text("kill_lgm_predict", px, py - 0.55,
                    string.format("PRED ft=%d %s", elm.flight_ticks or 0,

@@ -411,6 +411,9 @@ M.IDS = {
   kill_lgm_status = { short = "Kill-LGM status",
                       long  = "Per-LGM kill-evaluation labels (dist / aim corr / LOS clear-blocked / would-fire) plus a HUD summary line for the chosen target. Always shows when at least one hostile LGM is in view." },
 
+  capture_lgm_track = { short = "Capture-LGM track radius",
+                      long  = "Faint ring around the tank on every capture-pill LGM hunt tick: the straight-line radius (CAPTURE_LGM_HUNT_TRACK_TILES) inside which a hostile LGM can be the man the hunt tracks, whichever way the nose points. He must also be inside the pill's hunt radius (drawn by kill_lgm_status). Nothing is drawn while C.LGM_KILL_IMPROVED is false, because then admission is the old along-the-heading test and a circle would not be the shape the code uses." },
+
   capture_lgm_misses = { short = "Capture-LGM miss count",
                       long  = "During a capture_pill LGM hunt, a 'misses=N' label over the tank: the running count of consecutive capture-target shots at the current man whose flight completed with him still alive. Resets on a kill/leave (record dropped) or target change. The miss CAP is currently disabled, so this only reports -- it does not stop firing." },
 

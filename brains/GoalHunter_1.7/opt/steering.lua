@@ -4373,10 +4373,14 @@ local function steer_core(state, world, info, goal)
       -- ALWAYS-ON reference rings on the swept pill, EVERY capture_pill tick
       -- (not just while the hunt is engaged): the OUTER ring is the shoot/search
       -- radius (CAPTURE_LGM_HUNT_RADIUS) -- a hostile LGM inside it counts as on
-      -- this pill; the INNER ring is the fire distance (CAPTURE_LGM_HUNT_FIRE_WU,
-      -- in wu -> tiles).  NOTE the fire GATE in code is measured impact-to-MAN
-      -- (and exact-tile when he stands on a solid square), so this inner ring is
-      -- a distance REFERENCE drawn on the pill, not the literal gate centre.
+      -- this pill; the MIDDLE ring is the fire distance (the LGM-kill fire gate
+      -- in force: CAPTURE_LGM_HUNT_FIRE_WU when it overrides, else the shared
+      -- C.LGM_KILL_FIRE_WU); the INNERMOST ring is the engine's real kill radius
+      -- (C.LGM_ENGINE_KILL_WU, lgm.c MAP_SQUARE_MIDDLE = 128 wu), so the picture
+      -- shows what we shoot at AND what would actually kill.  NOTE the fire GATE
+      -- in code is measured impact-to-MAN (and exact-tile when he stands on a
+      -- solid square), so these are distance REFERENCES drawn on the pill, not
+      -- the literal gate centre.
     end
 
     if     turn_corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
