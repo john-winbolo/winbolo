@@ -2319,6 +2319,21 @@ int run_scenario_host_vm_lock_same_thread(void);
 int run_scenario_host_vm_lock_second_thread(void);
 int run_scenario_host_audit_human_lost(void);
 
+/* The bus events (test_scenario_events.c): the subscriber that only
+ * queues, the bounded drain at the end of each tick, and what a full
+ * queue does with the event that finds no room. */
+int run_scenario_events_queued_then_drained(void);
+int run_scenario_events_drain_reads_the_length_once(void);
+int run_scenario_events_queued_during_a_drain_waits(void);
+int run_scenario_events_overflow_boundary(void);
+int run_scenario_events_overflow_counts_errors(void);
+int run_scenario_events_no_scenario_delivers_nothing(void);
+int run_scenario_events_lobby_tick_drains(void);
+int run_scenario_events_control_reaches_the_queue(void);
+int run_scenario_events_both_channels_in_publish_order(void);
+int run_scenario_events_channel_says_which(void);
+int run_scenario_events_overflow_covers_both(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

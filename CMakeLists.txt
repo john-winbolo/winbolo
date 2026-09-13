@@ -3321,6 +3321,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
     tests/unit/test_scenario_host.c
+    # The bus events the host queues and drains: the subscriber, the
+    # fixed queue and the bounded drain at the end of each tick.
+    tests/unit/test_scenario_events.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -5006,6 +5009,17 @@ set(_unit_test_names
     scenario_host_vm_lock_same_thread
     scenario_host_vm_lock_second_thread
     scenario_host_audit_human_lost
+    scenario_events_queued_then_drained
+    scenario_events_drain_reads_the_length_once
+    scenario_events_queued_during_a_drain_waits
+    scenario_events_overflow_boundary
+    scenario_events_overflow_counts_errors
+    scenario_events_no_scenario_delivers_nothing
+    scenario_events_lobby_tick_drains
+    scenario_events_control_reaches_the_queue
+    scenario_events_both_channels_in_publish_order
+    scenario_events_channel_says_which
+    scenario_events_overflow_covers_both
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

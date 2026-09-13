@@ -54,6 +54,7 @@
  *  nothing under src/bolo/internal/.
  *********************************************************/
 
+#include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -79,6 +80,7 @@
 
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_events.h"
 
 /* One operator line. Long enough for a Lua error, which carries the file
  * path and the line number ahead of its message. */
@@ -287,6 +289,12 @@ struct ScenarioHost {
      * pointer and does not own it, so it lives here for as long as the
      * registration does. */
     ScenarioPolicy   policy;
+
+    /* What this round has raised on either channel, waiting for the tick
+     * that drains it, and the subscriber slot both channels arrive
+     * through. */
+    ScnEventQueue    events;
+    SubscriberHandle sub;
 };
 
 /* ── Finding the sidecar ──────────────────────────────────────────── */
@@ -790,6 +798,27 @@ static void scnDisable(ScenarioHost *h, const char *fmt, ...) {
     scnSay(h->lastError, sizeof(h->lastError), "scenario: %s", h->pending);
 }
 
+/* n more errors, for a caller that has already said its piece. Apart from a
+ * hook or a policy raising, the other thing that counts is an event the
+ * queue had no room for, and a tick that dropped many of those wants one
+ * line rather than one per event. */
+static void scnErrorsCounted(ScenarioHost *h, unsigned n) {
+    if (n == 0) {
+        return;
+    }
+    /* A count that cannot wrap: past the limit the only thing left to do is
+       switch the scenario off, which the next line does. */
+    if (h->errors > UINT_MAX - n) {
+        h->errors = UINT_MAX;
+    } else {
+        h->errors += n;
+    }
+    if (h->errors >= SCN_ERROR_LIMIT) {
+        scnDisable(h, "%.32s is off for the rest of the round: %d errors in "
+                      "a row.", scnSubject(h), SCN_ERROR_LIMIT);
+    }
+}
+
 /* One more call that raised. SCN_ERROR_LIMIT of them in a row and the
  * scenario is off. The operator sees every one on the way there, because
  * which calls they were is the whole of what a script author has to work
@@ -798,11 +827,7 @@ static void scnErrorRaised(ScenarioHost *h, const char *what,
                            const char *msg) {
     scnSay(h->lastError, sizeof(h->lastError), "scenario: %s raised: %s",
            what, msg);
-    h->errors++;
-    if (h->errors >= SCN_ERROR_LIMIT) {
-        scnDisable(h, "%.32s is off for the rest of the round: %d errors in "
-                      "a row.", scnSubject(h), SCN_ERROR_LIMIT);
-    }
+    scnErrorsCounted(h, 1);
 }
 
 /* A call that returned. The count is of errors in a row, so one success
@@ -906,12 +931,77 @@ static void scnSayPending(ScenarioHost *h) {
     }
 }
 
+/* ── The bus events ───────────────────────────────────────────────── */
+
+/* The host listens to both of the server's channels and does the same thing
+ * with each: copy into the one queue and return.
+ *
+ * This one runs inside serverSimPublishControl's deliver loop, which holds
+ * the publishing flag across it and asserts that nothing publishes from
+ * within. The other runs inside the mutation that raised a game event, with
+ * the sim's state half-written and its fan-out asserting the same. Neither
+ * calls Lua, issues an op or publishes, and everything that acts on an
+ * event happens at the drain.
+ *
+ * One queue for the two, so what the drain hands out is the order the facts
+ * happened in whichever channel carried each of them. */
+static void scnDeliverControl(void *ctx, const struct ControlEvent *evt) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
+
+    if (h == NULL) {
+        return;
+    }
+    scenarioEventsQueueControl(&h->events, evt);
+}
+
+static void scnDeliverEvent(void *ctx, const GameEvent *evt) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
+
+    if (h == NULL) {
+        return;
+    }
+    scenarioEventsQueueGame(&h->events, evt);
+}
+
+/* What the drain does with one entry. Turning it into the script's hook for
+ * that event is the binding table's work — including reading the channel to
+ * tell which of the two numberings the type belongs to. Until then an entry
+ * is read off the queue in order and the numbers on the queue are what it
+ * leaves behind. */
+static void scnEventConsume(void *ctx, const ScnQueuedEvent *e) {
+    (void)ctx;
+    (void)e;
+}
+
+/* Say what the queue had no room for, once, and count each of them. The
+ * drop itself happens inside a publish where there is nothing safe to say;
+ * this runs at the tick, after the drain, so events the drain's own work
+ * pushed past the end are reported in the tick they were lost in. */
+static void scnReportDrops(ScenarioHost *h) {
+    uint32_t dropped = scenarioEventsTakeDropped(&h->events);
+
+    if (dropped == 0) {
+        return;
+    }
+    scnSay(h->lastError, sizeof(h->lastError),
+           "scenario: %lu events arrived with the queue full at %d and were "
+           "dropped", (unsigned long)dropped, SCN_EVENT_QUEUE_MAX);
+    scnErrorsCounted(h, (unsigned)dropped);
+}
+
+/* ── The per-tick callback ────────────────────────────────────────── */
+
 /* The callback serverSimTick makes at the end of every frame, in both the
- * running and the non-running branch. It carries the round's line, and
- * makes the on_start call the round start left for the first running tick:
- * the state tells the two branches apart, and the flag tells the first
- * running tick from the ones after it. The drain of the host's event queue
- * belongs here too. */
+ * running and the non-running branch.
+ *
+ * In order: the on_start call the round start left for the first running
+ * tick, because a round's start comes before anything the round has
+ * produced — the state tells the two branches apart and the flag tells the
+ * first running tick from the ones after it; then the events that have
+ * arrived since the last tick; then what the queue had no room for, after
+ * the drain so a drop the drain caused is reported in its own tick; then
+ * the line the round owes the players, last, so a line any of the three
+ * above raised goes out in this tick rather than the next. */
 static void scnTick(void *ctx) {
     ScenarioHost *h = (ScenarioHost *)ctx;
 
@@ -919,12 +1009,14 @@ static void scnTick(void *ctx) {
         return;
     }
     scnLockEnter(&h->lock);
-    scnSayPending(h);
     if (h->startPending &&
         serverSimGetState(h->sim) == serverStateRunning) {
         h->startPending = false;
         scnHookRun(h, h->onStartRef, "on_start");
     }
+    (void)scenarioEventsDrain(&h->events, scnEventConsume, h);
+    scnReportDrops(h);
+    scnSayPending(h);
     scnLockLeave(&h->lock);
 }
 
@@ -1037,6 +1129,12 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     h->disabled     = false;
     h->startPending = true;
 
+    /* And with an empty queue, on both channels: what the last round raised
+       is no business of this one. Before the rules and the setup call, so
+       anything those do raise is this round's and reaches its first
+       drain. */
+    scenarioEventsReset(&h->events);
+
     scnApplyRules(h);
 
     scnRosterHumans(h, humans);
@@ -1140,6 +1238,8 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        table was read in. The first round start resolves them. */
     h->onSetupRef = LUA_NOREF;
     h->onStartRef = LUA_NOREF;
+    /* Neither of these is the zero calloc left: no subscriber is -1. */
+    h->sub        = SUBSCRIBER_HANDLE_INVALID;
     snprintf(h->sidecar, sizeof(h->sidecar), "%s", sidecar);
     snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
@@ -1153,6 +1253,26 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);
     serverSimSetScenarioTick(sim, scnTick, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
+
+    /* The bus, in three steps and in this order. Registration hands the new
+       subscriber the whole of the current server state through the control
+       callback before it returns, and that is a picture of how things
+       stand rather than a run of facts that happened, so the queue is
+       emptied straight after it and the host starts from the next thing the
+       server actually does. Then the second channel, which has been NULL
+       for all of the above and so has added nothing of its own.
+
+       An invalid handle is not worth refusing the map for — the rules, the
+       hooks and the policy all still work — so it is said once and the
+       scenario runs without events. */
+    h->sub = serverSimRegisterSubscriber(sim, scnDeliverControl, h);
+    scenarioEventsReset(&h->events);
+    if (h->sub == SUBSCRIBER_HANDLE_INVALID ||
+        !serverSimSetSubscriberEventDeliver(sim, h->sub, scnDeliverEvent)) {
+        scnSay(h->lastError, sizeof(h->lastError),
+               "scenario: no subscriber slot for %s, so it sees no events",
+               sidecar);
+    }
     return h;
 }
 
@@ -1239,6 +1359,9 @@ void scenarioHostDetach(ScenarioHost *h) {
         serverSimSetScenarioRoundStart(h->sim, NULL, NULL);
         serverSimSetScenarioTick(h->sim, NULL, NULL);
         serverSimSetScenarioPolicy(h->sim, NULL);
+        /* Both channels go with the slot, and an invalid handle is a
+           no-op, so this needs no test of its own. */
+        serverSimUnregisterSubscriber(h->sim, h->sub);
     }
     /* Outside the lock, and it has to be: the registrations are gone, so
        nothing can arrive at the VM any more, and a lock taken here would be
@@ -1276,4 +1399,8 @@ const char *scenarioHostLastError(const ScenarioHost *h) {
 
 const ScenarioManifest *scenarioHostManifest(const ScenarioHost *h) {
     return (h != NULL) ? &h->manifest : NULL;
+}
+
+const ScnEventQueue *scenarioHostEventQueue(const ScenarioHost *h) {
+    return (h != NULL) ? &h->events : NULL;
 }

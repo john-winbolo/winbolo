@@ -87,6 +87,18 @@
  * boots a fresh VM and begins again at zero. */
 #define SCN_ERROR_LIMIT 20
 
+/* How many events the host holds between one tick and the next, across
+ * both of the server's channels. Each of the two subscriber callbacks
+ * copies an event in and returns; the one drain at the end of the tick
+ * empties exactly what was waiting when it started.
+ *
+ * An event that arrives with the queue full is dropped rather than
+ * overwriting one, and each drop counts toward SCN_ERROR_LIMIT: a round
+ * that produces more events in one tick than this is producing them faster
+ * than a script can answer them, and the numbers say so rather than the
+ * oldest of them going quietly. */
+#define SCN_EVENT_QUEUE_MAX 256
+
 typedef struct ScenarioHost ScenarioHost;
 
 /*********************************************************

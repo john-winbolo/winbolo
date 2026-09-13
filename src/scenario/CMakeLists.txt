@@ -3,7 +3,9 @@
 #   scenario_static — the scenario runtime. Finds the Lua sidecar beside a
 #                     map, boots a VM, reads the scenario table it declares
 #                     and applies that table's rules through the op funnel
-#                     from the sim's round-start callback.
+#                     from the sim's round-start callback, and holds the
+#                     bus events a round raises until the tick that drains
+#                     them.
 #
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
@@ -19,6 +21,7 @@
 
 add_library(scenario_static STATIC
     scenario_host.c
+    scenario_events.c
 )
 
 bolo_apply_include_rules(scenario_static scenario_host)
@@ -27,9 +30,10 @@ set_target_properties(scenario_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # scenario_host.h is what a frontend includes, so this directory reaches the
 # consumers publicly. That publishes the whole directory, scenario_manifest.h
-# included, which is what lets the unit tests read the parsed manifest; the
-# bolo include rules above stay PRIVATE, so linking scenario_static still
-# hands nobody the scenario surface itself.
+# and scenario_events.h included, which is what lets the unit tests read the
+# parsed manifest and the event queue; the bolo include rules above stay
+# PRIVATE, so linking scenario_static still hands nobody the scenario
+# surface itself.
 target_include_directories(scenario_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # server_sim.h, which scenario_host.h hands on to its includers, opens with
