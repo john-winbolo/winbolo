@@ -2366,6 +2366,18 @@ int run_scenario_hooks_team_changed_on_difference(void);
 int run_scenario_hooks_tick_and_end(void);
 int run_scenario_hooks_error_counts_and_disables(void);
 
+/* What the host derives rather than hears (test_scenario_derived.c): the
+ * timers a script sets, the regions it names, and the enter and leave hooks
+ * that come from watching where the tanks are. */
+int run_scenario_derived_timer_fires_on_its_tick(void);
+int run_scenario_derived_timer_cancelled_and_stale(void);
+int run_scenario_derived_timer_limit_boundary(void);
+int run_scenario_derived_timers_die_with_the_round(void);
+int run_scenario_derived_region_enter_and_leave(void);
+int run_scenario_derived_define_region_adds_replaces_and_expires(void);
+int run_scenario_derived_region_loop_terminates(void);
+int run_scenario_derived_fixture_wins_without_on_tick(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

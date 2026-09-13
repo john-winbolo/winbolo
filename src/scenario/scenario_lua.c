@@ -831,11 +831,11 @@ static int scnLuaTagged(lua_State *L) {
     return 1;
 }
 
-static const ScnManifestRegion *scnRegionOf(const ScenarioManifest *m,
-                                            const char *name) {
+const ScnManifestRegion *scenarioLuaRegionFind(const ScenarioManifest *m,
+                                               const char *name) {
     int i;
 
-    if (m == NULL) {
+    if (m == NULL || name == NULL) {
         return NULL;
     }
     for (i = 0; i < (int)m->numRegions; i++) {
@@ -846,10 +846,18 @@ static const ScnManifestRegion *scnRegionOf(const ScenarioManifest *m,
     return NULL;
 }
 
+bool scenarioLuaRegionHolds(const ScnManifestRegion *r, int mx, int my) {
+    if (r == NULL || r->w == 0 || r->h == 0) {
+        return false;
+    }
+    return mx >= (int)r->x && mx < (int)r->x + (int)r->w &&
+           my >= (int)r->y && my < (int)r->y + (int)r->h;
+}
+
 static int scnLuaRegion(lua_State *L) {
     const ScnLuaCtx         *c    = scnCtx(L);
     const char              *name = scnArgStr(L, 1, "name");
-    const ScnManifestRegion *r    = scnRegionOf(c->manifest, name);
+    const ScnManifestRegion *r    = scenarioLuaRegionFind(c->manifest, name);
 
     if (r == NULL) {
         lua_pushnil(L);
@@ -897,23 +905,20 @@ static int scnLuaRegions(lua_State *L) {
 }
 
 /* A square inside a named rectangle. A name no region carries answers false:
- * a square is not inside a rectangle that was never declared, and the row is
- * a question rather than a read of an entity. */
+ * a square is not inside a rectangle that was never named, and the row is a
+ * question rather than a read of an entity.
+ *
+ * The square is compared as a plain int rather than as a byte, so a
+ * coordinate off the map answers false instead of wrapping onto one that is
+ * inside. */
 static int scnLuaInRegion(lua_State *L) {
     const ScnLuaCtx         *c    = scnCtx(L);
     const char              *name = scnArgStr(L, 1, "name");
     lua_Integer              mx   = scnArgInt(L, 2, "mx");
     lua_Integer              my   = scnArgInt(L, 3, "my");
-    const ScnManifestRegion *r    = scnRegionOf(c->manifest, name);
-    bool                     in;
+    const ScnManifestRegion *r    = scenarioLuaRegionFind(c->manifest, name);
 
-    if (r == NULL || r->w == 0 || r->h == 0) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    in = mx >= (lua_Integer)r->x && mx < (lua_Integer)r->x + (lua_Integer)r->w &&
-         my >= (lua_Integer)r->y && my < (lua_Integer)r->y + (lua_Integer)r->h;
-    lua_pushboolean(L, in ? 1 : 0);
+    lua_pushboolean(L, scenarioLuaRegionHolds(r, (int)mx, (int)my) ? 1 : 0);
     return 1;
 }
 
@@ -2340,6 +2345,270 @@ static int scnLuaSetRule(lua_State *L) {
                    (int)scnWhole(lua_tonumber(L, 2)));
 }
 
+/* ══ The rows that reach no op ════════════════════════════════════════
+ *
+ * Three of them, and they are the only rows that change something without
+ * the funnel seeing it: two name a call to make later and one names a
+ * rectangle. Nothing on the sim is touched by any of them, which is why
+ * there is no op to carry them — what they write is the host's own, and it
+ * lasts exactly as long as the round does.
+ *
+ * They answer the way every other row answers: the value asked for, or nil
+ * with the refusal's own name and one sentence carrying the number that
+ * mattered. */
+
+/* One region named for the rest of the round.
+ *
+ * A name already in the list is replaced where it stands, which costs no
+ * room and keeps the index a region sits at: the host's per-tick scan
+ * remembers who is inside which region by that index, so replacing a
+ * rectangle moves the tanks in and out of the new one rather than making a
+ * second region nobody was ever in.
+ *
+ * Declared and defined regions share the one list and the one limit. What a
+ * script defines lasts the round: the next round start reads the sidecar's
+ * regions over the whole list again. */
+static int scnLuaDefineRegion(lua_State *L) {
+    const ScnLuaCtx   *c    = scnCtx(L);
+    const char        *name = scnArgStr(L, 1, "name");
+    lua_Integer        x    = scnArgInt(L, 2, "x");
+    lua_Integer        y    = scnArgInt(L, 3, "y");
+    lua_Integer        w    = scnArgInt(L, 4, "w");
+    lua_Integer        h    = scnArgInt(L, 5, "h");
+    ScenarioManifest  *m    = c->manifest;
+    ScnManifestRegion *slot = NULL;
+    size_t             len;
+    int                i;
+
+    if (m == NULL) {
+        return scnRefused(L, SCN_OP_UNSUPPORTED, "this round has no table to "
+                                                 "define a region in");
+    }
+    len = strlen(name);
+    if (len == 0 || len >= SCN_REGION_NAME_LEN) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "the name is %d bytes and a region's name runs 1 to "
+                          "%d", (int)len, SCN_REGION_NAME_LEN - 1);
+    }
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE,
+                          "the corner is %d,%d and a square runs 0 to 255",
+                          (int)x, (int)y);
+    }
+    /* A side is a byte here because it is a byte in the table a sidecar
+       declares, and the two are one list. A region that wants the whole of
+       an axis is 255 wide and one column short of it, which is what a
+       declared region has always been. */
+    if (!scnFitsByte(w) || !scnFitsByte(h)) {
+        return scnRefused(L, SCN_OP_RANGE,
+                          "the size is %dx%d and a side runs 0 to 255",
+                          (int)w, (int)h);
+    }
+
+    for (i = 0; i < (int)m->numRegions; i++) {
+        if (strcmp(m->regions[i].name, name) == 0) {
+            slot = &m->regions[i];
+            break;
+        }
+    }
+    if (slot == NULL) {
+        if (m->numRegions >= SCN_REGIONS_MAX) {
+            return scnRefused(L, SCN_OP_FULL,
+                              "the round already names %d regions, which is "
+                              "the limit", (int)m->numRegions);
+        }
+        slot = &m->regions[m->numRegions];
+        m->numRegions++;
+        memcpy(slot->name, name, len);
+        slot->name[len] = '\0';
+    }
+    slot->x = (uint8_t)x;
+    slot->y = (uint8_t)y;
+    slot->w = (uint8_t)w;
+    slot->h = (uint8_t)h;
+
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/* ── Timers ───────────────────────────────────────────────────────────
+ *
+ * A timer is a function the round holds until a tick it names, and the id a
+ * script cancels it by. The set lives on the host beside the VM, because
+ * what a timer holds has to be released when that VM goes.
+ *
+ * Seconds become ticks at GAME_NUMTOTALTICKS_SEC, which is what the sim's
+ * own seconds-to-ticks conversions use. A running frame advances the clock
+ * by two half-steps and a lobby frame by one, so a timer set while the round
+ * is in the lobby comes due at half the wall-clock rate — it counts the
+ * ticks a script reads off game.tick(), which is the only clock this surface
+ * has. */
+
+void scenarioLuaTimersReset(ScnTimerSet *t) {
+    int i;
+
+    if (t == NULL) {
+        return;
+    }
+    for (i = 0; i < SCN_TIMERS_MAX; i++) {
+        t->entries[i].id      = 0;
+        t->entries[i].dueTick = 0;
+        t->entries[i].ref     = LUA_NOREF;
+    }
+    /* nextId is left where it is. It rises for the life of the host, so an
+       id from the round just finished matches nothing in this one. */
+}
+
+void scenarioLuaTimersDrop(lua_State *L, ScnTimerSet *t) {
+    int i;
+
+    if (t == NULL) {
+        return;
+    }
+    for (i = 0; i < SCN_TIMERS_MAX; i++) {
+        if (t->entries[i].ref != LUA_NOREF && L != NULL) {
+            luaL_unref(L, LUA_REGISTRYINDEX, t->entries[i].ref);
+        }
+        t->entries[i].id      = 0;
+        t->entries[i].dueTick = 0;
+        t->entries[i].ref     = LUA_NOREF;
+    }
+}
+
+int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
+                             int outMax) {
+    int taken[SCN_TIMERS_MAX];
+    int n = 0;
+    int i, j;
+
+    if (t == NULL || out == NULL || outMax <= 0) {
+        return 0;
+    }
+    /* Read the due set once, before any of it runs. */
+    for (i = 0; i < SCN_TIMERS_MAX && n < outMax; i++) {
+        if (t->entries[i].ref != LUA_NOREF && t->entries[i].dueTick <= now) {
+            taken[n] = i;
+            n++;
+        }
+    }
+    /* Oldest first. An entry is reused and an id is not, so the id is what
+       says which of two timers due on the same tick was set first. Sorted
+       here rather than left as entry order, which a script cannot see and
+       could not predict. */
+    for (i = 1; i < n; i++) {
+        int take = taken[i];
+        j = i - 1;
+        while (j >= 0 && t->entries[taken[j]].id > t->entries[take].id) {
+            taken[j + 1] = taken[j];
+            j--;
+        }
+        taken[j + 1] = take;
+    }
+    for (i = 0; i < n; i++) {
+        ScnTimer *e = &t->entries[taken[i]];
+        out[i]      = e->ref;
+        e->ref      = LUA_NOREF;
+        e->id       = 0;
+        e->dueTick  = 0;
+    }
+    return n;
+}
+
+static int scnLuaTimer(lua_State *L) {
+    const ScnLuaCtx *c       = scnCtx(L);
+    lua_Number       seconds;
+    ScnTimerSet     *t       = (c != NULL) ? c->timers : NULL;
+    int              free_at = -1;
+    int              i;
+    int64_t          due;
+
+    if (lua_type(L, 1) != LUA_TNUMBER) {
+        return luaL_argerror(
+            L, 1, lua_pushfstring(L, "seconds must be a number, got %s",
+                                  luaL_typename(L, 1)));
+    }
+    if (!lua_isfunction(L, 2)) {
+        return luaL_argerror(
+            L, 2, lua_pushfstring(L, "fn must be a function, got %s",
+                                  luaL_typename(L, 2)));
+    }
+    seconds = lua_tonumber(L, 1);
+    if (!(seconds >= 0)) {   /* negated, so a NaN takes this branch */
+        return scnRefused(L, SCN_OP_RANGE,
+                          "seconds is negative and a timer runs forwards");
+    }
+    if (t == NULL) {
+        return scnRefused(L, SCN_OP_UNSUPPORTED,
+                          "this round keeps no timers");
+    }
+
+    for (i = 0; i < SCN_TIMERS_MAX; i++) {
+        if (t->entries[i].ref == LUA_NOREF) {
+            free_at = i;
+            break;
+        }
+    }
+    if (free_at < 0) {
+        return scnRefused(L, SCN_OP_FULL,
+                          "%d timers are already waiting, which is the limit",
+                          SCN_TIMERS_MAX);
+    }
+
+    /* The tick it comes due on. The delay is held against the width of the
+       clock before it is made a whole number, because a double past what an
+       integer can hold does not convert to a large number — it does not
+       convert at all. A script asking for longer than the clock can count
+       gets the last tick there is rather than one in the past. */
+    {
+        lua_Number ticks = seconds * (lua_Number)GAME_NUMTOTALTICKS_SEC;
+        if (!(ticks < (lua_Number)UINT32_MAX)) {
+            ticks = (lua_Number)UINT32_MAX;
+        }
+        due = (int64_t)serverSimGetTick(c->sim) + (int64_t)ticks;
+        if (due > (int64_t)UINT32_MAX) {
+            due = (int64_t)UINT32_MAX;
+        }
+    }
+
+    /* The function off the top of the stack, held against collection until
+       it runs or is cancelled. */
+    lua_pushvalue(L, 2);
+    t->entries[free_at].ref     = luaL_ref(L, LUA_REGISTRYINDEX);
+    t->entries[free_at].dueTick = (uint32_t)due;
+    t->nextId++;
+    t->entries[free_at].id      = t->nextId;
+
+    lua_pushinteger(L, (lua_Integer)t->nextId);
+    return 1;
+}
+
+/* Stop one before it runs. An id that named a timer which has already run,
+ * or one that was cancelled, or one from a round that is over, all answer
+ * false: ids are never reused, so a stale one matches nothing rather than
+ * matching whatever has since taken its place. */
+static int scnLuaCancelTimer(lua_State *L) {
+    const ScnLuaCtx *c  = scnCtx(L);
+    lua_Integer      id = scnArgInt(L, 1, "id");
+    ScnTimerSet     *t  = (c != NULL) ? c->timers : NULL;
+    int              i;
+
+    if (t != NULL && id > 0) {
+        for (i = 0; i < SCN_TIMERS_MAX; i++) {
+            if (t->entries[i].ref != LUA_NOREF &&
+                (lua_Integer)t->entries[i].id == id) {
+                luaL_unref(L, LUA_REGISTRYINDEX, t->entries[i].ref);
+                t->entries[i].ref     = LUA_NOREF;
+                t->entries[i].id      = 0;
+                t->entries[i].dueTick = 0;
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+        }
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 /* ── The registry ─────────────────────────────────────────────────── */
 
 /* One row per script-visible function. The doc column is what
@@ -2411,8 +2680,22 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "regions", scnLuaRegions,
       "regions() — the name of every declared region, in name order." },
     { "in_region", scnLuaInRegion,
-      "in_region(name, mx, my) — whether a square is inside a declared "
+      "in_region(name, mx, my) — whether a square is inside a named "
       "region." },
+
+    /* The three that change nothing on the sim: what the host holds for the
+       rest of the round. */
+    { "timer", scnLuaTimer,
+      "timer(seconds, fn) → id — run fn once, on the first tick at or after "
+      "seconds from now; cancel it with the id. At most 64 wait at a time, "
+      "and none outlives its round." },
+    { "cancel_timer", scnLuaCancelTimer,
+      "cancel_timer(id) — stop a timer that has not run yet; false when the "
+      "id names none, which is what an id that has already run names." },
+    { "define_region", scnLuaDefineRegion,
+      "define_region(name, x, y, w, h) — name a rectangle for the rest of "
+      "the round, replacing one of that name; it shares the 64 the scenario "
+      "table's own regions come out of." },
 
     /* The writes. Each answers true, or nil with the refusal's name and one
        sentence saying what it was about. */

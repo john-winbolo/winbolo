@@ -108,6 +108,11 @@ BOLO_STATIC_ASSERT(SCN_MANIFEST_RULES_MAX >= (int)SCN_RULE_COUNT,
 BOLO_STATIC_ASSERT(SCN_BRAIN_LEN == SCN_PATH_MAX,
                    manifest_brain_matches_the_op_path_length);
 
+/* The region scan keeps one bit per region in a 64-bit word per seat. A
+ * sixty-fifth region would be a region no tank could ever be recorded in. */
+BOLO_STATIC_ASSERT(SCN_REGIONS_MAX <= 64,
+                   region_membership_fits_one_word_per_seat);
+
 /* What a refusal was, in words. A script author reads these, so each is
  * the reason rather than the enumerator's spelling. */
 static const char *scnResultText(ScnOpResult r) {
@@ -243,8 +248,17 @@ static void scnLockLeave(ScnVmLock *l) {
  *
  * The four at the top are not events. They are made where the round reaches
  * the point each of them names, and they take no trailing scripted boolean
- * because there is no event behind them to have caused. Everything below
- * them comes off the queue and does. */
+ * because there is no event behind them to have caused.
+ *
+ * Nor do the last two, and for the same reason read the other way round.
+ * Every hook between them comes off the queue, where the entry carries the
+ * mark saying whether the scenario caused the fact. The two region hooks
+ * come off no queue at all: the host samples where the tanks are once a
+ * tick and compares that against the sample before it, so what it has is a
+ * difference between two pictures and not an action anybody took. A
+ * boolean there could only be a guess about which of the things that moved
+ * a tank since the last sample mattered, and a script reading it would be
+ * reading a guess. See scnScanRegions for what bounds the loop instead. */
 #define SCN_HOOK_LIST(X)                                                     \
     X(SETUP,            "on_setup")                                          \
     X(START,            "on_start")                                          \
@@ -267,7 +281,9 @@ static void scnLockLeave(ScnVmLock *l) {
     X(PILL_KILLED,      "on_pill_killed")                                    \
     X(BUILT,            "on_built")                                          \
     X(MINE_LAID,        "on_mine_laid")                                      \
-    X(MINE_EXPLOSION,   "on_mine_explosion")
+    X(MINE_EXPLOSION,   "on_mine_explosion")                                 \
+    X(ENTER_REGION,     "on_enter_region")                                   \
+    X(LEAVE_REGION,     "on_leave_region")
 
 typedef enum {
 #define SCN_HOOK_ID_ROW(id, name) SCN_HOOK_##id,
@@ -341,6 +357,22 @@ struct ScenarioHost {
      * rather than reporting a change for every seat that is on a team at
      * all. */
     uint8_t          teams[MAX_TANKS];
+
+    /* Which regions each seat's tank was standing in at the last scan, one
+     * bit per region index. The enter and leave hooks are the difference
+     * between this and the next sample, so it is the whole of what the scan
+     * remembers; a round start clears it, along with the regions themselves.
+     *
+     * A bit is an index into the manifest's region list. Nothing removes a
+     * region inside a round and a defined one replaces by name rather than
+     * appending a second, so an index means the same rectangle for as long
+     * as the bits do. */
+    uint64_t         inRegion[MAX_TANKS];
+
+    /* The timers this round is holding, and the functions they hold with
+     * them. Handed to every VM through h->lua, and emptied against a state
+     * before that state is closed. */
+    ScnTimerSet      timers;
 
     /* One line for the players, waiting for a tick to say it. */
     char             pending[SCN_TEXT_MAX];
@@ -510,13 +542,17 @@ static lua_State *scnNewVm(void) {
  * nothing at all at the attach, where the first table is what this chunk is
  * about to declare, and the last round's at a round start, which is the same
  * table again because every round runs the bytes read at attach. */
-static lua_State *scnBootVm(ScenarioHost *h) {
+static lua_State *scnBootVmWith(const ScnLuaCtx *ctx) {
     lua_State *L = scnNewVm();
 
     if (L != NULL) {
-        scenarioLuaInstall(L, &h->lua);
+        scenarioLuaInstall(L, ctx);
     }
     return L;
+}
+
+static lua_State *scnBootVm(ScenarioHost *h) {
+    return scnBootVmWith(&h->lua);
 }
 
 static const char *scnLuaError(lua_State *L) {
@@ -1424,6 +1460,133 @@ static void scnEventConsume(void *ctx, const ScnQueuedEvent *e) {
     }
 }
 
+/* ── The regions a tank is standing in ────────────────────────────── */
+
+/* Which regions one seat's tank is inside right now, one bit per region
+ * index. A seat with nobody in it, and a seat whose tank is not in the
+ * world — the countdown before a round, and the wait after a death — are
+ * both inside nothing: serverSimGetTankInfo leaves the position at zero for
+ * those, and zero is a real square, so has_tank is what decides rather than
+ * the numbers. This is the same test game.tank(p) answers nil on, so a
+ * script that reads a tank and a script that handles the hook agree about
+ * which tanks have a place at all. */
+static uint64_t scnRegionsHolding(ScenarioHost *h, BYTE slot) {
+    const ScenarioManifest *m = &h->manifest;
+    TankInfo                info;
+    uint64_t                bits = 0;
+    int                     i;
+
+    if (!serverSimGetTankInfo(h->sim, slot, &info) || !info.has_tank) {
+        return 0;
+    }
+    for (i = 0; i < (int)m->numRegions; i++) {
+        if (scenarioLuaRegionHolds(&m->regions[i], (int)info.map_x,
+                                   (int)info.map_y)) {
+            bits |= (uint64_t)1 << i;
+        }
+    }
+    return bits;
+}
+
+/* The enter and leave hooks, which are a difference rather than a fact the
+ * engine reported. Once a tick the host takes a picture of where every tank
+ * is standing and runs a hook for each bit that changed since the last one.
+ *
+ * What it costs: one tank read per seat, and one rectangle test per seat per
+ * region. Sixteen seats against the sixty-four regions a round may name is
+ * 1,024 four-comparison tests a tick, and a round that names none does
+ * sixteen reads and nothing else. That is small enough that there is no
+ * index here to go stale, and this comment is so a later reader does not
+ * have to measure it.
+ *
+ * The picture is stored before any hook runs. That is what stops a handler
+ * that moves a tank from spinning: the move lands after this tick's sample
+ * was taken, so the region it moves into is seen by the next tick's scan
+ * and costs one more call then — one per tick, visible in the log, and
+ * never a loop inside a single tick. It is the rule the event drain follows
+ * for the same reason, and it holds whatever the handler does, including
+ * one that never asks who caused anything. Which is the other half of why
+ * these two hooks are handed no such answer: between one sample and the
+ * next a tank can be both moved by the script and driven under its own
+ * power, and there is no honest value to give a handler that asks which of
+ * the two this transition was.
+ *
+ * A tank that stops having a place leaves everything it was in. The
+ * alternative — clearing the bits and saying nothing — would leave a script
+ * counting who is inside a region permanently one too high the first time
+ * somebody is killed standing in it, because the enter it saw would never
+ * be matched. Every enter is followed by exactly one leave, which is the
+ * thing a handler can rely on. */
+static void scnScanRegions(ScenarioHost *h) {
+    const ScenarioManifest *m = &h->manifest;
+    BYTE                    slot;
+
+    if (m->numRegions == 0) {
+        return;
+    }
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        uint64_t now     = scnRegionsHolding(h, slot);
+        uint64_t changed = now ^ h->inRegion[slot];
+        int      i;
+
+        h->inRegion[slot] = now;
+        if (changed == 0) {
+            continue;
+        }
+        for (i = 0; i < (int)m->numRegions; i++) {
+            uint64_t bit = (uint64_t)1 << i;
+            ScnHookId id;
+
+            if ((changed & bit) == 0) {
+                continue;
+            }
+            id = (now & bit) ? SCN_HOOK_ENTER_REGION : SCN_HOOK_LEAVE_REGION;
+            if (!scnHookBegin(h, id)) {
+                continue;
+            }
+            lua_pushinteger(h->L, (lua_Integer)slot);
+            lua_pushstring(h->L, m->regions[i].name);
+            scnHookCall(h, id, 2);
+        }
+    }
+}
+
+/* ── The timers ───────────────────────────────────────────────────── */
+
+/* Every timer the round has reached the tick for, oldest first. The due set
+ * is read once, so a timer one of these sets waits for the next tick
+ * however short its delay — the same bound the event drain has, and for the
+ * same reason.
+ *
+ * The reference comes out of the set and is released here whether the call
+ * returned or raised, so a function that fails is still let go of: a timer
+ * runs once. */
+static void scnRunTimers(ScenarioHost *h) {
+    int refs[SCN_TIMERS_MAX];
+    int n;
+    int i;
+
+    if (h->L == NULL) {
+        return;
+    }
+    n = scenarioLuaTimersTakeDue(&h->timers, serverSimGetTick(h->sim), refs,
+                                 SCN_TIMERS_MAX);
+    for (i = 0; i < n; i++) {
+        /* A scenario switched off part way through the run still has to be
+           handed back what the rest of the timers were holding. */
+        if (!h->disabled) {
+            lua_rawgeti(h->L, LUA_REGISTRYINDEX, refs[i]);
+            if (lua_pcall(h->L, 0, 0, 0) != 0) {
+                scnErrorRaised(h, "a timer", scnLuaError(h->L));
+                lua_pop(h->L, 1);
+            } else {
+                scnErrorCleared(h);
+            }
+        }
+        luaL_unref(h->L, LUA_REGISTRYINDEX, refs[i]);
+    }
+}
+
 /* Say what the queue had no room for, once, and count each of them. The
  * drop itself happens inside a publish where there is nothing safe to say;
  * this runs at the tick, after the drain, so events the drain's own work
@@ -1449,12 +1612,14 @@ static void scnReportDrops(ScenarioHost *h) {
  * tick, because a round's start comes before anything the round has
  * produced — the state tells the two branches apart and the flag tells the
  * first running tick from the ones after it; then the events that have
- * arrived since the last tick; then on_tick, which is the script's own
- * frame and comes after the facts the frame produced; then on_end where the
- * round has just finished; then what the queue had no room for, after the
- * drain so a drop the drain caused is reported in its own tick; then the
- * line the round owes the players, last, so a line any of the above raised
- * goes out in this tick rather than the next.
+ * arrived since the last tick; then the regions the frame moved tanks in
+ * and out of, which are a fact of the same frame and belong with the rest
+ * of them; then the timers the frame has reached; then on_tick, which is
+ * the script's own frame and comes after everything the frame produced;
+ * then on_end where the round has just finished; then what the queue had no
+ * room for, after the drain so a drop the drain caused is reported in its
+ * own tick; then the line the round owes the players, last, so a line any
+ * of the above raised goes out in this tick rather than the next.
  *
  * The state is read again between the calls rather than once at the top. A
  * hook can end the round from the drain and on_tick can end it too, and
@@ -1474,6 +1639,8 @@ static void scnTick(void *ctx) {
         scnHookRun(h, SCN_HOOK_START);
     }
     (void)scenarioEventsDrain(&h->events, scnEventConsume, h);
+    scnScanRegions(h);
+    scnRunTimers(h);
 
     if (serverSimGetState(h->sim) == serverStateRunning &&
         scnHookBegin(h, SCN_HOOK_TICK)) {
@@ -1537,6 +1704,11 @@ static void scnRoundWithoutScenario(ScenarioHost *h) {
     h->disabled     = true;
     h->startPending = false;
     scnHooksForget(h);
+    /* Emptied without releasing anything, which is right for the one place
+       this is reached from: a round start that has already closed the state
+       its chunk could have set a timer in. There is nothing left to release
+       them against, and the set must not carry them into the round. */
+    scenarioLuaTimersReset(&h->timers);
 }
 
 /* The teams the roster is on right now. Called wherever the host starts
@@ -1578,6 +1750,14 @@ static void scnRoundStartLocked(ScenarioHost *h) {
 
     err[0] = '\0';
 
+    /* Whatever the last round was holding, released against the state that
+       holds it, before this one boots a state of its own. Every reference in
+       the set belongs to h->L, and this is the last moment that is true: the
+       chunk below runs in the new state and anything it sets from the top
+       level belongs to that one, which is why the failure paths empty the
+       set rather than releasing it. */
+    scenarioLuaTimersDrop(h->L, &h->timers);
+
     L = scnBootVm(h);
     if (L == NULL) {
         scnSay(h->lastError, sizeof(h->lastError),
@@ -1606,6 +1786,9 @@ static void scnRoundStartLocked(ScenarioHost *h) {
         lua_close(h->L);
     }
     h->L        = L;
+    /* The whole table, read from the sidecar's bytes again — which is how a
+       region the last round defined stops existing without anything here
+       having to remove it. */
     h->manifest = fresh;
     scnHooksResolve(h, L);
 
@@ -1627,6 +1810,12 @@ static void scnRoundStartLocked(ScenarioHost *h) {
        is itself the first change. */
     scnSeedTeams(h);
     h->lastState = serverSimGetState(h->sim);
+
+    /* Nobody is inside anything until the first scan says so, which is the
+       round's first tick. Cleared here rather than carried, because the
+       regions themselves have just been read over and a bit set against the
+       last round's list would name a different rectangle in this one. */
+    memset(h->inRegion, 0, sizeof(h->inRegion));
 
     scnApplyRules(h);
 
@@ -1699,6 +1888,10 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->sim          = sim;
     h->lua.sim      = sim;
     h->lua.manifest = &h->manifest;
+    h->lua.timers   = &h->timers;
+    /* calloc left every reference at 0, which is a reference to something.
+       An empty set is LUA_NOREF throughout. */
+    scenarioLuaTimersReset(&h->timers);
     /* The hooks belong to a round's VM, and this is the one the table is
        read in. The first round start resolves them. */
     scnHooksForget(h);
@@ -1786,6 +1979,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
 bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             soft[SCN_ERR_LEN];
     ScenarioManifest m;
+    ScnLuaCtx        check;
     lua_State       *L;
     char            *src    = NULL;
     size_t           srcLen = 0;
@@ -1815,8 +2009,22 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        The state carries the game table like any other, so a sidecar that
        reads the game at the top level loads here exactly as it loads at a
        round start rather than being turned down for a table this one
-       state lacked. */
-    L = scnBootVm(h);
+       state lacked.
+
+       It carries a context of its own, though. The rows that read the sim
+       are the same; the two that write what the host is holding are not
+       given it. A chunk that defined a region from the top level would move
+       a rectangle under the round that is playing, and one that set a timer
+       would leave the round holding a function in a state this call is
+       about to close. Both would break the one thing a reload promises,
+       which is that nothing changes until the next round start. The
+       manifest it writes into is the local below, which is read over a few
+       lines later. */
+    memset(&m, 0, sizeof(m));   /* the chunk can read it before it is read */
+    check.sim      = h->sim;
+    check.manifest = &m;
+    check.timers   = NULL;
+    L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
         free(src);
@@ -1881,6 +2089,7 @@ void scenarioHostDetach(ScenarioHost *h) {
        waiting. A detach while another thread is inside the VM is a lifetime
        question rather than a locking one — the caller detaches from the
        thread that owns the sim. */
+    scenarioLuaTimersDrop(h->L, &h->timers);
     if (h->L != NULL) {
         lua_close(h->L);
     }

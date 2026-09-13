@@ -29,19 +29,53 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include <lua.h>
 
 #include "server_sim.h"       /* ServerSim, BYTE */
 #include "scenario_manifest.h"
 
+/* One timer a script is waiting on: the tick it comes due, the function to
+ * call, and the id the script cancels it by.
+ *
+ * ref is LUA_NOREF for a free entry and is the only thing that says an entry
+ * is taken. It is a registry reference because the function has to survive
+ * every collection between the call that set it and the tick it runs on.
+ * Whoever takes the entry out owns the reference and has to release it. */
+typedef struct {
+    uint32_t id;
+    uint32_t dueTick;
+    int      ref;
+} ScnTimer;
+
+/* The timers of one round.
+ *
+ * nextId only ever rises, and it rises for the life of the host rather than
+ * of a round. An entry is reused; an id is not. That is what makes a stale
+ * id safe to cancel: it matches nothing, rather than matching whatever has
+ * since moved into the entry it used to hold. */
+typedef struct {
+    ScnTimer entries[SCN_TIMERS_MAX];
+    uint32_t nextId;
+} ScnTimerSet;
+
 /* What a row reads. The host holds one of these for as long as the VM it
  * installed the table on, and every row reads through it rather than
  * through a copy, so a round start that reads a new manifest into the same
- * struct is the table the next call sees. */
+ * struct is the table the next call sees.
+ *
+ * The manifest is not const: define_region writes a region into it, which is
+ * the one row that writes here rather than through the op funnel. It is the
+ * round's own copy of the table — a round start reads the sidecar's bytes
+ * over it — so what a script defines lasts the round and no longer.
+ *
+ * timers may be NULL, which leaves a state with no timers: the row refuses
+ * rather than reaching through nothing. */
 typedef struct {
-    ServerSim              *sim;
-    const ScenarioManifest *manifest;
+    ServerSim        *sim;
+    ScenarioManifest *manifest;
+    ScnTimerSet      *timers;
 } ScnLuaCtx;
 
 /* One script-visible function: what it is called, what runs it, and the one
@@ -137,6 +171,74 @@ BYTE scenarioLuaIndexToOp(lua_Integer n);
  *  the direction that adds.
  *********************************************************/
 lua_Integer scenarioLuaIndexToScript(int n);
+
+/* ── Regions ────────────────────────────────────────────────────────── */
+
+/*********************************************************
+ *NAME:          scenarioLuaRegionFind
+ *PURPOSE:
+ *  The region of that name, or NULL for a name nothing
+ *  carries. Declared and defined regions are one list, so
+ *  this finds either.
+ *********************************************************/
+const ScnManifestRegion *scenarioLuaRegionFind(const ScenarioManifest *m,
+                                               const char *name);
+
+/*********************************************************
+ *NAME:          scenarioLuaRegionHolds
+ *PURPOSE:
+ *  Whether a square is inside a region. Half-open on both
+ *  axes — x to x + w - 1 — and a rectangle with no width or
+ *  no height holds nothing.
+ *
+ *  The one place the test is written. game.in_region answers
+ *  from it and the host's per-tick scan decides from it, so
+ *  a script cannot be told it is inside a region the hook
+ *  disagrees about.
+ *********************************************************/
+bool scenarioLuaRegionHolds(const ScnManifestRegion *r, int mx, int my);
+
+/* ── Timers ─────────────────────────────────────────────────────────── */
+
+/*********************************************************
+ *NAME:          scenarioLuaTimersReset
+ *PURPOSE:
+ *  Empties the set without touching Lua. For a state that
+ *  has already been closed, where every reference in it died
+ *  with the state and there is nothing left to release.
+ *********************************************************/
+void scenarioLuaTimersReset(ScnTimerSet *t);
+
+/*********************************************************
+ *NAME:          scenarioLuaTimersDrop
+ *PURPOSE:
+ *  Releases every waiting timer's function against the state
+ *  that holds it, then empties the set. Called before a
+ *  state is closed — a round start swapping VMs, or a
+ *  detach — so nothing is left holding a reference into a
+ *  state that is going away.
+ *********************************************************/
+void scenarioLuaTimersDrop(lua_State *L, ScnTimerSet *t);
+
+/*********************************************************
+ *NAME:          scenarioLuaTimersTakeDue
+ *PURPOSE:
+ *  Takes every timer due at or before now out of the set and
+ *  writes their functions' references into out, oldest first
+ *  — the order they were set in, which is the order their
+ *  ids run in.
+ *
+ *  The due set is read once, so a timer one of them sets
+ *  while running waits for the next tick however short its
+ *  delay: a run that feeds itself moves one call per tick
+ *  and cannot spin inside one, which is the rule the event
+ *  drain follows.
+ *
+ *  Returns how many were taken. The caller owns each
+ *  reference and must release it.
+ *********************************************************/
+int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
+                             int outMax);
 
 /* ── The words an event's payload reads as ──────────────────────────── */
 

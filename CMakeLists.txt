@@ -3331,6 +3331,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # is handed, the mark saying whether the scenario caused the fact, and
     # the per-tick and round-end calls the drain makes beside them.
     tests/unit/test_scenario_hooks.c
+    # What the host derives rather than hears: the timers a script sets, the
+    # regions it names, and the enter and leave hooks the per-tick scan of
+    # tank positions produces.
+    tests/unit/test_scenario_derived.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -5050,6 +5054,14 @@ set(_unit_test_names
     scenario_hooks_team_changed_on_difference
     scenario_hooks_tick_and_end
     scenario_hooks_error_counts_and_disables
+    scenario_derived_timer_fires_on_its_tick
+    scenario_derived_timer_cancelled_and_stale
+    scenario_derived_timer_limit_boundary
+    scenario_derived_timers_die_with_the_round
+    scenario_derived_region_enter_and_leave
+    scenario_derived_define_region_adds_replaces_and_expires
+    scenario_derived_region_loop_terminates
+    scenario_derived_fixture_wins_without_on_tick
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

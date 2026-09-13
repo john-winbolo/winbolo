@@ -91,18 +91,32 @@
 
 /* ── A state with the table on it ─────────────────────────────────── */
 
+/* The timers every state this file builds is given. One set between them
+ * rather than one per case, and emptied as each state is installed: the
+ * references in it belong to whichever state was last installed, and that
+ * state is closed before the next is built. Emptied without releasing, for
+ * the same reason — there is nothing left to release them against.
+ *
+ * A case that wants to know what the timer rows did reads this; nothing
+ * here fires one, because a timer runs from the host's tick and these cases
+ * have no host. */
+static ScnTimerSet slTimers;
+
 /* The context outlives the state it is installed on: both are the caller's
- * locals and the state is closed first. */
-static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim,
-                       const ScenarioManifest *m) {
+ * locals and the state is closed first. The manifest is not const because
+ * one row writes it — game.define_region names a rectangle for the round —
+ * and the caller's own struct is what it writes into. */
+static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     lua_State *L = luaL_newstate();
 
     if (L == NULL) {
         return NULL;
     }
     luaL_openlibs(L);
+    scenarioLuaTimersReset(&slTimers);
     ctx->sim      = sim;
     ctx->manifest = m;
+    ctx->timers   = &slTimers;
     scenarioLuaInstall(L, ctx);
     return L;
 }
@@ -310,6 +324,17 @@ static const char *const kSlEveryRow =
     "  region      = function() return game.region(\"keep\") end,\n"
     "  regions     = function() return game.regions() end,\n"
     "  in_region   = function() return game.in_region(\"keep\", 10, 10) end,\n"
+    /* The three that change nothing on the sim. The timer sets one and
+       cancels the id it was just given, so it answers the same whichever
+       order this table happens to be walked in and leaves nothing waiting
+       for a tick that never comes. */
+    "  timer       = function() return game.timer(1, function() end) end,\n"
+    "  cancel_timer = function()\n"
+    "    return game.cancel_timer(game.timer(1, function() end))\n"
+    "  end,\n"
+    "  define_region = function()\n"
+    "    return game.define_region(\"made_here\", 1, 2, 3, 4)\n"
+    "  end,\n"
     /* The writes. Most are aimed at a seat nobody holds or an item the map
        does not have, so the case reaches every row without leaving the sim
        somewhere the next row cannot work in. */
