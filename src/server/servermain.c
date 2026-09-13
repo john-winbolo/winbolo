@@ -2151,6 +2151,32 @@ int main(int argc, char **argv) {
       return 0;
     }
   }
+
+  /* The lobby the scenario asks for. Its template reached the sim at the
+     attach far above; seating it is the separate step made wherever a lobby
+     is built, and a server booting on this map is one of those points — the
+     two callers inside the sim are a map being committed and a lobby
+     resetting once the last player leaves, and a fresh boot is neither.
+
+     Here rather than beside the attach because a team the template fields
+     with no brain of its own falls back to the server's, and that path and
+     the bot AI level are written into the sim by the startup above. A seat
+     that fields also builds its bot through the manager, which the block
+     above has just brought up. Seated before either, a fielded team would
+     quietly seat nothing.
+
+     Before the operator's -bots, which take the seats above these.
+
+     The headless makes the same call after its own player has joined: that
+     binary plays as well as hosts and its player has to hold slot 0, which a
+     horde seated first would take. Nobody plays from here — every
+     participant joins over the wire — so there is no slot to keep back.
+
+     A map with no scenario has no template and this seats nothing. */
+  if (scenarioHost != NULL) {
+    serverSimScenarioSeatLobby(serverSim);
+  }
+
   /* botBrainPath + botAiType were already pushed into the sim via the
    * cfg block above; the loop below only needs to spawn the configured
    * bot count (numBots / brainPath resolved earlier). */
