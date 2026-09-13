@@ -2306,6 +2306,19 @@ int run_scenario_host_reload_picks_up_edit(void);
 int run_scenario_host_reload_bad_syntax(void);
 int run_scenario_host_reload_bad_api(void);
 
+/* The round's lifecycle (test_scenario_host.c): the two lifecycle
+ * calls, a fresh set of globals per round, the error limit at its
+ * boundary, the recursion-aware VM lock from one thread and from two,
+ * and the roster audit. */
+int run_scenario_host_fresh_globals_per_round(void);
+int run_scenario_host_setup_in_window(void);
+int run_scenario_host_start_on_first_running_tick(void);
+int run_scenario_host_error_limit_boundary(void);
+int run_scenario_host_disabled_stops_hooks(void);
+int run_scenario_host_vm_lock_same_thread(void);
+int run_scenario_host_vm_lock_second_thread(void);
+int run_scenario_host_audit_human_lost(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

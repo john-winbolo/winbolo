@@ -13,10 +13,27 @@
  *  struct, and applies the rules that table sets through the
  *  op funnel from inside the sim's round-start callback.
  *
- *  The VM is a codec and nothing more here: the chunk runs,
- *  a table is read, and the host calls nothing back into the
- *  engine on the script's behalf. The only thing that
- *  reaches the sim is one SCN_OP_SET_RULE per rule.
+ *  The round's shape: a fresh VM at every round start, so a
+ *  fresh set of globals; the rules applied; on_setup called
+ *  inside the setup window the start opens; the roster
+ *  audited; and on_start called on the first running tick.
+ *  Both hooks are optional — most scenarios define neither.
+ *
+ *  A script that keeps raising is switched off for the round
+ *  at SCN_ERROR_LIMIT errors in a row, and so is one whose
+ *  setup leaves the round short a human. Either way the sim
+ *  answers classic for the rest of the round and the players
+ *  are told once.
+ *
+ *  Every entry into the Lua state takes the host's own lock,
+ *  which knows the thread that holds it: the lobby asks a
+ *  policy from the GUI thread while ticks run on the timer
+ *  thread, and a Lua state is not re-entrant across threads.
+ *
+ *  No Lua function reaches the engine yet. What the sim sees
+ *  from here is one SCN_OP_SET_RULE per rule, one
+ *  SCN_OP_MSG_ALL for a line the players are owed, and the
+ *  answer to the one policy registered below.
  *
  *  The sidecar is read from disk once, at attach. Every round
  *  after that runs the bytes the host is holding, so a round
@@ -48,6 +65,11 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
+
+/* SDL_Mutex, SDL_ThreadID and SDL_GetCurrentThreadID, which the VM lock is
+ * built from. server_sim.h brings SDL in as well; named here because this
+ * file uses it directly. */
+#include <SDL3/SDL.h>
 
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
@@ -157,6 +179,72 @@ static void scnSay(char *buf, size_t len, const char *fmt, ...) {
     }
 }
 
+/* ── The VM lock ──────────────────────────────────────────────────── */
+
+/* One Lua state, two threads that can arrive at it. When the desktop client
+ * hosts, the lobby runs on the GUI thread and the sim ticks on an SDL timer
+ * thread, so a policy the lobby asks and a hook a tick runs can be in flight
+ * at once; a Lua state is not re-entrant across threads and the prototype
+ * crashed on a Ready click with both inside one VM.
+ *
+ * A different thread waits. The thread that already holds it goes straight
+ * through and the depth rises, because a policy asked from inside a hook is
+ * the same thread arriving again and a plain mutex would stop dead there.
+ *
+ * The same owner-and-depth shape src/server/threads.c gives the server's own
+ * lock, built here from SDL rather than borrowed: src/scenario/ sees
+ * src/bolo/public/ and src/bolo/scenario_api/ and nothing under src/server/,
+ * that lock is a process-wide singleton the server binary brings up and the
+ * unit tests and the headless runner never do, and sharing one depth count
+ * between the sim's lock and this one would let a release on either side
+ * drop the other.
+ *
+ * Reading owner outside the lock is safe for the same reason it is there:
+ * only the owning thread writes its own id, and it writes while holding the
+ * mutex. */
+typedef struct {
+    SDL_Mutex   *m;
+    SDL_ThreadID owner;
+    unsigned     depth;
+} ScnVmLock;
+
+static bool scnLockCreate(ScnVmLock *l) {
+    l->owner = 0;
+    l->depth = 0;
+    l->m     = SDL_CreateMutex();
+    return l->m != NULL;
+}
+
+static void scnLockDestroy(ScnVmLock *l) {
+    if (l->m != NULL) {
+        SDL_DestroyMutex(l->m);
+        l->m = NULL;
+    }
+    l->owner = 0;
+    l->depth = 0;
+}
+
+static void scnLockEnter(ScnVmLock *l) {
+    SDL_ThreadID me = SDL_GetCurrentThreadID();
+    if (l->owner == me) {
+        l->depth++;
+        return;
+    }
+    SDL_LockMutex(l->m);
+    l->owner = me;
+    l->depth = 1;
+}
+
+static void scnLockLeave(ScnVmLock *l) {
+    if (l->depth > 1) {
+        l->depth--;
+        return;
+    }
+    l->owner = 0;
+    l->depth = 0;
+    SDL_UnlockMutex(l->m);
+}
+
 /* ── The host ─────────────────────────────────────────────────────── */
 
 struct ScenarioHost {
@@ -170,6 +258,35 @@ struct ScenarioHost {
     char             chunkName[SCN_SIDECAR_PATH_MAX + 2];
     char             lastError[SCN_ERR_LEN];
     bool             active;
+
+    /* Taken across every entry into L, and across the line below, which
+     * whichever thread hit the limit wrote and the tick thread says. */
+    ScnVmLock        lock;
+
+    /* The round's lifecycle functions, looked up once at the boot that
+     * defines them. LUA_NOREF for a script that defines neither, which is
+     * most of them. */
+    int              onSetupRef;
+    int              onStartRef;
+
+    /* Hook and policy errors in a row, and what happens at
+     * SCN_ERROR_LIMIT of them. Both are the round's, not the
+     * attachment's: a round start puts them back. */
+    unsigned         errors;
+    bool             disabled;
+
+    /* on_start is owed to the first running tick of the round the start
+     * set this on. */
+    bool             startPending;
+
+    /* One line for the players, waiting for a tick to say it. */
+    char             pending[SCN_TEXT_MAX];
+    bool             hasPending;
+
+    /* The decisions the sim asks. One entry filled; the sim holds the
+     * pointer and does not own it, so it lives here for as long as the
+     * registration does. */
+    ScenarioPolicy   policy;
 };
 
 /* ── Finding the sidecar ──────────────────────────────────────────── */
@@ -637,26 +754,256 @@ static void scnApplyRules(ScenarioHost *h) {
     }
 }
 
-/* The sim's round-start callback. A fresh VM for the round, the bytes read
- * at attach run again in it, the table read again, and then the rules.
- * Nothing here goes near the disk: this runs inside the start with the sim
- * mutex held. A round whose chunk fails says so and plays classic rather
- * than carrying the previous round's table into it. */
-static void scnRoundStart(void *ctx) {
-    ScenarioHost    *h = (ScenarioHost *)ctx;
-    lua_State       *L;
-    ScenarioManifest fresh;
-    char             err[SCN_ERR_LEN];
+/* ── Switching a scenario off for the round ───────────────────────── */
+
+/* What a line to the players calls the scenario: its own name where the
+ * table gave one, the plain words where it did not. */
+static const char *scnSubject(const ScenarioHost *h) {
+    return (h->manifest.name[0] != '\0') ? h->manifest.name : "The scenario";
+}
+
+/* Stop running this scenario's Lua for the rest of the round and hold one
+ * line for the players saying so. The round carries on with the classic
+ * answers; the next round start boots a fresh VM and begins again.
+ *
+ * The line waits for a tick rather than going out from here, and either of
+ * two reasons on its own would be enough. The funnel refuses every op while
+ * a policy call is on the stack, with SCN_OP_IN_POLICY, and a policy call
+ * is where the error limit is reached most often — issued from here the
+ * line would simply be turned down. And a policy the lobby asks runs on the
+ * GUI thread, where the control bus is not this tree's to publish on: the
+ * bus and its subscribers are the tick thread's. The tick callback is past
+ * both. */
+static void scnDisable(ScenarioHost *h, const char *fmt, ...) {
+    va_list ap;
+
+    if (h->disabled) {
+        return;                  /* the round is already without it */
+    }
+    h->disabled = true;
+
+    va_start(ap, fmt);
+    vsnprintf(h->pending, sizeof(h->pending), fmt, ap);
+    va_end(ap);
+    h->hasPending = true;
+
+    scnSay(h->lastError, sizeof(h->lastError), "scenario: %s", h->pending);
+}
+
+/* One more call that raised. SCN_ERROR_LIMIT of them in a row and the
+ * scenario is off. The operator sees every one on the way there, because
+ * which calls they were is the whole of what a script author has to work
+ * from until the bindings land. */
+static void scnErrorRaised(ScenarioHost *h, const char *what,
+                           const char *msg) {
+    scnSay(h->lastError, sizeof(h->lastError), "scenario: %s raised: %s",
+           what, msg);
+    h->errors++;
+    if (h->errors >= SCN_ERROR_LIMIT) {
+        scnDisable(h, "%.32s is off for the rest of the round: %d errors in "
+                      "a row.", scnSubject(h), SCN_ERROR_LIMIT);
+    }
+}
+
+/* A call that returned. The count is of errors in a row, so one success
+ * clears whatever came before it. */
+static void scnErrorCleared(ScenarioHost *h) {
+    h->errors = 0;
+}
+
+/* ── The lifecycle hooks ──────────────────────────────────────────── */
+
+/* Hold on to a no-argument global at the boot that defines it, rather than
+ * looking the name up per call. Absent is not an error: most scenarios
+ * define neither hook. */
+static int scnHookRef(lua_State *L, const char *name) {
+    lua_getglobal(L, name);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return LUA_NOREF;
+    }
+    return luaL_ref(L, LUA_REGISTRYINDEX);
+}
+
+/* Run one of them. A scenario that is off runs none, an absent one is not a
+ * call at all and leaves the error count where it was, and one that raises
+ * carries the count toward the limit.
+ *
+ * The caller holds the VM lock. */
+static void scnHookRun(ScenarioHost *h, int ref, const char *name) {
+    if (h->disabled || h->L == NULL || ref == LUA_NOREF) {
+        return;
+    }
+    lua_rawgeti(h->L, LUA_REGISTRYINDEX, ref);
+    if (lua_pcall(h->L, 0, 0, 0) != 0) {
+        scnErrorRaised(h, name, scnLuaError(h->L));
+        lua_pop(h->L, 1);
+        return;
+    }
+    scnErrorCleared(h);
+}
+
+/* ── The roster audit ─────────────────────────────────────────────── */
+
+/* Which seats hold a human, so the check after a hook has something to hold
+ * the roster against. */
+static void scnRosterHumans(ScenarioHost *h, bool *out) {
+    BYTE i;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        ServerSimRosterSlot slot;
+        out[i] = serverSimGetRosterSlot(h->sim, i, &slot) && !slot.is_bot;
+    }
+}
+
+/* Every human who was in the round is still in it, and every seat that is
+ * taken sits on a team the lobby knows. A scenario that breaks either is off
+ * for the round: the ops already refuse to remove a human, so anything that
+ * gets around them has left the round a player short, and a connection that
+ * has gone cannot be handed back.
+ *
+ * A team the lobby knows is one ServerSim.teams[] is keyed by. Zero is in
+ * that range and is not a fault: it is the seat with no team, which the
+ * lobby lets a player sit on and the round's alliance pass skips. */
+static void scnRosterAudit(ScenarioHost *h, const bool *before) {
+    BYTE i;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        ServerSimRosterSlot slot;
+        bool                here = serverSimGetRosterSlot(h->sim, i, &slot);
+
+        if (before[i] && (!here || slot.is_bot)) {
+            scnDisable(h, "%.32s is off for the rest of the round: it dropped "
+                          "player %d.", scnSubject(h), (int)i);
+            return;
+        }
+        if (here && slot.team >= MAX_TANKS) {
+            scnDisable(h, "%.32s is off for the rest of the round: player %d "
+                          "is on team %d.", scnSubject(h), (int)i,
+                          (int)slot.team);
+            return;
+        }
+    }
+}
+
+/* ── The per-tick callback ────────────────────────────────────────── */
+
+/* Say the line a switched-off scenario owes the players. Held until here
+ * because the point it was written at could not issue an op; this one can.
+ * A refusal keeps it for the next tick rather than dropping it, since what
+ * turned it down is a state this tick is in and the next may not be. */
+static void scnSayPending(ScenarioHost *h) {
+    ScenarioOp op;
+
+    if (!h->hasPending) {
+        return;
+    }
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_MSG_ALL;
+    snprintf(op.u.msgAll.text, sizeof(op.u.msgAll.text), "%s", h->pending);
+    if (serverSimApplyScenarioOp(h->sim, &op, NULL) == SCN_OP_OK) {
+        h->hasPending = false;
+    }
+}
+
+/* The callback serverSimTick makes at the end of every frame, in both the
+ * running and the non-running branch. It carries the round's line, and
+ * makes the on_start call the round start left for the first running tick:
+ * the state tells the two branches apart, and the flag tells the first
+ * running tick from the ones after it. The drain of the host's event queue
+ * belongs here too. */
+static void scnTick(void *ctx) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
 
     if (h == NULL) {
         return;
     }
+    scnLockEnter(&h->lock);
+    scnSayPending(h);
+    if (h->startPending &&
+        serverSimGetState(h->sim) == serverStateRunning) {
+        h->startPending = false;
+        scnHookRun(h, h->onStartRef, "on_start");
+    }
+    scnLockLeave(&h->lock);
+}
+
+/* ── The policy ───────────────────────────────────────────────────── */
+
+/* May a slot be put on a team that no other slot is on? The lobby asks this
+ * from the GUI thread while the sim ticks on another, which is the reason
+ * the lock below exists at all.
+ *
+ * Classic is yes, and an absent function, a nil answer and an error all
+ * come to it. An error counts toward the limit; the other two are not
+ * failures and leave the count alone. */
+static bool scnAllowExtraTeams(void *ctx) {
+    ScenarioHost *h     = (ScenarioHost *)ctx;
+    bool          allow = true;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    if (!h->disabled && h->L != NULL) {
+        lua_getglobal(h->L, "allow_extra_teams");
+        if (lua_isfunction(h->L, -1)) {
+            if (lua_pcall(h->L, 0, 1, 0) != 0) {
+                scnErrorRaised(h, "allow_extra_teams", scnLuaError(h->L));
+                lua_pop(h->L, 1);
+            } else {
+                if (!lua_isnil(h->L, -1)) {
+                    allow = lua_toboolean(h->L, -1) != 0;
+                }
+                lua_pop(h->L, 1);
+                scnErrorCleared(h);
+            }
+        } else {
+            lua_pop(h->L, 1);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return allow;
+}
+
+/* A round the scenario takes no part in: no hooks, no policy answers, and
+ * nothing owed to the first running tick. The operator has already been
+ * told why. */
+static void scnRoundWithoutScenario(ScenarioHost *h) {
+    h->disabled     = true;
+    h->startPending = false;
+    h->onSetupRef   = LUA_NOREF;
+    h->onStartRef   = LUA_NOREF;
+}
+
+/* The round start's work, with the VM lock already held.
+ *
+ * A fresh VM for the round, the bytes read at attach run again in it, the
+ * table read again, then the rules, then on_setup, then the audit. The
+ * fresh VM is what gives the round a fresh set of globals: nothing the last
+ * round's script left behind is reachable from this one.
+ *
+ * Nothing here goes near the disk: this runs inside the start with the sim
+ * mutex held. A round whose chunk fails says so and plays classic rather
+ * than carrying the previous round's table into it.
+ *
+ * on_setup runs after the rules, so a script's setup sees the table its own
+ * sidecar asked for, and inside the setup window the start holds open, so
+ * the funnel takes the ops it issues — every one but the six roster ops,
+ * which the window keeps refusing. */
+static void scnRoundStartLocked(ScenarioHost *h) {
+    lua_State       *L;
+    ScenarioManifest fresh;
+    char             err[SCN_ERR_LEN];
+    bool             humans[MAX_TANKS];
+
     err[0] = '\0';
 
     L = scnNewVm();
     if (L == NULL) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: no memory for this round's Lua state");
+        scnRoundWithoutScenario(h);
         return;
     }
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
@@ -664,6 +1011,7 @@ static void scnRoundStart(void *ctx) {
                          h->lastError, sizeof(h->lastError))) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
         lua_close(L);
+        scnRoundWithoutScenario(h);
         return;
     }
     if (fresh.api > SCENARIO_API_VERSION) {
@@ -671,6 +1019,7 @@ static void scnRoundStart(void *ctx) {
                "scenario: %s asks for api %d and this server is api %d",
                h->sidecar, fresh.api, SCENARIO_API_VERSION);
         lua_close(L);
+        scnRoundWithoutScenario(h);
         return;
     }
 
@@ -679,7 +1028,32 @@ static void scnRoundStart(void *ctx) {
     }
     h->L        = L;
     h->manifest = fresh;
+    h->onSetupRef = scnHookRef(L, "on_setup");
+    h->onStartRef = scnHookRef(L, "on_start");
+
+    /* Off for a round is off for that round alone. This one starts with the
+       count at zero and the scenario running, whatever the last one did. */
+    h->errors       = 0;
+    h->disabled     = false;
+    h->startPending = true;
+
     scnApplyRules(h);
+
+    scnRosterHumans(h, humans);
+    scnHookRun(h, h->onSetupRef, "on_setup");
+    scnRosterAudit(h, humans);
+}
+
+/* The sim's round-start callback. */
+static void scnRoundStart(void *ctx) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
+
+    if (h == NULL) {
+        return;
+    }
+    scnLockEnter(&h->lock);
+    scnRoundStartLocked(h);
+    scnLockLeave(&h->lock);
 }
 
 /* ── The frontend surface ─────────────────────────────────────────── */
@@ -714,6 +1088,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     /* The leading '@' is what makes Lua call this a file in its messages. */
     snprintf(chunkName, sizeof(chunkName), "@%s", sidecar);
 
+    /* The one VM entry that takes no lock, because there is nothing yet to
+       take one on: the host this state belongs to is built below, and until
+       it is registered no thread can reach either. */
     L = scnNewVm();
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
@@ -745,17 +1122,37 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         free(src);
         return NULL;
     }
+    if (!scnLockCreate(&h->lock)) {
+        scnFmt(err, errLen, "scenario: no mutex for the Lua state");
+        free(h);
+        lua_close(L);
+        free(src);
+        return NULL;
+    }
+
     h->sim      = sim;
     h->L        = L;
     h->manifest = m;
     h->src      = src;
     h->srcLen   = srcLen;
     h->active   = true;
+    /* The lifecycle hooks belong to a round's VM, and this is the one the
+       table was read in. The first round start resolves them. */
+    h->onSetupRef = LUA_NOREF;
+    h->onStartRef = LUA_NOREF;
     snprintf(h->sidecar, sizeof(h->sidecar), "%s", sidecar);
     snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
+    /* One entry filled and the rest left NULL, which is what the sim reads
+       as the classic rule. The lobby asks this one before a round starts,
+       so it is registered here rather than at the first start. */
+    h->policy.allowExtraTeams = scnAllowExtraTeams;
+    h->policy.ctx             = h;
+
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);
+    serverSimSetScenarioTick(sim, scnTick, h);
+    serverSimSetScenarioPolicy(sim, &h->policy);
     return h;
 }
 
@@ -814,11 +1211,19 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
 
     /* The bytes are replaced and nothing else is. The VM and the table the
        round is running on stay as they are; the next round start builds
-       both again from what is now here. */
+       both again from what is now here.
+
+       Under the lock, because the round start reads these bytes under it and
+       a reload arrives on whichever thread the operator's command came in
+       on. Only the swap: the reading and the checking above happen on a Lua
+       state of their own, and holding the lock across a disk read would stop
+       a tick for as long as the file took. */
+    scnLockEnter(&h->lock);
     free(h->src);
     h->src    = src;
     h->srcLen = srcLen;
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
+    scnLockLeave(&h->lock);
     return true;
 }
 
@@ -826,12 +1231,25 @@ void scenarioHostDetach(ScenarioHost *h) {
     if (h == NULL) {
         return;
     }
+    /* Every registration the host made, taken back before the memory it
+       points at goes. The policy struct is a member of what free() is about
+       to release, so leaving it registered would hand the sim a dangling
+       vtable the first time the lobby asked a question. */
     if (h->sim != NULL) {
         serverSimSetScenarioRoundStart(h->sim, NULL, NULL);
+        serverSimSetScenarioTick(h->sim, NULL, NULL);
+        serverSimSetScenarioPolicy(h->sim, NULL);
     }
+    /* Outside the lock, and it has to be: the registrations are gone, so
+       nothing can arrive at the VM any more, and a lock taken here would be
+       destroyed on the next line with whoever was waiting on it still
+       waiting. A detach while another thread is inside the VM is a lifetime
+       question rather than a locking one — the caller detaches from the
+       thread that owns the sim. */
     if (h->L != NULL) {
         lua_close(h->L);
     }
+    scnLockDestroy(&h->lock);
     free(h->src);
     free(h);
 }

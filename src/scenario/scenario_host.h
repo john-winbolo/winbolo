@@ -76,6 +76,17 @@
  * read, because at that size it is not a script. */
 #define SCN_SIDECAR_MAX_BYTES (1024 * 1024)
 
+/* How many hook or policy calls may raise in a row before the scenario is
+ * switched off for the rest of the round. Any call that returns normally
+ * puts the count back to zero, so this counts a script that is failing
+ * every time rather than one that fails now and then.
+ *
+ * A round the scenario is off for runs no more of its Lua: hooks are
+ * skipped, policies answer the classic rule, and the players are told once.
+ * It is off for the round and not for the attachment — the next round start
+ * boots a fresh VM and begins again at zero. */
+#define SCN_ERROR_LIMIT 20
+
 typedef struct ScenarioHost ScenarioHost;
 
 /*********************************************************

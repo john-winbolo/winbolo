@@ -4998,6 +4998,14 @@ set(_unit_test_names
     scenario_host_reload_picks_up_edit
     scenario_host_reload_bad_syntax
     scenario_host_reload_bad_api
+    scenario_host_fresh_globals_per_round
+    scenario_host_setup_in_window
+    scenario_host_start_on_first_running_tick
+    scenario_host_error_limit_boundary
+    scenario_host_disabled_stops_hooks
+    scenario_host_vm_lock_same_thread
+    scenario_host_vm_lock_second_thread
+    scenario_host_audit_human_lost
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
