@@ -759,6 +759,69 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     return h;
 }
 
+bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
+    char             soft[SCN_ERR_LEN];
+    ScenarioManifest m;
+    lua_State       *L;
+    char            *src    = NULL;
+    size_t           srcLen = 0;
+
+    if (err != NULL && errLen > 0) {
+        err[0] = '\0';
+    }
+    if (h == NULL) {
+        return false;
+    }
+
+    if (!scnReadFile(h->sidecar, &src, &srcLen, err, errLen)) {
+        /* A file that has gone leaves err empty, because at attach that is
+           the ordinary case rather than a fault. Asked for by name it is a
+           fault, so it is stated here. */
+        if (err != NULL && errLen > 0 && err[0] == '\0') {
+            scnFmt(err, errLen, "scenario: %s is no longer there", h->sidecar);
+        }
+        return false;
+    }
+
+    /* Everything below happens in a Lua state of its own, and nothing the
+       host holds is touched until all of it has passed. A file with an
+       error in it therefore changes nothing at all: the round that is
+       running keeps its table, and so does the round after it. */
+    L = scnNewVm();
+    if (L == NULL) {
+        scnFmt(err, errLen, "scenario: no memory for a Lua state");
+        free(src);
+        return false;
+    }
+
+    soft[0] = '\0';
+    if (!scnRunChunk(L, src, srcLen, h->chunkName, err, errLen) ||
+        !scnReadManifest(L, &m, h->sidecar, err, errLen, soft, sizeof(soft))) {
+        lua_close(L);
+        free(src);
+        return false;
+    }
+    if (m.api > SCENARIO_API_VERSION) {
+        scnFmt(err, errLen,
+               "scenario: %s asks for api %d and this server is api %d — "
+               "the server is too old to run it",
+               h->sidecar, m.api, SCENARIO_API_VERSION);
+        lua_close(L);
+        free(src);
+        return false;
+    }
+    lua_close(L);
+
+    /* The bytes are replaced and nothing else is. The VM and the table the
+       round is running on stay as they are; the next round start builds
+       both again from what is now here. */
+    free(h->src);
+    h->src    = src;
+    h->srcLen = srcLen;
+    snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
+    return true;
+}
+
 void scenarioHostDetach(ScenarioHost *h) {
     if (h == NULL) {
         return;

@@ -106,6 +106,27 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen);
 
 /*********************************************************
+ *NAME:          scenarioHostReload
+ *PURPOSE:
+ *  Reads the sidecar from disk again and, if the new bytes
+ *  are usable, keeps them in place of the ones the host was
+ *  holding. Usable means: inside SCN_SIDECAR_MAX_BYTES, the
+ *  chunk loads and runs, a scenario table comes out of it,
+ *  and its api is not above this server's.
+ *
+ *  Checked in a Lua state of its own before anything is
+ *  swapped, so a bad edit changes nothing: on any failure
+ *  this returns false, writes one operator line to err, and
+ *  leaves the running scenario exactly as it was.
+ *
+ *  On success the new bytes take effect at the next round
+ *  start. The round in progress keeps the table it began
+ *  with, so a caller telling an operator what happened
+ *  should say so.
+ *********************************************************/
+bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen);
+
+/*********************************************************
  *NAME:          scenarioHostDetach
  *PURPOSE:
  *  Takes the host off the sim, closes its VM, drops the

@@ -2302,6 +2302,9 @@ int run_scenario_host_no_sidecar(void);
 int run_scenario_host_manifest_roundtrip(void);
 int run_scenario_host_seed_reproducible(void);
 int run_scenario_host_edit_after_attach(void);
+int run_scenario_host_reload_picks_up_edit(void);
+int run_scenario_host_reload_bad_syntax(void);
+int run_scenario_host_reload_bad_api(void);
 
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init

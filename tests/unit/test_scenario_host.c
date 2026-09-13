@@ -26,6 +26,12 @@
  *                                       process PRNG state, reproducibly
  * run_scenario_host_edit_after_attach — the sidecar is read once, so an
  *                                       edit does not reach the next round
+ * run_scenario_host_reload_picks_up_edit
+ *                                     — and reload is what reads it again
+ * run_scenario_host_reload_bad_syntax — a reload that does not parse is
+ *                                       refused and changes nothing
+ * run_scenario_host_reload_bad_api    — a reload written for a newer server
+ *                                       is refused and changes nothing
  */
 
 #include <stdint.h>
@@ -647,6 +653,180 @@ int run_scenario_host_edit_after_attach(void) {
     UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Cached") == 0,
                   "the name read as '%s' after the round started, so the "
                   "edited file was read", scenarioHostName(h));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 10. Reload reads the file again ──────────────────────────────── */
+
+/* The value a round starts on, and the value reload is expected to put in
+   its place. Both inside tank_death_ticks' row and far enough apart that a
+   pump loop tells them apart at a glance. */
+#define SH_RELOAD_BEFORE 400
+#define SH_RELOAD_AFTER  520
+
+/* Start a round on `sim` and hand back slot 0's tank, killed, so the caller
+   can read the wait the rules gave it. Returns NULL when the round did not
+   produce a tank. */
+static tank *shKilledTankAfterStart(ServerSim *sim) {
+    tank *t;
+    serverSimStartGame(sim);
+    serverSimAddPlayer(sim, 0, "Tester", false);
+    t = shTank(sim, 0);
+    if (*t == NULL) {
+        return NULL;
+    }
+    if (shKill(sim, 0) != SCN_OP_OK) {
+        return NULL;
+    }
+    return t;
+}
+
+/* The inverse of scenario_host_edit_after_attach: the same edit, with a
+ * reload in between, does reach the next round. The two cases together are
+ * what say reload is the thing that re-reads the file, rather than the
+ * round start doing it anyway. */
+int run_scenario_host_reload_picks_up_edit(void) {
+    static const char *const kMap = "scnhost_reload_edit.map";
+    static const char *const kFirst =
+        "scenario = { name = \"Before\", api = 1,\n"
+        "             rules = { tank_death_ticks = 400 } }\n";
+    static const char *const kSecond =
+        "scenario = { name = \"After\", api = 1,\n"
+        "             rules = { tank_death_ticks = 520 } }\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    tank         *t;
+    char          err[512];
+
+    UT_ASSERT(shPut(kMap, kFirst));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+
+    UT_ASSERT(shPut(kMap, kSecond));
+    err[0] = '\0';
+    UT_ASSERT_MSG(scenarioHostReload(h, err, sizeof(err)),
+                  "the reload was refused: %s", err);
+
+    /* The round that has not started yet is the one that changes. */
+    t = shKilledTankAfterStart(sim);
+    UT_ASSERT_MSG(t != NULL, "the round produced no tank to kill");
+    UT_ASSERT_MSG(tankGetDeathWait(t) == SH_RELOAD_AFTER,
+                  "the tank waits %u: %d is the edited value the reload read "
+                  "and %d the one it replaced",
+                  (unsigned)tankGetDeathWait(t), SH_RELOAD_AFTER,
+                  SH_RELOAD_BEFORE);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), "After") == 0,
+                  "the name reads '%s' after the round started, so the "
+                  "reloaded table did not reach the manifest",
+                  scenarioHostName(h));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* A reload of a file that does not parse is refused with the line Lua
+ * reports, and the scenario carries on exactly as it was — the round after
+ * it still runs the table the host was holding. */
+int run_scenario_host_reload_bad_syntax(void) {
+    static const char *const kMap = "scnhost_reload_syntax.map";
+    static const char *const kGood =
+        "scenario = { name = \"Before\", api = 1,\n"
+        "             rules = { tank_death_ticks = 400 } }\n";
+    static const char *const kBroken =
+        "-- 1\n"
+        "-- 2\n"
+        "this is not lua\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    tank         *t;
+    char          err[512];
+
+    UT_ASSERT(shPut(kMap, kGood));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+
+    UT_ASSERT(shPut(kMap, kBroken));
+    err[0] = '\0';
+    UT_ASSERT_MSG(!scenarioHostReload(h, err, sizeof(err)),
+                  "a sidecar that does not parse was reloaded");
+    UT_ASSERT_MSG(err[0] != '\0', "the refusal produced no operator line");
+    UT_ASSERT_MSG(strstr(err, "scnhost_reload_syntax") != NULL,
+                  "the line does not name the file: %s", err);
+    UT_ASSERT_MSG(strstr(err, ":3:") != NULL,
+                  "the line does not carry the line number: %s", err);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Before") == 0,
+                  "the refused reload changed the name to '%s'",
+                  scenarioHostName(h));
+
+    t = shKilledTankAfterStart(sim);
+    UT_ASSERT_MSG(t != NULL, "the round produced no tank to kill");
+    UT_ASSERT_MSG(tankGetDeathWait(t) == SH_RELOAD_BEFORE,
+                  "the tank waits %u after a refused reload, expected the %d "
+                  "the scenario was already running on",
+                  (unsigned)tankGetDeathWait(t), SH_RELOAD_BEFORE);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Before") == 0,
+                  "the round read '%s', so the broken file reached it anyway",
+                  scenarioHostName(h));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* And the same for a file this server is too old to run: refused, with the
+ * running scenario left alone. */
+int run_scenario_host_reload_bad_api(void) {
+    static const char *const kMap = "scnhost_reload_api.map";
+    static const char *const kGood =
+        "scenario = { name = \"Before\", api = 1,\n"
+        "             rules = { tank_death_ticks = 400 } }\n";
+    char          tooNew[256];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    tank         *t;
+    char          err[512];
+
+    UT_ASSERT(shPut(kMap, kGood));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+
+    snprintf(tooNew, sizeof(tooNew),
+             "scenario = { name = \"After\", api = %d,\n"
+             "             rules = { tank_death_ticks = 520 } }\n",
+             SCENARIO_API_VERSION + 1);
+    UT_ASSERT(shPut(kMap, tooNew));
+    err[0] = '\0';
+    UT_ASSERT_MSG(!scenarioHostReload(h, err, sizeof(err)),
+                  "a sidecar written for a newer server was reloaded");
+    UT_ASSERT_MSG(err[0] != '\0', "the refusal produced no operator line");
+    UT_ASSERT_MSG(strstr(err, "api") != NULL,
+                  "the line does not mention the api: %s", err);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Before") == 0,
+                  "the refused reload changed the name to '%s'",
+                  scenarioHostName(h));
+
+    t = shKilledTankAfterStart(sim);
+    UT_ASSERT_MSG(t != NULL, "the round produced no tank to kill");
+    UT_ASSERT_MSG(tankGetDeathWait(t) == SH_RELOAD_BEFORE,
+                  "the tank waits %u after a refused reload, expected the %d "
+                  "the scenario was already running on",
+                  (unsigned)tankGetDeathWait(t), SH_RELOAD_BEFORE);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

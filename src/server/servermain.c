@@ -110,6 +110,7 @@ bool statusFile = FALSE;
 time_t ticks = 0;
 
 static ServerSim *serverSim = NULL;
+static ScenarioHost *scenarioHost = NULL;
 
 /* -finaljson destination: "" = disabled, "-" = stdout, else a file path.
  * When set, a single global game-state snapshot is written once the game
@@ -245,6 +246,35 @@ static bool consoleOpSetHost(const char *name) {
   return hostSet;
 }
 
+static bool consoleOpReloadScenario(char *msg, size_t msgLen) {
+  char err[512];
+  bool ok;
+
+  if (scenarioHost == NULL) {
+    snprintf(msg, msgLen, "No scenario is attached to this map");
+    return false;
+  }
+
+  /* Under the mutex like every other console command: the bytes this
+     replaces are what the round-start callback reads. */
+  threadsWaitForMutex();
+  ok = scenarioHostReload(scenarioHost, err, sizeof(err));
+  threadsReleaseMutex();
+
+  if (!ok) {
+    snprintf(msg, msgLen, "%s", err);
+    return false;
+  }
+  snprintf(msg, msgLen,
+           "Scenario '%s': %s re-read. The new settings take effect at the "
+           "next round; the round in progress keeps the ones it started with.",
+           scenarioHostName(scenarioHost),
+           scenarioHostSidecarPath(scenarioHost));
+  return true;
+}
+
+/* Positional, and the struct's own comment says why the newest entry goes
+   last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
   consoleOpSetLock,
   consoleOpInfo,
@@ -253,7 +283,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpLogSay,
   consoleOpStatus,
   consoleOpKick,
-  consoleOpSetHost
+  consoleOpSetHost,
+  consoleOpReloadScenario
 };
 
 
@@ -1174,7 +1205,6 @@ int main(int argc, char **argv) {
      paths that have one. -inbuilt and -randommap have no file on disk, so
      they carry no scenario. */
   char scenarioMapPath[2048] = "";
-  ScenarioHost *scenarioHost = NULL;
   aiType ai; /* Should we allow ai */
   /* Tracker stuff */
   char trackerAddr[FILENAME_MAX];

@@ -56,6 +56,14 @@ typedef struct {
   /* host <name> — hand the host role to the named player. Returns false
    * if there is no such player. */
   bool (*setHost)(const char *name);
+  /* reload — read the scenario sidecar beside the map again. Writes one
+   * line into msg either way: what was re-read, or why nothing was.
+   * Returns false when nothing changed.
+   *
+   * Last on purpose. Both the server's list and the test's are positional,
+   * so a field inserted above this one would quietly point every entry
+   * after it at its neighbour's implementation. */
+  bool (*reloadScenario)(char *msg, size_t msgLen);
 } ServerConsoleOps;
 
 /* Lower-case `s` in place. */

@@ -797,6 +797,7 @@ set(IOS_BOLO_SOURCES
 # minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
 # Server sources needed for single-player mode
@@ -1023,7 +1024,7 @@ bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/transport_udp_client.c
     src/gui/sdl3/bg_game.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -1721,6 +1722,9 @@ endif()
 # onnxruntime, so consumers inherit the link without repeating it.
 target_link_libraries(WinBolo PRIVATE
     bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides.
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -4991,6 +4995,9 @@ set(_unit_test_names
     scenario_host_manifest_roundtrip
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
+    scenario_host_reload_picks_up_edit
+    scenario_host_reload_bad_syntax
+    scenario_host_reload_bad_api
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
