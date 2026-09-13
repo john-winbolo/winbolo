@@ -3,9 +3,10 @@
 #   scenario_static — the scenario runtime. Finds the Lua sidecar beside a
 #                     map, boots a VM, reads the scenario table it declares
 #                     and applies that table's rules through the op funnel
-#                     from the sim's round-start callback, and holds the
-#                     bus events a round raises until the tick that drains
-#                     them.
+#                     from the sim's round-start callback, holds the bus
+#                     events a round raises until the tick that drains them,
+#                     and puts the game table a script reads the sim through
+#                     on every state it boots.
 #
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
@@ -22,6 +23,7 @@
 add_library(scenario_static STATIC
     scenario_host.c
     scenario_events.c
+    scenario_lua.c
 )
 
 bolo_apply_include_rules(scenario_static scenario_host)
@@ -29,11 +31,11 @@ bolo_apply_include_rules(scenario_static scenario_host)
 set_target_properties(scenario_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # scenario_host.h is what a frontend includes, so this directory reaches the
-# consumers publicly. That publishes the whole directory, scenario_manifest.h
-# and scenario_events.h included, which is what lets the unit tests read the
-# parsed manifest and the event queue; the bolo include rules above stay
-# PRIVATE, so linking scenario_static still hands nobody the scenario
-# surface itself.
+# consumers publicly. That publishes the whole directory, scenario_manifest.h,
+# scenario_events.h and scenario_lua.h included, which is what lets the unit
+# tests read the parsed manifest and the event queue and drive the binding
+# table; the bolo include rules above stay PRIVATE, so linking scenario_static
+# still hands nobody the scenario surface itself.
 target_include_directories(scenario_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # server_sim.h, which scenario_host.h hands on to its includers, opens with
@@ -46,10 +48,11 @@ target_link_libraries(scenario_static PUBLIC SDL3::SDL3)
 # WINBOLO_LUAJIT define and the 5.4-to-5.1 shim's force-include with it, so
 # the host compiles against either without naming one.
 #
-# PRIVATE: nothing on scenario_host.h names a Lua type, so a consumer has no
+# PRIVATE: nothing on scenario_host.h names a Lua type, so a frontend has no
 # business seeing Lua's headers. A static library still passes the link
 # itself along under PRIVATE, so the binaries resolve the symbols either
-# way.
+# way. scenario_lua.h does name them, and what includes that — the unit
+# tests — links lua_static for itself.
 target_link_libraries(scenario_static PRIVATE lua_static)
 
 if(NOT MSVC)

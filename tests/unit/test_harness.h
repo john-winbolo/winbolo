@@ -2319,6 +2319,20 @@ int run_scenario_host_vm_lock_same_thread(void);
 int run_scenario_host_vm_lock_second_thread(void);
 int run_scenario_host_audit_human_lost(void);
 
+/* The binding table (test_scenario_lua.c): every row of the registry
+ * called once, the three index rules, the nils an absent entity reads
+ * as, the whole-map string, a shape error against the error limit, and
+ * the rules, tags and regions a sidecar declares read back. */
+int run_scenario_lua_every_row_answers(void);
+int run_scenario_lua_read_index_passes_through(void);
+int run_scenario_lua_op_index_subtracts_one(void);
+int run_scenario_lua_script_index_adds_one(void);
+int run_scenario_lua_absent_reads_are_nil(void);
+int run_scenario_lua_terrain_is_the_whole_map(void);
+int run_scenario_lua_shape_error_counts(void);
+int run_scenario_lua_rule_reads_the_table(void);
+int run_scenario_lua_tags_and_regions(void);
+
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full
  * queue does with the event that finds no room. */

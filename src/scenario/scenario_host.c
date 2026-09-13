@@ -30,10 +30,12 @@
  *  policy from the GUI thread while ticks run on the timer
  *  thread, and a Lua state is not re-entrant across threads.
  *
- *  No Lua function reaches the engine yet. What the sim sees
- *  from here is one SCN_OP_SET_RULE per rule, one
- *  SCN_OP_MSG_ALL for a line the players are owed, and the
- *  answer to the one policy registered below.
+ *  The game table a script reads the sim through is built in
+ *  scenario_lua.c and goes on every state this file boots,
+ *  before the chunk runs. Those rows read and never write:
+ *  what the sim sees from here is one SCN_OP_SET_RULE per
+ *  rule, one SCN_OP_MSG_ALL for a line the players are owed,
+ *  and the answer to the one policy registered below.
  *
  *  The sidecar is read from disk once, at attach. Every round
  *  after that runs the bytes the host is holding, so a round
@@ -81,25 +83,11 @@
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_events.h"
+#include "scenario_lua.h"
 
 /* One operator line. Long enough for a Lua error, which carries the file
  * path and the line number ahead of its message. */
 #define SCN_ERR_LEN 512
-
-/* ── The rule names ───────────────────────────────────────────────── */
-
-/* A rule's name in a sidecar is its name in the rule list, so the list is
- * the only place the spelling exists. A rule added there is resolvable
- * here with nothing to update. */
-static const char *const kScnRuleNames[] = {
-#define SCN_RULE_NAME_ROW(name) #name,
-    SCN_RULE_LIST(SCN_RULE_NAME_ROW)
-#undef SCN_RULE_NAME_ROW
-};
-
-BOLO_STATIC_ASSERT(
-    (int)(sizeof(kScnRuleNames) / sizeof(kScnRuleNames[0])) == (int)SCN_RULE_COUNT,
-    rule_name_table_is_the_whole_rule_list);
 
 /* The manifest is sized in scenario_host.h, which cannot see the rule
  * count; this is where the two are visible together. */
@@ -110,16 +98,6 @@ BOLO_STATIC_ASSERT(SCN_MANIFEST_RULES_MAX >= (int)SCN_RULE_COUNT,
  * it without seeing the op. Held against the op's own length here. */
 BOLO_STATIC_ASSERT(SCN_BRAIN_LEN == SCN_PATH_MAX,
                    manifest_brain_matches_the_op_path_length);
-
-static int scnRuleIndexOf(const char *key) {
-    int i;
-    for (i = 0; i < (int)SCN_RULE_COUNT; i++) {
-        if (strcmp(kScnRuleNames[i], key) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
 
 /* What a refusal was, in words. A script author reads these, so each is
  * the reason rather than the enumerator's spelling. */
@@ -254,6 +232,12 @@ struct ScenarioHost {
     lua_State       *L;       /* the live VM: the metadata one until a round
                                * starts, then that round's own */
     ScenarioManifest manifest;
+
+    /* What the game table's rows read, handed to every VM this host boots.
+     * It points at the manifest above rather than carrying a copy, so the
+     * table a round start reads in is the one the next call answers from. */
+    ScnLuaCtx        lua;
+
     char             sidecar[SCN_SIDECAR_PATH_MAX];
     char            *src;     /* the sidecar's bytes, read once at attach */
     size_t           srcLen;
@@ -437,6 +421,27 @@ static lua_State *scnNewVm(void) {
     return L;
 }
 
+/* A state with the script's own surface on it, ready for a chunk.
+ *
+ * The game table goes on before the chunk runs, and every state this host
+ * boots gets one: a script may read the game at the top level rather than
+ * from a hook, and a sidecar that does must load the same way at an attach,
+ * at a round start and at a reload's check.
+ *
+ * What the rows read through is the host's own struct, so a chunk that reads
+ * one of the manifest rows reads the table the host is holding as it runs:
+ * nothing at all at the attach, where the first table is what this chunk is
+ * about to declare, and the last round's at a round start, which is the same
+ * table again because every round runs the bytes read at attach. */
+static lua_State *scnBootVm(ScenarioHost *h) {
+    lua_State *L = scnNewVm();
+
+    if (L != NULL) {
+        scenarioLuaInstall(L, &h->lua);
+    }
+    return L;
+}
+
 static const char *scnLuaError(lua_State *L) {
     const char *s = lua_tostring(L, -1);
     return (s != NULL) ? s : "unknown error";
@@ -558,7 +563,7 @@ static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
            and break the traversal. */
         if (lua_type(L, -2) == LUA_TSTRING && lua_type(L, -1) == LUA_TNUMBER) {
             const char *key = lua_tostring(L, -2);
-            int         idx = scnRuleIndexOf(key);
+            int         idx = scenarioLuaRuleIndex(key);
             if (idx < 0) {
                 scnSay(soft, softLen, "scenario: no rule is named '%s'", key);
             } else if (m->numRules >= SCN_MANIFEST_RULES_MAX) {
@@ -757,7 +762,8 @@ static void scnApplyRules(ScenarioHost *h) {
         if (r != SCN_OP_OK) {
             scnSay(h->lastError, sizeof(h->lastError),
                    "scenario: rule '%s' refused: %s",
-                   kScnRuleNames[h->manifest.rules[i].rule], scnResultText(r));
+                   scenarioLuaRuleName((int)h->manifest.rules[i].rule),
+                   scnResultText(r));
         }
     }
 }
@@ -1091,7 +1097,7 @@ static void scnRoundStartLocked(ScenarioHost *h) {
 
     err[0] = '\0';
 
-    L = scnNewVm();
+    L = scnBootVm(h);
     if (L == NULL) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: no memory for this round's Lua state");
@@ -1186,12 +1192,43 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     /* The leading '@' is what makes Lua call this a file in its messages. */
     snprintf(chunkName, sizeof(chunkName), "@%s", sidecar);
 
+    /* The host is built before the state is, because the game table's rows
+       read through a struct on it and the table goes on before the chunk
+       runs. Nothing can reach either of them yet: the registrations at the
+       bottom are what make this host reachable, and a path out of here
+       before them takes the whole thing back down again. */
+    h = (ScenarioHost *)calloc(1, sizeof(*h));
+    if (h == NULL) {
+        scnFmt(err, errLen, "scenario: out of memory");
+        free(src);
+        return NULL;
+    }
+    if (!scnLockCreate(&h->lock)) {
+        scnFmt(err, errLen, "scenario: no mutex for the Lua state");
+        free(h);
+        free(src);
+        return NULL;
+    }
+    h->sim          = sim;
+    h->lua.sim      = sim;
+    h->lua.manifest = &h->manifest;
+    /* The lifecycle hooks belong to a round's VM, and this is the one the
+       table is read in. The first round start resolves them. */
+    h->onSetupRef = LUA_NOREF;
+    h->onStartRef = LUA_NOREF;
+    /* Neither of these is the zero calloc left: no subscriber is -1. */
+    h->sub        = SUBSCRIBER_HANDLE_INVALID;
+    snprintf(h->sidecar, sizeof(h->sidecar), "%s", sidecar);
+    snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
+
     /* The one VM entry that takes no lock, because there is nothing yet to
-       take one on: the host this state belongs to is built below, and until
-       it is registered no thread can reach either. */
-    L = scnNewVm();
+       take one on: until the host below is registered no other thread can
+       reach either. */
+    L = scnBootVm(h);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
+        scnLockDestroy(&h->lock);
+        free(h);
         free(src);
         return NULL;
     }
@@ -1200,6 +1237,8 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
         !scnReadManifest(L, &m, sidecar, err, errLen, soft, sizeof(soft))) {
         lua_close(L);
+        scnLockDestroy(&h->lock);
+        free(h);
         free(src);
         return NULL;
     }
@@ -1209,39 +1248,17 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                "the server is too old to run it",
                sidecar, m.api, SCENARIO_API_VERSION);
         lua_close(L);
-        free(src);
-        return NULL;
-    }
-
-    h = (ScenarioHost *)calloc(1, sizeof(*h));
-    if (h == NULL) {
-        scnFmt(err, errLen, "scenario: out of memory");
-        lua_close(L);
-        free(src);
-        return NULL;
-    }
-    if (!scnLockCreate(&h->lock)) {
-        scnFmt(err, errLen, "scenario: no mutex for the Lua state");
+        scnLockDestroy(&h->lock);
         free(h);
-        lua_close(L);
         free(src);
         return NULL;
     }
 
-    h->sim      = sim;
     h->L        = L;
     h->manifest = m;
     h->src      = src;
     h->srcLen   = srcLen;
     h->active   = true;
-    /* The lifecycle hooks belong to a round's VM, and this is the one the
-       table was read in. The first round start resolves them. */
-    h->onSetupRef = LUA_NOREF;
-    h->onStartRef = LUA_NOREF;
-    /* Neither of these is the zero calloc left: no subscriber is -1. */
-    h->sub        = SUBSCRIBER_HANDLE_INVALID;
-    snprintf(h->sidecar, sizeof(h->sidecar), "%s", sidecar);
-    snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
     /* One entry filled and the rest left NULL, which is what the sim reads
@@ -1303,8 +1320,13 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     /* Everything below happens in a Lua state of its own, and nothing the
        host holds is touched until all of it has passed. A file with an
        error in it therefore changes nothing at all: the round that is
-       running keeps its table, and so does the round after it. */
-    L = scnNewVm();
+       running keeps its table, and so does the round after it.
+
+       The state carries the game table like any other, so a sidecar that
+       reads the game at the top level loads here exactly as it loads at a
+       round start rather than being turned down for a table this one
+       state lacked. */
+    L = scnBootVm(h);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
         free(src);

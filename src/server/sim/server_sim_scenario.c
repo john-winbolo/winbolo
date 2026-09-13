@@ -2390,6 +2390,31 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
 
 #undef SCN_RULE_WRITE_CASE
 
+/* Reading one back. Written from the list the write cases come from, so the
+ * index a script sets a rule by and the index it reads the same rule by
+ * cannot name different fields. Each field is converted to the double the op
+ * carries, which holds every value any of them can. */
+#define SCN_RULE_READ_CASE(name)                                             \
+    case SCN_RULE_##name:                                                    \
+        *out = (double)sim->sim.rules.name;                                  \
+        return true;
+
+bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
+                              double *out) {
+    if (sim == NULL || out == NULL || rule >= SCN_RULE_COUNT) {
+        return false;
+    }
+    switch (rule) {
+        SCN_RULE_LIST(SCN_RULE_READ_CASE)
+        default:
+            /* Unreachable: the bounds test above has already passed, and the
+               cases come from the list the enum comes from. */
+            return false;
+    }
+}
+
+#undef SCN_RULE_READ_CASE
+
 /* The six ops that change who is in the round. The start-in-progress guard
  * below exists for exactly these: a roster edit made from inside a start
  * re-enters the all-ready detector with every player still ready, which

@@ -3321,6 +3321,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
     tests/unit/test_scenario_host.c
+    # The binding table: the game table a script reads the sim through, the
+    # three index rules and what an absent entity reads as.
+    tests/unit/test_scenario_lua.c
     # The bus events the host queues and drains: the subscriber, the
     # fixed queue and the bounded drain at the end of each tick.
     tests/unit/test_scenario_events.c
@@ -5009,6 +5012,15 @@ set(_unit_test_names
     scenario_host_vm_lock_same_thread
     scenario_host_vm_lock_second_thread
     scenario_host_audit_human_lost
+    scenario_lua_every_row_answers
+    scenario_lua_read_index_passes_through
+    scenario_lua_op_index_subtracts_one
+    scenario_lua_script_index_adds_one
+    scenario_lua_absent_reads_are_nil
+    scenario_lua_terrain_is_the_whole_map
+    scenario_lua_shape_error_counts
+    scenario_lua_rule_reads_the_table
+    scenario_lua_tags_and_regions
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits
