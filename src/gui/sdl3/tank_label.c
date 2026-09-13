@@ -19,7 +19,8 @@
 
 #include "tank_label.h"
 #include "flags.h"           /* flagsGetSurface */
-#include "sdl3imgui.h"       /* sdl3ImguiPlayerIsBot, sdl3ImguiGetBrainIconSurface,
+#include "sdl3imgui.h"       /* sdl3ImguiPlayerIsBot, sdl3ImguiPlayerIsAlly,
+                                sdl3ImguiGetBotIconSurface,
                                 the voice-state accessors and MicIconGlyph */
 #include "sdl3draw_status.h" /* sdl3DrawOnRenderThread, the mic-icon setting */
 #if defined(WINBOLO_VOICE)
@@ -155,23 +156,35 @@ static void tankLabelRebuild(TankLabelCache *c, SDL_Renderer *r,
     /* Split the label into the name and its trailing location. The label
      * builder appends "@" + location only in long-label mode, and player
      * names cannot contain '@', so the last '@' is the separator. A bot
-     * gets the brain icon (its location, if any, is dropped); a human with
+     * gets the chip icon (its location, if any, is dropped); a human with
      * a 2-letter country code gets the flag. Anything else (short labels,
-     * or our own "@This Computer") is left as plain text with no icon. */
+     * or our own "@This Computer") is left as plain text with no icon.
+     *
+     * The bot test comes FIRST and does not require an '@'. It used to sit
+     * inside the `if (at)` below, which tied a bot's icon to its label
+     * carrying a location — and a bot has none. It only ever worked because
+     * labelMakeTankLabel appended the geolocator's "XX" unknown sentinel to
+     * every bot, so the '@' was always there to find. Now that the sentinel
+     * is suppressed (playersLocationShown), a bot's label is its bare name,
+     * and a bot icon gated on '@' would never draw again. A bot is a bot
+     * whatever its label says. */
     char nameOnly[TANK_LABEL_NAME_LEN];
     strncpy(nameOnly, label, TANK_LABEL_NAME_LEN - 1);
     nameOnly[TANK_LABEL_NAME_LEN - 1] = '\0';
 
     SDL_Surface *iconSurf = NULL;
     char *at = strrchr(nameOnly, '@');
-    if (at) {
+    if (sdl3ImguiPlayerIsBot(playerNum) &&
+        (iconSurf = sdl3ImguiGetBotIconSurface(
+             sdl3ImguiPlayerIsAlly(playerNum))) != NULL) {
+        /* Drop a location if the label still carries one: a bot showing a
+         * chip has nothing to add by also naming where it is not from. */
+        if (at) *at = '\0';
+    } else if (at) {
         const char *loc = at + 1;
-        if (sdl3ImguiPlayerIsBot(playerNum) &&
-            (iconSurf = sdl3ImguiGetBrainIconSurface()) != NULL) {
-            *at = '\0';
-        } else if (isalpha((unsigned char)loc[0]) &&
-                   isalpha((unsigned char)loc[1]) && loc[2] == '\0' &&
-                   (iconSurf = flagsGetSurface(loc)) != NULL) {
+        if (isalpha((unsigned char)loc[0]) &&
+            isalpha((unsigned char)loc[1]) && loc[2] == '\0' &&
+            (iconSurf = flagsGetSurface(loc)) != NULL) {
             *at = '\0';
         }
         /* No icon available (flags not loaded, unknown country, …): leave

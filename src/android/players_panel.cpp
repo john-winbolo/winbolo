@@ -127,6 +127,13 @@ extern "C" void playersPanelRender(ClientSim *cs) {
             uint8_t flags  = clientSimGetPlayerClientFlags(cs, (BYTE)i);
             uint8_t ctype  = clientSimGetPlayerClientType(cs, (BYTE)i);
 
+            /* Which chip a bot gets. Without this the badge falls back to
+             * the red one, so an allied bot on this list would be marked as
+             * an enemy. Read from the mirror sdl3ImguiPumpAndRender keeps,
+             * the same one the map's tank labels use — this list has a sim
+             * to ask, but the mirror is already a frame fresh and costs no
+             * call. */
+            renderPlayerNameSetBotAlly(sdl3ImguiPlayerIsAlly((unsigned char)i));
             renderPlayerName(NULL, flags, ctype, "", false);
 
             /* Checkbox + name */

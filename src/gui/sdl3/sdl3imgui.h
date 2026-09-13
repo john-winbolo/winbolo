@@ -284,16 +284,43 @@ const char *sdl3ImguiGetPlayerName(unsigned char playerNum);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
-*NAME:          sdl3ImguiGetBrainIconSurface
+*NAME:          sdl3ImguiGetBotIconSurface
 *PURPOSE:
-*  Returns the AI-brain icon (the badge shown for bot
-*  players) as an SDL_Surface — renderer-free, so the
+*  Returns the chip icon — the badge shown for a computer
+*  player — as an SDL_Surface, renderer-free, so the
 *  tank-label caches can texture it on whichever renderer
-*  hosts them. Owned by this module; do not destroy. Loads
-*  the SVG lazily on first call. Returns NULL if the SVG
-*  could not be loaded.
+*  hosts them.
+*
+*  isAlly picks the artwork: the green chip for a player
+*  allied with this client, the red one otherwise. The two
+*  are separate files drawn as authored, not one shape
+*  recoloured, and they keep their own colours — a tank
+*  label alpha-mods its icon but never colour-mods it, the
+*  same reason a country flag stays coloured out on the map.
+*
+*  Owned by this module; do not destroy. Both are loaded
+*  lazily on first call and freed once in sdl3ImguiCleanup.
+*  Returns NULL if the SVG could not be loaded.
 *********************************************************/
-SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
+SDL_Surface *sdl3ImguiGetBotIconSurface(bool isAlly);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerIsAlly
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+* Is that player allied with this client? Answered from a mirror refreshed
+* once a frame in sdl3ImguiPumpAndRender, so callers with no ClientSim can
+* ask — the tank labels on the map are why it exists: they pick a bot's chip
+* by it and are handed a player number and a font, nothing more.
+*
+* False for your own slot, and false with no game running.
+*
+*ARGUMENTS:
+* playerNum - the slot to ask about
+*********************************************************/
+bool sdl3ImguiPlayerIsAlly(unsigned char playerNum);
 
 #if defined(WINBOLO_VOICE)
 /* Which voice glyph to rasterize. The shape says which end the state belongs
@@ -404,6 +431,49 @@ SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
 *********************************************************/
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);
+
+/*********************************************************
+*NAME:          renderPlayerNameKeepY
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+* renderPlayerName with every icon in the run held at the y it is called at,
+* instead of snapping back to the line's top on each SameLine.
+*
+* For a caller that centres the icon run inside a row taller than the icons:
+* on the line's top the first icon lands on the row's midline and the rest
+* sit above it. A caller that starts its run at the line's top wants
+* renderPlayerName and sees no difference between the two.
+*
+*ARGUMENTS: as renderPlayerName
+*********************************************************/
+void renderPlayerNameKeepY(const char *name, uint8_t flags, uint8_t clientType,
+                           const char *countryCode, bool showCountry);
+
+/*********************************************************
+*NAME:          renderPlayerNameSetBotAlly
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+* Which of the two bot chips the NEXT renderPlayerName call draws, and only
+* that one — it is reset as the chip is drawn, so a caller that sets nothing
+* cannot inherit the last caller's answer. The default is the red chip.
+*
+* The green and red chips are separate artwork, drawn as authored rather
+* than one shape recoloured: each is gold pins around a dark body with a
+* coloured die, and a tinted silhouette loses all of it.
+*
+* Set rather than passed as an argument because renderPlayerName is given a
+* player's flags, not their slot, so it cannot work out who is allied with
+* whom. The caller can: both the players panel and the in-game player menu
+* already compute that for the mark they draw in front of the name.
+*
+*ARGUMENTS:
+* isAlly - true for the green chip, false for the red one
+*********************************************************/
+void renderPlayerNameSetBotAlly(bool isAlly);
 
 #if defined(WINBOLO_VOICE)
 /*********************************************************

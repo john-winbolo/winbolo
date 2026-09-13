@@ -1082,5 +1082,26 @@ uint8_t  playersGetClientFlags(players *plrs, BYTE playerNum);
 void     playersSetClientType(players *plrs, BYTE playerNum, uint8_t clientType);
 uint8_t  playersGetClientType(players *plrs, BYTE playerNum);
 
+/*********************************************************
+*NAME:          playersLocationShown
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+* TRUE when a player's location is a country code worth showing after their
+* name. Two values are not: an empty string, and the "XX" sentinel the
+* geolocator returns when it cannot place an address (geolookup.h) and which
+* every bot is given outright, a bot having no country.
+*
+* Shared rather than repeated: every place that puts a location after a name
+* has to make the same decision, and they are in two files — the four name
+* builders in players.c and the two label builders in labels.c. A copy in
+* each is a copy that can be fixed in one and not the other.
+*
+*ARGUMENTS:
+* location - The player's location string, may be NULL
+*********************************************************/
+bool playersLocationShown(const char *location);
+
 #endif /* PLAYERS_H */
 

@@ -2051,11 +2051,14 @@ static const LangEntry langTable[] = {
     {2062, "System default"},
 
     /* Players panel — per-player playback volume slider */
-    {2090, "How loud this player is played here"},
+    {2090, "Voice chat volume"},
 
     /* Players panel — per-player smart-ping mute toggle */
     {2162, "Pings shown — click to hide this player's pings"},
     {2163, "Pings hidden — click to show this player's pings"},
+
+    /* Players panel — label in front of the selection buttons */
+    {2164, "Select:"},
 
     /* Lobby — the local player's voice sub-row */
     {2095, "Your microphone and voice settings"},
