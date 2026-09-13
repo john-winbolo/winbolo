@@ -85,7 +85,7 @@ BOLO_STATIC_ASSERT(SCN_EVENT_ACTOR_NONE == SCN_NONE,
  * len is what the channel has to give; anything past it is zero, so a
  * reader that knows the type knows where the bytes stop. */
 static void scnEventPush(ScnEventQueue *q, uint8_t channel, uint8_t type,
-                         const void *src, size_t len) {
+                         uint8_t actor, const void *src, size_t len) {
     ScnQueuedEvent *slot;
 
     if (q->count >= SCN_EVENT_QUEUE_MAX) {
@@ -101,7 +101,7 @@ static void scnEventPush(ScnEventQueue *q, uint8_t channel, uint8_t type,
     slot = &q->entries[(q->head + q->count) % SCN_EVENT_QUEUE_MAX];
     slot->type    = type;
     slot->channel = channel;
-    slot->actor   = SCN_EVENT_ACTOR_NONE;
+    slot->actor   = actor;
     memcpy(slot->data, src, len);
     if (len < SCN_EVENT_DATA_MAX) {
         memset(slot->data + len, 0, SCN_EVENT_DATA_MAX - len);
@@ -118,23 +118,25 @@ void scenarioEventsReset(ScnEventQueue *q) {
     memset(q, 0, sizeof(*q));
 }
 
-void scenarioEventsQueueGame(ScnEventQueue *q, const GameEvent *evt) {
+void scenarioEventsQueueGame(ScnEventQueue *q, const GameEvent *evt,
+                             uint8_t actor) {
     if (q == NULL || evt == NULL) {
         return;
     }
-    scnEventPush(q, SCN_EVENT_CHANNEL_GAME, evt->type, evt->data,
+    scnEventPush(q, SCN_EVENT_CHANNEL_GAME, evt->type, actor, evt->data,
                  sizeof(evt->data));
 }
 
-void scenarioEventsQueueControl(ScnEventQueue *q, const ControlEvent *evt) {
+void scenarioEventsQueueControl(ScnEventQueue *q, const ControlEvent *evt,
+                                uint8_t actor) {
     if (q == NULL || evt == NULL) {
         return;
     }
     /* The front of the variant, whichever variant it is. Every control
        event puts the slot it is about at or near the front, and reading
        which one this is belongs to whoever consumes it. */
-    scnEventPush(q, SCN_EVENT_CHANNEL_CONTROL, (uint8_t)evt->type, &evt->u,
-                 SCN_EVENT_DATA_MAX);
+    scnEventPush(q, SCN_EVENT_CHANNEL_CONTROL, (uint8_t)evt->type, actor,
+                 &evt->u, SCN_EVENT_DATA_MAX);
 }
 
 /* ── Taking them back out ─────────────────────────────────────────── */

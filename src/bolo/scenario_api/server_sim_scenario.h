@@ -36,6 +36,10 @@
  *  callback, or while a game start is running, are refused
  *  before the op is looked at.
  *
+ *  The actor mark serverSimIsScenarioActing answers is held
+ *  across the whole call, so everything the op publishes
+ *  reaches a host's subscriber marked as the script's.
+ *
  *  out may be NULL. When it is not, an entity add writes the
  *  index it took and a spawn writes the seat it took.
  *********************************************************/

@@ -16,8 +16,17 @@
  *  The round's shape: a fresh VM at every round start, so a
  *  fresh set of globals; the rules applied; on_setup called
  *  inside the setup window the start opens; the roster
- *  audited; and on_start called on the first running tick.
- *  Both hooks are optional — most scenarios define neither.
+ *  audited; on_start called on the first running tick;
+ *  on_tick on every running one; and on_end where the round
+ *  moves into game over. Every hook is optional — a scenario
+ *  defines the few it cares about.
+ *
+ *  Between those, the events. Each entry the drain hands back
+ *  becomes the script's hook for that fact, with the payload
+ *  the engine published and a trailing boolean saying whether
+ *  the scenario itself caused it, so a handler that ignores
+ *  its own edits is one line. The four lifecycle calls take
+ *  no such boolean: there is no event behind them.
  *
  *  A script that keeps raising is switched off for the round
  *  at SCN_ERROR_LIMIT errors in a row, and so is one whose
@@ -225,6 +234,59 @@ static void scnLockLeave(ScnVmLock *l) {
     SDL_UnlockMutex(l->m);
 }
 
+/* ── The hooks ────────────────────────────────────────────────────── */
+
+/* Every function a round may call, in one list: the four lifecycle calls
+ * and one per event the host turns into a hook. The name a script writes it
+ * under is here and nowhere else, so the name the boot resolves and the name
+ * a case defines cannot drift apart.
+ *
+ * The four at the top are not events. They are made where the round reaches
+ * the point each of them names, and they take no trailing scripted boolean
+ * because there is no event behind them to have caused. Everything below
+ * them comes off the queue and does. */
+#define SCN_HOOK_LIST(X)                                                     \
+    X(SETUP,            "on_setup")                                          \
+    X(START,            "on_start")                                          \
+    X(TICK,             "on_tick")                                           \
+    X(END,              "on_end")                                            \
+    X(LOBBY,            "on_lobby")                                          \
+    X(PLAYER_JOIN,      "on_player_join")                                    \
+    X(PLAYER_LEAVE,     "on_player_leave")                                   \
+    X(TEAM_CHANGED,     "on_team_changed")                                   \
+    X(CHAT,             "on_chat")                                           \
+    X(TANK_SPAWNED,     "on_tank_spawned")                                   \
+    X(TANK_KILLED,      "on_tank_killed")                                    \
+    X(LGM_DIED,         "on_lgm_died")                                       \
+    X(LGM_LANDED,       "on_lgm_landed")                                     \
+    X(BASE_CAPTURED,    "on_base_captured")                                  \
+    X(BASE_NEUTRALIZED, "on_base_neutralized")                               \
+    X(PILL_CAPTURED,    "on_pill_captured")                                  \
+    X(PILL_PLACED,      "on_pill_placed")                                    \
+    X(PILL_PICKED_UP,   "on_pill_picked_up")                                 \
+    X(PILL_KILLED,      "on_pill_killed")                                    \
+    X(BUILT,            "on_built")                                          \
+    X(MINE_LAID,        "on_mine_laid")                                      \
+    X(MINE_EXPLOSION,   "on_mine_explosion")
+
+typedef enum {
+#define SCN_HOOK_ID_ROW(id, name) SCN_HOOK_##id,
+    SCN_HOOK_LIST(SCN_HOOK_ID_ROW)
+#undef SCN_HOOK_ID_ROW
+    SCN_HOOK_COUNT
+} ScnHookId;
+
+static const char *const kScnHookNames[] = {
+#define SCN_HOOK_NAME_ROW(id, name) name,
+    SCN_HOOK_LIST(SCN_HOOK_NAME_ROW)
+#undef SCN_HOOK_NAME_ROW
+};
+
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnHookNames) / sizeof(kScnHookNames[0])) ==
+        (int)SCN_HOOK_COUNT,
+    hook_name_table_is_the_whole_hook_list);
+
 /* ── The host ─────────────────────────────────────────────────────── */
 
 struct ScenarioHost {
@@ -249,11 +311,10 @@ struct ScenarioHost {
      * whichever thread hit the limit wrote and the tick thread says. */
     ScnVmLock        lock;
 
-    /* The round's lifecycle functions, looked up once at the boot that
-     * defines them. LUA_NOREF for a script that defines neither, which is
-     * most of them. */
-    int              onSetupRef;
-    int              onStartRef;
+    /* The round's functions, looked up once at the boot that defines them.
+     * LUA_NOREF for every name the script does not use, which for most
+     * scripts is most of them. */
+    int              hooks[SCN_HOOK_COUNT];
 
     /* Hook and policy errors in a row, and what happens at
      * SCN_ERROR_LIMIT of them. Both are the round's, not the
@@ -264,6 +325,22 @@ struct ScenarioHost {
     /* on_start is owed to the first running tick of the round the start
      * set this on. */
     bool             startPending;
+
+    /* What the round was doing the last time a tick looked at it. on_end is
+     * the move from anything else into game over, and this is the half of
+     * that comparison the sim does not hold: the state is read at the end
+     * of the tick the round ended in, whether the frame ended it or a hook
+     * did from the drain a few lines earlier. */
+    ServerState      lastState;
+
+    /* What team each seat was on the last time the host looked. The lobby
+     * slot event carries the team a seat is on and nothing about the team
+     * it was on, so the change on_team_changed reports is the difference
+     * between the event and this. Filled from the roster at the attach and
+     * again at every round start, so a round opens agreeing with the world
+     * rather than reporting a change for every seat that is on a team at
+     * all. */
+    uint8_t          teams[MAX_TANKS];
 
     /* One line for the players, waiting for a tick to say it. */
     char             pending[SCN_TEXT_MAX];
@@ -842,36 +919,84 @@ static void scnErrorCleared(ScenarioHost *h) {
     h->errors = 0;
 }
 
-/* ── The lifecycle hooks ──────────────────────────────────────────── */
+/* ── The hooks ────────────────────────────────────────────────────── */
 
-/* Hold on to a no-argument global at the boot that defines it, rather than
- * looking the name up per call. Absent is not an error: most scenarios
- * define neither hook. */
+/* Hold on to one function at the boot that defines it, rather than looking
+ * the name up per call. A script may write it as a global or as a field of
+ * its own scenario table, and the global wins where a script does both.
+ * Absent is not an error and is the ordinary case: a scenario defines the
+ * few hooks it cares about and none of the rest. */
 static int scnHookRef(lua_State *L, const char *name) {
     lua_getglobal(L, name);
-    if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 1);
-        return LUA_NOREF;
+    if (lua_isfunction(L, -1)) {
+        return luaL_ref(L, LUA_REGISTRYINDEX);
     }
-    return luaL_ref(L, LUA_REGISTRYINDEX);
+    lua_pop(L, 1);
+
+    lua_getglobal(L, "scenario");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, name);
+        if (lua_isfunction(L, -1)) {
+            int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            lua_pop(L, 1);          /* the scenario table */
+            return ref;
+        }
+        lua_pop(L, 1);              /* the field, which is not a function */
+    }
+    lua_pop(L, 1);                  /* scenario, or whatever the global held */
+    return LUA_NOREF;
 }
 
-/* Run one of them. A scenario that is off runs none, an absent one is not a
- * call at all and leaves the error count where it was, and one that raises
- * carries the count toward the limit.
- *
- * The caller holds the VM lock. */
-static void scnHookRun(ScenarioHost *h, int ref, const char *name) {
-    if (h->disabled || h->L == NULL || ref == LUA_NOREF) {
-        return;
+/* Resolve every name at once, at the boot of the state that defines them. */
+static void scnHooksResolve(ScenarioHost *h, lua_State *L) {
+    int i;
+
+    for (i = 0; i < (int)SCN_HOOK_COUNT; i++) {
+        h->hooks[i] = scnHookRef(L, kScnHookNames[i]);
     }
-    lua_rawgeti(h->L, LUA_REGISTRYINDEX, ref);
-    if (lua_pcall(h->L, 0, 0, 0) != 0) {
-        scnErrorRaised(h, name, scnLuaError(h->L));
+}
+
+static void scnHooksForget(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < (int)SCN_HOOK_COUNT; i++) {
+        h->hooks[i] = LUA_NOREF;
+    }
+}
+
+/* Push one hook, ready for its arguments. False when there is nothing to
+ * call: a scenario switched off for the round runs none of them, and a name
+ * the script never defined is not a call at all and leaves the error count
+ * where it was.
+ *
+ * The caller holds the VM lock, and must reach scnHookCall for every true
+ * this answers — the function it pushed is on the stack until then. */
+static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
+    if (h->disabled || h->L == NULL || h->hooks[id] == LUA_NOREF) {
+        return false;
+    }
+    lua_rawgeti(h->L, LUA_REGISTRYINDEX, h->hooks[id]);
+    return true;
+}
+
+/* Make the call, with the nargs the caller has pushed since. One that
+ * raises carries the error count toward the limit and one that returns puts
+ * it back to zero. */
+static void scnHookCall(ScenarioHost *h, ScnHookId id, int nargs) {
+    if (lua_pcall(h->L, nargs, 0, 0) != 0) {
+        scnErrorRaised(h, kScnHookNames[id], scnLuaError(h->L));
         lua_pop(h->L, 1);
         return;
     }
     scnErrorCleared(h);
+}
+
+/* One that takes nothing: the lifecycle calls with no payload. */
+static void scnHookRun(ScenarioHost *h, ScnHookId id) {
+    if (!scnHookBegin(h, id)) {
+        return;
+    }
+    scnHookCall(h, id, 0);
 }
 
 /* ── The roster audit ─────────────────────────────────────────────── */
@@ -939,8 +1064,18 @@ static void scnSayPending(ScenarioHost *h) {
 
 /* ── The bus events ───────────────────────────────────────────────── */
 
+/* Who caused what is being queued. Neither channel carries it, so it is
+ * read off the sim here, which is the only moment it can be: both callbacks
+ * run from inside the work that produced the fact — the op handler, or the
+ * spawn the drain is making — and by the time a hook runs for the entry
+ * that work is a tick behind and the sim says nothing about it. */
+static uint8_t scnActorNow(const ScenarioHost *h) {
+    return serverSimIsScenarioActing(h->sim) ? SCN_EVENT_ACTOR_SCRIPT
+                                             : SCN_EVENT_ACTOR_NONE;
+}
+
 /* The host listens to both of the server's channels and does the same thing
- * with each: copy into the one queue and return.
+ * with each: read the mark, copy into the one queue and return.
  *
  * This one runs inside serverSimPublishControl's deliver loop, which holds
  * the publishing flag across it and asserts that nothing publishes from
@@ -957,7 +1092,7 @@ static void scnDeliverControl(void *ctx, const struct ControlEvent *evt) {
     if (h == NULL) {
         return;
     }
-    scenarioEventsQueueControl(&h->events, evt);
+    scenarioEventsQueueControl(&h->events, evt, scnActorNow(h));
 }
 
 static void scnDeliverEvent(void *ctx, const GameEvent *evt) {
@@ -966,17 +1101,327 @@ static void scnDeliverEvent(void *ctx, const GameEvent *evt) {
     if (h == NULL) {
         return;
     }
-    scenarioEventsQueueGame(&h->events, evt);
+    scenarioEventsQueueGame(&h->events, evt, scnActorNow(h));
 }
 
-/* What the drain does with one entry. Turning it into the script's hook for
- * that event is the binding table's work — including reading the channel to
- * tell which of the two numberings the type belongs to. Until then an entry
- * is read off the queue in order and the numbers on the queue are what it
- * leaves behind. */
+/* ── One entry, one hook ──────────────────────────────────────────── */
+
+/* A game event's eight bytes are kept whole, so an index into data is the
+ * offset the emitting callback wrote at — including the bytes past
+ * gameEventDataSize, which never reach a client and are where the mine's
+ * layer and the builder's death square sit. A control event's is the front
+ * of its variant, which is why it is read back through the variant below
+ * rather than at an offset of this file's own.
+ *
+ * Item indices on an event are 0-based; every one of them goes into Lua
+ * through the one helper that adds. Player slots are 0-based on both sides
+ * and go through nothing. */
+
+/* The event the entry was copied from, as the struct that named its fields.
+ * Only the first SCN_EVENT_DATA_MAX bytes of the variant were kept, which
+ * scenario_events.c holds against the two variants read deepest into; the
+ * rest is left zero. */
+static void scnControlEventOf(const ScnQueuedEvent *e, ControlEvent *out) {
+    memset(out, 0, sizeof(*out));
+    out->type = (ControlEventType)e->type;
+    memcpy(&out->u, e->data, SCN_EVENT_DATA_MAX);
+}
+
+/* One tank's death. The wire order is [killer, killed, cause], and the hook
+ * takes the victim first: it is the hook's subject, and the killer is what
+ * happened to it. */
+static void scnHookTankKilled(ScenarioHost *h, const ScnQueuedEvent *e,
+                              bool scripted) {
+    const char *cause = scenarioLuaDeathCauseWord((int)e->data[2]);
+
+    if (cause == NULL || !scnHookBegin(h, SCN_HOOK_TANK_KILLED)) {
+        return;
+    }
+    lua_pushinteger(h->L, (lua_Integer)e->data[1]);   /* the victim */
+    lua_pushinteger(h->L, (lua_Integer)e->data[0]);   /* the killer */
+    lua_pushstring(h->L, cause);
+    lua_pushboolean(h->L, scripted ? 1 : 0);
+    scnHookCall(h, SCN_HOOK_TANK_KILLED, 4);
+}
+
+/* A base changed hands. One event carries both facts and the new owner is
+ * what tells them apart: a capture names who took it, a neutralisation has
+ * nobody to name and says who lost it. */
+static void scnHookBaseOwner(ScenarioHost *h, const ScnQueuedEvent *e,
+                             bool scripted) {
+    lua_Integer index = scenarioLuaIndexToScript((int)e->data[2]);
+
+    if (e->data[0] == NEUTRAL) {
+        if (!scnHookBegin(h, SCN_HOOK_BASE_NEUTRALIZED)) {
+            return;
+        }
+        lua_pushinteger(h->L, index);
+        lua_pushinteger(h->L, (lua_Integer)e->data[1]);   /* the old owner */
+        lua_pushboolean(h->L, scripted ? 1 : 0);
+        scnHookCall(h, SCN_HOOK_BASE_NEUTRALIZED, 3);
+        return;
+    }
+    if (!scnHookBegin(h, SCN_HOOK_BASE_CAPTURED)) {
+        return;
+    }
+    lua_pushinteger(h->L, index);
+    lua_pushinteger(h->L, (lua_Integer)e->data[1]);       /* the old owner */
+    lua_pushinteger(h->L, (lua_Integer)e->data[0]);       /* the new owner */
+    lua_pushboolean(h->L, scripted ? 1 : 0);
+    scnHookCall(h, SCN_HOOK_BASE_CAPTURED, 4);
+}
+
+/* A build that finished. The action byte is the builder's own request code
+ * and a number that names none is a fact the host cannot describe, so it
+ * runs no hook for it rather than handing a script a word of its own. */
+static void scnHookBuilt(ScenarioHost *h, const ScnQueuedEvent *e,
+                         bool scripted) {
+    const char *action = scenarioLuaBuiltActionWord((int)e->data[1]);
+
+    if (action == NULL || !scnHookBegin(h, SCN_HOOK_BUILT)) {
+        return;
+    }
+    lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+    lua_pushstring(h->L, action);
+    lua_pushinteger(h->L, (lua_Integer)e->data[2]);
+    lua_pushinteger(h->L, (lua_Integer)e->data[3]);
+    lua_pushboolean(h->L, scripted ? 1 : 0);
+    scnHookCall(h, SCN_HOOK_BUILT, 5);
+}
+
+/* One game event, as the hook written for it. Each case states the payload
+ * the emitting callback wrote, in its own order, above the arguments the
+ * hook takes — the two are not always the same order, and where they differ
+ * is where an off-by-one would otherwise hide. An event no hook is written
+ * for falls out of the bottom. */
+static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
+                             bool scripted) {
+    switch (e->type) {
+        case EVENT_TANK_KILLED:
+            scnHookTankKilled(h, e, scripted);
+            return;
+
+        case EVENT_TANK_SPAWNED:
+            /* [player, mx, my, respawn] — the last byte is a flag and
+               reaches Lua as one. */
+            if (!scnHookBegin(h, SCN_HOOK_TANK_SPAWNED)) return;
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[2]);
+            lua_pushboolean(h->L, e->data[3] != 0);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_TANK_SPAWNED, 5);
+            return;
+
+        case EVENT_LGM_LOST:
+            /* [victim, killer, quiet, mx, my]. The quiet byte is the
+               announce policy's answer to the players and is no business of
+               a hook; the square behind it is where the man died, which the
+               emit captures before the respawn overwrites his position. */
+            if (!scnHookBegin(h, SCN_HOOK_LGM_DIED)) return;
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[3]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[4]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_LGM_DIED, 5);
+            return;
+
+        case EVENT_LGM_LANDED:
+            /* [player, mx, my] */
+            if (!scnHookBegin(h, SCN_HOOK_LGM_LANDED)) return;
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[2]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_LGM_LANDED, 4);
+            return;
+
+        case EVENT_BASE_CAPTURED:
+            scnHookBaseOwner(h, e, scripted);
+            return;
+
+        case EVENT_PILL_CAPTURED:
+            /* [new, old, index, quiet]. A pillbox has no hook of its own
+               for being neutralised, so this one carries every change of
+               owner, with game.NEUTRAL as the new one where nobody took
+               it. */
+            if (!scnHookBegin(h, SCN_HOOK_PILL_CAPTURED)) return;
+            lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[2]));
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PILL_CAPTURED, 4);
+            return;
+
+        case EVENT_PILL_PLACED:
+            /* [player, index, mx, my], and the hook names the pillbox
+               first: the two are the other way round from the event. */
+            if (!scnHookBegin(h, SCN_HOOK_PILL_PLACED)) return;
+            lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[1]));
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PILL_PLACED, 3);
+            return;
+
+        case EVENT_PILL_PICKED_UP:
+            /* [player, index], and the same swap. */
+            if (!scnHookBegin(h, SCN_HOOK_PILL_PICKED_UP)) return;
+            lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[1]));
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PILL_PICKED_UP, 3);
+            return;
+
+        case EVENT_PILL_KILLED:
+            /* [index, attacker] — this one already leads with the item. */
+            if (!scnHookBegin(h, SCN_HOOK_PILL_KILLED)) return;
+            lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[0]));
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PILL_KILLED, 3);
+            return;
+
+        case EVENT_BUILT:
+            scnHookBuilt(h, e, scripted);
+            return;
+
+        case EVENT_MINE_PLACED:
+            /* [player, mx, my]. The event never reaches a client — it would
+               hand every recipient a map of the minefield — and the host
+               hears it because it is not the wire. */
+            if (!scnHookBegin(h, SCN_HOOK_MINE_LAID)) return;
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[2]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_MINE_LAID, 4);
+            return;
+
+        case EVENT_MINE_EXPLODED:
+            /* [mx, my, layer]. The layer sits past the event's wire size
+               for the same reason the event above is local-only, so a hook
+               reads it and a client cannot. */
+            if (!scnHookBegin(h, SCN_HOOK_MINE_EXPLOSION)) return;
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[2]);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_MINE_EXPLOSION, 4);
+            return;
+
+        default:
+            /* Every other game event is one no hook is written for. */
+            return;
+    }
+}
+
+/* A lobby slot event, which is two facts in one: that the seat changed at
+ * all, and — where the team differs from the copy the host keeps — that it
+ * changed team.
+ *
+ * The copy is brought up to date before either hook runs, and the change is
+ * reported first. A hook is free to move the seat again, and that lands as
+ * its own event next tick; reporting the change first means the team a
+ * script is told about is the team the event carried rather than one an
+ * on_lobby handler has already moved on from. */
+static void scnHookLobbySlot(ScenarioHost *h, const ControlEvent *evt,
+                             bool scripted) {
+    BYTE slot = evt->u.lobbySlot.playerNum;
+    BYTE team = evt->u.lobbySlot.slot.teamNumber;
+    bool changed;
+
+    if (slot >= MAX_TANKS) {
+        return;
+    }
+    changed        = (h->teams[slot] != team);
+    h->teams[slot] = team;
+
+    if (changed && scnHookBegin(h, SCN_HOOK_TEAM_CHANGED)) {
+        lua_pushinteger(h->L, (lua_Integer)slot);
+        lua_pushinteger(h->L, (lua_Integer)team);
+        lua_pushboolean(h->L, scripted ? 1 : 0);
+        scnHookCall(h, SCN_HOOK_TEAM_CHANGED, 3);
+    }
+    if (scnHookBegin(h, SCN_HOOK_LOBBY)) {
+        lua_pushinteger(h->L, (lua_Integer)slot);
+        lua_pushboolean(h->L, scripted ? 1 : 0);
+        scnHookCall(h, SCN_HOOK_LOBBY, 2);
+    }
+}
+
+static void scnControlEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
+                                bool scripted) {
+    ControlEvent evt;
+
+    scnControlEventOf(e, &evt);
+
+    switch (evt.type) {
+        case CTRL_PLAYER_JOIN:
+            if (!scnHookBegin(h, SCN_HOOK_PLAYER_JOIN)) return;
+            lua_pushinteger(h->L, (lua_Integer)evt.u.playerJoin.playerNum);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PLAYER_JOIN, 2);
+            return;
+
+        case CTRL_PLAYER_LEAVE:
+            if (!scnHookBegin(h, SCN_HOOK_PLAYER_LEAVE)) return;
+            lua_pushinteger(h->L, (lua_Integer)evt.u.playerLeave.playerNum);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PLAYER_LEAVE, 2);
+            return;
+
+        case CTRL_LOBBY_SLOT:
+            scnHookLobbySlot(h, &evt, scripted);
+            return;
+
+        case CTRL_CHAT: {
+            /* fromPlayer says what body holds. A seat sent raw text; the
+               two sentinels above the seats are the server talking to
+               itself, in a packed form with no sender to name, and there is
+               no on_chat for those.
+
+               The length is held against what the queue kept rather than
+               against the field, which is wider than a player's line can
+               be: a line is bytes, and a hook is handed the bytes that are
+               there. */
+            size_t len = evt.u.chat.bodyLen;
+
+            if (evt.u.chat.fromPlayer >= MAX_TANKS) return;
+            if (len > (size_t)PACKET_MAX_CHAT_MESSAGE) {
+                len = (size_t)PACKET_MAX_CHAT_MESSAGE;
+            }
+            if (!scnHookBegin(h, SCN_HOOK_CHAT)) return;
+            lua_pushinteger(h->L, (lua_Integer)evt.u.chat.fromPlayer);
+            lua_pushlstring(h->L, (const char *)evt.u.chat.body, len);
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_CHAT, 3);
+            return;
+        }
+
+        default:
+            /* Every other control event is one no hook is written for. */
+            return;
+    }
+}
+
+/* What the drain does with one entry. The channel is read first, because a
+ * type byte is a CTRL_* on one and an EVENT_* on the other and the two
+ * numberings overlap. */
 static void scnEventConsume(void *ctx, const ScnQueuedEvent *e) {
-    (void)ctx;
-    (void)e;
+    ScenarioHost *h = (ScenarioHost *)ctx;
+    bool          scripted;
+
+    if (h == NULL) {
+        return;
+    }
+    scripted = (e->actor == SCN_EVENT_ACTOR_SCRIPT);
+
+    if (e->channel == SCN_EVENT_CHANNEL_CONTROL) {
+        scnControlEventHook(h, e, scripted);
+    } else {
+        scnGameEventHook(h, e, scripted);
+    }
 }
 
 /* Say what the queue had no room for, once, and count each of them. The
@@ -1004,12 +1449,20 @@ static void scnReportDrops(ScenarioHost *h) {
  * tick, because a round's start comes before anything the round has
  * produced — the state tells the two branches apart and the flag tells the
  * first running tick from the ones after it; then the events that have
- * arrived since the last tick; then what the queue had no room for, after
- * the drain so a drop the drain caused is reported in its own tick; then
- * the line the round owes the players, last, so a line any of the three
- * above raised goes out in this tick rather than the next. */
+ * arrived since the last tick; then on_tick, which is the script's own
+ * frame and comes after the facts the frame produced; then on_end where the
+ * round has just finished; then what the queue had no room for, after the
+ * drain so a drop the drain caused is reported in its own tick; then the
+ * line the round owes the players, last, so a line any of the above raised
+ * goes out in this tick rather than the next.
+ *
+ * The state is read again between the calls rather than once at the top. A
+ * hook can end the round from the drain and on_tick can end it too, and
+ * neither the frame the script gets nor the end it is told about should be
+ * decided from a state that has already moved on. */
 static void scnTick(void *ctx) {
     ScenarioHost *h = (ScenarioHost *)ctx;
+    ServerState   state;
 
     if (h == NULL) {
         return;
@@ -1018,9 +1471,22 @@ static void scnTick(void *ctx) {
     if (h->startPending &&
         serverSimGetState(h->sim) == serverStateRunning) {
         h->startPending = false;
-        scnHookRun(h, h->onStartRef, "on_start");
+        scnHookRun(h, SCN_HOOK_START);
     }
     (void)scenarioEventsDrain(&h->events, scnEventConsume, h);
+
+    if (serverSimGetState(h->sim) == serverStateRunning &&
+        scnHookBegin(h, SCN_HOOK_TICK)) {
+        lua_pushinteger(h->L, (lua_Integer)serverSimGetTick(h->sim));
+        scnHookCall(h, SCN_HOOK_TICK, 1);
+    }
+
+    state = serverSimGetState(h->sim);
+    if (state == serverStateGameOver && h->lastState != serverStateGameOver) {
+        scnHookRun(h, SCN_HOOK_END);
+    }
+    h->lastState = state;
+
     scnReportDrops(h);
     scnSayPending(h);
     scnLockLeave(&h->lock);
@@ -1070,8 +1536,23 @@ static bool scnAllowExtraTeams(void *ctx) {
 static void scnRoundWithoutScenario(ScenarioHost *h) {
     h->disabled     = true;
     h->startPending = false;
-    h->onSetupRef   = LUA_NOREF;
-    h->onStartRef   = LUA_NOREF;
+    scnHooksForget(h);
+}
+
+/* The teams the roster is on right now. Called wherever the host starts
+ * again from what the world says — at the attach, and at every round start —
+ * so the first lobby slot event of a round is measured against the round's
+ * own roster rather than against nothing.
+ *
+ * An empty seat reads as team zero here and on the event, which is what the
+ * lobby calls a seat with no team, so the two agree either way. */
+static void scnSeedTeams(ScenarioHost *h) {
+    BYTE i;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        ServerSimRosterSlot slot;
+        h->teams[i] = serverSimGetRosterSlot(h->sim, i, &slot) ? slot.team : 0;
+    }
 }
 
 /* The round start's work, with the VM lock already held.
@@ -1126,8 +1607,7 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     }
     h->L        = L;
     h->manifest = fresh;
-    h->onSetupRef = scnHookRef(L, "on_setup");
-    h->onStartRef = scnHookRef(L, "on_start");
+    scnHooksResolve(h, L);
 
     /* Off for a round is off for that round alone. This one starts with the
        count at zero and the scenario running, whatever the last one did. */
@@ -1141,10 +1621,17 @@ static void scnRoundStartLocked(ScenarioHost *h) {
        drain. */
     scenarioEventsReset(&h->events);
 
+    /* The same for the roster copy the team change is measured against, and
+       for the state on_end watches: both are this round's, and both are
+       read before on_setup so a setup that moves a seat or ends the round
+       is itself the first change. */
+    scnSeedTeams(h);
+    h->lastState = serverSimGetState(h->sim);
+
     scnApplyRules(h);
 
     scnRosterHumans(h, humans);
-    scnHookRun(h, h->onSetupRef, "on_setup");
+    scnHookRun(h, SCN_HOOK_SETUP);
     scnRosterAudit(h, humans);
 }
 
@@ -1212,10 +1699,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->sim          = sim;
     h->lua.sim      = sim;
     h->lua.manifest = &h->manifest;
-    /* The lifecycle hooks belong to a round's VM, and this is the one the
-       table is read in. The first round start resolves them. */
-    h->onSetupRef = LUA_NOREF;
-    h->onStartRef = LUA_NOREF;
+    /* The hooks belong to a round's VM, and this is the one the table is
+       read in. The first round start resolves them. */
+    scnHooksForget(h);
     /* Neither of these is the zero calloc left: no subscriber is -1. */
     h->sub        = SUBSCRIBER_HANDLE_INVALID;
     snprintf(h->sidecar, sizeof(h->sidecar), "%s", sidecar);
@@ -1284,6 +1770,10 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        scenario runs without events. */
     h->sub = serverSimRegisterSubscriber(sim, scnDeliverControl, h);
     scenarioEventsReset(&h->events);
+    /* And the roster copy, for the same reason: the replay above is a
+       picture of how things stand, so the teams it named are what the host
+       starts from rather than changes to report. */
+    scnSeedTeams(h);
     if (h->sub == SUBSCRIBER_HANDLE_INVALID ||
         !serverSimSetSubscriberEventDeliver(sim, h->sub, scnDeliverEvent)) {
         scnSay(h->lastError, sizeof(h->lastError),

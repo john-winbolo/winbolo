@@ -358,6 +358,38 @@ static const char *scnBuilderJobWord(BuilderJob j) {
     return NULL;
 }
 
+const char *scenarioLuaBuiltActionWord(int action) {
+    switch (action) {
+        case builderJobTrees:    return "trees";
+        case builderJobRoad:     return "road";
+        case builderJobBuilding: return "building";
+        /* Not "pill". input_packet.h says so where the event is defined: a
+           new pillbox going down is EVENT_PILL_PLACED, so the one thing a
+           build of kind pill can be on EVENT_BUILT is a repair of one that
+           was already there. An order is still given as "pill" — the engine
+           has six request codes and decides repairing from what is on the
+           square — so this is the one direction the two spellings differ,
+           and it differs because the fact does. */
+        case builderJobPill:     return "repair";
+        /* Nor does a mine reach this event: laying one is EVENT_MINE_PLACED.
+           Spelled anyway, so the answer does not depend on which facts the
+           engine happens to route here today. */
+        case builderJobMine:     return "mine";
+        case builderJobBoat:     return "boat";
+        default:                 return NULL;
+    }
+}
+
+const char *scenarioLuaDeathCauseWord(int cause) {
+    switch (cause) {
+        case LAST_DEATH_BY_MINES:   return "mine";
+        case LAST_DEATH_BY_DEEPSEA: return "deep_sea";
+        case LAST_DEATH_BY_SHELL:   return "shell";
+        case LAST_DEATH_BY_SCRIPT:  return "script";
+        default:                    return NULL;
+    }
+}
+
 /* ── The counts and the clock ─────────────────────────────────────── */
 
 static int scnLuaTick(lua_State *L) {

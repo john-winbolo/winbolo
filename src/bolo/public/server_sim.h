@@ -1510,6 +1510,28 @@ void serverSimPublishSimRules(ServerSim *sim);
 bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
                               double *out);
 
+/*********************************************************
+ *NAME:          serverSimIsScenarioActing
+ *PURPOSE:
+ *  Whether what the engine is doing right now is a
+ *  scenario's doing. True for the duration of an op handler
+ *  and of the per-tick roster drain, which is where a bot a
+ *  script asked for actually lands — a tick after the op
+ *  that asked for it, and so outside the handler.
+ *
+ *  Neither event channel carries an actor, and neither needs
+ *  to: a remote client runs no hooks. This is what a host
+ *  reads as it queues an event, so the hook it later runs
+ *  can say whether the fact was the script's own doing. A
+ *  handler that ignores its own edits tests that.
+ *
+ *  False for a NULL sim and for a sim with no scenario.
+ *
+ *ARGUMENTS:
+ *  sim - The sim being asked
+ *********************************************************/
+bool serverSimIsScenarioActing(const ServerSim *sim);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);

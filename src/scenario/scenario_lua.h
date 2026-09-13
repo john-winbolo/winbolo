@@ -138,6 +138,29 @@ BYTE scenarioLuaIndexToOp(lua_Integer n);
  *********************************************************/
 lua_Integer scenarioLuaIndexToScript(int n);
 
+/* ── The words an event's payload reads as ──────────────────────────── */
+
+/*********************************************************
+ *NAME:          scenarioLuaBuiltActionWord
+ *PURPOSE:
+ *  What the action byte of a build event is called, as the
+ *  word a hook is handed. The builder's six request codes,
+ *  with one difference from the word an order takes: a build
+ *  of kind pill on this event is always a repair, because a
+ *  new pillbox going down is its own event. NULL for a
+ *  number that names no action.
+ *********************************************************/
+const char *scenarioLuaBuiltActionWord(int action);
+
+/*********************************************************
+ *NAME:          scenarioLuaDeathCauseWord
+ *PURPOSE:
+ *  What a tank died of, as the word a hook is handed: the
+ *  four LAST_DEATH_BY_* values the engine writes. NULL for a
+ *  number that names none of them.
+ *********************************************************/
+const char *scenarioLuaDeathCauseWord(int cause);
+
 /* ── The rule names ─────────────────────────────────────────────────── */
 
 /*********************************************************

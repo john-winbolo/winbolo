@@ -126,10 +126,13 @@ static uint16_t seMarkOf(const ScnQueuedEvent *e) {
     return (uint16_t)(e->data[0] | ((uint16_t)e->data[1] << 8));
 }
 
+/* Queued as nobody's doing: these cases drive the queue straight, with no
+   sim to read an actor off. What the actor byte is for is the hook cases'
+   business. */
 static void seQueue(ScnEventQueue *q, uint16_t mark) {
     GameEvent ev;
     seFill(&ev, mark);
-    scenarioEventsQueueGame(q, &ev);
+    scenarioEventsQueueGame(q, &ev, SCN_EVENT_ACTOR_NONE);
 }
 
 static void seRaise(ServerSim *sim, uint16_t mark) {
@@ -154,7 +157,7 @@ static void seFillControl(ControlEvent *evt, uint16_t mark) {
 static void seQueueControl(ScnEventQueue *q, uint16_t mark) {
     ControlEvent evt;
     seFillControl(&evt, mark);
-    scenarioEventsQueueControl(q, &evt);
+    scenarioEventsQueueControl(q, &evt, SCN_EVENT_ACTOR_NONE);
 }
 
 static void sePublish(ServerSim *sim, uint16_t mark) {

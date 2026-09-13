@@ -3327,6 +3327,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The bus events the host queues and drains: the subscriber, the
     # fixed queue and the bounded drain at the end of each tick.
     tests/unit/test_scenario_events.c
+    # What a drained event becomes: the hook written for it, the payload it
+    # is handed, the mark saying whether the scenario caused the fact, and
+    # the per-tick and round-end calls the drain makes beside them.
+    tests/unit/test_scenario_hooks.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -5039,6 +5043,13 @@ set(_unit_test_names
     scenario_events_both_channels_in_publish_order
     scenario_events_channel_says_which
     scenario_events_overflow_covers_both
+    scenario_hooks_every_hook_from_its_event
+    scenario_hooks_fire_one_tick_later
+    scenario_hooks_scripted_both_ways
+    scenario_hooks_spawn_drain_is_scripted
+    scenario_hooks_team_changed_on_difference
+    scenario_hooks_tick_and_end
+    scenario_hooks_error_counts_and_disables
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

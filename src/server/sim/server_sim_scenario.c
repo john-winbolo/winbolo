@@ -1925,6 +1925,7 @@ static void scenarioRosterRemoveNow(ServerSim *sim, BYTE slot) {
 
 void serverSimScenarioDrainRoster(ServerSim *sim) {
     ScnRosterQueueEntry entry;
+    bool                was;
 
     if (sim == NULL || sim->scenarioRosterCount == 0) {
         return;
@@ -1943,11 +1944,18 @@ void serverSimScenarioDrainRoster(ServerSim *sim) {
         (uint8_t)((sim->scenarioRosterHead + 1) % SCN_ROSTER_QUEUE_MAX);
     sim->scenarioRosterCount--;
 
+    /* Marked as the scenario's, because it is: this queue holds nothing but
+       what a script asked for. A bot lands here rather than in the handler
+       that asked for it, a tick later, and the join, the lobby slot and the
+       tank spawn it publishes on the way in are all the script's doing. */
+    was                 = sim->scenarioActing;
+    sim->scenarioActing = true;
     if (entry.isSpawn) {
         scenarioRosterSpawnNow(sim, &entry.spawn);
     } else {
         scenarioRosterRemoveNow(sim, entry.removeSlot);
     }
+    sim->scenarioActing = was;
 }
 
 void serverSimScenarioResetRoster(ServerSim *sim) {
@@ -2430,22 +2438,12 @@ static bool scenarioOpIsRoster(ScenarioOpType t) {
            t == SCN_OP_LOBBY_SET_TEAM;
 }
 
-ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
-                                     ScnOpOut *out) {
-    /* Loud in a development build, because either of these is a caller bug
-     * and the host that made it should hear about it at once. */
-    assert(sim != NULL);
-    assert(op != NULL);
-    /* And survivable in a shipped one, where the asserts above are gone:
-     * RelWithDebInfo carries -DNDEBUG. This is the call an out-of-process
-     * scenario host makes most, and a host that hands over a pointer it
-     * failed to resolve would otherwise take the whole server down and every
-     * player in the round with it. The other entry points below answer a
-     * NULL sim the same way. */
-    if (sim == NULL || op == NULL) {
-        return SCN_OP_BAD_CALL;
-    }
-
+/* The prelude and the handler for one op, with the caller holding the actor
+ * mark across the whole of it. Split from the entry point below so the mark
+ * goes on once and comes off once however the op ends: every case returns
+ * where it stands. */
+static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
+                                   ScnOpOut *out) {
     /* A policy callback is a question the engine asks mid-operation. It
      * answers and nothing else: an op from inside one would mutate state
      * the caller is halfway through reading. A depth, not a flag, so a
@@ -2567,6 +2565,43 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
 
     /* A value that is not a member of the enum at all. */
     return SCN_OP_UNSUPPORTED;
+}
+
+ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
+                                     ScnOpOut *out) {
+    ScnOpResult r;
+    bool        was;
+
+    /* Loud in a development build, because either of these is a caller bug
+     * and the host that made it should hear about it at once. */
+    assert(sim != NULL);
+    assert(op != NULL);
+    /* And survivable in a shipped one, where the asserts above are gone:
+     * RelWithDebInfo carries -DNDEBUG. This is the call an out-of-process
+     * scenario host makes most, and a host that hands over a pointer it
+     * failed to resolve would otherwise take the whole server down and every
+     * player in the round with it. The other entry points below answer a
+     * NULL sim the same way. */
+    if (sim == NULL || op == NULL) {
+        return SCN_OP_BAD_CALL;
+    }
+
+    /* Everything a handler publishes is the scenario's doing, and this is
+     * what says so. Saved and put back rather than cleared, because the
+     * funnel can be reached from inside itself — a handler's placement asks
+     * a policy and a policy runs the script's own Lua — and the outer op is
+     * still the script's whatever the inner call did. The mark is held
+     * across the prelude's refusals as well, which costs nothing: a refused
+     * op publishes nothing for it to reach. */
+    was                 = sim->scenarioActing;
+    sim->scenarioActing = true;
+    r                   = scenarioApplyOp(sim, op, out);
+    sim->scenarioActing = was;
+    return r;
+}
+
+bool serverSimIsScenarioActing(const ServerSim *sim) {
+    return sim != NULL && sim->scenarioActing;
 }
 
 void serverSimSetScenarioPolicy(ServerSim *sim, const ScenarioPolicy *p) {

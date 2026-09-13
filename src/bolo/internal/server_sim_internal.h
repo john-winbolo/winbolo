@@ -618,7 +618,18 @@ struct ServerSim {
      * every op, but the one thing that guard exists for is the roster
      * edit re-entering the all-ready detector mid-start. So while the
      * window is open the funnel admits every op except the six roster
-     * handlers, which keep refusing. */
+     * handlers, which keep refusing.
+     *
+     * scenarioActing is who caused what the engine is about to publish.
+     * Neither event channel carries an actor — a ControlEvent has no
+     * such field and a game event has no room for one — and neither
+     * needs one, because a remote client runs no hooks. So the mark is
+     * the host's own annotation, and this is what it reads: set across
+     * an op handler and across the per-tick roster drain, which is
+     * where a bot a script asked for actually lands, a tick after the
+     * op that asked for it. The host's two deliver callbacks read it as
+     * they queue an event, and a hook that ignores the script's own
+     * edits tests what they wrote. */
     void                  *scenario;
     const ScenarioPolicy  *scenarioPolicy;
     uint8_t                inScenarioPolicy;
@@ -628,6 +639,7 @@ struct ServerSim {
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
     bool                   scenarioSetupWindow;
+    bool                   scenarioActing;
 
     /* What is left of a fill-rect that did not fit in one tick, and how
      * much of this tick's tile budget has been spent on one. The

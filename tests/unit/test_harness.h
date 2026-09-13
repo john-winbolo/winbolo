@@ -2355,6 +2355,17 @@ int run_scenario_events_both_channels_in_publish_order(void);
 int run_scenario_events_channel_says_which(void);
 int run_scenario_events_overflow_covers_both(void);
 
+/* The hooks (test_scenario_hooks.c): what a drained event becomes, the
+ * payload each hook is handed, the mark that says whether the scenario
+ * caused the fact, and the two lifecycle calls the drain makes. */
+int run_scenario_hooks_every_hook_from_its_event(void);
+int run_scenario_hooks_fire_one_tick_later(void);
+int run_scenario_hooks_scripted_both_ways(void);
+int run_scenario_hooks_spawn_drain_is_scripted(void);
+int run_scenario_hooks_team_changed_on_difference(void);
+int run_scenario_hooks_tick_and_end(void);
+int run_scenario_hooks_error_counts_and_disables(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

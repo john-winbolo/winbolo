@@ -84,15 +84,21 @@
  * either of those two variants growing past it, fails the build there. */
 #define SCN_EVENT_DATA_MAX 132
 
-/* Nobody caused it. Every queued entry carries this, because neither
- * channel carries any notion of who did: a ControlEvent has no actor field
- * and a game event has no room for one. The mark is meant to be the host's
- * own annotation, read off the sim at the moment of queueing, and there is
- * nothing to read yet. The same spelling scenario_defs.h gives SCN_NONE,
- * written out here so this header needs nothing from
- * src/bolo/scenario_api/; scenario_events.c sees both and holds them
- * against each other. */
-#define SCN_EVENT_ACTOR_NONE 0xFF
+/* Who caused it. Neither channel carries any notion of that — a
+ * ControlEvent has no actor field and a game event has no room for one — so
+ * the mark is the host's own annotation, read off the sim at the moment of
+ * queueing and written here.
+ *
+ * Nobody is the same spelling scenario_defs.h gives SCN_NONE, written out
+ * here so this header needs nothing from src/bolo/scenario_api/;
+ * scenario_events.c sees both and holds them against each other.
+ *
+ * The two values below are the two answers a host can give today. They sit
+ * at the top of the byte and leave the player slots free: if a fact ever
+ * names the player who caused it, that is where it goes and nothing here
+ * has to move. */
+#define SCN_EVENT_ACTOR_NONE   0xFF
+#define SCN_EVENT_ACTOR_SCRIPT 0xFE
 
 /* One event, as the host keeps it.
  *
@@ -101,9 +107,10 @@
  * a game event's eight bytes whole, or the first SCN_EVENT_DATA_MAX of a
  * control event's variant.
  *
- * actor is who caused it. Nothing fills it and it is always
- * SCN_EVENT_ACTOR_NONE — see SCN_EVENT_ACTOR_NONE above. The field is here
- * because the shape is what it is, not because there is a source for it. */
+ * actor is who caused it, as the queueing callback read it off the sim —
+ * SCN_EVENT_ACTOR_SCRIPT for a fact the running scenario's own op or its
+ * queued spawn produced, SCN_EVENT_ACTOR_NONE for everything else. It is
+ * what a hook's trailing scripted boolean is built from. */
 typedef struct {
     uint8_t type;
     uint8_t channel;
@@ -157,9 +164,15 @@ void scenarioEventsReset(ScnEventQueue *q);
  *  oldest is kept rather than overwritten: what a script
  *  needs is the start of a run it can still make sense of,
  *  not the tail of one.
+ *
+ *  actor is what the caller read off the sim as it was
+ *  handed the event, and is the only thing either of them
+ *  knows that the event itself does not carry.
  *********************************************************/
-void scenarioEventsQueueGame(ScnEventQueue *q, const GameEvent *evt);
-void scenarioEventsQueueControl(ScnEventQueue *q, const ControlEvent *evt);
+void scenarioEventsQueueGame(ScnEventQueue *q, const GameEvent *evt,
+                             uint8_t actor);
+void scenarioEventsQueueControl(ScnEventQueue *q, const ControlEvent *evt,
+                                uint8_t actor);
 
 /*********************************************************
  *NAME:          scenarioEventsWaiting
