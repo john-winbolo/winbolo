@@ -16,9 +16,7 @@
  *
  *  Reads are public accessors on server_sim.h and events
  *  are the control bus, so this header is the whole of the
- *  non-public surface. The one read here is the rules
- *  table, because the index that names a rule is this
- *  surface's own. It is on the include path of
+ *  non-public surface. It is on the include path of
  *  scenario_host and of the privileged profiles, and not of
  *  gui or runtime_only.
  *********************************************************/
@@ -43,22 +41,6 @@
  *********************************************************/
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out);
-
-/*********************************************************
- *NAME:          serverSimGetScenarioRule
- *PURPOSE:
- *  What one rule of the simulation's table is set to, as the
- *  double the set-rule op carries a value in. rule is a
- *  ScnRuleIndex; an index that names no rule returns false
- *  and leaves *out alone.
- *
- *  The double is exact for every integer rule in the table
- *  and for every value a float rule can hold, so this reads
- *  back what a set-rule op wrote rather than an
- *  approximation of it.
- *********************************************************/
-bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
-                              double *out);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioPolicy

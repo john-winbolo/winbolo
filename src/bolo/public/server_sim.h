@@ -1488,6 +1488,28 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, struct ControlEvent *evt);
  *********************************************************/
 void serverSimPublishSimRules(ServerSim *sim);
 
+/*********************************************************
+ *NAME:          serverSimGetScenarioRule
+ *PURPOSE:
+ *  What one rule of the simulation's table is set to, as the
+ *  double the set-rule op carries a value in. The double is
+ *  exact for every integer rule in the table and for every
+ *  value a float rule can hold, so this reads back what a
+ *  write put there rather than an approximation of it.
+ *
+ *  rule is an index into the rule list scenario_defs.h
+ *  builds, carried as a plain uint16_t so this call names
+ *  nothing a frontend cannot see. An index that names no
+ *  rule returns false and leaves *out alone.
+ *
+ *ARGUMENTS:
+ *  sim  - The sim whose table is being read
+ *  rule - Which rule, by its index in the list
+ *  out  - Filled with the rule's value
+ *********************************************************/
+bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
+                              double *out);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);

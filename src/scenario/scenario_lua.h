@@ -141,6 +141,17 @@ lua_Integer scenarioLuaIndexToScript(int n);
 /* ── The rule names ─────────────────────────────────────────────────── */
 
 /*********************************************************
+ *NAME:          scenarioLuaResultName
+ *PURPOSE:
+ *  What an op answered, as the word a refusal hands a
+ *  script: the enumerator's own spelling, "SCN_OP_RANGE" and
+ *  its neighbours. One table builds these, so the string a
+ *  script reads and the string a case asserts are the same
+ *  one. "" for a number that names no result.
+ *********************************************************/
+const char *scenarioLuaResultName(int result);
+
+/*********************************************************
  *NAME:          scenarioLuaRuleIndex
  *PURPOSE:
  *  The index of the rule a name spells, or -1 for a name

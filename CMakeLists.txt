@@ -5021,6 +5021,13 @@ set(_unit_test_names
     scenario_lua_shape_error_counts
     scenario_lua_rule_reads_the_table
     scenario_lua_tags_and_regions
+    scenario_lua_refusals_in_round
+    scenario_lua_refusals_in_lobby
+    scenario_lua_op_index_reaches_the_payload
+    scenario_lua_add_answers_its_index
+    scenario_lua_queued_answers_queued
+    scenario_lua_shape_raises_refusal_does_not
+    scenario_lua_detail_carries_the_number
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

@@ -9,11 +9,11 @@
  *Author:        John Morrison
  *Purpose:
  *  The marshalling between a script's tables and the typed
- *  reads the sim publishes, the way transport_control_codec.c
- *  marshals between the wire and the same structs. One
- *  table-driven registry, one row per script-visible
- *  function, and the row carries the line a document is
- *  written from.
+ *  reads the sim publishes and the typed ops it takes, the
+ *  way transport_control_codec.c marshals between the wire
+ *  and the same structs. One table-driven registry, one row
+ *  per script-visible function, and the row carries the line
+ *  a document is written from.
  *
  *  What every row holds to:
  *
@@ -25,6 +25,13 @@
  *  counts are slot counts rather than live ones, and a
  *  removed pill keeps its index so the ones above it keep
  *  their numbers.
+ *
+ *  A write fills one typed payload and hands it to the
+ *  funnel. It answers true, or true and "queued" while the
+ *  work is still going on, or nil with the refusal's own
+ *  name and one sentence carrying the number that mattered.
+ *  A refusal is an answer a script tests rather than an
+ *  error, so no refusal raises.
  *
  *  A shape error raises. A missing or mistyped argument, or
  *  a word that names no kind, is a luaL_error naming the
@@ -43,9 +50,11 @@
  *  nothing under src/bolo/internal/.
  *********************************************************/
 
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <lua.h>
@@ -54,9 +63,10 @@
 #include "platform_types.h"       /* BOLO_STATIC_ASSERT */
 #include "global.h"               /* the terrain codes, NEUTRAL, MAX_TANKS */
 #include "gametype.h"             /* gameOpen and its siblings */
-#include "server_sim.h"           /* the read accessors and their structs */
-#include "scenario_defs.h"        /* SCN_RULE_LIST, SCN_RULE_COUNT */
-#include "server_sim_scenario.h"  /* serverSimGetScenarioRule */
+#include "client_enums.h"         /* sndEffects — the sound row's words */
+#include "server_sim.h"           /* the accessors, and the rule read */
+#include "scenario_defs.h"        /* SCN_RULE_LIST, the op payloads */
+#include "server_sim_scenario.h"  /* serverSimApplyScenarioOp */
 
 #include "scenario_host.h"
 #include "scenario_manifest.h"
@@ -109,6 +119,47 @@ const char *scenarioLuaRuleName(int rule) {
     return kScnRuleNames[rule];
 }
 
+/* ── What an op answered ──────────────────────────────────────────── */
+
+/* One line per result code. The word a script reads off a refusal and the
+ * word a case asserts come from this one list, so the two cannot drift. */
+#define SCN_LUA_RESULT_LIST(X)                                               \
+    X(SCN_OP_OK)             X(SCN_OP_QUEUED)      X(SCN_OP_UNSUPPORTED)     \
+    X(SCN_OP_IN_POLICY)      X(SCN_OP_WRONG_STATE) X(SCN_OP_NO_SUCH_PLAYER)  \
+    X(SCN_OP_TANK_DEAD)      X(SCN_OP_IS_HUMAN)    X(SCN_OP_NO_SUCH_ITEM)    \
+    X(SCN_OP_BAD_SQUARE)     X(SCN_OP_BAD_TERRAIN) X(SCN_OP_RANGE)           \
+    X(SCN_OP_PAIR)           X(SCN_OP_CARRIED)     X(SCN_OP_FULL)            \
+    X(SCN_OP_ALREADY)        X(SCN_OP_TOO_BIG)     X(SCN_OP_RATE)            \
+    X(SCN_OP_NOT_FOUND)      X(SCN_OP_NO_STOCK)    X(SCN_OP_BAD_CALL)
+
+static const struct {
+    int         result;
+    const char *name;
+} kScnLuaResults[] = {
+#define SCN_LUA_RESULT_ROW(r) { (int)(r), #r },
+    SCN_LUA_RESULT_LIST(SCN_LUA_RESULT_ROW)
+#undef SCN_LUA_RESULT_ROW
+};
+
+/* The codes run from zero with no gaps, so the last one plus one is how many
+ * there are. A code added to the enum without a line above does not compile
+ * rather than reaching a script as "". */
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnLuaResults) / sizeof(kScnLuaResults[0])) ==
+        (int)SCN_OP_BAD_CALL + 1,
+    result_name_table_is_the_whole_result_enum);
+
+const char *scenarioLuaResultName(int result) {
+    size_t i;
+
+    for (i = 0; i < sizeof(kScnLuaResults) / sizeof(kScnLuaResults[0]); i++) {
+        if (kScnLuaResults[i].result == result) {
+            return kScnLuaResults[i].name;
+        }
+    }
+    return "";
+}
+
 /* ── The three index rules ────────────────────────────────────────── */
 
 BYTE scenarioLuaIndexToRead(lua_Integer n) {
@@ -146,16 +197,7 @@ static const ScnLuaCtx *scnCtx(lua_State *L) {
  * The truncation is this file's own rather than lua_tointeger's: PUC 5.4
  * reads 1.5 as no integer at all and LuaJIT reads it as 1, and a row answers
  * the same under both builds. */
-static lua_Integer scnArgInt(lua_State *L, int idx, const char *name) {
-    lua_Number v;
-
-    if (lua_type(L, idx) != LUA_TNUMBER) {
-        return (lua_Integer)luaL_argerror(
-            L, idx,
-            lua_pushfstring(L, "%s must be a number, got %s", name,
-                            luaL_typename(L, idx)));
-    }
-    v = lua_tonumber(L, idx);
+static lua_Integer scnWhole(lua_Number v) {
     /* Written as a negated in-range test, so a NaN takes the first branch
        rather than falling through both. */
     if (!(v >= (lua_Number)SCN_LUA_INT_MIN)) {
@@ -165,6 +207,74 @@ static lua_Integer scnArgInt(lua_State *L, int idx, const char *name) {
         return (lua_Integer)SCN_LUA_INT_MAX;
     }
     return (lua_Integer)v;
+}
+
+static lua_Integer scnArgInt(lua_State *L, int idx, const char *name) {
+    if (lua_type(L, idx) != LUA_TNUMBER) {
+        return (lua_Integer)luaL_argerror(
+            L, idx,
+            lua_pushfstring(L, "%s must be a number, got %s", name,
+                            luaL_typename(L, idx)));
+    }
+    return scnWhole(lua_tonumber(L, idx));
+}
+
+/* An argument a row may be called without. Absent and nil are the same
+ * thing: a script writing nil for a field it does not care about means what
+ * a script leaving the field off means. */
+static lua_Integer scnOptInt(lua_State *L, int idx, const char *name,
+                             lua_Integer def) {
+    if (lua_isnoneornil(L, idx)) {
+        return def;
+    }
+    return scnArgInt(L, idx, name);
+}
+
+/* Whether a number arrived as one a payload's byte can carry. Every row that
+ * fills a byte asks this first: a Lua 256 cast into one would arrive as seat
+ * 0 or as the square at the top corner. */
+static bool scnFitsByte(lua_Integer v) {
+    return v >= 0 && v <= 255;
+}
+
+/* A true or false argument. A number is not one, because 0 is true in Lua
+ * and a script writing 0 for false would otherwise set the flag. */
+static bool scnArgBool(lua_State *L, int idx, const char *name) {
+    if (!lua_isboolean(L, idx)) {
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "%s must be true or false, got %s",
+                                      name, luaL_typename(L, idx)));
+    }
+    return lua_toboolean(L, idx) != 0;
+}
+
+static bool scnOptBool(lua_State *L, int idx, const char *name, bool def) {
+    if (lua_isnoneornil(L, idx)) {
+        return def;
+    }
+    return scnArgBool(L, idx, name);
+}
+
+static void scnArgTable(lua_State *L, int idx, const char *name) {
+    if (!lua_istable(L, idx)) {
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "%s must be a table, got %s", name,
+                                      luaL_typename(L, idx)));
+    }
+}
+
+/* A text argument and how many bytes of it there are. The length is the
+ * row's business: text is refused for being too long, never cut, so the row
+ * holds it against its own field and says what it found. */
+static const char *scnArgText(lua_State *L, int idx, const char *name,
+                              size_t *len) {
+    if (lua_type(L, idx) != LUA_TSTRING) {
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "%s must be a string, got %s", name,
+                                      luaL_typename(L, idx)));
+        return NULL;   /* luaL_argerror does not return */
+    }
+    return lua_tolstring(L, idx, len);
 }
 
 /* A string argument. A number is not one: Lua would coerce it, the two
@@ -775,6 +885,1429 @@ static int scnLuaInRegion(lua_State *L) {
     return 1;
 }
 
+/* ══ The ops ══════════════════════════════════════════════════════════
+ *
+ * A row fills one typed payload, hands it to the funnel and answers what
+ * came back: true, true and "queued" while the work is still going on, or
+ * nil, the refusal's own name and one sentence with the number that
+ * mattered. A refusal is an answer rather than an error — a script tests it
+ * — and only a mistyped argument or a word that names nothing raises.
+ *
+ * A number that no payload byte could carry is refused here rather than
+ * cast, with the code the funnel would have answered for a value it could
+ * see: a seat past the roster is no such player, a square past the map is a
+ * bad square. Everything else the funnel decides.
+ *
+ * Item indices go through scenarioLuaIndexToOp, which is the one place the
+ * script's 1-based numbering becomes the op's 0-based one. Player slots are
+ * 0-based on both sides and convert nowhere. */
+
+/* One word a script may write, and what the payload carries for it. */
+typedef struct {
+    const char *word;
+    int         value;
+} ScnLuaWord;
+
+/* A set of them, and what a message calls the set when a script writes a
+ * word that is not in it. */
+typedef struct {
+    const ScnLuaWord *rows;
+    size_t            count;
+    const char       *what;
+} ScnLuaWordSet;
+
+/* The builder's jobs. Six, because the engine has six request codes: it
+ * decides repairing from what is already on the square rather than from a
+ * word of its own, so these are also the six game.builder(p).job answers. */
+static const ScnLuaWord kScnActionWords[] = {
+    { "trees",    (int)builderJobTrees    },
+    { "road",     (int)builderJobRoad     },
+    { "building", (int)builderJobBuilding },
+    { "pill",     (int)builderJobPill     },
+    { "mine",     (int)builderJobMine     },
+    { "boat",     (int)builderJobBoat     },
+};
+static const ScnLuaWordSet kScnActions = {
+    kScnActionWords, sizeof(kScnActionWords) / sizeof(kScnActionWords[0]),
+    "a builder action"
+};
+
+/* What a spawning bot is handed, by the name of the rules it plays under. */
+static const ScnLuaWord kScnLoadoutWords[] = {
+    { "open",       (int)gameOpen             },
+    { "tournament", (int)gameTournament       },
+    { "strict",     (int)gameStrictTournament },
+};
+static const ScnLuaWordSet kScnLoadouts = {
+    kScnLoadoutWords, sizeof(kScnLoadoutWords) / sizeof(kScnLoadoutWords[0]),
+    "a loadout"
+};
+
+/* The sounds the server plays to the round. The list stops where the engine
+ * stops taking one from a scenario: the lobby's own sounds are the last it
+ * carries, and the ping sounds past them are the client's own. */
+static const ScnLuaWord kScnSoundWords[] = {
+    { "shoot_self",           (int)shootSelf          },
+    { "shoot_near",           (int)shootNear          },
+    { "shoot_far",            (int)shootFar           },
+    { "shot_tree_near",       (int)shotTreeNear       },
+    { "shot_tree_far",        (int)shotTreeFar        },
+    { "shot_building_near",   (int)shotBuildingNear   },
+    { "shot_building_far",    (int)shotBuildingFar    },
+    { "hit_tank_near",        (int)hitTankNear        },
+    { "hit_tank_far",         (int)hitTankFar         },
+    { "hit_tank_self",        (int)hitTankSelf        },
+    { "bubbles",              (int)bubbles            },
+    { "tank_sink_near",       (int)tankSinkNear       },
+    { "tank_sink_far",        (int)tankSinkFar        },
+    { "big_explosion_near",   (int)bigExplosionNear   },
+    { "big_explosion_far",    (int)bigExplosionFar    },
+    { "farming_tree_near",    (int)farmingTreeNear    },
+    { "farming_tree_far",     (int)farmingTreeFar     },
+    { "man_building_near",    (int)manBuildingNear    },
+    { "man_building_far",     (int)manBuildingFar     },
+    { "man_dying_near",       (int)manDyingNear       },
+    { "man_dying_far",        (int)manDyingFar        },
+    { "man_laying_mine_near", (int)manLayingMineNear  },
+    { "mine_explosion_near",  (int)mineExplosionNear  },
+    { "mine_explosion_far",   (int)mineExplosionFar   },
+    { "lobby_chat_received",  (int)lobbyChatReceived  },
+    { "lobby_ready",          (int)lobbyReady         },
+    { "lobby_unready",        (int)lobbyUnready       },
+    { "lobby_countdown",      (int)lobbyCountdown     },
+    { "lobby_game_start",     (int)lobbyGameStart     },
+    { "lobby_player_join",    (int)lobbyPlayerJoin    },
+    { "lobby_player_leave",   (int)lobbyPlayerLeave   },
+};
+static const ScnLuaWordSet kScnSounds = {
+    kScnSoundWords, sizeof(kScnSoundWords) / sizeof(kScnSoundWords[0]),
+    "a sound"
+};
+
+/* A word argument. One that names nothing in its set is a shape error, so a
+ * misspelling stops the script rather than doing something else quietly. */
+static int scnArgWord(lua_State *L, int idx, const char *name,
+                      const ScnLuaWordSet *set) {
+    const char *word = scnArgStr(L, idx, name);
+    size_t      i;
+
+    for (i = 0; i < set->count; i++) {
+        if (strcmp(set->rows[i].word, word) == 0) {
+            return set->rows[i].value;
+        }
+    }
+    return luaL_argerror(L, idx,
+                         lua_pushfstring(L, "%s is '%s', which is not %s",
+                                         name, word, set->what));
+}
+
+/* Who a line is addressed to. */
+typedef enum {
+    SCN_LUA_TO_ALL,
+    SCN_LUA_TO_PLAYER,
+    SCN_LUA_TO_TEAM
+} ScnLuaTargetKind;
+
+/* nil or "all" for the whole game, a number for one seat, { team = t } for
+ * one team. Anything else is a shape error. */
+static ScnLuaTargetKind scnArgTarget(lua_State *L, int idx,
+                                     lua_Integer *value) {
+    *value = 0;
+
+    if (lua_isnoneornil(L, idx)) {
+        return SCN_LUA_TO_ALL;
+    }
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        const char *word = lua_tostring(L, idx);
+        if (strcmp(word, "all") == 0) {
+            return SCN_LUA_TO_ALL;
+        }
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "target is '%s' and the only word a "
+                                         "target takes is \"all\"", word));
+    }
+    if (lua_type(L, idx) == LUA_TNUMBER) {
+        *value = scnWhole(lua_tonumber(L, idx));
+        return SCN_LUA_TO_PLAYER;
+    }
+    if (lua_istable(L, idx)) {
+        lua_getfield(L, idx, "team");
+        if (lua_type(L, -1) != LUA_TNUMBER) {
+            lua_pop(L, 1);
+            luaL_argerror(L, idx, "target is a table and has no team in it");
+        }
+        *value = scnWhole(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        return SCN_LUA_TO_TEAM;
+    }
+    luaL_argerror(L, idx,
+                  lua_pushfstring(L, "target must be nil, \"all\", a player "
+                                     "or { team = t }, got %s",
+                                  luaL_typename(L, idx)));
+    return SCN_LUA_TO_ALL;   /* luaL_argerror does not return */
+}
+
+/* nil, the refusal's name, and one sentence with the number that mattered. */
+static int scnRefusedV(lua_State *L, ScnOpResult r, const char *fmt,
+                       va_list ap) {
+    lua_pushnil(L);
+    lua_pushstring(L, scenarioLuaResultName((int)r));
+    lua_pushvfstring(L, fmt, ap);
+    return 3;
+}
+
+/* A refusal the row itself makes, for a number the payload could not carry
+ * at all. The code is the one the funnel would have answered had it been
+ * able to see the value. */
+static int scnRefused(lua_State *L, ScnOpResult r, const char *fmt, ...) {
+    va_list ap;
+    int     n;
+
+    va_start(ap, fmt);
+    n = scnRefusedV(L, r, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+/* Hand the op to the funnel and answer for it: true when it applied, true
+ * and "queued" when the work is under way, and the refusal otherwise, whose
+ * sentence the row writes from the numbers it was given.
+ *
+ * The rows that answer with an index or a seat of their own pass an out
+ * struct and read it themselves. */
+static int scnDone(lua_State *L, ScenarioOp *op, const char *fmt, ...) {
+    ScnOpResult r = serverSimApplyScenarioOp(scnCtx(L)->sim, op, NULL);
+    va_list     ap;
+    int         n;
+
+    if (r == SCN_OP_OK) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    if (r == SCN_OP_QUEUED) {
+        lua_pushboolean(L, 1);
+        lua_pushliteral(L, "queued");
+        return 2;
+    }
+    va_start(ap, fmt);
+    n = scnRefusedV(L, r, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+/* ── Tank ─────────────────────────────────────────────────────────── */
+
+/* One field out of a stocks table. Absent leaves that stock alone, which the
+ * payload spells -1 where the numbers are absolute and 0 where they are
+ * deltas. */
+static int16_t scnStockField(lua_State *L, int idx, const char *key,
+                             int16_t absent) {
+    int16_t v = absent;
+
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        lua_Integer n;
+        if (lua_type(L, -1) != LUA_TNUMBER) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s must be a number, got %s",
+                                          key, luaL_typename(L, -1)));
+        }
+        n = scnWhole(lua_tonumber(L, -1));
+        /* Past what the field holds is past every cap the funnel checks
+           against, so the clamp changes no answer: the op refuses it. */
+        if (n < -32768) n = -32768;
+        if (n > 32767)  n = 32767;
+        v = (int16_t)n;
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
+static int scnStocks(lua_State *L, BYTE mode) {
+    ScenarioOp  op;
+    int16_t     absent = (mode == SCN_STOCK_ABSOLUTE) ? -1 : 0;
+    lua_Integer p = scnArgInt(L, 1, "p");
+
+    scnArgTable(L, 2, "t");
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_TANK_SET_STOCKS;
+    op.u.tankSetStocks.slot    = (BYTE)p;
+    op.u.tankSetStocks.mode    = mode;
+    op.u.tankSetStocks.shells  = scnStockField(L, 2, "shells", absent);
+    op.u.tankSetStocks.mines   = scnStockField(L, 2, "mines", absent);
+    op.u.tankSetStocks.armour  = scnStockField(L, 2, "armour", absent);
+    op.u.tankSetStocks.trees   = scnStockField(L, 2, "trees", absent);
+    return scnDone(L, &op,
+                   "player %d, shells %d, mines %d, armour %d, trees %d",
+                   (int)p, (int)op.u.tankSetStocks.shells,
+                   (int)op.u.tankSetStocks.mines,
+                   (int)op.u.tankSetStocks.armour,
+                   (int)op.u.tankSetStocks.trees);
+}
+
+static int scnLuaSetStocks(lua_State *L) {
+    return scnStocks(L, SCN_STOCK_ABSOLUTE);
+}
+
+static int scnLuaAddStocks(lua_State *L) {
+    return scnStocks(L, SCN_STOCK_DELTA);
+}
+
+static int scnLuaKillTank(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p      = scnArgInt(L, 1, "p");
+    lua_Integer killer = scnOptInt(L, 2, "killer", SCN_NONE);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(killer)) {
+        return scnRefused(L, SCN_OP_RANGE, "killer %d is not a seat",
+                          (int)killer);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type              = SCN_OP_TANK_KILL;
+    op.u.tankKill.slot   = (BYTE)p;
+    op.u.tankKill.killer = (BYTE)killer;
+    /* A death the script caused, whether or not it named who did it. */
+    op.u.tankKill.cause  = LAST_DEATH_BY_SCRIPT;
+    return scnDone(L, &op, "player %d, killer %d", (int)p, (int)killer);
+}
+
+static int scnLuaTeleport(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p   = scnArgInt(L, 1, "p");
+    lua_Integer x   = scnArgInt(L, 2, "x");
+    lua_Integer y   = scnArgInt(L, 3, "y");
+    lua_Integer dir = scnOptInt(L, 4, "dir", SCN_NONE);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (!scnFitsByte(dir)) {
+        return scnRefused(L, SCN_OP_RANGE, "dir is %d, outside 0 to 255",
+                          (int)dir);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_TANK_TELEPORT;
+    op.u.tankTeleport.slot  = (BYTE)p;
+    op.u.tankTeleport.mode  = SCN_TELEPORT_SQUARE;
+    op.u.tankTeleport.x     = (BYTE)x;
+    op.u.tankTeleport.y     = (BYTE)y;
+    op.u.tankTeleport.start = SCN_NONE;
+    op.u.tankTeleport.dir   = (BYTE)dir;
+    return scnDone(L, &op, "player %d to (%d, %d)", (int)p, (int)x, (int)y);
+}
+
+static int scnLuaTeleportToStart(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer n = scnOptInt(L, 2, "n", 0);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_TANK_TELEPORT;
+    op.u.tankTeleport.slot = (BYTE)p;
+    op.u.tankTeleport.mode = SCN_TELEPORT_START;
+    op.u.tankTeleport.dir  = SCN_NONE;
+    /* No start named leaves the engine its own pick. */
+    op.u.tankTeleport.start =
+        lua_isnoneornil(L, 2) ? SCN_NONE : scenarioLuaIndexToOp(n);
+    return scnDone(L, &op, "player %d to start %d", (int)p, (int)n);
+}
+
+static int scnLuaSetBoat(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p  = scnArgInt(L, 1, "p");
+    bool        on = scnArgBool(L, 2, "on");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_TANK_SET_BOAT;
+    op.u.tankSetBoat.slot   = (BYTE)p;
+    op.u.tankSetBoat.onBoat = on;
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
+static int scnLuaGivePill(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer n = scnArgInt(L, 2, "n");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_TANK_GIVE_PILL;
+    op.u.tankGivePill.slot = (BYTE)p;
+    op.u.tankGivePill.pill = scenarioLuaIndexToOp(n);
+    return scnDone(L, &op, "player %d, pill %d", (int)p, (int)n);
+}
+
+static int scnLuaDropPill(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer n = scnArgInt(L, 2, "n");
+    lua_Integer x = scnOptInt(L, 3, "x", SCN_NONE);
+    lua_Integer y = scnOptInt(L, 4, "y", SCN_NONE);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_TANK_DROP_PILL;
+    op.u.tankDropPill.slot = (BYTE)p;
+    op.u.tankDropPill.pill = scenarioLuaIndexToOp(n);
+    op.u.tankDropPill.x    = (BYTE)x;
+    op.u.tankDropPill.y    = (BYTE)y;
+    return scnDone(L, &op, "player %d, pill %d", (int)p, (int)n);
+}
+
+/* One percentage out of a modifier table. Absent is the classic tank, which
+ * the payload spells 0. */
+static bool scnModField(lua_State *L, int idx, const char *key, uint8_t *out,
+                        lua_Integer *bad) {
+    lua_Integer v = 0;
+
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        if (lua_type(L, -1) != LUA_TNUMBER) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s must be a number, got %s",
+                                          key, luaL_typename(L, -1)));
+        }
+        v = scnWhole(lua_tonumber(L, -1));
+    }
+    lua_pop(L, 1);
+    if (!scnFitsByte(v)) {
+        *bad = v;
+        return false;
+    }
+    *out = (uint8_t)v;
+    return true;
+}
+
+static int scnLuaSetModifiers(lua_State *L) {
+    ScenarioOp     op;
+    TankModifiers *m;
+    lua_Integer    bad = 0;
+    lua_Integer    p   = scnArgInt(L, 1, "p");
+
+    scnArgTable(L, 2, "t");
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                     = SCN_OP_TANK_SET_MODIFIERS;
+    op.u.tankSetModifiers.slot  = (BYTE)p;
+    m = &op.u.tankSetModifiers.mods;
+    /* The whole set is replaced, so a field the table leaves out goes back to
+       the classic tank rather than keeping what it had. */
+    if (!scnModField(L, 2, "speed", &m->speed, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)bad);
+    }
+    if (!scnModField(L, 2, "accel", &m->accel, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "accel is %d", (int)bad);
+    }
+    if (!scnModField(L, 2, "turn", &m->turn, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "turn is %d", (int)bad);
+    }
+    if (!scnModField(L, 2, "reload", &m->reload, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "reload is %d", (int)bad);
+    }
+    if (!scnModField(L, 2, "dealt", &m->dealt, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "dealt is %d", (int)bad);
+    }
+    if (!scnModField(L, 2, "taken", &m->taken, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "taken is %d", (int)bad);
+    }
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
+/* ── Builder ──────────────────────────────────────────────────────── */
+
+static int scnLuaBuilderOrder(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p      = scnArgInt(L, 1, "p");
+    int         action = scnArgWord(L, 2, "action", &kScnActions);
+    lua_Integer x      = scnArgInt(L, 3, "x");
+    lua_Integer y      = scnArgInt(L, 4, "y");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                  = SCN_OP_LGM_DISPATCH;
+    op.u.lgmDispatch.slot    = (BYTE)p;
+    op.u.lgmDispatch.action  = (BYTE)action;
+    op.u.lgmDispatch.x       = (BYTE)x;
+    op.u.lgmDispatch.y       = (BYTE)y;
+    return scnDone(L, &op, "player %d at (%d, %d)", (int)p, (int)x, (int)y);
+}
+
+static int scnLuaBuilderRecall(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type              = SCN_OP_LGM_RECALL;
+    op.u.lgmRecall.slot  = (BYTE)p;
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
+static int scnLuaKillLgm(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p      = scnArgInt(L, 1, "p");
+    lua_Integer killer = scnOptInt(L, 2, "killer", SCN_NONE);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(killer)) {
+        return scnRefused(L, SCN_OP_RANGE, "killer %d is not a seat",
+                          (int)killer);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type             = SCN_OP_LGM_KILL;
+    op.u.lgmKill.slot   = (BYTE)p;
+    op.u.lgmKill.killer = (BYTE)killer;
+    return scnDone(L, &op, "player %d, killer %d", (int)p, (int)killer);
+}
+
+static int scnLuaBuilderParachute(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer x = scnOptInt(L, 2, "x", SCN_NONE);
+    lua_Integer y = scnOptInt(L, 3, "y", SCN_NONE);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_LGM_PARACHUTE;
+    op.u.lgmParachute.slot  = (BYTE)p;
+    op.u.lgmParachute.x     = (BYTE)x;
+    op.u.lgmParachute.y     = (BYTE)y;
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
+static int scnLuaSetBuilderCarried(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p     = scnArgInt(L, 1, "p");
+    lua_Integer trees = scnOptInt(L, 2, "trees", SCN_NONE);
+    lua_Integer mines = scnOptInt(L, 3, "mines", SCN_NONE);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(trees)) {
+        return scnRefused(L, SCN_OP_RANGE, "trees is %d", (int)trees);
+    }
+    if (!scnFitsByte(mines)) {
+        return scnRefused(L, SCN_OP_RANGE, "mines is %d", (int)mines);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_LGM_SET_CARRIED;
+    op.u.lgmSetCarried.slot    = (BYTE)p;
+    op.u.lgmSetCarried.trees   = (BYTE)trees;
+    op.u.lgmSetCarried.mines   = (BYTE)mines;
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
+/* ── Pill and base ────────────────────────────────────────────────── */
+
+/* An owner argument: a seat, game.NEUTRAL, or nothing at all, which is the
+ * neutral owner as well. */
+static lua_Integer scnArgOwner(lua_State *L, int idx) {
+    return scnOptInt(L, idx, "owner", NEUTRAL);
+}
+
+static int scnLuaSetPillOwner(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n = scnArgInt(L, 1, "n");
+    lua_Integer p = scnOptInt(L, 2, "p", NEUTRAL);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_RANGE, "owner %d is not a seat", (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_PILL_SET_OWNER;
+    op.u.pillSetOwner.pill  = scenarioLuaIndexToOp(n);
+    op.u.pillSetOwner.owner = (BYTE)p;
+    return scnDone(L, &op, "pill %d, owner %d", (int)n, (int)p);
+}
+
+static int scnLuaSetPillArmour(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n = scnArgInt(L, 1, "n");
+    lua_Integer a = scnArgInt(L, 2, "a");
+
+    if (!scnFitsByte(a)) {
+        return scnRefused(L, SCN_OP_RANGE, "armour is %d", (int)a);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_PILL_SET_ARMOUR;
+    op.u.pillSetArmour.pill    = scenarioLuaIndexToOp(n);
+    op.u.pillSetArmour.armour  = (BYTE)a;
+    return scnDone(L, &op, "pill %d, armour %d", (int)n, (int)a);
+}
+
+static int scnLuaSetPillSpeed(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n = scnArgInt(L, 1, "n");
+    lua_Integer s = scnArgInt(L, 2, "s");
+
+    if (!scnFitsByte(s)) {
+        return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)s);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                  = SCN_OP_PILL_SET_SPEED;
+    op.u.pillSetSpeed.pill   = scenarioLuaIndexToOp(n);
+    op.u.pillSetSpeed.speed  = (BYTE)s;
+    return scnDone(L, &op, "pill %d, speed %d", (int)n, (int)s);
+}
+
+static int scnLuaMovePill(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n = scnArgInt(L, 1, "n");
+    lua_Integer x = scnArgInt(L, 2, "x");
+    lua_Integer y = scnArgInt(L, 3, "y");
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type             = SCN_OP_PILL_MOVE;
+    op.u.pillMove.pill  = scenarioLuaIndexToOp(n);
+    op.u.pillMove.x     = (BYTE)x;
+    op.u.pillMove.y     = (BYTE)y;
+    return scnDone(L, &op, "pill %d to (%d, %d)", (int)n, (int)x, (int)y);
+}
+
+static int scnLuaSetBaseOwner(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n    = scnArgInt(L, 1, "n");
+    lua_Integer p    = scnOptInt(L, 2, "p", NEUTRAL);
+    bool        keep = scnOptBool(L, 3, "keep_stock", false);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_RANGE, "owner %d is not a seat", (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                     = SCN_OP_BASE_SET_OWNER;
+    op.u.baseSetOwner.base      = scenarioLuaIndexToOp(n);
+    op.u.baseSetOwner.owner     = (BYTE)p;
+    op.u.baseSetOwner.keepStock = keep;
+    return scnDone(L, &op, "base %d, owner %d", (int)n, (int)p);
+}
+
+/* One stock a base is being set to. Absent keeps what is there, which the
+ * payload spells -1. */
+static bool scnBaseStock(lua_State *L, int idx, const char *name,
+                         int16_t *out, lua_Integer *bad) {
+    lua_Integer v;
+
+    if (lua_isnoneornil(L, idx)) {
+        *out = -1;
+        return true;
+    }
+    v = scnArgInt(L, idx, name);
+    if (v < 0 || v > 32767) {
+        *bad = v;
+        return false;
+    }
+    *out = (int16_t)v;
+    return true;
+}
+
+static int scnLuaSetBaseStock(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer bad = 0;
+    lua_Integer n   = scnArgInt(L, 1, "n");
+
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_BASE_SET_STOCK;
+    op.u.baseSetStock.base = scenarioLuaIndexToOp(n);
+    if (!scnBaseStock(L, 2, "armour", &op.u.baseSetStock.armour, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "armour is %d", (int)bad);
+    }
+    if (!scnBaseStock(L, 3, "shells", &op.u.baseSetStock.shells, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "shells is %d", (int)bad);
+    }
+    if (!scnBaseStock(L, 4, "mines", &op.u.baseSetStock.mines, &bad)) {
+        return scnRefused(L, SCN_OP_RANGE, "mines is %d", (int)bad);
+    }
+    return scnDone(L, &op, "base %d", (int)n);
+}
+
+/* ── Entities ─────────────────────────────────────────────────────── */
+
+/* What the index an add chose is called in the script: the op counts from
+ * zero and the script counts from one. */
+static int scnAdded(lua_State *L, ScenarioOp *op, const char *fmt, ...) {
+    ScnOpOut    out;
+    ScnOpResult r;
+    va_list     ap;
+    int         n;
+
+    memset(&out, 0, sizeof(out));
+    r = serverSimApplyScenarioOp(scnCtx(L)->sim, op, &out);
+    if (r == SCN_OP_OK) {
+        lua_pushinteger(L, scenarioLuaIndexToScript((int)out.index));
+        return 1;
+    }
+    va_start(ap, fmt);
+    n = scnRefusedV(L, r, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+/* The interval an untouched pill fires at, which is the rate a pill added
+ * without one takes. Read off the round's own table, so a scenario that
+ * changed the rule adds pills at the rate it is playing with. */
+static BYTE scnRoundPillSpeed(lua_State *L) {
+    int    rule = scenarioLuaRuleIndex("pill_attack_ticks");
+    double v    = 0.0;
+
+    if (rule >= 0 &&
+        serverSimGetScenarioRule(scnCtx(L)->sim, (uint16_t)rule, &v) &&
+        v >= 0.0 && v <= 255.0) {
+        return (BYTE)v;
+    }
+    return 0;
+}
+
+static int scnLuaAddPill(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer x     = scnArgInt(L, 1, "x");
+    lua_Integer y     = scnArgInt(L, 2, "y");
+    lua_Integer owner = scnArgOwner(L, 3);
+    lua_Integer armour;
+    lua_Integer speed;
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (!scnFitsByte(owner)) {
+        return scnRefused(L, SCN_OP_RANGE, "owner %d is not a seat",
+                          (int)owner);
+    }
+    /* A pill nobody holds, lying dead on the ground, firing at the rate the
+       round's table says: what a script asks for when it says only where. */
+    armour = scnOptInt(L, 4, "armour", 0);
+    speed  = scnOptInt(L, 5, "speed", scnRoundPillSpeed(L));
+    if (!scnFitsByte(armour)) {
+        return scnRefused(L, SCN_OP_RANGE, "armour is %d", (int)armour);
+    }
+    if (!scnFitsByte(speed)) {
+        return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)speed);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                   = SCN_OP_ENTITY_ADD_PILL;
+    op.u.entityAddPill.x      = (BYTE)x;
+    op.u.entityAddPill.y      = (BYTE)y;
+    op.u.entityAddPill.owner  = (BYTE)owner;
+    op.u.entityAddPill.armour = (BYTE)armour;
+    op.u.entityAddPill.speed  = (BYTE)speed;
+    return scnAdded(L, &op, "at (%d, %d)", (int)x, (int)y);
+}
+
+static int scnLuaRemovePill(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n = scnArgInt(L, 1, "n");
+
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_ENTITY_REMOVE_PILL;
+    op.u.entityRemovePill.pill = scenarioLuaIndexToOp(n);
+    return scnDone(L, &op, "pill %d", (int)n);
+}
+
+static int scnLuaAddBase(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer x      = scnArgInt(L, 1, "x");
+    lua_Integer y      = scnArgInt(L, 2, "y");
+    lua_Integer owner  = scnArgOwner(L, 3);
+    lua_Integer armour = scnOptInt(L, 4, "armour", 0);
+    lua_Integer shells = scnOptInt(L, 5, "shells", 0);
+    lua_Integer mines  = scnOptInt(L, 6, "mines", 0);
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (!scnFitsByte(owner)) {
+        return scnRefused(L, SCN_OP_RANGE, "owner %d is not a seat",
+                          (int)owner);
+    }
+    if (!scnFitsByte(armour) || !scnFitsByte(shells) || !scnFitsByte(mines)) {
+        return scnRefused(L, SCN_OP_RANGE,
+                          "armour %d, shells %d, mines %d", (int)armour,
+                          (int)shells, (int)mines);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                   = SCN_OP_ENTITY_ADD_BASE;
+    op.u.entityAddBase.x      = (BYTE)x;
+    op.u.entityAddBase.y      = (BYTE)y;
+    op.u.entityAddBase.owner  = (BYTE)owner;
+    op.u.entityAddBase.armour = (BYTE)armour;
+    op.u.entityAddBase.shells = (BYTE)shells;
+    op.u.entityAddBase.mines  = (BYTE)mines;
+    return scnAdded(L, &op, "at (%d, %d)", (int)x, (int)y);
+}
+
+static int scnLuaRemoveBase(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n = scnArgInt(L, 1, "n");
+
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_ENTITY_REMOVE_BASE;
+    op.u.entityRemoveBase.base = scenarioLuaIndexToOp(n);
+    return scnDone(L, &op, "base %d", (int)n);
+}
+
+static int scnLuaAddStart(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer x   = scnArgInt(L, 1, "x");
+    lua_Integer y   = scnArgInt(L, 2, "y");
+    lua_Integer dir = scnArgInt(L, 3, "dir");
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (!scnFitsByte(dir)) {
+        return scnRefused(L, SCN_OP_RANGE, "dir is %d", (int)dir);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_ENTITY_ADD_START;
+    op.u.entityAddStart.x  = (BYTE)x;
+    op.u.entityAddStart.y  = (BYTE)y;
+    op.u.entityAddStart.dir = (BYTE)dir;
+    return scnAdded(L, &op, "at (%d, %d) facing %d", (int)x, (int)y, (int)dir);
+}
+
+static int scnLuaRemoveStart(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer n = scnArgInt(L, 1, "n");
+
+    memset(&op, 0, sizeof(op));
+    op.type                      = SCN_OP_ENTITY_REMOVE_START;
+    op.u.entityRemoveStart.start = scenarioLuaIndexToOp(n);
+    return scnDone(L, &op, "start %d", (int)n);
+}
+
+/* ── Map ──────────────────────────────────────────────────────────── */
+
+static int scnLuaSetTile(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer x = scnArgInt(L, 1, "x");
+    lua_Integer y = scnArgInt(L, 2, "y");
+    lua_Integer t = scnArgInt(L, 3, "t");
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (!scnFitsByte(t)) {
+        return scnRefused(L, SCN_OP_RANGE, "terrain is %d", (int)t);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                  = SCN_OP_MAP_SET_TILE;
+    op.u.mapSetTile.x        = (BYTE)x;
+    op.u.mapSetTile.y        = (BYTE)y;
+    op.u.mapSetTile.terrain  = (BYTE)t;
+    return scnDone(L, &op, "square (%d, %d), terrain %d", (int)x, (int)y,
+                   (int)t);
+}
+
+static int scnLuaFillRect(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer x0 = scnArgInt(L, 1, "x0");
+    lua_Integer y0 = scnArgInt(L, 2, "y0");
+    lua_Integer x1 = scnArgInt(L, 3, "x1");
+    lua_Integer y1 = scnArgInt(L, 4, "y1");
+    lua_Integer t  = scnArgInt(L, 5, "t");
+
+    if (!scnFitsByte(x0) || !scnFitsByte(y0) || !scnFitsByte(x1) ||
+        !scnFitsByte(y1)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE,
+                          "rectangle (%d, %d) to (%d, %d) is off the map",
+                          (int)x0, (int)y0, (int)x1, (int)y1);
+    }
+    if (!scnFitsByte(t)) {
+        return scnRefused(L, SCN_OP_RANGE, "terrain is %d", (int)t);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_MAP_FILL_RECT;
+    op.u.mapFillRect.x0     = (BYTE)x0;
+    op.u.mapFillRect.y0     = (BYTE)y0;
+    op.u.mapFillRect.x1     = (BYTE)x1;
+    op.u.mapFillRect.y1     = (BYTE)y1;
+    op.u.mapFillRect.terrain = (BYTE)t;
+    return scnDone(L, &op, "rectangle (%d, %d) to (%d, %d), terrain %d",
+                   (int)x0, (int)y0, (int)x1, (int)y1, (int)t);
+}
+
+static int scnLuaPlaceMine(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer x       = scnArgInt(L, 1, "x");
+    lua_Integer y       = scnArgInt(L, 2, "y");
+    lua_Integer owner   = scnArgOwner(L, 3);
+    bool        visible = scnOptBool(L, 4, "visible", false);
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (!scnFitsByte(owner)) {
+        return scnRefused(L, SCN_OP_RANGE, "owner %d is not a seat",
+                          (int)owner);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_MAP_PLACE_MINE;
+    op.u.mapPlaceMine.x        = (BYTE)x;
+    op.u.mapPlaceMine.y        = (BYTE)y;
+    op.u.mapPlaceMine.owner    = (BYTE)owner;
+    op.u.mapPlaceMine.visible  = visible;
+    return scnDone(L, &op, "square (%d, %d)", (int)x, (int)y);
+}
+
+static int scnLuaRemoveMine(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer x = scnArgInt(L, 1, "x");
+    lua_Integer y = scnArgInt(L, 2, "y");
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_MAP_REMOVE_MINE;
+    op.u.mapRemoveMine.x   = (BYTE)x;
+    op.u.mapRemoveMine.y   = (BYTE)y;
+    return scnDone(L, &op, "square (%d, %d)", (int)x, (int)y);
+}
+
+/* ── The roster ───────────────────────────────────────────────────── */
+
+/* Text out of a table's field, into a fixed buffer. Absent leaves the buffer
+ * empty, which every field here reads as the server's own choice. False when
+ * the text would not fit, with what it measured in *len: text is refused for
+ * being too long, never cut. */
+static bool scnFieldText(lua_State *L, int idx, const char *key, char *out,
+                         size_t cap, size_t *len) {
+    *len = 0;
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        const char *s;
+        size_t      n = 0;
+
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s must be a string, got %s",
+                                          key, luaL_typename(L, -1)));
+        }
+        s    = lua_tolstring(L, -1, &n);
+        *len = n;
+        if (n >= cap) {
+            lua_pop(L, 1);
+            return false;
+        }
+        memcpy(out, s, n + 1);
+    }
+    lua_pop(L, 1);
+    return true;
+}
+
+static lua_Integer scnFieldInt(lua_State *L, int idx, const char *key,
+                               lua_Integer def) {
+    lua_Integer v = def;
+
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        if (lua_type(L, -1) != LUA_TNUMBER) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s must be a number, got %s",
+                                          key, luaL_typename(L, -1)));
+        }
+        v = scnWhole(lua_tonumber(L, -1));
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
+static bool scnFieldBool(lua_State *L, int idx, const char *key, bool def) {
+    bool v = def;
+
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        if (!lua_isboolean(L, -1)) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s must be true or false, "
+                                             "got %s", key,
+                                          luaL_typename(L, -1)));
+        }
+        v = lua_toboolean(L, -1) != 0;
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
+static int scnFieldWord(lua_State *L, int idx, const char *key,
+                        const ScnLuaWordSet *set, int def) {
+    int v = def;
+
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        const char *word;
+        size_t      i;
+        bool        found = false;
+
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s must be a string, got %s",
+                                          key, luaL_typename(L, -1)));
+        }
+        word = lua_tostring(L, -1);
+        for (i = 0; i < set->count && !found; i++) {
+            if (strcmp(set->rows[i].word, word) == 0) {
+                v     = set->rows[i].value;
+                found = true;
+            }
+        }
+        if (!found) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s is '%s', which is not %s",
+                                          key, word, set->what));
+        }
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
+/* The flat table a bot is handed at its first breath. Keys are names and
+ * values are text, with a number written out as the text of itself, because
+ * that is what a brain reads. False when a pair did not fit, with the key it
+ * stopped on copied into badKey. */
+static bool scnFieldTable(lua_State *L, int idx, const char *key,
+                          ScnTable *out, char *badKey, size_t badCap) {
+    bool ok = true;
+    int  t;
+
+    scnTableClear(out);
+    lua_getfield(L, idx, key);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return true;
+    }
+    if (!lua_istable(L, -1)) {
+        luaL_argerror(L, idx,
+                      lua_pushfstring(L, "t.%s must be a table, got %s", key,
+                                      luaL_typename(L, -1)));
+    }
+    t = lua_gettop(L);
+
+    lua_pushnil(L);
+    while (ok && lua_next(L, t) != 0) {
+        /* The key is tested rather than read as a string: lua_tostring on a
+           number key would rewrite it in place and break the walk. The value
+           is safe to convert, since the walk is past it. */
+        if (lua_type(L, -2) != LUA_TSTRING) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s has a key that is not a "
+                                             "name", key));
+        }
+        if (lua_type(L, -1) != LUA_TSTRING && lua_type(L, -1) != LUA_TNUMBER) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s.%s must be a string or a "
+                                             "number, got %s", key,
+                                          lua_tostring(L, -2),
+                                          luaL_typename(L, -1)));
+        }
+        if (!scnTableSet(out, lua_tostring(L, -2), lua_tostring(L, -1))) {
+            snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
+            ok = false;
+        }
+        lua_pop(L, 1);   /* the value; the key stays for the next step */
+    }
+    if (!ok) {
+        lua_pop(L, 1);   /* the key the walk stopped on */
+    }
+    lua_pop(L, 1);       /* the table */
+    return ok;
+}
+
+/* What every roster row says when a pair of the table would not fit. */
+static int scnTableTooBig(lua_State *L, const char *field, const char *key) {
+    return scnRefused(L, SCN_OP_TOO_BIG,
+                      "%s '%s' does not fit: at most %d pairs, a name of %d "
+                      "bytes and a value of %d", field, key, SCN_TABLE_MAX,
+                      (int)SCN_TABLE_KEY_LEN - 1,
+                      (int)SCN_TABLE_VALUE_LEN - 1);
+}
+
+static int scnLuaSpawnBot(lua_State *L) {
+    ScenarioOp  op;
+    ScnOpOut    out;
+    ScnOpResult r;
+    char        badKey[SCN_TABLE_KEY_LEN + 1];
+    size_t      len  = 0;
+    lua_Integer team, slot, start;
+    int         loadout;
+
+    scnArgTable(L, 1, "t");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_ROSTER_SPAWN_BOT;
+
+    if (!scnFieldText(L, 1, "name", op.u.rosterSpawnBot.name,
+                      sizeof(op.u.rosterSpawnBot.name), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "name is %d bytes, limit %d",
+                          (int)len,
+                          (int)sizeof(op.u.rosterSpawnBot.name) - 1);
+    }
+    if (!scnFieldText(L, 1, "brain", op.u.rosterSpawnBot.brain,
+                      sizeof(op.u.rosterSpawnBot.brain), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
+                          (int)len,
+                          (int)sizeof(op.u.rosterSpawnBot.brain) - 1);
+    }
+    team = scnFieldInt(L, 1, "team", 0);
+    if (!scnFitsByte(team)) {
+        return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)team);
+    }
+    slot = scnFieldInt(L, 1, "slot", SCN_NONE);
+    if (!scnFitsByte(slot)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "seat %d is not a seat",
+                          (int)slot);
+    }
+    /* A start of nothing is the engine's own pick, which is also what the
+       script's own numbering makes of zero. */
+    start   = scnFieldInt(L, 1, "start", 0);
+    loadout = scnFieldWord(L, 1, "loadout", &kScnLoadouts, 0);
+
+    op.u.rosterSpawnBot.team    = (BYTE)team;
+    op.u.rosterSpawnBot.slot    = (BYTE)slot;
+    op.u.rosterSpawnBot.start   =
+        (start == 0) ? SCN_NONE : scenarioLuaIndexToOp(start);
+    op.u.rosterSpawnBot.loadout = (BYTE)loadout;
+    if (!scnFieldTable(L, 1, "init", &op.u.rosterSpawnBot.init, badKey,
+                       sizeof(badKey))) {
+        return scnTableTooBig(L, "init", badKey);
+    }
+
+    memset(&out, 0, sizeof(out));
+    r = serverSimApplyScenarioOp(scnCtx(L)->sim, &op, &out);
+    if (r == SCN_OP_OK || r == SCN_OP_QUEUED) {
+        /* The seat, when the op was told which one. A spawn that asked for
+           the first free seat is not promised one until it lands. */
+        if (out.slot == SCN_NONE) {
+            lua_pushboolean(L, 1);
+        } else {
+            lua_pushinteger(L, (lua_Integer)out.slot);
+        }
+        if (r == SCN_OP_QUEUED) {
+            lua_pushliteral(L, "queued");
+            return 2;
+        }
+        return 1;
+    }
+    return scnRefused(L, r, "seat %d, team %d", (int)slot, (int)team);
+}
+
+static int scnLuaRemoveBot(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_ROSTER_REMOVE_BOT;
+    op.u.rosterRemoveBot.slot  = (BYTE)p;
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
+static int scnLuaSetTeam(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer t = scnArgInt(L, 2, "t");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(t)) {
+        return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)t);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_ROSTER_SET_TEAM;
+    op.u.rosterSetTeam.slot = (BYTE)p;
+    op.u.rosterSetTeam.team = (BYTE)t;
+    return scnDone(L, &op, "player %d to team %d", (int)p, (int)t);
+}
+
+static int scnLuaLobbyAddBot(lua_State *L) {
+    ScenarioOp  op;
+    ScnOpOut    out;
+    ScnOpResult r;
+    size_t      len = 0;
+    lua_Integer team, slot;
+
+    scnArgTable(L, 1, "t");
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_LOBBY_ADD_BOT;
+
+    if (!scnFieldText(L, 1, "name", op.u.lobbyAddBot.name,
+                      sizeof(op.u.lobbyAddBot.name), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "name is %d bytes, limit %d",
+                          (int)len, (int)sizeof(op.u.lobbyAddBot.name) - 1);
+    }
+    if (!scnFieldText(L, 1, "brain", op.u.lobbyAddBot.brain,
+                      sizeof(op.u.lobbyAddBot.brain), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
+                          (int)len, (int)sizeof(op.u.lobbyAddBot.brain) - 1);
+    }
+    team = scnFieldInt(L, 1, "team", 0);
+    if (!scnFitsByte(team)) {
+        return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)team);
+    }
+    slot = scnFieldInt(L, 1, "slot", SCN_NONE);
+    if (!scnFitsByte(slot)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "seat %d is not a seat",
+                          (int)slot);
+    }
+    op.u.lobbyAddBot.team    = (BYTE)team;
+    op.u.lobbyAddBot.slot    = (BYTE)slot;
+    /* A seat that plays the round, which is the only kind the lobby seats
+       today; a table asking for one that sits the round out is refused. */
+    op.u.lobbyAddBot.fielded = scnFieldBool(L, 1, "fielded", true);
+
+    memset(&out, 0, sizeof(out));
+    r = serverSimApplyScenarioOp(scnCtx(L)->sim, &op, &out);
+    if (r == SCN_OP_OK) {
+        lua_pushinteger(L, (lua_Integer)out.slot);
+        return 1;
+    }
+    return scnRefused(L, r, "seat %d, team %d", (int)slot, (int)team);
+}
+
+static int scnLuaLobbyRemoveBot(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                   = SCN_OP_LOBBY_REMOVE_BOT;
+    op.u.lobbyRemoveBot.slot  = (BYTE)p;
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
+static int scnLuaLobbySetTeam(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer t = scnArgInt(L, 2, "t");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(t)) {
+        return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)t);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                = SCN_OP_LOBBY_SET_TEAM;
+    op.u.lobbySetTeam.slot = (BYTE)p;
+    op.u.lobbySetTeam.team = (BYTE)t;
+    return scnDone(L, &op, "player %d to team %d", (int)p, (int)t);
+}
+
+/* ── Comms ────────────────────────────────────────────────────────── */
+
+/* One line, to everyone, to a team or to a seat. Three ops rather than one
+ * with a target byte, which is how the funnel spells the three. */
+static int scnLuaMessage(lua_State *L) {
+    ScenarioOp       op;
+    size_t           len = 0;
+    const char      *text = scnArgText(L, 1, "text", &len);
+    lua_Integer      to   = 0;
+    ScnLuaTargetKind kind = scnArgTarget(L, 2, &to);
+
+    memset(&op, 0, sizeof(op));
+    if (len >= SCN_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                          (int)len, (int)SCN_TEXT_MAX - 1);
+    }
+    if (!scnFitsByte(to)) {
+        return scnRefused(L,
+                          (kind == SCN_LUA_TO_TEAM) ? SCN_OP_RANGE
+                                                    : SCN_OP_NO_SUCH_PLAYER,
+                          "target is %d", (int)to);
+    }
+    switch (kind) {
+        case SCN_LUA_TO_PLAYER:
+            op.type                = SCN_OP_MSG_PLAYER;
+            op.u.msgPlayer.slot    = (BYTE)to;
+            memcpy(op.u.msgPlayer.text, text, len + 1);
+            break;
+        case SCN_LUA_TO_TEAM:
+            op.type            = SCN_OP_MSG_TEAM;
+            op.u.msgTeam.team  = (BYTE)to;
+            memcpy(op.u.msgTeam.text, text, len + 1);
+            break;
+        case SCN_LUA_TO_ALL:
+        default:
+            op.type = SCN_OP_MSG_ALL;
+            memcpy(op.u.msgAll.text, text, len + 1);
+            break;
+    }
+    return scnDone(L, &op, "%d bytes to %d", (int)len, (int)to);
+}
+
+static int scnLuaSound(lua_State *L) {
+    ScenarioOp  op;
+    int         sound = scnArgWord(L, 1, "name", &kScnSounds);
+    lua_Integer x     = scnOptInt(L, 2, "x", SCN_NONE);
+    lua_Integer y     = scnOptInt(L, 3, "y", SCN_NONE);
+
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type          = SCN_OP_SOUND;
+    op.u.sound.sound = (BYTE)sound;
+    op.u.sound.x     = (BYTE)x;
+    op.u.sound.y     = (BYTE)y;
+    return scnDone(L, &op, "sound %d at (%d, %d)", sound, (int)x, (int)y);
+}
+
+static int scnLuaLog(lua_State *L) {
+    ScenarioOp  op;
+    size_t      len  = 0;
+    const char *text = scnArgText(L, 1, "text", &len);
+
+    if (len >= SCN_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                          (int)len, (int)SCN_TEXT_MAX - 1);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_LOG;
+    memcpy(op.u.log.text, text, len + 1);
+    return scnDone(L, &op, "%d bytes", (int)len);
+}
+
+/* ── Flow ─────────────────────────────────────────────────────────── */
+
+static int scnLuaEndRound(lua_State *L) {
+    ScenarioOp  op;
+    size_t      len = 0;
+    lua_Integer team;
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_END_ROUND;
+    if (!lua_isnoneornil(L, 1)) {
+        const char *text = scnArgText(L, 1, "text", &len);
+        if (len >= SCN_TEXT_MAX) {
+            return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                              (int)len, (int)SCN_TEXT_MAX - 1);
+        }
+        memcpy(op.u.endRound.text, text, len + 1);
+    }
+    team = scnOptInt(L, 2, "winner_team", 0);
+    if (!scnFitsByte(team)) {
+        return scnRefused(L, SCN_OP_RANGE, "winner_team is %d", (int)team);
+    }
+    op.u.endRound.winnerTeam = (BYTE)team;
+    return scnDone(L, &op, "winner team %d", (int)team);
+}
+
+static int scnGameTime(lua_State *L, bool relative) {
+    ScenarioOp  op;
+    lua_Integer ticks = scnArgInt(L, 1, "ticks");
+
+    memset(&op, 0, sizeof(op));
+    op.type                    = SCN_OP_SET_GAME_TIME;
+    op.u.setGameTime.ticks     = (int32_t)ticks;
+    op.u.setGameTime.relative  = relative;
+    return scnDone(L, &op, "ticks %d", (int)ticks);
+}
+
+static int scnLuaSetGameTime(lua_State *L) {
+    return scnGameTime(L, false);
+}
+
+static int scnLuaAddGameTime(lua_State *L) {
+    return scnGameTime(L, true);
+}
+
+static int scnLuaSetRule(lua_State *L) {
+    ScenarioOp  op;
+    const char *name = scnArgStr(L, 1, "name");
+    int         rule = scenarioLuaRuleIndex(name);
+
+    if (rule < 0) {
+        return luaL_error(L, "no rule is named '%s'", name);
+    }
+    if (lua_type(L, 2) != LUA_TNUMBER) {
+        return luaL_argerror(L, 2,
+                             lua_pushfstring(L, "value must be a number, got "
+                                                "%s", luaL_typename(L, 2)));
+    }
+    memset(&op, 0, sizeof(op));
+    op.type             = SCN_OP_SET_RULE;
+    op.u.setRule.rule   = (uint16_t)rule;
+    op.u.setRule.value  = (double)lua_tonumber(L, 2);
+    /* The value is stated to the whole part, which is what the sentence has
+       room for and what an integer rule ends up holding anyway. */
+    return scnDone(L, &op, "rule '%s' to %d", name,
+                   (int)scnWhole(lua_tonumber(L, 2)));
+}
+
 /* ── The registry ─────────────────────────────────────────────────── */
 
 /* One row per script-visible function. The doc column is what
@@ -848,6 +2381,139 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "in_region", scnLuaInRegion,
       "in_region(name, mx, my) — whether a square is inside a declared "
       "region." },
+
+    /* The writes. Each answers true, or nil with the refusal's name and one
+       sentence saying what it was about. */
+    { "set_stocks", scnLuaSetStocks,
+      "set_stocks(p, t) — set any of t.shells, t.mines, t.armour and "
+      "t.trees on player p's tank; a stock the table leaves out is left "
+      "alone." },
+    { "add_stocks", scnLuaAddStocks,
+      "add_stocks(p, t) — the same four as amounts to add, negative to take "
+      "away; each is held at the cap and at zero rather than refused." },
+    { "kill_tank", scnLuaKillTank,
+      "kill_tank(p[, killer]) — kill player p's tank; killer is a seat, and "
+      "without one the death is the scenario's own." },
+    { "teleport", scnLuaTeleport,
+      "teleport(p, x, y[, dir]) — put player p's tank on a square, facing "
+      "dir from 0 to 255; without dir it keeps the way it faces." },
+    { "teleport_to_start", scnLuaTeleportToStart,
+      "teleport_to_start(p[, n]) — put player p's tank on start n, or on "
+      "the one the engine would have chosen." },
+    { "set_boat", scnLuaSetBoat,
+      "set_boat(p, on) — put player p's tank on a boat or take it off one; "
+      "the square under it has to be water." },
+    { "give_pill", scnLuaGivePill,
+      "give_pill(p, n) — put pill n into player p's tank, however armoured "
+      "and whoever held it." },
+    { "drop_pill", scnLuaDropPill,
+      "drop_pill(p, n[, x, y]) — put a pill player p is carrying back on "
+      "the map, on a square or under the tank." },
+    { "set_modifiers", scnLuaSetModifiers,
+      "set_modifiers(p, t) — replace player p's speed, accel, turn, reload, "
+      "dealt and taken percentages; a field the table leaves out goes back "
+      "to the classic tank." },
+    { "builder_order", scnLuaBuilderOrder,
+      "builder_order(p, action, x, y) — send player p's builder out to do "
+      "one of \"trees\", \"road\", \"building\", \"pill\", \"mine\" or "
+      "\"boat\" on a square; the engine repairs rather than builds where "
+      "the square already holds one." },
+    { "builder_recall", scnLuaBuilderRecall,
+      "builder_recall(p) — call player p's builder back to the tank." },
+    { "kill_lgm", scnLuaKillLgm,
+      "kill_lgm(p[, killer]) — kill player p's builder; killer is a seat." },
+    { "builder_parachute", scnLuaBuilderParachute,
+      "builder_parachute(p[, x, y]) — drop a dead builder back in, on a "
+      "square or at the tank." },
+    { "set_builder_carried", scnLuaSetBuilderCarried,
+      "set_builder_carried(p[, trees[, mines]]) — what player p's builder "
+      "is carrying; a count left out is left alone." },
+    { "set_pill_owner", scnLuaSetPillOwner,
+      "set_pill_owner(n, p) — hand pill n to a seat, or to nobody with "
+      "game.NEUTRAL." },
+    { "set_pill_armour", scnLuaSetPillArmour,
+      "set_pill_armour(n, a) — how much pill n has left; 0 is a dead pill "
+      "on the ground." },
+    { "set_pill_speed", scnLuaSetPillSpeed,
+      "set_pill_speed(n, s) — the ticks between pill n's shots." },
+    { "move_pill", scnLuaMovePill,
+      "move_pill(n, x, y) — put pill n on another square." },
+    { "set_base_owner", scnLuaSetBaseOwner,
+      "set_base_owner(n, p[, keep_stock]) — hand base n to a seat, or to "
+      "nobody with game.NEUTRAL; keep_stock leaves what it holds." },
+    { "set_base_stock", scnLuaSetBaseStock,
+      "set_base_stock(n, armour, shells, mines) — what base n holds; a "
+      "stock left out is left alone and one past the cap is held there." },
+    { "add_pill", scnLuaAddPill,
+      "add_pill(x, y[, owner[, armour[, speed]]]) → n — put a new pill on "
+      "the map and answer which one it is; nobody's, dead, and firing at "
+      "the round's own rate unless told otherwise." },
+    { "remove_pill", scnLuaRemovePill,
+      "remove_pill(n) — take pill n off the map; the slot stays, so the "
+      "pills above it keep their numbers." },
+    { "add_base", scnLuaAddBase,
+      "add_base(x, y[, owner[, armour, shells, mines]]) → n — put a new "
+      "base on the map and answer which one it is; nobody's and empty "
+      "unless told otherwise." },
+    { "remove_base", scnLuaRemoveBase,
+      "remove_base(n) — take base n off the map; the slot stays." },
+    { "add_start", scnLuaAddStart,
+      "add_start(x, y, dir) → n — put a new start on a deep-sea square, "
+      "facing dir from 0 to 15." },
+    { "remove_start", scnLuaRemoveStart,
+      "remove_start(n) — take start n off the map; the last one is "
+      "refused." },
+    { "set_tile", scnLuaSetTile,
+      "set_tile(x, y, t) — write one square's terrain, by a game.TERRAIN "
+      "code." },
+    { "fill_rect", scnLuaFillRect,
+      "fill_rect(x0, y0, x1, y1, t) — write a rectangle of terrain; one "
+      "too big for a tick's budget answers true and \"queued\" and finishes "
+      "over the ticks after it." },
+    { "place_mine", scnLuaPlaceMine,
+      "place_mine(x, y[, owner[, visible]]) — lay a mine on a square; "
+      "visible shows it to everyone rather than to its owner's side." },
+    { "remove_mine", scnLuaRemoveMine,
+      "remove_mine(x, y) — take a mine off a square without setting it "
+      "off." },
+    { "spawn_bot", scnLuaSpawnBot,
+      "spawn_bot(t) → p, \"queued\" — put a bot into the running round; t "
+      "takes name, brain, team, slot, start, loadout and a flat init "
+      "table, all of them optional." },
+    { "remove_bot", scnLuaRemoveBot,
+      "remove_bot(p) → true, \"queued\" — take a bot out of the running "
+      "round; a human seat is refused." },
+    { "set_team", scnLuaSetTeam,
+      "set_team(p, t) — move a seat to another team mid-round." },
+    { "lobby_add_bot", scnLuaLobbyAddBot,
+      "lobby_add_bot(t) → p — seat a bot in the lobby and answer which seat "
+      "it took; t takes name, brain, team, slot and fielded." },
+    { "lobby_remove_bot", scnLuaLobbyRemoveBot,
+      "lobby_remove_bot(p) — take a bot out of the lobby; a human seat is "
+      "refused." },
+    { "lobby_set_team", scnLuaLobbySetTeam,
+      "lobby_set_team(p, t) — move a lobby seat to another team." },
+    { "message", scnLuaMessage,
+      "message(text[, target]) — a line to everyone, to one seat with a "
+      "number, or to a team with { team = t }." },
+    { "sound", scnLuaSound,
+      "sound(name[, x, y]) — play one of the server's sounds, at a square "
+      "or everywhere." },
+    { "log", scnLuaLog,
+      "log(text) — write a line to the server's console; no player sees "
+      "it." },
+    { "end_round", scnLuaEndRound,
+      "end_round([text[, winner_team]]) — end the round now, with the line "
+      "the lobby shows and the team that won it." },
+    { "set_game_time", scnLuaSetGameTime,
+      "set_game_time(ticks) — how long the round has left." },
+    { "add_game_time", scnLuaAddGameTime,
+      "add_game_time(ticks) — add to what the round has left, or take away "
+      "with a negative." },
+    { "set_rule", scnLuaSetRule,
+      "set_rule(name, value) — write one of the gameplay rules; a name that "
+      "spells no rule raises, and a value the table will not take is "
+      "refused." },
 };
 
 static const ScnLuaConst kScnLuaConsts[] = {

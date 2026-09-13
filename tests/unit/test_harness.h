@@ -2332,6 +2332,13 @@ int run_scenario_lua_terrain_is_the_whole_map(void);
 int run_scenario_lua_shape_error_counts(void);
 int run_scenario_lua_rule_reads_the_table(void);
 int run_scenario_lua_tags_and_regions(void);
+int run_scenario_lua_refusals_in_round(void);
+int run_scenario_lua_refusals_in_lobby(void);
+int run_scenario_lua_op_index_reaches_the_payload(void);
+int run_scenario_lua_add_answers_its_index(void);
+int run_scenario_lua_queued_answers_queued(void);
+int run_scenario_lua_shape_raises_refusal_does_not(void);
+int run_scenario_lua_detail_carries_the_number(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full
