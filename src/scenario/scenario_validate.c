@@ -291,10 +291,15 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
     for (i = 0; i < lob->numTeams; i++) {
         const ScnManifestTeam *t = &lob->teams[i];
 
+        /* One below MAX_TANKS is the top the engine seats: the template drops
+           an id at MAX_TANKS or above, and the sim's team table is keyed by
+           the same range. A team past it would be dropped without a word,
+           which is the case this check exists to catch. The bound is derived
+           rather than written out, so the two cannot drift apart. */
         snprintf(key, sizeof(key), "lobby.teams[%u].id", (unsigned)(i + 1));
-        if (t->id < 1 || t->id > MAX_TANKS) {
+        if (t->id < 1 || t->id >= MAX_TANKS) {
             scnIssueAdd(out, key, "team id %u is outside 1 to %d",
-                        (unsigned)t->id, MAX_TANKS);
+                        (unsigned)t->id, MAX_TANKS - 1);
         } else {
             for (j = 0; j < i; j++) {
                 if (lob->teams[j].id == t->id) {

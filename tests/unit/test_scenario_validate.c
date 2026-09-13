@@ -204,24 +204,31 @@ int run_scenario_validate_api_too_new(void) {
 
 /* ── 3. The lobby template ────────────────────────────────────────── */
 
+/* The last two teams are the bound the engine seats: the highest id it takes
+   and the first one it drops. Both are written from MAX_TANKS rather than
+   spelled out, so the case asks about whatever the engine's range is. */
 int run_scenario_validate_lobby_shape(void) {
     static const char *const kMap = "scnval_lobby.map";
-    static const char *const kLua =
-        "scenario = {\n"
-        "  api = 1,\n"
-        "  lobby = {\n"
-        "    max_players = 99,\n"
-        "    teams = {\n"
-        "      { id = 1, bots = 5, max_bots = 2 },\n"
-        "      { id = 1, brain = \"package:\" },\n"
-        "    },\n"
-        "  },\n"
-        "}\n";
+    char              lua[512];
     ServerSim        *sim;
     ScnValidateResult r;
     char              seen[1024];
 
-    UT_ASSERT(svPut(kMap, kLua));
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  api = 1,\n"
+             "  lobby = {\n"
+             "    max_players = 99,\n"
+             "    teams = {\n"
+             "      { id = 1, bots = 5, max_bots = 2 },\n"
+             "      { id = 1, brain = \"package:\" },\n"
+             "      { id = %d },\n"
+             "      { id = %d },\n"
+             "    },\n"
+             "  },\n"
+             "}\n",
+             MAX_TANKS - 1, MAX_TANKS);
+    UT_ASSERT(svPut(kMap, lua));
     sim = svSim();
     UT_ASSERT(sim != NULL);
 
@@ -235,6 +242,12 @@ int run_scenario_validate_lobby_shape(void) {
                   "a team number used twice was accepted: %s", seen);
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[2].brain") != NULL,
                   "a package brain naming nothing was accepted: %s", seen);
+    UT_ASSERT_MSG(svFind(&r, "lobby.teams[3].id") == NULL,
+                  "team %d is one the engine seats and was refused: %s",
+                  MAX_TANKS - 1, seen);
+    UT_ASSERT_MSG(svFind(&r, "lobby.teams[4].id") != NULL,
+                  "team %d is above what the engine seats and was accepted: "
+                  "%s", MAX_TANKS, seen);
 
     serverSimDestroy(sim);
     svDrop(kMap);
