@@ -1182,7 +1182,7 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
    what the process exits with: 0 for a map that is playable, 1 for one that is
    not. Nothing else in the server is running by the time this is called, and
    nothing it does starts anything. */
-static int validateMapAndReport(const char *mapPath) {
+static int validateMapAndReport(char *mapPath) {
   ServerSim *sim;
   ScnValidateResult result;
   char sidecar[SCN_SIDECAR_PATH_MAX];
@@ -1260,7 +1260,7 @@ int main(int argc, char **argv) {
   {
     int validateArg = findArg(argc, argv, "validate");
     if (validateArg != ARG_NOT_FOUND) {
-      return validateMapAndReport((const char *)argv[validateArg]);
+      return validateMapAndReport((char *) argv[validateArg]);
     }
   }
 
