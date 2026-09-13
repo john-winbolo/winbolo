@@ -715,7 +715,7 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
 
     bool isBot[MAX_TANKS];
     for (int slot = 0; slot < MAX_TANKS; slot++) {
-        isBot[slot] = botManagerIsBot(sim, (BYTE)slot);
+        isBot[slot] = serverSimIsBot(sim, (BYTE)slot);
     }
 
     /* One curated scoreboard row per connected slot. Leavers were zeroed

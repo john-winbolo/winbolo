@@ -525,8 +525,9 @@ int run_scenario_read_num_fielded(void) {
                       (unsigned)serverSimGetNumFielded(sim));
     }
 
-    /* Seats that sit out do not exist yet, so this matches the roster
-       length; the two part company when they do. */
+    /* Every seat here is on the field, so the two agree; they part company
+       over a seat held for a bot that has not been fielded, which is
+       test_unfielded_seat.c's. */
     UT_ASSERT(serverSimGetNumFielded(sim) == serverSimGetNumPlayers(sim));
 
     serverSimDestroy(sim);

@@ -355,7 +355,7 @@ static EncodeResult encodePlayerName(const ControlEvent *evt,
  *   If connected:
  *     [nameLen 1] [name nameLen bytes] [teamNumber 1] [ready 1]
  *     [isBot 1] [pingMs 2 BE] [cc 2] [clientType 1] [clientFlags 1]
- *     [startIdx 1] */
+ *     [startIdx 1] [fielded 1] */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
@@ -369,7 +369,7 @@ static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
         nameLen = strnlen(slot->playerName, PACKET_MAX_PLAYER_NAME - 1);
     }
     const size_t needed = 1 + 1
-                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 1) : 0);
+                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 1 + 1) : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.lobbySlot.playerNum;
@@ -390,6 +390,7 @@ static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
         buf[pos++] = slot->clientType;
         buf[pos++] = slot->clientFlags;
         buf[pos++] = slot->startIdx;
+        buf[pos++] = slot->fielded ? 1 : 0;
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -2101,7 +2102,7 @@ static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
         if (pos + 1 > len) return false;
         uint8_t nameLen = buf[pos++];
         if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
-        if (pos + nameLen + 10 > len) return false;
+        if (pos + nameLen + 11 > len) return false;
         if (nameLen > 0) memcpy(slot->playerName, buf + pos, nameLen);
         slot->playerName[nameLen] = '\0';
         pos += nameLen;
@@ -2118,6 +2119,7 @@ static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
         if (slot->clientType >= CLIENT_TYPE_COUNT)
             slot->clientType = CLIENT_TYPE_UNKNOWN;
         slot->startIdx = buf[pos++];
+        slot->fielded  = buf[pos++] ? true : false;
     }
     return true;
 }

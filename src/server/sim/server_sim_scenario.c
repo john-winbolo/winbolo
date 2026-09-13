@@ -1596,7 +1596,10 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
         if (asked >= MAX_TANKS) {
             return SCN_OP_RANGE;
         }
-        if (sim->playerConnected[asked] || botManagerIsBot(sim, asked)) {
+        /* A seat held for a bot that is not on the field is the one occupied
+           seat a spawn may name: fielding it is what the seat is for. */
+        if ((sim->playerConnected[asked] && sim->lobbyPlayers[asked].fielded) ||
+            botManagerIsBot(sim, asked)) {
             return SCN_OP_ALREADY;
         }
         *out = asked;
@@ -1625,10 +1628,31 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
 static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const char *name, BYTE team,
                                  const ScnTable *init) {
+    /* A seat already held keeps the name and the team it was seated with: the
+       add reads both off the roster rather than taking the op's, so a wave
+       spawning by seat number does not have to restate them. */
+    const bool wasHeld = sim->playerConnected[slot] &&
+                         !sim->lobbyPlayers[slot].fielded;
+    char seatName[PLAYER_NAME_LEN];
+
+    seatName[0] = '\0';
+    if (wasHeld) {
+        playersGetPlayerName(&sim->sim.plyrs, slot, seatName, sizeof(seatName),
+                             TRUE);
+        name = seatName;
+        team = sim->lobbyPlayers[slot].teamNumber;
+    }
     if (!botManagerAddBot(sim, slot, brain, name,
                           serverSimGetBotAiType(sim),
                           gameTypeGet(&sim->sim.game),
                           sim->sim.hiddenMines, team, init)) {
+        /* An add that gets part-way and then fails empties the seat on its
+           way out. A seat that was being fielded goes back to being held, so
+           a brain that will not load costs the wave its bot and not its
+           seat. */
+        if (wasHeld && !sim->playerConnected[slot]) {
+            serverSimAddUnfieldedSeat(sim, slot, seatName, team);
+        }
         return false;
     }
     transportUdpServerSetBotName(slot, name);
@@ -1645,10 +1669,26 @@ static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
     if (slot >= MAX_TANKS || !sim->playerConnected[slot]) {
         return SCN_OP_NO_SUCH_PLAYER;
     }
-    if (!botManagerIsBot(sim, slot)) {
+    if (!serverSimIsBot(sim, slot)) {
         return SCN_OP_IS_HUMAN;
     }
     return SCN_OP_OK;
+}
+
+/* Take the bot out of a seat a script named. A seat that was seeded to be
+ * held — the kind a wave fields and refields — goes back to being held
+ * rather than being emptied, so the next wave still has it; every other seat
+ * is emptied, which is what a remove has always done. */
+static void scenarioTakeBotOut(ServerSim *sim, BYTE slot) {
+    if (sim->lobbyPlayers[slot].keepSeat && sim->lobbyPlayers[slot].fielded) {
+        char name[PLAYER_NAME_LEN];
+        BYTE team = sim->lobbyPlayers[slot].teamNumber;
+        playersGetPlayerName(&sim->sim.plyrs, slot, name, sizeof(name), TRUE);
+        serverSimRemoveBot(sim, slot);
+        serverSimAddUnfieldedSeat(sim, slot, name, team);
+        return;
+    }
+    serverSimRemoveBot(sim, slot);
 }
 
 /* Put one change on the queue. The one past the last is refused rather than
@@ -1783,10 +1823,11 @@ static ScnOpResult scenarioOpRosterSetTeam(ServerSim *sim,
 /* Add a bot to the lobby. CMD_LOBBY_ADD_BOT's own checks in order — the
  * operator's bot cap, the name, a free seat — and then the same add.
  *
- * An unfielded seat is a lobby entry the sim does not have: every add here
- * goes through botManagerAddBot, which fields the bot. Until a seat can be
- * held without one, an op asking for that is refused rather than quietly
- * given a fielded bot instead. */
+ * fielded false asks for the seat without the bot: the roster gains the
+ * entry, the host can see and trim it, and no brain loads until a spawn
+ * names the seat. Nothing else about the add changes — the cap counts it,
+ * the name is checked the same way — except the brain, which such a seat has
+ * no use for yet. */
 static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
                                          const ScnOpLobbyAddBot *p,
                                          ScnOpOut *out) {
@@ -1801,9 +1842,6 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     if (serverSimGetBotAiType(sim) == aiNone) {
         return SCN_OP_WRONG_STATE;
     }
-    if (!p->fielded) {
-        return SCN_OP_RANGE;
-    }
     if (p->team >= MAX_TANKS) {
         return SCN_OP_RANGE;
     }
@@ -1816,8 +1854,12 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
        would. The seat is not known yet and only the refusals matter here. */
     r = scenarioBotName(p->name, 0, name, sizeof(name));
     if (r != SCN_OP_OK) return r;
-    r = scenarioBrainPath(sim, p->brain, &brain);
-    if (r != SCN_OP_OK) return r;
+    /* A seat held without a bot in it loads no brain, so there is no path to
+       resolve here: the spawn that fields the seat brings one. */
+    if (p->fielded) {
+        r = scenarioBrainPath(sim, p->brain, &brain);
+        if (r != SCN_OP_OK) return r;
+    }
     /* The seat the op names, or the first free one, by the rule the spawn
        arm and the lobby's Add Bot share. */
     r = scenarioSpawnSeat(sim, p->slot, &slot);
@@ -1825,6 +1867,19 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     /* Again with the seat, because an op that named no name is given the
        lobby's default for the one it got. */
     (void)scenarioBotName(p->name, slot, name, sizeof(name));
+
+    if (!p->fielded) {
+        if (!serverSimAddUnfieldedSeat(sim, slot, name, p->team)) {
+            /* The seat picked is one already being held. A spawn is allowed
+               to land on one of those and this is not a spawn. */
+            return SCN_OP_ALREADY;
+        }
+        lobbyAutoUnreadyOnChange(sim);
+        if (out != NULL) {
+            out->slot = slot;
+        }
+        return SCN_OP_OK;
+    }
 
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, NULL)) {
         /* The path named a file and the file would not load as a brain. */
@@ -1846,7 +1901,7 @@ static ScnOpResult scenarioOpLobbyRemoveBot(ServerSim *sim,
     r = scenarioRemovableBot(sim, p->slot);
     if (r != SCN_OP_OK) return r;
 
-    serverSimRemoveBot(sim, p->slot);
+    scenarioTakeBotOut(sim, p->slot);
     return SCN_OP_OK;
 }
 
@@ -1920,7 +1975,7 @@ static void scenarioRosterRemoveNow(ServerSim *sim, BYTE slot) {
     if (scenarioRemovableBot(sim, slot) != SCN_OP_OK) {
         return;
     }
-    serverSimRemoveBot(sim, slot);
+    scenarioTakeBotOut(sim, slot);
 }
 
 void serverSimScenarioDrainRoster(ServerSim *sim) {

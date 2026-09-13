@@ -96,6 +96,10 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
+    /* Taking a seat this way is taking it on the field: the unfielded seat
+       has its own constructor and never comes through here. */
+    sim->lobbyPlayers[playerNum].fielded = TRUE;
+    sim->lobbyPlayers[playerNum].keepSeat = FALSE;
     sim->soundSquares[playerNum] = false;
     /* A recycled slot must not inherit the previous occupant's ping mutes. */
     sim->pingMuteMask[playerNum] = 0;
@@ -318,7 +322,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —
      * gating on a human leaver keeps that from re-entering. */
-    wasBot = botManagerIsBot(sim, playerNum);
+    wasBot = serverSimIsBot(sim, playerNum);
     {
         char nm[PLAYER_NAME_LEN];
         playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, sizeof(nm), TRUE);
@@ -536,6 +540,10 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
+    /* Taking a seat this way is taking it on the field: the unfielded seat
+       has its own constructor and never comes through here. */
+    sim->lobbyPlayers[playerNum].fielded = TRUE;
+    sim->lobbyPlayers[playerNum].keepSeat = FALSE;
     sim->mapSkipVotes[playerNum] = false;
     sim->soundSquares[playerNum] = false;
     /* Smart-ping mutes, both directions, exactly as a voice mute is swept on

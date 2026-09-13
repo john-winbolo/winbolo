@@ -1350,6 +1350,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
 
                 bool isMe   = (!spectator && i == myPlayerNum);
                 bool isBot  = clientSimGetLobbySlot(cs, (BYTE)(i))->isBot;
+                /* A seat held for a bot that is not on the field draws faded,
+                 * so a host can tell the horde it has seated apart from the
+                 * bots that are playing this round. */
+                bool unfielded = !clientSimGetLobbySlot(cs, (BYTE)(i))->fielded;
                 bool isSelf = isMe;
                 bool isAlly = (myTeam != 0 && clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber == myTeam);
 
@@ -1655,6 +1659,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     char nameBuf[64];
                     lobbyTruncateName(clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
                                       nameAvail - tagReserve, nameBuf, sizeof(nameBuf));
+                    if (unfielded) {
+                        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                            ImGui::GetStyle().Alpha * 0.45f);
+                    }
                     if (isBot) {
                         ImGui::PushStyleColor(ImGuiCol_Text,
                                               wbThemeColor(g_theme->botBadge));
@@ -1664,6 +1672,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s", nameBuf);
                     } else {
                         ImGui::Text("%s", nameBuf);
+                    }
+                    if (unfielded) {
+                        ImGui::PopStyleVar();
                     }
                     lobbyNameJumpToPlayer(cs, i);
                 }

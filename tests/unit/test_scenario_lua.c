@@ -158,6 +158,17 @@ static bool slGlobalIsNil(lua_State *L, const char *name) {
     return nil;
 }
 
+/* A global the chunk left, as a boolean. Anything that is not one reads
+ * false, so a case asserting true is asserting the boolean as well. */
+static bool slGlobalBool(lua_State *L, const char *name) {
+    bool v;
+
+    lua_getglobal(L, name);
+    v = lua_isboolean(L, -1) && lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return v;
+}
+
 /* A global the chunk left, as a string. "" when it is not one. */
 static void slGlobalStr(lua_State *L, const char *name, char *out,
                         size_t outLen) {
@@ -1258,9 +1269,6 @@ static const SlRefusal kSlLobbyRefusals[] = {
     { "taking a lobby bot out of an empty seat",
       "res, code, detail = game.lobby_remove_bot(9)\n",
       SCN_OP_NO_SUCH_PLAYER },
-    { "a lobby bot that sits the round out",
-      "res, code, detail = game.lobby_add_bot({ fielded = false })\n",
-      SCN_OP_RANGE },
     { "a lobby bot on a team the lobby has not got",
       "res, code, detail = game.lobby_add_bot({ team = 99 })\n",
       SCN_OP_RANGE },
@@ -1336,10 +1344,18 @@ int run_scenario_lua_refusals_in_round(void) {
 /* At the foot of the file, beside the two sims it needs. */
 static int slStatePrecedence(void);
 
+/* Beside them, on the same lobby fixture: the one lobby row that is not a
+ * refusal. */
+static int slUnfieldedSeat(void);
+
 int run_scenario_lua_refusals_in_lobby(void) {
     int r = slRefusals(kSlLobbyRefusals,
                        sizeof(kSlLobbyRefusals) / sizeof(kSlLobbyRefusals[0]),
                        false);
+    if (r != 0) {
+        return r;
+    }
+    r = slUnfieldedSeat();
     if (r != 0) {
         return r;
     }
@@ -1619,6 +1635,69 @@ int run_scenario_lua_detail_carries_the_number(void) {
  *
  * Run from the lobby refusal case below rather than registered as one of its
  * own, since it is the same subject and needs the same two sims. */
+/* Asking for a seat without the bot in it, through the binding rather than
+ * through the op underneath it.
+ *
+ * The seat is the one thing a script can ask for that it cannot see the
+ * result of anywhere else: game.lobby_slot is the only read that carries
+ * fielded, and until a seat could sit a round out that field answered true
+ * for every seat that existed. This is what proves the value a script reads
+ * is the seat's own.
+ *
+ * No brain path is set on the fixture and none is needed — a seat with
+ * nobody in it loads none. */
+static int slUnfieldedSeat(void) {
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    ServerSim       *lobby;
+    char             err[512];
+    long             seat;
+
+    lobby = slSeatedLobbySim();
+    if (lobby == NULL) UT_FAIL("could not build a lobby");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, lobby, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(slRun(L,
+                        "seat = game.lobby_add_bot({ team = 3,"
+                        " fielded = false })\n"
+                        "row = seat and game.lobby_slot(seat) or nil\n"
+                        "row_connected = row ~= nil and row.connected\n"
+                        "row_bot = row ~= nil and row.bot\n"
+                        "row_fielded = row ~= nil and row.fielded\n"
+                        "row_team = row ~= nil and row.team or -1\n",
+                        err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+
+    /* The seat number, not nil: this used to be a refusal. */
+    UT_ASSERT_MSG(!slGlobalIsNil(L, "seat"),
+                  "asking for a seat with nobody in it was refused");
+    seat = slGlobalInt(L, "seat");
+    UT_ASSERT_MSG(seat > 0 && seat < MAX_TANKS,
+                  "the add answered seat %ld, and slot 0 holds the human",
+                  seat);
+
+    /* And it reads back as what it is. */
+    UT_ASSERT_MSG(!slGlobalIsNil(L, "row"),
+                  "seat %ld answered no lobby slot", seat);
+    UT_ASSERT_MSG(slGlobalBool(L, "row_connected"),
+                  "seat %ld does not read as connected", seat);
+    UT_ASSERT_MSG(slGlobalBool(L, "row_bot"),
+                  "seat %ld does not read as a bot", seat);
+    UT_ASSERT_MSG(!slGlobalBool(L, "row_fielded"),
+                  "seat %ld reads as fielded, so the read row is still "
+                  "answering true for every seat", seat);
+    UT_ASSERT_MSG(slGlobalInt(L, "row_team") == 3,
+                  "seat %ld is on team %ld, expected 3", seat,
+                  slGlobalInt(L, "row_team"));
+
+    lua_close(L);
+    serverSimDestroy(lobby);
+    return 0;
+}
+
 static int slStatePrecedence(void) {
     ScenarioManifest m;
     ScnLuaCtx        ctx;

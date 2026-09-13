@@ -303,6 +303,7 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         slot.ready      = sim->lobbyPlayers[i].ready;
         slot.isBot      = sim->lobbyPlayers[i].isBot;
         slot.startIdx   = sim->lobbyPlayers[i].startIdx;
+        slot.fielded    = sim->lobbyPlayers[i].fielded;
         /* sim->playerPing[i] is only refreshed by queueInput; in lobby
          * no inputs flow, so it sits at 0 the whole time. The PING/PONG
          * handler keeps udpServer.clients[i].pingMs live across every

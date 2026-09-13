@@ -2157,8 +2157,8 @@ static int scnLuaLobbyAddBot(lua_State *L) {
     }
     op.u.lobbyAddBot.team    = (BYTE)team;
     op.u.lobbyAddBot.slot    = (BYTE)slot;
-    /* A seat that plays the round, which is the only kind the lobby seats
-       today; a table asking for one that sits the round out is refused. */
+    /* False asks for the seat without the bot: it is held in the roster and
+       loads no brain until a spawn names it. */
     op.u.lobbyAddBot.fielded = scnFieldBool(L, 1, "fielded", true);
 
     memset(&out, 0, sizeof(out));

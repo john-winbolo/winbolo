@@ -132,6 +132,17 @@ typedef struct {
   bool ready;
   bool isBot;          /* Managed by bot system, not by player packets */
   uint8_t startIdx;    /* reserved map start, 1-based; 0xFF = none */
+  /* On the field. A seat can be held without being played: an unfielded seat
+     is a connected bot seat with no bot manager entry, no ClientSim and no
+     tank, which shows in the roster and is skipped by the start sequence
+     until something fields it. Every other way of taking a seat sets this
+     true. */
+  bool fielded;
+  /* The seat outlives the bot in it. Taking the bot out of a seat marked
+     this way returns the seat to unfielded rather than emptying it, so the
+     next wave has somewhere to land. Set when the seat is seeded unfielded;
+     survives being fielded. */
+  bool keepSeat;
 } LobbyPlayer;
 
 /* Per-team metadata — used by the Layout A lobby UI for color tinting,
@@ -900,11 +911,32 @@ BYTE serverSimGetNumHumans(ServerSim *sim);
  *  are playing the round rather than sitting it out. This
  *  is the count "how many players are there" wants, not
  *  the length of the roster: a seat can hold a place in
- *  the lobby without being on the field. Every connected
- *  seat is on the field today, so this matches
- *  serverSimGetNumPlayers.
+ *  the lobby without being on the field, and an unfielded
+ *  seat is one of those.
  *********************************************************/
 BYTE serverSimGetNumFielded(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimIsSeatFielded
+ *PURPOSE:
+ *  Whether seat playerNum is on the field. False for an
+ *  empty seat and for a seat held without a bot in it.
+ *********************************************************/
+bool serverSimIsSeatFielded(const ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          serverSimAddUnfieldedSeat
+ *PURPOSE:
+ *  Seat a bot in the lobby without putting it on the
+ *  field: the roster gains a connected bot seat with the
+ *  name and team given, and nothing else is built — no
+ *  brain, no ClientSim, no tank. The seat shows in the
+ *  roster, counts as ready, is skipped by the start
+ *  sequence, and is fielded later by a spawn naming it.
+ *  Returns false for an out-of-range or occupied seat.
+ *********************************************************/
+bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
+                               const char *name, BYTE teamNumber);
 
 /*********************************************************
  *NAME:          serverSimRefreshWbnLobbyInfo
@@ -1621,8 +1653,8 @@ typedef struct ServerSimRosterSlot {
     char    name[PLAYER_NAME_LEN]; /* NUL-terminated player name */
     bool    ready;      /* Has said it is ready to start */
     bool    fielded;    /* Playing the round rather than sitting it out.
-                           Every connected seat plays today, so this is
-                           true whenever the call succeeds. */
+                           False for a seat held in the roster with no bot,
+                           no ClientSim and no tank behind it. */
     bool    alive;      /* Has a tank in the world and is not in death-wait */
 } ServerSimRosterSlot;
 

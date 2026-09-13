@@ -109,8 +109,10 @@ int run_transfer_host_rejects_bot_target(void) {
     ServerSim *sim = make_lobby_sim();
     UT_ASSERT(sim != NULL);
     serverSimAddPlayer(sim, 0, "Host", false);
-    /* Fake a connected bot at slot 2 (a real bot needs a brain file;
-     * serverSimIsBot reads botMgr.bots[i].active). */
+    /* Fake a connected bot at slot 2 (a real bot needs a brain file).
+     * serverSimIsBot answers yes to a live bot pool entry or to a roster
+     * seat marked as a bot; the pool flag is the half a fake bot can set
+     * without the brain. */
     sim->playerConnected[2] = TRUE;
     sim->botMgr.bots[2].active = true;
     UT_ASSERT(serverSimIsBot(sim, 2) == true);

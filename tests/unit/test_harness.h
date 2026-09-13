@@ -2169,6 +2169,18 @@ int run_scenario_lobby_set_team(void);
 int run_scenario_roster_bots_seat_past_the_human_cap(void);
 int run_scenario_roster_spawn_named_start(void);
 
+/* The unfielded seat (test_unfielded_seat.c): a seat a bot holds with no
+ * bot manager entry, no ClientSim and no tank behind it. What it counts for,
+ * what the start sequence does with it, the two ops that field and unfield
+ * it, and the byte that carries it to clients. */
+int run_unfielded_seat_counts(void);
+int run_unfielded_seat_is_empty(void);
+int run_unfielded_seat_all_ready(void);
+int run_unfielded_seat_start_skips_it(void);
+int run_unfielded_seat_spawn_fields_it(void);
+int run_unfielded_seat_survives_remove(void);
+int run_unfielded_seat_on_the_wire(void);
+
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient
  * is; a sound at a square and a sound at no square; a console line. Plus the

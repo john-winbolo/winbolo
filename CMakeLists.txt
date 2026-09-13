@@ -3359,6 +3359,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # queue that paces a spawn and a removal one to a tick, and the init
     # table a spawned bot's brain is created with.
     tests/unit/test_scenario_roster_arms.c
+    # The unfielded seat: what a seat held without a bot in it counts for, the
+    # start sequence walking past it, the spawn that fields it and the removal
+    # that gives it back, and the byte that carries it to clients.
+    tests/unit/test_unfielded_seat.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
     # listener wherever they stand, and the records the three lines leave in a
@@ -4932,6 +4936,13 @@ set(_unit_test_names
     scenario_lobby_set_team
     scenario_roster_bots_seat_past_the_human_cap
     scenario_roster_spawn_named_start
+    unfielded_seat_counts
+    unfielded_seat_is_empty
+    unfielded_seat_all_ready
+    unfielded_seat_start_skips_it
+    unfielded_seat_spawn_fields_it
+    unfielded_seat_survives_remove
+    unfielded_seat_on_the_wire
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player

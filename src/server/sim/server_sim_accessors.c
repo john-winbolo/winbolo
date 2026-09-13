@@ -285,8 +285,7 @@ bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
                          TRUE);
     out->name[sizeof(out->name) - 1] = '\0';
     out->ready = sim->lobbyPlayers[i].ready;
-    /* Holding a seat is playing the round. */
-    out->fielded = true;
+    out->fielded = sim->lobbyPlayers[i].fielded;
     t = &sim->sim.tanks[i];
     out->alive = (*t != NULL && tankGetDeathWait(t) == 0);
     return true;
@@ -296,14 +295,20 @@ BYTE serverSimGetNumFielded(ServerSim *sim) {
     BYTE count;
     BYTE num = 0;
     if (sim == NULL) return 0;
-    /* Seats playing the round. Holding a seat is playing it, so this walks
-       the same flag serverSimGetNumPlayers does. */
+    /* Seats playing the round, which is fewer than the roster whenever a
+       seat is held for a bot that has not been fielded yet. */
     for (count = 0; count < MAX_TANKS; count++) {
-        if (sim->playerConnected[count]) {
+        if (sim->playerConnected[count] && sim->lobbyPlayers[count].fielded) {
             num++;
         }
     }
     return num;
+}
+
+bool serverSimIsSeatFielded(const ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    return sim->playerConnected[playerNum] &&
+           sim->lobbyPlayers[playerNum].fielded;
 }
 
 char *const *serverSimGetMapDirFiles(const ServerSim *sim) {

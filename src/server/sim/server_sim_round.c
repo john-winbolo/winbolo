@@ -50,9 +50,11 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "Lobby empty — resetting to startup defaults");
 
-    /* Drop any bots the previous occupants added. */
+    /* Drop any bots the previous occupants added, seats held for a bot that
+       was never fielded included — those have no bot manager entry, so the
+       roster is what has to be asked. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (botManagerIsBot(sim, i)) {
+        if (serverSimIsBot(sim, i)) {
             serverSimRemoveBot(sim, i);
         }
     }
@@ -404,7 +406,7 @@ BYTE serverSimGetNumHumans(ServerSim *sim) {
     BYTE count;
     BYTE num = 0;
     for (count = 0; count < MAX_TANKS; count++) {
-        if (sim->playerConnected[count] && !botManagerIsBot(sim, count)) {
+        if (sim->playerConnected[count] && !serverSimIsBot(sim, count)) {
             num++;
         }
     }
@@ -573,7 +575,7 @@ void serverSimEnterGameOver(ServerSim *sim) {
          * wire-sized field, so the copy into it truncates. */
         char nameBuf[PLAYER_NAME_LEN];
         memset(id, 0, sizeof(*id));
-        id->isBot = botManagerIsBot(sim, (BYTE)slot) ? 1 : 0;
+        id->isBot = serverSimIsBot(sim, (BYTE)slot) ? 1 : 0;
         id->team  = sim->lobbyPlayers[slot].teamNumber;
         playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, nameBuf,
                              sizeof(nameBuf), TRUE);
@@ -794,7 +796,7 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         numConnected++;
-        if (!botManagerIsBot(sim, i)) numHumans++;
+        if (!serverSimIsBot(sim, i)) numHumans++;
         if (!sim->lobbyPlayers[i].ready) return; /* Not all ready */
     }
     if (numConnected == 0) return;
@@ -1157,6 +1159,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     {
         BYTE batchTeam[MAX_TANKS];
         BYTE reserved0[MAX_TANKS];
+        bool fieldedNow[MAX_TANKS];
         BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
         BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
         memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
@@ -1169,9 +1172,14 @@ void serverSimStartGameInPlace(ServerSim *sim) {
             reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
                          ? MAX_STARTS                  /* none / stale-after-map-change */
                          : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
+            /* The batch places the round's field, not its roster: a seat
+               held for a bot that is not being fielded takes no square here,
+               and takes one from the incremental pick when it is fielded. */
+            fieldedNow[i] = sim->playerConnected[i] &&
+                            sim->lobbyPlayers[i].fielded;
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
-                          sim->playerConnected, batchTeam,
+                          fieldedNow, batchTeam,
                           sim->sim.pendingStartIdx, reserved0, teamSide);
     }
 
@@ -1190,9 +1198,10 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         }
     }
 
-    /* Create tanks for all connected players */
+    /* Create tanks for every seat that is being fielded — a seat held for a
+       bot the round is not starting with is skipped, as in serverSimStartGame. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i] || !sim->lobbyPlayers[i].fielded) continue;
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
     }
@@ -1332,6 +1341,7 @@ void serverSimStartGame(ServerSim *sim) {
     {
         BYTE batchTeam[MAX_TANKS];
         BYTE reserved0[MAX_TANKS];
+        bool fieldedNow[MAX_TANKS];
         BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
         BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
         memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
@@ -1344,15 +1354,22 @@ void serverSimStartGame(ServerSim *sim) {
             reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
                          ? MAX_STARTS                  /* none / stale-after-map-change */
                          : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
+            /* The batch places the round's field, not its roster: a seat
+               held for a bot that is not being fielded takes no square here,
+               and takes one from the incremental pick when it is fielded. */
+            fieldedNow[i] = sim->playerConnected[i] &&
+                            sim->lobbyPlayers[i].fielded;
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
-                          sim->playerConnected, batchTeam,
+                          fieldedNow, batchTeam,
                           sim->sim.pendingStartIdx, reserved0, teamSide);
     }
 
-    /* Create tanks for all connected players */
+    /* Create tanks for every seat that is being fielded. A seat held for a
+       bot the round is not starting with is skipped: it stays in the roster
+       with no tank until something fields it. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i] || !sim->lobbyPlayers[i].fielded) continue;
         /* Clean up any existing tank/lgm (shouldn't exist, but be safe) */
         if (sim->sim.tanks[i] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[i]);

@@ -549,11 +549,8 @@ int run_scenario_lobby_add_bot(void) {
     sim = raLobbySim();
     UT_ASSERT(sim != NULL);
 
-    /* A seat with nobody fielded in it has no entry point on the sim, so it
-       is refused rather than quietly given a fielded bot instead. */
-    raLobbyAddOp(&op, 0, false, NULL, NULL);
-    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
-
+    /* An add asking for the seat without the bot in it is
+       test_unfielded_seat.c's; this case is about the fielded add. */
     raLobbyAddOp(&op, MAX_TANKS, true, NULL, NULL);
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
 
