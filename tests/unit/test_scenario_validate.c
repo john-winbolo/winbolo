@@ -39,6 +39,8 @@
  * run_scenario_validate_lines_point_at_the_key
  *                                        — the line each issue carries is the
  *                                          line its key is written on
+ * run_scenario_validate_wave_defense     — the sidecar that ships beside Wave
+ *                                          Defense.map, against that map
  */
 
 #include <stdint.h>
@@ -56,6 +58,13 @@
 #include "scenario_manifest.h"
 #include "scenario_validate.h"
 #include "test_harness.h"
+
+/* Where the maps the baseline runs play are kept, and the sidecars beside
+ * them. CMake passes the absolute path; the fallback is the path from the
+ * source root, for a run started there. */
+#ifndef WB_BASELINE_MAPS_DIR
+#define WB_BASELINE_MAPS_DIR "tests/baseline/maps"
+#endif
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
 
@@ -546,5 +555,41 @@ int run_scenario_validate_lines_point_at_the_key(void) {
 
     serverSimDestroy(sim);
     svDrop(kMap);
+    return 0;
+}
+
+/* ── 13. The sidecar that ships ───────────────────────────────────── */
+
+/* The one case that writes no fixture of its own: it reads the content beside
+   its own map, against a sim built from that map, which is what an author
+   running the check on it would get. */
+int run_scenario_validate_wave_defense(void) {
+    const char       *dir = getenv("WB_BASELINE_MAPS_DIR");
+    char              mapPath[512];
+    ServerSim        *sim;
+    ScnValidateResult r;
+    char              seen[1024];
+
+    if (dir == NULL || dir[0] == '\0') {
+        dir = WB_BASELINE_MAPS_DIR;
+    }
+    snprintf(mapPath, sizeof(mapPath), "%s/Wave Defense.map", dir);
+
+    sim = serverSimCreate(mapPath, gameOpen, false, 0, -1);
+    if (sim == NULL) {
+        UT_FAIL("the map is missing or will not load: %s", mapPath);
+    }
+
+    if (!scenarioValidateMap(sim, mapPath, &r)) {
+        svList(&r, seen, sizeof(seen));
+        UT_FAIL("the sidecar beside %s was refused: %s", mapPath, seen);
+    }
+    UT_ASSERT_MSG(r.haveManifest, "no sidecar was found beside %s", mapPath);
+    UT_ASSERT_MSG(r.count == 0, "%u issues against the shipped sidecar",
+                  (unsigned)r.count);
+    UT_ASSERT_MSG(strcmp(r.manifest.name, "Wave Defense") == 0,
+                  "the sidecar calls itself '%s'", r.manifest.name);
+
+    serverSimDestroy(sim);
     return 0;
 }

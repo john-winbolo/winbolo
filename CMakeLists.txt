@@ -3212,6 +3212,7 @@ set(_baseline_fast
     pill_yard_capture
     pill_yard_anger
     grass_flat_growth
+    wave_defense_fast
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)
@@ -3992,6 +3993,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Committed skin fixture directory: the parity test opens
     # <dir>/basic and zips it into the working directory at run time.
     WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
+    # The maps the baseline runs play, and the scenario sidecars that sit
+    # beside them: the validator case reads one from here.
+    WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -5057,6 +5061,7 @@ set(_unit_test_names
     scenario_validate_bound_false_with_tags
     scenario_validate_syntax_error_line
     scenario_validate_lines_point_at_the_key
+    scenario_validate_wave_defense
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

@@ -2358,6 +2358,7 @@ int run_scenario_validate_region_off_map(void);
 int run_scenario_validate_bound_false_with_tags(void);
 int run_scenario_validate_syntax_error_line(void);
 int run_scenario_validate_lines_point_at_the_key(void);
+int run_scenario_validate_wave_defense(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads

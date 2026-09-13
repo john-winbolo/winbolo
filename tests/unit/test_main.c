@@ -1131,6 +1131,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_validate_syntax_error_line",        run_scenario_validate_syntax_error_line        },
     { "scenario_validate_lines_point_at_the_key",
       run_scenario_validate_lines_point_at_the_key                                                 },
+    { "scenario_validate_wave_defense",             run_scenario_validate_wave_defense             },
     { "scenario_lua_every_row_answers",             run_scenario_lua_every_row_answers             },
     { "scenario_lua_read_index_passes_through",     run_scenario_lua_read_index_passes_through     },
     { "scenario_lua_op_index_subtracts_one",        run_scenario_lua_op_index_subtracts_one        },

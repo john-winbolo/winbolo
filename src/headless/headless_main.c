@@ -125,6 +125,10 @@ static char optTrackerAddr[256] = "";
 static unsigned short optTrackerPort = 0;
 static char optName[64] = "HeadlessBot";
 static char optBrain[512] = "";
+/* The brain the server runs bots on, which is not optBrain: that one is this
+ * process's own player, started through ClientSim. This one is handed to the
+ * sim, which loads it for every bot a lobby or a scenario seats. */
+static char optBotBrain[512] = "";
 static int optTicks = 0; /* 0 = unlimited */
 static char optPassword[256] = "";
 static char optLogState[512] = "";
@@ -1932,7 +1936,7 @@ static void printUsage(const char *prog) {
     "\n"
     "Common options:\n"
     "  --name NAME       Player name (default: HeadlessBot)\n"
-    "  --brain PATH      Path to Lua brain script\n"
+    "  --brain PATH      Path to the Lua brain this process's own player runs\n"
     "  --ticks N         Run for N game ticks then exit (0 = unlimited)\n"
     "  --ai TYPE         AI type: yes (default), full, advantage, no\n"
     "  --gametype TYPE   Game type: strict (default), tournament, open\n"
@@ -1960,6 +1964,10 @@ static void printUsage(const char *prog) {
     "                    always written (- for stdout)\n"
     "  --record FILE     Record the run to a .wbv replay, started before the\n"
     "                    first game tick and closed at exit\n"
+    "  --bot-brain PATH  Path to the Lua brain the server runs its bots on, and\n"
+    "                    what turns bot AI on for the fast-mode sim. Not --brain,\n"
+    "                    which is this process's own player. A scenario's lobby\n"
+    "                    seats and its spawns both need this\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
@@ -2039,6 +2047,8 @@ static bool parseArgs(int argc, char **argv) {
       strncpy(optName, argv[++i], sizeof(optName) - 1);
     } else if (strcmp(argv[i], "--brain") == 0 && i + 1 < argc) {
       strncpy(optBrain, argv[++i], sizeof(optBrain) - 1);
+    } else if (strcmp(argv[i], "--bot-brain") == 0 && i + 1 < argc) {
+      strncpy(optBotBrain, argv[++i], sizeof(optBotBrain) - 1);
     } else if (strcmp(argv[i], "--ticks") == 0 && i + 1 < argc) {
       optTicks = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--log-state") == 0 && i + 1 < argc) {
@@ -2381,6 +2391,16 @@ static int runFastMode(void) {
     } else {
       cfg.skipLobby    = true;
     }
+    /* The bot brain and the AI level go over together: a sim with a path and
+     * no level runs no brains, and a level with no path has none to run. Left
+     * out, both stay as serverSimCreate left them — no bot AI, which is what
+     * every run of this binary has had. The reset path below starts the sim
+     * again with a zeroed config, and both fields survive that: the apply
+     * writes them only when the config carries them. */
+    if (optBotBrain[0] != '\0') {
+      cfg.botBrainPath = optBotBrain;
+      cfg.botAiType    = (BYTE)aiYes;
+    }
     applyViewPolicyOptions(fastServerSim);
     serverInstanceStartup(fastServerSim, &cfg);
   }
@@ -2401,6 +2421,17 @@ static int runFastMode(void) {
    * server would send it a near/far tier and a bearing instead. */
   serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
                            true);
+  /* The lobby a scenario asks for. Its template reached the sim at the attach
+   * above; seating it is the separate step made wherever a lobby is built, and
+   * this is where this binary builds one.
+   *
+   * After the local player joins, not before: a seat is taken from the first
+   * free slot, so seating a horde first would put it in slot 0 and leave this
+   * process's own player somewhere above it. A map with no scenario has no
+   * template, and this seats nothing. */
+  if (scenarioHost != NULL) {
+    serverSimScenarioSeatLobby(fastServerSim);
+  }
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   if (!optQuiet) {
