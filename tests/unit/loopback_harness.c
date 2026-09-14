@@ -49,8 +49,11 @@ static void loopbackSetImpairEnv(const char *spec) {
 }
 
 /* Bind a throwaway UDP socket to 127.0.0.1:0 and read back the kernel-
- * assigned port. The server rebinds it (with SO_REUSEADDR) immediately
- * after; the close→rebind window is small enough to ignore for a test. */
+ * assigned port. The server rebinds it immediately after, but the
+ * close→rebind window is a real one: under a parallel ctest run another
+ * process's probe can be handed the same port in between, and the server's
+ * bind then fails. The caller re-picks rather than treating that as a
+ * bring-up failure, so this need not be race-free on its own. */
 static unsigned short loopbackPickEphemeralPort(void) {
     SOCKET probe;
     struct sockaddr_in bindAddr;
@@ -91,9 +94,18 @@ static unsigned short loopbackPickEphemeralPort(void) {
  * keeps a case's output and shows it only when the case fails, so a green run
  * reads the same as before and a failed one says which port it was on — which
  * is what tells a port the server could not rebind apart from a stall. */
+/* How many ports a bring-up will try before giving up. Each attempt loses
+ * only to a process that grabbed this exact port inside a window of a few
+ * microseconds, so the chance of losing eight in a row is not one worth
+ * naming; the count is high enough that a whole suite run never sees the
+ * end of it, and low enough that a genuinely unbindable address (no
+ * loopback, a sandbox with no sockets) still fails fast. */
+#define LOOPBACK_PORT_ATTEMPTS 8
+
 static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     BYTE emap[6000] = E_MAP;
     ServerInstanceConfig cfg;
+    int attempt;
 
     bolo_net_init();
 
@@ -102,12 +114,6 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
         return false;
     }
     h->threadsUp = true;
-
-    h->port = loopbackPickEphemeralPort();
-    if (h->port == 0) {
-        fprintf(stderr, "  loopback bring-up failed: no ephemeral port\n");
-        return false;
-    }
 
     h->sim = serverSimCreateCompressed(emap, LOOPBACK_EMAP_LEN,
                                        "Everard Island", gameOpen,
@@ -120,7 +126,6 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     serverSimSetAllowNewPlayers(h->sim, true);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.udpPort             = h->port;
     cfg.bindAddr            = "127.0.0.1";
     cfg.password            = "";
     cfg.maxPlayers          = MAX_TANKS;
@@ -137,14 +142,34 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     } else {
         cfg.skipLobby = true;   /* enter running immediately */
     }
-    if (!serverInstanceStartup(h->sim, &cfg)) {
+    /* Pick a port and bind it, re-picking if the bind lost the close→rebind
+     * race. A failed serverInstanceStartup returns from the bind itself,
+     * before it has touched anything but sim->maxPlayers, so the next
+     * attempt starts from the same clean sim. */
+    for (attempt = 0; attempt < LOOPBACK_PORT_ATTEMPTS; attempt++) {
+        h->port = loopbackPickEphemeralPort();
+        if (h->port == 0) {
+            fprintf(stderr, "  loopback bring-up failed: no ephemeral port\n");
+            return false;
+        }
+        cfg.udpPort = h->port;
+        if (serverInstanceStartup(h->sim, &cfg)) {
+            h->serverUp = true;
+            break;
+        }
         /* The port is on this line because a bind that another process still
            holds is what this failure usually is. */
+        fprintf(stderr, "  loopback bring-up: port=%u taken between the probe "
+                        "and the bind, re-picking (attempt %d of %d)\n",
+                (unsigned)h->port, attempt + 1, LOOPBACK_PORT_ATTEMPTS);
+        h->port = 0;
+    }
+    if (!h->serverUp) {
         fprintf(stderr, "  loopback bring-up failed: serverInstanceStartup "
-                        "port=%u\n", (unsigned)h->port);
+                        "could not bind any of %d ephemeral ports\n",
+                LOOPBACK_PORT_ATTEMPTS);
         return false;
     }
-    h->serverUp = true;
     fprintf(stderr, "  loopback server: port=%u mode=%s\n",
             (unsigned)h->port, lobbyMode ? "lobby" : "running");
     return true;
