@@ -137,9 +137,28 @@ static SOCKET jrlOpenSocketOnIp(const char *ip) {
 }
 
 /* Non-blocking poll: returns the byte count of a datagram now waiting on s,
- * or <= 0 if none is currently available. */
-static int jrlTryRecv(SOCKET s, uint8_t *buf, int cap) {
-    return (int)recvfrom(s, (char *)buf, cap, 0, NULL, NULL);
+ * or <= 0 if none is currently available. The sender is reported through
+ * *from so the caller can tell our server's reply from a stray.
+ *
+ * Telling them apart matters. These sockets are bound to ephemeral
+ * 127.0.0.1 ports, and a full `ctest -j` run has dozens of other loopback
+ * servers on the same interface sending JOIN_CHALLENGEs of their own at
+ * ephemeral ports. One addressed to a port this test happens to hold lands
+ * here looking exactly like a challenge we asked for. */
+static int jrlTryRecvFrom(SOCKET s, uint8_t *buf, int cap,
+                          struct sockaddr_in *from) {
+    socklen_t fromLen = (socklen_t)sizeof(*from);
+    memset(from, 0, sizeof(*from));
+    return (int)recvfrom(s, (char *)buf, cap, 0,
+                         (struct sockaddr *)from, &fromLen);
+}
+
+/* True if a datagram came from the harness server rather than from some
+ * other test's server that happens to share this loopback. */
+static bool jrlIsFromServer(const struct sockaddr_in *from,
+                            const struct sockaddr_in *server) {
+    return from->sin_addr.s_addr == server->sin_addr.s_addr &&
+           from->sin_port == server->sin_port;
 }
 
 int run_join_rate_limit(void) {
@@ -209,7 +228,9 @@ int run_join_rate_limit(void) {
         loopbackHarnessPump(&h);
         for (i = 0; i < JRL_NUM_SOCKETS; i++) {
             int n;
-            while ((n = jrlTryRecv(socks[i], in, sizeof(in))) > 0) {
+            struct sockaddr_in from;
+            while ((n = jrlTryRecvFrom(socks[i], in, sizeof(in), &from)) > 0) {
+                if (!jrlIsFromServer(&from, &serverAddr)) continue;
                 if (getPacketType(in, n) == PACKET_JOIN_CHALLENGE &&
                     !challenged[i]) {
                     challenged[i] = true;
@@ -264,6 +285,7 @@ int run_join_rate_limit(void) {
 
             for (pump = 0; pump < JRL_PUMP_MAX && !altChallenge; pump++) {
                 uint8_t in[1024];
+                struct sockaddr_in from;
                 int n;
                 if (pump % 8 == 0) {
                     sendto(altSock, (const char *)altJoin, altLen, 0,
@@ -271,7 +293,9 @@ int run_join_rate_limit(void) {
                            sizeof(serverAddr));
                 }
                 loopbackHarnessPump(&h);
-                while ((n = jrlTryRecv(altSock, in, sizeof(in))) > 0) {
+                while ((n = jrlTryRecvFrom(altSock, in, sizeof(in),
+                                           &from)) > 0) {
+                    if (!jrlIsFromServer(&from, &serverAddr)) continue;
                     if (getPacketType(in, n) == PACKET_JOIN_CHALLENGE) {
                         altChallenge = true;
                     }
