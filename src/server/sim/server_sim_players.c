@@ -279,6 +279,28 @@ int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
     return -1;
 }
 
+/* A dedicated server seats its bots before anybody arrives, so the slot the
+   host role starts in — slot 0, at creation and again at every round reset —
+   is a bot, and nobody in the lobby can change a setting. -firstjoinhost hands
+   the role to the first person through the door instead: the role is going
+   spare when the slot holding it holds a bot or holds nobody, and a connected
+   person there keeps it, so a later joiner never takes it off the first. Bots
+   never host, which is why only the human join paths call this. The setter
+   publishes the lobby settings, so clients already in the lobby are told the
+   new slot and the joiner reads it out of its subscriber replay. */
+void serverSimPromoteHostOnJoin(ServerSim *sim, BYTE playerNum) {
+    BYTE host;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->firstJoinerBecomesHost) return;
+    if (serverSimIsBot(sim, playerNum)) return;
+    host = sim->hostSlot;
+    if (host < MAX_TANKS && sim->playerConnected[host] &&
+        !serverSimIsBot(sim, host)) {
+        return;
+    }
+    serverSimSetHostSlot(sim, playerNum);
+}
+
 LocalJoinResult serverSimLocalJoin(ServerSim *sim,
                                    const char *playerName,
                                    const char *fallbackCountry,
@@ -314,6 +336,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
     addPlayerInternal(sim, (BYTE)slot, validatedName, country, false);
     setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, clientFlags);
     fillAndPublishPlayerJoin(sim, (BYTE)slot);
+    serverSimPromoteHostOnJoin(sim, (BYTE)slot);
 
     {
         char serverKey[WINBOLONET_KEY_LEN];

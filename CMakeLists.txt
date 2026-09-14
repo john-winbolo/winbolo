@@ -4309,6 +4309,9 @@ set(_unit_test_names
     transfer_host_rejects_self
     transfer_host_rejects_unconnected
     transfer_host_rejects_bot_target
+    firstjoinhost_promotes_over_bot
+    firstjoinhost_off_leaves_host_alone
+    firstjoinhost_second_joiner_does_not_displace
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
