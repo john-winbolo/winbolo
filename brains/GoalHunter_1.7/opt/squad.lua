@@ -16,6 +16,7 @@ local ally_state = require("ally_state")
 local cpf        = require("cpathfinder")
 local U          = require("util")
 local viz        = require("viz")
+local orders     = require("orders")
 local print2     = require("print2")
 
 local M = {}
@@ -531,12 +532,41 @@ end
 -- blitz its goal_selection would never actually pursue, which produced endless
 -- accept/commit/leave churn. The discount alone now decides whether a blitz
 -- pill is worth switching to; availability just confirms we made that switch.
+-- =========================================================================
+-- M.busy(state, info) -> busy, reason
+-- THE one "not interruptible" test, shared by the blitz availability gate
+-- below and by the chat-order auction (orders.lua).  Reasons:
+--   man_out        the LGM is out of the tank, for any reason
+--   capturing      capture_pill in its final phase (man dispatched)
+--   repositioning  a reposition move executing after its vote passed
+--   kill_me        the kill-me hand-off, while executing
+--   escaping       escape_water or a stuck escape in progress
+-- Everything else is interruptible: attack_pill on another pill, a topped-off
+-- refuel, explore, seek_trees.  Low armour and no ammo are NOT busy reasons
+-- (the refuel pause covers them) and there is no danger check.
+-- Blitz behaviour is unchanged by routing availability() through this: every
+-- case here already failed availability()'s own blitz-only rule.
+-- The rule itself lives in orders.lua so the order code and this gate cannot
+-- drift apart; this is the name the design doc asked for.
+function M.busy(state, info)
+  return orders.busy(state, info)
+end
+
 function M.availability(state, info, help_target_id)
   -- Joining a blitz has NO armour floor (a 2+ tank take shares the incoming
   -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
   -- commander-level armour before diving in and risking the pill it's holding.
   local ok, reason
-  if state.blitz_disabled or not C.BLITZ_ENABLED then
+  -- The shared "not interruptible" test runs FIRST (see M.busy above). Every
+  -- case it catches already failed the blitz-only rule at the bottom of this
+  -- chain, so no join that used to happen stops happening; the answer is
+  -- still "bz", only the debug line now names WHICH busy state it was.
+  -- Gated on the bot-commands master switch so preset=keel (and any run with
+  -- the feature off) keeps the OLD chain bit-for-bit.
+  local _busy, _busy_reason = M.busy(state, info)
+  if _busy and C.BOT_COMMANDS_ENABLED then
+    ok, reason = false, "bz"
+  elseif state.blitz_disabled or not C.BLITZ_ENABLED then
     -- "noblitz" BRAIN_INIT_ARG (or BLITZ_ENABLED=false, e.g. Easy difficulty):
     -- this bot never joins anyone's blitz. Answered
     -- here (rather than at every call site) because availability() is the one

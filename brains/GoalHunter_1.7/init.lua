@@ -269,6 +269,10 @@ local pill_table = require("pill_table")
 local PP = require("pill_portfolio")
 local lgm_registry = require("lgm_registry")
 local circles = require("circles")
+-- Chat orders (bot commands). ONE table name for the whole feature: Brain.think
+-- is a couple of slots off Lua's 60-upvalue cap, so everything hangs off this
+-- module and off state.orders. See orders.lua.
+local ORD = require("orders")
 lgm_registry.init()
 
 local Brain = {}
@@ -4232,7 +4236,20 @@ function Brain.think(info)
           comms.process_message(m.sender, m.text, now, state)
         end
 
-        local cmd = cmds.parse(m.text)
+        -- Chat ORDERS first ("attack 5", "all defend base 3", "socrates
+        -- retreat"). The old operator commands below are all "verb:N" forms,
+        -- which never start with a bare verb word, so the two parsers cannot
+        -- both claim a line. The TEAM CHECK is _from_ally: an enemy typing
+        -- "attack 5" in all chat is ignored in silence.
+        local _ord_took = false
+        if C.BOT_COMMANDS_ENABLED then
+          _ord_took = ORD.on_chat(state, world, info, m.sender, m.text, now,
+                                  _from_ally,
+                                  bit.band(info.player_bots or 0,
+                                           bit.lshift(1, (m.sender or 0))) ~= 0)
+        end
+
+        local cmd = (not _ord_took) and cmds.parse(m.text) or nil
         if cmd then
           if BRAIN_DEBUG_MODE then
             print(string.format(TAG .. " t=%d RECV from player %d: '%s'",
@@ -4288,6 +4305,11 @@ function Brain.think(info)
       state._kw_resync_cd = now + (C.KW_RESYNC_COOLDOWN or 150)
     end
   end
+
+  -- Chat orders: drain the inbound bids/claims/releases, settle any auction
+  -- that is due, expire a finished order, and publish the live slot on
+  -- state._order. Runs BEFORE goal selection so the pool sees it this tick.
+  ORD.update(state, world, info, now)
   W.collect_kw_changes(world, now)
 
   -- Paused: accept commands but do nothing else
@@ -10096,6 +10118,21 @@ function Brain.think(info)
       state._repo_outbox = kept
     end
 
+    -- Bot-command order verbs (obd/obc/obr) queued by ORD.update / ORD.on_chat.
+    -- Same keep-and-retry rule as the vote ballots: a dropped bid would leave
+    -- an auction waiting on an ally that already answered.
+    if state.orders and state.orders.out and #state.orders.out > 0 then
+      local kept
+      for _, m in ipairs(state.orders.out) do
+        if try_send(m, 0) then
+          print2(string.format("ORDER_TX t=%d %s", now, m))
+        else
+          kept = kept or {}; kept[#kept + 1] = m
+        end
+      end
+      state.orders.out = kept or {}
+    end
+
     -- Steal-negotiation verbs (stq/sta/str) queued by the ally-claimed sync
     -- (requests) and the steal-request processor (replies). Keep any that
     -- didn't fit the batch — a dropped sta would leave the challenger
@@ -10468,6 +10505,16 @@ function Brain.think(info)
     -- info.allies leaves humans on our team. If a busy tick prevents
     -- the announcement going out, we defer; the next tick's slate
     -- heartbeat is at most 30 s away so the slot frees up quickly.
+    -- Order acks / status lines. Sent to the ALLIES mask (humans AND bots)
+    -- rather than the internal channel so a human -- or a test seat -- sees
+    -- them. One per tick; the rest wait for a free slot (the list is short and
+    -- self-limiting at 6 entries, see orders.lua say()).
+    if not send_msg and state.orders and state.orders.say
+       and #state.orders.say > 0 and (info.allies or 0) ~= 0 then
+      send_msg = table.remove(state.orders.say, 1)
+      msg_dest = info.allies
+    end
+
     if not send_msg and state.pending_human_goal_msg then
       local allies = info.allies or 0
       local bots   = info.player_bots or 0
@@ -10685,8 +10732,9 @@ function Brain.debug_info()
   local amy = g.approach_my or -1
   local swx, swy = smx * 256 + 128, smy * 256 + 128
   local sdist = math.sqrt((i.tankx - swx)^2 + (i.tanky - swy)^2)
-  return string.format("sub=%s tank=(%d,%d) standoff=(%d,%d) approach=(%d,%d) sdist=%.0f",
-    tostring(g.substate), tmx, tmy, smx, smy, amx, amy, sdist)
+  return string.format("sub=%s tank=(%d,%d) standoff=(%d,%d) approach=(%d,%d) sdist=%.0f%s",
+    tostring(g.substate), tmx, tmy, smx, smy, amx, amy, sdist,
+    ORD.panel_line(state, i))
 end
 
 function Brain.set_manual_mode(on)

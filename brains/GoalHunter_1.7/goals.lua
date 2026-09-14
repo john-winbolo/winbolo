@@ -2092,6 +2092,12 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     if not local_gate and low_shells_global and not boat_sink then
       local_gate = string.format("low_shells(%d<%d)", info.shells, C.TANK_COMBAT_MIN_SHELLS)
     end
+    -- `attack <tank name>` ORDER: the min-shells gate and the pill-crossfire
+    -- gate are waived for the ONE tank the human named. No danger check.
+    if C.BOT_COMMANDS_ENABLED and state._order
+       and state._order.kind == "attack_tank" and state._order.tid == et.id then
+      local_gate = nil
+    end
     if local_gate then
       breakdown[#breakdown + 1] = {
         id = et.id, mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
@@ -2401,6 +2407,25 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
             skipped = "not_visible", player_name = name,
           }
         end
+      end
+    end
+  end
+
+  -- `attack <tank name>` ORDER: the named tank wins the pick outright, and at
+  -- a price low enough that the rest of the pool cannot argue. Done AFTER the
+  -- candidate loop so a cheaper tank scored later cannot take the pick back.
+  -- The engage-range and min-shells gates were already waived above.
+  if C.BOT_COMMANDS_ENABLED and state._order
+     and state._order.kind == "attack_tank" then
+    for _, et in ipairs(enemy_tanks) do
+      if et.id == state._order.tid then
+        for _, b in ipairs(breakdown) do
+          if b.id == et.id and (b.cost or 1e30) < 1e29 then
+            best_tank = et
+            best_cost = math.min(b.cost, C.ORDER_INJECT_COST or 20)
+          end
+        end
+        break
       end
     end
   end
@@ -7171,6 +7196,20 @@ local function eval_take_cover(state, world, info, tmx, tmy, boat, ammo)
     trig = trig .. "_holding"
   end
 
+  -- A `retreat` ORDER waives the danger-margin gate AND the CALM floor: the
+  -- human asked for it, so find_cover_tile's safest tile is the answer even
+  -- when nothing is shooting and the move buys almost nothing. Applied after
+  -- the whole trigger chain (including the hold release) so nothing below can
+  -- put the reject back. No danger check: "if the user says it, that's it."
+  if C.BOT_COMMANDS_ENABLED and state._order
+     and state._order.kind == "take_cover" then
+    trig = "order"
+    local ocost = C.ORDER_INJECT_COST or 20
+    if cost and cost < ocost then ocost = cost end
+    cost = ocost
+    cost_str = string.format("ORDER retreat{%.0f} — MIN_DANGER_MARGIN and CALM_MIN waived", cost)
+  end
+
   -- Every candidate becomes a row so the panel shows the whole scan.
   local rows = nil
   if BRAIN_POOL_VIZ then
@@ -11124,6 +11163,16 @@ local function get_formula_inner(e)
   local p = e._p
   local raw = e.raw
   local f
+  -- Bot-command ORDER reject row. While this bot holds a chat order every
+  -- other STRATEGIC candidate stays in its pool but is priced out, so the
+  -- panel still shows what it would have cost and who took the decision away.
+  if e._reject == "order" then
+    return reject_with_breakdown(e, "REJECT order",
+      string.format("reject:order — %s's order %s #%s, %d s left",
+        tostring(e._order_by), tostring(e._order_kind),
+        tostring(e._order_tid), e._reject_remaining or 0))
+  end
+
   -- Generic ally-claimed REJECT row.  Pools 2/3/4/5/6/7 use the per-tick
   -- sync to set _reject="ally_claimed" against fresh ally_state.  We
   -- render a uniform row so the pool grid shows who out-bid us and by
@@ -11973,8 +12022,19 @@ local function get_formula(e)
     if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
     else        f = f .. disp .. " ||" .. map:sub(2) end
   end
+  -- The ORDERED goal keeps its real cost and its full breakdown; one extra
+  -- line says why it is the only STRATEGIC row still bidding, so the panel
+  -- stays hand-computable.
+  if e._order_held_by then
+    local disp = " [ORDER]"
+    local map  = string.format("|order: held, from %s", tostring(e._order_held_by))
+    local sep = f:find("||", 1, true)
+    if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
+    else        f = f .. disp .. " ||" .. map:sub(2) end
+  end
   -- REJECT row already formatted by inner — no trailing term to append.
   if e._reject == "ally_claimed"
+     or e._reject == "order"
      or e._reject == "armour_too_low"
      or e._reject == "ally_pill_take_priority" then
     return f
@@ -16071,6 +16131,66 @@ end
 --   2. Cost-based competition — reads pre-evaluated pool cache,
 --      applies hysteresis, picks lowest cost winner.
 -- =========================================================================
+-- =========================================================================
+-- M.order_goal — build the goal an ORDER asks for when the pools did not
+-- offer it this tick.
+--
+-- Most ordered goals are already in a pool (attack_pill on a live pill,
+-- capture_pill on a dead one, capture_base, attack_base), and those keep
+-- their real cost. Three do not always show up and this is where they are
+-- made, with the gates the design says to waive:
+--   defend_pill  — alarm mode, WITHOUT waiting for an alarm to fire
+--   take_cover   — the retreat verb, WITHOUT the danger-margin gate
+--   attack_tank  — pinned to one player, WITHOUT the shells/range gates
+-- No danger check anywhere: "if the user says it, that's it."
+-- Returns a goal table, or nil when the target cannot be located at all.
+-- =========================================================================
+function M.order_goal(state, world, info, ord)
+  local k = ord.kind
+  if k == "defend_pill" then
+    local p = world.pills[ord.tid]
+    if not p then return nil end
+    return { kind = "defend_pill", mx = p.mx, my = p.my,
+             wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = ord.tid,
+             alarm = true, pill_mx = p.mx, pill_my = p.my, _ordered = true }
+  elseif k == "attack_pill" or k == "capture_pill" then
+    local p = world.pills[ord.tid]
+    if not p then return nil end
+    return { kind = k, mx = p.mx, my = p.my,
+             wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = ord.tid,
+             _ordered = true }
+  elseif k == "capture_base" or k == "attack_base" then
+    local b = world.bases[ord.tid]
+    if not b then return nil end
+    return { kind = k, mx = b.mx, my = b.my,
+             wx = U.m2w(b.mx), wy = U.m2w(b.my), target_id = ord.tid,
+             _ordered = true }
+  elseif k == "attack_tank" then
+    local perc = state.perc
+    for _, list in ipairs({ (perc and perc.enemy_tanks) or {},
+                            (perc and perc.ghost_tanks) or {} }) do
+      for _, et in ipairs(list) do
+        if et.id == ord.tid then
+          return { kind = "attack_tank", mx = et.mx, my = et.my,
+                   wx = U.m2w(et.mx), wy = U.m2w(et.my),
+                   target_id = et.id, target_obj = et.obj,
+                   substate = "close", _ordered = true }
+        end
+      end
+    end
+    return nil   -- cannot see him; the order waits (the timer keeps running)
+  elseif k == "take_cover" then
+    local tmx = bit.rshift(info.tankx, 8)
+    local tmy = bit.rshift(info.tanky, 8)
+    local _, best = M.find_cover_tile(state, world, info, tmx, tmy)
+    if not best then return nil end
+    return { kind = "take_cover", mx = best.mx, my = best.my,
+             wx = U.m2w(best.mx), wy = U.m2w(best.my), target_id = -1,
+             _tc_trigger = "order", _tc_margin = 0, _ordered = true }
+  end
+  return nil
+end
+
 local function goal_selection(state, world, info, quiet)
   local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PROFILE)
   local _tgs_t = 0
@@ -16484,6 +16604,50 @@ local function goal_selection(state, world, info, quiet)
         chosen_id = bid, chosen_score = bdist,
         candidates = base_cands,
       })
+    end
+  end
+
+  -- ════════════════════════════════════════════════════════════════════
+  -- Override 3c: CHAT ORDER (bot commands, stage 1).
+  --
+  -- Placed right after the critical-armour flee injection on purpose: an
+  -- order NEVER outranks survival (armour below the escape line pauses every
+  -- order, and the flee it injects is REACTIVE, so it keeps bidding), but it
+  -- does outrank every strategic choice the bot would make for itself.
+  --
+  -- This block does NOT return a result. A hard override would also silence
+  -- kill_lgm, take_cover and refuel, and Andrew's rule is that an attack_pill
+  -- order must not stop the bot shooting an incoming enemy builder. So the
+  -- order is applied INSIDE the cost competition instead: state._order_reject
+  -- tells the pool pass (see "Bot-command ORDER reject pass") to stamp every
+  -- STRATEGIC row except the ordered one with the "order" reject chip, the
+  -- same mechanism "REJECT blitz(joinable)" uses, so the pool visualizer
+  -- still shows every candidate and why it lost. The ordered goal keeps its
+  -- real cost and gains one breakdown line; REACTIVE rows
+  -- (C.ORDER_REACTIVE_KINDS) are untouched.
+  --
+  -- The slot itself (expiry, cancel, steal, target taken) is maintained by
+  -- orders.lua on state._order; here we only decide whether it is usable THIS
+  -- tick and hand the pool pass what it needs.
+  -- ════════════════════════════════════════════════════════════════════
+  state._order_reject = nil
+  if C.BOT_COMMANDS_ENABLED and not result and state._order then
+    local ordq = state._order
+    local okq  = true
+    -- Target gone = nothing to do; orders.lua clears the slot on its own next
+    -- think, we just stop rejecting rows for it now.
+    if ordq.tkind == "pill" and ordq.tid and not world.pills[ordq.tid] then okq = false end
+    if ordq.tkind == "base" and ordq.tid and not world.bases[ordq.tid] then okq = false end
+    -- Armour below the escape line PAUSES every order (a pause, not an exit:
+    -- orders.lua keeps the 60 s timer running).
+    if (info.armour or 0) <= C.ARMOUR_CRITICAL then okq = false end
+    if okq then
+      state._order_reject = ordq
+      if not quiet and BRAIN_DEBUG_MODE then
+        print2(string.format("ORDER_ACTIVE t=%d %s#%s from=%s left=%d",
+               state.tick or 0, ordq.kind, tostring(ordq.tid),
+               tostring(ordq.sender_name), (ordq.expiry or 0) - (state.tick or 0)))
+      end
     end
   end
 
@@ -17006,6 +17170,85 @@ local function goal_selection(state, world, info, quiet)
           _engage_break_lock = entry._engage_break_lock,
         }
         ::continue_pool::
+      end
+    end
+
+    -- ── Bot-command ORDER reject pass ─────────────────────────────────────
+    -- While this bot holds a chat order, every STRATEGIC row except the
+    -- ordered one is priced at the reject sentinel and tagged with the chip
+    -- "order", exactly like "REJECT blitz(joinable)": the row STAYS in the
+    -- pool so the visualizer shows it and its reason. REACTIVE rows
+    -- (C.ORDER_REACTIVE_KINDS: kill_lgm, take_cover, refuel, escape, ...)
+    -- are untouched, so an order never stops the bot defending itself.
+    --
+    -- Placed here, just before the sentinel pin, so the rejected rows are
+    -- tagged _reject_sentinel by the loop below and pinned back to
+    -- POOL_REJECT_COST after the shaping passes — the same treatment every
+    -- other reject gets.
+    if state._order_reject then
+      local ordr = state._order_reject
+      local rk   = C.ORDER_REACTIVE_KINDS or {}
+      local secs = math.max(0, math.floor(((ordr.expiry or 0) - now) / 50))
+      local held = nil
+      for _, c in ipairs(pool) do
+        if c.goal and c.goal.kind == ordr.kind
+           and (ordr.tid == nil or c.goal.target_id == ordr.tid) then
+          held = c
+          break
+        end
+      end
+      if not held then
+        local og = M.order_goal(state, world, info, ordr)
+        if og then
+          held = { cost = C.ORDER_INJECT_COST or 20,
+                   _base_cost = C.ORDER_INJECT_COST or 20,
+                   _raw_cost  = C.ORDER_INJECT_COST or 20,
+                   goal = og, phase_weight = 1.0,
+                   _pool_idx = KIND_TO_POOL[ordr.kind],
+                   _order_injected = true,
+                   desc = string.format("ORDER %s#%s from %s (injected)",
+                          ordr.kind, tostring(ordr.tid or "-"),
+                          tostring(ordr.sender_name)) }
+          pool[#pool + 1] = held
+        end
+      end
+      for _, c in ipairs(pool) do
+        if c ~= held and c.goal then
+          local ck  = c.goal.kind
+          local rej = not rk[ck]
+          -- An order that needs no shells (sweeping a dead pill, retreating,
+          -- taking a neutral base) sends the bot STRAIGHT there: the refuel
+          -- row is rejected too, as long as armour is not the reason to go.
+          if not rej and ck == "refuel_at_base" and not ordr.needs_shells
+             and C.ORDER_REFUEL_SKIP_NO_SHELLS
+             and (info.armour or 0) > C.ARMOUR_LOW then
+            rej = true
+          end
+          if rej then
+            c.cost = C.POOL_REJECT_COST or 1e30
+            c._order_reject = ordr
+            local ce = (state.cost_cache and c._pool_idx and c.goal.target_id)
+                       and state.cost_cache[c._pool_idx .. ":" .. c.goal.target_id]
+            if ce then
+              ce._reject           = "order"
+              ce._reject_remaining = secs
+              ce._order_by         = ordr.sender_name
+              ce._order_kind       = ordr.kind
+              ce._order_tid        = ordr.tid
+              ce.formula           = nil
+            end
+          end
+        end
+      end
+      if held then
+        local ce = (state.cost_cache and held._pool_idx and held.goal.target_id)
+                   and state.cost_cache[held._pool_idx .. ":" .. held.goal.target_id]
+        if ce then ce._order_held_by = ordr.sender_name; ce.formula = nil end
+        if not quiet and BRAIN_DEBUG_MODE then
+          print2(string.format("ORDER_POOL t=%d held=%s#%s cost=%.0f injected=%s left=%ds",
+                 now, held.goal.kind, tostring(held.goal.target_id),
+                 held.cost or 0, tostring(held._order_injected or false), secs))
+        end
       end
     end
 

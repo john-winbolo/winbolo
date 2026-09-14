@@ -4122,6 +4122,65 @@ M.KILL_ME_EXECUTE_TILES = 12
 M.ALLY_CLAIMED_STEAL_FRAC_KILLME = 0.10
 
 -- ══════════════════════════════════════════════════════════════════════════
+-- BOT COMMANDS (chat orders) — stage 1
+-- ══════════════════════════════════════════════════════════════════════════
+-- A human ally types "attack 5", "all defend base 3", "socrates retreat" in
+-- team (or all) chat.  Every bot on the team hears the same line, prices the
+-- trip and the cheapest one takes the job; while it holds the order every
+-- OTHER strategic goal is stamped REJECTED in the pool (chip "order") so the
+-- pool visualizer still shows what lost and why.  Reactive goals (kill_lgm,
+-- take_cover, refuel, escape) keep bidding, so an order never stops the bot
+-- defending itself.  See orders.lua for the wire protocol and the auction.
+--
+-- MASTER SWITCH.  With it false nothing in this block is read: no chat line
+-- is parsed, no /info ob* verb is sent, no pool row is rejected.
+M.BOT_COMMANDS_ENABLED  = true   -- keel false
+-- How long one order holds the bot before goal selection is free again.
+-- 3000 ticks = 60 s at 50 ticks/s.  A repeat of the same line refreshes it.
+M.ORDER_FOCUS_TICKS     = 3000   -- keel 3000 (moot; master off)
+-- Auction window.  The design said 6 ticks; a brain thinks every 2 game
+-- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
+-- gives every ally one full round trip.  The auction still ends EARLY the
+-- moment every active ally has answered, so the window is only a cap.
+M.ORDER_AUCTION_TICKS   = 10     -- keel 10 (moot; master off)
+-- Steal hysteresis: a free bot takes a live order off its holder only when
+-- its own travel price is lower by BOTH of these, and only after the holder
+-- has had the job for ORDER_STEAL_HOLD_TICKS.
+M.ORDER_STEAL_PCT       = 0.20   -- keel 0.20 (moot; master off)
+M.ORDER_STEAL_MIN_TILES = 2      -- keel 2 (moot; master off)
+M.ORDER_STEAL_HOLD_TICKS = 100   -- keel 100 (moot; master off)
+-- Bids are Dijkstra COST units, not tiles, so the min-tiles rule above is
+-- converted with this "what one plain tile costs" scale.
+M.ORDER_TILE_COST       = 4      -- keel 4 (moot; master off)
+-- `nearby <verb> <target>`: every bot within this many tiles OF THE TARGET
+-- (never of the sender -- distance is always measured to the target so every
+-- bot computes the same answer).
+M.ORDER_NEARBY_TILES    = 10     -- keel 10 (moot; master off)
+-- A line of only bot names SELECTS them; the sender's next order goes to the
+-- selected set with no auction.  The selection lapses after this.
+M.ORDER_SELECT_TICKS    = 500    -- keel 500 (moot; master off)
+-- Price of an ordered goal the pools did not offer this tick (a defend_pill
+-- with no alarm, a take_cover with no trigger, an attack_tank out of engage
+-- range).  Low enough to beat the rejected strategic field, high enough that
+-- a real emergency (flee at critical armour, a builder in reach) still wins.
+M.ORDER_INJECT_COST     = 20     -- keel 20 (moot; master off)
+-- Orders that do NOT need shells (sweeping a dead pill, retreating, taking a
+-- neutral base) send the bot straight there: the refuel row is rejected too
+-- while armour is above the escape line.  false = refuel competes as usual.
+M.ORDER_REFUEL_SKIP_NO_SHELLS = true   -- keel false
+-- Goal kinds that keep bidding under an order.  Everything NOT in here is
+-- STRATEGIC and gets the "order" reject while the slot is live.  A knob so
+-- the split can be retuned without touching goal selection.
+-- NOT in PRESETS.keel: a preset entry must be a scalar (_cfg_set refuses
+-- tables), and the master switch above already turns the whole feature off.
+M.ORDER_REACTIVE_KINDS = {
+  attack_tank = true, kill_lgm = true, take_cover = true,
+  refuel_at_base = true, flee_to_base = true, flee_pill = true,
+  escape_water = true, rescue_lgm = true, kill_me_wait = true,
+  mine_crater = true, none = true,
+}
+
+-- ══════════════════════════════════════════════════════════════════════════
 -- PRESETS — named bundles of constant overrides, applied per bot
 -- ══════════════════════════════════════════════════════════════════════════
 -- A bot given the BRAIN_INIT_ARG token "preset=NAME" has every entry of
@@ -4351,6 +4410,23 @@ M.PRESETS = {
     --   fight loop.  This one flag turns the whole feature off; every other
     --   KILL_ME_* knob is unread while it is false.
     KILL_ME_ENABLED               = false,
+    --   and there were no chat orders at all: no line was parsed, no /info
+    --   ob* verb went out, no pool row carried an "order" reject.  This one
+    --   flag turns the whole feature off; the rest are pinned at their
+    --   defaults only so a later tweak to one cannot leak into the baseline.
+    --   ORDER_REACTIVE_KINDS is a TABLE and cannot ride a preset, but it is
+    --   unread while the master is false.
+    BOT_COMMANDS_ENABLED          = false,
+    ORDER_FOCUS_TICKS             = 3000,
+    ORDER_AUCTION_TICKS           = 10,
+    ORDER_STEAL_PCT               = 0.20,
+    ORDER_STEAL_MIN_TILES         = 2,
+    ORDER_STEAL_HOLD_TICKS        = 100,
+    ORDER_TILE_COST               = 4,
+    ORDER_NEARBY_TILES            = 10,
+    ORDER_SELECT_TICKS            = 500,
+    ORDER_INJECT_COST             = 20,
+    ORDER_REFUEL_SKIP_NO_SHELLS   = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
