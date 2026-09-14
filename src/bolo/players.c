@@ -1952,7 +1952,6 @@ void playersRequestAlliance(ClientSim *cs, players *plrs, BYTE selfPlayer) {
 *********************************************************/
 void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
   BYTE count; /* Looping variable */
-  BYTE total; /* Amount of items to redraw */
   bool found;
   count = 0;
   found = FALSE;
@@ -1968,6 +1967,31 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
 
   basesMigrate(sim, playerNum, count);
   pillsMigratePlanted(sim, playerNum, count);
+
+  playersClearAlliance(sim, plrs, selfPlayer, playerNum, isServer);
+}
+
+/*********************************************************
+*NAME:          playersClearAlliance
+*PURPOSE:
+* Takes a player out of every alliance bitmap — their own,
+* and every other player's reference to them — and redraws.
+* What they own is left where it is: handing pillboxes and
+* bases to an ally belongs to a departure, which is what
+* playersLeaveAlliance above is for. A server stating who
+* is allied with whom is not one, so the caller applying
+* such a statement clears through here.
+*
+*ARGUMENTS:
+* sim        - Pointer to the game sim
+* plrs       - Pointer to the players object
+* selfPlayer - The player this client is
+* playerNum  - Player number to take out of the alliances
+* isServer   - TRUE if we are the server (no screen to draw)
+*********************************************************/
+void playersClearAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+  BYTE count; /* Looping variable */
+  BYTE total; /* Amount of items to redraw */
 
   allienceDestroy(&((*plrs)->item[playerNum].allie));
   (*plrs)->item[playerNum].allie = allienceCreate();

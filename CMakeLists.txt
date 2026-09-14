@@ -4372,6 +4372,8 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     alliance_reset_bots_synced_after_inplace_start
     alliance_reset_bots_synced_after_countdown_start
+    alliance_reset_apply_keeps_owners
+    alliance_reset_changed_matrix_keeps_owners
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour

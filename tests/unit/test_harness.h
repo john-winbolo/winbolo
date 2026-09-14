@@ -829,6 +829,10 @@ int run_alliance_reset_apply_rebuilds_alliances(void);
  * start, on both start paths (bot re-arm before vs after the reapply). */
 int run_alliance_reset_bots_synced_after_inplace_start(void);
 int run_alliance_reset_bots_synced_after_countdown_start(void);
+/* Applying a reset moves no pillbox and no base owner — ownership changes
+ * hands on a departure, which arrives as CTRL_PLAYER_LEAVE. */
+int run_alliance_reset_apply_keeps_owners(void);
+int run_alliance_reset_changed_matrix_keeps_owners(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);

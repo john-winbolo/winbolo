@@ -18,6 +18,10 @@
  *   5/6. After a game start on either start path, every in-process
  *      bot's ClientSim alliance matrix matches the server's, so a
  *      bot's view never paints its own team as enemies.
+ *   7/8. Applying a reset moves no pillbox and no base owner, whether
+ *      the matrix it carries is the one already in force or a
+ *      different one. Ownership changes hands on a departure, which
+ *      arrives as CTRL_PLAYER_LEAVE.
  */
 
 #include <stdint.h>
@@ -39,6 +43,8 @@
 #include "server_sim_internal.h"     /* sim->lobbyPlayers, playerConnected */
 #include "server_sim_lifecycle.h"
 #include "players.h"                 /* playersIsAllie */
+#include "pillbox.h"                 /* the owners a reset must not move */
+#include "bases.h"
 #include "everard_map.h"
 #include "test_harness.h"
 
@@ -541,5 +547,172 @@ int run_alliance_reset_bots_synced_after_countdown_start(void) {
         if (botCs[b] != NULL) clientSimDestroy(botCs[b]);
     }
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ----------------------------------------------------------------
+ * Ownership across a reset.
+ *
+ * A pillbox or base changes hands when its owner leaves, and the
+ * receiver is told that by CTRL_PLAYER_LEAVE. CTRL_ALLIANCE_RESET says
+ * who is allied with whom and nothing about anybody leaving, so applying
+ * one must leave every owner where it is. The clearing pass used to run
+ * playersLeaveAlliance over all sixteen slots, which handed each slot's
+ * pillboxes and bases to the first ally it could find — or to slot 15
+ * when it could find none — and the re-accept pass put the bits back and
+ * not the ownership. The viewer's own pillboxes then drew hostile until
+ * the next full pill snapshot, up to 250 ticks later.
+ * ---------------------------------------------------------------- */
+
+/* Four pillboxes and three bases, owned by the viewer, an ally, a
+ * stranger and nobody, so a migration to an ally and a migration to the
+ * top slot are both visible. */
+#define AR_PILLS 4
+#define AR_BASES 3
+
+static void ar_seed_world(GameSim *gs) {
+    /* Both setters mark every item within the new count live, which is
+       the state the migration walks, and pillsCreate leaves each pillbox
+       out of a tank, which is the other half of what it reads. */
+    pillsSetNumPills(&gs->pb, AR_PILLS);
+    (*gs->pb).item[0].owner = 0;        /* the viewer's own    */
+    (*gs->pb).item[1].owner = 1;        /* an ally's           */
+    (*gs->pb).item[2].owner = 2;        /* a stranger's        */
+    (*gs->pb).item[3].owner = NEUTRAL;  /* nobody's            */
+
+    basesSetNumBases(&gs->bs, AR_BASES);
+    (*gs->bs).item[0].owner = 0;
+    (*gs->bs).item[1].owner = 3;
+    (*gs->bs).item[2].owner = NEUTRAL;
+}
+
+static int ar_owners_unchanged(GameSim *gs, const BYTE *wantPills,
+                               const BYTE *wantBases, const char *when) {
+    BYTE i;
+
+    for (i = 0; i < AR_PILLS; i++) {
+        UT_ASSERT_MSG(pillsGetPillOwner(&gs->pb, (BYTE)(i + 1)) == wantPills[i],
+                      "%s: pillbox %u is owned by %u, expected %u",
+                      when, (unsigned)(i + 1),
+                      (unsigned)pillsGetPillOwner(&gs->pb, (BYTE)(i + 1)),
+                      (unsigned)wantPills[i]);
+    }
+    for (i = 0; i < AR_BASES; i++) {
+        UT_ASSERT_MSG(basesGetBaseOwner(&gs->bs, (BYTE)(i + 1)) == wantBases[i],
+                      "%s: base %u is owned by %u, expected %u",
+                      when, (unsigned)(i + 1),
+                      (unsigned)basesGetBaseOwner(&gs->bs, (BYTE)(i + 1)),
+                      (unsigned)wantBases[i]);
+    }
+    return 0;
+}
+
+/* A reset that says exactly what is already in force. */
+int run_alliance_reset_apply_keeps_owners(void) {
+    ClientSim *cs = clientSimAlloc();
+    GameSim *gs;
+    ControlEvent evt;
+    const BYTE wantPills[AR_PILLS] = { 0, 1, 2, NEUTRAL };
+    const BYTE wantBases[AR_BASES] = { 0, 3, NEUTRAL };
+    const uint16_t pair01 = (uint16_t)((1u << 0) | (1u << 1));
+    const uint16_t pair23 = (uint16_t)((1u << 2) | (1u << 3));
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 0);
+    gs = clientSimGetGameSim(cs);
+    for (BYTE i = 0; i < 5; i++) {
+        gs->plyrs->item[i].inUse = TRUE;
+    }
+
+    playersAcceptAlliance(gs, &gs->plyrs, 0, 0, 1, FALSE);
+    playersAcceptAlliance(gs, &gs->plyrs, 0, 2, 3, FALSE);
+    UT_ASSERT(playersIsAllie(&gs->plyrs, 0, 1));
+    UT_ASSERT(playersIsAllie(&gs->plyrs, 2, 3));
+
+    ar_seed_world(gs);
+    if (ar_owners_unchanged(gs, wantPills, wantBases, "test setup") != 0) {
+        clientSimDestroy(cs);
+        return 1;
+    }
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_RESET;
+    evt.u.allianceReset.allies[0] = pair01;
+    evt.u.allianceReset.allies[1] = pair01;
+    evt.u.allianceReset.allies[2] = pair23;
+    evt.u.allianceReset.allies[3] = pair23;
+    evt.u.allianceReset.allies[4] = (uint16_t)(1u << 4);
+
+    clientSimApplyControl(cs, &evt);
+
+    if (ar_owners_unchanged(gs, wantPills, wantBases, "after the reset") != 0) {
+        clientSimDestroy(cs);
+        return 1;
+    }
+
+    /* And the bits the matrix states are the bits in force. */
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1),
+                  "after the reset: 0+1 must still be allied");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 2, 3),
+                  "after the reset: 2+3 must still be allied");
+    UT_ASSERT_MSG(!playersIsAllie(&gs->plyrs, 0, 2),
+                  "after the reset: 0+2 must not be allied");
+    UT_ASSERT_MSG(!playersIsAllie(&gs->plyrs, 1, 4),
+                  "after the reset: 1+4 must not be allied");
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* And a reset that genuinely changes the matrix: the bits follow it, the
+ * owners still do not move. Only a departure moves those. */
+int run_alliance_reset_changed_matrix_keeps_owners(void) {
+    ClientSim *cs = clientSimAlloc();
+    GameSim *gs;
+    ControlEvent evt;
+    const BYTE wantPills[AR_PILLS] = { 0, 1, 2, NEUTRAL };
+    const BYTE wantBases[AR_BASES] = { 0, 3, NEUTRAL };
+    const uint16_t pair02 = (uint16_t)((1u << 0) | (1u << 2));
+    const uint16_t pair13 = (uint16_t)((1u << 1) | (1u << 3));
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 0);
+    gs = clientSimGetGameSim(cs);
+    for (BYTE i = 0; i < 5; i++) {
+        gs->plyrs->item[i].inUse = TRUE;
+    }
+
+    playersAcceptAlliance(gs, &gs->plyrs, 0, 0, 1, FALSE);
+    playersAcceptAlliance(gs, &gs->plyrs, 0, 2, 3, FALSE);
+    ar_seed_world(gs);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_RESET;
+    evt.u.allianceReset.allies[0] = pair02;
+    evt.u.allianceReset.allies[1] = pair13;
+    evt.u.allianceReset.allies[2] = pair02;
+    evt.u.allianceReset.allies[3] = pair13;
+    evt.u.allianceReset.allies[4] = (uint16_t)(1u << 4);
+
+    clientSimApplyControl(cs, &evt);
+
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 2),
+                  "after the reset: 0+2 must be allied");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 1, 3),
+                  "after the reset: 1+3 must be allied");
+    UT_ASSERT_MSG(!playersIsAllie(&gs->plyrs, 0, 1),
+                  "after the reset: the old 0+1 pair must be gone");
+    UT_ASSERT_MSG(!playersIsAllie(&gs->plyrs, 2, 3),
+                  "after the reset: the old 2+3 pair must be gone");
+
+    if (ar_owners_unchanged(gs, wantPills, wantBases,
+                            "after a reset that changed the matrix") != 0) {
+        clientSimDestroy(cs);
+        return 1;
+    }
+
+    clientSimDestroy(cs);
     return 0;
 }
