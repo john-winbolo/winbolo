@@ -49,9 +49,10 @@ BIN_DS="${2:-$BIN_DS_DEFAULT}"
 # went ephemeral. It also costs a crash-handler install per process and, on
 # a crash, network I/O inside the scenario's 60 s budget.
 #
-# Neither binary parses the flag: sentryInit scans argv for it itself, and
-# both tolerate an argument they do not recognise. So it is inert on a build
-# with no DSN and harmless everywhere else.
+# sentryInit scans argv for the flag itself, before either binary parses its
+# arguments. WinBoloDS ignores an argument it does not recognise; WinBoloHeadless
+# rejects one, so its parser accepts -nocrashreporting and does nothing with it
+# (headless_main.c). Inert on a build with no DSN, harmless everywhere else.
 #
 # Both wrappers exec once they are already running in a child of the script,
 # which is where `ds_bin ... &` puts them. Without that, the pid a launch
@@ -63,15 +64,23 @@ BIN_DS="${2:-$BIN_DS_DEFAULT}"
 # multiplies into a machine full of servers holding ports: the opposite of
 # what the rest of this work is for.
 #
-# $BASHPID differs from $$ only inside a subshell, so this execs for every
-# backgrounded launch and runs the binary as an ordinary child for the
+# $BASH_SUBSHELL is 0 at the top level of the script and greater than 0 in
+# any subshell, which includes a backgrounded `ds_bin ... &`. So this execs for
+# every backgrounded launch and runs the binary as an ordinary child for the
 # foreground ones, where exec would replace the harness itself.
+#
+# Not $BASHPID: that variable arrived in bash 4.0, and macOS ships 3.2 as
+# /bin/bash, which is what `bash run.sh` under ctest resolves to there. On 3.2
+# it expands to nothing, the test is always true, and every foreground launch
+# execs the harness away — the scenario then "passes" with whatever status
+# the binary exits with, no diff ever runs, and the DS a single-client UDP
+# scenario started is orphaned. $BASH_SUBSHELL has been in bash since 3.0.
 ds_bin() {
-  if [ "$BASHPID" != "$$" ]; then exec "$BIN_DS" "$@" -nocrashreporting; fi
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN_DS" "$@" -nocrashreporting; fi
   "$BIN_DS" "$@" -nocrashreporting
 }
 headless_bin() {
-  if [ "$BASHPID" != "$$" ]; then exec "$BIN" "$@" -nocrashreporting; fi
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN" "$@" -nocrashreporting; fi
   "$BIN" "$@" -nocrashreporting
 }
 
