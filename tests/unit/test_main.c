@@ -344,6 +344,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_modes_missing_falls_back",          run_brain_modes_missing_falls_back          },
     { "brain_modes_malformed_lines_skipped",     run_brain_modes_malformed_lines_skipped     },
     { "brain_modes_counts_clamped",              run_brain_modes_counts_clamped              },
+    { "brain_view_data_edge_rect",               run_brain_view_data_edge_rect               },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
     { "pf_dijkstra_no_solid_corner_cut",         run_pf_dijkstra_no_solid_corner_cut         },
     { "pf_astar_no_solid_corner_cut",            run_pf_astar_no_solid_corner_cut            },

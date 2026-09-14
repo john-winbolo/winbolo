@@ -3551,6 +3551,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
     tests/unit/test_brain_modes.c
+    tests/unit/test_brain_view_data.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
     tests/unit/test_pf_influence_tail.c
@@ -4420,6 +4421,7 @@ set(_unit_test_names
     brain_modes_missing_falls_back
     brain_modes_malformed_lines_skipped
     brain_modes_counts_clamped
+    brain_view_data_edge_rect
     bot_init_arg_difficulty_token
     bot_init_arg_mode_tokens
     bot_difficulty_names

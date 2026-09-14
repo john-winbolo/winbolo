@@ -407,6 +407,12 @@ int run_brain_modes_manifest_parses(void);
 int run_brain_modes_missing_falls_back(void);
 int run_brain_modes_malformed_lines_skipped(void);
 int run_brain_modes_counts_clamped(void);
+
+/* The brain's terrain window at the map edge (test_brain_view_data.c): the
+ * rect brainDataMakeInfo builds is inclusive, so a tank on row or column 240
+ * and beyond is described out to 255. BYTE loop counters never finished such a
+ * fill, which left a joining client spinning inside its first brain pass. */
+int run_brain_view_data_edge_rect(void);
 int run_bolo_rand_golden_sequence(void);
 
 /* Pathfinder diagonal corner-cut rule (test_pf_corner_cut.c): the nav
