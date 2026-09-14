@@ -124,20 +124,11 @@ bool utScratchPath(char *out, size_t outSz, const char *leaf) {
     }
 
     if (s_dir[0] == '\0' || strcmp(s_dirTest, test) != 0) {
-        char procDir[1024];
-
-        /* Each level is created separately: SDL_CreateDirectory does not
-         * make parents, and it reports success when the directory is
-         * already there, which is what the repeat calls rely on. */
-        if (!SDL_CreateDirectory(WB_TEST_SCRATCH_DIR)) {
-            return false;
-        }
-        SDL_snprintf(procDir, sizeof(procDir), "%s/%lu",
-                     WB_TEST_SCRATCH_DIR, UT_SCRATCH_PID());
-        if (!SDL_CreateDirectory(procDir)) {
-            return false;
-        }
-        SDL_snprintf(s_dir, sizeof(s_dir), "%s/%s", procDir, test);
+        /* One call for the whole path: SDL_CreateDirectory makes any missing
+         * parents (SDL 3.2+) and succeeds when the directory is already
+         * there, which is what the repeat calls per test rely on. */
+        SDL_snprintf(s_dir, sizeof(s_dir), "%s/%lu/%s",
+                     WB_TEST_SCRATCH_DIR, UT_SCRATCH_PID(), test);
         if (!SDL_CreateDirectory(s_dir)) {
             s_dir[0] = '\0';
             return false;

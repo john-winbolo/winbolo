@@ -2133,14 +2133,17 @@ static bool parseArgs(int argc, char **argv) {
       optNoScenarios = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
-    } else if (strcmp(argv[i], "-nocrashreporting") == 0 ||
-               strcmp(argv[i], "--nocrashreporting") == 0) {
+    } else if (strcmp(argv[i], "-nocrashreporting") == 0) {
       /* Accepted and ignored here: sentryInit (called from main before this
        * parser runs) scans argv for it directly, so there is nothing left to
        * do. WinBoloDS takes the same flag, and the baseline harness passes it
        * to both so a suite run does not have every process open the one
        * shared crash database under SDL_GetPrefPath. Without this branch the
-       * flag would fall through to the unknown-argument error below. */
+       * flag would fall through to the unknown-argument error below.
+       *
+       * Single dash only, unlike the rest of this parser: sentryInit matches
+       * the exact spelling WinBoloDS uses, so a --nocrashreporting accepted
+       * here would be swallowed and still start the reporter. */
     } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       printUsage(argv[0]);
       exit(0);
