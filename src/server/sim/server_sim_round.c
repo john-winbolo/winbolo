@@ -50,9 +50,11 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "Lobby empty — resetting to startup defaults");
 
-    /* Drop any bots the previous occupants added. */
+    /* Drop any bots the previous occupants added, seats held for a bot that
+       was never fielded included — those have no bot manager entry, so the
+       roster is what has to be asked. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (botManagerIsBot(sim, i)) {
+        if (serverSimIsBot(sim, i)) {
             serverSimRemoveBot(sim, i);
         }
     }
@@ -129,6 +131,12 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
      * human just left, so no control-event subscribers remain to receive the
      * reset; the next joiner picks up the full lobby state (settings, team
      * metadata, bot configs) via the join-time sync replay. */
+    /* The reset above emptied the lobby, seats a scenario put there
+       included. Seat them again at the end of it, so the next joiner opens
+       the map's own lobby rather than a bare one — the scenario is still
+       attached, only its lobby was swept. */
+    serverSimScenarioSeatLobby(sim);
+
     serverSimPublishLobbySettings(sim);
     serverSimWbnLobbyUpdate(sim, FALSE);
 }
@@ -417,7 +425,7 @@ BYTE serverSimGetNumHumans(ServerSim *sim) {
     BYTE count;
     BYTE num = 0;
     for (count = 0; count < MAX_TANKS; count++) {
-        if (sim->playerConnected[count] && !botManagerIsBot(sim, count)) {
+        if (sim->playerConnected[count] && !serverSimIsBot(sim, count)) {
             num++;
         }
     }
@@ -586,7 +594,7 @@ void serverSimEnterGameOver(ServerSim *sim) {
          * wire-sized field, so the copy into it truncates. */
         char nameBuf[PLAYER_NAME_LEN];
         memset(id, 0, sizeof(*id));
-        id->isBot = botManagerIsBot(sim, (BYTE)slot) ? 1 : 0;
+        id->isBot = serverSimIsBot(sim, (BYTE)slot) ? 1 : 0;
         id->team  = sim->lobbyPlayers[slot].teamNumber;
         playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, nameBuf,
                              sizeof(nameBuf), TRUE);
@@ -692,6 +700,13 @@ void serverSimReturnToLobby(ServerSim *sim) {
             sim->lobbyPlayers[i].ready = TRUE;
         }
     }
+
+    /* The roster the round ended with is back, so this is where the lobby a
+       scenario asks for is brought into line with it: what the host changed
+       between rounds stands, a team grown past its ceiling is cut back, and
+       the seats the script fielded during the round go back to being held so
+       the next round starts where the last one did. */
+    serverSimScenarioReconcileLobby(sim);
 
     /* Reconcile the players table against the restored connection state:
      * clear any slot still marked inUse but no longer connected. The leave
@@ -831,7 +846,7 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         numConnected++;
-        if (!botManagerIsBot(sim, i)) numHumans++;
+        if (!serverSimIsBot(sim, i)) numHumans++;
         if (!sim->lobbyPlayers[i].ready) return; /* Not all ready */
     }
     if (numConnected == 0) return;
@@ -1151,6 +1166,7 @@ static void serverSimApplyAutoLockOnGameStart(ServerSim *sim) {
 static void serverSimRunStartBatch(ServerSim *sim) {
     BYTE batchTeam[MAX_TANKS];
     BYTE reserved0[MAX_TANKS];
+    bool fieldedNow[MAX_TANKS];
     BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
     BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
     BYTE i;
@@ -1164,9 +1180,14 @@ static void serverSimRunStartBatch(ServerSim *sim) {
         reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
                      ? MAX_STARTS                  /* none / stale-after-map-change */
                      : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
+        /* The batch places the round's field, not its roster: a seat
+           held for a bot that is not being fielded takes no square here,
+           and takes one from the incremental pick when it is fielded. */
+        fieldedNow[i] = sim->playerConnected[i] &&
+                        sim->lobbyPlayers[i].fielded;
     }
     startsAssignBatch(&sim->sim, &sim->sim.ss,
-                      sim->playerConnected, batchTeam,
+                      fieldedNow, batchTeam,
                       sim->sim.pendingStartIdx, reserved0, teamSide);
 }
 
@@ -1178,12 +1199,13 @@ void serverSimReassignStarts(ServerSim *sim) {
     }
     serverSimRunStartBatch(sim);
 
-    /* Re-place every connected tank from the fresh batch. Destroy-and-create
+    /* Re-place every fielded tank from the fresh batch. Destroy-and-create
      * is what the game-start paths do; this is the same loop, and it is safe
-     * here because the caller runs before the first tick. */
+     * here because the caller runs before the first tick. A seat held for a
+     * bot that is not on the field has no tank and takes no square. */
     serverSimSetActive(sim);
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i] || !sim->lobbyPlayers[i].fielded) continue;
         if (sim->sim.tanks[i] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[i]);
             sim->sim.tanks[i] = NULL;
@@ -1244,7 +1266,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 
     /* Pre-compute start indices for the whole batch so teammates land
      * near each other and a team with a side keeps its side (see
-     * serverSimRunStartBatch, which wraps main's startsAssignBatch call). */
+     * serverSimRunStartBatch, and serverSimStartGame for the rationale). */
     serverSimRunStartBatch(sim);
 
     /* Destroy every connected slot's tank and man before creating any, so
@@ -1262,9 +1284,10 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         }
     }
 
-    /* Create tanks for all connected players */
+    /* Create tanks for every seat that is being fielded — a seat held for a
+       bot the round is not starting with is skipped, as in serverSimStartGame. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i] || !sim->lobbyPlayers[i].fielded) continue;
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
     }
@@ -1294,6 +1317,17 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         memset(&phaseEvt, 0, sizeof(phaseEvt));
         phaseEvt.type = CTRL_GAME_PHASE_RUNNING;
         serverSimPublishControl(sim, &phaseEvt);
+    }
+
+    /* The round-start callback, at the point where the world, the tanks
+     * and the roster are built and the state already reads running. The
+     * setup window is open across it, so the funnel takes the ops it
+     * issues although the start has not finished; the publish below then
+     * carries whatever rules those ops set. */
+    if (sim->scenarioRoundStart != NULL) {
+        sim->scenarioSetupWindow = true;
+        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
+        sim->scenarioSetupWindow = false;
     }
 
     /* And the table the round is starting on, beside the phase. The twin of
@@ -1388,13 +1422,20 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimReapplyTeamAlliances(sim);
 
     /* Pre-compute start indices for the whole batch so teammates land
-     * near each other and a team with a side keeps its side (see
-     * serverSimRunStartBatch, which wraps main's startsAssignBatch call). */
+     * near each other, rivals don't grab adjacent squares, and a team with
+     * a side keeps its side (the tankCreate loop below runs synchronously,
+     * so without a batch pass each player's per-position checks would be
+     * blind to siblings being created in the same loop). startsGetStart
+     * consumes the slot lazily, doing scatter and direction conversion at
+     * consumption time so the per-square nudge sees siblings already placed
+     * earlier in this loop. See serverSimRunStartBatch. */
     serverSimRunStartBatch(sim);
 
-    /* Create tanks for all connected players */
+    /* Create tanks for every seat that is being fielded. A seat held for a
+       bot the round is not starting with is skipped: it stays in the roster
+       with no tank until something fields it. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i] || !sim->lobbyPlayers[i].fielded) continue;
         /* Clean up any existing tank/lgm (shouldn't exist, but be safe) */
         if (sim->sim.tanks[i] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[i]);
@@ -1413,6 +1454,17 @@ void serverSimStartGame(ServerSim *sim) {
     sim->startInProgress = FALSE;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
+
+    /* The round-start callback, as in serverSimStartGameInPlace: the world,
+     * the tanks and the roster are built and the state already reads
+     * running, and the setup window is open across the call so the funnel
+     * takes the ops it issues. The publish below carries whatever rules
+     * those ops set. */
+    if (sim->scenarioRoundStart != NULL) {
+        sim->scenarioSetupWindow = true;
+        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
+        sim->scenarioSetupWindow = false;
+    }
 
     /* The table the round is starting on, stated here rather than by each
      * caller. This and serverSimStartGameInPlace are the two authoritative
@@ -1506,6 +1558,11 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
     /* Hash the canonical BMAPBOLO file so WBN can match it. */
     serverSimCacheMapMd5FromFile(sim, mapFileName);
+
+    /* And keep the file itself: a scenario is discovered beside its .map and
+       the display name cannot find it again. The rotation reaches the map
+       change through here. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
 
     basesClearMines(&sim->sim);
 

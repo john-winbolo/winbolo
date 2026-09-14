@@ -1641,6 +1641,24 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
                    (unsigned)fromPlayer, (unsigned)allies, delivered, msg);
 }
 
+/* Everything the pool holds for one bot: the brain, the control
+ * subscription and the ClientSim. The caller deactivates the context
+ * before calling in here; the player itself is the caller's to deal
+ * with — botManagerRemoveBot takes it out of the game, and
+ * botManagerRemoveBotKeepSeat leaves it in the roster. */
+static void botTearDownRunner(ServerSim *sim, BotContext *bot) {
+    luaBrainInstanceDestroy(&bot->brain);
+    serverSimUnregisterSubscriber(sim, bot->controlSub);
+    bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
+    /* Transport ownership moved to bot->cs (botManagerAddBot binds
+     * bot->cs->transport = bot->transport); clientSimDestroy tears it
+     * down via cs->transport.  Don't call transportLocalDestroy on
+     * bot->transport here — it's the same underlying TransportLocalCtx
+     * and would double-free. */
+    clientSimDestroy(bot->cs);
+    bot->cs = NULL;
+}
+
 /* Worker-safe front end to the fan-out above. Writes ONLY into the sending
  * bot's own job slot, which no other thread touches during Stage 2, so it
  * cannot race with a receiver reading its inbox. Stage 3 does the real
@@ -1685,24 +1703,33 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     bot->active = false;
     sim->botMgr.numBots--;
 
-    luaBrainInstanceDestroy(&bot->brain);
-    serverSimUnregisterSubscriber(sim, bot->controlSub);
-    bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
-    /* Transport ownership moved to bot->cs (botManagerAddBot binds
-     * bot->cs->transport = bot->transport); clientSimDestroy tears it
-     * down via cs->transport.  Don't call transportLocalDestroy on
-     * bot->transport here — it's the same underlying TransportLocalCtx
-     * and would double-free. */
-    clientSimDestroy(bot->cs);
-    bot->cs = NULL;
-    /* The context is already deactivated, so serverSimRemovePlayer's
-     * botManagerIsBot check can no longer see this leaver was a bot —
+    botTearDownRunner(sim, bot);
+
+    /* The context is already deactivated, so the bot check inside
+     * serverSimRemovePlayer can no longer see this leaver was a bot —
      * flag the slot for the duration of the call. */
     sim->botMgr.removingBotSlot = (BYTE)(playerNum + 1);
     serverSimRemovePlayer(sim, playerNum);
     sim->botMgr.removingBotSlot = 0;
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d removed", playerNum);
+}
+
+void botManagerRemoveBotKeepSeat(ServerSim *sim, BYTE playerNum) {
+    BotContext *bot;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->active) return;
+
+    /* Deactivate before the teardown, for the same reason
+     * botManagerRemoveBot does: nothing the teardown reaches may walk
+     * a context that is still active with its ClientSim already gone. */
+    bot->active = false;
+    sim->botMgr.numBots--;
+
+    botTearDownRunner(sim, bot);
+
+    WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d off the field", playerNum);
 }
 
 void botManagerDestroy(ServerSim *sim) {

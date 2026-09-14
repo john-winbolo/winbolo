@@ -132,6 +132,17 @@ typedef struct {
   bool ready;
   bool isBot;          /* Managed by bot system, not by player packets */
   uint8_t startIdx;    /* reserved map start, 1-based; 0xFF = none */
+  /* On the field. A seat can be held without being played: an unfielded seat
+     is a connected bot seat with no bot manager entry, no ClientSim and no
+     tank, which shows in the roster and is skipped by the start sequence
+     until something fields it. Every other way of taking a seat sets this
+     true. */
+  bool fielded;
+  /* The seat outlives the bot in it. Taking the bot out of a seat marked
+     this way returns the seat to unfielded rather than emptying it, so the
+     next wave has somewhere to land. Set when the seat is seeded unfielded;
+     survives being fielded. */
+  bool keepSeat;
 } LobbyPlayer;
 
 /* Per-team metadata — used by the Layout A lobby UI for color tinting,
@@ -979,11 +990,18 @@ BYTE serverSimGetNumHumans(ServerSim *sim);
  *  are playing the round rather than sitting it out. This
  *  is the count "how many players are there" wants, not
  *  the length of the roster: a seat can hold a place in
- *  the lobby without being on the field. Every connected
- *  seat is on the field today, so this matches
- *  serverSimGetNumPlayers.
+ *  the lobby without being on the field, and an unfielded
+ *  seat is one of those.
  *********************************************************/
 BYTE serverSimGetNumFielded(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimIsSeatFielded
+ *PURPOSE:
+ *  Whether seat playerNum is on the field. False for an
+ *  empty seat and for a seat held without a bot in it.
+ *********************************************************/
+bool serverSimIsSeatFielded(const ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          serverSimRefreshWbnLobbyInfo
@@ -1524,6 +1542,18 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum);
 void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name);
 
 /*********************************************************
+ *NAME:          serverSimAcceptAllianceQuiet
+ *PURPOSE:
+ *  The same alliance accept, with the newswire line off.
+ *  For seating rather than for something somebody did: a
+ *  bot put on its team is setup, and the lobby path that
+ *  does the same job with a rebake draws nothing either.
+ *  The replay log and the tracker still record it.
+ *********************************************************/
+void serverSimAcceptAllianceQuiet(ServerSim *sim, BYTE accepter,
+                                  BYTE newMember);
+
+/*********************************************************
  *NAME:          serverSimFillGamePhaseEvent
  *               serverSimFillLobbySettingsEvent
  *               serverSimFillLobbySlotEvent
@@ -1586,6 +1616,50 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, struct ControlEvent *evt);
  *  sim - The sim whose table is being stated
  *********************************************************/
 void serverSimPublishSimRules(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimGetScenarioRule
+ *PURPOSE:
+ *  What one rule of the simulation's table is set to, as the
+ *  double the set-rule op carries a value in. The double is
+ *  exact for every integer rule in the table and for every
+ *  value a float rule can hold, so this reads back what a
+ *  write put there rather than an approximation of it.
+ *
+ *  rule is an index into the rule list scenario_defs.h
+ *  builds, carried as a plain uint16_t so this call names
+ *  nothing a frontend cannot see. An index that names no
+ *  rule returns false and leaves *out alone.
+ *
+ *ARGUMENTS:
+ *  sim  - The sim whose table is being read
+ *  rule - Which rule, by its index in the list
+ *  out  - Filled with the rule's value
+ *********************************************************/
+bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
+                              double *out);
+
+/*********************************************************
+ *NAME:          serverSimIsScenarioActing
+ *PURPOSE:
+ *  Whether what the engine is doing right now is a
+ *  scenario's doing. True for the duration of an op handler
+ *  and of the per-tick roster drain, which is where a bot a
+ *  script asked for actually lands — a tick after the op
+ *  that asked for it, and so outside the handler.
+ *
+ *  Neither event channel carries an actor, and neither needs
+ *  to: a remote client runs no hooks. This is what a host
+ *  reads as it queues an event, so the hook it later runs
+ *  can say whether the fact was the script's own doing. A
+ *  handler that ignores its own edits tests that.
+ *
+ *  False for a NULL sim and for a sim with no scenario.
+ *
+ *ARGUMENTS:
+ *  sim - The sim being asked
+ *********************************************************/
+bool serverSimIsScenarioActing(const ServerSim *sim);
 
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
@@ -1676,8 +1750,8 @@ typedef struct ServerSimRosterSlot {
     char    name[PLAYER_NAME_LEN]; /* NUL-terminated player name */
     bool    ready;      /* Has said it is ready to start */
     bool    fielded;    /* Playing the round rather than sitting it out.
-                           Every connected seat plays today, so this is
-                           true whenever the call succeeds. */
+                           False for a seat held in the roster with no bot,
+                           no ClientSim and no tank behind it. */
     bool    alive;      /* Has a tank in the world and is not in death-wait */
 } ServerSimRosterSlot;
 

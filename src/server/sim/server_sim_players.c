@@ -96,6 +96,11 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
+    /* Taking a seat this way is taking it on the field: the unfielded seat
+       has its own constructor and never comes through here. */
+    sim->lobbyPlayers[playerNum].fielded = TRUE;
+    sim->lobbyPlayers[playerNum].keepSeat = FALSE;
+    sim->seatBrain[playerNum][0] = '\0';
     sim->soundSquares[playerNum] = false;
     /* A recycled slot must not inherit the previous occupant's ping mutes. */
     sim->pingMuteMask[playerNum] = 0;
@@ -230,15 +235,21 @@ int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
     int  i;
     BYTE limit;
     if (sim == NULL) return -1;
-    /* Both caps count people. The operator's -maxplayers and a scenario's
-       max_players are how many humans a round is meant for; a scenario may
-       hold the round to fewer than the operator configured and never widens
-       it, so both bind and the tighter one wins. A bot seats anywhere below
-       MAX_TANKS whichever way it arrives — a host's Add Bot, a scripted
-       spawn, a lobby add — so a six-human map keeps its ten bot seats. */
+    /* Every cap counts people. The operator's -maxplayers, a scenario's
+       max_players and a scenario policy's answer are all how many humans a
+       round is meant for; a scenario may hold the round to fewer than the
+       operator configured and never widens it, so each binds and the tightest
+       one wins. A bot seats anywhere below MAX_TANKS whichever way it arrives
+       — a host's Add Bot, a scripted spawn, a lobby add — so a six-human map
+       keeps its ten bot seats. */
     limit = (BYTE)MAX_TANKS;
     if (!forBot && sim->maxPlayers > 0) {
         limit = sim->maxPlayers;
+    }
+    if (!forBot && sim->scenarioLobbyValid &&
+        sim->scenarioLobby.maxPlayers > 0 &&
+        sim->scenarioLobby.maxPlayers < limit) {
+        limit = sim->scenarioLobby.maxPlayers;
     }
     if (!forBot && sim->scenarioPolicy != NULL &&
         sim->scenarioPolicy->maxPlayers != NULL) {
@@ -250,12 +261,44 @@ int serverSimFindFreeSlot(ServerSim *sim, bool forBot) {
             limit = (BYTE)cap;
         }
     }
-    for (i = 0; i < limit; i++) {
+    /* Is there room for another person? A headcount, asked before any slot is
+       looked at, because the cap is on how many people are in the round and
+       not on where in the roster they sit. A bot in a low slot is not a
+       person and takes nobody's place: an unfielded seat counts as a bot
+       here, which is what the roster-level test answers. */
+    if (!forBot && serverSimGetNumHumans(sim) >= limit) {
+        return -1;
+    }
+
+    /* And which slot: the first one nobody is in. */
+    for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i] && !botManagerIsBot(sim, (BYTE)i)) {
             return i;
         }
     }
     return -1;
+}
+
+/* A dedicated server seats its bots before anybody arrives, so the slot the
+   host role starts in — slot 0, at creation and again at every round reset —
+   is a bot, and nobody in the lobby can change a setting. -firstjoinhost hands
+   the role to the first person through the door instead: the role is going
+   spare when the slot holding it holds a bot or holds nobody, and a connected
+   person there keeps it, so a later joiner never takes it off the first. Bots
+   never host, which is why only the human join paths call this. The setter
+   publishes the lobby settings, so clients already in the lobby are told the
+   new slot and the joiner reads it out of its subscriber replay. */
+void serverSimPromoteHostOnJoin(ServerSim *sim, BYTE playerNum) {
+    BYTE host;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->firstJoinerBecomesHost) return;
+    if (serverSimIsBot(sim, playerNum)) return;
+    host = sim->hostSlot;
+    if (host < MAX_TANKS && sim->playerConnected[host] &&
+        !serverSimIsBot(sim, host)) {
+        return;
+    }
+    serverSimSetHostSlot(sim, playerNum);
 }
 
 LocalJoinResult serverSimLocalJoin(ServerSim *sim,
@@ -293,6 +336,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
     addPlayerInternal(sim, (BYTE)slot, validatedName, country, false);
     setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, clientFlags);
     fillAndPublishPlayerJoin(sim, (BYTE)slot);
+    serverSimPromoteHostOnJoin(sim, (BYTE)slot);
 
     {
         char serverKey[WINBOLONET_KEY_LEN];
@@ -318,12 +362,14 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —
      * gating on a human leaver keeps that from re-entering. */
-    /* ...and the removingBotSlot fallback: botManagerRemoveBot now
-     * deactivates the context BEFORE calling in here (so re-entrant
-     * walkers can't see a half-torn-down bot), which means
-     * botManagerIsBot alone would misread the departing bot as a human
-     * and trip the last-human-left lobby reset on every bot removal. */
-    wasBot = botManagerIsBot(sim, playerNum) ||
+    /* serverSimIsBot rather than botManagerIsBot: a seat held for a bot
+     * that was never fielded has no pool entry and is a bot seat all the
+     * same. The removingBotSlot fallback covers the other direction —
+     * botManagerRemoveBot deactivates the context BEFORE calling in here
+     * (so re-entrant walkers can't see a half-torn-down bot), and without
+     * the flag a departing fielded bot would read as a human and trip the
+     * last-human-left lobby reset on every bot removal. */
+    wasBot = serverSimIsBot(sim, playerNum) ||
              sim->botMgr.removingBotSlot == (BYTE)(playerNum + 1);
     {
         char nm[PLAYER_NAME_LEN];
@@ -545,6 +591,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
     sim->lobbyPlayers[playerNum].startIdx = 0xFF;
+    /* Taking a seat this way is taking it on the field: the unfielded seat
+       has its own constructor and never comes through here. */
+    sim->lobbyPlayers[playerNum].fielded = TRUE;
+    sim->lobbyPlayers[playerNum].keepSeat = FALSE;
+    sim->seatBrain[playerNum][0] = '\0';
     sim->mapSkipVotes[playerNum] = false;
     sim->soundSquares[playerNum] = false;
     /* Smart-ping mutes, both directions, exactly as a voice mute is swept on
@@ -705,21 +756,17 @@ void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
     sim->lobbyPlayers[playerNum].ready = ready ? TRUE : FALSE;
 }
 
-void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
+static void acceptAllianceAndPublish(ServerSim *sim, BYTE accepter,
+                                     BYTE newMember, bool quiet) {
     GameSim *gs;
     ControlEvent evt;
-    if (sim == NULL) {
-        return;
-    }
     gs = serverSimGetGameSim(sim);
     playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, accepter, newMember, TRUE);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_ACCEPT;
     evt.u.allianceAccept.acceptedBy = accepter;
     evt.u.allianceAccept.newMember  = newMember;
-    evt.u.allianceAccept.quiet =
-        serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, newMember, accepter)
-            ? 0 : 1;
+    evt.u.allianceAccept.quiet = quiet ? 1 : 0;
     serverSimPublishControl(sim, &evt);
     /* WBN tracker + replay-log side effects live here so every input
      * source (UDP wire, local transport, headless cmd-stdin) fires
@@ -729,6 +776,25 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
     winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember,
                        botManagerIsBot(sim, accepter), botManagerIsBot(sim, newMember));
     logAddEvent(log_AllyAccept, accepter, newMember, 0, 0, 0, NULL);
+}
+
+void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
+    if (sim == NULL) {
+        return;
+    }
+    /* Somebody asked for this one, so whether it draws a line is the
+       announce policy's to answer. */
+    acceptAllianceAndPublish(sim, accepter, newMember,
+                             !serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE,
+                                                newMember, accepter));
+}
+
+void serverSimAcceptAllianceQuiet(ServerSim *sim, BYTE accepter,
+                                  BYTE newMember) {
+    if (sim == NULL) {
+        return;
+    }
+    acceptAllianceAndPublish(sim, accepter, newMember, true);
 }
 
 void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {

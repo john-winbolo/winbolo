@@ -445,6 +445,10 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         return NULL;
     }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
+    /* The file the live map came from, kept so a scenario can be looked for
+       beside it. Every other loader either sets this or clears it. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName ? mapFileName : "",
+                sizeof(sim->mapFilePath));
 
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
@@ -730,7 +734,7 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
 
     bool isBot[MAX_TANKS];
     for (int slot = 0; slot < MAX_TANKS; slot++) {
-        isBot[slot] = botManagerIsBot(sim, (BYTE)slot);
+        isBot[slot] = serverSimIsBot(sim, (BYTE)slot);
     }
 
     /* One curated scoreboard row per connected slot. Leavers were zeroed

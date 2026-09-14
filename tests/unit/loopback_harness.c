@@ -3,6 +3,7 @@
  * API contract, the impairment / determinism notes, and the lifecycle.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -84,7 +85,12 @@ static unsigned short loopbackPickEphemeralPort(void) {
  * Everard-Island ServerSim (running unless lobbyMode), and the UDP server
  * instance accepting remote clients. Sets h->threadsUp / h->port / h->sim /
  * h->serverUp. The caller has already zeroed *h. Returns false on any failure
- * (the harness stays safe to Stop). */
+ * (the harness stays safe to Stop).
+ *
+ * Every step that fails, and the port on the way out, goes to stderr. CTest
+ * keeps a case's output and shows it only when the case fails, so a green run
+ * reads the same as before and a failed one says which port it was on — which
+ * is what tells a port the server could not rebind apart from a stall. */
 static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     BYTE emap[6000] = E_MAP;
     ServerInstanceConfig cfg;
@@ -92,12 +98,14 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     bolo_net_init();
 
     if (!threadsCreate(TRUE)) {
+        fprintf(stderr, "  loopback bring-up failed: threadsCreate\n");
         return false;
     }
     h->threadsUp = true;
 
     h->port = loopbackPickEphemeralPort();
     if (h->port == 0) {
+        fprintf(stderr, "  loopback bring-up failed: no ephemeral port\n");
         return false;
     }
 
@@ -105,6 +113,7 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
                                        "Everard Island", gameOpen,
                                        false, 0, -1);
     if (h->sim == NULL) {
+        fprintf(stderr, "  loopback bring-up failed: serverSimCreateCompressed\n");
         return false;
     }
     /* The wire joiner claims its own slot — keep the lobby open. */
@@ -129,9 +138,15 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
         cfg.skipLobby = true;   /* enter running immediately */
     }
     if (!serverInstanceStartup(h->sim, &cfg)) {
+        /* The port is on this line because a bind that another process still
+           holds is what this failure usually is. */
+        fprintf(stderr, "  loopback bring-up failed: serverInstanceStartup "
+                        "port=%u\n", (unsigned)h->port);
         return false;
     }
     h->serverUp = true;
+    fprintf(stderr, "  loopback server: port=%u mode=%s\n",
+            (unsigned)h->port, lobbyMode ? "lobby" : "running");
     return true;
 }
 

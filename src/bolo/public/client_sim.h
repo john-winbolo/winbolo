@@ -85,6 +85,9 @@ typedef struct {
     uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
     uint8_t clientType;    /* ClientType enum */
     uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
+    bool fielded;          /* On the field this round. False for a seat held
+                              in the roster with no tank behind it — the
+                              roster draws those dimmed. */
 } ClientLobbySlot;
 
 /* Client-side mirror of a server spectator roster slot. Spectators

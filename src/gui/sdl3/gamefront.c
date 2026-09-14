@@ -61,6 +61,7 @@
 #include "../brainsHandler.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
+#include "../../scenario/scenario_host.h"
 #include "../../server/threads.h"
 #include "../input.h"
 #include "../lang.h"
@@ -422,6 +423,10 @@ static bool s_joinAttemptFailed = FALSE;
 
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
+/* The scenario attached to spServerSim, if the map it was built from has
+ * a script beside it. NULL whenever there is no host to speak of, which
+ * scenarioHostDetach treats as nothing to do. */
+static ScenarioHost *spScenarioHost = NULL;
 static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
 
 static bool spServerSimActive = FALSE;
@@ -1677,6 +1682,26 @@ bool gameFrontSetDlgState(openingStates newState) {
           /* Embedded server: silence its console messages (Thread Manager
            * Startup, Game started!, …) — the client has no server console. */
           serverSimSetQuiet(spServerSim, true);
+          /* A scenario script beside the map this game was built from. A
+             random or built-in map has no file on disk, so it carries none.
+             No script says nothing; one loaded, one that cannot be used and
+             one refused because scripts are off each say so. The switch is
+             the library's, so this path has no test of its own. */
+          if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
+            char scenarioErr[512];
+            spScenarioHost = scenarioHostAttach(spServerSim, fileName,
+                                                scenarioErr,
+                                                sizeof(scenarioErr));
+            if (spScenarioHost != NULL) {
+              WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
+                          scenarioHostName(spScenarioHost),
+                          scenarioHostScriptPath(spScenarioHost));
+            } else if (scenarioErr[0] != '\0') {
+              WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
+            }
+          }
+          /* And from here on the scenario follows the committed map. */
+          scenarioHostFollowMap(spServerSim, &spScenarioHost);
           /* Tutorial: mark the freshly-created sim authoritative-tutorial and
              reset the respawn start to 0 (sea) BEFORE the host player is added
              in gameFrontStartServerSim below.  startsGetStart only takes the
@@ -1744,6 +1769,8 @@ bool gameFrontSetDlgState(openingStates newState) {
             frontEndSetActiveClientSim(NULL);
             clientSimDestroy(humanSim);
             humanSim = NULL;
+            scenarioHostDetach(spScenarioHost);
+            spScenarioHost = NULL;
             serverSimDestroy(spServerSim);
             spServerSim = NULL;
             spServerSimActive = FALSE;
@@ -2679,6 +2706,8 @@ void gameFrontShutdownServer(void) {
    * waiting on the mutex will see spServerSim == NULL when it runs and
    * bail without dereferencing a freed pointer. */
   threadsWaitForMutex();
+  scenarioHostDetach(spScenarioHost);
+  spScenarioHost = NULL;
   toFree = spServerSim;
   spServerSim = NULL;
   spServerSimActive = FALSE;
@@ -2930,6 +2959,22 @@ bool gameFrontSetupServer(void) {
   /* Embedded listen server: silence its console messages — no server console. */
   serverSimSetQuiet(spServerSim, true);
 
+  /* A scenario script beside the map, as on the single-player path. */
+  if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
+    char scenarioErr[512];
+    spScenarioHost = scenarioHostAttach(spServerSim, fileName,
+                                        scenarioErr, sizeof(scenarioErr));
+    if (spScenarioHost != NULL) {
+      WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
+                  scenarioHostName(spScenarioHost),
+                  scenarioHostScriptPath(spScenarioHost));
+    } else if (scenarioErr[0] != '\0') {
+      WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
+    }
+  }
+  /* And from here on the scenario follows the committed map. */
+  scenarioHostFollowMap(spServerSim, &spScenarioHost);
+
   /* Visibility rules from the [GAME OPTIONS] prefs, pushed onto the sim
    * after create rather than through ServerInstanceConfig. */
   serverSimSetViewPolicy(spServerSim, viewCategoryPill,
@@ -2993,6 +3038,8 @@ bool gameFrontSetupServer(void) {
       WB_LOG_WARN(WB_LOG_CAT_NET,
                   "cannot create upload directory '%s' — refusing to host",
                   gameFrontHostingUploadDir);
+      scenarioHostDetach(spScenarioHost);
+      spScenarioHost = NULL;
       serverSimDestroy(spServerSim);
       spServerSim = NULL;
       return FALSE;
@@ -3010,6 +3057,8 @@ bool gameFrontSetupServer(void) {
       WB_LOG_WARN(WB_LOG_CAT_NET,
                   "cannot create log directory '%s' — refusing to host",
                   gameFrontHostingLogDir);
+      scenarioHostDetach(spScenarioHost);
+      spScenarioHost = NULL;
       serverSimDestroy(spServerSim);
       spServerSim = NULL;
       return FALSE;
@@ -3068,6 +3117,8 @@ bool gameFrontSetupServer(void) {
   }
 
   if (!gameFrontStartServerSim(spServerSim, &cfg)) {
+    scenarioHostDetach(spScenarioHost);
+    spScenarioHost = NULL;
     serverSimDestroy(spServerSim);
     spServerSim = NULL;
     return FALSE;

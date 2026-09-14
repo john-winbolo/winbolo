@@ -2,7 +2,8 @@
  * CMD_LOBBY_TRANSFER_HOST dispatch authority and validation
  * (test_lobby_transfer_host.c). The host may hand the role to another
  * connected human; openHost does NOT grant transfer; bots, self, and
- * unconnected slots are rejected.
+ * unconnected slots are rejected. Also the -firstjoinhost promotion, which
+ * moves the role the other way: onto a joiner, when a bot holds it.
  */
 
 #include <stdint.h>
@@ -12,8 +13,10 @@
 #include "global.h"
 #include "everard_map.h"
 #include "client_command.h"          /* CMD_LOBBY_TRANSFER_HOST, CmdResult */
+#include "player_flags.h"            /* CLIENT_TYPE_UNKNOWN */
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* sim->botMgr for the bot-target case */
+#include "server_sim_join.h"          /* serverSimLocalJoin, LocalJoinResult */
 #include "server_sim_lifecycle.h"     /* serverSimSetLobbyEnabled, SetOpenHost */
 #include "threads.h"
 #include "test_harness.h"
@@ -109,13 +112,103 @@ int run_transfer_host_rejects_bot_target(void) {
     ServerSim *sim = make_lobby_sim();
     UT_ASSERT(sim != NULL);
     serverSimAddPlayer(sim, 0, "Host", false);
-    /* Fake a connected bot at slot 2 (a real bot needs a brain file;
-     * serverSimIsBot reads botMgr.bots[i].active). */
+    /* Fake a connected bot at slot 2 (a real bot needs a brain file).
+     * serverSimIsBot answers yes to a live bot pool entry or to a roster
+     * seat marked as a bot; the pool flag is the half a fake bot can set
+     * without the brain. */
     sim->playerConnected[2] = TRUE;
     sim->botMgr.bots[2].active = true;
     UT_ASSERT(serverSimIsBot(sim, 2) == true);
     UT_ASSERT_MSG(transfer(sim, 0, 2) == CMD_REJECT_INVALID,
                   "bot target must be CMD_REJECT_INVALID");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* -firstjoinhost promotion. A dedicated server fills its low slots with bots
+ * before anybody arrives, so slot 0 — where the role sits — is a bot. Fake
+ * one the same way the bot-target case above does. */
+static void seat_bot(ServerSim *sim, BYTE slot) {
+    sim->playerConnected[slot] = TRUE;
+    sim->botMgr.bots[slot].active = true;
+}
+
+static CmdResult clear_team(ServerSim *sim, int senderSlot) {
+    ClientCommand cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_LOBBY_TEAM_CLEAR;
+    cmd.cmdSeq = 1;
+    cmd.u.lobbyTeamClear.teamId = 1;
+    threadsWaitForMutex();
+    CmdResult r = serverSimApplyCommand(sim, senderSlot, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+/* The first person onto a bots-only server takes the role off the bot, and
+ * the lobby commands open up to them. */
+int run_firstjoinhost_promotes_over_bot(void) {
+    ServerSim *sim = make_lobby_sim();
+    BYTE slot = 0xFF;
+    UT_ASSERT(sim != NULL);
+    serverSimSetFirstJoinerBecomesHost(sim, true);
+    seat_bot(sim, 0);
+    UT_ASSERT(serverSimIsBot(sim, 0) == true);
+    UT_ASSERT(serverSimGetHostSlot(sim) == 0);
+
+    UT_ASSERT_MSG(serverSimLocalJoin(sim, "Arrival", "", CLIENT_TYPE_UNKNOWN,
+                                     0, &slot) == LOCAL_JOIN_OK,
+                  "the join must be accepted");
+    UT_ASSERT_MSG(slot != 0, "the bot holds slot 0, so the joiner sits above it");
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == slot,
+                  "the joiner must take the host role from the bot "
+                  "(host=%u, joined=%u)",
+                  (unsigned)serverSimGetHostSlot(sim), (unsigned)slot);
+    UT_ASSERT_MSG(clear_team(sim, slot) == CMD_OK,
+                  "the promoted joiner must be able to edit the lobby");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Without the flag the role stays on the bot and the joiner has no rights. */
+int run_firstjoinhost_off_leaves_host_alone(void) {
+    ServerSim *sim = make_lobby_sim();
+    BYTE slot = 0xFF;
+    UT_ASSERT(sim != NULL);
+    seat_bot(sim, 0);
+    UT_ASSERT(serverSimGetFirstJoinerBecomesHost(sim) == false);
+
+    UT_ASSERT(serverSimLocalJoin(sim, "Arrival", "", CLIENT_TYPE_UNKNOWN,
+                                 0, &slot) == LOCAL_JOIN_OK);
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == 0,
+                  "without -firstjoinhost the role must stay put (host=%u)",
+                  (unsigned)serverSimGetHostSlot(sim));
+    UT_ASSERT_MSG(clear_team(sim, slot) == CMD_REJECT_NOT_HOST,
+                  "an unpromoted joiner must not be able to edit the lobby");
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The promotion fires once: whoever holds the role keeps it. */
+int run_firstjoinhost_second_joiner_does_not_displace(void) {
+    ServerSim *sim = make_lobby_sim();
+    BYTE first = 0xFF, second = 0xFF;
+    UT_ASSERT(sim != NULL);
+    serverSimSetFirstJoinerBecomesHost(sim, true);
+    seat_bot(sim, 0);
+
+    UT_ASSERT(serverSimLocalJoin(sim, "First", "", CLIENT_TYPE_UNKNOWN,
+                                 0, &first) == LOCAL_JOIN_OK);
+    UT_ASSERT(serverSimGetHostSlot(sim) == first);
+
+    UT_ASSERT(serverSimLocalJoin(sim, "Second", "", CLIENT_TYPE_UNKNOWN,
+                                 0, &second) == LOCAL_JOIN_OK);
+    UT_ASSERT(second != first);
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == first,
+                  "the second joiner must not take the role (host=%u, first=%u)",
+                  (unsigned)serverSimGetHostSlot(sim), (unsigned)first);
+    UT_ASSERT_MSG(clear_team(sim, second) == CMD_REJECT_NOT_HOST,
+                  "the second joiner must not be able to edit the lobby");
     serverSimDestroy(sim);
     return 0;
 }

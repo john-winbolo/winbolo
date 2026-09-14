@@ -597,11 +597,12 @@ int run_sound_payload_shape(void) {
     }
 
     /* ---- A bot recipient keeps the map square ---------------------------- */
-    /* serverSimIsBot reads sim->botMgr.bots[slot].active and nothing else, so
-     * slot 1 is turned into a bot by setting that flag. serverSimAddBot is not
-     * an option here: it wants a real brain file, and the unit tests stub the
-     * Lua brain entry points out entirely (test_stubs.c). No tick runs while
-     * the flag is set, so the snapshot build below is its only reader. */
+    /* serverSimIsBot answers yes to a live bot pool entry or to a roster seat
+     * marked as a bot, so slot 1 is turned into a bot by setting the pool
+     * flag. serverSimAddBot is not an option here: it wants a real brain file,
+     * and the unit tests stub the Lua brain entry points out entirely
+     * (test_stubs.c). No tick runs while the flag is set, so the snapshot
+     * build below is its only reader. */
     {
         const BYTE soundMX = (BYTE)(SD_LISTENER_MX + SD_GAP_NEAR);
 

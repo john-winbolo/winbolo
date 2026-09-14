@@ -349,6 +349,41 @@ run_events_cmd_fast() {
   fi
 }
 
+# Run WinBoloHeadless --fast with a command stream and a scenario script
+# beside the map, and look for the line the scenario ends the round with.
+# Arguments: name, map, command file, bot brain, ticks, the line to find.
+#
+# The check is the round's own outcome rather than a recorded log. A scenario
+# says what happened when it ends the round, so the line is the result; a run
+# that stalls, or one whose waves never field, never says it. --bot-brain is
+# what the horde's seats load when a wave fields one — not --brain, which is
+# this process's own player and is left out here.
+run_scenario_fast() {
+  local name="$1"
+  local map="$2"
+  local cmd_file="$3"
+  local brain="$4"
+  local ticks="$5"
+  local want="$6"
+  echo -n "  $name ... "
+  "$BIN" --fast --map "$map" --cmd-stdin "$cmd_file" \
+      --bot-brain "$brain" \
+      --ticks "$ticks" --seed 42 \
+      --log-events "$ACTUAL/$name.jsonl" --quiet \
+      > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
+  if grep -qF "$want" "$ACTUAL/$name.jsonl"; then
+    echo "OK"
+  else
+    echo "NO END"
+    echo "    the round never said: $want"
+    # The attach line and any complaint about the script go to stderr; the
+    # scenario's own console lines go to stdout.
+    tail -10 "$ACTUAL/$name.err"
+    tail -10 "$ACTUAL/$name.out"
+    return 1
+  fi
+}
+
 # WinBoloHeadless --server with --cmd-stdin, connected to a
 # WinBoloDS instance. The server side may optionally take its
 # own -cmd-stdin file (4th arg, "" for none). Compares sorted to
@@ -870,6 +905,10 @@ BASE_YARD_MAP="$MAPS/Base Yard.map"
 PILL_YARD_MAP="$MAPS/Pill Yard.map"
 GRASS_FLAT_MAP="$MAPS/Grass Flat.map"
 WATCH_ROAD_MAP="$MAPS/Watch Road.map"
+# A copy of Slugfest IV with a scenario script beside it. The copy is what
+# keeps the script off the Slugfest cases: a scenario is found by the map's
+# own file name.
+WAVE_DEFENSE_MAP="$MAPS/Wave Defense.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -1029,6 +1068,22 @@ dispatch_scenario() {
     grass_flat_growth)
       run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 1520 "" terrain ;;
 
+    # The scenario beside Wave Defense.map, played to the end it writes for
+    # itself. The lobby holds six seats for the raiders, the command stream
+    # readies the one human and starts the round, and three waves go in on
+    # timers. The raiders run the idle brain, so a wave ends on its own time
+    # rather than on anything a bot does, which is what makes the run the same
+    # every time.
+    #
+    # The scenario's timers add up to fourteen seconds, which is 1400 of the
+    # simulation's ticks. The budget here is counted in game ticks, and the
+    # loop runs a server frame on its keys pass as well as its game pass, so
+    # it buys at least that many again.
+    wave_defense_fast)
+      run_scenario_fast "$name" "$WAVE_DEFENSE_MAP" \
+                        "$COMMANDS/wave_defense.client.jsonl" \
+                        "$BRAINS/idle.lua" 1800 "The keep held." ;;
+
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
 
@@ -1164,6 +1219,9 @@ done
 
 echo "Grass Flat:"
 dispatch_scenario grass_flat_growth || fail=1
+
+echo "Wave Defense:"
+dispatch_scenario wave_defense_fast || fail=1
 
 echo "Dedicated server (Everard Island):"
 dispatch_scenario ds_4bot_melee || fail=1

@@ -65,6 +65,8 @@
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
 #include "wire_limits.h"
+#include "../scenario/scenario_host.h"
+#include "../scenario/scenario_validate.h"
 #include "cJSON.h"
 
 /* Constants previously from backend.h */
@@ -117,6 +119,7 @@ bool statusFile = FALSE;
 time_t ticks = 0;
 
 static ServerSim *serverSim = NULL;
+static ScenarioHost *scenarioHost = NULL;
 
 /* -finaljson destination: "" = disabled, "-" = stdout, else a file path.
  * When set, a single global game-state snapshot is written once the game
@@ -260,6 +263,35 @@ static bool consoleOpSetHost(const char *name) {
   return hostSet;
 }
 
+static bool consoleOpReloadScenario(char *msg, size_t msgLen) {
+  char err[512];
+  bool ok;
+
+  if (scenarioHost == NULL) {
+    snprintf(msg, msgLen, "No scenario is attached to this map");
+    return false;
+  }
+
+  /* Under the mutex like every other console command: the bytes this
+     replaces are what the round-start callback reads. */
+  threadsWaitForMutex();
+  ok = scenarioHostReload(scenarioHost, err, sizeof(err));
+  threadsReleaseMutex();
+
+  if (!ok) {
+    snprintf(msg, msgLen, "%s", err);
+    return false;
+  }
+  snprintf(msg, msgLen,
+           "Scenario '%s': %s re-read. The new settings take effect at the "
+           "next round; the round in progress keeps the ones it started with.",
+           scenarioHostName(scenarioHost),
+           scenarioHostScriptPath(scenarioHost));
+  return true;
+}
+
+/* Positional, and the struct's own comment says why the newest entry goes
+   last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
   consoleOpSetLock,
   consoleOpInfo,
@@ -268,7 +300,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpLogSay,
   consoleOpStatus,
   consoleOpKick,
-  consoleOpSetHost
+  consoleOpSetHost,
+  consoleOpReloadScenario
 };
 
 
@@ -607,6 +640,13 @@ void printArgs() {
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
+  fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
+  fprintf(stderr, "                has a script says which one was not loaded.\n");
+  fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
+  fprintf(stderr, "                starting a server. Each problem is printed as\n");
+  fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
+  fprintf(stderr, "                playable, 1 when it is not.\n");
 
   fprintf(stderr, "\nGame rules:\n");
   fprintf(stderr, "-gametype <T> - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
@@ -1284,6 +1324,68 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
   return (window == overviewWindowClassic) ? "classic" : "expanded";
 }
 
+/* One map's scenario script, checked and reported, for -validate. Returns
+   what the process exits with: 0 for a map that is playable, 1 for one that is
+   not. Nothing else in the server is running by the time this is called, and
+   nothing it does starts anything. */
+static int validateMapAndReport(char *mapPath) {
+  ServerSim *sim;
+  ScnValidateResult result;
+  char script[SCN_SCRIPT_PATH_MAX];
+  bool ok;
+  uint16_t i;
+
+#ifdef USING_SDL
+  /* The sim builds its locks through SDL. Nothing here needs a subsystem. */
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
+    return 1;
+  }
+#endif
+  /* The debug file the server opens is a server's; a check writes nothing to
+     it. */
+  setWriteToDebugFileStream(-1);
+
+  /* What the issues are printed against. A path with no room for a script
+     name is reported against the map's own name. */
+  if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
+    snprintf(script, sizeof(script), "%s", mapPath);
+  }
+
+  sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
+  if (sim == NULL) {
+    fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
+    return 1;
+  }
+
+  ok = scenarioValidateMap(sim, mapPath, &result);
+
+  for (i = 0; i < result.count; i++) {
+    const ScnValidateIssue *issue = &result.issues[i];
+    if (issue->line > 0) {
+      fprintf(stderr, "%s:%d: %s: %s\n", script, issue->line, issue->key,
+              issue->message);
+    } else {
+      fprintf(stderr, "%s: %s: %s\n", script, issue->key, issue->message);
+    }
+  }
+
+  if (result.haveManifest == FALSE && result.count == 0) {
+    fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
+  } else if (ok == TRUE) {
+    fprintf(stderr, "%s: no problems\n", script);
+  } else if (result.dropped > 0) {
+    fprintf(stderr, "%s: %u problems, and %u more than the list holds\n",
+            script, (unsigned)result.count, (unsigned)result.dropped);
+  } else {
+    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result.count,
+            (result.count == 1) ? "" : "s");
+  }
+
+  serverSimDestroy(sim);
+  return (ok == TRUE) ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   {
@@ -1296,6 +1398,17 @@ int main(int argc, char **argv) {
   atexit(sentryClose);
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
   atexit(wb_log_shutdown);
+
+  /* -validate <map> checks a map's scenario script and exits. It is answered
+     here, ahead of the argument checks a server start needs, so a map can be
+     checked without a port and a game type to go with it — and before any of
+     the network, the tracker, mDNS or a window is brought up. */
+  {
+    int validateArg = findArg(argc, argv, "validate");
+    if (validateArg != ARG_NOT_FOUND) {
+      return validateMapAndReport((char *) argv[validateArg]);
+    }
+  }
 
 #ifdef _WIN32
   // Show the console w/o activation if we were started hidden by WinBolo.exe
@@ -1312,6 +1425,10 @@ int main(int argc, char **argv) {
   int32_t gmeLen;
   char pass[FILENAME_MAX]; /* Password */
   char mapName[2048];
+  /* The map file a scenario script would sit beside, for the two start
+     paths that have one. -inbuilt and -randommap have no file on disk, so
+     they carry no scenario. */
+  char scenarioMapPath[2048] = "";
   aiType ai; /* Should we allow ai */
   /* Tracker stuff */
   char trackerAddr[FILENAME_MAX];
@@ -1551,7 +1668,11 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    serverSim = serverSimCreate(scannedFiles[bolo_rand_below((uint32_t)scannedCount)], game, hiddenMines, srtDelay, gmeLen);
+    {
+      const char *chosen = scannedFiles[bolo_rand_below((uint32_t)scannedCount)];
+      snprintf(scenarioMapPath, sizeof(scenarioMapPath), "%s", chosen);
+      serverSim = serverSimCreate(chosen, game, hiddenMines, srtDelay, gmeLen);
+    }
     if (serverSim == NULL) {
       int i;
       for (i = 0; i < scannedCount; i++) SDL_free(scannedFiles[i]);
@@ -1565,6 +1686,7 @@ int main(int argc, char **argv) {
     serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount,
                                (const char *)argv[mdArg]);
   } else {
+    snprintf(scenarioMapPath, sizeof(scenarioMapPath), "%s", mapName);
     serverSim = serverSimCreate(mapName, game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation\n");
@@ -1596,6 +1718,35 @@ int main(int argc, char **argv) {
   } else {
     serverMessageConsoleMessage(serverSim, "Geo lookup database not found — country codes will be XX.\n");
   }
+
+  /* -noscenarios: run every map plainly, whatever sits beside it. Set on the
+     library before the first attach, so the map commits that follow answer to
+     it as well. */
+  if (argExist(argc, argv, "noscenarios") == TRUE) {
+    scenarioHostSetEnabled(false);
+  }
+
+  /* A scenario script beside the map, when the map came from a file and one
+     is there. No script is the ordinary case and says nothing; a script
+     that cannot be used says why, as does one -noscenarios turned down, and
+     the server runs the map plainly. */
+  if (scenarioMapPath[0] != '\0') {
+    char scenarioErr[512];
+    scenarioHost = scenarioHostAttach(serverSim, scenarioMapPath,
+                                      scenarioErr, sizeof(scenarioErr));
+    if (scenarioHost != NULL) {
+      char line[SCN_SCRIPT_PATH_MAX + 128];
+      snprintf(line, sizeof(line), "Scenario loaded: %s (from %s)",
+               scenarioHostName(scenarioHost),
+               scenarioHostScriptPath(scenarioHost));
+      serverMessageConsoleMessage(serverSim, line);
+    } else if (scenarioErr[0] != '\0') {
+      serverMessageConsoleMessage(serverSim, scenarioErr);
+    }
+  }
+  /* And from here on the sim says when a map is committed, so the scenario
+     follows the map without this file knowing how. */
+  scenarioHostFollowMap(serverSim, &scenarioHost);
 
   useAddr = NULL;
   httpSetAltIpAddress("");
@@ -2122,6 +2273,7 @@ int main(int argc, char **argv) {
     }
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
+      scenarioHostDetach(scenarioHost);
       serverSimDestroy(serverSim);
 #ifdef USING_SDL
       SDL_Quit();
@@ -2230,6 +2382,32 @@ int main(int argc, char **argv) {
       return 0;
     }
   }
+
+  /* The lobby the scenario asks for. Its template reached the sim at the
+     attach far above; seating it is the separate step made wherever a lobby
+     is built, and a server booting on this map is one of those points — the
+     two callers inside the sim are a map being committed and a lobby
+     resetting once the last player leaves, and a fresh boot is neither.
+
+     Here rather than beside the attach because a team the template fields
+     with no brain of its own falls back to the server's, and that path and
+     the bot AI level are written into the sim by the startup above. A seat
+     that fields also builds its bot through the manager, which the block
+     above has just brought up. Seated before either, a fielded team would
+     quietly seat nothing.
+
+     Before the operator's -bots, which take the seats above these.
+
+     The headless makes the same call after its own player has joined: that
+     binary plays as well as hosts and its player has to hold slot 0, which a
+     horde seated first would take. Nobody plays from here — every
+     participant joins over the wire — so there is no slot to keep back.
+
+     A map with no scenario has no template and this seats nothing. */
+  if (scenarioHost != NULL) {
+    serverSimScenarioSeatLobby(serverSim);
+  }
+
   /* botBrainPath + botAiType were already pushed into the sim via the
    * cfg block above; the loop below only needs to spawn the configured
    * bot count (numBots / brainPath resolved earlier). */
@@ -2624,6 +2802,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Error starting Thread Manager\n");
     threadsDestroy();
     serverInstanceShutdown(serverSim);
+    scenarioHostDetach(scenarioHost);
     serverSimDestroy(serverSim);
 #ifdef USING_SDL
     SDL_Quit();
@@ -2662,6 +2841,7 @@ int main(int argc, char **argv) {
         botWorkerPoolDestroy();
         threadsDestroy();
         serverInstanceShutdown(serverSim);
+        scenarioHostDetach(scenarioHost);
         serverSimDestroy(serverSim);
 #ifdef USING_SDL
         SDL_Quit();
@@ -2720,6 +2900,7 @@ int main(int argc, char **argv) {
   }
   geoLookupDestroy();
   serverSimMapDirDestroy(serverSim);
+  scenarioHostDetach(scenarioHost);
   serverSimDestroy(serverSim);
   if (g_serverTickLock != NULL) {
     SDL_DestroyMutex(g_serverTickLock);

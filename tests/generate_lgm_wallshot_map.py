@@ -150,7 +150,7 @@ def main():
             f.write(struct.pack('BBB', x, y, d))
         f.write(encode_map_runs(terrain))
 
-    # No scenario sidecar: the brain keeps the wall standing with the in-game
+    # No scenario script: the brain keeps the wall standing with the in-game
     # LGM repair action, so this arena runs on plain main.  Remove a stale one
     # left by an earlier version.
     stale = Path(str(Path(output).with_suffix('')) + ".scenario.lua")

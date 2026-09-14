@@ -19,6 +19,32 @@ void serverSimReturnToLobby(ServerSim *sim);
 void serverSimEnterGameOver(ServerSim *sim);
 void serverSimLobbyCheckAllReady(ServerSim *sim);
 
+/* The lobby template, applied by the engine. Defined in
+ * server_sim_scenario.c; called from the three points a lobby is built or
+ * rebuilt. The sim owns all of this — none of it calls back into whoever
+ * read the scenario off disk.
+ *
+ * SeatLobby empties the seats the scenario put there and seats the template
+ * again from scratch. ReconcileLobby is the softer one a returning round
+ * gets: it keeps what the host did between rounds, cuts a team back to
+ * maxBots, and returns the seats a script fielded to being held.
+ * ClearSeats is the first half of SeatLobby on its own. OnMapChanged tells
+ * whoever owns the scenario about the new map and then seats what they
+ * leave behind. */
+void serverSimScenarioClearSeats(ServerSim *sim);
+void serverSimScenarioSeatLobby(ServerSim *sim);
+void serverSimScenarioReconcileLobby(ServerSim *sim);
+void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
+
+/* The pair a preview and its cancel use. SeatCounts reads the template seats
+ * each team holds into out[], indexed by team id and MAX_TANKS long, and
+ * answers false without writing when no template is attached. TrimSeatsTo
+ * takes each of the template's teams back down to the matching count, the
+ * way ReconcileLobby cuts one back to maxBots; a team below its count is
+ * left alone, because this never seats upward. */
+bool serverSimScenarioSeatCounts(const ServerSim *sim, BYTE *out);
+void serverSimScenarioTrimSeatsTo(ServerSim *sim, const BYTE *counts);
+
 /* Per-slot lobby state setter. Driven by UDP PACKET_LOBBY_READY handlers
  * and by client_net.c's local-transport branches. */
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);

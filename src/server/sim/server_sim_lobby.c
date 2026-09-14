@@ -480,7 +480,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             serverSimSetBotAiType(sim, (aiType)value[0]);
             if ((aiType)value[0] == aiNone) {
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                    if (botManagerIsBot(sim, bi)) {
+                    if (serverSimIsBot(sim, bi)) {
                         serverSimRemoveBot(sim, bi);
                     }
                 }
@@ -526,7 +526,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
                 serverSimSetAiPolicy(sim, (uint8_t)aiNone);
                 serverSimSetBotAiType(sim, aiNone);
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                    if (botManagerIsBot(sim, bi)) {
+                    if (serverSimIsBot(sim, bi)) {
                         serverSimRemoveBot(sim, bi);
                     }
                 }

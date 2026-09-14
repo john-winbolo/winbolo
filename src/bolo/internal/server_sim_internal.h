@@ -311,6 +311,27 @@ struct ServerSim {
     BYTE        *previousMapData;
     int          previousMapDataLen;
     char         previousMapName[MAP_STR_SIZE];
+    /* The file the previous committed map was read from, beside the name,
+     * so cancelling a preview can look for a scenario beside it again.
+     * Empty when that map came from bytes rather than a file. */
+    char         previousMapPath[FILENAME_MAX];
+
+    /* How many template seats each team held when the preview started,
+     * indexed by team id. Cancelling re-seats the template from scratch, so
+     * without these a host's trim is lost; kept alongside the map above and
+     * across a chain of previews for the same reason. previousSeatsValid is
+     * separate because a team the host emptied records a zero and must come
+     * back empty, which is not the same answer as nothing being recorded —
+     * that is what a map with no scenario template leaves. */
+    bool         previousSeatsValid;
+    BYTE         previousSeats[MAX_TANKS];
+
+    /* The file the live map was read from, kept because a scenario is
+     * discovered beside its .map and the display name is not enough to find
+     * it. Set by the loaders handed a path and cleared by the ones that are
+     * not — an upload, a generated random map, a preview rolled back — so it
+     * is either the live map's own file or empty, never a stale one. */
+    char         mapFilePath[FILENAME_MAX];
 
     /* Info packet fields — stored at creation for server browser responses */
     char         mapName[MAP_STR_SIZE];
@@ -661,13 +682,49 @@ struct ServerSim {
      * would start a second game on top of the one being set up. The
      * detector returns at its first line while this is set. (The
      * Ready-click crash was exactly this: botManagerOnGameStart walked a
-     * half-removed bot.) */
+     * half-removed bot.)
+     *
+     * scenarioSetupWindow is open across the round-start callback, at a
+     * point in the start where the world and the roster are already
+     * built. A start is not a settled point and startInProgress refuses
+     * every op, but the one thing that guard exists for is the roster
+     * edit re-entering the all-ready detector mid-start. So while the
+     * window is open the funnel admits every op except the six roster
+     * handlers, which keep refusing.
+     *
+     * scenarioActing is who caused what the engine is about to publish.
+     * Neither event channel carries an actor — a ControlEvent has no
+     * such field and a game event has no room for one — and neither
+     * needs one, because a remote client runs no hooks. So the mark is
+     * the host's own annotation, and this is what it reads: set across
+     * an op handler and across the per-tick roster drain, which is
+     * where a bot a script asked for actually lands, a tick after the
+     * op that asked for it. The host's two deliver callbacks read it as
+     * they queue an event, and a hook that ignores the script's own
+     * edits tests what they wrote. */
     void                  *scenario;
     const ScenarioPolicy  *scenarioPolicy;
     uint8_t                inScenarioPolicy;
     bool                   startInProgress;
     void                 (*scenarioTick)(void *ctx);
     void                  *scenarioTickCtx;
+    void                 (*scenarioRoundStart)(void *ctx);
+    void                  *scenarioRoundStartCtx;
+    void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
+                                               const char *mapPath);
+    void                  *scenarioMapChangedCtx;
+    bool                   scenarioSetupWindow;
+    bool                   scenarioActing;
+
+    /* The lobby the attached scenario asks for, copied off whoever read it so
+     * the sim owns seating and reconciling it and never calls back out.
+     * scenarioLobbyValid false means an ordinary lobby. */
+    ScnLobbyTemplate       scenarioLobby;
+    bool                   scenarioLobbyValid;
+    /* The brain a seat was seeded with, so a seat held without a bot in it
+     * still knows what to run when something fields it. Empty means the
+     * server's own. */
+    char                   seatBrain[MAX_TANKS][SCN_PATH_MAX];
 
     /* What is left of a fill-rect that did not fit in one tick, and how
      * much of this tick's tile budget has been spent on one. The

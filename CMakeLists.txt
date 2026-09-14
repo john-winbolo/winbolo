@@ -863,6 +863,7 @@ set(IOS_BOLO_SOURCES
 # minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
 # Server sources needed for single-player mode
@@ -1089,7 +1090,7 @@ bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/transport_udp_client.c
     src/gui/sdl3/bg_game.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -1460,6 +1461,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
 # server_static and server_sim_static have a circular dependency that
@@ -1793,6 +1795,9 @@ endif()
 # onnxruntime, so consumers inherit the link without repeating it.
 target_link_libraries(WinBolo PRIVATE
     bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides.
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -2127,6 +2132,9 @@ endif()
 
 target_link_libraries(WinBoloDS PRIVATE
     bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides.
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -2521,6 +2529,7 @@ endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
     bolo_static
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -3278,6 +3287,7 @@ set(_baseline_fast
     pill_yard_capture
     pill_yard_anger
     grass_flat_growth
+    wave_defense_fast
 )
 set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
 set(_baseline_udp_50002 centralize_events_udp)
@@ -3387,6 +3397,24 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick registrations beside it, and the flag that keeps the all-ready
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
+    tests/unit/test_scenario_host.c
+    # The validator: a script read in a stub VM and checked against the map,
+    # the lobby template and the rule catalogue, without a round being run.
+    tests/unit/test_scenario_validate.c
+    # The binding table: the game table a script reads the sim through, the
+    # three index rules and what an absent entity reads as.
+    tests/unit/test_scenario_lua.c
+    # The bus events the host queues and drains: the subscriber, the
+    # fixed queue and the bounded drain at the end of each tick.
+    tests/unit/test_scenario_events.c
+    # What a drained event becomes: the hook written for it, the payload it
+    # is handed, the mark saying whether the scenario caused the fact, and
+    # the per-tick and round-end calls the drain makes beside them.
+    tests/unit/test_scenario_hooks.c
+    # What the host derives rather than hears: the timers a script sets, the
+    # regions it names, and the enter and leave hooks the per-tick scan of
+    # tank positions produces.
+    tests/unit/test_scenario_derived.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -3408,9 +3436,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     # that drop a remainder rather than painting the map that replaced it.
     tests/unit/test_scenario_map_arms.c
     # The roster ops: the six arms, the refusals each one answers with, the
-    # queue that paces a spawn and a removal one to a tick, and the init
-    # table a spawned bot's brain is created with.
+    # queue that paces a spawn and a removal one to a tick, the init table a
+    # spawned bot's brain is created with, and the one quiet accept a spawn
+    # onto a team publishes.
     tests/unit/test_scenario_roster_arms.c
+    # The unfielded seat: what a seat held without a bot in it counts for, the
+    # start sequence walking past it, the spawn that fields it and the removal
+    # that gives it back, what that removal costs — one event, no resync — and
+    # the byte that carries the seat to clients.
+    # The lobby template: the engine seating a scenario's teams at a map
+    # commit, reconciling them when a round comes back, re-seating them when
+    # an emptied lobby resets, and leaving a preview and a plain map alone.
+    tests/unit/test_lobby_template.c
+    tests/unit/test_unfielded_seat.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
     # listener wherever they stand, and the records the three lines leave in a
@@ -3442,6 +3480,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # classic, with the two kill ops shown to reach the death bodies without
     # asking, and once more with nothing registered.
     tests/unit/test_scenario_policy_combat.c
+    # The same rows answered from a script instead: the host's lookup, the
+    # words and indices a script is handed at each site, nil as the classic
+    # answer, the op a policy may not issue while it is answering, and the
+    # raise that counts toward the error limit.
+    tests/unit/test_scenario_policy_lua.c
     # The in-process game-event channel: the second subscriber callback, and
     # the captures and builder death that reach it from GameSim callbacks
     # rather than from an event built in shared code, byte for byte as before.
@@ -3630,6 +3673,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
+    # A scenario's changeover from a connected client: the pillbox a human
+    # holds keeps its owner while a held seat is fielded and taken off again,
+    # with no full sync in the middle to cover a migration.
+    tests/unit/test_loopback_scenario_seat.c
     # The rules table over the wire: a mid-round change reaching a connected
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
@@ -4050,6 +4097,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Committed skin fixture directory: the parity test opens
     # <dir>/basic and zips it into the working directory at run time.
     WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
+    # The maps the baseline runs play, and the scenario scripts that sit
+    # beside them: the validator case reads one from here.
+    WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -4075,7 +4125,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
 bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
-    bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+    bolo_static scenario_static ${SERVER_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image
@@ -4422,6 +4472,9 @@ set(_unit_test_names
     transfer_host_rejects_self
     transfer_host_rejects_unconnected
     transfer_host_rejects_bot_target
+    firstjoinhost_promotes_over_bot
+    firstjoinhost_off_leaves_host_alone
+    firstjoinhost_second_joiner_does_not_displace
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
@@ -4477,6 +4530,8 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     alliance_reset_bots_synced_after_inplace_start
     alliance_reset_bots_synced_after_countdown_start
+    alliance_reset_apply_keeps_owners
+    alliance_reset_changed_matrix_keeps_owners
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour
@@ -4981,6 +5036,12 @@ set(_unit_test_names
     scenario_start_flag_set_during_start
     scenario_start_guard_blocks_reentry
     scenario_start_flag_cleared_after_start
+    scenario_round_start_called_both_starts
+    scenario_setup_window_admits_ops
+    scenario_setup_window_roster_refused
+    scenario_setup_window_shut_refuses_all
+    scenario_setup_window_no_callback
+    scenario_setup_window_holds_publish
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -4996,6 +5057,7 @@ set(_unit_test_names
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records
+    scenario_tank_death_ticks_respawn
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -5020,6 +5082,7 @@ set(_unit_test_names
     scenario_entity_publish
     scenario_entity_add_out_null
     loopback_entity_change
+    loopback_scenario_seat_keeps_pills
     pill_armour_scale_classic_cap
     pill_armour_scale_raised_cap
     pill_armour_scale_client_caps
@@ -5046,6 +5109,9 @@ set(_unit_test_names
     scenario_roster_spawn_lands
     scenario_roster_spawn_paced
     scenario_roster_team_during_add
+    scenario_roster_spawn_allies_team
+    scenario_roster_spawn_ally_is_quiet
+    scenario_roster_spawn_no_team_allies_nothing
     scenario_roster_remove_bot
     scenario_roster_set_team
     scenario_lobby_add_bot
@@ -5053,6 +5119,32 @@ set(_unit_test_names
     scenario_lobby_set_team
     scenario_roster_bots_seat_past_the_human_cap
     scenario_roster_spawn_named_start
+    lobby_template_map_commit_seats
+    lobby_template_return_reconciles
+    lobby_template_return_unfields
+    lobby_template_reset_reseats
+    lobby_template_preview_is_inert
+    lobby_template_plain_map_clears
+    lobby_template_caps_humans_only
+    lobby_template_cap_seats_human_above_bots
+    lobby_template_cap_refuses_extra_human
+    lobby_template_cap_never_binds_bots
+    lobby_template_cancel_keeps_trim
+    lobby_template_cancel_keeps_empty_team
+    lobby_template_cancel_chain_rolls_back
+    lobby_template_commit_keeps_new_lobby
+    lobby_template_cancel_restores_path_inmem
+    lobby_template_cancel_restores_path_random
+    unfielded_seat_counts
+    unfielded_seat_is_empty
+    unfielded_seat_all_ready
+    unfielded_seat_start_skips_it
+    unfielded_seat_spawn_fields_it
+    unfielded_seat_survives_remove
+    unfielded_seat_unfield_is_quiet
+    unfielded_seat_unfield_keeps_sync
+    unfielded_seat_spawn_keeps_alliances
+    unfielded_seat_on_the_wire
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player
@@ -5093,6 +5185,21 @@ set(_unit_test_names
     scenario_policy_can_capture
     scenario_policy_kill_ops_ignore_can_die
     scenario_policy_combat_null_is_classic
+    scenario_policy_lua_allow_base_win
+    scenario_policy_lua_can_respawn
+    scenario_policy_lua_can_build
+    scenario_policy_lua_can_capture
+    scenario_policy_lua_announce
+    scenario_policy_lua_can_die
+    scenario_policy_lua_nil_is_classic
+    scenario_policy_lua_op_in_policy
+    scenario_policy_lua_error_counts
+    scenario_policy_lua_choose_start
+    scenario_policy_lua_spawn_loadout
+    scenario_policy_lua_damage_scale
+    scenario_policy_lua_value_classic
+    scenario_policy_lua_value_error_counts
+    scenario_policy_lua_value_in_policy
     game_event_channel_base_captured
     game_event_channel_pill_captured
     game_event_channel_lgm_lost
@@ -5121,6 +5228,91 @@ set(_unit_test_names
     scenario_announce_pill_line_written_once
     scenario_announce_vote_line_held
     scenario_announce_loopback_quiet_draws_no_line
+    scenario_host_metadata
+    scenario_host_rules_change_round
+    scenario_host_syntax_error_line
+    scenario_host_unknown_rule_key
+    scenario_host_api_too_new
+    scenario_host_no_script
+    scenario_host_manifest_roundtrip
+    scenario_host_seed_reproducible
+    scenario_host_edit_after_attach
+    scenario_host_reload_picks_up_edit
+    scenario_host_reload_bad_syntax
+    scenario_host_reload_bad_api
+    scenario_host_reload_applies_nothing
+    scenario_host_fresh_globals_per_round
+    scenario_host_setup_in_window
+    scenario_host_start_on_first_running_tick
+    scenario_host_error_limit_boundary
+    scenario_host_disabled_stops_hooks
+    scenario_host_vm_lock_same_thread
+    scenario_host_vm_lock_second_thread
+    scenario_host_audit_human_lost
+    scenario_host_failed_start_drops_manifest
+    scenario_host_metatable_raises
+    scenario_host_metatable_not_read
+    scenario_host_hook_via_global_metatable
+    scenario_host_disabled_refuses_script
+    scenario_host_disabled_plain_map
+    scenario_host_enabled_again
+    scenario_validate_clean
+    scenario_validate_api_too_new
+    scenario_validate_lobby_shape
+    scenario_validate_unknown_rule
+    scenario_validate_rule_out_of_range
+    scenario_validate_rule_pair
+    scenario_validate_tag_past_map
+    scenario_validate_fifth_tag
+    scenario_validate_region_off_map
+    scenario_validate_bound_false_with_tags
+    scenario_validate_syntax_error_line
+    scenario_validate_lines_point_at_the_key
+    scenario_validate_wave_defense
+    scenario_lua_every_row_answers
+    scenario_lua_read_index_passes_through
+    scenario_lua_op_index_subtracts_one
+    scenario_lua_script_index_adds_one
+    scenario_lua_absent_reads_are_nil
+    scenario_lua_terrain_is_the_whole_map
+    scenario_lua_shape_error_counts
+    scenario_lua_rule_reads_the_table
+    scenario_lua_tags_and_regions
+    scenario_lua_refusals_in_round
+    scenario_lua_refusals_in_lobby
+    scenario_lua_op_index_reaches_the_payload
+    scenario_lua_add_answers_its_index
+    scenario_lua_queued_answers_queued
+    scenario_lua_shape_raises_refusal_does_not
+    scenario_lua_detail_carries_the_number
+    scenario_lua_teleport_start_refuses_bad_index
+    scenario_lua_spawn_bot_refuses_bad_start
+    scenario_events_queued_then_drained
+    scenario_events_drain_reads_the_length_once
+    scenario_events_queued_during_a_drain_waits
+    scenario_events_overflow_boundary
+    scenario_events_overflow_counts_errors
+    scenario_events_no_scenario_delivers_nothing
+    scenario_events_lobby_tick_drains
+    scenario_events_control_reaches_the_queue
+    scenario_events_both_channels_in_publish_order
+    scenario_events_channel_says_which
+    scenario_events_overflow_covers_both
+    scenario_hooks_every_hook_from_its_event
+    scenario_hooks_fire_one_tick_later
+    scenario_hooks_scripted_both_ways
+    scenario_hooks_spawn_drain_is_scripted
+    scenario_hooks_team_changed_on_difference
+    scenario_hooks_tick_and_end
+    scenario_hooks_error_counts_and_disables
+    scenario_derived_timer_fires_on_its_tick
+    scenario_derived_timer_cancelled_and_stale
+    scenario_derived_timer_limit_boundary
+    scenario_derived_timers_die_with_the_round
+    scenario_derived_region_enter_and_leave
+    scenario_derived_define_region_adds_replaces_and_expires
+    scenario_derived_region_loop_terminates
+    scenario_derived_fixture_wins_without_on_tick
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

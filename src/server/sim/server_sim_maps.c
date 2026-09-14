@@ -123,6 +123,9 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
     serverSimConsoleMessage(msg);
 
+    /* Generated, not read — nothing to look beside. */
+    sim->mapFilePath[0] = '\0';
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -430,6 +433,37 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
     return TRUE;
 }
 
+/* Stash the currently-committed map as the "previous" snapshot before a
+ * preview touches the sim. Keep the ORIGINAL committed map across a chain of
+ * previews so one Cancel rolls all the way back to where the user started —
+ * that is what the outer test is for, and a second preview must not displace
+ * the first one's snapshot.
+ *
+ * Everything a Cancel needs goes in together: the bytes, the display name,
+ * the file the map was read from so a script can be found beside it again,
+ * and the template seats each team holds, because the cancel re-seats the
+ * template from scratch and the host's trim would otherwise go with it.
+ * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
+ * false when no template is attached — that is what keeps "no template" apart
+ * from a team the host emptied on purpose.
+ *
+ * Every field is written only once the bytes are held, so a failed malloc
+ * leaves no preview to cancel rather than half a snapshot. Every preview
+ * entry point calls this and none keeps a copy of it: the path was missing
+ * from two of the copies for as long as there were three. */
+static void stashCommittedMap(ServerSim *sim) {
+    if (sim->previousMapData != NULL || sim->cachedMapData == NULL) return;
+    sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+    if (sim->previousMapData == NULL) return;
+    memcpy(sim->previousMapData, sim->cachedMapData, sim->cachedMapDataLen);
+    sim->previousMapDataLen = sim->cachedMapDataLen;
+    memcpy(sim->previousMapName, sim->mapName, sizeof(sim->previousMapName));
+    memcpy(sim->previousMapPath, sim->mapFilePath,
+           sizeof(sim->previousMapPath));
+    sim->previousSeatsValid =
+        serverSimScenarioSeatCounts(sim, sim->previousSeats);
+}
+
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
@@ -449,20 +483,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         return FALSE;
     }
 
-    /* Stash the currently-committed map as the "previous" snapshot
-     * before we touch the sim. Keep the ORIGINAL committed map
-     * across a chain of previews so one Cancel rolls all the way
-     * back to where the user started. */
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
+    stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before mapRead
      * touches them. mapRead's RLE-decoder only writes cells encoded
@@ -559,6 +580,10 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         "serverSimReloadMap: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    /* Kept because a scenario is discovered beside its .map and the display
+       name cannot find the file again. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -586,20 +611,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         return FALSE;
     }
 
-    /* Stash the currently-committed map as the "previous" snapshot
-     * before we touch the sim. Keep the ORIGINAL committed map
-     * across a chain of previews so one Cancel rolls all the way
-     * back to where the user started. */
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
+    stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before the
      * decoder touches them. mapLoadCompressedMap's RLE-decoder only
@@ -710,6 +722,9 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    /* Bytes, not a file — nothing to look beside. */
+    sim->mapFilePath[0] = '\0';
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -753,16 +768,7 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
         return FALSE;
     }
 
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
+    stashCommittedMap(sim);
 
     if (!serverSimApplyRandomMapConfig(sim, cfg)) return FALSE;
 
@@ -832,14 +838,31 @@ bool serverSimRevertPreview(ServerSim *sim) {
         sim->cachedMapDataLen = 0;
     }
 
+    /* The map that was displaced is back, so the file it was read from is
+       the live one again and a scenario can be found beside it. Empty when
+       that map came from bytes, which is the same answer as before. */
+    SDL_strlcpy(sim->mapFilePath, sim->previousMapPath,
+                sizeof(sim->mapFilePath));
+
     free(sim->previousMapData);
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
+
+    /* The map change above seated the template from scratch, which is what a
+       map the host commits wants and not what one they backed out of wants:
+       the seats are back at the template's counts and the host's trim is
+       gone. Put their counts back. */
+    if (sim->previousSeatsValid) {
+        serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
+    }
+    sim->previousSeatsValid = false;
+    memset(sim->previousSeats, 0, sizeof(sim->previousSeats));
     return TRUE;
 }
 
@@ -849,6 +872,11 @@ void serverSimCommitPreview(ServerSim *sim) {
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
+    /* The host keeps the previewed map, so the lobby the old one had is gone
+       for good and there is nothing left to put back. */
+    sim->previousSeatsValid = false;
+    memset(sim->previousSeats, 0, sizeof(sim->previousSeats));
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimCommitPreview: committed '%s'", sim->mapName);
 }
@@ -1135,6 +1163,13 @@ static void serverSimApplyMapChange(ServerSim *sim) {
             }
         }
     }
+
+    /* The map is loaded and the starts are reconciled, so this is the first
+       point a seat can be given one on the new map. Whoever owns the
+       scenario is told about the file first and the seating reads whatever
+       template they leave; the settings publish below then carries a lobby
+       that is already the new map's. */
+    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
 
     transportUdpServerOnLobbyMapChange(sim);
     {

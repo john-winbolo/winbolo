@@ -910,6 +910,26 @@ void playersRequestAlliance(struct ClientSim *cs, players *plrs, BYTE selfPlayer
 void playersLeaveAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
 
 /*********************************************************
+*NAME:          playersClearAlliance
+*PURPOSE:
+* Takes a player out of every alliance bitmap — their own,
+* and every other player's reference to them — and redraws.
+* What they own is left where it is: handing pillboxes and
+* bases to an ally belongs to a departure, which is what
+* playersLeaveAlliance is for. A server stating who is
+* allied with whom is not one, so the caller applying such
+* a statement clears through here.
+*
+*ARGUMENTS:
+* sim        - Pointer to the game sim
+* plrs       - Pointer to the players object
+* selfPlayer - The player this client is
+* playerNum  - Player number to take out of the alliances
+* isServer   - TRUE if we are the server (no screen to draw)
+*********************************************************/
+void playersClearAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
+
+/*********************************************************
 *NAME:          playersAcceptAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
