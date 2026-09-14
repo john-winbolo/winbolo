@@ -2857,6 +2857,33 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
     return SCN_OP_OK;
 }
 
+/* ── Test hooks ────────────────────────────────────────────────── */
+
+/* Post one of a seat's shells as having run its full range and died on a
+ * square, and let the three-shot order detector read it. Three of these on
+ * one open square inside the detector's window put "!goto <mx> <my>" into
+ * every allied bot's inbox, which is the whole point: a script has no way
+ * to make a seat pull a trigger, and steering a round into three full-range
+ * shells landing on one chosen square is not a test anybody could read.
+ *
+ * Nothing else about the shell is simulated. No explosion, no sound and no
+ * shell object: the op names the one server path it is for. */
+static ScnOpResult scenarioOpShellExpired(ServerSim *sim,
+                                          const ScnOpShellExpired *p) {
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (sim->state != serverStateRunning) {
+        return SCN_OP_WRONG_STATE;
+    }
+    /* The centre of the square, which is where a shell that died over it
+       would have been. */
+    serverSimShotOrderNote(sim, p->slot,
+                           (WORLD)(((WORLD)p->x << TANK_SHIFT_MAPSIZE) + 128),
+                           (WORLD)(((WORLD)p->y << TANK_SHIFT_MAPSIZE) + 128));
+    return SCN_OP_OK;
+}
+
 /* The same question the arm asks, without the answer landing anywhere. The
  * whole set is written into the copy before the check reads it, so a pair two
  * of the values break together is found although each of them passes alone —
@@ -3066,6 +3093,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpSetGameTime(sim, &op->u.setGameTime);
         case SCN_OP_SET_RULE:
             return scenarioOpSetRule(sim, &op->u.setRule);
+        case SCN_OP_SHELL_EXPIRED:
+            return scenarioOpShellExpired(sim, &op->u.shellExpired);
     }
 
     /* A value that is not a member of the enum at all. */

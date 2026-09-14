@@ -241,6 +241,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->snapshotTicks = 0;
     sim->tick = 0;
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
+    /* No shells in flight toward a three-shot order yet. */
+    memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
     sim->countdownTicks = 0;

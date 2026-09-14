@@ -2601,6 +2601,36 @@ static int scnLuaSetRule(lua_State *L) {
                    (int)scnWhole(lua_tonumber(L, 2)));
 }
 
+/* ── Test hooks ────────────────────────────────────────────────────
+ *
+ * shell_expired(p, x, y): one of seat p's shells ran its full range and
+ * died over square (x, y) with nothing hit. It exists because a script
+ * cannot make a seat fire, and the three-shot order — three full-range
+ * shells on one open square inside two seconds — has no other way of being
+ * put to a round. Nothing is simulated but the notice itself.
+ */
+static int scnLuaShellExpired(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    lua_Integer x = scnArgInt(L, 2, "x");
+    lua_Integer y = scnArgInt(L, 3, "y");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_SHELL_EXPIRED;
+    op.u.shellExpired.slot  = (BYTE)p;
+    op.u.shellExpired.x     = (BYTE)x;
+    op.u.shellExpired.y     = (BYTE)y;
+    return scnDone(L, &op, "player %d over (%d, %d)", (int)p, (int)x, (int)y);
+}
+
 /* ══ The rows that reach no op ════════════════════════════════════════
  *
  * Three of them, and they are the only rows that change something without
@@ -3091,6 +3121,11 @@ static const ScnLuaRow kScnLuaRows[] = {
       "set_rule(name, value) — write one of the gameplay rules; a name that "
       "spells no rule raises, and a value the table will not take is "
       "refused." },
+    { "shell_expired", scnLuaShellExpired,
+      "shell_expired(p, x, y) — post one of seat p's shells as having run "
+      "its full range and died over square (x, y) with nothing hit; three "
+      "on one open square inside two seconds are the three-shot order the "
+      "bots read. A test hook: nothing else about the shell happens." },
 };
 
 static const ScnLuaConst kScnLuaConsts[] = {

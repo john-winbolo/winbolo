@@ -3485,6 +3485,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # decoder addresses a rebuilt line to every recipient, and the in-process
     # filter reads 0xFF as everyone at a client that is not slot 0.
     tests/unit/test_scenario_comms_arms.c
+    # Three shots = go there: the shell-expiry detector that turns three
+    # full-range shells on one open square into an order line in every
+    # allied bot's inbox — which squares count, the window, and the count
+    # that starts again after one.
+    tests/unit/test_three_shot_order.c
     # The flow ops: a scripted end to the round — its state, its reason, the
     # line it leaves the returning lobby and the WinBolo.net crediting it does
     # not do — and the game-time change, the four lengths it refuses, and the
@@ -5258,6 +5263,10 @@ set(_unit_test_names
     scenario_comms_sound
     scenario_comms_log
     scenario_comms_say
+    three_shot_order_orders_allied_bots
+    three_shot_order_ignores_closed_ground
+    three_shot_order_needs_one_square
+    three_shot_order_window_and_reset
     scenario_comms_arm_records
     scenario_comms_decoder_dest_player
     scenario_comms_apply_non_zero_slot

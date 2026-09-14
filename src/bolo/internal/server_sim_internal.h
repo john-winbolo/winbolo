@@ -67,6 +67,33 @@
  * plausible tick, so it doubles as the "not latched yet" flag. */
 #define ROUND_LOG_START_UNSET     0xFFFFFFFFu
 
+/* THREE SHOTS = GO THERE.
+ *
+ * Three of one player's shells that run their full range — no pill, tank,
+ * base, wall, building or forest in the way — and land on the SAME open
+ * square inside a short window are an order to the bots on that player's
+ * team: go to that square and hold there.
+ *
+ * The detector keeps the last three expiry squares per player. SHOT_ORDER_
+ * SHOTS is how many make an order, and SHOT_ORDER_WINDOW_TICKS is how long
+ * the three have to arrive in: sim->tick counts 100 a second (the keys/game
+ * half-step alternation), so 200 is the two seconds the design asks for.
+ * A constant rather than a sim rule: the detector is server-side only, so
+ * there is nothing for a client to agree with, and a rule would put a new
+ * field on the wire for one number nobody tunes per round.
+ *
+ * Ticks are read from sim->tick alone, never from a clock, so a seeded run
+ * fires the order on the same tick every time. */
+#define SHOT_ORDER_SHOTS        3
+#define SHOT_ORDER_WINDOW_TICKS 200
+
+typedef struct {
+    BYTE     mx[SHOT_ORDER_SHOTS];    /* oldest first; [SHOTS-1] is the last */
+    BYTE     my[SHOT_ORDER_SHOTS];
+    uint32_t tick[SHOT_ORDER_SHOTS];
+    uint8_t  count;                   /* filled slots, held at SHOT_ORDER_SHOTS */
+} ShotOrderRing;
+
 /* One roster change waiting its turn. A spawn carries the whole payload
  * because the seat, the brain and the init table are all read when it
  * lands rather than when it was asked for; a removal needs only the slot. */
@@ -158,6 +185,12 @@ struct ServerSim {
     uint16_t        botConfigPublishPending;
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
+
+    /* The last three expired shells of each player, for the three-shot
+     * order above. Zeroed when the sim is built, when a round starts and
+     * when a player leaves, so a slot never inherits the shots of whoever
+     * sat in it before. */
+    ShotOrderRing   shotOrder[MAX_TANKS];
 
     /* Per-bot brain selection as an index into brainList. 0xFF means
      * "use the global botBrainPath" (the CLI-configured default). The

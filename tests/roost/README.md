@@ -88,6 +88,12 @@ under `-nolobby` no lobby-slot event is ever published, so each bot's own
 copy of the roster has team 0 and its receiver-side team filter drops the
 line. Say `game.say(p, text, "all")`, or name a seat, in a ROOST test.
 
+**A verdict has to fit in one short line.** `game.log` and `game.end_round`
+both refuse text of 129 bytes or more, and a refusal is a return value rather
+than an error — so a verdict that runs long is not truncated, it is never
+said, and the runner reports a round that gave no verdict. Say the numbers in
+as few words as they need.
+
 **A bot's reply does not come back.** GoalHunter answers a command by
 sending its reply to its own seat (`msg_dest = 1 << player_number`), which
 is a local echo: nothing is published, so `on_chat` never sees it and no
@@ -98,4 +104,5 @@ what it says.
 
 | Test | What it proves |
 |---|---|
+| `three_shots_go_there` | Three shells that run their full range onto one open square are an order, and a bot obeys it. The scenario posts the three through `game.shell_expired` — a script cannot make a seat fire a gun — from the seat of one bot, so the OTHER bot is the only one that hears the line (a sender never receives its own) and the round has exactly one bot that could go. It must get within two squares of the target and still be near it three seconds later. |
 | `say_stop_halts_bot` | A chat line from a seat reaches a bot's brain and it obeys. One of two identical bots is told `stop` over broadcast chat; after that its tank never turns again and the other's turns constantly. Facing is the signal rather than position, because a Bolo tank handed no key keeps the speed it had and coasts straight. |

@@ -27,8 +27,10 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>                /* snprintf — the three-shot order line */
 
 #include "server_sim_shared.h"
+#include "../../common/wb_log.h"  /* WB_LOG_INFO — the three-shot order trace */
 #include "server_sim_internal.h"
 #include "log.h"                  /* logAddEvent — the kill/death log entries */
 #include "round_stats_derive.h"   /* roundStatsApplyRecord — the record callbacks' stats funnel */
@@ -213,6 +215,119 @@ void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py) {
     serverSimAddEvent(sim, &ev);
 }
 
+/* ── THREE SHOTS = GO THERE ──────────────────────────────────────────
+ *
+ * Which squares an order may be dropped on. The rule is "open ground a
+ * tank could be told to stand on", and it is deliberately generous with
+ * water because the design lists it:
+ *
+ *   counts  — GRASS, ROAD, SWAMP, CRATER, RUBBLE, RIVER, BOAT (shallow
+ *             water) and DEEP_SEA
+ *   does not — FOREST, BUILDING (the wall), HALFBUILDING, and any square
+ *             holding a pillbox or a base
+ *
+ * A mined square is judged by what is under the mine: MINE_GRASS counts
+ * because GRASS does, MINE_FOREST does not because FOREST does not. The
+ * mine terrain codes run MINE_START..MINE_END and sit MINE_SUBTRACT above
+ * their own base type.
+ *
+ * The pill and base tests are belt and braces: a shell that hits either
+ * resolves in shellsCalcCollision and never reaches the expiry path. A
+ * DEAD pillbox is flown over rather than hit, though, and an order on top
+ * of one is not "open ground" in any sense a player means. */
+static bool shotOrderOpenSquare(GameSim *gs, BYTE mx, BYTE my) {
+    BYTE terrain = mapGetPos(&gs->mp, mx, my);
+
+    if (terrain >= MINE_START && terrain <= MINE_END) {
+        terrain = (BYTE)(terrain - MINE_SUBTRACT);
+    }
+    switch (terrain) {
+        case GRASS:
+        case ROAD:
+        case SWAMP:
+        case CRATER:
+        case RUBBLE:
+        case RIVER:
+        case BOAT:
+        case DEEP_SEA:
+            break;
+        default:                 /* FOREST, BUILDING, HALFBUILDING */
+            return false;
+    }
+    if (pillsExistPos(&gs->pb, mx, my)) return false;
+    if (basesExistPos(&gs->bs, mx, my)) return false;
+    return true;
+}
+
+void serverSimShotOrderClear(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    memset(&sim->shotOrder[playerNum], 0, sizeof(sim->shotOrder[playerNum]));
+}
+
+void serverSimShotOrderNote(ServerSim *sim, BYTE owner, WORLD wx, WORLD wy) {
+    GameSim       *gs;
+    ShotOrderRing *ring;
+    BYTE           mx, my;
+    int            i;
+    char           msg[32];
+
+    if (sim == NULL || owner >= MAX_TANKS) return;
+    gs = &sim->sim;
+    mx = (BYTE)(wx >> TANK_SHIFT_MAPSIZE);
+    my = (BYTE)(wy >> TANK_SHIFT_MAPSIZE);
+
+    /* A square an order cannot be dropped on is not recorded at all — it
+     * neither counts nor breaks a run. Three shells on one square inside
+     * the window are the whole test; a fourth shell somewhere else in the
+     * middle of them does not make the three less deliberate. */
+    if (!shotOrderOpenSquare(gs, mx, my)) return;
+
+    ring = &sim->shotOrder[owner];
+    for (i = 0; i < SHOT_ORDER_SHOTS - 1; i++) {
+        ring->mx[i]   = ring->mx[i + 1];
+        ring->my[i]   = ring->my[i + 1];
+        ring->tick[i] = ring->tick[i + 1];
+    }
+    ring->mx[SHOT_ORDER_SHOTS - 1]   = mx;
+    ring->my[SHOT_ORDER_SHOTS - 1]   = my;
+    ring->tick[SHOT_ORDER_SHOTS - 1] = sim->tick;
+    if (ring->count < SHOT_ORDER_SHOTS) {
+        ring->count++;
+    }
+    if (ring->count < SHOT_ORDER_SHOTS) {
+        return;                       /* fewer than three so far */
+    }
+
+    /* All three on one square... */
+    for (i = 0; i < SHOT_ORDER_SHOTS - 1; i++) {
+        if (ring->mx[i] != mx || ring->my[i] != my) return;
+    }
+    /* ...and the oldest of them inside the window. sim->tick only goes up
+     * while a round runs, and the ring is cleared when it is reset. */
+    if (sim->tick - ring->tick[0] > (uint32_t)SHOT_ORDER_WINDOW_TICKS) return;
+
+    /* One order, then a clean slate: the next three shells start a fresh
+     * count rather than every further shell on the square re-ordering. */
+    serverSimShotOrderClear(sim, owner);
+
+    /* The brains read this as a chat line. The leading "!" is the forced
+     * form their parser wants, which is also what keeps a bot's own
+     * chatter from being read as an order. The sender is the SHOOTER, so
+     * the brain's own team check (the sender's bit in info.allies) decides
+     * who obeys; botManagerDeliverInternalMessage hands it to the
+     * shooter's allied bots and skips the shooter's own slot.
+     *
+     * Deliver rather than Queue: this runs on the producer thread inside
+     * the sim tick, and the queue is drained per bot slot for messages a
+     * bot's own worker produced — a human shooter has no worker to drain
+     * it, so a queued line would sit there for ever. */
+    snprintf(msg, sizeof(msg), "!goto %u %u", (unsigned)mx, (unsigned)my);
+    botManagerDeliverInternalMessage(sim, owner, msg);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "three shots from p%u on (%u,%u) -> \"%s\"",
+                (unsigned)owner, (unsigned)mx, (unsigned)my, msg);
+}
+
 /* A shell owned by `owner` ended (collision or expiry). Publish a
  * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
  * its predicted shell, cull the ghost, and draw the impact at
@@ -230,6 +345,14 @@ void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
     evt.u.shellDeath.owner    = owner;
     evt.u.shellDeath.outcome  = outcome;
     serverSimPublishControl(sim, &evt);
+
+    /* Only a shell that ran its full range with nothing hit can be an
+     * order. Every hit — pill, tank, base, wall, building, forest —
+     * resolves in shellsCalcCollision and reports another outcome, which
+     * is what keeps a normal firefight from ordering anybody about. */
+    if (outcome == SHELL_OUTCOME_EXPIRED) {
+        serverSimShotOrderNote(sim, owner, impactWX, impactWY);
+    }
 }
 
 void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,

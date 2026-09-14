@@ -196,7 +196,11 @@ typedef enum {
     SCN_OP_SET_GAME_TIME,
 
     /* Rules */
-    SCN_OP_SET_RULE
+    SCN_OP_SET_RULE,
+
+    /* Test hooks. Not part of the round a player plays: each one drives a
+     * server path a script has no other way to reach. */
+    SCN_OP_SHELL_EXPIRED
 } ScenarioOpType;
 
 /* A payload byte holding 0xFF means there is nothing there: no slot, no
@@ -645,6 +649,19 @@ typedef struct {
     double   value;
 } ScnOpSetRule;
 
+/* ── Test hooks ────────────────────────────────────────────────── */
+
+/* One of `slot`'s shells ran its full range and died on square (x, y) with
+ * nothing hit. It fires the three-shot order detector exactly as a real
+ * expiring shell does, without a gun having to be aimed: a script cannot
+ * make a seat shoot, and three full-range shells landing on one chosen
+ * square is not something a round can be steered into. Nothing else happens
+ * — no explosion, no sound, no shell is created or destroyed. */
+typedef struct {
+    BYTE slot;
+    BYTE x, y;
+} ScnOpShellExpired;
+
 /* One op, tagged by type. */
 typedef struct {
     ScenarioOpType type;
@@ -697,6 +714,7 @@ typedef struct {
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
         ScnOpSetRule           setRule;
+        ScnOpShellExpired      shellExpired;
     } u;
 } ScenarioOp;
 

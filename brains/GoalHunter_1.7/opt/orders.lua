@@ -244,6 +244,37 @@ function M.parse(text, roster, all_roster)
   for w in s:gmatch("[%w%-']+") do toks[#toks + 1] = w end
   if #toks == 0 then return nil end
 
+  -- ── "!goto <mx> <my>" — THREE SHOTS = GO THERE ───────────────────────
+  -- Three of one player's shells that run their full range and land on the
+  -- same open square inside two seconds are an order: go there and hold.
+  -- The SERVER spots the pattern and injects this line with the SHOOTER as
+  -- the sender, so the team check every order runs through is the shooter's
+  -- team, exactly as for a typed line.
+  --
+  -- FORCED FORM ONLY.  Players have no coordinates to type, so a bare
+  -- "goto 40 40" is somebody's chatter and never an order: without the "!"
+  -- the line reaches the start-of-line test below, matches no verb and no
+  -- name, and is ignored in silence.
+  --
+  -- who.mode is "ping", which gives this order the SAME id a bot ping on
+  -- that square from the same sender derives (sender | goto | ping | here |
+  -- tile), so every bot agrees on it without exchanging anything.
+  -- who.near is the ten-tile rule: a bot further from the square than that
+  -- does not bid, and nobody in range means nothing happens and no bot
+  -- speaks.
+  if forced and toks[1] == "goto" then
+    local mx, my = tonumber(toks[2]), tonumber(toks[3])
+    if #toks ~= 3 or not mx or not my
+       or mx < 0 or mx > 255 or my < 0 or my > 255 then
+      return { reply = "didn't understand" }
+    end
+    mx, my = math.floor(mx), math.floor(my)
+    return { verb = "goto",
+             who = { mode = "ping", near = C.ORDER_NEARBY_TILES or 10 },
+             target = { kind = "here", id = mx * 256 + my, mx = mx, my = my },
+             forced = true }
+  end
+
   -- Only lines that START with a verb, a who-word, `!` or a bot name are
   -- read; everything else is ordinary chat and is ignored in silence. Without
   -- this a bot's own ack ("Got it! attack_pill #5") would be answered with
@@ -934,6 +965,16 @@ local function start_order(state, world, info, spec, who, now, want)
   -- ── auction: everyone bids, the `want` cheapest take it ────────────────
   local cost = (not busy) and M.travel_cost(state, world, info, spec) or nil
   if cost and cost >= 1e29 then cost = nil end
+  -- RANGE RULE, for the three-shot order: only bots within who.near tiles
+  -- of the square bid at all.  Out of range answers "no" the way a busy bot
+  -- does, so an order nobody is near settles with no winner, and since a
+  -- line is only ever said by a bot that TAKES an order, nothing is said.
+  if cost and who.near then
+    local mx, my = M.target_tile(world, state, spec)
+    local tmx = bit.rshift(info.tankx or 0, 8)
+    local tmy = bit.rshift(info.tanky or 0, 8)
+    if not mx or U.mdist(tmx, tmy, mx, my) > who.near then cost = nil end
+  end
   o.auctions[spec.oid] = {
     spec = spec, open = now, bids = {}, answered = {}, want = want or 1,
   }
@@ -1068,6 +1109,10 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     oid = M.order_id(sender, cmd), verb = cmd.verb, kind = kind,
     tkind = cmd.target and cmd.target.kind or nil,
     tid = tid, sender = sender, sender_name = player_name(info, sender),
+    -- tkind "here" ("go there and hold", which is what a three-shot order
+    -- is) carries its own square: there is no pill or base to look the
+    -- position up from.
+    mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
     needs_shells = needs_shells, who = who,
   }
   o.known[spec.oid] = { spec = spec, tick = now }

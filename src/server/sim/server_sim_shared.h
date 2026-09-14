@@ -171,6 +171,20 @@ void publishServerMessageToTeam(ServerSim *sim, const char *message,
  * with the other control-event fillers in server_sim_control.c. */
 void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
 
+/* Defined in server_sim_callbacks.c — the three-shot order detector.
+ *
+ * One of `owner`'s shells ran its full range and died at (wx, wy) with
+ * nothing hit. Three of them on the SAME open square inside
+ * SHOT_ORDER_WINDOW_TICKS put one "!goto <mx> <my>" line into every allied
+ * bot's inbox and clear the count. serverSimCbShellDeath calls it on the
+ * expiry outcome, and the scenario funnel's shell_expired arm calls it so a
+ * scripted round can post the three shells without aiming a gun. */
+void serverSimShotOrderNote(ServerSim *sim, BYTE owner, WORLD wx, WORLD wy);
+
+/* Forgets every shot a player has in flight toward an order. Called when a
+ * player leaves and when a round starts. */
+void serverSimShotOrderClear(ServerSim *sim, BYTE playerNum);
+
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */
 

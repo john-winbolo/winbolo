@@ -30,6 +30,7 @@ bug worth reporting.
 - [Bots and seats](#bots-and-seats)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
 - [Rules](#rules)
+- [Test hooks](#test-hooks)
 - [Constants](#constants)
 - [Terrain codes](#terrain-codes)
 - [Sounds](#sounds)
@@ -1104,6 +1105,34 @@ below the tables say which.
   at most 255, so the longest shot's life still fits its byte.
 
 The detail a refusal carries names both sides with their numbers.
+
+---
+
+## Test hooks
+
+One call, and it is here because a test needs a server path that a round
+cannot be steered into.
+
+| Call | What it does |
+|---|---|
+| `game.shell_expired(p, x, y)` | Posts one of seat `p`'s shells as having run its full range and died over square `(x, y)` with nothing hit. Nothing else about the shell happens: no explosion, no sound, no shell. |
+
+**Three shots = go there.** Three full-range shells from one player that die
+on the SAME open square inside two seconds are an order to that player's
+bots: the nearest one within ten squares goes there and holds, for the same
+sixty seconds every other order runs for. Open means grass, road, swamp,
+crater, rubble, river, shallow water or deep sea, a mined square counting as
+whatever is under the mine, and never forest, a wall, a building, a pillbox
+or a base. A script cannot make a seat pull a trigger, and three full-range
+shells landing on a chosen square is not something a round arrives at by
+accident, so `shell_expired` is how a test gives that order:
+
+```lua
+for _ = 1, 3 do game.shell_expired(SHOOTER, 40, 40) end
+```
+
+The op is refused with `SCN_OP_WRONG_STATE` outside a running round and with
+`SCN_OP_NO_SUCH_PLAYER` for a seat nobody is in.
 
 ---
 

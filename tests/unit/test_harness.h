@@ -2415,6 +2415,12 @@ int run_scenario_comms_msg_player(void);
 int run_scenario_comms_sound(void);
 int run_scenario_comms_log(void);
 int run_scenario_comms_say(void);
+/* THREE SHOTS = GO THERE — the shell-expiry detector behind the order
+ * (tests/unit/test_three_shot_order.c). */
+int run_three_shot_order_orders_allied_bots(void);
+int run_three_shot_order_ignores_closed_ground(void);
+int run_three_shot_order_needs_one_square(void);
+int run_three_shot_order_window_and_reset(void);
 int run_scenario_comms_arm_records(void);
 int run_scenario_comms_decoder_dest_player(void);
 int run_scenario_comms_apply_non_zero_slot(void);

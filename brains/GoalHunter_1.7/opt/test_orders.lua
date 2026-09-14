@@ -419,6 +419,60 @@ ORD.update(st3, W(), I({ allies = 0x16, player_bots = 0x16 }), 50)
 check("no banner with no human ally",
       #st3.orders.say == 0, tostring(#st3.orders.say))
 
+-- =========================================================================
+-- THREE SHOTS = GO THERE.  Three of one player's shells that run their full
+-- range and land on one open square inside two seconds are an order; the
+-- server spots them and injects "!goto <mx> <my>" with the SHOOTER as the
+-- sender.  The parser takes that line from any ally, and only with the "!".
+-- =========================================================================
+print("orders.lua — three shots = go there")
+local HERE = 100 * 256 + 99
+check("!goto 100 99",
+      shape(P("!goto 100 99")) == "goto who=ping tgt=here:" .. HERE,
+      shape(P("!goto 100 99")))
+check("goto without the ! is not an order",
+      P("goto 100 99") == nil, shape(P("goto 100 99")))
+check("!goto off the map",
+      shape(P("!goto 300 4")) == "reply:didn't understand", shape(P("!goto 300 4")))
+check("!goto with no square",
+      shape(P("!goto")) == "reply:didn't understand", shape(P("!goto")))
+check("!goto with one number",
+      shape(P("!goto 40")) == "reply:didn't understand", shape(P("!goto 40")))
+
+-- The id is the one a bot ping on the same square from the same sender
+-- derives, so a ping and a burst of shots land on ONE order.
+check("the id matches a ping on the same square",
+      ORD.order_id(0, P("!goto 100 99")) ==
+      ORD.order_id(0, { verb = "goto", who = { mode = "ping" },
+                        target = { kind = "here", id = HERE } }), "?")
+
+-- The ten-tile rule.  This bot sits at (10,10).
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 400, true, false)
+local goid = next(st.orders.auctions)
+check("a three-shot order opens an auction", goid ~= nil, tostring(goid))
+check("a bot within 10 tiles bids",
+      goid ~= nil and type(st.orders.auctions[goid].bids[1]) == "number",
+      goid and tostring(st.orders.auctions[goid].bids[1]) or "nil")
+
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "!goto 100 99", 400, true, false)
+local foid = next(st.orders.auctions)
+check("a bot further than 10 tiles does not bid",
+      foid ~= nil and st.orders.auctions[foid].bids[1] == nil,
+      foid and tostring(st.orders.auctions[foid].bids[1]) or "no auction")
+check("and it says nothing about it",
+      #st.orders.say == 0, tostring(#st.orders.say))
+
+-- An enemy shooting three shells orders nobody about: the sender is not an
+-- ally, so on_chat never reads the line.
+st, w, inf = ST(), W(), I()
+local took_shot = ORD.on_chat(st, w, inf, 9, "!goto 15 15", 400, false, false)
+check("an enemy's three shots are ignored",
+      took_shot == false and st.orders == nil, tostring(took_shot))
+
 print("orders.lua — focus pricing")
 local C = require("constants")
 check("no focus -> x1", ORD.focus_mult({}, "attack_pill") == 1.0, "?")
