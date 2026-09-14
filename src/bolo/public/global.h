@@ -231,6 +231,26 @@ void efree(Generic object);
    MINES, which is 0 and so also reads as "never set". */
 #define LAST_DEATH_BY_SCRIPT 3
 
+/* Per-player death-cause tally slots (server-side observation only; nothing
+ * here feeds a decision). Kept separate from LAST_DEATH_BY_*, which is a
+ * render hint, is not set on every death path (a mine death leaves the
+ * previous value in place) and cannot tell a tank's shell from a pill's.
+ * DEATH_CAUSE_OTHER is index 0 so a slot nothing tagged reads as "other". */
+#define DEATH_CAUSE_OTHER      0
+#define DEATH_CAUSE_DROWNED    1
+#define DEATH_CAUSE_SHELL_TANK 2
+#define DEATH_CAUSE_SHELL_PILL 3
+#define DEATH_CAUSE_MINE       4
+/* Sub-classification of DEATH_CAUSE_DROWNED, NOT a sixth independent cause:
+ * the tank drowned with no shell having come near it, and without having had
+ * its boat shot out from under it, in the last TANK_SHELL_NEAR_MEMORY_FRAMES
+ * game ticks (one second). A drowning lands in exactly one of DROWNED /
+ * DROWNED_UNFORCED, so "all drownings" is the sum of the two and the five
+ * *independent* causes (OTHER, DROWNED + DROWNED_UNFORCED, SHELL_TANK,
+ * SHELL_PILL, MINE) still add up to the death count. */
+#define DEATH_CAUSE_DROWNED_UNFORCED 5
+#define DEATH_CAUSE_NUM        6
+
 /* Change the static bitmap displayed every 10 ticks */
 #define STATIC_CHANGE_TICKS 10
 

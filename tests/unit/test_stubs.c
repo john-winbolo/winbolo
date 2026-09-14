@@ -129,15 +129,52 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
   (void)inst;
 }
 
+/* Lua seeding (ec47fa43 / 73ba4e7a): the bot manager forwards -brain-lua-seed
+ * here; nothing in the unit suite runs a Lua brain. */
+void luaBrainSeedRandom(LuaBrainInstance *inst, long seed) {
+  (void)inst; (void)seed;
+}
+
+void luaBrainSetDefaultRandomSeed(long seed) {
+  (void)seed;
+}
+
 void luaBrainSetTickInputs(LuaBrainInstance *inst,
                            double lastThinkMs,
                            double targetMs,
-                           bool   wasKilled) {
-  (void)inst; (void)lastThinkMs; (void)targetMs; (void)wasKilled;
+                           bool   wasKilled,
+                           int    tierOverride) {
+  (void)inst; (void)lastThinkMs; (void)targetMs; (void)wasKilled; (void)tierOverride;
 }
 
 void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   (void)inst; (void)enabled;
+}
+
+/* A per-bot BRAIN_INIT_ARG is staged through this before serverSimCreateBot
+ * (servermain.c and braintest_main.c both do it). luabrainshandler.c is a
+ * GUI-side file that the test binary does not link, so the symbol has to
+ * resolve here even though no test spawns a bot with an init arg. */
+void luaBrainsSetNextInitArg(const char *arg);
+void luaBrainsSetNextInitArg(const char *arg) {
+  (void)arg;
+}
+
+/* bot_manager reads the staged arg back so it can APPEND its
+ * "difficulty=<word>" token instead of clobbering a -bot-init suffix.
+ * Nothing is staged in the test binary, so this reports the empty string —
+ * the same answer the real one gives an unstaged create. */
+const char *luaBrainsPeekNextInitArg(void);
+const char *luaBrainsPeekNextInitArg(void) {
+  return "";
+}
+
+/* bot_manager.c seeds a freshly created brain's tick counter from the engine
+ * tick through this, the same way it stages the init arg above. No test
+ * creates a bot brain, so the symbol only has to resolve. */
+void luaBrainsSetNextStartEngineTick(unsigned int tick);
+void luaBrainsSetNextStartEngineTick(unsigned int tick) {
+  (void)tick;
 }
 
 /* client_sim.c::netProcessedDnsLookup pairs clientMutexWaitFor with

@@ -136,7 +136,7 @@ def write_bmap(path, terrain, pills, bases, starts):
     print(f"  bases: {len(bases)} ({sum(1 for b in bases if b[2] in FRIENDLY_OWNERS)} friendly, "
           f"{sum(1 for b in bases if b[2] == ENEMY_OWNER)} enemy)")
     print(f"  starts: {len(starts)} (friendly, south)")
-    print(f"  Run with: -bots 3 -allybots 1 -brain brains/GoalHunter_1.6/init.lua")
+    print(f"  Run with: -bots 3 -allybots 1 -brain brains/GoalHunter_1.7/init.lua")
     print(f"  (enemy pills/base are static team-2, owner slot {ENEMY_OWNER}, no bot)")
 
 

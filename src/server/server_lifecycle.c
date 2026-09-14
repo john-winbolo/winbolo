@@ -674,6 +674,13 @@ void serverInstanceTick(ServerSim *sim) {
         if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }
+        /* Re-assert team alliances now that (a) the reliable queues were
+         * reset above — discarding the CTRL_ALLIANCE_RESET the start
+         * sequence published, which left remote clients rendering their
+         * own teammates as enemies — and (b) botManagerOnGameStart just
+         * rebuilt the bot ClientSims, whose alliance matrices start
+         * empty. One republish + direct bot sync fixes both sides. */
+        serverSimReapplyTeamAlliances(sim);
         /* Notify WBN that we are now in-game */
         winbolonetSendLobbyStatus(FALSE);
         /* Send EVENT_PLAYER_JOIN for each connected WBN player */
@@ -817,6 +824,18 @@ void serverInstanceTick(ServerSim *sim) {
           serverSimPublishLobbySlot(sim, pi);
         }
       }
+    }
+
+    /* Bot-config events queued by serverSimApplyNewBotDefaults — a freshly
+     * added or seeded bot's mode and difficulty — sent a couple per tick
+     * instead of inside the add. A scenario seeds ten bots in one call stack
+     * while no client ack can be read; ten more events there would grow the
+     * burst that once overran a client's 64-event reliable window and
+     * dropped the host. Runs for single player too: its timer drives this
+     * same function. */
+    if (sim->state == serverStateLobby ||
+        sim->state == serverStateCountdown) {
+      serverSimFlushBotConfigPublishes(sim);
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */

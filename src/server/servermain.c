@@ -52,6 +52,7 @@
 #include "transport_udp.h"
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
+#include "brain_list.h"  /* BrainModes, brainListLoadModesForPath — -mode */
 #include "bot_worker_pool.h"
 #include "lobby_bot_pools.h"
 #include "brain_record.h"
@@ -100,6 +101,13 @@ typedef enum {
 DWORD oldTick;     /* Number of ticks passed */
 bool isQuiet = FALSE;
 bool isNoInput = FALSE;
+/* -asap: run game ticks back-to-back instead of one per SERVER_TICK_LENGTH of
+ * wall clock. Nothing in a tick needs real time to pass between ticks --
+ * botManagerTick joins the worker pool inside the tick -- so the only thing
+ * the 20 ms timer buys a headless measurement run is wall-clock waiting.
+ * Read from the tick loop and from the command loops (which shorten their
+ * sleeps so they don't pace the game); set once, before any thread starts. */
+bool isAsap = FALSE;
 unsigned int serverTimerGameID = 1;
 /* The dedicated-server replay-log state (former fileName/isLogging/
  * dontSendLog globals) is now private to server_dedicated_log.c. This TU
@@ -117,6 +125,14 @@ static ScenarioHost *scenarioHost = NULL;
  * When set, a single global game-state snapshot is written once the game
  * reaches a terminal game-over (as -ticks produces). See serverEmitFinalJson. */
 static char optFinalJson[512] = "";
+
+/* -snapjson / -snapinterval: periodic JSONL time series of the same global
+ * snapshot -finaljson writes once. optSnapJson is the destination ("" =
+ * disabled, "-" = stdout, else a file path opened in append mode so each
+ * snapshot is one line); optSnapInterval is the period in running ticks
+ * (0 = disabled). Both must be set for anything to be emitted. */
+static char optSnapJson[512] = "";
+static int32_t optSnapInterval = 0;
 
 /* Shutdown handshake for the game-tick timer.
  *
@@ -320,7 +336,9 @@ void processKeys(bool isQuiet) {
 			if (alarmRaised == alarmInterrupt) {
 				break;
 			}
-			Sleep(1000);
+			/* Under -asap the whole game can finish inside one of these
+			 * sleeps, so poll fast enough not to add a second to the run. */
+			Sleep(isAsap ? 1 : 1000);
 		}
 	} else {
 		/* Start background thread to read stdin */
@@ -343,7 +361,7 @@ void processKeys(bool isQuiet) {
 
 				serverConsoleDispatch(&serverConsoleOps, keyBuff, saveBuff);
 			} else {
-				Sleep(100);
+				Sleep(isAsap ? 1 : 100);
 			}
 		}
 
@@ -454,9 +472,9 @@ static void processCmdStdin(CmdStdin *cs) {
              * is expected to supply an explicit exit/shutdown op once
              * its goldens have been written. */
 #ifdef _WIN32
-            Sleep(50);
+            Sleep(isAsap ? 1 : 50);
 #else
-            SDL_Delay(50);
+            SDL_Delay(isAsap ? 1 : 50);
 #endif
             continue;
         }
@@ -464,9 +482,9 @@ static void processCmdStdin(CmdStdin *cs) {
         uint32_t serverTick = serverSimGetTick(serverSim);
         if (cmd.tick > serverTick) {
 #ifdef _WIN32
-            Sleep(10);
+            Sleep(isAsap ? 0 : 10);
 #else
-            SDL_Delay(10);
+            SDL_Delay(isAsap ? 0 : 10);
 #endif
             continue;
         }
@@ -547,6 +565,30 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
 #endif
 }
 
+/* -asap tick driver: the serverGameTimer body with the elapsed-time gate
+ * removed, on a thread of its own instead of the timer's. Same lock, same
+ * shutdown handshake, same `ticks` counter -- so -ticks, -snapinterval and
+ * -finaljson count exactly what they counted under the timer. */
+static int SDLCALL serverAsapLoop(void *unused) {
+  (void)unused;
+  while (!SDL_GetAtomicInt(&g_serverShuttingDown) && g_serverTickLock != NULL) {
+    SDL_LockMutex(g_serverTickLock);
+    if (SDL_GetAtomicInt(&g_serverShuttingDown)) {
+      SDL_UnlockMutex(g_serverTickLock);
+      break;
+    }
+    serverInstanceTick(serverSim);
+    ticks++;
+    SDL_UnlockMutex(g_serverTickLock);
+    /* The command loops (processKeys / processCmdStdin) and the shutdown
+     * path both want g_serverTickLock or the global mutex; yield between
+     * ticks so a "quit" is not starved on a single-core box. */
+    SDL_Delay(0);
+  }
+  return 0;
+}
+static SDL_Thread *serverAsapThread = NULL;
+
 /* Stop the game-tick timer and guarantee no tick callback is — or will be —
  * executing before the caller frees the sim / bot lua_States. timeKillEvent
  * and SDL_RemoveTimer only unschedule future callbacks; they do not join an
@@ -558,11 +600,19 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
  * path. */
 static void serverQuiesceGameTimer(void) {
   SDL_SetAtomicInt(&g_serverShuttingDown, 1);
+  if (isAsap) {
+    /* No timer was armed; join the tick thread instead. SDL_WaitThread is a
+     * no-op on NULL, and the flag above makes the loop exit at its next
+     * iteration boundary. */
+    SDL_WaitThread(serverAsapThread, NULL);
+    serverAsapThread = NULL;
+  } else {
 #ifdef _WIN32
-  timeKillEvent(serverTimerGameID);
+    timeKillEvent(serverTimerGameID);
 #else
-  SDL_RemoveTimer(serverTimerGameID);
+    SDL_RemoveTimer(serverTimerGameID);
 #endif
+  }
   if (g_serverTickLock != NULL) {
     SDL_LockMutex(g_serverTickLock);
     SDL_UnlockMutex(g_serverTickLock);
@@ -670,7 +720,18 @@ void printArgs() {
   fprintf(stderr, "-maxbots <N>  - Maximum number of AI bots that can be in the lobby\n");
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
-  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots (default: the\n");
+  fprintf(stderr, "                first of Brains/GoalHunter_1.7/init.lua,\n");
+  fprintf(stderr, "                brains/GoalHunter_1.7/init.lua,\n");
+  fprintf(stderr, "                data/Brains/GoalHunter_1.7/init.lua that exists)\n");
+  fprintf(stderr, "-mode <key> - Mode for the -bots bots, one of the mode keys in the\n");
+  fprintf(stderr, "                brain's modes.txt (default 'default'). Handed to the\n");
+  fprintf(stderr, "                brain as a 'mode=<key>' BRAIN_INIT_ARG token.\n");
+  fprintf(stderr, "-difficulty <key> - Difficulty for the -bots bots: a level key from the\n");
+  fprintf(stderr, "                selected mode, or easy|medium|hard (default: the mode's\n");
+  fprintf(stderr, "                own default, which is hard). Handed to the brain as a\n");
+  fprintf(stderr, "                'difficulty=<key>' BRAIN_INIT_ARG token; every setting\n");
+  fprintf(stderr, "                plays the same way for now.\n");
   fprintf(stderr, "-bot-init <spec> - Per-bot brain paths by player id: 'range=path[arg],...'\n");
   fprintf(stderr, "                where range is 'a-b' or 'n' and the optional [arg] becomes\n");
   fprintf(stderr, "                that bot's BRAIN_INIT Lua table: ';'-separated key=value\n");
@@ -755,6 +816,12 @@ void printArgs() {
   fprintf(stderr, "-finaljson <F> - On terminal game-over (as -ticks produces), write a single\n");
   fprintf(stderr, "                JSON snapshot of the final global game state (all tanks,\n");
   fprintf(stderr, "                pillboxes, bases, winner). \"-\" writes to stdout, else a file.\n");
+  fprintf(stderr, "-snapjson <F> - Append the same global snapshot periodically, one JSON object\n");
+  fprintf(stderr, "                per line (JSONL), with \"reason\":\"snapshot\". Requires\n");
+  fprintf(stderr, "                -snapinterval. The file is truncated at startup, and a final\n");
+  fprintf(stderr, "                \"reason\":\"final\" line is appended on terminal game-over.\n");
+  fprintf(stderr, "-snapinterval <N> - Emit a -snapjson snapshot every N game-ticks of running\n");
+  fprintf(stderr, "                play (same tick units as -ticks). 0/omitted disables.\n");
 
   fprintf(stderr, "\nLogging & diagnostics:\n");
   fprintf(stderr, "-log [name]   - Create game log file. Optional [name] is a filename, or a\n");
@@ -766,6 +833,28 @@ void printArgs() {
   fprintf(stderr, "                serves unless it is registered with winbolo.net. Needs -log.\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
+  fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
+  fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
+  fprintf(stderr, "                from think times. The tier normally comes from wall-clock\n");
+  fprintf(stderr, "                measurements, so the same seed yields different tiers -- and\n");
+  fprintf(stderr, "                a different tier is a different brain. Timing telemetry still\n");
+  fprintf(stderr, "                reports real values.\n");
+  fprintf(stderr, "-brain-lua-seed <N> - Seed each brain's Lua math.random with N + player\n");
+  fprintf(stderr, "                number. Without it PUC-Lua auto-seeds per process and runs\n");
+  fprintf(stderr, "                diverge from the first tick.\n");
+  fprintf(stderr, "-brain-no-budget-kill - Give each brain a 1000 ms budget so the watchdog\n");
+  fprintf(stderr, "                never truncates a think. Still finite, so a hung brain is\n");
+  fprintf(stderr, "                still aborted. For measurement runs; pair with -threads 1.\n");
+  fprintf(stderr, "                ALSO suppresses the consecutive-crash kick, so a brain that\n");
+  fprintf(stderr, "                crashes every tick stays in the game instead of being\n");
+  fprintf(stderr, "                removed. Wanted for measurement (a kick is a huge fork),\n");
+  fprintf(stderr, "                surprising on a live server.\n");
+  fprintf(stderr, "-asap         - Run game ticks back-to-back instead of one per 20 ms of\n");
+  fprintf(stderr, "                wall clock. The simulation is unchanged (same ticks, same\n");
+  fprintf(stderr, "                order, same -ticks/-snapinterval counting); it just stops\n");
+  fprintf(stderr, "                waiting for real time between them, so a headless\n");
+  fprintf(stderr, "                measurement or golden run finishes as fast as the CPU\n");
+  fprintf(stderr, "                allows. Pointless with real clients connected.\n");
 #if WB_ENABLE_NETIMPAIR
   fprintf(stderr, "-netimpair <spec> - Apply network impairment to both directions for testing.\n");
   fprintf(stderr, "                spec is comma-separated keys, e.g.\n");
@@ -1034,15 +1123,19 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 *  player-centric: fog-of-war viewport around "self"), the
 *  dedicated server has no ClientSim/brain view, so this is a
 *  global snapshot: every connected tank, every pillbox, every
-*  base, plus the winner (if any). Emitted once at end-of-game.
+*  base, plus the winner (if any). Emitted once at end-of-game
+*  for -finaljson, and repeatedly for -snapjson (append mode,
+*  one object per line = JSONL).
 *
 *ARGUMENTS:
 *  sim    - The server sim (must still hold final state).
-*  dest   - "-" for stdout, otherwise a file path (truncated).
+*  dest   - "-" for stdout, otherwise a file path.
 *  reason - Short machine tag for why the game ended.
+*  append - FALSE truncates the file (the -finaljson contract,
+*           unchanged); TRUE appends one line (-snapjson).
 *********************************************************/
 static void serverEmitFinalJson(ServerSim *sim, const char *dest,
-                                const char *reason) {
+                                const char *reason, bool append) {
   cJSON *root;
   cJSON *tanks;
   cJSON *pills;
@@ -1083,12 +1176,48 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
     if (!serverSimGetTankInfo(sim, i, &ti)) {
       continue;
     }
+    /* Kills come from serverSimGetPlayerKills, NOT ti.kills: TankInfo.kills
+     * reads tank->numKills, which only tankAddKill writes, and tankAddKill
+     * is called solely from the client snapshot path (client_snapshot.c,
+     * EVENT_TANK_KILLED for the local player). A dedicated server has no
+     * client, so ti.kills is permanently 0 here. Deaths are credited
+     * server-side, so ti.deaths is left alone. */
     t = cJSON_CreateObject();
     cJSON_AddNumberToObject(t, "player", (double)i);
     cJSON_AddStringToObject(t, "name", ti.name);
     cJSON_AddBoolToObject(t, "alive", ti.alive);
-    cJSON_AddNumberToObject(t, "kills", (double)ti.kills);
+    cJSON_AddNumberToObject(t, "kills",
+                            (double)serverSimGetPlayerKills(sim, i));
     cJSON_AddNumberToObject(t, "deaths", (double)ti.deaths);
+    /* Per-cause split of the same death count, so a bench can tell a
+     * drowning from a shell without replaying the game. The five entries
+     * sum to "deaths". */
+    {
+      uint32_t causes[DEATH_CAUSE_NUM];
+      cJSON *dc = cJSON_AddObjectToObject(t, "deaths_by");
+      serverSimGetDeathCauses(sim, i, causes);
+      if (dc != NULL) {
+        /* "drowned" stays the TOTAL number of drownings so readers written
+         * before the split keep working; "drowned_unforced" is the subset
+         * of those in which no shell came near the tank in the last second
+         * (the bot drove itself in).  Summing every key would therefore
+         * double-count -- the independent causes are drowned + shell_tank +
+         * shell_pill + mine + other, and those sum to "deaths". */
+        cJSON_AddNumberToObject(dc, "drowned",
+                                (double)(causes[DEATH_CAUSE_DROWNED] +
+                                         causes[DEATH_CAUSE_DROWNED_UNFORCED]));
+        cJSON_AddNumberToObject(dc, "drowned_unforced",
+                                (double)causes[DEATH_CAUSE_DROWNED_UNFORCED]);
+        cJSON_AddNumberToObject(dc, "shell_tank",
+                                (double)causes[DEATH_CAUSE_SHELL_TANK]);
+        cJSON_AddNumberToObject(dc, "shell_pill",
+                                (double)causes[DEATH_CAUSE_SHELL_PILL]);
+        cJSON_AddNumberToObject(dc, "mine",
+                                (double)causes[DEATH_CAUSE_MINE]);
+        cJSON_AddNumberToObject(dc, "other",
+                                (double)causes[DEATH_CAUSE_OTHER]);
+      }
+    }
     if (ti.has_tank) {
       cJSON_AddNumberToObject(t, "x", (double)ti.world_x / 256.0);
       cJSON_AddNumberToObject(t, "y", (double)ti.world_y / 256.0);
@@ -1149,9 +1278,10 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
   if (strcmp(dest, "-") == 0) {
     f = stdout;
   } else {
-    f = fopen(dest, "w");
+    f = fopen(dest, append ? "a" : "w");
     if (f == NULL) {
-      fprintf(stderr, "Error: cannot open -finaljson file '%s'\n", dest);
+      fprintf(stderr, "Error: cannot open %s file '%s'\n",
+              append ? "-snapjson" : "-finaljson", dest);
       cJSON_free(out);
       return;
     }
@@ -1163,6 +1293,19 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
     fclose(f);
   }
   cJSON_free(out);
+}
+
+/*********************************************************
+*NAME:          serverSnapshotTick
+*PURPOSE:
+*  serverSimSetSnapshotHook callback: appends one -snapjson
+*  line every -snapinterval running ticks. Called from inside
+*  the sim step (game-timer thread) before that step does any
+*  work, so the state written is settled, not half-applied.
+*  Read-only with respect to the sim.
+*********************************************************/
+static void serverSnapshotTick(ServerSim *sim) {
+  serverEmitFinalJson(sim, optSnapJson, "snapshot", TRUE);
 }
 
 /* The lower-case word -pillview / -baseview / -allyview accept for a
@@ -1342,6 +1485,7 @@ int main(int argc, char **argv) {
     isQuiet = TRUE;
   }
   isNoInput = argExist(argc, argv, "noinput");
+  isAsap = (argExist(argc, argv, "asap") == TRUE);
 
   if (argExist(argc, argv, "maxplayers") == TRUE) {
     maxPlayers = atoi((char *) argv[findArg(argc, argv, "maxplayers")]);
@@ -1640,6 +1784,43 @@ int main(int argc, char **argv) {
     if (argNum != ARG_NOT_FOUND) {
       strncpy(optFinalJson, (char *)argv[argNum], sizeof(optFinalJson) - 1);
       optFinalJson[sizeof(optFinalJson) - 1] = '\0';
+    }
+  }
+  {
+    int argNum = findArg(argc, argv, "snapjson");
+    if (argNum != ARG_NOT_FOUND) {
+      strncpy(optSnapJson, (char *)argv[argNum], sizeof(optSnapJson) - 1);
+      optSnapJson[sizeof(optSnapJson) - 1] = '\0';
+    }
+    argNum = findArg(argc, argv, "snapinterval");
+    if (argNum != ARG_NOT_FOUND) {
+      optSnapInterval = (int32_t)strtol((char *)argv[argNum], NULL, 0);
+      if (optSnapInterval < 0) {
+        optSnapInterval = 0;
+      }
+    }
+    if (optSnapJson[0] != '\0' && optSnapInterval > 0) {
+      /* Start a fresh series: the emit path appends, so an existing file
+       * from a previous run would otherwise be extended. "-" is stdout. */
+      if (strcmp(optSnapJson, "-") != 0) {
+        FILE *snapTrunc = fopen(optSnapJson, "w");
+        if (snapTrunc == NULL) {
+          fprintf(stderr, "Error: cannot open -snapjson file '%s'\n",
+                  optSnapJson);
+          optSnapJson[0] = '\0';
+        } else {
+          fclose(snapTrunc);
+        }
+      }
+      if (optSnapJson[0] != '\0') {
+        serverSimSetSnapshotHook(serverSim, serverSnapshotTick,
+                                 optSnapInterval);
+      }
+    } else if (optSnapJson[0] != '\0') {
+      fprintf(stderr,
+              "Warning: -snapjson given without a positive -snapinterval; "
+              "no snapshots will be written\n");
+      optSnapJson[0] = '\0';
     }
   }
 
@@ -1952,9 +2133,9 @@ int main(int argc, char **argv) {
      * so that lobby "Add Bot" requests have a brain to use. */
     if (brainPath[0] == '\0' && ai != aiNone) {
       static const char *candidates[] = {
-        "Brains/GoalHunter_1.6/init.lua",
-        "brains/GoalHunter_1.6/init.lua",
-        "data/Brains/GoalHunter_1.6/init.lua",
+        "Brains/GoalHunter_1.7/init.lua",
+        "brains/GoalHunter_1.7/init.lua",
+        "data/Brains/GoalHunter_1.7/init.lua",
       };
       int c;
       for (c = 0; c < 3; c++) {
@@ -2155,6 +2336,44 @@ int main(int argc, char **argv) {
     if (argNum != ARG_NOT_FOUND) {
       threadsArg = atoi((char *)argv[argNum]);
     }
+    /* Determinism aids for A/B measurement runs. Neither has any effect
+     * unless asked for, and both are honest about what they are: the tier pin
+     * changes what the brain DOES, the Lua seed changes what it draws. Timing
+     * telemetry keeps reporting real measured values either way. */
+    {
+      int argNum = findArg(argc, argv, "brain-tier");
+      if (argNum != ARG_NOT_FOUND) {
+        int tier = atoi((char *)argv[argNum]);
+        if (tier < 1 || tier > 10) {
+          fprintf(stderr, "-brain-tier must be 1..10 (got %d)\n", tier);
+          return 0;
+        }
+        botManagerSetBrainTierOverride(tier);
+        fprintf(stderr, "Brain capacity tier pinned to %d "
+                        "(dynamic controller disabled)\n", tier);
+      }
+      argNum = findArg(argc, argv, "brain-lua-seed");
+      if (argNum != ARG_NOT_FOUND) {
+        long ls = strtol((char *)argv[argNum], NULL, 0);
+        botManagerSetBrainLuaSeed(ls);
+        fprintf(stderr, "Brain math.random seeded from %ld (+ player number)\n", ls);
+      }
+      /* NOTE: argExist prepends the "-" itself — passing the name with a
+       * leading dash made it look for "--brain-no-budget-kill" and the flag
+       * was silently dead (found 20260831: killbot.log full of 3ms kills in
+       * runs that passed it). */
+      if (argExist(argc, argv, "brain-no-budget-kill") == TRUE) {
+        /* Reuses the slow-mo path: a 1000 ms budget, which no real tick
+         * approaches, so the watchdog never truncates a think mid-computation
+         * -- including the abort-flag polls inside the C pathfinder and
+         * worldsim, which otherwise cut their results at a wall-clock-
+         * dependent instruction. Still finite, so a genuinely hung brain is
+         * aborted rather than hanging the server. */
+        botManagerSetSlowMoDebug(1);
+        fprintf(stderr, "Brain budget kill disabled (1000 ms per-bot budget); "
+                        "consecutive-crash kick also suppressed\n");
+      }
+    }
     if (!botManagerInit(threadsArg)) {
       fprintf(stderr, "Error initializing bot manager\n");
 #ifdef USING_SDL
@@ -2193,7 +2412,12 @@ int main(int argc, char **argv) {
    * cfg block above; the loop below only needs to spawn the configured
    * bot count (numBots / brainPath resolved earlier). */
   {
-    if (numBots > 0 && brainPath[0] != '\0') {
+    /* Runs whenever a brain is available — NOT gated on -bots N. The debug/
+     * profile flag handling inside must also cover servers whose bots come
+     * from elsewhere (hosts adding lobby bots): -brain-debug used to be
+     * silently ignored without -bots. With numBots == 0 the spawn/team
+     * loops below are natural no-ops. */
+    if (brainPath[0] != '\0') {
       int i;
       /* Brain debug / profiling flags. Canonical names are -brain-debug and
        * -brain-profile-log; -braindebug and -profile-log are kept as legacy
@@ -2400,6 +2624,58 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Warning: -teams overrides -allybots\n");
         allyTeam = 0;
       }
+      /* -mode / -difficulty: the mode and difficulty every -bots bot is
+       * created with, as INDICES into the brain's own modes.txt manifest.
+       * Both land in the slot's LobbyBotConfig before the brain is created,
+       * so the brain sees them as "mode=<key>;difficulty=<key>"
+       * BRAIN_INIT_ARG tokens. A brain with no manifest gets the
+       * synthesized default mode with easy/medium/hard, so leaving both
+       * flags off is the pre-manifest "hard" exactly as before. */
+      BrainModes botModes;
+      brainListLoadModesForPath(brainPath, &botModes);
+      uint8_t botMode = 0;
+      if (argExist(argc, argv, "mode") == TRUE) {
+        int mArg = findArg(argc, argv, "mode");
+        if (mArg != ARG_NOT_FOUND && argv[mArg][0] != '-') {
+          int found = brainModesFindMode(&botModes, (const char *)argv[mArg]);
+          if (found < 0) {
+            fprintf(stderr, "Warning: -mode '%s' is not a mode this brain declares; using '%s'\n",
+                    (const char *)argv[mArg], botModes.modes[0].key);
+          } else {
+            botMode = (uint8_t)found;
+          }
+        } else {
+          fprintf(stderr, "Warning: -mode given with no value; using '%s'\n",
+                  botModes.modes[0].key);
+        }
+      }
+      /* The mode's own default level — "hard" for the default mode, which
+       * is what a lobby bot left alone gets. */
+      uint8_t botDifficulty = (uint8_t)botModes.modes[botMode].defaultLevel;
+      if (argExist(argc, argv, "difficulty") == TRUE) {
+        int dArg = findArg(argc, argv, "difficulty");
+        if (dArg != ARG_NOT_FOUND && argv[dArg][0] != '-') {
+          /* A level key of the selected mode first; then the frozen
+           * easy/medium/hard words, so an old command line keeps working
+           * against a mode that happens to name its levels differently. */
+          int lvl = brainModeFindLevel(&botModes.modes[botMode],
+                                       (const char *)argv[dArg]);
+          uint8_t legacy = 0;
+          if (lvl >= 0) {
+            botDifficulty = (uint8_t)lvl;
+          } else if (botDifficultyFromName((const char *)argv[dArg], &legacy) &&
+                     legacy < (uint8_t)botModes.modes[botMode].levelCount) {
+            botDifficulty = legacy;
+          } else {
+            fprintf(stderr, "Warning: -difficulty '%s' is not a level of mode '%s'; using '%s'\n",
+                    (const char *)argv[dArg], botModes.modes[botMode].key,
+                    botModes.modes[botMode].levels[botDifficulty].key);
+          }
+        } else {
+          fprintf(stderr, "Warning: -difficulty given with no value; using '%s'\n",
+                  botModes.modes[botMode].levels[botDifficulty].key);
+        }
+      }
       /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
        * id defaults to the shared brainPath with an empty init table; the spec
        * overrides the ids it names. Shared parser/semantics with BrainTest. */
@@ -2465,6 +2741,11 @@ int main(int argc, char **argv) {
           fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
                   initText[0] ? " init=" : "", initText);
         }
+        /* Mode and difficulty have to be in the slot's config BEFORE the
+         * brain is created: botManagerAddBot reads them from there to build
+         * the mode= / difficulty= tokens it appends to the staged arg. */
+        serverSimSetBotConfig(serverSim, (BYTE)i, botMode, botDifficulty,
+                              0 /* personality: normal */, NULL);
         /* No team in the add: -allybots and -teams place these bots through
          * serverSimSetTeamBatch below, once the whole set is in. */
         if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game,
@@ -2478,7 +2759,10 @@ int main(int argc, char **argv) {
           serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
         }
       }
-      if (numTeamSizes > 0) {
+      if (numBots <= 0) {
+        /* No -bots requested — this pass only processed the debug/profile
+         * flags above; nothing was spawned, so skip the summary prints. */
+      } else if (numTeamSizes > 0) {
         /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
          * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
          * total stay on team 0 (FFA). */
@@ -2529,13 +2813,21 @@ int main(int argc, char **argv) {
   /* Created before the timer starts so serverGameTimer always sees a valid
    * lock; serverQuiesceGameTimer drains the timer through it on shutdown. */
   g_serverTickLock = SDL_CreateMutex();
+  oldTick = SDL_GetTicks();
+  if (isAsap) {
+    fprintf(stderr, "ASAP mode: ticks run back-to-back\n");
+    serverAsapThread = SDL_CreateThread(serverAsapLoop, "wb-asap-tick", NULL);
+    if (serverAsapThread == NULL) {
+      fprintf(stderr, "Error: -asap could not start the tick thread\n");
+      return 0;
+    }
+  } else {
 #ifdef _WIN32
-  oldTick = SDL_GetTicks();
-  serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
+    serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
 #else
-  oldTick = SDL_GetTicks();
-  serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
+    serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
 #endif
+  }
 
   {
     CmdStdin *cmdStream = NULL;
@@ -2577,7 +2869,13 @@ int main(int argc, char **argv) {
    * timer is drained above, so the sim is quiescent and still fully
    * populated here (destroy happens further down). */
   if (optFinalJson[0] != '\0' && serverSimIsTerminalGameOver(serverSim)) {
-    serverEmitFinalJson(serverSim, optFinalJson, "tick_limit");
+    serverEmitFinalJson(serverSim, optFinalJson, "tick_limit", FALSE);
+  }
+  /* -snapjson: close the series with the true final state, so the last row
+   * is the terminal one rather than the last interval boundary. Same
+   * terminal-only gate as -finaljson. */
+  if (optSnapJson[0] != '\0' && serverSimIsTerminalGameOver(serverSim)) {
+    serverEmitFinalJson(serverSim, optSnapJson, "final", TRUE);
   }
   botWorkerPoolDestroy();
   brainRecordShutdown();   /* flush + close brainrec.btr (no-op if not recording) */

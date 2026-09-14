@@ -68,12 +68,27 @@ void brainCoreRegisterConstants(struct lua_State *L);
 void brainCoreSetInitTable(struct lua_State *L, const ScnTable *init);
 void brainCoreRegisterGetTerrain(struct lua_State *L, const BYTE **worldPtr);
 void brainCoreRegisterPathfinder(struct lua_State *L, BrainPathfinder **pfPtr);
+/* Registry key brainCoreRegisterPathfinder parks the pathfinder under, and
+ * the reader for it. For C that a brain links in beside braincore
+ * (brains/<brain>/c): those modules register Lua functions of their own, so
+ * they have no cpf_* upvalue, and every shot and movement rule hangs off the
+ * pathfinder. NULL before a pathfinder is registered, or after it is torn
+ * down; callers must handle that the way the cpf_* wrappers do. */
+#define BRAINCORE_PATHFINDER_REGKEY "braincore_pathfinder"
+BrainPathfinder *brainCoreGetPathfinder(struct lua_State *L);
 void brainCoreRegisterWorldSim(struct lua_State *L, BrainWorldSim **wsPtr);
 void brainCoreRegisterOverlay(struct lua_State *L, OverlayCmdBuffer **bufPtr);
 void brainCoreRegisterVizRegister(struct lua_State *L);
 void brainCoreRegisterPanelRegister(struct lua_State *L);
 void brainCoreRegisterShotSimPoiRegister(struct lua_State *L);
 void brainCoreRegisterVizDetail(struct lua_State *L);
+/* Flush hook the crash-log writer calls before it writes, so a brain's own
+ * buffered output reaches disk first. Installed by the same frontend code
+ * that registers the bindings above (luabrainshandler.c hands it the brain
+ * C library's naOptLogFlushSync), which is why the declaration belongs here
+ * and not only on internal/braincore.h — that header is T2 and a frontend
+ * never sees it. Full contract documented there. */
+void brainCoreSetLogFlushHook(void (*fn)(void));
 bool brainCoreCallThink(struct lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(struct lua_State *L, BrainInfo *info, const char *method);
 

@@ -142,8 +142,10 @@ typedef struct {
     bool ready;
 } CmdReady;
 
-/* CMD_LOBBY_BOT_CONFIG — update difficulty/personality (+ optional
+/* CMD_LOBBY_BOT_CONFIG — update mode/difficulty/personality (+ optional
  * rename) for a bot slot. nameLen == 0 means "keep current name".
+ * mode indexes the brain's own mode list (brain_list.h) and difficulty
+ * indexes that mode's level list.
  * Bot-config validation runs against the connected-player table
  * via transportUdpServerGetPlayerName; the stub for non-server
  * binaries returns NULL (no collision) on every slot. */
@@ -151,6 +153,7 @@ typedef struct {
     uint8_t slot;
     uint8_t difficulty;
     uint8_t personality;
+    uint8_t mode;
     uint8_t nameLen;
     char    name[PACKET_MAX_PLAYER_NAME];
 } CmdLobbyBotConfig;

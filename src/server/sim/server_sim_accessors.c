@@ -132,6 +132,21 @@ void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks) {
     sim->gameTicksRun = 0;
 }
 
+void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
+                              int32_t intervalTicks) {
+    if (sim == NULL) {
+        return;
+    }
+    if (cb == NULL || intervalTicks <= 0) {
+        sim->snapshotCb = NULL;
+        sim->snapshotInterval = 0;
+    } else {
+        sim->snapshotCb = cb;
+        sim->snapshotInterval = intervalTicks;
+    }
+    sim->snapshotTicks = 0;
+}
+
 void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
     if (name == NULL || name[0] == '\0') {
         sim->userLogFileName[0] = '\0';
@@ -588,6 +603,24 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     out->pills   = tankGetNumCarriedPills(t);
     tankGetModifiers(*t, &out->mods);
     tankGetKillsDeaths(t, &out->kills, &out->deaths);
+    return true;
+}
+
+bool serverSimGetDeathCauses(const ServerSim *sim, BYTE slot,
+                             uint32_t out[DEATH_CAUSE_NUM]) {
+    int c;
+    if (out == NULL) {
+        return false;
+    }
+    for (c = 0; c < DEATH_CAUSE_NUM; c++) {
+        out[c] = 0;
+    }
+    if (sim == NULL || slot >= MAX_TANKS) {
+        return false;
+    }
+    for (c = 0; c < DEATH_CAUSE_NUM; c++) {
+        out[c] = sim->sim.deathCauseCount[slot][c];
+    }
     return true;
 }
 

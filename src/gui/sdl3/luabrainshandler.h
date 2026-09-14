@@ -437,11 +437,76 @@ void luaBrainsSetLogJson(int enable);
 *********************************************************/
 void luaBrainsSetAllowUnsafe(int enable);
 
-/* One resolved bot from a -bot-init spec. Indexed by player id. */
+/*********************************************************
+*NAME:          luaBrainsSetNextInitArg
+*PURPOSE:
+*  Stages an optional per-bot init argument for the NEXT
+*  brain instance created. When non-empty, the string is
+*  injected as the BRAIN_INIT_ARG Lua global (nil otherwise)
+*  before the brain's init script runs, so a brain can branch
+*  on it "if it supports it". Drives the [..] suffix of the
+*  shared -bot-init CLI flag.
+*
+*  Consume-once: luaBrainInstanceCreate() reads the staged
+*  value, sets BRAIN_INIT_ARG, then clears it — so it applies
+*  only to the immediately-following create and the next brain
+*  defaults back to nil unless re-staged. Set it right before
+*  each botManagerAddBot / serverSimCreateBot call.
+*********************************************************/
+void luaBrainsSetNextInitArg(const char *arg);
+
+/*********************************************************
+*NAME:          luaBrainsPeekNextInitArg
+*PURPOSE:
+*  Reads back whatever luaBrainsSetNextInitArg last staged
+*  (an empty string when nothing is staged, never NULL) so a
+*  caller can APPEND to it rather than clobber it. bot_manager
+*  uses this to add the lobby's per-bot "difficulty=" token to
+*  a CLI -bot-init arg instead of replacing it.
+*
+*  Read-only: the value is still consumed (and cleared) by the
+*  next luaBrainInstanceCreate. The returned pointer is the
+*  module's own buffer, valid until the next Set/create call.
+*********************************************************/
+const char *luaBrainsPeekNextInitArg(void);
+
+/*********************************************************
+*NAME:          luaBrainsSetNextStartEngineTick
+*PURPOSE:
+*  Stages the server sim's current tick for the NEXT brain
+*  instance created; luaBrainInstanceCreate() injects it as
+*  the BRAIN_START_ENGINE_TICK Lua global.
+*
+*  A brain's own tick counter restarts at 0 on every create,
+*  so in a game where bots are re-created mid-session (a
+*  Survival wave respawn) every life re-uses the same tick
+*  numbers and the logs of five lives are indistinguishable.
+*  With this the brain seeds its counter from the game clock
+*  instead, and its tick numbers are unique for the session.
+*
+*  Consume-once: the create reads the staged value, injects
+*  it, then resets it to 0 — so a host that never stages one
+*  gets 0, the correct game-start value. The global is always
+*  a number, never nil. Set it right before each
+*  botManagerAddBot / botManagerReloadBrain call.
+*********************************************************/
+void luaBrainsSetNextStartEngineTick(unsigned int tick);
+
+/* Buffer size for a BRAIN_INIT_ARG string — 127 usable bytes plus the NUL.
+ * The staged buffer inside luabrainshandler.c and every BotInitSlot.arg use
+ * this one size, so a token that fits one fits the other. */
+#define BRAIN_INIT_ARG_MAX 128
+
+/* One resolved bot from a -bot-init spec. Indexed by player id. The [..]
+ * suffix is kept twice on purpose: `init` is the parsed BRAIN_INIT table a
+ * scenario-aware host reads, `arg` is the same text unparsed, which is what
+ * the GoalHunter brains read as BRAIN_INIT_ARG and what bot_manager appends
+ * its mode= / difficulty= tokens to. */
 typedef struct {
-  char     path[512];  /* brain/init.lua path for this bot */
-  ScnTable init;       /* BRAIN_INIT pairs, empty if none */
-  int      covered;    /* 1 if a -bot-init entry named this id */
+  char     path[512];              /* brain/init.lua path for this bot   */
+  char     arg[BRAIN_INIT_ARG_MAX];/* BRAIN_INIT_ARG text, or "" if none */
+  ScnTable init;                   /* BRAIN_INIT pairs, empty if none    */
+  int      covered;                /* 1 if a -bot-init entry named this id */
 } BotInitSlot;
 
 /*********************************************************
@@ -459,7 +524,7 @@ typedef struct {
 *  scnTableFromArgText: ';'-separated "key=value" pairs, a
 *  bare token being the value "1". E.g.
 *
-*     0-3=brains/GoalHunter_1.6/init.lua,4-5=brains/Foo/init.lua[llm]
+*     0-3=brains/GoalHunter_1.7/init.lua,4-5=brains/Foo/init.lua[llm]
 *
 *  The caller pre-fills `slots` for every id with the default
 *  brain path and an empty table; this overwrites only the ids
@@ -510,11 +575,41 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst);
 *  lua_State while the bot's worker thread is idle, so no
 *  cross-thread Lua access happens. Stack-balanced (pops every
 *  value it pushes).
+*
+*  tierOverride (1..10) pins the brain's capacity tier by setting
+*  the _BT_TIER_OVERRIDE global the brain already honours; 0 clears
+*  it and restores the dynamic controller.
 *********************************************************/
 void luaBrainSetTickInputs(LuaBrainInstance *inst,
                            double lastThinkMs,
                            double targetMs,
-                           bool   wasKilled);
+                           bool   wasKilled,
+                           int    tierOverride);
+
+/*********************************************************
+*NAME:          luaBrainSeedRandom
+*PURPOSE:
+*  Calls math.randomseed(seed) on the brain's Lua state, so
+*  math.random is reproducible across runs. Best-effort: a brain
+*  without a math table, or an erroring randomseed, is ignored.
+*
+*  Call once per instance, after creation. Producer-thread only.
+*********************************************************/
+void luaBrainSeedRandom(LuaBrainInstance *inst, long seed);
+
+/*********************************************************
+*NAME:          luaBrainSetDefaultRandomSeed
+*PURPOSE:
+*  Host-controlled base seed applied inside luaBrainInstanceCreate,
+*  BEFORE brain.open runs; 0 (the default) leaves the VM alone.
+*  Each instance gets base + its player number.
+*
+*  Must be applied before open, not after create returns: brains
+*  draw during open (GoalHunter's replan_offset staggers its whole
+*  replan cadence off one such draw), and those draws are exactly
+*  what needs to be reproducible.
+*********************************************************/
+void luaBrainSetDefaultRandomSeed(long base);
 
 /*********************************************************
 *NAME:          luaBrainInstanceSetDebugMode

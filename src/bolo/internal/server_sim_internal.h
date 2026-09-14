@@ -27,6 +27,7 @@
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
+#include "brain_list.h"      /* BRAIN_MODE_KEY_LEN — the remembered bot mode/level keys */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "view_policy.h"    /* ViewPolicy / ViewCategory — broadcast in lobby-settings event */
 #include "server_voice_mode.h" /* ServerVoiceMode — the voiceMode field below */
@@ -94,6 +95,15 @@ struct ServerSim {
     int32_t      gameTickLimit;      /* 0 = unlimited; ends the running game when reached (no loop exit). */
     int32_t      gameTicksRun;       /* Running-state tick counter paired with gameTickLimit; resets each game. */
 
+    /* Periodic state-snapshot hook (-snapjson/-snapinterval in WinBoloDS).
+     * snapshotTicks counts exactly the same running half-steps ticksRun
+     * does; the callback fires from inside simRunHalfStep every
+     * snapshotInterval of them, before the half-step does any work, so the
+     * observer sees fully settled state. 0 interval = disabled. */
+    void       (*snapshotCb)(ServerSim *sim);
+    int32_t      snapshotInterval;
+    int32_t      snapshotTicks;
+
     /* Server state machine */
     ServerState  state;
     bool         lobbyEnabled;       /* false = no-lobby mode (skip lobby, play immediately) */
@@ -106,6 +116,46 @@ struct ServerSim {
      * the lobby state. */
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
+
+    /* The mode and difficulty the host last chose BY HAND for any bot, so
+     * the next bot added with Add Bot starts there instead of back at the
+     * default. Setting up a lobby means picking a difficulty once and adding
+     * five bots, and re-picking it five times is the kind of chore nobody
+     * should have to do twice.
+     *
+     * Written only by serverSimRememberManualBotPick — CMD_LOBBY_BOT_CONFIG,
+     * when it changes mode or difficulty — and never by an automatic write
+     * (a scenario seed, single player's own add path, the CLI). Otherwise
+     * the game's defaults pass for the host's choice: that is how single
+     * player's skill guess used to override Survival's Hard.
+     *
+     * Stored as the brain's own KEYS, not the indices that are kept in
+     * botConfigs. An index only means something against one manifest: mode
+     * 1 is "survival" in GoalHunter and could be anything at all in another
+     * brain, so copying the number onto a bot running a different brain
+     * would silently pick the wrong mode. Keys are re-resolved against
+     * whatever brain the new bot actually runs, and a key that brain has
+     * never heard of is simply dropped.
+     *
+     * Empty strings mean "nothing chosen yet this lobby session" — bots are
+     * added at the ordinary default. The lifetime is one lobby session: the
+     * pick is remembered from entering the lobby until the game starts, and
+     * is cleared at every NEW lobby, which is exactly three places —
+     *   - the server is created (the memset in serverSimCreate),
+     *   - the last human leaves the lobby (serverSimResetLobbyToDefaults),
+     *   - every return to the lobby after a round, humans remaining or not
+     *     (serverSimReturnToLobby).
+     * A map change within one lobby session is NOT a new lobby: the pick
+     * survives it. Unlike the rest of the lobby state, this does not persist
+     * across rounds. */
+    char            lastBotModeKey[BRAIN_MODE_KEY_LEN];
+    char            lastBotLevelKey[BRAIN_MODE_KEY_LEN];
+
+    /* One bit per slot: a CTRL_LOBBY_BOT_CONFIG still to publish. Set by
+     * serverSimApplyNewBotDefaults, sent a couple per lobby tick by
+     * serverSimFlushBotConfigPublishes, so a scenario seed's ten bots do not
+     * add ten events to the burst it already makes in one call stack. */
+    uint16_t        botConfigPublishPending;
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
@@ -287,7 +337,6 @@ struct ServerSim {
     char         mapName[MAP_STR_SIZE];
     uint32_t     timeCreated;
     unsigned short serverPort;
-
     /* Per-player input queues — allows 2 inputs per server timer callback */
 #define SERVER_INPUT_QUEUE_SIZE 16  /* Must be power of 2 */
     InputPacket  inputQueue[MAX_TANKS][SERVER_INPUT_QUEUE_SIZE];
@@ -631,7 +680,9 @@ struct ServerSim {
      * that edits the roster from that publish re-enters
      * serverSimLobbyCheckAllReady with every player still ready — which
      * would start a second game on top of the one being set up. The
-     * detector returns at its first line while this is set.
+     * detector returns at its first line while this is set. (The
+     * Ready-click crash was exactly this: botManagerOnGameStart walked a
+     * half-removed bot.)
      *
      * scenarioSetupWindow is open across the round-start callback, at a
      * point in the start where the world and the roster are already

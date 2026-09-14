@@ -46,6 +46,29 @@
 extern "C" {
 #endif
 
+/* The name of the test currently running, as test_main.c's table spells it
+ * ("none" outside a test). For a test that needs a FIXTURE ON DISK.
+ *
+ * CTest gives each entry its own process (`WinBoloUnitTests --test <name>`)
+ * and `ctest -j` runs several of those at once, all sharing one working
+ * directory. A fixture at a path baked in at compile time is therefore
+ * shared by every test in its file: they create it, read it and delete it
+ * under each other, and the failures land on whichever test lost the race.
+ * A mutex fixes nothing — the contention is between processes, not threads.
+ *
+ * So build the path from this, and two tests can never collide. It is the
+ * test name rather than the process id on purpose: the path is then the
+ * SAME on every run, so a test that removes its own fixture on the way in
+ * also clears the wreckage a previously crashed run left behind. A pid
+ * would make every crash leak a directory nothing ever cleans up.
+ *
+ * The one case this does not cover is two concurrent runs of the same test,
+ * which CTest never does.
+ *
+ * Do not use it to vary what a test ASSERTS — only where it keeps its
+ * scratch files. */
+const char *utCurrentTestName(void);
+
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_active_sim_armed_on_lobby_tick(void);
@@ -109,6 +132,12 @@ int run_live_stats_cleared_on_running_phase(void);
 int run_shell_death_codec_roundtrip(void);
 int run_shell_death_culls_matching_predicted_shell(void);
 int run_shell_death_rejected_culls_without_impact(void);
+int run_lobby_bot_config_memory_applies(void);
+int run_lobby_bot_config_memory_empty_is_noop(void);
+int run_lobby_bot_config_memory_unknown_key_ignored(void);
+int run_lobby_bot_config_memory_not_honoured(void);
+int run_lobby_bot_config_memory_manual_only(void);
+int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -361,6 +390,16 @@ int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
+
+/* A brain's mode manifest (test_brain_modes.c): brains/<brain>/modes.txt,
+ * the API by which a brain tells the lobby which modes it has and which
+ * difficulty levels each of them offers. Happy path, the synthesized
+ * fallback when there is no manifest, malformed lines being skipped rather
+ * than fatal, and the two fixed-size caps. */
+int run_brain_modes_manifest_parses(void);
+int run_brain_modes_missing_falls_back(void);
+int run_brain_modes_malformed_lines_skipped(void);
+int run_brain_modes_counts_clamped(void);
 int run_bolo_rand_golden_sequence(void);
 
 /* Pathfinder diagonal corner-cut rule (test_pf_corner_cut.c): the nav
@@ -373,6 +412,24 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+int run_pf_tail_reaches_radius_and_stops(void);
+int run_pf_tail_blocked_by_wall_and_sea(void);
+int run_pf_tail_neutral_zone_slows(void);
+int run_pf_tail_meeting_cancels_tie_to_hostile(void);
+int run_pf_tail_never_overwrites_a_stamp(void);
+int run_pf_tail_deep_margin_keeps_off_the_shore(void);
+int run_pf_tail_contact_makes_a_front_line(void);
+
+int run_loadbrowser_segment_walks_parts(void);
+int run_loadbrowser_segment_crosses_blocks(void);
+int run_loadbrowser_segment_no_neighbour(void);
+int run_loadbrowser_segment_path_forms(void);
+int run_loadbrowser_segment_labels(void);
+
+int run_loadbrowser_rename_splits_names(void);
+int run_loadbrowser_rename_family_plan(void);
+int run_loadbrowser_rename_rejections(void);
+int run_loadbrowser_rename_applies(void);
 
 int run_net_impair(void);
 
@@ -1842,6 +1899,16 @@ int run_ping_network(void);
  * the table is strictly sorted for bsearch, and every name round-trips —
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
+
+/* Bot difficulty plumbing (test_bot_init_arg.c): the "difficulty=<word>"
+ * BRAIN_INIT_ARG token is appended after any existing tokens with a ';',
+ * takes an exact fit, and is dropped WHOLE (buffer untouched) when it would
+ * not fit — a truncated token would silently run the bot at a difficulty
+ * nobody asked for. Plus the difficulty <-> word round trip the CLI's
+ * -difficulty flag and the "Chosen Difficulty" preference share. */
+int run_bot_init_arg_difficulty_token(void);
+int run_bot_init_arg_mode_tokens(void);
+int run_bot_difficulty_names(void);
 
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
  * the advertiser builder + browser parse path, asserting the SRV port, the

@@ -1341,7 +1341,7 @@ static const LangEntry langTable[] = {
     {1331, "Name (override)"},
     {1332, "Reroll"},
     {1333, "Pick a fresh random name from the team's pool."},
-    {1334, "Bot Code"},
+    {1334, "Codebase"},
     {1335, "(none)"},
     {1336, "Difficulty"},
     {1337, "Easy"},
@@ -1352,6 +1352,23 @@ static const LangEntry langTable[] = {
     {1342, "Defensive"},
     {1343, "Sniper"},
     {1344, "Done"},
+    /* 2172: 2164 went to STR_DLGPLAYERS_SELECT on main — see lang.h. */
+    {2172, "Medium"},
+
+    /* Bot difficulty — tagline then description, per difficulty. The
+       lobby colours everything up to the first full stop by difficulty,
+       so start the tagline with the difficulty word in your language and
+       end that word with a full stop. The words themselves are free. */
+    {2165, "Easy. Captures pillboxes and bases, coordinates with allied bots, and plays in a steady, predictable way."},
+    {2166, "Medium. Captures pillboxes and bases with its allied bots and presses an attack when it is already ahead."},
+    {2167, "Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together."},
+    {2168, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they avoid chasing the same target, though it plays cautiously and steers clear of big risks. Its steady, easy-to-read behaviour makes it a gentler challenge. Best for newer players, or anyone who wants a more relaxed game."},
+    {2169, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they can strike a target together. It will join a group attack and press an advantage, but it picks its fights, keeps itself fuelled, and gives ground when the odds turn against it. Best for players who know the game and want a real opponent rather than a relentless one."},
+    {2170, "This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent."},
+
+    /* Bot AiConfig: the Mode dropdown's label. The mode names themselves
+       come from the brain's own modes.txt, so they are data, not strings. */
+    {2171, "Mode"},
     /* Balance from WBN */
     {1345, "Balance from WBN"},
     {1346, "Balance teams from WBN"},
