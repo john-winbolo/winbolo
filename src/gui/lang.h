@@ -2325,6 +2325,12 @@
 /* The lobby's reload button, for a host editing its map's script. */
 #define STR_DLGLOBBY_RELOAD_SCENARIO        2200
 
+/* Two more lines for the reject toast, beside the STR_DLGLOBBY_REJECT_*
+ * group above: a setting the map's scenario decides, and a command sent
+ * again before the server will take another. */
+#define STR_DLGLOBBY_REJECT_SCENARIO        2201
+#define STR_DLGLOBBY_REJECT_COOLDOWN        2202
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

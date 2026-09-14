@@ -1186,8 +1186,13 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             /* A scripted lobby is on the type its map commit set, and the
                server refuses every other value while the scenario is there.
                Greying the whole group says so, rather than letting a row be
-               picked and snap back when the refusal arrives. */
-            if (clientSimGetLobbyGameType(cs) == gameScripted) {
+               picked and snap back when the refusal arrives.
+               Keyed on the scenario, which is what the server's own refusal
+               reads: the type and the scenario can disagree for a moment —
+               a lobby that has a scenario but has not been committed onto it
+               yet — and the client would then offer a row the server turns
+               down. */
+            if (clientSimGetLobbyScenarioSource(cs) != 0) {
                 optDisabled = true;
             }
             if (optDisabled) ImGui::BeginDisabled();
@@ -1226,10 +1231,18 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##ai%d", items[i], i);
             bool checked = (clientSimGetLobbyAiType(cs) == (uint8_t)i);
+            /* A scenario fields its own bots, so the server refuses the row
+               that takes every bot off the roster and admits the other
+               three. Only that row is greyed: the host still picks how hard
+               the bots play. */
+            bool rowDisabled = (i == (int)aiNone &&
+                                clientSimGetLobbyScenarioSource(cs) != 0);
+            if (rowDisabled) ImGui::BeginDisabled();
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
                 lobbySendSetting(cs, LST_AI_POLICY, &v, 1);
             }
+            if (rowDisabled) ImGui::EndDisabled();
         }
         if (disable) ImGui::EndDisabled();
     }

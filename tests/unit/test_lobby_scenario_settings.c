@@ -20,11 +20,21 @@
  * run_lobby_scenario_settings_scripted_bytes
  *                                          — the same base plus the tail
  * run_lobby_scenario_settings_roundtrip    — every scenario field survives
- * run_lobby_scenario_commit_sets_type      — scripted in, plain out
+ * run_lobby_scenario_commit_sets_type      — scripted in, plain out, and the
+ *                                            ranked flag and AI policy with
+ *                                            the game type
+ * run_lobby_scenario_reset_keeps_rules     — an emptied lobby restores the
+ *                                            operator's settings and is put
+ *                                            back on the scenario's
  * run_lobby_scenario_refuses_ranked        — both directions
  * run_lobby_scenario_refuses_ai_none       — and the policy that empties the
  *                                            roster of bots
  * run_lobby_scenario_refuses_game_type     — and the type the commit set
+ *
+ * The three refusal cases read the reason the apply answers as well as the
+ * refusal itself: a setting the scenario fixes comes back
+ * CMD_REJECT_SCENARIO, so the sender is told what took it away, while a
+ * malformed write of the same setting is still CMD_REJECT_INVALID.
  * run_lobby_scenario_boot_sets_type        — and the same type on a server
  *                                            that booted onto the map
  *
@@ -36,6 +46,8 @@
 #include <string.h>
 
 #include "global.h"
+#include "client_command.h"        /* CMD_REJECT_SCENARIO — what a refused
+                                    * setting answers */
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "server_sim.h"
@@ -362,11 +374,29 @@ int run_lobby_scenario_commit_sets_type(void) {
                   "setup: the operator's type and the host's pick must differ "
                   "for this case to mean anything");
 
+    /* And ranked on, which takes the bots off with it: those two are the
+       other settings a scripted commit displaces, and they have to come back
+       with the game type. */
+    {
+        uint8_t on = 1;
+        UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_RANKED, &on, 1),
+                      "setup: ranked was refused on a lobby with no scenario");
+    }
+    UT_ASSERT(serverSimGetRanked(sim));
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "setup: ranked leaves the lobby running no bots, and this "
+                  "case needs that to be what comes back");
+
     lsAttachIdentity(sim);
     UT_ASSERT_MSG(lsCommitMap(sim), "the scripted commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
                   "a commit with a scenario attached left the game type at %d",
                   (int)serverSimGetGameType(sim));
+    UT_ASSERT_MSG(!serverSimGetRanked(sim),
+                  "a commit with a scenario attached left the lobby ranked");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) != aiNone,
+                  "a commit with a scenario attached left the lobby running "
+                  "no bots");
 
     /* A second scripted commit must not forget what the lobby was on. */
     UT_ASSERT(lsCommitMap(sim));
@@ -380,14 +410,94 @@ int run_lobby_scenario_commit_sets_type(void) {
                   "tournament (%d); the operator's own is %d",
                   (int)serverSimGetGameType(sim), (int)gameTournament,
                   (int)sim->originalLobbySettings.gameType);
+    UT_ASSERT_MSG(serverSimGetRanked(sim),
+                  "a plain map left the lobby unranked; the lobby the "
+                  "scenario arrived at was ranked");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "a plain map gave back AI policy %d, wanted the aiNone (%d) "
+                  "the lobby was on",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
 
     /* And a plain commit on a lobby that never had a scenario changes
-       nothing. */
+       nothing — the three are given back once, not at every commit. */
     serverSimSetGameType(sim, gameStrictTournament);
     UT_ASSERT(lsCommitMap(sim));
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameStrictTournament,
                   "a plain commit moved the game type to %d on its own",
                   (int)serverSimGetGameType(sim));
+    UT_ASSERT(serverSimGetRanked(sim));
+    UT_ASSERT(serverSimGetBotAiType(sim) == aiNone);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 4b. The lobby the last player leaves ─────────────────────────── */
+
+/* The reset that empties a lobby puts the operator's own game type, ranked
+ * flag and AI policy back — the three a scripted map displaces. The scenario
+ * is still attached at that point, only its lobby was swept, so the reset has
+ * to end where a commit ends: on the scripted type, unranked, and running
+ * bots. */
+int run_lobby_scenario_reset_keeps_rules(void) {
+    ServerSim           *sim = lsLobbySim();
+    ServerInstanceConfig cfg;
+
+    UT_ASSERT(sim != NULL);
+
+    /* The operator started a ranked tournament server with no bot AI.
+       serverSimApplyInstanceConfig is what a server startup runs, and its
+       tail captures the snapshot the empty-lobby reset restores from. */
+    serverSimSetGameType(sim, gameTournament);
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.lobbyEnabled = true;
+    cfg.ranked       = true;
+    cfg.botAiType    = (BYTE)aiNone;
+    serverSimApplyInstanceConfig(sim, &cfg);
+    UT_ASSERT_MSG(sim->originalLobbySettings.gameType == gameTournament &&
+                  sim->originalLobbySettings.ranked &&
+                  sim->originalLobbySettings.botAiType == aiNone,
+                  "setup: the snapshot the reset restores from is not the "
+                  "operator's ranked tournament with no bots");
+
+    lsAttachIdentity(sim);
+    UT_ASSERT_MSG(lsCommitMap(sim), "the scripted commit was refused");
+    UT_ASSERT(serverSimGetGameType(sim) == gameScripted);
+
+    /* Somebody visits and leaves again. The last human out is what runs the
+       reset. */
+    serverSimAddPlayer(sim, 0, "Visitor", false);
+    UT_ASSERT_MSG(serverSimGetNumHumans(sim) == 1,
+                  "setup: the visitor did not join");
+    serverSimRemovePlayer(sim, 0);
+    UT_ASSERT_MSG(serverSimGetNumHumans(sim) == 0,
+                  "setup: the visitor did not leave");
+
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
+                  "the emptied lobby is on game type %d with the scenario "
+                  "still attached, wanted scripted (%d)",
+                  (int)serverSimGetGameType(sim), (int)gameScripted);
+    UT_ASSERT_MSG(!serverSimGetRanked(sim),
+                  "the emptied lobby is ranked with a scenario attached");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) != aiNone,
+                  "the emptied lobby runs no bots with a scenario attached, "
+                  "so the seats its template asks for could never be filled");
+
+    /* And what the reset remembered as displaced is the operator's own type,
+       which is what a plain map committed from here gives back. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false);
+    UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
+                  "a plain map after the reset gave back game type %d, wanted "
+                  "the operator's tournament (%d)",
+                  (int)serverSimGetGameType(sim), (int)gameTournament);
+    UT_ASSERT_MSG(serverSimGetRanked(sim),
+                  "a plain map after the reset left the lobby unranked");
+    UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiNone,
+                  "a plain map after the reset gave back AI policy %d, wanted "
+                  "the operator's aiNone (%d)",
+                  (int)serverSimGetBotAiType(sim), (int)aiNone);
 
     serverSimDestroy(sim);
     return 0;
@@ -412,11 +522,22 @@ int run_lobby_scenario_refuses_ranked(void) {
     UT_ASSERT_MSG(!serverSimGetRanked(sim),
                   "a commit that attached a scenario left the lobby ranked");
 
-    /* And it cannot be put back while the scenario is there. */
-    UT_ASSERT_MSG(!serverSimApplyLobbySetting(sim, LST_RANKED, &on, 1),
-                  "ranked was accepted on a lobby running a scenario");
+    /* And it cannot be put back while the scenario is there. The refusal
+       names the scenario rather than answering a bare invalid, which is what
+       the sender's toast reads. */
+    {
+        CmdResult r = serverSimApplyLobbySettingResult(sim, LST_RANKED, &on, 1);
+        UT_ASSERT_MSG(r == CMD_REJECT_SCENARIO,
+                      "ranked on a lobby running a scenario answered %d, "
+                      "wanted CMD_REJECT_SCENARIO (%d)",
+                      (int)r, (int)CMD_REJECT_SCENARIO);
+    }
     UT_ASSERT_MSG(!serverSimGetRanked(sim),
                   "a refused ranked setting turned ranked on anyway");
+    /* A malformed payload is still malformed, not the scenario's doing. */
+    UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_RANKED, &on, 2) ==
+                      CMD_REJECT_INVALID,
+                  "a two-byte ranked payload was blamed on the scenario");
 
     /* With the scenario gone it is the host's again. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
@@ -453,13 +574,29 @@ int run_lobby_scenario_refuses_ai_none(void) {
                   "the commit moved the AI policy to %d, wanted aiYes (%d)",
                   (int)serverSimGetBotAiType(sim), (int)aiYes);
 
-    /* And it cannot be put back to aiNone while the scenario is there. */
+    /* And it cannot be put back to aiNone while the scenario is there. The
+       refusal names the scenario, which is what the sender's toast reads. */
     v = (uint8_t)aiNone;
-    UT_ASSERT_MSG(!serverSimApplyLobbySetting(sim, LST_AI_POLICY, &v, 1),
-                  "aiNone was accepted on a lobby running a scenario");
+    {
+        CmdResult r = serverSimApplyLobbySettingResult(sim, LST_AI_POLICY,
+                                                       &v, 1);
+        UT_ASSERT_MSG(r == CMD_REJECT_SCENARIO,
+                      "aiNone on a lobby running a scenario answered %d, "
+                      "wanted CMD_REJECT_SCENARIO (%d)",
+                      (int)r, (int)CMD_REJECT_SCENARIO);
+    }
     UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiYes,
                   "a refused AI policy changed the policy anyway, to %d",
                   (int)serverSimGetBotAiType(sim));
+    /* A byte that names no policy is refused as the malformed write it is,
+       even with a scenario attached. */
+    {
+        uint8_t bad = 9;
+        UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_AI_POLICY,
+                                                       &bad, 1) ==
+                          CMD_REJECT_INVALID,
+                      "an out-of-range AI policy was blamed on the scenario");
+    }
 
     /* The other policies are still the host's to pick between. */
     v = (uint8_t)aiFull;
@@ -508,15 +645,27 @@ int run_lobby_scenario_refuses_game_type(void) {
                   "a commit with a scenario left the game type at %d",
                   (int)serverSimGetGameType(sim));
 
-    /* And none of the three can take it off scripted while it is there. */
+    /* And none of the three can take it off scripted while it is there. Each
+       refusal names the scenario, which is what the sender's toast reads. */
     for (i = 0; i < 3; i++) {
-        UT_ASSERT_MSG(!serverSimApplyLobbySetting(sim, LST_GAME_TYPE,
-                                                  &types[i], 1),
-                      "game type %d was accepted on a lobby running a scenario",
-                      (int)types[i]);
+        CmdResult r = serverSimApplyLobbySettingResult(sim, LST_GAME_TYPE,
+                                                       &types[i], 1);
+        UT_ASSERT_MSG(r == CMD_REJECT_SCENARIO,
+                      "game type %d on a lobby running a scenario answered "
+                      "%d, wanted CMD_REJECT_SCENARIO (%d)",
+                      (int)types[i], (int)r, (int)CMD_REJECT_SCENARIO);
         UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
                       "a refused game type moved the lobby to %d",
                       (int)serverSimGetGameType(sim));
+    }
+    /* A byte that names no game type is refused as malformed, not as the
+       scenario's doing. */
+    {
+        uint8_t bad = 9;
+        UT_ASSERT_MSG(serverSimApplyLobbySettingResult(sim, LST_GAME_TYPE,
+                                                       &bad, 1) ==
+                          CMD_REJECT_INVALID,
+                      "an out-of-range game type was blamed on the scenario");
     }
 
     /* With the scenario gone the type is the host's again. */

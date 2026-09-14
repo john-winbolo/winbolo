@@ -161,10 +161,10 @@ bool serverSimScenarioReload(ServerSim *sim, char *err, size_t errLen);
 /*********************************************************
  *NAME:          serverSimSetScenarioMapScripted
  *PURPOSE:
- *  Registers the question the map lister asks of each map
- *  it finds: has this one a script beside it. The answer
- *  tags an entry so a player can see which maps are scripted
- *  before picking one.
+ *  Registers the question the map lister asks of each map it
+ *  finds: would a round on this one here play by a script.
+ *  The answer tags an entry so a player can see which maps
+ *  are scripted before picking one.
  *
  *  A callback rather than a call, for the reason the round
  *  start is one: finding a script is the scenario library's

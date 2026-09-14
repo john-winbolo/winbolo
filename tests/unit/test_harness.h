@@ -376,11 +376,12 @@ int run_lobby_map_list_scripted_golden(void);
 int run_lobby_map_list_scripted_mixed(void);
 
 /* The lobby's reload request (test_lobby_reload_scenario.c): who may ask,
- * when, and what a lobby with no scenario answers. */
+ * when, how often, and what a lobby with no scenario answers. */
 int run_lobby_reload_scenario_needs_host(void);
 int run_lobby_reload_scenario_needs_lobby(void);
 int run_lobby_reload_scenario_no_scenario(void);
 int run_lobby_reload_scenario_calls_back(void);
+int run_lobby_reload_scenario_cooldown(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
@@ -2296,13 +2297,14 @@ int run_scenario_roster_spawn_loadout_not_next_life(void);
 
 /* What the lobby says about its scenario (test_lobby_scenario_settings.c):
  * the settings body with and without one, byte for byte; the scripted game
- * type a commit sets and gives back, and the same type on a server that
- * booted onto the map with no commit to set it; and the settings a scenario
- * does not go with. */
+ * type a commit sets and gives back, the same type on a server that booted
+ * onto the map with no commit to set it, and the same again on a lobby the
+ * last player has left; and the settings a scenario does not go with. */
 int run_lobby_scenario_settings_plain_bytes(void);
 int run_lobby_scenario_settings_scripted_bytes(void);
 int run_lobby_scenario_settings_roundtrip(void);
 int run_lobby_scenario_commit_sets_type(void);
+int run_lobby_scenario_reset_keeps_rules(void);
 int run_lobby_scenario_refuses_ranked(void);
 int run_lobby_scenario_refuses_ai_none(void);
 int run_lobby_scenario_refuses_game_type(void);
@@ -2535,6 +2537,8 @@ int run_scenario_host_failed_start_drops_manifest(void);
 int run_scenario_host_round_answers_its_own_start(void);
 int run_scenario_host_opening_tank_under_rules(void);
 int run_scenario_host_boot_failure_still_starts(void);
+int run_scenario_host_round_after_scenario_is_classic(void);
+int run_scenario_host_tag_follows_switch(void);
 
 /* A metatable on the script's own tables (test_scenario_host.c): what the
    host's reads of the declared data do and do not run. */

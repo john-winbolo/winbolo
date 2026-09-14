@@ -1661,6 +1661,63 @@ bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
  *********************************************************/
 bool serverSimIsScenarioActing(const ServerSim *sim);
 
+/*********************************************************
+ *NAME:          serverSimScenarioSeatLobby
+ *PURPOSE:
+ *  Empties the seats the attached scenario put in the lobby
+ *  and seats its lobby template again from scratch, so the
+ *  lobby holds the teams and bot counts the scenario asks
+ *  for.
+ *
+ *  A map commit reaches this through the map change. A
+ *  process that boots straight onto a scripted map makes no
+ *  commit, so it calls this itself — after the bot pool is
+ *  up and the server's brain path is set, because a team the
+ *  template fields with no brain of its own falls back to
+ *  the server's and builds its bot through the manager.
+ *
+ *  A seat takes the first slot nobody is in, so a caller
+ *  that wants a particular slot held — its own player's, or
+ *  one a bot it adds by number is going into — puts that
+ *  player or bot in first.
+ *
+ *  Safe with no scenario attached: there is then no template
+ *  and this seats nothing.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose lobby is being seated
+ *********************************************************/
+void serverSimScenarioSeatLobby(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimScenarioApplyLobbyRules
+ *PURPOSE:
+ *  Brings the lobby's own settings into line with the
+ *  scenario attached now — the game type, the ranked flag
+ *  and the AI policy. A scripted map puts the lobby on
+ *  gameScripted, takes ranked off and moves an AI policy
+ *  that allows no bots up to one that does; the three
+ *  settings it displaced are remembered, and a map with no
+ *  scenario gives them back.
+ *
+ *  A map commit reaches this straight after the seating
+ *  above. A process that boots straight onto a scripted map
+ *  has no commit to reach either through and calls both
+ *  itself; without this the round plays the operator's game
+ *  type, so the game the scenario declares is never asked
+ *  for. A boot whose round starts inside serverInstanceStartup
+ *  calls this before that startup — the rules have to be in
+ *  force before the first tank is built.
+ *
+ *  Safe with no scenario attached: a lobby that never had one
+ *  is left exactly as it is.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose lobby settings are being brought into
+ *        line
+ *********************************************************/
+void serverSimScenarioApplyLobbyRules(ServerSim *sim);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);
@@ -1850,12 +1907,13 @@ typedef struct {
                           mtime so the table sort still reads sensibly
                           for them. */
     int64_t size;      /* file size in bytes; 0 for folders. */
-    bool    scripted;  /* the map has a script beside it, so a round on it
-                          plays by that script. Always false for a folder,
-                          and false throughout when nothing has registered
-                          the question with serverSimSetScenarioMapScripted
-                          — a build with no scenario library reports every
-                          map plain. */
+    bool    scripted;  /* a round on this map here plays by a script: one is
+                          beside it and this server runs scripts. Always
+                          false for a folder, and false throughout when
+                          nothing has registered the question with
+                          serverSimSetScenarioMapScripted — a build with no
+                          scenario library reports every map plain, and so
+                          does a server with scripts switched off. */
 } ServerMapEntry;
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,

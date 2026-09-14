@@ -33,6 +33,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and serverLifecycleGet*Stats via server_lifecycle.h */
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
+#include "sim_rules.h"              /* simRulesClassic — the table a round starts from */
 #include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetAddEvent, WINBOLO_NET_EVENT_WIN */
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
@@ -136,6 +137,14 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
        the map's own lobby rather than a bare one — the scenario is still
        attached, only its lobby was swept. */
     serverSimScenarioSeatLobby(sim);
+
+    /* And the settings the scenario asks for, in the order a map commit does
+       the two. The restore above put the operator's game type, ranked flag
+       and AI policy back, which are the settings a scripted map displaces:
+       without this the lobby would be left on them with the scenario still
+       attached. The operator's type is what is remembered as displaced here,
+       and it is what a plain map committed later gives back. */
+    serverSimScenarioApplyLobbyRules(sim);
 
     serverSimPublishLobbySettings(sim);
     serverSimWbnLobbyUpdate(sim, FALSE);
@@ -1252,6 +1261,13 @@ static void serverSimScenarioStartCall(ServerSim *sim, void (*call)(void *ctx),
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
+    /* Every round opens on the classic table. A scenario writes its own over
+     * this at the boot call below, so a scripted round plays by its script
+     * either way; what this settles is the round that has no script to write
+     * one — the round after a scripted one, and a round whose scenario failed
+     * to boot — which would otherwise play by the last script's numbers. */
+    simRulesClassic(&sim->sim.rules);
+
     /* Held for the whole start so the all-ready detector refuses to run
      * while the roster and the state are being rebuilt. */
     sim->startInProgress = true;
@@ -1383,6 +1399,13 @@ void serverSimStartGame(ServerSim *sim) {
        identity (name, country, clientType, clientFlags) is preserved across
        the reset by serverSimResetGameWorld, so it no longer needs saving. */
     bool savedConnected[MAX_TANKS];
+
+    /* The classic table, as in serverSimStartGameInPlace and for the same
+     * reason. Before serverSimResetGameWorld below as well as before the
+     * boot call: the reload in there caps the map's pills and bases against
+     * whatever table the sim is on, and the map a round is starting on is
+     * capped by that round's rules and not by the previous round's. */
+    simRulesClassic(&sim->sim.rules);
 
     /* Held for the whole start, as in serverSimStartGameInPlace. */
     sim->startInProgress = true;

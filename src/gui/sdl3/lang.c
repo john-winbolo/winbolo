@@ -2145,6 +2145,8 @@ static const LangEntry langTable[] = {
     {2198, "Scenario:"},
     {2199, "Scripts off"},
     {2200, "Reload script"},
+    {2201, "That setting is fixed by the map's scenario"},
+    {2202, "Too soon; try again in a moment"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

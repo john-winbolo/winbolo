@@ -140,16 +140,18 @@ void scenarioHostSetEnabled(bool enabled);
 /*********************************************************
  *NAME:          scenarioHostMapHasScript
  *PURPOSE:
- *  Whether the map at mapPath has a script beside it, asked
- *  without reading, parsing or running a byte of it. This is
- *  the one question a lister asks to tag a map before anyone
- *  picks it, and the one place that knows how a script is
- *  found, so a later way of carrying one changes here and
- *  every caller follows.
+ *  Whether picking the map at mapPath here would run a
+ *  script: one is beside it on disk AND this process runs
+ *  scripts. Asked without reading, parsing or running a byte
+ *  of the file. This is the one question a lister asks to tag
+ *  a map before anyone picks it, and the one place that knows
+ *  how a script is found, so a later way of carrying one
+ *  changes here and every caller follows.
  *
- *  Answers only what is on disk. It does not consult the
- *  scripts switch: a map with a script beside it has one
- *  whether or not this process would run it.
+ *  False for every map while scripts are switched off. That
+ *  is what the tag has to say then: the attach would refuse
+ *  the file and the map would play plain, so tagging it
+ *  scripted would promise a round nobody gets.
  *
  *ARGUMENTS:
  *  mapPath - Full path to the .map file
@@ -169,9 +171,9 @@ bool scenarioHostMapHasScript(const char *mapPath);
  *  plain reporting every scripted map in its directory as
  *  plain, and nothing would say so.
  *
- *  Registering is independent of the scripts switch: the list
- *  describes what is on disk, and a host that has turned
- *  scripts off still sees which maps carry one.
+ *  Registering is independent of the scripts switch, but what
+ *  the question answers is not: with scripts off every entry
+ *  reads plain, which is what those maps will play as here.
  *
  *ARGUMENTS:
  *  sim - The sim whose lister is being told

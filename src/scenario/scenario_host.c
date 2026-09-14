@@ -2543,6 +2543,13 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     if (mapPath == NULL || mapPath[0] == '\0') {
         return false;
     }
+    /* What the tag means is that picking this map here runs its script, so a
+       process with scripts off answers no for every map: the attach would
+       refuse the file and the map would play plain. Without this the chooser
+       marks maps Scripted on a server that will not run one. */
+    if (!scnEnabled) {
+        return false;
+    }
     if (!scnScriptPath(mapPath, script, sizeof(script))) {
         return false;
     }
@@ -2758,8 +2765,29 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     return h;
 }
 
+/* The file name at the end of a path. What a reload says goes to whoever
+   asked for it as a single 128-byte line, and Lua puts the chunk's name at
+   the front of every message it raises — so a script under a deep map
+   directory would spend the whole line on a path the asker cannot see
+   anyway, leaving no room for the line number and the error itself. The
+   round boot keeps the full path: that one goes to the operator's console,
+   where the path is the useful part. */
+static const char *scnFileName(const char *path) {
+    const char *base = path;
+    const char *p;
+
+    for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') {
+            base = p + 1;
+        }
+    }
+    return base;
+}
+
 bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             soft[SCN_ERR_LEN];
+    char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
+    const char      *name;
     ScenarioManifest m;
     ScnParseReport   rep;
     ScnLuaCtx        check;
@@ -2773,13 +2801,16 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     if (h == NULL) {
         return false;
     }
+    name = scnFileName(h->script);
+    /* The leading '@' is what makes Lua call this a file in its messages. */
+    snprintf(chunkName, sizeof(chunkName), "@%s", name);
 
     if (!scnReadFile(h->script, &src, &srcLen, err, errLen)) {
         /* A file that has gone leaves err empty, because at attach that is
            the ordinary case rather than a fault. Asked for by name it is a
            fault, so it is stated here. */
         if (err != NULL && errLen > 0 && err[0] == '\0') {
-            scnFmt(err, errLen, "scenario: %s is no longer there", h->script);
+            scnFmt(err, errLen, "scenario: %s is no longer there", name);
         }
         return false;
     }
@@ -2825,8 +2856,8 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     rep.soft    = soft;
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
-    if (!scnRunChunk(L, src, srcLen, h->chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, h->script, err, errLen, &rep)) {
+    if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
+        !scnReadManifest(L, &m, name, err, errLen, &rep)) {
         lua_close(L);
         free(src);
         return false;
@@ -2835,7 +2866,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               h->script, m.api, SCENARIO_API_VERSION);
+               name, m.api, SCENARIO_API_VERSION);
         lua_close(L);
         free(src);
         return false;

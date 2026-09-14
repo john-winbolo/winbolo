@@ -4412,6 +4412,7 @@ set(_unit_test_names
     lobby_reload_scenario_needs_lobby
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
+    lobby_reload_scenario_cooldown
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -5189,6 +5190,7 @@ set(_unit_test_names
     lobby_scenario_settings_scripted_bytes
     lobby_scenario_settings_roundtrip
     lobby_scenario_commit_sets_type
+    lobby_scenario_reset_keeps_rules
     lobby_scenario_refuses_ranked
     lobby_scenario_refuses_ai_none
     lobby_scenario_refuses_game_type
@@ -5311,6 +5313,8 @@ set(_unit_test_names
     scenario_host_round_answers_its_own_start
     scenario_host_opening_tank_under_rules
     scenario_host_boot_failure_still_starts
+    scenario_host_round_after_scenario_is_classic
+    scenario_host_tag_follows_switch
     scenario_host_metatable_raises
     scenario_host_metatable_not_read
     scenario_host_hook_via_global_metatable

@@ -934,7 +934,12 @@ uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
 
 /* Client-hosting write-through setters. The desktop build persists each key
  * into [HOSTING] as it changes; there is no prefs file in the browser, so
- * these only hold the value for the session the dialogs read it back in. */
+ * these only hold the value for the session the dialogs read it back in.
+ *
+ * The desktop's scripts setter also passes the answer to the scenario
+ * library, which is what decides whether an attach loads a script. This
+ * build links no scenario library — the browser never hosts — so there is
+ * nothing here to tell and the value is held for the dialogs alone. */
 void gameFrontSetHostingPort(unsigned short port)    { gameFrontHostingPort = port; }
 void gameFrontSetHostingAllowSpec(bool allow)        { gameFrontHostingAllowSpec = allow; }
 void gameFrontSetHostingScripts(bool allow)          { gameFrontHostingScripts = allow; }

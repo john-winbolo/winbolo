@@ -363,11 +363,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             (serverSimGetServerLocks(sim) & lockBit) != 0u) {
             return CMD_REJECT_LOCKED;
         }
-        if (!serverSimApplyLobbySetting(sim, p->settingType, p->value,
-                                        p->valueLen)) {
-            return CMD_REJECT_INVALID;
-        }
-        return CMD_OK;
+        /* The Result form, so a setting the map's scenario fixes comes back
+           as that rather than as a bare invalid: those three were the host's
+           to set a map ago and the toast has to say what took them away. */
+        return serverSimApplyLobbySettingResult(sim, p->settingType, p->value,
+                                                p->valueLen);
     }
     case CMD_CHAT: {
         const CmdChat *p = &cmd->u.chat;
@@ -826,6 +826,16 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_BAD_STATE;
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        /* One reload a second, per sim, before the file is opened: the read
+           and the check behind it are disk and Lua work on this thread, and
+           a datagram may carry several commands. The sender is told by the
+           toast, which is why this returns rather than sending a line. */
+        if (sim->scenarioReloadTick != 0 &&
+            sim->tick + 1 - sim->scenarioReloadTick <
+                SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioReloadTick = sim->tick + 1;
         {
             char err[512];
             char line[672];
@@ -834,12 +844,19 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
 
             /* Addressed to whoever asked. A reload says what happened even
                when it worked, because what it changed is not visible until
-               the next round starts. */
+               the next round starts.
+               What a reload changes and what it does not: the script's bytes
+               are swapped and nothing else is, so a round starting later
+               boots the new rules and hooks, while the lobby the template
+               seats, the scenario's name and description and the game type
+               it declares are the map commit's and only change when the map
+               is committed again. Kept inside the 128 bytes the text event
+               carries, so the whole of it reaches the sender. */
             if (ok) {
                 SDL_snprintf(line, sizeof(line),
-                             "Scenario re-read. The new settings take effect "
-                             "at the next round; the round in progress keeps "
-                             "the ones it started with.");
+                             "Scenario re-read: the next round boots its new "
+                             "rules and hooks. Seats, name and game type "
+                             "change on a map commit.");
             } else {
                 SDL_snprintf(line, sizeof(line), "%s", err);
             }
@@ -849,8 +866,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                         sizeof(evt.u.serverText.text));
             evt.u.serverText.destPlayer = (BYTE)senderSlot;
             serverSimPublishControl(sim, &evt);
-            if (!ok) return CMD_REJECT_INVALID;
         }
+        /* Including a reload that failed: the line above went to whoever
+           asked and carries the reason, and a reject code on top of it would
+           add a second, contentless toast saying only that something was
+           wrong. */
         return CMD_OK;
     }
     case CMD_LOBBY_PREVIEW_CANCEL: {

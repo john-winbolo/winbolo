@@ -2168,4 +2168,6 @@ STR_DLGLOBBY_SCRIPTS_OFF=Scripts off
 
 # The lobby's reload button, for a host editing its map's script.
 STR_DLGLOBBY_RELOAD_SCENARIO=Reload script
+STR_DLGLOBBY_REJECT_SCENARIO=That setting is fixed by the map's scenario
+STR_DLGLOBBY_REJECT_COOLDOWN=Too soon; try again in a moment
 

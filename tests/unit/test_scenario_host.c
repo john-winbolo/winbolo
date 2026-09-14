@@ -82,7 +82,11 @@
  *                                       under the script's own table
  * run_scenario_host_boot_failure_still_starts
  *                                     — a round whose chunk raises still
- *                                       starts, with its tanks and no setup
+ *                                       starts, with its tanks and no setup,
+ *                                       and on the classic table
+ * run_scenario_host_round_after_scenario_is_classic
+ *                                     — and so does the round started after
+ *                                       the scenario is detached
  *
  * and the switch that decides whether a script is loaded at all:
  *
@@ -93,6 +97,8 @@
  *                                       says nothing
  * run_scenario_host_enabled_again     — the switch back on, and the attach
  *                                       is as it was
+ * run_scenario_host_tag_follows_switch— and the tag a chooser reads follows
+ *                                       the switch as well
  *
  * and what a metatable on the script's own tables reaches and does not:
  *
@@ -2310,10 +2316,16 @@ int run_scenario_host_opening_tank_under_rules(void) {
 /* ── A boot that fails leaves a round to play ─────────────────────── */
 
 /* The chunk raises as soon as a file beside it exists, and the file is made
- * after the attach — so the attach loads and the round's own boot does not.
- * The boot now runs before anything is placed, so what it leaves behind has
- * to be a round that still starts: the state flips to running, the seat gets
- * its tank, and the scenario is simply not part of the round. */
+ * between two rounds — so the first round boots and plays by the script, and
+ * the second round's boot does not. The boot now runs before anything is
+ * placed, so what a failed one leaves behind has to be a round that still
+ * starts: the state flips to running, the seat gets its tank, and the
+ * scenario is simply not part of the round.
+ *
+ * And the table that round plays by is the classic one. The first round's
+ * script set a short shell load; the second round has no script to set one,
+ * so a tank still carrying the short load would be the round before it
+ * lending this one its rules. */
 int run_scenario_host_boot_failure_still_starts(void) {
     static const char *const kMap    = "scnhost_boot_fail.map";
     static const char *const kBreak  = "scnhost_boot_fail.break";
@@ -2329,12 +2341,13 @@ int run_scenario_host_boot_failure_still_starts(void) {
     remove(kRecord);
     remove(kBreak);
     snprintf(body, sizeof(body),
-             "scenario = { name = \"Breaks\", api = 1 }\n"
+             "scenario = { name = \"Breaks\", api = 1,\n"
+             "             rules = { tank_full_shells = %d } }\n"
              "do\n"
              "  local f = io.open(\"%s\", \"r\")\n"
              "  if f then f:close() error(\"this round is not loading\") end\n"
              "end\n"
-             "function on_setup() note(\"s\") end\n", kBreak);
+             "function on_setup() note(\"s\") end\n", SH_SHELLS_SET, kBreak);
     shScript(lua, sizeof(lua), kRecord, body);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
@@ -2344,6 +2357,20 @@ int run_scenario_host_boot_failure_still_starts(void) {
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     shSeat(sim, 0, "Tester");
+
+    /* The round the script does boot for, so the table the failed round is
+       measured against is one a script really set. */
+    serverSimStartGame(sim);
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "s") == 0,
+                  "the first round recorded '%s', expected 's': the round the "
+                  "script boots for did not run its setup", got);
+    UT_ASSERT_MSG(sim->sim.rules.tank_full_shells == SH_SHELLS_SET,
+                  "the first round's tank_full_shells is %d, expected the "
+                  "script's %d",
+                  (int)sim->sim.rules.tank_full_shells, SH_SHELLS_SET);
+
+    remove(kRecord);
     f = fopen(kBreak, "wb");
     UT_ASSERT_MSG(f != NULL, "setup: the file the chunk trips on was not made");
     fclose(f);
@@ -2363,11 +2390,121 @@ int run_scenario_host_boot_failure_still_starts(void) {
     UT_ASSERT_MSG(scenarioHostLastError(h)[0] != '\0',
                   "the host reports no error, so the round above could be a "
                   "scenario round that simply wrote nothing");
+    UT_ASSERT_MSG(sim->sim.rules.tank_full_shells == TANK_FULL_SHELLS,
+                  "the failed round's tank_full_shells is %d, expected the "
+                  "classic %d: it is still on the table the round before set",
+                  (int)sim->sim.rules.tank_full_shells, TANK_FULL_SHELLS);
+    UT_ASSERT_MSG(tankGetShells(&sim->sim.tanks[0]) == TANK_FULL_SHELLS,
+                  "the failed round's tank carries %u shells, expected the "
+                  "classic %d",
+                  (unsigned)tankGetShells(&sim->sim.tanks[0]),
+                  TANK_FULL_SHELLS);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
     remove(kBreak);
     remove(kRecord);
+    return 0;
+}
+
+/* ── The round after the scenario goes ────────────────────────────── */
+
+/* A scripted round, then the scenario detached and another round started:
+ * the second round is an ordinary one and has to play by the classic table.
+ * Detaching is what a plain map committed over a scripted one leaves behind
+ * — the host follows the map and drops the scenario — and the round started
+ * after it has no script to set a table of its own, so anything but the
+ * classic numbers is the previous round's script still deciding how this one
+ * plays. */
+int run_scenario_host_round_after_scenario_is_classic(void) {
+    static const char *const kMap = "scnhost_after_scn.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Short Load\",\n"
+        "  api = 1,\n"
+        "  rules = { tank_full_shells = 5 },\n"
+        "}\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    UT_ASSERT_MSG(TANK_FULL_SHELLS != SH_SHELLS_SET,
+                  "setup: the script's load is the classic one, so the "
+                  "assertion below would pass either way");
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    shSeat(sim, 0, "Tester");
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->sim.rules.tank_full_shells == SH_SHELLS_SET,
+                  "the scripted round's tank_full_shells is %d, expected the "
+                  "script's %d",
+                  (int)sim->sim.rules.tank_full_shells, SH_SHELLS_SET);
+
+    scenarioHostDetach(h);
+    h = NULL;
+
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->sim.rules.tank_full_shells == TANK_FULL_SHELLS,
+                  "the plain round's tank_full_shells is %d, expected the "
+                  "classic %d: it inherited the scenario's table",
+                  (int)sim->sim.rules.tank_full_shells, TANK_FULL_SHELLS);
+    UT_ASSERT_MSG(sim->sim.tanks[0] != NULL,
+                  "the plain round built no tank for seat 0");
+    UT_ASSERT_MSG(tankGetShells(&sim->sim.tanks[0]) == TANK_FULL_SHELLS,
+                  "the plain round's tank carries %u shells, expected the "
+                  "classic %d",
+                  (unsigned)tankGetShells(&sim->sim.tanks[0]),
+                  TANK_FULL_SHELLS);
+
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── The chooser's tag, and the switch ────────────────────────────── */
+
+/* What the tag means is that picking this map here runs its script, so it
+ * follows the switch: on, a map with a file beside it is scripted; off, no
+ * map is, because the attach would refuse the file and the round would play
+ * plain. A map with nothing beside it is never scripted either way. */
+int run_scenario_host_tag_follows_switch(void) {
+    static const char *const kMap   = "scnhost_tag.map";
+    static const char *const kPlain = "scnhost_tag_plain.map";
+    static const char *const kLua =
+        "scenario = { name = \"Tagged\", api = 1 }\n";
+    bool onScripted, onPlain, offScripted, offPlain;
+
+    UT_ASSERT(shPut(kMap, kLua));
+    shDrop(kPlain);              /* whatever an earlier run left beside it */
+
+    onScripted  = scenarioHostMapHasScript(kMap);
+    onPlain     = scenarioHostMapHasScript(kPlain);
+
+    scenarioHostSetEnabled(false);
+    offScripted = scenarioHostMapHasScript(kMap);
+    offPlain    = scenarioHostMapHasScript(kPlain);
+
+    /* Back before the first assert, so a failure leaves the switch where the
+       rest of the process expects it. */
+    scenarioHostSetEnabled(true);
+    shDrop(kMap);
+
+    UT_ASSERT_MSG(onScripted,
+                  "a map with a script beside it read as plain with scripts "
+                  "on");
+    UT_ASSERT_MSG(!onPlain,
+                  "a map with nothing beside it read as scripted");
+    UT_ASSERT_MSG(!offScripted,
+                  "a map read as scripted with scripts off, so the chooser "
+                  "would tag a map this process will not run a script for");
+    UT_ASSERT_MSG(!offPlain,
+                  "a map with nothing beside it read as scripted with "
+                  "scripts off");
     return 0;
 }

@@ -725,6 +725,17 @@ struct ServerSim {
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);
     void                  *scenarioReloadCtx;
+    /* One second at the sim's tick rate: how long a taken reload holds the
+       next one off. The read, the parse and the check behind a reload are
+       all disk and Lua work on the thread a lobby command arrives on. */
+#define SCENARIO_RELOAD_GAP_TICKS   GAME_NUMGAMETICKS_SEC
+    /* The tick a reload was last taken on, PLUS ONE, so 0 reads as "none
+       yet" — tick 0 is a real tick. A request inside
+       SCENARIO_RELOAD_GAP_TICKS of it is refused before the file is read,
+       so a host holding the button down, or a datagram carrying several
+       commands, costs one read of the script a second. Ticks, not wall
+       clock, and the lobby advances them like any other state. */
+    uint32_t               scenarioReloadTick;
     void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
                                                const char *mapPath);
     void                  *scenarioMapChangedCtx;
@@ -751,11 +762,17 @@ struct ServerSim {
         char                description[LOBBY_SCENARIO_DESC_LEN];
         bool                extraTeams;
     } scenarioIdentity;
-    /* The game type the lobby was on when a scripted map displaced it with
-     * gameScripted. A commit with no scenario puts this back. 0 means
-     * nothing is displaced, which is every lobby that has not had a scripted
-     * map committed into it. */
+    /* What the lobby was set to when a scripted map displaced it: the game
+     * type gameScripted took the place of, the ranked flag a scripted round
+     * cannot run under, and the AI policy and bot AI type that aiNone was
+     * moved off. A commit with no scenario puts all four back and empties
+     * them again. preScenarioGameType is the one that says whether anything
+     * is held: 0 is no game type, which no lobby is ever on, and is what
+     * every lobby that has not had a scripted map committed into it reads. */
     gameType               preScenarioGameType;
+    bool                   preScenarioRanked;
+    uint8_t                preScenarioAiPolicy;
+    aiType                 preScenarioAiType;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

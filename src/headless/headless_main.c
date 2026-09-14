@@ -2447,6 +2447,15 @@ static int runFastMode(void) {
       cfg.botAiType    = (BYTE)aiYes;
     }
     applyViewPolicyOptions(fastServerSim);
+    /* A run with no command stream skips the lobby, so its round starts
+       inside the startup below and the scenario's own settings have to be in
+       force before it: the round is built and the first tanks placed in
+       there, and a game type set afterwards would never be asked for. A
+       --cmd-stdin run stays in the lobby and takes them further down, with
+       the seating. */
+    if (scenarioHost != NULL && cfg.skipLobby) {
+      serverSimScenarioApplyLobbyRules(fastServerSim);
+    }
     serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
@@ -2478,7 +2487,9 @@ static int runFastMode(void) {
    * the map change seats the template and the rules follow it. Without this
    * a run booted onto a scripted map stays on the game type it started with,
    * so gameTypeResolve is never asked and the game the scenario declares is
-   * ignored for the whole run. */
+   * ignored for the whole run. A run that skipped the lobby has already had
+   * them applied, above the startup where its round begins; the call here
+   * then finds the game type scripted already and changes nothing. */
   if (scenarioHost != NULL) {
     serverSimScenarioSeatLobby(fastServerSim);
     serverSimScenarioApplyLobbyRules(fastServerSim);

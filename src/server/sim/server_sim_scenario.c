@@ -1943,12 +1943,22 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    The AI policy: a scenario fields its own bots, and aiNone empties the
    roster of them, so a policy that allows none is moved up to the one that
    allows them plainly. A policy that already allows bots is the operator's
-   or the host's and is left alone. */
+   or the host's and is left alone.
+
+   All three are remembered and all three are given back, so a lobby that was
+   ranked with no bots is ranked with no bots again once a plain map is
+   committed. They are remembered together, under the same test that decides
+   the game type: the lobby already being on gameScripted is what says a
+   scenario displaced these settings earlier in this run, and the values from
+   the first scripted commit are the ones a plain map has to give back. */
 void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
     if (sim == NULL) return;
     if (sim->scenarioIdentity.source != lobbyScenarioNone) {
         if (gameTypeGet(&sim->sim.game) != gameScripted) {
             sim->preScenarioGameType = gameTypeGet(&sim->sim.game);
+            sim->preScenarioRanked   = serverSimGetRanked(sim);
+            sim->preScenarioAiPolicy = sim->aiPolicy;
+            sim->preScenarioAiType   = serverSimGetBotAiType(sim);
             serverSimSetGameType(sim, gameScripted);
         }
         if (serverSimGetRanked(sim)) {
@@ -1959,11 +1969,21 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
             serverSimSetBotAiType(sim, aiYes);
         }
     } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
-        serverSimSetGameType(sim,
-                             sim->preScenarioGameType != (gameType)0
-                                 ? sim->preScenarioGameType
-                                 : gameOpen);
+        /* Nothing held means a lobby that reached gameScripted without going
+           through the arm above; there is no earlier state to give back, so
+           the type falls to open and the other two stay as they are. */
+        if (sim->preScenarioGameType != (gameType)0) {
+            serverSimSetGameType(sim, sim->preScenarioGameType);
+            serverSimSetRanked(sim, sim->preScenarioRanked);
+            serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
+            serverSimSetBotAiType(sim, sim->preScenarioAiType);
+        } else {
+            serverSimSetGameType(sim, gameOpen);
+        }
         sim->preScenarioGameType = (gameType)0;
+        sim->preScenarioRanked   = false;
+        sim->preScenarioAiPolicy = 0;
+        sim->preScenarioAiType   = aiNone;
     }
 }
 

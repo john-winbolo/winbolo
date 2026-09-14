@@ -1599,6 +1599,22 @@ bool gameFrontSetDlgState(openingStates newState) {
         if (!clientSimIsInLobby(humanSim)) {
           gameFrontUpdateSteamPresence(humanSim);
         }
+        /* Hosting our own game on a map with a scenario: seat the lobby the
+         * scenario asks for, now that the host's own join has landed. Its
+         * template reached the sim at the attach in gameFrontSetupServer,
+         * and the settings that go with it were applied there; the seating
+         * waits until here because a seat takes the first free slot and the
+         * host has to hold slot 0 — the lobby's host role starts there, and
+         * a seat sitting in it would leave the host unable to change a
+         * setting or start the game. spServerSimActive tells a host joining
+         * its own server from somebody joining another one — a single-player
+         * game sets it too, but never comes through openUdpJoin. Under the
+         * mutex: the host timer is already ticking the sim. */
+        if (spServerSimActive && spScenarioHost != NULL) {
+          threadsWaitForMutex();
+          serverSimScenarioSeatLobby(spServerSim);
+          threadsReleaseMutex();
+        }
         dlgState = openFinished;
       } else {
         const char *reason = clientSimGetConnectErrorReason(humanSim);
@@ -1770,6 +1786,16 @@ bool gameFrontSetDlgState(openingStates newState) {
           clientSimCreate(humanSim);
           clientSimSetIsLanOnly(humanSim, s_isLanOnly);
           frontEndSetActiveClientSim(humanSim);
+
+          /* A game that skips the lobby starts its round inside the startup
+           * below, so the scenario's own settings have to be in force before
+           * it: the round is built and the first tanks placed in there, and
+           * a game type set afterwards would never be asked for. A game that
+           * opens the lobby takes them once the host has joined, with the
+           * seating. */
+          if (spScenarioHost != NULL && cfg.skipLobby) {
+            serverSimScenarioApplyLobbyRules(spServerSim);
+          }
 
           /* Start the host timer; serverInstanceStartup applies the
            * lobby/skipLobby + hasPassword + brain/AI fields above. */
@@ -1961,6 +1987,27 @@ bool gameFrontSetDlgState(openingStates newState) {
                * pairs. Re-run it now that the lobby is populated. */
               serverSimReapplyTeamAlliances(spServerSim);
             }
+            /* The lobby the scenario asks for, and the settings that go with
+             * it. Its template reached the sim at the attach above; seating
+             * it is the separate step made wherever a lobby is built, and a
+             * game opening on this map is one of those points — the callers
+             * inside the sim are a map being committed and a lobby resetting
+             * once the last player leaves, and this is neither.
+             *
+             * After the host has joined, so slot 0 is the host's rather than
+             * a seat's, and after the bots above, which are put in slots 1
+             * upward by number: a seat already in one of those slots would
+             * be replaced by the bot that names it. The brain path and the
+             * AI level the seating reads are in the sim from the startup's
+             * config, and the bot pool has been up since the client booted.
+             *
+             * A map with no scenario has no template and this seats nothing;
+             * a game that skipped the lobby has already had the settings
+             * applied above and the second call changes nothing. */
+            if (spScenarioHost != NULL) {
+              serverSimScenarioSeatLobby(spServerSim);
+              serverSimScenarioApplyLobbyRules(spServerSim);
+            }
             threadsReleaseMutex();
             gameFrontUpdateSteamPresence(humanSim);
             }  /* end "clientSimConnectLocalPassive succeeded" */
@@ -2137,6 +2184,13 @@ bool mapChooserMapHasScript(const char *mapPath) {
 void gameFrontSetHostingScripts(bool allow) {
   gameFrontHostingScripts = allow;
   prefsSetString("HOSTING", "Run Map Scripts", TRUEFALSE_TO_STR(allow));
+  /* And the library, which is what actually decides whether an attach loads
+     a script. The two hosting-start paths set it as well, so a game started
+     after this reads the same answer; setting it here is what makes the
+     preference true of the process the moment it is changed, rather than
+     only from the next hosted game. The map chooser's scripted tag reads it
+     too, so a map stops being tagged as soon as the preference goes off. */
+  scenarioHostSetEnabled(allow);
 }
 
 void gameFrontSetHostingMaxSpec(int maxSpec) {
@@ -3267,6 +3321,23 @@ bool gameFrontSetupServer(void) {
     spServerSim = NULL;
     return FALSE;
   }
+  /* The settings the scenario asks for. A hosted game always opens the
+   * lobby, so no round is starting here and this is the first point the
+   * sim's own settings can be brought into line with the script beside the
+   * map — the two callers inside the sim are a map being committed and a
+   * lobby resetting once the last player leaves, and a fresh host is
+   * neither. Without it the lobby the host and every joiner see is on the
+   * host's own game type, and gameTypeResolve is never asked for the game
+   * the scenario declares.
+   *
+   * Under the mutex: the host timer is armed by the call above and is
+   * already ticking this sim. A map with no scenario leaves this alone. */
+  if (spScenarioHost != NULL) {
+    threadsWaitForMutex();
+    serverSimScenarioApplyLobbyRules(spServerSim);
+    threadsReleaseMutex();
+  }
+
   /* The host-side flags previously set by gameFrontFinishLobbyHost
    * after the startup call. The lobby state itself is now driven by
    * cfg.lobbyEnabled inside serverInstanceStartup. */
