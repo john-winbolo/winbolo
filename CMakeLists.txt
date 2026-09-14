@@ -4363,6 +4363,7 @@ set(_unit_test_names
     map_read_memory_handbuilt
     map_convert_file_to_compressed
     map_read_memory_rejects_garbage
+    map_read_clears_mine_under_pill
     upload_busy_predicate
     upload_lost_ack_retry
     upload_timeout_releases_other_player
@@ -4794,6 +4795,8 @@ set(_unit_test_names
     map_compress_rejects_null_handles
     map_checksum_ignores_mines
     map_resync_base_crater_converges
+    map_pill_mine_cleared_on_load
+    map_carried_pill_keeps_terrain
     map_shadow_tracks_real
     map_shadow_crc_matches
     map_shadow_blob_identical

@@ -599,6 +599,13 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     for (pi = 0; pi < numPills; pi++) {
       BYTE t;
       if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      /* A carried pill's x/y is the square it was picked up from, not a square
+       * it is on: pillsSetPillCompressData marks every pill in a blob active,
+       * while inTank rides in from the wire. Writing terrain there would stomp
+       * ground that legitimately holds a mine the server still knows about,
+       * and mapCalcChecksum masks mines away, so the divergence would never
+       * resync. */
+      if ((*pb)->item[pi].inTank != FALSE) continue;
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
@@ -1695,6 +1702,13 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     for (pi = 0; pi < numPills; pi++) {
       BYTE t;
       if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      /* A carried pill's x/y is the square it was picked up from, not a square
+       * it is on: pillsSetPillCompressData marks every pill in a blob active,
+       * while inTank rides in from the wire. Writing terrain there would stomp
+       * ground that legitimately holds a mine the server still knows about,
+       * and mapCalcChecksum masks mines away, so the divergence would never
+       * resync. */
+      if ((*pb)->item[pi].inTank != FALSE) continue;
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;

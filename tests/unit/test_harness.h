@@ -323,6 +323,7 @@ int run_map_read_memory_matches_file(void);
 int run_map_read_memory_handbuilt(void);
 int run_map_convert_file_to_compressed(void);
 int run_map_read_memory_rejects_garbage(void);
+int run_map_read_clears_mine_under_pill(void);
 int run_upload_busy_predicate(void);
 int run_upload_lost_ack_retry(void);
 int run_upload_timeout_releases_other_player(void);
@@ -1731,6 +1732,8 @@ int run_map_compress_roundtrip_mutated(void);
 int run_map_compress_rejects_null_handles(void);
 int run_map_checksum_ignores_mines(void);
 int run_map_resync_base_crater_converges(void);
+int run_map_pill_mine_cleared_on_load(void);
+int run_map_carried_pill_keeps_terrain(void);
 
 /* Per-client copies of the terrain (test_map_shadow.c): each slot's
  * clientKnownMap follows the live map across frames of scattered terrain
