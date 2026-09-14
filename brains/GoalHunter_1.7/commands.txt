@@ -176,8 +176,8 @@ from players and bots alike, so an ordinary chat word can never freeze a team.
   !attack:N    attack pillbox N.
   !cp:N        capture pillbox N.
   !cb:N        capture base N. !cb:all captures every base.
-  !bpc:N       build a pillbox near pillbox N.
-  !pp:N        place a pillbox at the spot picked for pillbox N.
+  !bpc:N       attack pillbox N with the blocker-pill test log on.
+  !pp:N        place a carried pillbox on pillbox N's square.
   !watch:N     watch pillbox N.
 
 They are hard locks: the bot runs them ahead of everything else, with no
