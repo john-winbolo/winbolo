@@ -447,6 +447,7 @@ applied around it; one bad row does not cost a scenario its other rules.
 | `on_player_leave(p, scripted)` | |
 | `on_team_changed(p, team, scripted)` | `team` is the seat's new team. |
 | `on_chat(p, text, scripted)` | A player said something. |
+| `on_ping(p, kind, mx, my, scripted)` | Seat `p` put a smart ping on the map. `kind` is 0 standard, 1 caution, 2 assist, 3 attack, 4 on my way, 5 bot command; `mx`, `my` are the map square it landed on. A seated bot brain places its own pings through the same path, so this fires for a bot as it does for a person. The hook only watches: nothing it returns changes the marker, and there is no call that places one. |
 
 ### What happens in the round
 

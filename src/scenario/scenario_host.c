@@ -302,6 +302,7 @@ static void scnLockLeave(ScnVmLock *l) {
     X(PLAYER_LEAVE,     "on_player_leave")                                   \
     X(TEAM_CHANGED,     "on_team_changed")                                   \
     X(CHAT,             "on_chat")                                           \
+    X(PING,             "on_ping")                                           \
     X(TANK_SPAWNED,     "on_tank_spawned")                                   \
     X(TANK_KILLED,      "on_tank_killed")                                    \
     X(LGM_DIED,         "on_lgm_died")                                       \
@@ -1392,6 +1393,25 @@ static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
             lua_pushboolean(h->L, e->data[3] != 0);
             lua_pushboolean(h->L, scripted ? 1 : 0);
             scnHookCall(h, SCN_HOOK_TANK_SPAWNED, 5);
+            return;
+
+        case EVENT_PING:
+            /* [sender, kind, xHi, xLo, yHi, yLo]. The two positions are in
+               world units, 256 to a map square, and the hook is handed the
+               map square, because that is what a script points at. The hook
+               only watches: there is no scenario call that places a ping,
+               and nothing a handler returns changes the marker. */
+            if (!scnHookBegin(h, SCN_HOOK_PING)) return;
+            lua_pushinteger(h->L, (lua_Integer)e->data[0]);
+            lua_pushinteger(h->L, (lua_Integer)e->data[1]);
+            lua_pushinteger(h->L,
+                (lua_Integer)(((unsigned)e->data[2] << 8 |
+                               (unsigned)e->data[3]) >> M_W_SHIFT_SIZE));
+            lua_pushinteger(h->L,
+                (lua_Integer)(((unsigned)e->data[4] << 8 |
+                               (unsigned)e->data[5]) >> M_W_SHIFT_SIZE));
+            lua_pushboolean(h->L, scripted ? 1 : 0);
+            scnHookCall(h, SCN_HOOK_PING, 5);
             return;
 
         case EVENT_LGM_LOST:

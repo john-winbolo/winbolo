@@ -3612,6 +3612,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
+    tests/unit/test_bot_ping.c
     tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
@@ -4512,6 +4513,9 @@ set(_unit_test_names
     bot_chat_send_to_other_bot_lands_in_recipient_inbox
     bot_chat_receive_from_human_lands_in_bot_inbox
     bot_chat_receive_from_other_bot_via_broadcast
+    bot_ping_queue_becomes_cmd_ping_from_bot_slot
+    bot_ping_rate_limit_drops_extras
+    bot_ping_ignores_bad_slot
     internal_msg_reaches_allied_bot
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot

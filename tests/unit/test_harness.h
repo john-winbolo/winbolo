@@ -669,6 +669,13 @@ int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
 int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
 int run_bot_chat_receive_from_other_bot_via_broadcast(void);
 
+/* A bot placing its own smart ping (test_bot_ping.c) — a brain's ping
+ * request becomes a CMD_PING from the bot's own player slot, and the bot's
+ * own rate limit drops the extras. */
+int run_bot_ping_queue_becomes_cmd_ping_from_bot_slot(void);
+int run_bot_ping_rate_limit_drops_extras(void);
+int run_bot_ping_ignores_bad_slot(void);
+
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
  * messagedest=0 fan out into allied bot inboxes only, never the chat

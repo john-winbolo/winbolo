@@ -1690,6 +1690,48 @@ void botManagerQueueInternalMessage(ServerSim *sim, BYTE fromPlayer,
     j->pendingInternalMsgCount++;
 }
 
+/* A bot's own smart ping. Worker-safe in the same way the chat callback
+ * above is: it writes only into this bot's job slot and its own BotContext,
+ * and Stage 3 hands the queued command to serverSimApplyCommand on the
+ * producer thread. From there the ping is a ping — the dispatcher does not
+ * ask whether the sender is a bot, so the marker is filtered to the team,
+ * drawn and recorded exactly like a person's. */
+void botManagerQueuePing(ServerSim *sim, BYTE fromPlayer,
+                         uint8_t kind, uint16_t worldX, uint16_t worldY) {
+    BotJobCtx  *j;
+    BotContext *bot;
+    uint32_t    now;
+
+    if (sim == NULL) return;
+    if (fromPlayer >= MAX_TANKS) return;
+
+    bot = &sim->botMgr.bots[fromPlayer];
+    now = serverSimGetTick(sim);
+    /* Stored as tick+1 so zero can mean "never": tick 0 is a real tick. */
+    if (bot->lastPingTick != 0 &&
+        (now + 1 - bot->lastPingTick) < BOT_PING_MIN_GAP_TICKS) {
+        return;
+    }
+
+    j = &sim->botMgr.jobs[fromPlayer];
+    if (j->pendingCmdCount >= BOT_PENDING_CMD_MAX) {
+        /* Queue full. A dropped marker is better than an unbounded queue,
+         * and the brain will ask again when it still wants to. */
+        return;
+    }
+
+    bot->lastPingTick = now + 1;
+
+    {
+        ClientCommand *cmd = &j->pendingCmds[j->pendingCmdCount++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CMD_PING;
+        cmd->u.ping.kind   = kind;
+        cmd->u.ping.worldX = worldX;
+        cmd->u.ping.worldY = worldY;
+    }
+}
+
 void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     BotContext *bot;
     if (sim == NULL || playerNum >= MAX_TANKS) return;
