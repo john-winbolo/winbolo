@@ -35,6 +35,17 @@
  *                                         people are in
  * run_lobby_template_cap_never_binds_bots
  *                                       — and never binds a bot
+ * run_lobby_template_cancel_keeps_trim  — a cancelled preview gives the
+ *                                         host's trim back
+ * run_lobby_template_cancel_keeps_empty_team
+ *                                       — and gives an emptied team back
+ *                                         empty
+ * run_lobby_template_cancel_chain_rolls_back
+ *                                       — one cancel over two previews goes
+ *                                         back to before the first
+ * run_lobby_template_commit_keeps_new_lobby
+ *                                       — a commit keeps the previewed map's
+ *                                         lobby and restores nothing
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -580,5 +591,170 @@ int run_lobby_template_cap_never_binds_bots(void) {
                   "expected %d", seat, LT_CAP, LT_CAP, LT_CAP);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── A cancelled preview gives the host their lobby back ──────────── */
+
+/* Take a team down to n the way a host does, one seat at a time. */
+static void ltTrimTo(ServerSim *sim, BYTE team, int n) {
+    while (ltSeats(sim, team) > n) {
+        int slot = ltFirstSeat(sim, team);
+        if (slot < 0) return;
+        serverSimRemoveBot(sim, (BYTE)slot);
+    }
+}
+
+/* Show the host another map. A real preview is a map change like any other,
+ * which is why it seats the template again. */
+static bool ltPreview(ServerSim *sim, const char *name) {
+    BYTE emap[6000] = E_MAP;
+    return serverSimReloadCompressedInMemory(sim, emap, 5097, name);
+}
+
+int run_lobby_template_cancel_keeps_trim(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_keeps_trim"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 6, 6, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 6);
+
+    /* The host trims the six raider seats to three. */
+    ltTrimTo(sim, LT_HORDE, 3);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 3);
+
+    UT_ASSERT(ltPreview(sim, "Preview"));
+    UT_ASSERT_MSG(serverSimHasPreviewMap(sim),
+                  "the map change left no preview to cancel");
+
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 3,
+                  "the trim to three came back as %d after a cancel",
+                  ltSeats(sim, LT_HORDE));
+    UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 1,
+                  "the untouched team came back at %d, expected 1",
+                  ltSeats(sim, LT_GUARD));
+    UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
+                  "the cancel left a preview pending");
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A team emptied on purpose comes back empty, not re-seated — the same edit
+ * as a trim, only further. */
+int run_lobby_template_cancel_keeps_empty_team(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_keeps_empty_team"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 4, 4, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 4);
+
+    ltTrimTo(sim, LT_HORDE, 0);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 0);
+
+    UT_ASSERT(ltPreview(sim, "Preview"));
+    UT_ASSERT(serverSimRevertPreview(sim));
+
+    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 0,
+                  "an emptied team came back with %d seats after a cancel",
+                  ltSeats(sim, LT_HORDE));
+    UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 1,
+                  "the untouched team came back at %d, expected 1",
+                  ltSeats(sim, LT_GUARD));
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* One cancel rolls a chain of previews all the way back to where the host
+ * started, not to whatever the lobby looked like between two of them. */
+int run_lobby_template_cancel_chain_rolls_back(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_chain_rolls_back"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 5, 5, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltTrimTo(sim, LT_HORDE, 2);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 2);
+
+    UT_ASSERT(ltPreview(sim, "Preview one"));
+    /* The first preview seated the five again; the host trims to four while
+       looking at it, so four is the count in between. */
+    ltTrimTo(sim, LT_HORDE, 4);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 4);
+
+    UT_ASSERT(ltPreview(sim, "Preview two"));
+    UT_ASSERT(serverSimRevertPreview(sim));
+
+    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 2,
+                  "one cancel over two previews gave back %d seats, expected "
+                  "the two the host had before the first",
+                  ltSeats(sim, LT_HORDE));
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* Committing keeps the previewed map, so its lobby stands and the counts the
+ * old map had are gone for good. */
+int run_lobby_template_commit_keeps_new_lobby(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(ltMakeBrainFile("commit_keeps_new_lobby"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 4, 4, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltTrimTo(sim, LT_HORDE, 1);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 1);
+
+    UT_ASSERT(ltPreview(sim, "Preview"));
+    serverSimCommitPreview(sim);
+    UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
+                  "the commit left a preview pending");
+    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 4,
+                  "the committed map's lobby holds %d seats, expected the "
+                  "template's four",
+                  ltSeats(sim, LT_HORDE));
+
+    /* And the old map's count is not waiting to be applied to a later
+       cancel: previewing again and backing out returns the four that are
+       there now. */
+    UT_ASSERT(ltPreview(sim, "Preview again"));
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 4,
+                  "a cancel after a commit gave back %d seats, expected 4",
+                  ltSeats(sim, LT_HORDE));
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
     return 0;
 }

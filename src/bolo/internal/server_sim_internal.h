@@ -266,6 +266,16 @@ struct ServerSim {
      * Empty when that map came from bytes rather than a file. */
     char         previousMapPath[FILENAME_MAX];
 
+    /* How many template seats each team held when the preview started,
+     * indexed by team id. Cancelling re-seats the template from scratch, so
+     * without these a host's trim is lost; kept alongside the map above and
+     * across a chain of previews for the same reason. previousSeatsValid is
+     * separate because a team the host emptied records a zero and must come
+     * back empty, which is not the same answer as nothing being recorded —
+     * that is what a map with no scenario template leaves. */
+    bool         previousSeatsValid;
+    BYTE         previousSeats[MAX_TANKS];
+
     /* The file the live map was read from, kept because a scenario is
      * discovered beside its .map and the display name is not enough to find
      * it. Set by the loaders handed a path and cleared by the ones that are

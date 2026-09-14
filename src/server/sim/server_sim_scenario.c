@@ -1726,6 +1726,21 @@ static BYTE scenarioSeatsOnTeam(const ServerSim *sim, BYTE team) {
     return n;
 }
 
+/* Take a team's scenario seats down to want, highest seat first so the seats
+ * the host has had longest are the ones that survive. A team already at or
+ * below want is left alone — this only ever removes. */
+static void scenarioTrimTeamTo(ServerSim *sim, BYTE team, BYTE want) {
+    BYTE have = scenarioSeatsOnTeam(sim, team);
+    BYTE i;
+    for (i = MAX_TANKS; i > 0 && have > want; i--) {
+        BYTE slot = (BYTE)(i - 1);
+        if (!scenarioSeatIsTemplates(sim, slot)) continue;
+        if (sim->lobbyPlayers[slot].teamNumber != team) continue;
+        serverSimRemoveBot(sim, slot);
+        have--;
+    }
+}
+
 /* Empty every seat the scenario put there. The host's own seats and every
  * human are left alone. */
 void serverSimScenarioClearSeats(ServerSim *sim) {
@@ -1830,19 +1845,44 @@ void serverSimScenarioReconcileLobby(ServerSim *sim) {
 
     for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
         const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
-        BYTE have;
         if (team->id == 0 || team->id >= MAX_TANKS) continue;
         if (team->maxBots == 0) continue;
-        have = scenarioSeatsOnTeam(sim, team->id);
-        /* Highest seat first, so the seats the host has had longest are the
-           ones that survive the trim. */
-        for (i = MAX_TANKS; i > 0 && have > team->maxBots; i--) {
-            BYTE slot = (BYTE)(i - 1);
-            if (!scenarioSeatIsTemplates(sim, slot)) continue;
-            if (sim->lobbyPlayers[slot].teamNumber != team->id) continue;
-            serverSimRemoveBot(sim, slot);
-            have--;
-        }
+        scenarioTrimTeamTo(sim, team->id, team->maxBots);
+    }
+}
+
+/* How many template seats each team holds right now, indexed by team id, for
+ * a caller that means to put these counts back later. Answers false and
+ * writes nothing when no template is attached, so the caller can tell that
+ * apart from a team recorded at zero: a host who emptied a team on purpose
+ * has to come back to an empty one. */
+bool serverSimScenarioSeatCounts(const ServerSim *sim, BYTE *out) {
+    BYTE t;
+    if (sim == NULL || out == NULL) return false;
+    if (!sim->scenarioLobbyValid) return false;
+    memset(out, 0, MAX_TANKS * sizeof(BYTE));
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        BYTE id = sim->scenarioLobby.teams[t].id;
+        if (id == 0 || id >= MAX_TANKS) continue;
+        out[id] = scenarioSeatsOnTeam(sim, id);
+    }
+    return true;
+}
+
+/* Put each of the template's teams back down to the count it was given.
+ *
+ * Trimming only. A team now holding fewer seats than its count is left where
+ * it is rather than seated back up, and that half is deliberate: it is the
+ * reconcile's rule that the ceiling binds and the floor does not, so a host
+ * who added seats and then backed out of a map keeps the lobby they are
+ * looking at instead of having the additions taken off them as well. */
+void serverSimScenarioTrimSeatsTo(ServerSim *sim, const BYTE *counts) {
+    BYTE t;
+    if (sim == NULL || counts == NULL || !sim->scenarioLobbyValid) return;
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        BYTE id = sim->scenarioLobby.teams[t].id;
+        if (id == 0 || id >= MAX_TANKS) continue;
+        scenarioTrimTeamTo(sim, id, counts[id]);
     }
 }
 

@@ -4960,6 +4960,10 @@ set(_unit_test_names
     lobby_template_cap_seats_human_above_bots
     lobby_template_cap_refuses_extra_human
     lobby_template_cap_never_binds_bots
+    lobby_template_cancel_keeps_trim
+    lobby_template_cancel_keeps_empty_team
+    lobby_template_cancel_chain_rolls_back
+    lobby_template_commit_keeps_new_lobby
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready

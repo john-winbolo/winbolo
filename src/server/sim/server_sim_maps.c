@@ -466,6 +466,11 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
                    sizeof(sim->previousMapName));
             memcpy(sim->previousMapPath, sim->mapFilePath,
                    sizeof(sim->previousMapPath));
+            /* The seats go with the map, for the same reason and under the
+             * same rule: a cancel re-seats the template from scratch, so
+             * without these the host's trim goes with it. */
+            sim->previousSeatsValid =
+                serverSimScenarioSeatCounts(sim, sim->previousSeats);
         }
     }
 
@@ -607,6 +612,8 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
             sim->previousMapDataLen = sim->cachedMapDataLen;
             memcpy(sim->previousMapName, sim->mapName,
                    sizeof(sim->previousMapName));
+            sim->previousSeatsValid =
+                serverSimScenarioSeatCounts(sim, sim->previousSeats);
         }
     }
 
@@ -773,6 +780,8 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
             sim->previousMapDataLen = sim->cachedMapDataLen;
             memcpy(sim->previousMapName, sim->mapName,
                    sizeof(sim->previousMapName));
+            sim->previousSeatsValid =
+                serverSimScenarioSeatCounts(sim, sim->previousSeats);
         }
     }
 
@@ -859,6 +868,16 @@ bool serverSimRevertPreview(ServerSim *sim) {
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
+
+    /* The map change above seated the template from scratch, which is what a
+       map the host commits wants and not what one they backed out of wants:
+       the seats are back at the template's counts and the host's trim is
+       gone. Put their counts back. */
+    if (sim->previousSeatsValid) {
+        serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
+    }
+    sim->previousSeatsValid = false;
+    memset(sim->previousSeats, 0, sizeof(sim->previousSeats));
     return TRUE;
 }
 
@@ -869,6 +888,10 @@ void serverSimCommitPreview(ServerSim *sim) {
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
     sim->previousMapPath[0] = '\0';
+    /* The host keeps the previewed map, so the lobby the old one had is gone
+       for good and there is nothing left to put back. */
+    sim->previousSeatsValid = false;
+    memset(sim->previousSeats, 0, sizeof(sim->previousSeats));
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimCommitPreview: committed '%s'", sim->mapName);
 }

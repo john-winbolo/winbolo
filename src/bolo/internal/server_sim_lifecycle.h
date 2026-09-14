@@ -36,6 +36,15 @@ void serverSimScenarioSeatLobby(ServerSim *sim);
 void serverSimScenarioReconcileLobby(ServerSim *sim);
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
 
+/* The pair a preview and its cancel use. SeatCounts reads the template seats
+ * each team holds into out[], indexed by team id and MAX_TANKS long, and
+ * answers false without writing when no template is attached. TrimSeatsTo
+ * takes each of the template's teams back down to the matching count, the
+ * way ReconcileLobby cuts one back to maxBots; a team below its count is
+ * left alone, because this never seats upward. */
+bool serverSimScenarioSeatCounts(const ServerSim *sim, BYTE *out);
+void serverSimScenarioTrimSeatsTo(ServerSim *sim, const BYTE *counts);
+
 /* Per-slot lobby state setter. Driven by UDP PACKET_LOBBY_READY handlers
  * and by client_net.c's local-transport branches. */
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
