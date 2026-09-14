@@ -309,12 +309,44 @@ is inside a region safe.
 
 ### Policies
 
-| Function | Returns |
-|---|---|
-| `allow_extra_teams()` | Whether a host may put a seat on a team no other seat is on. Absent, or returning `nil`, means yes. |
+A policy is a question the engine asks in the middle of doing something, and
+the answer decides what it does. Unlike a hook, which is told about a fact
+after it has happened, a policy is asked before, and it answers and nothing
+else: an op issued from inside one is refused with `SCN_OP_IN_POLICY`.
 
-An op issued from inside a policy is refused with `SCN_OP_IN_POLICY`: a policy
-is a question the engine asks mid-operation, and it answers and nothing else.
+Every policy is a plain global function, looked up by name at each call.
+Leave one out and the game plays by its ordinary rule. Four things all mean
+"no opinion" and give that same rule: no function of the name, a scenario
+switched off for the round, a `nil` return, and a call that raises. Only the
+raise counts toward the error limit. An answer the engine cannot use — a
+start that is not on the map, a loadout table missing an amount, a percent
+out of range — also gives the ordinary rule and also counts, and is named on
+the console, so a script answering unusably every time is switched off
+rather than left to misbehave quietly.
+
+| Function | Asked | Answer |
+|---|---|---|
+| `allow_extra_teams()` | When a host would put a seat on a team no other seat is on. | `true` to allow. Ordinary rule: yes. |
+| `allow_base_win()` | Before the round checks whether one side owns every base. | `false` takes that ending out of the round and leaves every other ending alone. Ordinary rule: yes. |
+| `can_respawn(p)` | On the last tick of a dead tank's wait. | `false` holds the tank where it is, and the question is asked again next tick. Ordinary rule: yes. |
+| `can_build(p, action, x, y, n)` | Before a builder order goes ahead. `action` is the order as given — `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` — before the engine decides whether the square makes it a repair. `n` is the pillbox for a pill order and `nil` otherwise. | `false` refuses the order. Ordinary rule: yes. |
+| `can_capture(kind, n, p)` | When seat `p` would take `"pill"` or `"base"` number `n`. | `false` leaves it where it is and does not stop the tank. Ordinary rule: yes. |
+| `announce(kind, subject, actor)` | Before a newswire line is shown. `kind` is `"joined"`, `"left"`, `"base_captured"`, `"pill_captured"`, `"builder_lost"`, `"name_changed"`, `"alliance"` or `"vote"`. `subject` is the base or pillbox number for a capture and a seat otherwise; `actor` is the seat that did it. | `false` keeps the line off every client's newswire. The fact still happens. Ordinary rule: shown. |
+| `can_die(kind, n, killer, cause)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank, `"shell"` or `"mine"` for the other two, and `nil` when the engine could not name it. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
+| `on_choose_start(p)` | When the engine is about to pick a start for seat `p`, at a spawn, a respawn or a teleport with no start named. A start the script named in the op itself is not asked about. | A start number, counted from 1 as `game.start` counts. A number that names no live start is reported and the engine picks. `nil` lets the engine pick. |
+| `spawn_loadout(p)` | When seat `p`'s tank is created. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
+| `damage_scale(attacker, victim, cause)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
+
+`scenario.lobby.max_players` is the one decision that is a number rather than
+a function; it is applied by the lobby without asking.
+
+**Which round answers.** The tanks for everyone seated when a round starts
+are built before the round's own Lua state is, so `on_choose_start` and
+`spawn_loadout` for those seats are answered by the state the server holds at
+that moment: the one the file was loaded into, for the first round, and the
+previous round's for later ones, with that round's globals. A seat that joins
+or respawns after the start is answered by the round's own state. Keep those
+two policies free of state that changes across a round.
 
 ---
 
@@ -994,9 +1026,6 @@ takes the first one's line.
 
 Named so you do not spend an afternoon looking for them:
 
-- **Policies beyond `allow_extra_teams`.** Choosing a start, deciding a
-  loadout, scaling damage, allowing a capture, vetoing a death: none of these
-  are asked of a scenario today.
 - **`scenario.game` and `scenario.lobby.extra_teams`.** Both are read and
   neither changes the round yet.
 - **`spawn_bot`'s `loadout`.** The field is read and any value for it is
