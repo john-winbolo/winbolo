@@ -1610,9 +1610,15 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 
   /* Each of the four world structures arrives as a pointer to its handle, so
    * either level can be NULL when the game is torn down under a caller that is
-   * still holding it. Nothing below checks: the three compress setters and the
-   * (*value)->mapItem reads all dereference straight away. Refuse instead, so
-   * the caller gets its FALSE rather than a crash inside the loader. */
+   * still holding it, or when a caller races a teardown and hands over a
+   * destroyed sim's world. Nothing below checks: the three compress setters and
+   * the (*value)->mapItem reads all dereference straight away. Refuse instead,
+   * so the caller gets its FALSE rather than a crash inside the loader.
+   *
+   * Both levels are checked, and the outer pointers are the only ones logged. A
+   * caller handing over a NULL GameSim produces handle pointers that are its
+   * small field offsets (0/8/16/24) — non-null but garbage — and dereferencing
+   * those to log them is how the first version of this guard itself crashed. */
   if (value == NULL || *value == NULL ||
       pb == NULL || *pb == NULL ||
       bs == NULL || *bs == NULL ||
@@ -1628,23 +1634,6 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
    * passes a full compressed map; only short/garbage input is rejected here. */
   if (input == NULL ||
       inputLen < (int)(SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)) {
-    return FALSE;
-  }
-
-  /* Structure handles must be live too — a caller racing a teardown
-   * (or handing over a destroyed sim's world) used to crash on a null
-   * handle deref inside the copy loops below. Refuse instead. */
-  /* A caller handing over a NULL GameSim produces handle pointers that
-   * are its small field offsets (0/8/16/24) — non-null but garbage, so
-   * only dereference after checking BOTH levels, and log the outer
-   * pointers only (dereferencing them here is how the first version of
-   * this guard itself crashed). */
-  if (value == NULL || *value == NULL || pb == NULL || *pb == NULL ||
-      bs == NULL || *bs == NULL || ss == NULL || *ss == NULL) {
-    WB_LOG_ERROR(WB_LOG_CAT_SIM,
-        "mapLoadCompressedMap: null world handle (map@%p pills@%p "
-        "bases@%p starts@%p) — load refused",
-        (void *)value, (void *)pb, (void *)bs, (void *)ss);
     return FALSE;
   }
 
