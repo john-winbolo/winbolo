@@ -20,6 +20,7 @@
 #include "brain_list.h"               /* BRAIN_MODES_MAX, BRAIN_LEVELS_MAX */
 #include "client_command.h"
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
+#include "server_sim_scenario.h"      /* serverSimScenarioReload */
 #include "log.h"
 #include "mapgen.h"                   /* MapGenConfig, mapGenSeedToConfig */
 #include "netpacks.h"                 /* lobbyBotNameAcceptable */
@@ -813,6 +814,43 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
                      serverSimGetMapDirRoot(sim), relPath);
         if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
+        return CMD_OK;
+    }
+    case CMD_LOBBY_RELOAD_SCENARIO: {
+        /* The edit-reload-play loop the dedicated server's console already
+           has, for a host with no console. Lobby-only and host-only, like
+           the map change beside it: re-reading the script changes what the
+           next round plays by, which is not a joiner's to decide. */
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        {
+            char err[512];
+            char line[672];
+            ControlEvent evt;
+            bool ok = serverSimScenarioReload(sim, err, sizeof(err));
+
+            /* Addressed to whoever asked. A reload says what happened even
+               when it worked, because what it changed is not visible until
+               the next round starts. */
+            if (ok) {
+                SDL_snprintf(line, sizeof(line),
+                             "Scenario re-read. The new settings take effect "
+                             "at the next round; the round in progress keeps "
+                             "the ones it started with.");
+            } else {
+                SDL_snprintf(line, sizeof(line), "%s", err);
+            }
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_SERVER_TEXT;
+            SDL_strlcpy(evt.u.serverText.text, line,
+                        sizeof(evt.u.serverText.text));
+            evt.u.serverText.destPlayer = (BYTE)senderSlot;
+            serverSimPublishControl(sim, &evt);
+            if (!ok) return CMD_REJECT_INVALID;
+        }
         return CMD_OK;
     }
     case CMD_LOBBY_PREVIEW_CANCEL: {

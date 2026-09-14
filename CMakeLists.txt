@@ -3537,6 +3537,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_time_minutes_valid.c
     tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
+    # The lobby's reload request: who may ask, when, and what a lobby with
+    # no scenario answers.
+    tests/unit/test_lobby_reload_scenario.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4386,6 +4389,12 @@ set(_unit_test_names
     lobby_bot_name_skip_excludes_self_from_uniqueness
     lobby_bot_name_accepts_clean_unique
     lobby_map_list_chunked
+    lobby_map_list_scripted_golden
+    lobby_map_list_scripted_mixed
+    lobby_reload_scenario_needs_host
+    lobby_reload_scenario_needs_lobby
+    lobby_reload_scenario_no_scenario
+    lobby_reload_scenario_calls_back
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec

@@ -569,10 +569,12 @@ static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
     if (got < 0) got = 0;
 
     /* Chunked send: each frame fits in UDP_MAX_PAYLOAD and
-     * carries [header][pathLen][path][final][count][entries].
-     * Last chunk sets final=1; empty result is a single chunk
-     * with count=0, final=1. Lost final-chunk failure mode is
-     * accepted — chooser shows a partial list until next req. */
+     * carries [header][pathLen][path][final][count][entries],
+     * each entry [nameLen 1][name M][isFolder 1][modTime 8 BE]
+     * [scripted 1]. Last chunk sets final=1; empty result is a
+     * single chunk with count=0, final=1. Lost final-chunk
+     * failure mode is accepted — chooser shows a partial list
+     * until next req. */
     uint8_t rsp[UDP_MAX_PAYLOAD];
     int i = 0;
     do {
@@ -591,7 +593,7 @@ static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
         for (; i < got; i++) {
             int nameLen = (int)SDL_strlen(entries[i].name);
             if (nameLen > 127) nameLen = 127;
-            if (rpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+            if (rpos + 1 + nameLen + 1 + 8 + 1 > (int)sizeof(rsp)) break;
             rsp[rpos++] = (uint8_t)nameLen;
             memcpy(rsp + rpos, entries[i].name, nameLen);
             rpos += nameLen;
@@ -600,6 +602,7 @@ static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
             for (int b = 7; b >= 0; b--) {
                 rsp[rpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
             }
+            rsp[rpos++] = entries[i].scripted ? 1 : 0;
             written++;
         }
         rsp[countPos] = (uint8_t)written;

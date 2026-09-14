@@ -710,6 +710,14 @@ struct ServerSim {
     void                  *scenarioTickCtx;
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
+    /* Asked of each map the lister finds, so an entry can say whether it is
+       scripted. NULL means nothing registered and every map reads plain. */
+    bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);
+    void                  *scenarioMapScriptedCtx;
+    /* What a lobby host's reload request runs. NULL means no scenario is
+       attached and a request answers so. */
+    bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);
+    void                  *scenarioReloadCtx;
     void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
                                                const char *mapPath);
     void                  *scenarioMapChangedCtx;

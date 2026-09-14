@@ -2382,6 +2382,11 @@ static int runFastMode(void) {
   if (optNoScenarios) {
     scenarioHostSetEnabled(false);
   }
+  /* And the question the map lister asks, registered here rather than at the
+     attach below: an attach answers nothing for a map with no script, so a
+     run on a plain map would report every scripted map in the directory as
+     plain. */
+  scenarioHostRegisterMapScripted(fastServerSim);
   {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(fastServerSim, optMap,

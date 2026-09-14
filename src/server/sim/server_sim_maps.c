@@ -965,6 +965,10 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
         e->isFolder = isDir;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = isDir ? 0 : (int64_t)info.size;
+        /* A folder is never scripted; the question is about a map file, and
+           `child` is the full path the answer needs. */
+        e->scripted = isDir ? false
+                            : serverSimScenarioMapIsScripted(sim, child);
     }
     SDL_free(list);
 
@@ -1057,6 +1061,9 @@ static void searchDirRecursive(const char *fullRoot,
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = (int64_t)info.size;
+        /* Written rather than left alone: the caller's array is not zeroed,
+           and the search's own results do not carry the flag. */
+        e->scripted = false;
     }
     SDL_free(list);
 }

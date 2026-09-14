@@ -2453,6 +2453,21 @@ static void scnRoundStart(void *ctx) {
     scnLockLeave(&h->lock);
 }
 
+/* The sim's reload callback, for a lobby host asking through the command bus
+ * rather than through a server console. scenarioHostReload takes the lock for
+ * itself, so this is the call and nothing else. */
+static bool scnReloadCb(void *ctx, char *err, size_t errLen) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
+
+    if (h == NULL) {
+        if (err != NULL && errLen > 0) {
+            snprintf(err, errLen, "No scenario is attached to this map");
+        }
+        return false;
+    }
+    return scenarioHostReload(h, err, errLen);
+}
+
 /* ── The frontend surface ─────────────────────────────────────────── */
 
 /* Whether an attach may load a script at all.
@@ -2487,6 +2502,29 @@ static bool scnScriptExists(const char *path) {
     }
     fclose(f);
     return true;
+}
+
+bool scenarioHostMapHasScript(const char *mapPath) {
+    char script[SCN_SCRIPT_PATH_MAX];
+
+    if (mapPath == NULL || mapPath[0] == '\0') {
+        return false;
+    }
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        return false;
+    }
+    return scnScriptExists(script);
+}
+
+/* The lister's question, in the shape the sim's setter takes. No context:
+   finding a script is a fact about a path and about nothing else. */
+static bool scnMapScriptedCb(void *ctx, const char *mapPath) {
+    (void)ctx;
+    return scenarioHostMapHasScript(mapPath);
+}
+
+void scenarioHostRegisterMapScripted(ServerSim *sim) {
+    serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, NULL);
 }
 
 ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
@@ -2632,6 +2670,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
 
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);
     serverSimSetScenarioTick(sim, scnTick, h);
+    /* And what a lobby host's reload request runs, so a player editing a
+       script has the loop the server console already has. */
+    serverSimSetScenarioReload(sim, scnReloadCb, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
     /* The lobby goes over as data rather than as another callback: the sim
        seats and reconciles it at every point a lobby is built, and a question
@@ -2836,6 +2877,7 @@ void scenarioHostDetach(ScenarioHost *h) {
     if (h->sim != NULL) {
         serverSimSetScenarioRoundStart(h->sim, NULL, NULL);
         serverSimSetScenarioTick(h->sim, NULL, NULL);
+        serverSimSetScenarioReload(h->sim, NULL, NULL);
         serverSimSetScenarioPolicy(h->sim, NULL);
         /* The lobby goes with them. What is already seated is left where it
            is — emptying the roster is the map change's business, and a

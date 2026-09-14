@@ -363,6 +363,17 @@ int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
 int run_bot_pool_wire_chunk_transport(void);
 int run_lobby_map_list_chunked(void);
+/* The scripted byte on a map-list entry: the layout by hand-written bytes,
+ * and a list carrying a mix of scripted and plain maps. */
+int run_lobby_map_list_scripted_golden(void);
+int run_lobby_map_list_scripted_mixed(void);
+
+/* The lobby's reload request (test_lobby_reload_scenario.c): who may ask,
+ * when, and what a lobby with no scenario answers. */
+int run_lobby_reload_scenario_needs_host(void);
+int run_lobby_reload_scenario_needs_lobby(void);
+int run_lobby_reload_scenario_no_scenario(void);
+int run_lobby_reload_scenario_calls_back(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);

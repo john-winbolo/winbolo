@@ -2121,6 +2121,7 @@ static const LangEntry langTable[] = {
     {2174, "Run map scripts when hosting"},
     {2175, "Scenario:"},
     {2176, "Scripts off"},
+    {2177, "Reload script"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

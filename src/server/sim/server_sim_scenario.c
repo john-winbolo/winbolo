@@ -2981,6 +2981,42 @@ void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx
     sim->scenarioRoundStartCtx = ctx;
 }
 
+void serverSimSetScenarioReload(ServerSim *sim,
+                                bool (*reload)(void *ctx, char *err,
+                                               size_t errLen),
+                                void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioReload = reload;
+    sim->scenarioReloadCtx = ctx;
+}
+
+bool serverSimScenarioReload(ServerSim *sim, char *err, size_t errLen) {
+    if (err != NULL && errLen > 0) err[0] = '\0';
+    if (sim == NULL || sim->scenarioReload == NULL) {
+        if (err != NULL && errLen > 0) {
+            snprintf(err, errLen, "No scenario is attached to this map");
+        }
+        return false;
+    }
+    return sim->scenarioReload(sim->scenarioReloadCtx, err, errLen);
+}
+
+void serverSimSetScenarioMapScripted(ServerSim *sim,
+                                     bool (*mapScripted)(void *ctx,
+                                                         const char *mapPath),
+                                     void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioMapScripted = mapScripted;
+    sim->scenarioMapScriptedCtx = ctx;
+}
+
+bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
+    if (sim == NULL || sim->scenarioMapScripted == NULL || mapPath == NULL) {
+        return false;
+    }
+    return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
+}
+
 void serverSimSetScenarioMapChanged(ServerSim *sim,
                                     void (*mapChanged)(void *ctx,
                                                        ServerSim *sim,

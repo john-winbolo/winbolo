@@ -2285,6 +2285,9 @@
 #define STR_DLGLOBBY_SCENARIO_LBL           2175
 #define STR_DLGLOBBY_SCRIPTS_OFF            2176
 
+/* The lobby's reload button, for a host editing its map's script. */
+#define STR_DLGLOBBY_RELOAD_SCENARIO        2177
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

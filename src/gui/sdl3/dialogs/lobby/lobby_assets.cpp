@@ -70,6 +70,17 @@ void lobbyRenderScenarioLine(ClientSim *cs) {
             ImGui::TextWrapped("%s", desc);
             ImGui::PopStyleColor();
         }
+        /* The edit-reload-play loop, for the host who has the script file on
+           the machine the server is running on. The server answers with a
+           line addressed to whoever asked, including what a reload that
+           failed says, so nothing is reported from here. */
+        if (clientSimGetLobbyHostSlot(cs) == clientSimGetMyPlayerNum(cs) &&
+            !clientSimIsSpectator(cs)) {
+            if (ImGui::SmallButton(
+                    langGetText(STR_DLGLOBBY_RELOAD_SCENARIO))) {
+                clientSimNetSendLobbyReloadScenario(cs);
+            }
+        }
         return;
     }
     if (!gameFrontHostingScripts && gameFrontGetServerSim() != NULL) {

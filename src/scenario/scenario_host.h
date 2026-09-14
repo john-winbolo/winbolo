@@ -138,6 +138,47 @@ typedef struct ScenarioHost ScenarioHost;
 void scenarioHostSetEnabled(bool enabled);
 
 /*********************************************************
+ *NAME:          scenarioHostMapHasScript
+ *PURPOSE:
+ *  Whether the map at mapPath has a script beside it, asked
+ *  without reading, parsing or running a byte of it. This is
+ *  the one question a lister asks to tag a map before anyone
+ *  picks it, and the one place that knows how a script is
+ *  found, so a later way of carrying one changes here and
+ *  every caller follows.
+ *
+ *  Answers only what is on disk. It does not consult the
+ *  scripts switch: a map with a script beside it has one
+ *  whether or not this process would run it.
+ *
+ *ARGUMENTS:
+ *  mapPath - Full path to the .map file
+ *********************************************************/
+bool scenarioHostMapHasScript(const char *mapPath);
+
+/*********************************************************
+ *NAME:          scenarioHostRegisterMapScripted
+ *PURPOSE:
+ *  Hands the sim's map lister the question above, so every
+ *  entry it returns says whether that map is scripted.
+ *
+ *  Call it once where the process decides whether it runs
+ *  scripts at all, beside scenarioHostSetEnabled — not at an
+ *  attach. An attach answers NULL for a map with no script,
+ *  so registering there would leave a server whose own map is
+ *  plain reporting every scripted map in its directory as
+ *  plain, and nothing would say so.
+ *
+ *  Registering is independent of the scripts switch: the list
+ *  describes what is on disk, and a host that has turned
+ *  scripts off still sees which maps carry one.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose lister is being told
+ *********************************************************/
+void scenarioHostRegisterMapScripted(ServerSim *sim);
+
+/*********************************************************
  *NAME:          scenarioHostAttach
  *PURPOSE:
  *  Looks for a script beside mapPath, reads it, boots a VM,

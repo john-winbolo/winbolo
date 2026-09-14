@@ -78,7 +78,8 @@ typedef enum {
     CMD_PLAYER_MUTE,
     CMD_VOICE_STATE,
     CMD_PING,
-    CMD_PLAYER_PING_MUTE
+    CMD_PLAYER_PING_MUTE,
+    CMD_LOBBY_RELOAD_SCENARIO
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -284,6 +285,13 @@ typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCancel;
 
+/* The lobby host asking the server to read its map's script again. Nothing
+ * to carry: which script is the server's own business, and the answer comes
+ * back as a line addressed to whoever asked. */
+typedef struct {
+    uint8_t _unused;
+} CmdLobbyReloadScenario;
+
 typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCommit;
@@ -463,6 +471,7 @@ typedef struct ClientCommand {
         CmdLobbyAddBot         lobbyAddBot;
         CmdLobbySetMap         lobbySetMap;
         CmdLobbyPreviewCancel  lobbyPreviewCancel;
+        CmdLobbyReloadScenario lobbyReloadScenario;
         CmdLobbyPreviewCommit  lobbyPreviewCommit;
         CmdLobbyPreviewRandom  lobbyPreviewRandom;
         CmdLobbyKick           lobbyKick;

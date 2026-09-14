@@ -329,6 +329,8 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
                     clientSimGetLobbyMapListIsFolder(cs, i);
                 serverEntries[got].modTime =
                     clientSimGetLobbyMapListModTime(cs, i);
+                serverEntries[got].scripted =
+                    clientSimGetLobbyMapListScripted(cs, i);
                 got++;
             }
         }
@@ -339,6 +341,7 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
         memset(e, 0, sizeof(*e));
         e->isFolder = serverEntries[i].isFolder;
         e->modTime  = serverEntries[i].modTime;
+        e->scripted = serverEntries[i].scripted;
         if (e->isFolder) {
             SDL_strlcpy(e->name, serverEntries[i].name, sizeof(e->name));
             if (inSub) {

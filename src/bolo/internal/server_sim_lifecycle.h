@@ -36,6 +36,12 @@ void serverSimScenarioSeatLobby(ServerSim *sim);
 void serverSimScenarioReconcileLobby(ServerSim *sim);
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
 
+/* Whether the map at mapPath has a script beside it, asked through whatever
+ * the process registered with serverSimSetScenarioMapScripted. False with
+ * nothing registered, which is what a build carrying no scenario library
+ * answers for every map. */
+bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath);
+
 /* The pair a preview and its cancel use. SeatCounts reads the template seats
  * each team holds into out[], indexed by team id and MAX_TANKS long, and
  * answers false without writing when no template is attached. TrimSeatsTo

@@ -647,6 +647,27 @@ static bool commandDecodeLobbyPreviewCancel(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_LOBBY_RELOAD_SCENARIO — PACKET_LOBBY_RELOAD_SCENARIO
+ * Wire: [header 8] (no body) */
+static bool commandEncodeLobbyReloadScenario(const ClientCommand *cmd,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)cmd;
+    if (bufCap < CMD_PACKET_BODY_OFFSET) return false;
+    packHeader(buf, PACKET_LOBBY_RELOAD_SCENARIO, 0);
+    *outLen = CMD_PACKET_BODY_OFFSET;
+    return true;
+}
+
+static bool commandDecodeLobbyReloadScenario(const uint8_t *buf, size_t len,
+                                             ClientCommand *cmd) {
+    (void)buf;
+    if (len < CMD_PACKET_BODY_OFFSET) return false;
+    cmd->type = CMD_LOBBY_RELOAD_SCENARIO;
+    cmd->u.lobbyReloadScenario._unused = 0;
+    return true;
+}
+
 /* CMD_LOBBY_PREVIEW_COMMIT — PACKET_LOBBY_PREVIEW_COMMIT
  * Wire: [header 8] (no body) */
 static bool commandEncodeLobbyPreviewCommit(const ClientCommand *cmd,
@@ -1085,6 +1106,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_LOBBY_ADD_BOT:         ok = commandEncodeLobbyAddBot(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_MAP:         ok = commandEncodeLobbySetMap(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_CANCEL:  ok = commandEncodeLobbyPreviewCancel(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_RELOAD_SCENARIO: ok = commandEncodeLobbyReloadScenario(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_COMMIT:  ok = commandEncodeLobbyPreviewCommit(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_RANDOM:  ok = commandEncodeLobbyPreviewRandom(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_KICK:            ok = commandEncodeLobbyKick(cmd, buf, bufCap, outLen); break;
@@ -1137,6 +1159,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_LOBBY_ADD_BOT:         return commandDecodeLobbyAddBot(buf, len, cmd);
         case PACKET_LOBBY_SET_MAP:         return commandDecodeLobbySetMap(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_CANCEL:  return commandDecodeLobbyPreviewCancel(buf, len, cmd);
+        case PACKET_LOBBY_RELOAD_SCENARIO: return commandDecodeLobbyReloadScenario(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_COMMIT:  return commandDecodeLobbyPreviewCommit(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_RANDOM:  return commandDecodeLobbyPreviewRandom(buf, len, cmd);
         case PACKET_LOBBY_KICK:            return commandDecodeLobbyKick(buf, len, cmd);

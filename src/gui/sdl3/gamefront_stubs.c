@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include "../gamefront.h"
 #include "input_source.h"
+#include "dialogs/imgui_mapchooser.h"  /* mapChooserMapHasScript */
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
@@ -65,3 +66,11 @@ bool inputGamepadGetScrollDirection(float *dx, float *dy) {
  * MapEditor have no controller input, so report keyboard — keeps the desktop
  * menu bar and keyboard-style dialogs. */
 InputSource inputSourceCurrent(void) { return INPUT_SOURCE_KEYBOARD; }
+
+/* The map chooser tags a map that has a script beside it. MapEditor builds
+ * the chooser without the scenario library, and has nothing to run a script
+ * with anyway, so every map reads plain there. */
+bool mapChooserMapHasScript(const char *mapPath) {
+  (void)mapPath;
+  return false;
+}

@@ -189,6 +189,10 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
  *   - Commit: free the stash; the sim already shows the previewed
  *             map, so no further broadcast is needed. */
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs);
+/* Ask the server to read the map's script again. Host-only and lobby-only
+ * at the server; what it changes takes effect at the next round. The server
+ * answers with a line addressed to the sender, whether it worked or not. */
+void clientSimNetSendLobbyReloadScenario(ClientSim *cs);
 void clientSimNetSendLobbyPreviewCommit(ClientSim *cs);
 
 /* Procedural-map preview. seedStr is a mapGenConfigToSeed-encoded

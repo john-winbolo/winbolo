@@ -1046,6 +1046,10 @@ int         clientSimGetLobbyMapListCount(const ClientSim *cs);
 const char *clientSimGetLobbyMapListName(const ClientSim *cs, int idx);
 bool        clientSimGetLobbyMapListIsFolder(const ClientSim *cs, int idx);
 int64_t     clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx);
+/* Whether the server said this map has a script beside it. False for a
+ * folder, for an index out of range, and for every entry from a server
+ * that runs no scenario library. */
+bool        clientSimGetLobbyMapListScripted(const ClientSim *cs, int idx);
 bool        clientSimGetLobbyMapListReady(const ClientSim *cs);
 const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs);
 bool        clientSimGetLobbyMapListInFlight(const ClientSim *cs);

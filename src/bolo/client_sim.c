@@ -2705,6 +2705,10 @@ int64_t clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx) {
   if (idx < 0 || idx >= cs->lobbyMapListCount) return 0;
   return cs->lobbyMapListModTime[idx];
 }
+bool clientSimGetLobbyMapListScripted(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return false;
+  return cs->lobbyMapListScripted[idx];
+}
 bool clientSimGetLobbyMapListReady(const ClientSim *cs) {
   return cs->lobbyMapListReady;
 }

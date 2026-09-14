@@ -110,6 +110,66 @@ void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx
                                     void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioReload
+ *PURPOSE:
+ *  Registers what a lobby host's reload request runs. The
+ *  sim cannot re-read a script itself — that is the scenario
+ *  library's, and the dependency points one way — so the
+ *  host leaves this behind the way it leaves the round start.
+ *
+ *  Answers true when the script was re-read, and false with
+ *  err saying why when it was not. With nothing registered
+ *  it answers false and err says there is no scenario, which
+ *  is what a lobby on a plain map gets.
+ *
+ *  What a reload changes takes effect at the next round; the
+ *  round in progress keeps what it started with.
+ *
+ *  NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioReload(ServerSim *sim,
+                                bool (*reload)(void *ctx, char *err,
+                                               size_t errLen),
+                                void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimScenarioReload
+ *PURPOSE:
+ *  Asks whoever owns the scenario to read its script again,
+ *  through the callback above. False with err filled when
+ *  there is nothing registered or the re-read failed.
+ *********************************************************/
+bool serverSimScenarioReload(ServerSim *sim, char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioMapScripted
+ *PURPOSE:
+ *  Registers the question the map lister asks of each map
+ *  it finds: has this one a script beside it. The answer
+ *  tags an entry so a player can see which maps are scripted
+ *  before picking one.
+ *
+ *  A callback rather than a call, for the reason the round
+ *  start is one: finding a script is the scenario library's
+ *  to know and the sim is below it. NULL clears it, and with
+ *  nothing registered every map answers unscripted — which is
+ *  what a build with no scenario library reports.
+ *
+ *  Registered once, where the process decides whether it runs
+ *  scripts at all, not where a scenario attaches: an attach
+ *  answers NULL for a map with no script, so registering
+ *  there would leave a plain map's server reporting every
+ *  scripted map in its directory as plain.
+ *
+ *  mapPath is the full path to the .map file, which is what
+ *  the lister holds and the wire layer does not.
+ *********************************************************/
+void serverSimSetScenarioMapScripted(ServerSim *sim,
+                                     bool (*mapScripted)(void *ctx,
+                                                         const char *mapPath),
+                                     void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
  *PURPOSE:
  *  Hands the sim the lobby a scenario asks for. The sim

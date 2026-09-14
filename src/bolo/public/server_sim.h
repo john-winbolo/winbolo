@@ -1850,6 +1850,12 @@ typedef struct {
                           mtime so the table sort still reads sensibly
                           for them. */
     int64_t size;      /* file size in bytes; 0 for folders. */
+    bool    scripted;  /* the map has a script beside it, so a round on it
+                          plays by that script. Always false for a folder,
+                          and false throughout when nothing has registered
+                          the question with serverSimSetScenarioMapScripted
+                          — a build with no scenario library reports every
+                          map plain. */
 } ServerMapEntry;
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,

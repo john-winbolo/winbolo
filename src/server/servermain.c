@@ -1725,6 +1725,12 @@ int main(int argc, char **argv) {
   if (argExist(argc, argv, "noscenarios") == TRUE) {
     scenarioHostSetEnabled(false);
   }
+  /* And the question the map lister asks of every map it finds, so the list
+     a player picks from says which maps are scripted. Registered here rather
+     than at the attach below: an attach answers NULL for a map with no
+     script, so a server whose own map is plain would report every scripted
+     map in its directory as plain. */
+  scenarioHostRegisterMapScripted(serverSim);
 
   /* A scenario script beside the map, when the map came from a file and one
      is there. No script is the ordinary case and says nothing; a script

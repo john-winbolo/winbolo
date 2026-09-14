@@ -529,6 +529,9 @@ struct ClientSim {
     char     lobbyMapListNames[LOBBY_MAP_LIST_MAX][LOBBY_MAP_LIST_NAME_LEN];
     uint8_t  lobbyMapListIsFolder[LOBBY_MAP_LIST_MAX];
     int64_t  lobbyMapListModTime[LOBBY_MAP_LIST_MAX];
+    /* The map has a script beside it on the server. False for a folder, and
+       false throughout from a server that runs no scenario library. */
+    bool     lobbyMapListScripted[LOBBY_MAP_LIST_MAX];
     bool     lobbyMapListReady;     /* true once a response arrives */
     /* Most-recently requested path (set when the client sends
      * MAP_LIST_REQ; cleared when the matching response arrives). The

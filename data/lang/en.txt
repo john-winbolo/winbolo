@@ -2143,3 +2143,6 @@ STR_DLGSETTINGS_HOSTING_SCRIPTS=Run map scripts when hosting
 STR_DLGLOBBY_SCENARIO_LBL=Scenario:
 STR_DLGLOBBY_SCRIPTS_OFF=Scripts off
 
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_RELOAD_SCENARIO=Reload script
+

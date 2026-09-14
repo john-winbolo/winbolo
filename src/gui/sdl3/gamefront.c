@@ -1693,6 +1693,11 @@ bool gameFrontSetDlgState(openingStates newState) {
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
           scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* And the question the map chooser's server list asks of each map,
+             registered beside the switch rather than at the attach: an attach
+             answers NULL for a map with no script, so hosting a plain map
+             would report every scripted map in the directory as plain. */
+          scenarioHostRegisterMapScripted(spServerSim);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
             spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -2121,6 +2126,12 @@ void gameFrontSetHostingPort(unsigned short port) {
 void gameFrontSetHostingAllowSpec(bool allow) {
   gameFrontHostingAllowSpec = allow;
   prefsSetString("HOSTING", "Allow Spectators", TRUEFALSE_TO_STR(allow));
+}
+
+/* The map chooser's question, answered by the scenario library. The editor
+   builds the chooser without that library and stubs this to false. */
+bool mapChooserMapHasScript(const char *mapPath) {
+  return scenarioHostMapHasScript(mapPath);
 }
 
 void gameFrontSetHostingScripts(bool allow) {
@@ -2973,6 +2984,7 @@ bool gameFrontSetupServer(void) {
   /* A scenario script beside the map, as on the single-player path, and the
      same host preference deciding whether it runs at all. */
   scenarioHostSetEnabled(gameFrontHostingScripts);
+  scenarioHostRegisterMapScripted(spServerSim);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
