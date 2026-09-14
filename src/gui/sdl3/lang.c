@@ -1356,8 +1356,9 @@ static const LangEntry langTable[] = {
     {2172, "Medium"},
 
     /* Bot difficulty — tagline then description, per difficulty. The
-       leading "Easy." / "Medium." / "Hard." token is coloured by the
-       lobby, so keep it first and keep the full stop. */
+       lobby colours everything up to the first full stop by difficulty,
+       so start the tagline with the difficulty word in your language and
+       end that word with a full stop. The words themselves are free. */
     {2165, "Easy. Captures pillboxes and bases, coordinates with allied bots, and plays in a steady, predictable way."},
     {2166, "Medium. Captures pillboxes and bases with its allied bots and presses an attack when it is already ahead."},
     {2167, "Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together."},

@@ -2956,7 +2956,7 @@ static void renderBotAiConfig(ClientSim *cs,
                 const LobbyBrainMeta *m = lobbyBrainMetaFor(e->name);
                 if (m && m->tagline[0] && ImGui::IsItemHovered()) {
                     ImGui::BeginTooltip();
-                    lobbyDrawTagline(m->tagline, 320.0f * s);
+                    lobbyDrawTagline(m->tagline, 320.0f * s, -1);
                     ImGui::EndTooltip();
                 }
                 if (sel) ImGui::SetItemDefaultFocus();

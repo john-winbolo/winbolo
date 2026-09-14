@@ -384,7 +384,7 @@ const LobbyBrainMeta *lobbyBrainMetaFor(const char *name);
  * derived from the name and remembered from then on. */
 void lobbyBotBrainTagColors(ClientSim *cs, int slot,
                             ImU32 *bg, ImU32 *fg, ImU32 *border);
-void lobbyDrawTagline(const char *tag, float wrapPosX);
+void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty);
 void lobbyGearTooltip(ClientSim *cs, int slot, float s);
 /* Per-difficulty wording (lang ids) and the bot's brain name without its
  * version suffix. Difficulty is a BOT_DIFFICULTY_* value; anything out of

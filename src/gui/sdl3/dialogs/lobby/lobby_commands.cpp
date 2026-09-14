@@ -353,26 +353,29 @@ void lobbyBotBrainBaseName(ClientSim *cs, int slot, char *out, size_t outSz) {
     brainListSplitVersion(bl->entries[cur].name, out, outSz);
 }
 
-/* Render a one-line tagline, colouring a leading "Easy." / "Medium." /
- * "Hard." token (green / amber / red) so the difficulty reads at a glance.
+/* Render a one-line tagline. When `difficulty` is a BOT_DIFFICULTY_*
+ * value, the leading token (up to and including the first full stop) is
+ * coloured green / amber / red for that difficulty; the colour comes from
+ * the index, never from the words, so a translated tagline keeps it. Pass
+ * -1 for a free-form tagline (a brain's about.txt) to draw it flat.
  * wrapPosX > 0 wraps the remainder at that window-local x. */
-void lobbyDrawTagline(const char *tag, float wrapPosX) {
+void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty) {
     if (!tag || !tag[0]) return;
-    /* Token, its length, its colour — matched against the START of the
-     * tagline, which is where the difficulty word always sits. */
-    static const struct { const char *tok; int len; ImVec4 col; } kTokens[] = {
-        { "Easy.",   5, ImVec4(0.40f, 0.82f, 0.45f, 1.0f) },
-        { "Medium.", 7, ImVec4(0.93f, 0.75f, 0.35f, 1.0f) },
-        { "Hard.",   5, ImVec4(0.95f, 0.52f, 0.38f, 1.0f) },
-    };
     const char *rest = tag;
-    for (size_t i = 0; i < sizeof(kTokens) / sizeof(kTokens[0]); i++) {
-        if (strncmp(tag, kTokens[i].tok, (size_t)kTokens[i].len) != 0) continue;
-        ImGui::TextColored(kTokens[i].col, "%s", kTokens[i].tok);
-        ImGui::SameLine(0.0f, 4.0f);
-        rest = tag + kTokens[i].len;
-        while (*rest == ' ') rest++;
-        break;
+    if (difficulty >= 0) {
+        ImVec4 col;
+        switch (difficulty) {
+            case BOT_DIFFICULTY_EASY:   col = ImVec4(0.40f, 0.82f, 0.45f, 1.0f); break;
+            case BOT_DIFFICULTY_MEDIUM: col = ImVec4(0.93f, 0.75f, 0.35f, 1.0f); break;
+            default:                    col = ImVec4(0.95f, 0.52f, 0.38f, 1.0f); break;
+        }
+        const char *dot = strchr(tag, '.');
+        if (dot != NULL && dot != tag) {
+            ImGui::TextColored(col, "%.*s", (int)(dot + 1 - tag), tag);
+            ImGui::SameLine(0.0f, 4.0f);
+            rest = dot + 1;
+            while (*rest == ' ') rest++;
+        }
     }
     if (wrapPosX > 0.0f) ImGui::PushTextWrapPos(wrapPosX);
     ImGui::TextUnformatted(rest);
@@ -412,7 +415,7 @@ void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
         ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_BOTCFG_CURRENTLY, &cargs));
         if (langLevels) {
             lobbyDrawTagline(langGetText(lobbyBotDifficultyTaglineId((uint8_t)level)),
-                             320.0f * s);
+                             320.0f * s, level);
         }
     }
     ImGui::EndTooltip();
