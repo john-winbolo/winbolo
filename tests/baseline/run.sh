@@ -186,6 +186,37 @@ await_ds_port() {
   return 1
 }
 
+# How long a scenario waits on one of its clients before calling it hung. Only
+# has to be shorter than the CTest timeout (60s); a healthy client finishes in
+# a few seconds. Override for a quicker check.
+CLIENT_WAIT_LIMIT="${CLIENT_WAIT_LIMIT:-40}"
+
+# Wait for a scenario client to exit, but not forever.
+#
+# A client that stops making progress otherwise parks the scenario in `wait`
+# until CTest's timeout kills the whole tree, and that failure arrives with no
+# output whatsoever: the scenario name has been echoed without a newline, so
+# the partial line dies in the buffer, and the log says neither which process
+# stopped nor where. Kill it at the deadline and name it instead. Returns 124,
+# the usual timed-out status, so the caller's CRASH line carries it.
+await_client() {
+  local pid="$1"
+  local label="$2"
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$CLIENT_WAIT_LIMIT" ]; then
+      echo
+      echo "  HUNG: $label did not exit within ${CLIENT_WAIT_LIMIT}s; killing it"
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
 run() {
   local name="$1"
   local map="$2"
@@ -549,8 +580,8 @@ run_events_cmd_udp_two_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -627,8 +658,8 @@ run_events_cmd_udp_two_clients_lobby() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -712,9 +743,9 @@ run_events_cmd_udp_three_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" "$c3_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0 c3_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
-  wait "$c3_pid" || c3_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
+  await_client "$c3_pid" "client 3" || c3_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -787,8 +818,8 @@ run_events_udp_two_clients_ticklimit() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -873,8 +904,8 @@ run_captures_udp_two_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
