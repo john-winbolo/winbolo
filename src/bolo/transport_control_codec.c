@@ -488,7 +488,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
- *   [overviewWindow 1] [lineOfSight 1]
+ *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1]
  *
  * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
@@ -501,9 +501,23 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
  * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
- * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1). */
+ * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
+ * + smartPingsOff(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1 + 1)
+
+/* The scenario tail, written only when the lobby has one. A lobby with no
+ * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
+ * more, which is what keeps a plain map's body the length it has always
+ * been. source(1) + extraTeams(1), then the three strings, each a one-byte
+ * length and that many bytes with no terminator — the same shape the team
+ * name and the bot name use in this file — and last the base game type(1),
+ * appended behind the strings so none of the offsets ahead of it move. */
+#define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
+    (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
+           + (1 + (LOBBY_SCENARIO_FILE_LEN - 1))                           \
+           + (1 + (LOBBY_SCENARIO_DESC_LEN - 1))                           \
+           + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -511,7 +525,20 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
                                             uint8_t *buf, size_t bufCap,
                                             size_t *outLen) {
     (void)recipient;
-    const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD;
+    const bool hasScenario =
+        evt->u.lobbySettings.scenarioSource != lobbyScenarioNone;
+    const size_t scnNameLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioName,
+                  LOBBY_SCENARIO_NAME_LEN - 1) : 0;
+    const size_t scnFileLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioFileName,
+                  LOBBY_SCENARIO_FILE_LEN - 1) : 0;
+    const size_t scnDescLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioDescription,
+                  LOBBY_SCENARIO_DESC_LEN - 1) : 0;
+    const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD
+        + (hasScenario ? (2 + 3 + 1 + scnNameLen + scnFileLen + scnDescLen)
+                       : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     memset(buf + pos, 0, MAP_STR_SIZE);
@@ -554,9 +581,49 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = (uint8_t)evt->u.lobbySettings.voiceMode;
     buf[pos++] = evt->u.lobbySettings.lobbyOverviewWindow;
     buf[pos++] = evt->u.lobbySettings.lobbyLineOfSight;
+    /* Negative sense on the wire: 1 bans smart pings, 0 allows them. The
+     * tail is append-only and a decoder leaves zero for a byte the sender
+     * never wrote, so allowing them has to be the zero. */
+    buf[pos++] = evt->u.lobbySettings.lobbySmartPingsOff ? 1 : 0;
+    /* Nothing past here for a lobby with no scenario. */
+    if (hasScenario) {
+        buf[pos++] = (uint8_t)evt->u.lobbySettings.scenarioSource;
+        buf[pos++] = evt->u.lobbySettings.scenarioExtraTeams ? 1 : 0;
+        buf[pos++] = (uint8_t)scnNameLen;
+        if (scnNameLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioName, scnNameLen);
+            pos += scnNameLen;
+        }
+        buf[pos++] = (uint8_t)scnFileLen;
+        if (scnFileLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioFileName, scnFileLen);
+            pos += scnFileLen;
+        }
+        buf[pos++] = (uint8_t)scnDescLen;
+        if (scnDescLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioDescription,
+                   scnDescLen);
+            pos += scnDescLen;
+        }
+        /* Behind the strings, so the offsets above keep the places they
+           already had. The game underneath a scripted round: a client
+           resolves gameScripted through this to know what its first life is
+           handed before any snapshot arrives. */
+        buf[pos++] = evt->u.lobbySettings.scenarioBaseGame;
+    }
     *outLen = pos;
     return ENCODE_OK;
 }
+
+/* Compile-time guarantee that the lobby-settings worst case — every optional
+ * field written and a full-length scenario tail behind them — fits
+ * MAX_CONTROL_PACKET, which keeps the runtime ENCODE_OVERFLOW path in the
+ * body encoder unreachable as long as the three scenario strings keep their
+ * lengths. */
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + LOBBY_SETTINGS_WIRE_PAYLOAD +
+        LOBBY_SETTINGS_WIRE_SCENARIO_MAX <= MAX_CONTROL_PACKET,
+    lobby_settings_worst_case_fits_MAX_CONTROL_PACKET);
 
 static EncodeResult encodeLobbySettings(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
@@ -2257,6 +2324,56 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyLineOfSight = buf[pos++];
+    }
+    /* Absent means the sender predates the setting, and every such server
+     * accepted smart pings — so the zero this arm leaves in place is the
+     * right answer, not a guess. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbySmartPingsOff = buf[pos++] ? true : false;
+    }
+    /* The scenario tail. A body that stops here came from a lobby with no
+     * scenario, and the memset above has already left every field of it
+     * empty with the source reading as lobbyScenarioNone. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioSource =
+            (LobbyScenarioSource)buf[pos++];
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioExtraTeams = buf[pos++] ? true : false;
+    }
+    if (len >= pos + 1) {
+        uint8_t nameLen = buf[pos++];
+        if (nameLen > LOBBY_SCENARIO_NAME_LEN - 1) return false;
+        if (len < pos + nameLen) return false;
+        if (nameLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioName, buf + pos, nameLen);
+            pos += nameLen;
+        }
+        outEvt->u.lobbySettings.scenarioName[nameLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        uint8_t fileLen = buf[pos++];
+        if (fileLen > LOBBY_SCENARIO_FILE_LEN - 1) return false;
+        if (len < pos + fileLen) return false;
+        if (fileLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioFileName, buf + pos, fileLen);
+            pos += fileLen;
+        }
+        outEvt->u.lobbySettings.scenarioFileName[fileLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        uint8_t descLen = buf[pos++];
+        if (descLen > LOBBY_SCENARIO_DESC_LEN - 1) return false;
+        if (len < pos + descLen) return false;
+        if (descLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioDescription, buf + pos,
+                   descLen);
+            pos += descLen;
+        }
+        outEvt->u.lobbySettings.scenarioDescription[descLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioBaseGame = buf[pos++];
     }
     return true;
 }

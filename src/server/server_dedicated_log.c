@@ -119,11 +119,6 @@ static bool s_mapMsgPending = FALSE;
 static bool s_settingsPending = FALSE;
 static char s_pendingMapMsg[256];
 
-/* Bytes of settings the log_GameSettings blob carries. The layout is written
- * out in docs/replay-format.md; it is append-only, so a later field lands
- * after byte 13 and this grows with it. */
-#define LOG_SETTINGS_PAYLOAD_LEN 14
-
 /* The settings last written to the open log. CTRL_LOBBY_SETTINGS is published
  * for map changes, phase transitions and joins as well as real edits, so the
  * drained lobby-edit path compares against this and writes nothing when the
@@ -309,60 +304,6 @@ static void serverDedicatedLogRenameForMap(ServerSim *sim) {
         s_logFileName[512 - 1] = '\0';
         fprintf(stderr, "Renamed log to %s (played map)\n", s_logFileName);
     }
-}
-
-/* Build the settings blob in the pascal-string form logAddEvent takes: out[0]
- * is the byte count, out[1..] the fields. Every multi-byte value is
- * big-endian, matching the framing the serializer writes around it. The
- * values are read straight off the sim, so this records what the server is
- * running with rather than what the header captured when the file opened. */
-static void serverDedicatedLogBuildSettings(ServerSim *sim, char *out) {
-    uint16_t pillDecay = sim->viewDecaySecs[viewCategoryPill];
-    uint16_t baseDecay = sim->viewDecaySecs[viewCategoryBase];
-    uint16_t allyDecay = sim->viewDecaySecs[viewCategoryAlly];
-    uint16_t timeMinutes = serverSimGetTimeMinutes(sim);
-    BYTE flags = 0;
-
-    if (sim->sim.hiddenMines)       flags |= 0x01u;
-    if (serverSimGetTimeLimit(sim)) flags |= 0x02u;
-    if (sim->autoLockOnGameStart)   flags |= 0x04u;
-    if (sim->ranked)                flags |= 0x08u;
-    /* Whether a password is set, never the password text. */
-    if (sim->hasPassword)           flags |= 0x10u;
-    if (sim->allowNewPlayers)       flags |= 0x20u;
-    /* One bit each. The overview window has three values now and this bit
-     * says only that it is not the expanded one; the viewer tells Classic
-     * from None by the classic-mode bit in out[1], which is right for every
-     * case but a host who picked None without classic mode. Widening the
-     * blob for that would version a format on disk, so it stays as it is. */
-    if (sim->overviewWindow != (BYTE)overviewWindowExpanded) flags |= 0x40u;
-    if (sim->lineOfSight != (BYTE)lineOfSightOff)           flags |= 0x80u;
-
-    out[0]  = (char)LOG_SETTINGS_PAYLOAD_LEN;
-    /* Same packing as INFO_PACKET.view_policies, so this byte reads the
-     * same wherever it is carried. The overview window and line of sight
-     * ride the flags byte here rather than INFO's second view byte. */
-    out[1]  = (char)infoPacketPackViewPolicies(sim->viewPolicy[viewCategoryPill],
-                                               sim->viewPolicy[viewCategoryBase],
-                                               sim->viewPolicy[viewCategoryAlly],
-                                               sim->classicMode,
-                                               sim->alliesInTrees);
-    out[2]  = (char)((pillDecay >> 8) & 0xFF);
-    out[3]  = (char)(pillDecay & 0xFF);
-    out[4]  = (char)((baseDecay >> 8) & 0xFF);
-    out[5]  = (char)(baseDecay & 0xFF);
-    out[6]  = (char)((allyDecay >> 8) & 0xFF);
-    out[7]  = (char)(allyDecay & 0xFF);
-    out[8]  = (char)gameTypeGet(&sim->sim.game);
-    out[9]  = (char)sim->botAiType;
-    out[10] = (char)flags;
-    out[11] = (char)((timeMinutes >> 8) & 0xFF);
-    out[12] = (char)(timeMinutes & 0xFF);
-    /* The blob carries 16 bits of the lock mask. No lock uses bit 16 or
-     * above, so nothing is lost; widening the blob would version the
-     * format for a value that is still zero. */
-    out[13] = (char)((sim->serverLocks >> 8) & 0xFF);
-    out[14] = (char)(sim->serverLocks & 0xFF);
 }
 
 /* Write the current settings to the log. `force` is TRUE where the record has

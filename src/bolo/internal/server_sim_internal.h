@@ -231,6 +231,14 @@ struct ServerSim {
     uint8_t  lineOfSight;          /* LineOfSightMode — what blocks sight
                                     * inside that block. Off (0) is today's
                                     * behaviour. */
+    bool     smartPingsOff;        /* host banned smart pings; CMD_PING is
+                                    * refused while it is set. Stored in the
+                                    * negative sense on purpose, matching
+                                    * LST_SMART_PINGS_OFF: false — the value
+                                    * a zeroed struct and an absent wire byte
+                                    * both give — has to mean pings ALLOWED,
+                                    * because that is what every build before
+                                    * this one did. */
     ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
                                     * startup, read by the advertisement
                                     * paths. */
@@ -279,6 +287,7 @@ struct ServerSim {
         bool       alliesInTrees;
         uint8_t    overviewWindow;
         uint8_t    lineOfSight;
+        bool       smartPingsOff;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running
@@ -684,13 +693,15 @@ struct ServerSim {
      * Ready-click crash was exactly this: botManagerOnGameStart walked a
      * half-removed bot.)
      *
-     * scenarioSetupWindow is open across the round-start callback, at a
-     * point in the start where the world and the roster are already
-     * built. A start is not a settled point and startInProgress refuses
-     * every op, but the one thing that guard exists for is the roster
-     * edit re-entering the all-ready detector mid-start. So while the
-     * window is open the funnel admits every op except the six roster
-     * handlers, which keep refusing.
+     * scenarioSetupWindow is open across each of the two calls a start
+     * makes into the scenario: the boot, ahead of the start batch, where
+     * the round's own Lua state and its rules come into force, and the
+     * round-start callback after it, at a point where the world and the
+     * roster are already built. A start is not a settled point and
+     * startInProgress refuses every op, but the one thing that guard
+     * exists for is the roster edit re-entering the all-ready detector
+     * mid-start. So while the window is open the funnel admits every op
+     * except the six roster handlers, which keep refusing.
      *
      * scenarioActing is who caused what the engine is about to publish.
      * Neither event channel carries an actor — a ControlEvent has no
@@ -708,8 +719,32 @@ struct ServerSim {
     bool                   startInProgress;
     void                 (*scenarioTick)(void *ctx);
     void                  *scenarioTickCtx;
+    /* The round's own state, booted before the start places anything, so
+       the seats already in the round are placed and armed by the round
+       being started rather than by the one before it. */
+    void                 (*scenarioRoundBoot)(void *ctx);
+    void                  *scenarioRoundBootCtx;
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
+    /* Asked of each map the lister finds, so an entry can say whether it is
+       scripted. NULL means nothing registered and every map reads plain. */
+    bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);
+    void                  *scenarioMapScriptedCtx;
+    /* What a lobby host's reload request runs. NULL means no scenario is
+       attached and a request answers so. */
+    bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);
+    void                  *scenarioReloadCtx;
+    /* One second at the sim's tick rate: how long a taken reload holds the
+       next one off. The read, the parse and the check behind a reload are
+       all disk and Lua work on the thread a lobby command arrives on. */
+#define SCENARIO_RELOAD_GAP_TICKS   GAME_NUMGAMETICKS_SEC
+    /* The tick a reload was last taken on, PLUS ONE, so 0 reads as "none
+       yet" — tick 0 is a real tick. A request inside
+       SCENARIO_RELOAD_GAP_TICKS of it is refused before the file is read,
+       so a host holding the button down, or a datagram carrying several
+       commands, costs one read of the script a second. Ticks, not wall
+       clock, and the lobby advances them like any other state. */
+    uint32_t               scenarioReloadTick;
     void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
                                                const char *mapPath);
     void                  *scenarioMapChangedCtx;
@@ -721,6 +756,32 @@ struct ServerSim {
      * scenarioLobbyValid false means an ordinary lobby. */
     ScnLobbyTemplate       scenarioLobby;
     bool                   scenarioLobbyValid;
+    /* What the attached scenario is called, where it came from, and what it
+     * says about itself — the lobby's description of it, which the settings
+     * event carries to every client. Held apart from the template above
+     * because the template is seating: it reconciles and re-seats at points
+     * that have nothing to do with identity, and a scenario the host picks
+     * for itself will bring its identity from somewhere the map's template
+     * does not. source lobbyScenarioNone means no scenario is attached, and
+     * is the one thing every other site tests. */
+    struct {
+        LobbyScenarioSource source;
+        char                name[LOBBY_SCENARIO_NAME_LEN];
+        char                fileName[LOBBY_SCENARIO_FILE_LEN];
+        char                description[LOBBY_SCENARIO_DESC_LEN];
+        bool                extraTeams;
+    } scenarioIdentity;
+    /* What the lobby was set to when a scripted map displaced it: the game
+     * type gameScripted took the place of, the ranked flag a scripted round
+     * cannot run under, and the AI policy and bot AI type that aiNone was
+     * moved off. A commit with no scenario puts all four back and empties
+     * them again. preScenarioGameType is the one that says whether anything
+     * is held: 0 is no game type, which no lobby is ever on, and is what
+     * every lobby that has not had a scripted map committed into it reads. */
+    gameType               preScenarioGameType;
+    bool                   preScenarioRanked;
+    uint8_t                preScenarioAiPolicy;
+    aiType                 preScenarioAiType;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

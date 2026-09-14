@@ -1169,14 +1169,33 @@ void serverSimTick(ServerSim *sim) {
            it does on a running frame. */
         sim->mapEventCount = 0;
         simRunHalfStep(sim);
+        /* The half-step above is where a countdown runs out, so the state can
+         * read running from here on and the rest of this frame is the round's
+         * first. Terrain the hook or the fill writes then belongs to the round
+         * and is recorded the way a running frame records it. The states that
+         * are still not running publish no map events — a lobby client is
+         * handed the whole map on download and again at the start — so the
+         * callback stays off for them. */
+        if (sim->state == serverStateRunning) {
+            mapSetChangeCallback(simMapChangeCallback);
+        }
         if (sim->scenarioTick != NULL) {
             sim->scenarioTick(sim->scenarioTickCtx);
         }
-        /* The non-running states run no simulation and publish no map
-         * events — a lobby client is handed the whole map on download and
-         * again at the start — so the callback stays off here and a fill is
-         * paced only so one frame's work stays one frame's work. */
+        /* A fill is paced here only so one frame's work stays one frame's
+         * work. */
         serverSimScenarioDrainFill(sim);
+        mapSetChangeCallback(NULL);
+        if (sim->state == serverStateRunning) {
+            /* The round started in this frame, so each slot's copy of the
+             * terrain takes the frame's changes here, as it does at the end of
+             * a running frame. The caller sends the same events straight
+             * after this returns, and the next frame's clear above is what
+             * would otherwise take them: a square sent to a client with no
+             * copy advanced for it reads back as a checksum that never
+             * settles. */
+            serverSimShadowTick(sim);
+        }
     }
 }
 

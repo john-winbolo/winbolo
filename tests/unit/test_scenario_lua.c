@@ -67,6 +67,9 @@
  * run_scenario_lua_spawn_bot_refuses_bad_start
  *                                      — and the same numbers in a spawn's
  *                                        table, where zero keeps its meaning
+ * run_scenario_lua_game_type_resolves_scripted
+ *                                      — a scripted round reads back the base
+ *                                        game it plays, never "scripted"
  *
  * and, run from the lobby case because it is the same subject: a row with a
  * state guard answers the state before its own arguments, while a row over
@@ -1977,6 +1980,56 @@ int run_scenario_lua_spawn_bot_refuses_bad_start(void) {
     UT_ASSERT_MSG(
         strcmp(code, scenarioLuaResultName(SCN_OP_NO_SUCH_ITEM)) != 0,
         "a spawn with no start answered '%s'", code);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 18. game_type answers a game the loadout table holds ─────────── */
+
+/* A scripted round's own game type is gameScripted, and a script that feeds
+   game.game_type() into a spawn's loadout would have that word refused: the
+   loadout table holds "open", "tournament" and "strict" and nothing else. So
+   the row resolves, and a round that declared no base game reads "open".
+   With a base game declared the row reads that instead. */
+int run_scenario_lua_game_type_resolves_scripted(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    char             word[64];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    serverSimSetGameType(sim, gameScripted);
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(slRun(L, "word = game.game_type()\n", err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+    slGlobalStr(L, "word", word, sizeof(word));
+    UT_ASSERT_MSG(strcmp(word, "open") == 0,
+                  "a scripted round declaring no game read '%s'", word);
+
+    /* The base game the lobby template carried reaches the row the same way
+       it reaches the loadout and the start picker. */
+    serverSimGetGameSim(sim)->scenarioBaseGame = gameStrictTournament;
+    UT_ASSERT_MSG(slRun(L, "word = game.game_type()\n", err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+    slGlobalStr(L, "word", word, sizeof(word));
+    UT_ASSERT_MSG(strcmp(word, "strict") == 0,
+                  "a scripted round declaring strict read '%s'", word);
+
+    /* And a table that names one of its own is still what the script reads,
+       resolve or no resolve. */
+    snprintf(m.game, sizeof(m.game), "tournament");
+    UT_ASSERT_MSG(slRun(L, "word = game.game_type()\n", err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+    slGlobalStr(L, "word", word, sizeof(word));
+    UT_ASSERT_MSG(strcmp(word, "tournament") == 0,
+                  "a table naming tournament read '%s'", word);
 
     lua_close(L);
     serverSimDestroy(sim);

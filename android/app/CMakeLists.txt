@@ -256,6 +256,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/ping_overlay.cpp
     ${PROJ_ROOT}/src/gui/sdl3/ping_icons.c
     ${PROJ_ROOT}/src/gui/sdl3/ping_marker.c
+    ${PROJ_ROOT}/src/gui/sdl3/ring_band.c
     ${PROJ_ROOT}/src/gui/sdl3/build_cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c

@@ -273,6 +273,24 @@ static void scnCheckApi(const ScenarioManifest *m, ScnValidateResult *out) {
     }
 }
 
+/* The game type the table asks for. The attach reads it through the same
+ * word set a spawn op's loadout takes, and a word that set does not hold is
+ * dropped there without a sound — the round plays open and the author is
+ * never told the line did nothing. */
+static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
+    int base;
+
+    if (m->game[0] == '\0') {
+        return;
+    }
+    if (!scenarioLuaLoadoutFromWord(m->game, &base)) {
+        scnIssueAdd(out, "game",
+                    "game is '%s', and the game types are 'open', "
+                    "'tournament' and 'strict'",
+                    m->game);
+    }
+}
+
 /* The template the lobby is seated from: the human cap, and per team the
  * number it is, the bots it asks for and the brain it names them with. */
 static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
@@ -542,6 +560,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     out->haveManifest = true;
 
     scnCheckApi(&out->manifest, out);
+    scnCheckGame(&out->manifest, out);
     scnCheckLobby(&out->manifest, out);
     /* The two that read a map. Without one the table can still be checked for
        everything it says about itself, which is what an editor holding a

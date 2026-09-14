@@ -1919,6 +1919,74 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
     serverSimScenarioSeatLobby(sim);
 }
 
+/* The lobby's own settings, brought into line with whatever scenario is
+   attached now. Both points a lobby first learns its scenario need this: a
+   map commit, which calls it straight after the map change above, and a
+   server or headless run booting on a scripted map, which attaches and seats
+   without any commit and would otherwise never reach it.
+
+   The game type: a scripted round plays by what its scenario declared, which
+   gameTypeResolve reads, so the type itself says scripted. The type the
+   lobby was on is remembered rather than recomputed, because a host may have
+   picked one by hand and the operator's startup default — what
+   serverSimResetLobbyToDefaults restores — is not it. On a boot the type the
+   lobby was on is the operator's own -gametype, which is what a plain map
+   committed later gives back. Only the first scripted commit in a run of
+   them remembers, so scripted map after scripted map still gives the lobby's
+   own type back at the end.
+
+   Ranked and a scenario do not go together: a scripted round is not a
+   measured one. The settings handler refuses ranked while a scenario is
+   attached, and this is the other direction — ranked already on when the
+   scenario arrives.
+
+   The AI policy: a scenario fields its own bots, and aiNone empties the
+   roster of them, so a policy that allows none is moved up to the one that
+   allows them plainly. A policy that already allows bots is the operator's
+   or the host's and is left alone.
+
+   All three are remembered and all three are given back, so a lobby that was
+   ranked with no bots is ranked with no bots again once a plain map is
+   committed. They are remembered together, under the same test that decides
+   the game type: the lobby already being on gameScripted is what says a
+   scenario displaced these settings earlier in this run, and the values from
+   the first scripted commit are the ones a plain map has to give back. */
+void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
+    if (sim == NULL) return;
+    if (sim->scenarioIdentity.source != lobbyScenarioNone) {
+        if (gameTypeGet(&sim->sim.game) != gameScripted) {
+            sim->preScenarioGameType = gameTypeGet(&sim->sim.game);
+            sim->preScenarioRanked   = serverSimGetRanked(sim);
+            sim->preScenarioAiPolicy = sim->aiPolicy;
+            sim->preScenarioAiType   = serverSimGetBotAiType(sim);
+            serverSimSetGameType(sim, gameScripted);
+        }
+        if (serverSimGetRanked(sim)) {
+            serverSimSetRanked(sim, false);
+        }
+        if (serverSimGetBotAiType(sim) == aiNone) {
+            serverSimSetAiPolicy(sim, (uint8_t)aiYes);
+            serverSimSetBotAiType(sim, aiYes);
+        }
+    } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
+        /* Nothing held means a lobby that reached gameScripted without going
+           through the arm above; there is no earlier state to give back, so
+           the type falls to open and the other two stay as they are. */
+        if (sim->preScenarioGameType != (gameType)0) {
+            serverSimSetGameType(sim, sim->preScenarioGameType);
+            serverSimSetRanked(sim, sim->preScenarioRanked);
+            serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
+            serverSimSetBotAiType(sim, sim->preScenarioAiType);
+        } else {
+            serverSimSetGameType(sim, gameOpen);
+        }
+        sim->preScenarioGameType = (gameType)0;
+        sim->preScenarioRanked   = false;
+        sim->preScenarioAiPolicy = 0;
+        sim->preScenarioAiType   = aiNone;
+    }
+}
+
 /* Put one change on the queue. The one past the last is refused rather than
  * displacing something already accepted: a script told QUEUED has been
  * promised that change. */
@@ -1970,9 +2038,14 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
          startsIsActive(&sim->sim.ss, (BYTE)(p->start + 1)) == FALSE)) {
         return SCN_OP_RANGE;
     }
-    /* The loadout is the spawnLoadout policy's until an override exists;
-       a value that asks for one is refused rather than quietly dropped. */
-    if (p->loadout != 0) {
+    /* A named loadout is one of the game types the spawn's loadout words
+       hold. Anything else is refused here rather than reaching the tank as a
+       game type the engine has no amounts written for; 0 leaves the answer to
+       the spawn-loadout policy. */
+    if (p->loadout != 0 &&
+        p->loadout != (BYTE)gameOpen &&
+        p->loadout != (BYTE)gameTournament &&
+        p->loadout != (BYTE)gameStrictTournament) {
         return SCN_OP_RANGE;
     }
     /* The init table reaches a Lua VM, so every string in it must end inside
@@ -2187,8 +2260,15 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
         startsIsActive(&sim->sim.ss, (BYTE)(p->start + 1)) != FALSE) {
         sim->sim.scenarioStartIdx[slot] = p->start;
     }
+    /* And a named loadout goes into the scenario's own loadout slot, which
+       the spawn-loadout callback reads ahead of the policy and consumes: it
+       is for the tank this spawn builds, not a property of the seat. */
+    if (p->loadout != 0) {
+        sim->sim.scenarioSpawnLoadout[slot] = p->loadout;
+    }
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, &p->init)) {
         sim->sim.scenarioStartIdx[slot] = MAX_STARTS;
+        sim->sim.scenarioSpawnLoadout[slot] = 0;
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                     "scenario: queued bot spawn for slot %d would not start",
                     (int)slot);
@@ -2690,11 +2770,14 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
     sim->sim.rules = copy;
     scenarioRecordRuleSet(p->rule, written);
     scenarioClampWorldToRules(sim);
-    /* Held while the setup window is open. The round start publishes the
-       table itself a few lines after the callback returns, and that publish
-       carries every field, so a scenario setting a dozen rules there would
-       otherwise send a dozen control events where one says the same thing.
-       Outside the window no publish follows, so the change states itself. */
+    /* Held while the setup window is open, which covers both the boot the
+       start makes ahead of its batch — where a script's own rules table is
+       applied — and the round-start callback after it. The start publishes
+       the table itself at its end, and that publish carries every field, so
+       a scenario setting a dozen rules there would otherwise send a dozen
+       control events where one says the same thing, and a round would state
+       its table twice. Outside the window no publish follows, so the change
+       states itself. */
     if (scenarioRuleIsCarried(p->rule) && !sim->scenarioSetupWindow) {
         serverSimPublishSimRules(sim);
     }
@@ -2803,14 +2886,15 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
      * state are all being rebuilt, so nothing may be written until it
      * finishes.
      *
-     * The setup window is the exception. It is open only across the
-     * round-start callback, which the start makes once the world, the
-     * tanks and the roster are built and the state already reads
-     * running, so an op issued from there has settled state to work on.
-     * The six roster ops are the exception to that: what the guard
-     * exists for is a roster edit re-entering the all-ready detector,
-     * which is as true inside the window as outside it, so they keep
-     * their refusal either way. */
+     * The setup window is the exception. It is open across each of the
+     * two calls a start makes into the scenario — the boot, where the
+     * round's state and its rules come into force ahead of the start
+     * batch, and the round-start callback the start makes once the
+     * world, the tanks and the roster are built and the state already
+     * reads running. The six roster ops are the exception to that: what
+     * the guard exists for is a roster edit re-entering the all-ready
+     * detector, which is as true inside the window as outside it, so
+     * they keep their refusal either way. */
     if (sim->startInProgress &&
         (!sim->scenarioSetupWindow || scenarioOpIsRoster(op->type))) {
         return SCN_OP_WRONG_STATE;
@@ -2962,11 +3046,54 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
     sim->scenarioTickCtx = ctx;
 }
 
+void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
+                                   void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioRoundBoot = roundBoot;
+    sim->scenarioRoundBootCtx = ctx;
+}
+
 void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx),
                                     void *ctx) {
     if (sim == NULL) return;
     sim->scenarioRoundStart = roundStart;
     sim->scenarioRoundStartCtx = ctx;
+}
+
+void serverSimSetScenarioReload(ServerSim *sim,
+                                bool (*reload)(void *ctx, char *err,
+                                               size_t errLen),
+                                void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioReload = reload;
+    sim->scenarioReloadCtx = ctx;
+}
+
+bool serverSimScenarioReload(ServerSim *sim, char *err, size_t errLen) {
+    if (err != NULL && errLen > 0) err[0] = '\0';
+    if (sim == NULL || sim->scenarioReload == NULL) {
+        if (err != NULL && errLen > 0) {
+            snprintf(err, errLen, "No scenario is attached to this map");
+        }
+        return false;
+    }
+    return sim->scenarioReload(sim->scenarioReloadCtx, err, errLen);
+}
+
+void serverSimSetScenarioMapScripted(ServerSim *sim,
+                                     bool (*mapScripted)(void *ctx,
+                                                         const char *mapPath),
+                                     void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioMapScripted = mapScripted;
+    sim->scenarioMapScriptedCtx = ctx;
+}
+
+bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
+    if (sim == NULL || sim->scenarioMapScripted == NULL || mapPath == NULL) {
+        return false;
+    }
+    return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
 }
 
 void serverSimSetScenarioMapChanged(ServerSim *sim,
@@ -2985,6 +3112,9 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
     if (t == NULL) {
         memset(&sim->scenarioLobby, 0, sizeof(sim->scenarioLobby));
         sim->scenarioLobbyValid = false;
+        /* A plain map committed after a scripted one must not keep the old
+           scenario's base game type. */
+        sim->sim.scenarioBaseGame = (gameType)0;
         return;
     }
     sim->scenarioLobby = *t;
@@ -2992,6 +3122,57 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
         sim->scenarioLobby.numTeams = MAX_TANKS;
     }
     sim->scenarioLobbyValid = true;
+    /* The one value on the template the sim core reads directly, so it is
+       kept where the spawn and start paths can see it without a ServerSim. */
+    sim->sim.scenarioBaseGame = (gameType)t->baseGameType;
+}
+
+/* One of the three identity strings, copied with every control character
+   turned into a space. The text comes out of a Lua table an author wrote and
+   is drawn as a single wrapped block: the lobby draws the description inside
+   a panel of a fixed height, so a newline in it grows the panel past its
+   bounds. Done here rather than in the decoder, so the headless log and the
+   lobby read the same text. The length does not change: each byte is
+   replaced, never dropped. */
+static void scnCopyIdentityText(char *dst, size_t dstLen, const char *src) {
+    size_t i;
+
+    if (dstLen == 0) {
+        return;
+    }
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+    for (i = 0; i + 1 < dstLen && src[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)src[i];
+        dst[i] = (c < 0x20 || c == 0x7F) ? ' ' : (char)c;
+    }
+    dst[i] = '\0';
+}
+
+void serverSimSetScenarioIdentity(ServerSim *sim,
+                                  LobbyScenarioSource source,
+                                  const char *name,
+                                  const char *fileName,
+                                  const char *description,
+                                  bool extraTeams) {
+    if (sim == NULL) return;
+    memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
+    if (source == lobbyScenarioNone) {
+        /* A detach, or a map with nothing beside it. Everything else the
+           caller passed goes with it rather than being kept beside a source
+           that says there is no scenario. */
+        return;
+    }
+    sim->scenarioIdentity.source     = source;
+    sim->scenarioIdentity.extraTeams = extraTeams;
+    scnCopyIdentityText(sim->scenarioIdentity.name,
+                        sizeof(sim->scenarioIdentity.name), name);
+    scnCopyIdentityText(sim->scenarioIdentity.fileName,
+                        sizeof(sim->scenarioIdentity.fileName), fileName);
+    scnCopyIdentityText(sim->scenarioIdentity.description,
+                        sizeof(sim->scenarioIdentity.description), description);
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

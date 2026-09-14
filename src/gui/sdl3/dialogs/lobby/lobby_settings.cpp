@@ -1157,17 +1157,44 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             langGetText(STR_DLGGAMESETUP_RADIO1),
             langGetText(STR_DLGGAMESETUP_RADIO2),
             langGetText(STR_DLGGAMESETUP_RADIO3),
+            langGetText(STR_DLGGAMEINFO_SCRIPTED),
         };
+        /* One source for how many rows there are: the loop below used to
+         * carry a literal that had to match this array by hand. */
+        const int itemCount = (int)(sizeof(items) / sizeof(items[0]));
         bool rankedNow = clientSimGetLobbyRanked(cs);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < itemCount; i++) {
             /* gameType enum is 1-based (gameOpen=1, gameTournament=2,
              * gameStrictTournament=3), so the array index → enum
              * mapping is i+1. The previous (gameType)i comparison
              * read the wrong row as "checked" — Open showed as
              * Unknown, Tournament showed as Open, etc. */
             int enumVal = i + 1;
+            /* The scripted type has a row only while the lobby is on it, so
+               a scripted lobby has a checked row instead of an empty group
+               and every other lobby looks exactly as it did. It is never
+               offered: a host cannot pick it and the server refuses the
+               value, so committing a map with a script beside it is the only
+               thing that sets it. */
+            if ((gameType)enumVal == gameScripted &&
+                clientSimGetLobbyGameType(cs) != gameScripted) {
+                continue;
+            }
             /* Ranked games forbid the "Open" type — grey it out. */
             bool optDisabled = rankedNow && (gameType)enumVal == gameOpen;
+            if ((gameType)enumVal == gameScripted) optDisabled = true;
+            /* A scripted lobby is on the type its map commit set, and the
+               server refuses every other value while the scenario is there.
+               Greying the whole group says so, rather than letting a row be
+               picked and snap back when the refusal arrives.
+               Keyed on the scenario, which is what the server's own refusal
+               reads: the type and the scenario can disagree for a moment —
+               a lobby that has a scenario but has not been committed onto it
+               yet — and the client would then offer a row the server turns
+               down. */
+            if (clientSimGetLobbyScenarioSource(cs) != 0) {
+                optDisabled = true;
+            }
             if (optDisabled) ImGui::BeginDisabled();
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##gt%d", items[i], i);
@@ -1204,10 +1231,18 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##ai%d", items[i], i);
             bool checked = (clientSimGetLobbyAiType(cs) == (uint8_t)i);
+            /* A scenario fields its own bots, so the server refuses the row
+               that takes every bot off the roster and admits the other
+               three. Only that row is greyed: the host still picks how hard
+               the bots play. */
+            bool rowDisabled = (i == (int)aiNone &&
+                                clientSimGetLobbyScenarioSource(cs) != 0);
+            if (rowDisabled) ImGui::BeginDisabled();
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
                 lobbySendSetting(cs, LST_AI_POLICY, &v, 1);
             }
+            if (rowDisabled) ImGui::EndDisabled();
         }
         if (disable) ImGui::EndDisabled();
     }
@@ -1227,6 +1262,21 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         }
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) lobbyRenderLockBadge();
+
+        /* Smart pings. The checkbox is the positive question ("allow"),
+         * which is why it reads through clientSimIsLobbyAllowSmartPings;
+         * the wire field it sends is the negative one, so the byte is the
+         * inverse of the box. Same host/lock gating as Hidden Mines above. */
+        bool pingLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_SMART_PINGS) != 0;
+        bool pingV = clientSimIsLobbyAllowSmartPings(cs);
+        bool pingDisabled = !effectiveHost || pingLocked;
+        if (pingDisabled) ImGui::BeginDisabled();
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_SMART_PINGS_CB), &pingV)) {
+            uint8_t v = pingV ? 0 : 1;
+            lobbySendSetting(cs, LST_SMART_PINGS_OFF, &v, 1);
+        }
+        if (pingDisabled) ImGui::EndDisabled();
+        if (pingLocked) lobbyRenderLockBadge();
 
         /* "Allow all players to change settings" — toggles openHost
          * (the same flag that gates per-team manage-bots authority).
@@ -1778,4 +1828,55 @@ void lobbyRenderVisibilitySummary(ClientSim *cs, float s) {
     if (!ImGui::IsItemHovered()) return;
 
     lobbyRenderVisibilityTooltip(&live, preset, s);
+}
+
+/* ── Smart-ping summary ───────────────────────────────────────────
+ * Whether the host lets players drop ping markers, on the same header line
+ * and in the same shape as the visibility entries above: the marker the
+ * player would be dropping, then yes or no. Read only, and drawn for
+ * everyone, because the settings panel that owns the checkbox is host-only
+ * and a joiner has no other way to find out.
+ *
+ * The mechanics below are lobbyRenderVisibilitySummary's, deliberately —
+ * the idempotent icon-cache load, the two drops that centre a sprite
+ * against its word, the faint No, and the label that stands in when the
+ * sprite is missing. See the long comments there for why each is needed. */
+void lobbyRenderSmartPingSummary(ClientSim *cs, float s) {
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (renderer) lobbyLoadStatusIconsOnce(renderer, s);
+
+    ImGuiWindow *win = ImGui::GetCurrentWindow();
+    const float iconSize = 16.0f * s;
+    const float textH    = ImGui::GetTextLineHeight();
+    const float imgDrop  = (textH > iconSize) ? (textH - iconSize) * 0.5f : 0.0f;
+    const float textDrop = (iconSize > textH) ? (iconSize - textH) * 0.5f : 0.0f;
+
+    bool allow = clientSimIsLobbyAllowSmartPings(cs);
+    const char *word = langGetText(allow ? STR_YES : STR_NO);
+
+    if (!allow) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            ImGui::GetStyle().Alpha * 0.45f);
+    }
+    ImGui::BeginGroup();
+    const float baseY = ImGui::GetCursorPosY();
+    SDL_Texture *ping = renderer ? lobbyGetPingStandardTexture(renderer) : nullptr;
+    if (ping) {
+        ImGui::SetCursorPosY(baseY + win->DC.CurrLineTextBaseOffset + imgDrop);
+        ImGui::Image((ImTextureID)ping, ImVec2(iconSize, iconSize));
+    } else {
+        /* Sprite missing — the label stands in for it, as above. */
+        ImGui::SetCursorPosY(baseY + textDrop);
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SMART_PINGS_CB));
+    }
+    ImGui::SameLine(0, 4.0f * s);
+    ImGui::SetCursorPosY(baseY + textDrop);
+    ImGui::TextUnformatted(word);
+    ImGui::EndGroup();
+    if (!allow) ImGui::PopStyleVar();
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s: %s",
+                          langGetText(STR_DLGLOBBY_SMART_PINGS_CB), word);
+    }
 }

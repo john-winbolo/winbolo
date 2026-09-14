@@ -80,6 +80,10 @@ typedef struct {
   bool     alliesInTrees;            /* Allied tanks show through forest */
   BYTE     overviewWindow;           /* OverviewWindow the map overview keeps live */
   BYTE     lineOfSight;              /* LineOfSightMode inside that block */
+  bool     smartPingsOff;            /* server refuses smart pings. Negative
+                                      * sense: false is "allowed", so a
+                                      * tracker row with no such key reads as
+                                      * what every server did before it */
   uint16_t pillViewDecay;            /* Pillbox decay seconds (viewPolicyDecay) */
   uint16_t baseViewDecay;            /* Base decay seconds (viewPolicyDecay) */
   uint16_t allyViewDecay;            /* Allied tank decay seconds (viewPolicyDecay) */

@@ -225,6 +225,28 @@ typedef enum {
     ENTITY_KIND_START = 2
 } EntityKind;
 
+/* Where the lobby's scenario came from. The values ride the wire, so they
+ * are written out. None is 0, so a lobby with no scenario is the zeroed
+ * event and writes no scenario bytes at all. A scenario read from beside
+ * the map is lobbyScenarioMap; lobbyScenarioMod is a scenario the host
+ * picked for itself, which nothing selects yet — it is named here so the
+ * wire form does not move when something does. */
+typedef enum {
+    lobbyScenarioNone = 0,
+    lobbyScenarioMap  = 1,
+    lobbyScenarioMod  = 2
+} LobbyScenarioSource;
+
+/* What CTRL_LOBBY_SETTINGS carries of a scenario's identity. Independent of
+ * the scenario host's own caps (which a public header must not reach for)
+ * and chosen to match them: the name and the description are the manifest's,
+ * and the file name is a name rather than a path, so a server's disk layout
+ * does not travel. Longer text is truncated where the sim is told, not on
+ * the wire. */
+#define LOBBY_SCENARIO_NAME_LEN 64
+#define LOBBY_SCENARIO_FILE_LEN 64
+#define LOBBY_SCENARIO_DESC_LEN 256
+
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
  *
  * A rule is here because code a ClientSim reaches reads it: the movement
@@ -431,6 +453,30 @@ typedef struct ControlEvent {
                                          * send voice, so it captures none. */
             uint8_t  lobbyOverviewWindow;  /* OverviewWindow */
             uint8_t  lobbyLineOfSight;     /* LineOfSightMode */
+            bool     lobbySmartPingsOff;   /* server refuses CMD_PING. Held in
+                                            * the negative sense so the zero a
+                                            * decoder leaves for an absent byte
+                                            * reads as "pings allowed" — what
+                                            * every server did before the field
+                                            * existed. */
+            /* The scenario this lobby is running, if any. scenarioSource
+             * none means there is none and the five fields below are empty:
+             * a lobby with no scenario writes none of these bytes, so a
+             * plain map's settings body is the length it always was. */
+            LobbyScenarioSource scenarioSource;
+            char     scenarioName[LOBBY_SCENARIO_NAME_LEN];
+            char     scenarioFileName[LOBBY_SCENARIO_FILE_LEN];
+            char     scenarioDescription[LOBBY_SCENARIO_DESC_LEN];
+            bool     scenarioExtraTeams;  /* the manifest's extra_teams: may a
+                                           * host add teams beyond the
+                                           * scenario's own */
+            /* The game type the scenario declared, as a gameType value, 0 for
+             * none. lobbyGameType reads gameScripted for the whole of a
+             * scripted round, and this is the game underneath it — what every
+             * site that picks behaviour from the game type resolves to. A
+             * client needs it to predict its first life's loadout and its
+             * start before the first snapshot lands. */
+            uint8_t  scenarioBaseGame;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

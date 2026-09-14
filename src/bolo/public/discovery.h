@@ -144,6 +144,11 @@ typedef struct {
   /* Voice the server forwards. A server whose INFO predates the flag bits
    * reports serverVoiceOn, which is what it does. */
   ServerVoiceMode voiceMode;
+  /* Host banned smart pings. Carried by the mDNS record only ("spingoff");
+   * the broadcast INFO packet has no room for it and leaves this false.
+   * Negative sense, so false — what both an old record and a server that
+   * never mentions it give — means smart pings are ALLOWED. */
+  bool           smartPingsOff;
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

@@ -17,6 +17,7 @@
 
 #include "test_harness.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "platform_net.h"     /* sockets / htons / inet_addr / bolo_net_init */
@@ -163,6 +164,8 @@ int run_mdns_discovery(void) {
   info.viewPolicies2   = infoPacketPackViewPolicies2(
       (uint8_t)overviewWindowClassic,
       (uint8_t)lineOfSightBuildingsAndTrees);
+  /* Negative sense on the wire: spingoff=1 means the host banned them. */
+  info.smartPingsOff   = true;
 
   UT_ASSERT(sendServerAnswer(responder, &browserAddr, &info) == 0);
 
@@ -198,6 +201,44 @@ int run_mdns_discovery(void) {
                 "window=%u", (unsigned)s.overviewWindow);
   UT_ASSERT_MSG(s.lineOfSight == (uint8_t)lineOfSightBuildingsAndTrees,
                 "sight=%u", (unsigned)s.lineOfSight);
+  UT_ASSERT_MSG(s.smartPingsOff == true,
+                "spingoff did not survive the wire: smartPingsOff=%d",
+                (int)s.smartPingsOff);
+
+  /* And the other way: a host that left pings on advertises spingoff=0 and
+     the browser reads it back as allowed. */
+  {
+    MdnsServerInfo allowed = info;
+    DiscoveryServer sAllowed;
+    allowed.smartPingsOff = false;
+    allowed.port = 27513;
+    UT_ASSERT(sendServerAnswer(responder, &browserAddr, &allowed) == 0);
+    memset(&sAllowed, 0, sizeof(sAllowed));
+    UT_ASSERT(recvServer(browser, &sAllowed) == 0);
+    UT_ASSERT_MSG(sAllowed.smartPingsOff == false,
+                  "spingoff=0 read back as banned");
+  }
+
+  /* A record from a server old enough to send no spingoff key at all must
+     read as allowed, not as whatever the caller's buffer held. The parse
+     seam is driven directly here because the advertiser always emits the
+     key — there is no way to produce this record over the wire. */
+  {
+    DiscoveryMdnsResolved r;
+    DiscoveryServer sOld;
+    memset(&r, 0, sizeof(r));
+    r.haveSrv = true;
+    r.port    = 27500;
+    snprintf(r.txt[0].key, sizeof(r.txt[0].key), "%s", "newp");
+    snprintf(r.txt[0].value, sizeof(r.txt[0].value), "%s", "1");
+    r.txtCount = 1;
+    memset(&sOld, 0, sizeof(sOld));
+    sOld.smartPingsOff = true;   /* the stale value a reuse could leave */
+    UT_ASSERT(discoveryMdnsFillServer(&r, &sOld));
+    UT_ASSERT_MSG(sOld.smartPingsOff == false,
+                  "a record with no spingoff key read as banned; absent means "
+                  "smart pings are allowed");
+  }
 
   /* ---- unique instance label: distinct ports => distinct SRV owner name ---- */
   {

@@ -107,6 +107,7 @@ int run_lobby_settings_codec_and_apply(void) {
         (uint8_t)overviewWindowClassic;
     in.u.lobbySettings.lobbyLineOfSight                =
         (uint8_t)lineOfSightBuildingsAndTrees;
+    in.u.lobbySettings.lobbySmartPingsOff              = true;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -164,14 +165,16 @@ int run_lobby_settings_codec_and_apply(void) {
                       (uint8_t)lineOfSightBuildingsAndTrees,
                   "line of sight did not survive codec round-trip (got %u)",
                   (unsigned)out.u.lobbySettings.lobbyLineOfSight);
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbySmartPingsOff == true,
+                  "smart-pings-off did not survive codec round-trip");
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is fourteen bytes shorter (3 policies + 3 u16 decay values +
+     * that is fifteen bytes shorter (3 policies + 3 u16 decay values +
      * classic mode + allies in trees + voice mode + overview window +
-     * line of sight). */
+     * line of sight + smart pings off). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -182,7 +185,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 14;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 15;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -208,6 +211,14 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyLineOfSight ==
                           (uint8_t)lineOfSightOff,
                       "short payload must leave line of sight off");
+        /* The polarity pin. The event that was encoded had smart pings
+         * BANNED; a sender that stops before the byte must still read as
+         * ALLOWED, because that is what every server did before the setting
+         * existed. If the field is ever flipped to a positive sense this
+         * assertion is the one that fails. */
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbySmartPingsOff == false,
+                      "a payload with no smart-ping byte must read as "
+                      "pings ALLOWED");
     }
 
     /* The voice mode over the body tables, which is what the reliable
@@ -235,9 +246,9 @@ int run_lobby_settings_codec_and_apply(void) {
                           "body round-trip lost voice mode %d (got %d)",
                           (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
 
-            /* The mode is the third byte from the end: the overview
-             * window and line of sight follow it. */
-            body[bodyLen - 3] = 0x7F;
+            /* The mode is the fourth byte from the end: the overview
+             * window, line of sight and smart-pings-off follow it. */
+            body[bodyLen - 4] = 0x7F;
             memset(&bout, 0, sizeof(bout));
             UT_ASSERT(bdec(body, bodyLen, &bout));
             UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,
@@ -288,6 +299,11 @@ int run_lobby_settings_codec_and_apply(void) {
                       (uint8_t)lineOfSightBuildingsAndTrees,
                   "line of sight did not reach the client mirror (got %u)",
                   (unsigned)clientSimGetLineOfSight(cs));
+    /* The event banned smart pings, and the positive accessor the UI reads
+     * has to say so. A fresh ClientSim that has applied nothing answers
+     * true, which the block below pins. */
+    UT_ASSERT_MSG(clientSimIsLobbyAllowSmartPings(cs) == false,
+                  "smart-pings-off did not reach the client mirror");
     /* And the client honours them where it counts: the test the overview and
      * the scroll keys actually ask answers from the mirror the server wrote,
      * so Classic really does put the block on the classic view. */
@@ -315,8 +331,152 @@ int run_lobby_settings_codec_and_apply(void) {
         clientSimDestroy(oddCs);
     }
 
+    /* A client that has applied no lobby settings at all — the state it is
+     * in while talking to a server too old to send them — must read as
+     * smart pings ALLOWED. Together with the short-payload assertion above
+     * this pins both ways a zero can arrive. */
+    {
+        ClientSim *freshCs = fresh_client_sim();
+        UT_ASSERT(freshCs != NULL);
+        UT_ASSERT_MSG(clientSimIsLobbyAllowSmartPings(freshCs) == true,
+                      "a client with no lobby settings yet must read as "
+                      "pings ALLOWED");
+        clientSimDestroy(freshCs);
+    }
+
     /* Nothing to put back: both settings live on the ClientSim, so the next
      * case's own sim starts on Expanded with line of sight off. */
+    return 0;
+}
+
+/* ================================================================
+ * CTRL_LOBBY_SETTINGS — the scenario the map is running, from the
+ * event onto the ClientSim and back out through the accessors.
+ *
+ * Both shapes, because the interesting half is the empty one: a
+ * settings body from a lobby with no scenario carries none of these
+ * bytes at all, so what the mirrors hold afterwards has to come from
+ * the decoder's own zeroing rather than from anything the apply path
+ * does. A lobby that had a scenario and then does not is the case
+ * that would leave a stale name on screen.
+ * ================================================================ */
+int run_lobby_settings_scenario_apply(void) {
+    ControlEvent in;
+    ClientSim   *cs;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SETTINGS;
+    strncpy(in.u.lobbySettings.mapName, "ScriptedMap",
+            sizeof(in.u.lobbySettings.mapName) - 1);
+    in.u.lobbySettings.lobbyGameType   = gameScripted;
+    in.u.lobbySettings.scenarioSource  = lobbyScenarioMap;
+    strncpy(in.u.lobbySettings.scenarioName, "Wave Defense",
+            sizeof(in.u.lobbySettings.scenarioName) - 1);
+    strncpy(in.u.lobbySettings.scenarioFileName, "wave.lua",
+            sizeof(in.u.lobbySettings.scenarioFileName) - 1);
+    strncpy(in.u.lobbySettings.scenarioDescription,
+            "Hold the base against ten waves.",
+            sizeof(in.u.lobbySettings.scenarioDescription) - 1);
+    in.u.lobbySettings.scenarioExtraTeams = true;
+    in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
+
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    clientSimApplyControl(cs, &in);
+
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioSource(cs) ==
+                      (uint8_t)lobbyScenarioMap,
+                  "the scenario source reached the client as %u, wanted %u",
+                  (unsigned)clientSimGetLobbyScenarioSource(cs),
+                  (unsigned)lobbyScenarioMap);
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioName(cs),
+                         "Wave Defense") == 0,
+                  "the scenario name reached the client as \"%s\"",
+                  clientSimGetLobbyScenarioName(cs));
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioFileName(cs),
+                         "wave.lua") == 0,
+                  "the scenario file name reached the client as \"%s\"",
+                  clientSimGetLobbyScenarioFileName(cs));
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioDescription(cs),
+                         "Hold the base against ten waves.") == 0,
+                  "the scenario description reached the client as \"%s\"",
+                  clientSimGetLobbyScenarioDescription(cs));
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioExtraTeams(cs),
+                  "the extra-teams flag did not reach the client");
+    UT_ASSERT_MSG(clientSimGetLobbyGameType(cs) == gameScripted,
+                  "the scripted game type did not reach the client (got %d)",
+                  (int)clientSimGetLobbyGameType(cs));
+    /* The base game lands on the GameSim, where gameTypeResolve reads it —
+       the client predicts its first life's loadout and start through there,
+       and the lobby mirrors have nowhere to put it. */
+    UT_ASSERT_MSG(clientSimGetGameSim(cs)->scenarioBaseGame ==
+                      gameStrictTournament,
+                  "the base game type reached the client as %d, wanted %d",
+                  (int)clientSimGetGameSim(cs)->scenarioBaseGame,
+                  (int)gameStrictTournament);
+
+    /* The same client, told about a map with no scenario. Everything the
+       previous settings left has to go, or the lobby keeps naming a
+       scenario that is not running. */
+    {
+        ControlEvent plain;
+        memset(&plain, 0, sizeof(plain));
+        plain.type = CTRL_LOBBY_SETTINGS;
+        strncpy(plain.u.lobbySettings.mapName, "PlainMap",
+                sizeof(plain.u.lobbySettings.mapName) - 1);
+        plain.u.lobbySettings.lobbyGameType = gameTournament;
+        clientSimApplyControl(cs, &plain);
+
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioSource(cs) ==
+                          (uint8_t)lobbyScenarioNone,
+                      "a plain map left the source at %u",
+                      (unsigned)clientSimGetLobbyScenarioSource(cs));
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioName(cs)[0] == '\0',
+                      "a plain map left the scenario name \"%s\" behind",
+                      clientSimGetLobbyScenarioName(cs));
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioFileName(cs)[0] == '\0',
+                      "a plain map left the scenario file name \"%s\" behind",
+                      clientSimGetLobbyScenarioFileName(cs));
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioDescription(cs)[0] == '\0',
+                      "a plain map left the description \"%s\" behind",
+                      clientSimGetLobbyScenarioDescription(cs));
+        UT_ASSERT_MSG(!clientSimGetLobbyScenarioExtraTeams(cs),
+                      "a plain map left the extra-teams flag set");
+        UT_ASSERT_MSG(clientSimGetGameSim(cs)->scenarioBaseGame == (gameType)0,
+                      "a plain map left the base game type %d behind",
+                      (int)clientSimGetGameSim(cs)->scenarioBaseGame);
+    }
+
+    /* And the whole way round: a scripted event that has been through the
+       codec applies the same, so the tail the encoder writes is the tail
+       the mirrors end up holding. */
+    {
+        ControlEvent out;
+        ClientSim   *wireCs;
+        memset(&out, 0, sizeof(out));
+        UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
+                      "the scripted settings event did not survive the codec");
+        wireCs = fresh_client_sim();
+        UT_ASSERT(wireCs != NULL);
+        clientSimApplyControl(wireCs, &out);
+        UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioName(wireCs),
+                             "Wave Defense") == 0,
+                      "the name off the wire reached the client as \"%s\"",
+                      clientSimGetLobbyScenarioName(wireCs));
+        UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioDescription(wireCs),
+                             "Hold the base against ten waves.") == 0,
+                      "the description off the wire reached the client as "
+                      "\"%s\"", clientSimGetLobbyScenarioDescription(wireCs));
+        UT_ASSERT_MSG(clientSimGetGameSim(wireCs)->scenarioBaseGame ==
+                          gameStrictTournament,
+                      "the base game off the wire reached the client as %d, "
+                      "wanted %d",
+                      (int)clientSimGetGameSim(wireCs)->scenarioBaseGame,
+                      (int)gameStrictTournament);
+        clientSimDestroy(wireCs);
+    }
+
+    clientSimDestroy(cs);
     return 0;
 }
 

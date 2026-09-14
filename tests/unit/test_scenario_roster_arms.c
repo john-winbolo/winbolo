@@ -29,6 +29,15 @@
  *                                     — and that accept draws no line
  * run_scenario_roster_spawn_no_team_allies_nothing
  *                                     — a spawn onto no team allies nothing
+ * run_scenario_roster_spawn_loadout_named
+ *                                     — a named loadout fuels the tank the
+ *                                       spawn builds, ahead of the policy;
+ *                                       naming none leaves it to the policy
+ * run_scenario_roster_spawn_loadout_without_policy
+ *                                     — and is answered with no policy there
+ * run_scenario_roster_spawn_loadout_not_next_life
+ *                                     — it is spent on that tank, not held
+ *                                       for the seat's next life
  * run_scenario_roster_remove_bot      — humans refused, the removal paced
  * run_scenario_roster_set_team        — the write, and a team off the end
  * run_scenario_lobby_add_bot          — the lobby add and its refusals
@@ -768,9 +777,16 @@ int run_scenario_roster_spawn_named_start(void) {
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
                   "a start past the end was not refused");
     op.u.rosterSpawnBot.start = (BYTE)(numStarts - 1);
-    op.u.rosterSpawnBot.loadout = 1;
+    /* A loadout names one of the three game types the spawn's loadout words
+       hold. A game type past them, and a byte that is no game type at all,
+       are both refused where the op is made. */
+    op.u.rosterSpawnBot.loadout = (BYTE)gameScripted;
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
-                  "a loadout override was accepted before one exists");
+                  "a loadout naming a game type the words cannot say was "
+                  "accepted");
+    op.u.rosterSpawnBot.loadout = 0xFF;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
+                  "a loadout of 0xFF was accepted");
     op.u.rosterSpawnBot.loadout = 0;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
     serverSimTick(sim);
@@ -803,6 +819,222 @@ int run_scenario_roster_spawn_named_start(void) {
     return 0;
 }
 
+/* ── The loadout a spawn names ───────────────────────────────────── */
+
+/* The four amounts the policy below hands out, picked so no amount is one
+   either game type in these cases gives: a strict round hands out nothing
+   and an open one everything the rules allow. */
+#define RA_POLICY_SHELLS 7
+#define RA_POLICY_MINES  6
+#define RA_POLICY_ARMOUR 33
+#define RA_POLICY_TREES  5
+
+typedef struct {
+    int  asks;
+    BYTE lastPlayer;
+} RaLoadoutCtx;
+
+static bool raPolicySpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
+    RaLoadoutCtx *c = (RaLoadoutCtx *)ctx;
+
+    c->asks++;
+    c->lastPlayer = player;
+    memset(out, 0, sizeof(*out));
+    out->shells = RA_POLICY_SHELLS;
+    out->mines  = RA_POLICY_MINES;
+    out->armour = RA_POLICY_ARMOUR;
+    out->trees  = RA_POLICY_TREES;
+    return true;
+}
+
+/* A strict-tournament round, where a tank is handed nothing unless something
+   says otherwise — so an "open" loadout on one bot is unmistakable. */
+static ServerSim *raStrictSim(void) {
+    ServerSim *sim = raRunningSim();
+    if (sim == NULL) return NULL;
+    serverSimSetGameType(sim, gameStrictTournament);
+    return sim;
+}
+
+/* The first bot slot, or SCN_NONE. skip and skip2 are slots to walk past,
+ * so each spawn of a case can be told from the ones before it. */
+static BYTE raFirstBotSlot(ServerSim *sim, BYTE skip, BYTE skip2) {
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == skip || i == skip2) continue;
+        if (serverSimIsBot(sim, i)) return i;
+    }
+    return SCN_NONE;
+}
+
+/* Queue one spawn and let the drain make it. Answers the seat it took,
+ * walking past a seat an earlier spawn in the same case is holding. */
+static BYTE raSpawnAndDrain(ServerSim *sim, ScenarioOp *op, BYTE skip) {
+    if (serverSimApplyScenarioOp(sim, op, NULL) != SCN_OP_QUEUED) {
+        return SCN_NONE;
+    }
+    serverSimTick(sim);
+    return raFirstBotSlot(sim, skip, SCN_NONE);
+}
+
+/* A spawn that names a loadout builds its tank with that game type's
+ * amounts, ahead of a spawn-loadout policy that would answer differently;
+ * one that names none is left to the policy. */
+int run_scenario_roster_spawn_loadout_named(void) {
+    ServerSim     *sim;
+    ScenarioOp     op;
+    ScenarioPolicy pol;
+    RaLoadoutCtx   pc;
+    GameSim       *gs;
+    BYTE           slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_loadout_named"));
+    ut_brain_stub_arm(true);
+    sim = raStrictSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+
+    memset(&pol, 0, sizeof(pol));
+    memset(&pc, 0, sizeof(pc));
+    pol.spawnLoadout = raPolicySpawnLoadout;
+    pol.ctx          = &pc;
+    serverSimSetScenarioPolicy(sim, &pol);
+
+    raSpawnOp(&op, SCN_NONE, 2, "Armed", NULL);
+    op.u.rosterSpawnBot.loadout = (BYTE)gameOpen;
+    slot = raSpawnAndDrain(sim, &op, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn naming a loadout did not land");
+    UT_ASSERT(gs->tanks[slot] != NULL);
+
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_shells &&
+                  tankGetMines(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_mines &&
+                  tankGetTrees(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_trees,
+                  "an open loadout should have handed the bot %ld/%ld/%ld "
+                  "(shells/mines/trees) in a strict round, handed it %u/%u/%u",
+                  (long)gs->rules.tank_full_shells,
+                  (long)gs->rules.tank_full_mines,
+                  (long)gs->rules.tank_full_trees,
+                  (unsigned)tankGetShells(&gs->tanks[slot]),
+                  (unsigned)tankGetMines(&gs->tanks[slot]),
+                  (unsigned)tankGetTrees(&gs->tanks[slot]));
+    UT_ASSERT_MSG(pc.asks == 0,
+                  "the spawn-loadout policy was asked %d times for a spawn "
+                  "that named its own loadout", pc.asks);
+    UT_ASSERT_MSG(gs->scenarioSpawnLoadout[slot] == 0,
+                  "the spawn left its loadout slot set to %u",
+                  (unsigned)gs->scenarioSpawnLoadout[slot]);
+
+    /* The same spawn with no loadout on it is the policy's. */
+    raSpawnOp(&op, SCN_NONE, 2, "Asked", NULL);
+    {
+        BYTE second = raSpawnAndDrain(sim, &op, slot);
+        UT_ASSERT_MSG(second != SCN_NONE, "the second spawn did not land");
+        UT_ASSERT(gs->tanks[second] != NULL);
+        UT_ASSERT_MSG(pc.asks == 1,
+                      "the policy was asked %d times for the spawn that named "
+                      "no loadout, wanted once", pc.asks);
+        UT_ASSERT_MSG(pc.lastPlayer == second,
+                      "the policy was asked about seat %u, wanted %u",
+                      (unsigned)pc.lastPlayer, (unsigned)second);
+        UT_ASSERT_MSG(tankGetShells(&gs->tanks[second]) == RA_POLICY_SHELLS &&
+                      tankGetMines(&gs->tanks[second])  == RA_POLICY_MINES &&
+                      tankGetArmour(&gs->tanks[second]) == RA_POLICY_ARMOUR &&
+                      tankGetTrees(&gs->tanks[second])  == RA_POLICY_TREES,
+                      "the policy's four amounts should have fuelled the "
+                      "second bot, it holds %u/%u/%u/%u",
+                      (unsigned)tankGetShells(&gs->tanks[second]),
+                      (unsigned)tankGetMines(&gs->tanks[second]),
+                      (unsigned)tankGetArmour(&gs->tanks[second]),
+                      (unsigned)tankGetTrees(&gs->tanks[second]));
+    }
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* A scenario that names a loadout and writes no spawn_loadout function is
+ * the ordinary case, so the named loadout is answered with no policy
+ * registered at all. */
+int run_scenario_roster_spawn_loadout_without_policy(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    GameSim   *gs;
+    BYTE       slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_loadout_without_policy"));
+    ut_brain_stub_arm(true);
+    sim = raStrictSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    UT_ASSERT_MSG(sim->scenarioPolicy == NULL,
+                  "setup: this case wants a sim with no policy on it");
+
+    raSpawnOp(&op, SCN_NONE, 2, "Alone", NULL);
+    op.u.rosterSpawnBot.loadout = (BYTE)gameOpen;
+    slot = raSpawnAndDrain(sim, &op, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn did not land");
+    UT_ASSERT(gs->tanks[slot] != NULL);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_shells,
+                  "with no policy registered an open loadout should still "
+                  "have handed the bot %ld shells, handed it %u",
+                  (long)gs->rules.tank_full_shells,
+                  (unsigned)tankGetShells(&gs->tanks[slot]));
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* The loadout is for the tank the spawn builds. The bot's next life is
+ * fuelled the way every other tank in the round is. */
+int run_scenario_roster_spawn_loadout_not_next_life(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    GameSim   *gs;
+    BYTE       slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_loadout_not_next_life"));
+    ut_brain_stub_arm(true);
+    sim = raStrictSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+
+    raSpawnOp(&op, SCN_NONE, 2, "Once", NULL);
+    op.u.rosterSpawnBot.loadout = (BYTE)gameOpen;
+    slot = raSpawnAndDrain(sim, &op, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn did not land");
+    UT_ASSERT(gs->tanks[slot] != NULL);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_shells,
+                  "setup: the first life should carry the named loadout's "
+                  "%ld shells, carries %u",
+                  (long)gs->rules.tank_full_shells,
+                  (unsigned)tankGetShells(&gs->tanks[slot]));
+
+    /* Killed and back again: the round is a strict tournament, which hands
+       a tank nothing. */
+    tankSetArmour(&gs->tanks[slot], 0);
+    tankSetDestroyed(&gs->tanks[slot], TRUE);
+    tankDeath(gs, &gs->tanks[slot]);
+    UT_ASSERT(gs->tanks[slot] != NULL);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) == 0,
+                  "the named loadout reached the bot's next life: it came "
+                  "back with %u shells in a strict round",
+                  (unsigned)tankGetShells(&gs->tanks[slot]));
+    UT_ASSERT_MSG(gs->scenarioSpawnLoadout[slot] == 0,
+                  "the loadout slot still holds %u after the spawn spent it",
+                  (unsigned)gs->scenarioSpawnLoadout[slot]);
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
 /* ── The team's alliance ─────────────────────────────────────────── */
 
 /* The two alliance events a spawn could publish, and who the last accept
@@ -827,17 +1059,6 @@ static void raCountAllyEvents(void *ctx, const ControlEvent *evt) {
     } else if (evt->type == CTRL_ALLIANCE_RESET) {
         c->resets++;
     }
-}
-
-/* The first bot slot, or SCN_NONE. skip and skip2 are slots to walk past,
- * so each spawn of a case can be told from the ones before it. */
-static BYTE raFirstBotSlot(ServerSim *sim, BYTE skip, BYTE skip2) {
-    BYTE i;
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (i == skip || i == skip2) continue;
-        if (serverSimIsBot(sim, i)) return i;
-    }
-    return SCN_NONE;
 }
 
 int run_scenario_roster_spawn_allies_team(void) {

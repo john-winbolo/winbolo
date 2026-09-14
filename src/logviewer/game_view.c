@@ -678,6 +678,8 @@ static void gv_drawPings(SDL_Renderer *renderer,
     PingMarkerLabel label;
 
     if (!lv_screenGetPing(i, &sender, &kind, &wx, &wy, &ageMs)) continue;
+    /* Expiry only; pingMarkerDraw does the blink, so a recording shows what
+       the player was shown. */
     alpha = pingDisplayAlpha((int)ageMs);
     if (alpha <= 0.0f) continue;
 
@@ -703,8 +705,11 @@ static void gv_drawPings(SDL_Renderer *renderer,
        + ((float)(wy >> 8) + 0.5f - (float)(lv_screenGetYOffset() + 1)) * (float)tileH
        - (float)edgeY;
 
+    /* The world marker, so with the arrival ring: it runs off the ping's age
+       out of the recording, which is the same number the live game fed it, so
+       the replay shows the ring the player was shown. */
     pingMarkerDraw(renderer, kind, cx, cy, (float)tileW, (float)tileH,
-                   ageMs, alpha, &label);
+                   ageMs, &label);
   }
 }
 

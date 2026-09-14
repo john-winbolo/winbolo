@@ -26,6 +26,7 @@
 
 #include "server_sim.h"
 #include "scenario_defs.h"
+#include "control_event.h"  /* LobbyScenarioSource — the identity setter's source */
 
 /*********************************************************
  *NAME:          serverSimApplyScenarioOp
@@ -96,6 +97,23 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
                               void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioRoundBoot
+ *PURPOSE:
+ *  Registers the callback both authoritative round starts
+ *  invoke before the start batch and the tanks, which is
+ *  where the round's own Lua state, its chunk and its rules
+ *  come into force. The policies asked while the opening
+ *  tanks are built are therefore the round's own.
+ *
+ *  The setup window is open across the call, as it is across
+ *  the round start below, so the funnel takes the ops it
+ *  issues and the rules it sets wait for the one publish the
+ *  start makes at its end. NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
+                                   void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioRoundStart
  *PURPOSE:
  *  Registers the callback both authoritative round starts
@@ -107,6 +125,66 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
  *********************************************************/
 void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx),
                                     void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioReload
+ *PURPOSE:
+ *  Registers what a lobby host's reload request runs. The
+ *  sim cannot re-read a script itself — that is the scenario
+ *  library's, and the dependency points one way — so the
+ *  host leaves this behind the way it leaves the round start.
+ *
+ *  Answers true when the script was re-read, and false with
+ *  err saying why when it was not. With nothing registered
+ *  it answers false and err says there is no scenario, which
+ *  is what a lobby on a plain map gets.
+ *
+ *  What a reload changes takes effect at the next round; the
+ *  round in progress keeps what it started with.
+ *
+ *  NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioReload(ServerSim *sim,
+                                bool (*reload)(void *ctx, char *err,
+                                               size_t errLen),
+                                void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimScenarioReload
+ *PURPOSE:
+ *  Asks whoever owns the scenario to read its script again,
+ *  through the callback above. False with err filled when
+ *  there is nothing registered or the re-read failed.
+ *********************************************************/
+bool serverSimScenarioReload(ServerSim *sim, char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioMapScripted
+ *PURPOSE:
+ *  Registers the question the map lister asks of each map it
+ *  finds: would a round on this one here play by a script.
+ *  The answer tags an entry so a player can see which maps
+ *  are scripted before picking one.
+ *
+ *  A callback rather than a call, for the reason the round
+ *  start is one: finding a script is the scenario library's
+ *  to know and the sim is below it. NULL clears it, and with
+ *  nothing registered every map answers unscripted — which is
+ *  what a build with no scenario library reports.
+ *
+ *  Registered once, where the process decides whether it runs
+ *  scripts at all, not where a scenario attaches: an attach
+ *  answers NULL for a map with no script, so registering
+ *  there would leave a plain map's server reporting every
+ *  scripted map in its directory as plain.
+ *
+ *  mapPath is the full path to the .map file, which is what
+ *  the lister holds and the wire layer does not.
+ *********************************************************/
+void serverSimSetScenarioMapScripted(ServerSim *sim,
+                                     bool (*mapScripted)(void *ctx,
+                                                         const char *mapPath),
+                                     void *ctx);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
@@ -121,9 +199,45 @@ void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx
  *  Setting it does not seat anything by itself. The map
  *  commit seats it; a caller that wants the seats without a
  *  map change asks for them.
+ *
+ *  The template's base game type is kept on the game the
+ *  sim runs, where the spawn and start paths read it while
+ *  the round is gameScripted. Clearing the template clears
+ *  that too.
  *********************************************************/
 void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
                                        const ScnLobbyTemplate *t);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioIdentity
+ *PURPOSE:
+ *  Tells the sim what the attached scenario is called and
+ *  where it came from, so the lobby can say so without
+ *  asking the host anything. The sim copies the strings,
+ *  truncating any that are longer than the lobby carries.
+ *
+ *  Separate from the lobby template: that is seating, and
+ *  it is re-applied at points that have nothing to do with
+ *  what the scenario is called.
+ *
+ *  source lobbyScenarioNone clears it, whatever the other
+ *  arguments say, and is what a detach passes. NULL for any
+ *  string is the empty one.
+ *
+ *ARGUMENTS:
+ *  sim         - The sim being told
+ *  source      - Where the scenario came from
+ *  name        - The scenario's name
+ *  fileName    - The file it came from, a name and not a path
+ *  description - What it says about itself
+ *  extraTeams  - Whether it lets a host add teams of its own
+ *********************************************************/
+void serverSimSetScenarioIdentity(ServerSim *sim,
+                                  LobbyScenarioSource source,
+                                  const char *name,
+                                  const char *fileName,
+                                  const char *description,
+                                  bool extraTeams);
 
 /*********************************************************
  *NAME:          serverSimAddUnfieldedSeat

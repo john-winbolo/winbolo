@@ -203,6 +203,15 @@ typedef struct LobbyIconCache {
      * entry on the same summary. Lazily loaded and reloaded like the rest. */
     SDL_Texture  *forest;
     bool          forestAttempted;
+
+    /* The default ping marker, for the header summary's smart-ping entry.
+     * Its own copy rather than the game renderer's ping_icons.c cache: that
+     * one single-owns a renderer and reloads the whole set whenever the
+     * pointer changes, so sharing it would make the lobby and the game
+     * thrash it across every screen swap. Lazily loaded and destroyed on a
+     * renderer swap like the rest of this cache. */
+    SDL_Texture  *pingStandard;
+    bool          pingStandardAttempted;
 } LobbyIconCache;
 
 /* Map-preview state: the stashed compressed map bytes plus the per-start
@@ -498,6 +507,10 @@ SDL_Texture *lobbyBuildMapPreview(SDL_Renderer *renderer,
 
 /* assets */
 const char *lobbyGameTypeStr(gameType gt);
+/* The map's scenario — its name and its description — or, for a host who
+ * has the scripts preference switched off, a line saying so. Draws nothing
+ * for a joiner on a map with no scenario. */
+void lobbyRenderScenarioLine(ClientSim *cs);
 const char *lobbyAiTypeStr(uint8_t ai);
 void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize);
 SDL_Texture *lobbyGetTankSelf04Texture(SDL_Renderer *renderer);
@@ -506,6 +519,7 @@ SDL_Texture *lobbyGetTankGood04Texture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetPillbox15Texture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetBaseGoodTexture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetForestTexture(SDL_Renderer *renderer);
+SDL_Texture *lobbyGetPingStandardTexture(SDL_Renderer *renderer);
 void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale);
 
 /* players */
@@ -571,6 +585,8 @@ void lobbyRenderGameSettingsPanel(ClientSim *cs,
 void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 /* Read-only one-line summary of the three view policies. */
 void lobbyRenderVisibilitySummary(ClientSim *cs, float s);
+/* Read-only ping-marker-and-answer pair for the same header line. */
+void lobbyRenderSmartPingSummary(ClientSim *cs, float s);
 
 /* ── One visibility value, drawn the one way ──────────────────
  * The lobby's header line, the Details table, the server browser and the

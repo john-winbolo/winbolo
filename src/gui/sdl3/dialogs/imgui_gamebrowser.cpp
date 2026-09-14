@@ -162,6 +162,10 @@ struct ServerEntry {
      * true answer for a server that says nothing: both wires define an
      * absent value as serverVoiceOn. */
     ServerVoiceMode voiceMode;
+    /* Host banned smart pings. Negative sense, so the false a server that
+     * says nothing leaves here means they are allowed — what every server
+     * did before the setting existed. */
+    bool smartPingsOff;
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
@@ -292,6 +296,7 @@ static const char *gameTypeStr(gameType g) {
     switch (g) {
     case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
     case gameTournament:     return langGetText(STR_DLGGAMEINFO_TOURN);
+    case gameScripted:       return langGetText(STR_DLGGAMEINFO_SCRIPTED);
     case gameStrictTournament:
     default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
     }
@@ -302,6 +307,7 @@ static const char *gameTypeAbbr(gameType g) {
     switch (g) {
     case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
     case gameTournament:     return langGetText(STR_DLGBROWSER_TYPE_TOURN_ABBR);
+    case gameScripted:       return langGetText(STR_DLGGAMEINFO_SCRIPTED);
     case gameStrictTournament:
     default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
     }
@@ -585,6 +591,7 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.lineOfSight     = src->lineOfSight;
     e.hasViewInfo     = src->hasViewInfo;
     e.voiceMode       = src->voiceMode;
+    e.smartPingsOff   = src->smartPingsOff;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
      * to minutes the same way the server does (ticks / (50 * 60)). */
@@ -908,6 +915,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.lineOfSight = (uint8_t)w.lineOfSight;
                         e.hasViewInfo = w.hasViewInfo;
                         e.voiceMode = (ServerVoiceMode)w.voiceMode;
+                        e.smartPingsOff = w.smartPingsOff;
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -1807,6 +1815,20 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::TableSetColumnIndex(0); label(langGetText(STR_ALLOW_NEW_PLAYERS));
                         ImGui::TableSetColumnIndex(1);
                         ImGui::TextUnformatted(langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
+                    }
+
+                    /* Smart pings — rich info only, like the row above. The
+                     * broadcast INFO packet has no room for the flag, so a
+                     * server found that way would otherwise read Yes on a
+                     * field it never reported. The stored value is the
+                     * negative one; the row asks the positive question. */
+                    if (sel.hasRichInfo) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        label(langGetText(STR_DLGLOBBY_SMART_PINGS_CB));
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(
+                            langGetText(sel.smartPingsOff ? STR_NO : STR_YES));
                     }
 
                     /* Voice — drawn for every server, not only rich-info ones

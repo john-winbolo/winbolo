@@ -66,6 +66,15 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
    * (today's dedicated-server-with-no-cfg-fields behaviour). */
   if (cfg->skipLobby) {
     serverSimSetLobbyEnabled(sim, false);
+    /* The lobby the attached scenario asks for, seated here and not by the
+       caller, because this is the only point that is after both of the things
+       it needs and before the thing that needs it. A team the template fields
+       with no brain of its own falls back to the server's, and that path and
+       the bot AI level were written a few lines above; the start below builds
+       a tank for every fielded seat, and only for the seats that already
+       exist when it runs. With no scenario attached there is no template and
+       this seats nothing, so a plain server is unchanged. */
+    serverSimScenarioSeatLobby(sim);
     serverSimStartGame(sim);
     /* serverSimStartGame latches hadPlayersEver = TRUE, but a map-rotation
      * server's first round boots up empty and waits for joiners. Left set, the
@@ -104,6 +113,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   sim->originalLobbySettings.alliesInTrees       = sim->alliesInTrees;
   sim->originalLobbySettings.overviewWindow      = sim->overviewWindow;
   sim->originalLobbySettings.lineOfSight         = sim->lineOfSight;
+  sim->originalLobbySettings.smartPingsOff       = sim->smartPingsOff;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -446,6 +456,31 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     serverSimPublishControl(sim, &evt);
 }
 
+/* Whether this write is one the attached scenario fixes: the game type it
+ * declared, the ranked flag a scripted round cannot be measured under, and
+ * the AI policy that would take every bot it fields off the roster. The
+ * three arms below refuse through this, and the reject code the dispatcher
+ * sends back reads the same answer — so the reason a host is shown cannot
+ * drift from the test that produced the refusal.
+ *
+ * Each arm's own payload check is mirrored here, so a malformed write is
+ * still refused as malformed rather than blamed on the scenario. */
+static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
+                                      const uint8_t *value, size_t len) {
+    if (sim == NULL || value == NULL) return false;
+    if (sim->scenarioIdentity.source == lobbyScenarioNone) return false;
+    if (len != 1) return false;
+    switch (lst) {
+        /* Every value the handler admits would take the lobby off
+           gameScripted, so with a scenario attached none of them is the
+           host's to send. */
+        case LST_GAME_TYPE: return value[0] >= 1 && value[0] <= 3;
+        case LST_RANKED:    return value[0] != 0;
+        case LST_AI_POLICY: return (aiType)value[0] == aiNone;
+        default:            return false;
+    }
+}
+
 /* Shared apply path for the LST_* setting cluster carried in
  * PACKET_LOBBY_SET_SETTING and its SP-host local-transport
  * equivalent. The caller is responsible for upstream lock-bit /
@@ -456,7 +491,7 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
  * Returns true if the setting was applied, false if the payload
  * was malformed, out of range, or rejected by a cross-setting
  * invariant (e.g. ranked forbids gameOpen / non-aiNone / autoLock
- * off). */
+ * off, or the attached scenario fixes the value). */
 static bool serverSimApplyLobbySettingInner(ServerSim *sim,
                                             uint8_t lst,
                                             const uint8_t *value, size_t len) {
@@ -466,6 +501,9 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1 || value[0] < 1 || value[0] > 3) return false;
             if (serverSimGetRanked(sim) &&
                 (gameType)value[0] == gameOpen) return false;
+            /* A scripted round plays the game its scenario declared, and the
+               type that says so is the map commit's to set. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetGameType(sim, (gameType)value[0]);
             return true;
         case LST_HIDDEN_MINES:
@@ -476,6 +514,10 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1 || value[0] > 3) return false;
             if (serverSimGetRanked(sim) &&
                 (aiType)value[0] != aiNone) return false;
+            /* A scenario fields its own bots, and this is the setting that
+               takes every bot off the roster, so a scripted lobby cannot be
+               put into it. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetAiPolicy(sim, value[0]);
             serverSimSetBotAiType(sim, (aiType)value[0]);
             if ((aiType)value[0] == aiNone) {
@@ -521,6 +563,11 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
         case LST_RANKED: {
             if (len != 1) return false;
             bool r = value[0] != 0;
+            /* A scripted round is not a measured one, so ranked is refused
+               while a scenario is attached. The other direction — ranked
+               already on when a scripted map is committed — is answered at
+               the commit, which clears it. */
+            if (lobbySettingScenarioFixes(sim, lst, value, len)) return false;
             serverSimSetRanked(sim, r);
             if (r) {
                 serverSimSetAiPolicy(sim, (uint8_t)aiNone);
@@ -574,6 +621,14 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             serverSimSetLineOfSight(sim, value[0]);
             return true;
         }
+        case LST_SMART_PINGS_OFF: {
+            if (len != 1) return false;
+            /* A plain bool like LST_ALLIES_IN_TREES, so any non-zero byte
+             * counts. Classic mode does not own it: what a player may
+             * point at is not one of the visibility rules. */
+            serverSimSetSmartPingsOff(sim, value[0] != 0);
+            return true;
+        }
         case LST_PILL_VIEW:
         case LST_BASE_VIEW:
         case LST_ALLY_VIEW: {
@@ -598,14 +653,26 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
     }
 }
 
-bool serverSimApplyLobbySetting(ServerSim *sim,
-                                uint8_t lst,
-                                const uint8_t *value, size_t len) {
-    if (!serverSimApplyLobbySettingInner(sim, lst, value, len)) return false;
+CmdResult serverSimApplyLobbySettingResult(ServerSim *sim,
+                                           uint8_t lst,
+                                           const uint8_t *value, size_t len) {
+    if (!serverSimApplyLobbySettingInner(sim, lst, value, len)) {
+        /* Why, for the line the sender is shown: a setting the map's
+           scenario fixes says so, and everything else is the payload being
+           one this lobby will not take. */
+        return lobbySettingScenarioFixes(sim, lst, value, len)
+                   ? CMD_REJECT_SCENARIO : CMD_REJECT_INVALID;
+    }
     serverSimPublishLobbySettings(sim);
     lobbyAutoUnreadyOnChange(sim);
     serverSimWbnLobbyUpdate(sim, FALSE);
-    return true;
+    return CMD_OK;
+}
+
+bool serverSimApplyLobbySetting(ServerSim *sim,
+                                uint8_t lst,
+                                const uint8_t *value, size_t len) {
+    return serverSimApplyLobbySettingResult(sim, lst, value, len) == CMD_OK;
 }
 
 /* Auto-unready: any meaningful lobby change clears every human's

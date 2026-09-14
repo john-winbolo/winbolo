@@ -30,6 +30,7 @@
 #include "lobby_internal.h"
 extern "C" {
 #include "../../../lang.h"
+#include "../../../gamefront.h"  /* gameFrontHostingScripts / gameFrontGetServerSim */
 }
 
 const char *lobbyGameTypeStr(gameType gt) {
@@ -37,7 +38,55 @@ const char *lobbyGameTypeStr(gameType gt) {
         case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
         case gameTournament:       return langGetText(STR_DLGGAMEINFO_TOURN);
         case gameStrictTournament: return langGetText(STR_DLGGAMEINFO_STRICT);
+        case gameScripted:         return langGetText(STR_DLGGAMEINFO_SCRIPTED);
         default:                   return langGetText(STR_UNKNOWN);
+    }
+}
+
+/* The scenario the lobby's map is running, under the map's own lines in
+ * both lobby layouts. It belongs to the map — the script file sits beside
+ * it — and the description is prose, so it goes on lines of its own rather
+ * than onto the single settings row, which is built from SameLine and ends
+ * with a right-aligned badge.
+ *
+ * The source is 0 when the round has no scenario, which covers a map with
+ * no script file and a map whose script this host declined alike: the
+ * server answers the same either way. So when this client is the one
+ * hosting and has the preference switched off, the line says that instead
+ * of nothing, rather than leaving a player wondering where the scenario
+ * went. Nothing is drawn for a joiner on a plain map. */
+void lobbyRenderScenarioLine(ClientSim *cs) {
+    if (cs == NULL) return;
+
+    if (clientSimGetLobbyScenarioSource(cs) != 0) {
+        const char *name = clientSimGetLobbyScenarioName(cs);
+        const char *desc = clientSimGetLobbyScenarioDescription(cs);
+        /* A scenario that named itself nothing still came from a file. */
+        if (name[0] == '\0') name = clientSimGetLobbyScenarioFileName(cs);
+        ImGui::TextWrapped("%s %s",
+                           langGetText(STR_DLGLOBBY_SCENARIO_LBL), name);
+        if (desc[0] != '\0') {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::TextWrapped("%s", desc);
+            ImGui::PopStyleColor();
+        }
+        /* The edit-reload-play loop, for the host who has the script file on
+           the machine the server is running on. The server answers with a
+           line addressed to whoever asked, including what a reload that
+           failed says, so nothing is reported from here. */
+        if (clientSimGetLobbyHostSlot(cs) == clientSimGetMyPlayerNum(cs) &&
+            !clientSimIsSpectator(cs)) {
+            if (ImGui::SmallButton(
+                    langGetText(STR_DLGLOBBY_RELOAD_SCENARIO))) {
+                clientSimNetSendLobbyReloadScenario(cs);
+            }
+        }
+        return;
+    }
+    if (!gameFrontHostingScripts && gameFrontGetServerSim() != NULL) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCRIPTS_OFF));
+        ImGui::PopStyleColor();
     }
 }
 
@@ -220,6 +269,24 @@ static SDL_Texture *loadWhiteIcon(SDL_Renderer *renderer, const char *relPath,
     return tex;
 }
 
+/* The default ping marker — the icon half of the header summary's
+ * smart-ping entry. An authored white alpha mask (see PingKindStyle in
+ * src/gui/ping_kinds.h: every drawer tints it), so it loads through
+ * loadWhiteIcon rather than loadLobbyPng.
+ *
+ * Rasterised at a fixed 32 px because the lazy getters take no scale: the
+ * summary draws it at 16 logical px, so 32 still reads on a 2x display and
+ * scales down cleanly below that. */
+SDL_Texture *lobbyGetPingStandardTexture(SDL_Renderer *renderer) {
+    if (s_icons.pingStandardAttempted) return s_icons.pingStandard;
+    s_icons.pingStandardAttempted = true;
+    s_icons.pingStandard = loadWhiteIcon(renderer, "data/ui/ping/standard.svg", 32);
+    if (s_icons.pingStandard) {
+        SDL_SetTextureScaleMode(s_icons.pingStandard, SDL_SCALEMODE_LINEAR);
+    }
+    return s_icons.pingStandard;
+}
+
 void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* If we've loaded against this exact renderer already, nothing
      * to do. If the renderer pointer differs (game→lobby may have
@@ -247,12 +314,14 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.pillbox15)   { SDL_DestroyTexture(s_icons.pillbox15);   s_icons.pillbox15   = nullptr; }
         if (s_icons.baseGood)    { SDL_DestroyTexture(s_icons.baseGood);    s_icons.baseGood    = nullptr; }
         if (s_icons.forest)      { SDL_DestroyTexture(s_icons.forest);      s_icons.forest      = nullptr; }
+        if (s_icons.pingStandard){ SDL_DestroyTexture(s_icons.pingStandard);s_icons.pingStandard= nullptr; }
         s_icons.tankSelfAttempted  = false;
         s_icons.tankEvilAttempted  = false;
         s_icons.tankGoodAttempted  = false;
         s_icons.pillbox15Attempted = false;
         s_icons.baseGoodAttempted  = false;
         s_icons.forestAttempted    = false;
+        s_icons.pingStandardAttempted = false;
     }
     s_icons.attempted = true;
     s_icons.renderer  = renderer;

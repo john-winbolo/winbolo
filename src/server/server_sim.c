@@ -204,7 +204,13 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     for (count = 0; count < MAX_TANKS; count++) {
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
         sim->sim.scenarioStartIdx[count] = MAX_STARTS;
+        /* No spawn has named a loadout, so every seat asks the policy. */
+        sim->sim.scenarioSpawnLoadout[count] = 0;
     }
+
+    /* No scenario has declared a base game type yet, so a round that turns
+       out to be scripted plays open until a lobby template says otherwise. */
+    sim->sim.scenarioBaseGame = (gameType)0;
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below
      * every stop row) would disable all tutorial stops. */
@@ -315,6 +321,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * later change to it must not quietly stop applying here. */
     sim->overviewWindow = (uint8_t)OVERVIEW_WINDOW_STOCK;
     sim->lineOfSight    = (uint8_t)LINE_OF_SIGHT_STOCK;
+    /* Smart pings are allowed until a host says otherwise. Written out
+     * rather than left to the memset for the same reason the two above
+     * are: the field is stored in the negative sense, so the line has to
+     * say which way round "false" reads. */
+    sim->smartPingsOff  = FALSE;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;

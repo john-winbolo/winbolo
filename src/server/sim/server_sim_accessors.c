@@ -800,6 +800,7 @@ uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_ALLIES_IN_TREES:   return LOBBY_LOCK_ALLIES_IN_TREES;
         case LST_OVERVIEW_WINDOW:   return LOBBY_LOCK_OVERVIEW_WINDOW;
         case LST_LINE_OF_SIGHT:     return LOBBY_LOCK_LINE_OF_SIGHT;
+        case LST_SMART_PINGS_OFF:   return LOBBY_LOCK_SMART_PINGS;
         default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
@@ -982,6 +983,17 @@ void serverSimSetGameType(ServerSim *sim, gameType gt) {
 
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines) {
     if (sim) sim->sim.hiddenMines = hiddenMines;
+}
+
+/* Negative sense throughout — see the field in server_sim_internal.h.
+ * false is "pings allowed", which is what a sim nobody has configured
+ * holds and what a NULL sim answers. */
+void serverSimSetSmartPingsOff(ServerSim *sim, bool off) {
+    if (sim) sim->smartPingsOff = off;
+}
+
+bool serverSimGetSmartPingsOff(const ServerSim *sim) {
+    return sim ? sim->smartPingsOff : false;
 }
 
 void serverSimSetState(ServerSim *sim, ServerState s) {

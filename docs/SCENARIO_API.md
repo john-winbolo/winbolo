@@ -17,6 +17,7 @@ bug worth reporting.
 ## Contents
 
 - [Where a scenario lives](#where-a-scenario-lives)
+- [What a scripted lobby looks like](#what-a-scripted-lobby-looks-like)
 - [A worked example: Wave Defense](#a-worked-example-wave-defense)
 - [The `scenario` table](#the-scenario-table)
 - [Hooks](#hooks)
@@ -118,12 +119,72 @@ answerable for it. Every host that opens a map from a file looks beside it:
 the dedicated server, the desktop client hosting a single-player or LAN game,
 and the headless runner.
 
-**Reloading after an edit.** On a dedicated server the console command
-`reload` reads the file again, checks that it loads, and swaps it in for the
-next round; the round in progress keeps what it started with, and a file that
-will not load leaves the old one in place and says why. The desktop host has
-no reload yet, so a client-hosted game picks up an edit when the map is
-loaded again.
+**Switching scripts off.** Each of the three hosts can be told not to load
+one, and each spells it its own way:
+
+- `-noscenarios` on the dedicated server. One dash.
+- `--noscenarios` on the headless runner. Two.
+- **Run map scripts when hosting**, the desktop client's hosting preference.
+  On by default, and it takes effect the moment it changes rather than from
+  the next hosted game.
+
+With any of them off a map that has a script beside it plays plainly, the
+operator is told which script was skipped, and the map chooser does not tag
+the map as scripted.
+
+**Reloading after an edit.** Two ways in. On a dedicated server the console
+command `reload` reads the file again; in a lobby, the host has a **Reload
+script** button beside the scenario's name. The button is the host's alone
+and only while the lobby is up, and at most one reload a second is accepted —
+reading and checking the file is real work on the thread the command arrives
+on.
+
+Either way the file is read and checked before anything is swapped, so one
+that will not load leaves the old one in place and says why, naming the file
+and the line. A reload swaps the script's bytes and nothing else: the next
+round to start boots the new rules and hooks, while the lobby seats the
+template asks for, the scenario's name and description, and the game it
+declares are the map commit's and change only when the map is committed
+again. The round in progress keeps what it started with.
+
+---
+
+## What a scripted lobby looks like
+
+Worth knowing before you write one, because some of it is not yours to
+change from the script.
+
+**The game type reads Scripted.** In the lobby and in both game finders, a
+round with a scenario attached shows its type as Scripted rather than as the
+game the scenario declared. `scenario.game` is what the round is actually
+played by; Scripted is what the round is called.
+
+**The scenario names itself under the map.** The lobby draws the scenario's
+name below the map lines, and the description under that in a dimmer shade.
+A scenario whose table left `name` empty is shown by its script's file name
+instead, because a scenario that named itself nothing still came from a file.
+Any control character in the three strings arrives as a space, so a
+description with a newline in it does not take the lobby apart.
+
+**The map chooser tags a scripted map.** Every map the lister finds is asked
+whether a script sits beside it, and the ones that do carry a Scripted tag.
+With scripts switched off nothing is tagged.
+
+**Three settings are refused while a scenario is attached.** Any game-type
+change, ranked on, and the no-bots AI policy. All three are refused the same
+way and the host is shown the same line — *That setting is fixed by the map's
+scenario* — rather than the request failing silently.
+
+**Committing a scripted map moves two settings out of the way**, because the
+three above cannot stand beside a scenario: ranked goes off, and an AI policy
+set to no bots moves up to one that runs them. Committing a plain map
+afterwards gives all three back — the game type, the ranked flag and the AI
+policy the lobby was on before the scenario arrived.
+
+**A lobby everyone leaves keeps the scenario's settings.** The reset that
+empties a lobby puts the operator's own game type, ranked flag and AI policy
+back and then applies the scenario's over them again, so the lobby the next
+player walks into is the one the scenario asked for.
 
 ---
 
@@ -194,8 +255,9 @@ If you write one scenario, write this one first and change it.
 ## The `scenario` table
 
 A global table named `scenario`, declared at the chunk's top level. Every field
-is optional except in the sense that a scenario with no `name` is a scenario
-nobody can identify.
+is optional. Leaving out `name` costs less than it looks: the lobby falls back
+to the script's own file name, so the scenario is still identified — but by
+the name you gave the file rather than by the one you would have chosen.
 
 ```lua
 scenario = {
@@ -216,7 +278,7 @@ scenario = {
 | `name` | string | What the scenario is called. |
 | `description` | string | One or two sentences for a host reading a list. |
 | `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
-| `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. **Not applied yet.** The round runs under the server's own game type; the only thing that reads this field today is `game.game_type()`, which echoes it back. It is written into the table now so a scenario need not change when the server starts honouring it. |
+| `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays open. A word that is none of the three also plays open, and `-validate` reports it by name. |
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. |
 
 ### `scenario.lobby`
@@ -226,7 +288,7 @@ The lobby the map opens with.
 | Field | Type | Meaning |
 |---|---|---|
 | `max_players` | number | The cap on human players, 1 to 16. 0 (the default) leaves the server's own cap. |
-| `extra_teams` | boolean | Read and not yet used. Whether a host may put a seat on a team nobody is on is decided by the `allow_extra_teams()` policy below, and a scenario that declares neither allows it. |
+| `extra_teams` | boolean | Read, and sent to every client on the lobby settings event, but nothing acts on it yet. Whether a host may put a seat on a team nobody is on is decided by the `allow_extra_teams()` policy below, and a scenario that declares neither allows it. |
 | `teams` | array | One entry per team, in order. |
 
 Each team:
@@ -310,6 +372,34 @@ costs nothing.
 | `on_tick(tick)` | Once per frame, fifty times a second. The `tick` it is handed goes up by **2** each time, not by 1 — see [Three clocks](#three-clocks). **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs fifty times a second is a handler that has to be cheap. |
 | `on_end()` | The round has just ended, for any reason. |
 
+**What a setup arranges, and what it does not.** The window that lets writes
+through is open across two calls, not one: the chunk's own top level at the
+round's boot and `on_setup` after the tanks are built. Both are inside a
+round start, and three things follow from that.
+
+What a setup arranges is the world the round begins in, not something that
+happened in it. It rides the opening snapshot's own tank, base and pill lists,
+and writes no newswire line: a setup that deals every base on the map hands
+each client sixteen owners rather than sixteen captures. For the same reason
+none of those captures is credited to anyone — the round's scoreboard and its
+timeline both start empty, whatever a setup arranged.
+
+Terrain a setup edits does reach every client. A `set_tile` or a `fill_rect`
+at setup is sent the same way a mid-round one is, so the round opens on the
+map the script wrote rather than on the one the file held.
+
+**The rules table, round by round.** Every round opens on the classic table,
+whatever the round before it played by. A scenario writes its own over that at
+the boot, before a start is picked or a tank is built, so the opening tanks are
+built under the numbers the file asked for. Two rounds therefore play classic
+without asking for it: the round after a scenario is detached, and a round
+whose script failed to boot — neither has a table of its own to write, and
+neither inherits the last script's.
+
+The table is applied a rule at a time. A rule the file names that the sim
+refuses is reported by name, with the reason, and the rest of the table is
+applied around it; one bad row does not cost a scenario its other rules.
+
 ### The roster and the lobby
 
 | Hook | Arguments |
@@ -383,19 +473,17 @@ rather than left to misbehave quietly.
 | `announce(kind, subject, actor)` | Before a newswire line is shown. `kind` is `"joined"`, `"left"`, `"base_captured"`, `"pill_captured"`, `"builder_lost"`, `"name_changed"`, `"alliance"` or `"vote"`. `subject` is the base or pillbox number for a capture and a seat otherwise; `actor` is the seat that did it. | `false` keeps the line off every client's newswire. The fact still happens. Ordinary rule: shown. |
 | `can_die(kind, n, killer, cause)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank, `"shell"` or `"mine"` for the other two, and `nil` when the engine could not name it. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
 | `on_choose_start(p)` | When the engine is about to pick a start for seat `p`, at a spawn, a respawn or a teleport with no start named. A start the script named in the op itself is not asked about. | A start number, counted from 1 as `game.start` counts. A number that names no live start is reported and the engine picks. `nil` lets the engine pick. |
-| `spawn_loadout(p)` | When seat `p`'s tank is created. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
+| `spawn_loadout(p)` | When seat `p`'s tank is created, unless the op that spawned it named a `loadout` of its own. A named one outranks the policy and is taken as it is read, so the policy is not asked for that tank and the named amounts are spent on it rather than held for the seat's next life. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
 | `damage_scale(attacker, victim, cause)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
 
 `scenario.lobby.max_players` is the one decision that is a number rather than
 a function; it is applied by the lobby without asking.
 
-**Which round answers.** The tanks for everyone seated when a round starts
-are built before the round's own Lua state is, so `on_choose_start` and
-`spawn_loadout` for those seats are answered by the state the server holds at
-that moment: the one the file was loaded into, for the first round, and the
-previous round's for later ones, with that round's globals. A seat that joins
-or respawns after the start is answered by the round's own state. Keep those
-two policies free of state that changes across a round.
+**Which round answers.** A round's own state is booted before the round places
+anything, so `on_choose_start` and `spawn_loadout` for the seats already in the
+round are answered by the state that is about to play it, with that round's
+globals, and the opening tanks are built under the rules the same file asked
+for. A seat that joins or respawns later is answered by the same state.
 
 ---
 
@@ -468,7 +556,7 @@ far as the server is concerned.
 | `game.num_players()` | How many seats are playing the round, bots included. |
 | `game.num_humans()` | How many of those are people. |
 | `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. |
-| `game.game_type()` | `"open"`, `"tournament"` or `"strict"`. This answers `scenario.game` when the table sets one, and the server's own game type otherwise — and since `scenario.game` is not applied yet, the two can differ. |
+| `game.game_type()` | `"open"`, `"tournament"` or `"strict"` — the game the round is being played by. It answers `scenario.game` when the table sets one, and the game the round resolves to otherwise. It never answers `"scripted"`: that is what the lobby calls the round, not a set of rules anything plays by. |
 
 ### Three clocks
 
@@ -716,6 +804,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `brain` | The brain to run, as a path on the server's disk. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. `package:NAME` is refused with `SCN_OP_NOT_FOUND` today. |
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
+| `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
 | `init` | A flat table of names to strings or numbers, handed to the brain at its first breath. |
 
 `lobby_add_bot` takes `name`, `brain`, `team`, `slot` and `fielded`, where
@@ -1029,11 +1118,26 @@ The `code` a refused write answers, as a string.
 | A line of text | 128 bytes |
 | A bot's `init` table | 16 pairs |
 | Events queued for one frame | 256 |
+| Roster changes outstanding at once | 32 |
+| Tiles a fill may change in one tick | 256 |
+| Errors in a row before the scenario is switched off | 20 |
+| `scenario.name` | 63 bytes |
+| `scenario.description` | 255 bytes |
+| `scenario.game` | 23 bytes |
+| A team's `brain` | 255 bytes |
 
-Going past one of the counts is reported and refused. The two name lengths
-are the exception when the name comes from the `scenario` table: a tag or a
-region name longer than 31 bytes is cut to 31 there, where `define_region`
-refuses one.
+Going past one of the counts is reported and refused. Spawns and removals
+share the one roster queue and the sim drains one a tick, so a script that
+asks for ten bots gets them over ten ticks; the one past the last is refused
+rather than displacing something already accepted. A rectangle bigger than a
+tick's tile budget applies what the budget allows and carries the rest on
+later ticks, one budget each — a whole-map fill takes 256 of them.
+
+The lengths are the exception, and they are cut rather than refused. A tag or
+a region name longer than 31 bytes is cut to 31 when it comes from the
+`scenario` table, where `define_region` refuses one instead. The four string
+fields above are cut the same way and just as quietly, so a description
+written as prose arrives at the lobby ending mid-word rather than not at all.
 
 ---
 
@@ -1075,10 +1179,10 @@ takes the first one's line.
 
 Named so you do not spend an afternoon looking for them:
 
-- **`scenario.game` and `scenario.lobby.extra_teams`.** Both are read and
-  neither changes the round yet.
-- **`spawn_bot`'s `loadout`.** The field is read and any value for it is
-  refused; a spawning bot is handed what the round's own policy hands it.
+- **`scenario.lobby.extra_teams`.** It is read, and it is sent to every
+  client on the lobby settings event, but nothing acts on it: whether a host
+  may put a seat on a team nobody is on is still decided by the
+  `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
 - **Bot hints.** There is no call that speaks to a bot's brain.
 - **Presentation.** A panel, a score line, a newswire line and a map marker

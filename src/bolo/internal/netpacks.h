@@ -745,6 +745,15 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               sender. Not echoed to anyone
                                               else. */
 
+#define PACKET_LOBBY_RELOAD_SCENARIO   221  /* client → server
+                                              (no payload) the lobby host
+                                              asks the server to read its
+                                              map's script again. The new
+                                              settings take effect at the
+                                              next round; the round in
+                                              progress keeps what it started
+                                              with. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

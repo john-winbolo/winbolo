@@ -671,6 +671,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
+            /* Own line like the labels around it — the smart-ping rule is
+             * host-only in the settings panel, so this is where a joiner or
+             * spectator reads it. */
+            lobbyRenderSmartPingSummary(cs, s);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
             /* Own line, like the labels above it — the view policies are
@@ -723,6 +727,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
+            /* Same reasoning as the view policies further down this line:
+             * the settings panel that owns the checkbox is host-only, so
+             * the header is where everyone else reads the rule. */
+            ImGui::SameLine(0, 16);
+            lobbyRenderSmartPingSummary(cs, s);
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::SameLine(0, 16);
@@ -1156,6 +1165,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     }
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), clientSimGetLobbyPillCount(cs), clientSimGetLobbyBaseCount(cs), clientSimGetLobbyStartCount(cs));
+
+                    lobbyRenderScenarioLine(cs);
 
                     /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
                      * the map blocks both manual change and skip-vote. */
@@ -2057,6 +2068,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
+                lobbyRenderScenarioLine(cs);
 
                 lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
             }
