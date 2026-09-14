@@ -566,6 +566,18 @@ bool serverSimCbSpawnLoadout(void *ctx, BYTE player, BYTE *shells,
     ScnLoadout wanted;
     bool answered;
 
+    /* A loadout the spawn op named for this tank outranks the policy, and is
+       answered before the policy is even looked for: a script that spawns a
+       bot with a named loadout and writes no spawn_loadout function is the
+       ordinary case, and the early return below would drop the answer. Taken
+       as it is read, so it fuels this tank and not the seat's next one. */
+    if (player < MAX_TANKS && sim->sim.scenarioSpawnLoadout[player] != 0) {
+        gameType named = (gameType)sim->sim.scenarioSpawnLoadout[player];
+        sim->sim.scenarioSpawnLoadout[player] = 0;
+        gameTypeGetItems(&sim->sim, &named, shells, mines, armour, trees);
+        return TRUE;
+    }
+
     if (sim->scenarioPolicy == NULL ||
         sim->scenarioPolicy->spawnLoadout == NULL) {
         return FALSE;

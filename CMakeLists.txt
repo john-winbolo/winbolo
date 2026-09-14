@@ -5123,6 +5123,9 @@ set(_unit_test_names
     scenario_lobby_set_team
     scenario_roster_bots_seat_past_the_human_cap
     scenario_roster_spawn_named_start
+    scenario_roster_spawn_loadout_named
+    scenario_roster_spawn_loadout_without_policy
+    scenario_roster_spawn_loadout_not_next_life
     lobby_template_map_commit_seats
     lobby_template_return_reconciles
     lobby_template_return_unfields

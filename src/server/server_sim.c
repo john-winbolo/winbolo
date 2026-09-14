@@ -204,6 +204,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     for (count = 0; count < MAX_TANKS; count++) {
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
         sim->sim.scenarioStartIdx[count] = MAX_STARTS;
+        /* No spawn has named a loadout, so every seat asks the policy. */
+        sim->sim.scenarioSpawnLoadout[count] = 0;
     }
 
     /* No scenario has declared a base game type yet, so a round that turns

@@ -1970,9 +1970,14 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
          startsIsActive(&sim->sim.ss, (BYTE)(p->start + 1)) == FALSE)) {
         return SCN_OP_RANGE;
     }
-    /* The loadout is the spawnLoadout policy's until an override exists;
-       a value that asks for one is refused rather than quietly dropped. */
-    if (p->loadout != 0) {
+    /* A named loadout is one of the game types the spawn's loadout words
+       hold. Anything else is refused here rather than reaching the tank as a
+       game type the engine has no amounts written for; 0 leaves the answer to
+       the spawn-loadout policy. */
+    if (p->loadout != 0 &&
+        p->loadout != (BYTE)gameOpen &&
+        p->loadout != (BYTE)gameTournament &&
+        p->loadout != (BYTE)gameStrictTournament) {
         return SCN_OP_RANGE;
     }
     /* The init table reaches a Lua VM, so every string in it must end inside
@@ -2187,8 +2192,15 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
         startsIsActive(&sim->sim.ss, (BYTE)(p->start + 1)) != FALSE) {
         sim->sim.scenarioStartIdx[slot] = p->start;
     }
+    /* And a named loadout goes into the scenario's own loadout slot, which
+       the spawn-loadout callback reads ahead of the policy and consumes: it
+       is for the tank this spawn builds, not a property of the seat. */
+    if (p->loadout != 0) {
+        sim->sim.scenarioSpawnLoadout[slot] = p->loadout;
+    }
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, &p->init)) {
         sim->sim.scenarioStartIdx[slot] = MAX_STARTS;
+        sim->sim.scenarioSpawnLoadout[slot] = 0;
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                     "scenario: queued bot spawn for slot %d would not start",
                     (int)slot);

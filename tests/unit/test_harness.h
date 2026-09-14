@@ -2259,6 +2259,13 @@ int run_scenario_lobby_set_team(void);
 int run_scenario_roster_bots_seat_past_the_human_cap(void);
 int run_scenario_roster_spawn_named_start(void);
 
+/* The loadout a spawn names for the one bot it builds: it fuels that tank
+ * ahead of the spawn-loadout policy, it is answered with no policy there at
+ * all, and it is spent on that tank rather than held for the seat. */
+int run_scenario_roster_spawn_loadout_named(void);
+int run_scenario_roster_spawn_loadout_without_policy(void);
+int run_scenario_roster_spawn_loadout_not_next_life(void);
+
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that
  * comes back from a round against what the host did to it, and leaving a

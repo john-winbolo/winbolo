@@ -253,6 +253,8 @@ bool clientSimCreate(ClientSim *cs) {
   for (int i = 0; i < MAX_TANKS; i++) {
     cs->sim.pendingStartIdx[i] = MAX_STARTS;
     cs->sim.scenarioStartIdx[i] = MAX_STARTS;
+    /* No spawn has named a loadout, so every seat asks the policy. */
+    cs->sim.scenarioSpawnLoadout[i] = 0;
   }
 
   /* A client is never handed a lobby template, so this stays 0 and a

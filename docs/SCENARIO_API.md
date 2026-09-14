@@ -667,6 +667,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `brain` | The brain to run, as a path on the server's disk. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. `package:NAME` is refused with `SCN_OP_NOT_FOUND` today. |
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
+| `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
 | `init` | A flat table of names to strings or numbers, handed to the brain at its first breath. |
 
 `lobby_add_bot` takes `name`, `brain`, `team`, `slot` and `fielded`, where
@@ -1028,8 +1029,6 @@ Named so you do not spend an afternoon looking for them:
 
 - **`scenario.game` and `scenario.lobby.extra_teams`.** Both are read and
   neither changes the round yet.
-- **`spawn_bot`'s `loadout`.** The field is read and any value for it is
-  refused; a spawning bot is handed what the round's own policy hands it.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
 - **Bot hints.** There is no call that speaks to a bot's brain.
 - **Presentation.** A panel, a score line, a newswire line and a map marker
