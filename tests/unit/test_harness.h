@@ -46,6 +46,29 @@
 extern "C" {
 #endif
 
+/* The name of the test currently running, as test_main.c's table spells it
+ * ("none" outside a test). For a test that needs a FIXTURE ON DISK.
+ *
+ * CTest gives each entry its own process (`WinBoloUnitTests --test <name>`)
+ * and `ctest -j` runs several of those at once, all sharing one working
+ * directory. A fixture at a path baked in at compile time is therefore
+ * shared by every test in its file: they create it, read it and delete it
+ * under each other, and the failures land on whichever test lost the race.
+ * A mutex fixes nothing — the contention is between processes, not threads.
+ *
+ * So build the path from this, and two tests can never collide. It is the
+ * test name rather than the process id on purpose: the path is then the
+ * SAME on every run, so a test that removes its own fixture on the way in
+ * also clears the wreckage a previously crashed run left behind. A pid
+ * would make every crash leak a directory nothing ever cleans up.
+ *
+ * The one case this does not cover is two concurrent runs of the same test,
+ * which CTest never does.
+ *
+ * Do not use it to vary what a test ASSERTS — only where it keeps its
+ * scratch files. */
+const char *utCurrentTestName(void);
+
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_active_sim_armed_on_lobby_tick(void);

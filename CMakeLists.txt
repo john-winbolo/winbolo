@@ -4138,6 +4138,17 @@ set(_unit_test_names
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact
+    # A new bot's mode/difficulty rule (test_lobby_bot_config_memory.c): the
+    # base, then the host's last MANUAL pick, remembered by key so it survives
+    # a brain declaring a different list. Reads the shipped GoalHunter_1.7
+    # modes.txt beside the binary and writes nothing, so these are safe under
+    # `ctest -j`.
+    lobby_bot_config_memory_applies
+    lobby_bot_config_memory_empty_is_noop
+    lobby_bot_config_memory_unknown_key
+    lobby_bot_config_memory_not_honoured
+    lobby_bot_config_memory_manual_only
+    lobby_bot_config_memory_new_lobby
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -4313,6 +4324,7 @@ set(_unit_test_names
     pf_tail_neutral_zone_slows
     pf_tail_meeting_cancels_tie_to_hostile
     pf_tail_never_overwrites_a_stamp
+    pf_tail_deep_margin_keeps_off_the_shore
     pf_tail_contact_makes_a_front_line
     loadbrowser_segment_walks_parts
     loadbrowser_segment_crosses_blocks

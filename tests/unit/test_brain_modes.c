@@ -33,35 +33,53 @@
 #  define SEP '/'
 #endif
 
-#define MODES_BRAIN_DIR "wbtest_modesbrain"
-
-/* True when we had to create brains/ ourselves — only then may teardown
- * remove it, because a real tree's brains/ must survive the test. */
-static bool s_madeParent = false;
-
-static void modes_path(char *out, size_t outSz) {
-    SDL_snprintf(out, outSz, "brains%c%s%cmodes.txt", SEP, MODES_BRAIN_DIR, SEP);
+/* The brain directory this test writes its manifest into, named after the
+ * running test.
+ *
+ * All four tests in this file used to share one compile-time name. CTest
+ * runs each of them in its own process out of the same working directory,
+ * so under `ctest -j` they created, read and deleted one another's
+ * manifest: brain_modes_manifest_parses would read the eight-mode file
+ * brain_modes_counts_clamped had just written and report "got 4 modes,
+ * expected 2". Each passed alone, which is what made it look like a parse
+ * bug rather than a fixture one. A name per test removes the sharing —
+ * see utCurrentTestName in test_harness.h for why it is the test name and
+ * not the process id. */
+static const char *modes_brain_name(void) {
+    static char name[160];
+    SDL_snprintf(name, sizeof(name), "wbtest_modesbrain_%s",
+                 utCurrentTestName());
+    return name;
 }
 
+static void modes_path(char *out, size_t outSz) {
+    SDL_snprintf(out, outSz, "brains%c%s%cmodes.txt", SEP,
+                 modes_brain_name(), SEP);
+}
+
+/* Remove this test's fixture. Called on the way IN as well as out, so a
+ * previous run that died mid-test cannot poison this one — which is the
+ * whole reason the directory name is stable across runs. */
 static void modes_cleanup(void) {
     char p[512];
     modes_path(p, sizeof(p));
     SDL_RemovePath(p);
-    SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, MODES_BRAIN_DIR);
+    SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, modes_brain_name());
     SDL_RemovePath(p);
-    if (s_madeParent) {
-        SDL_RemovePath("brains");
-        s_madeParent = false;
-    }
+    /* brains/ itself is deliberately left behind. It is shared with every
+     * other test running right now, and removing it between a sibling's
+     * SDL_CreateDirectory("brains") and its CreateDirectory of the child
+     * would fail that sibling for no reason. An empty brains/ in a build
+     * tree costs nothing; in a real checkout it was already there. */
 }
 
 /* Write `contents` as the temp brain's modes.txt. Returns 0 on success. */
 static int modes_write(const char *contents) {
     char p[512];
-    SDL_PathInfo info;
-    s_madeParent = !SDL_GetPathInfo("brains", &info);
+    /* Both creates tolerate "it already exists" — brains/ normally does,
+     * and a sibling test may be making it at the same moment. */
     if (!SDL_CreateDirectory("brains")) return 1;
-    SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, MODES_BRAIN_DIR);
+    SDL_snprintf(p, sizeof(p), "brains%c%s", SEP, modes_brain_name());
     if (!SDL_CreateDirectory(p)) return 1;
     modes_path(p, sizeof(p));
     FILE *f = fopen(p, "wb");
@@ -108,7 +126,7 @@ int run_brain_modes_manifest_parses(void) {
         "levels  = easy:Easy, medium:Medium, hard:Hard\r\n"
         "default = medium\r\n") == 0);
 
-    UT_ASSERT_MSG(brainListLoadModes(MODES_BRAIN_DIR, &m),
+    UT_ASSERT_MSG(brainListLoadModes(modes_brain_name(), &m),
                   "a readable manifest must report true");
     UT_ASSERT_MSG(m.modeCount == 2, "got %d modes, expected 2", m.modeCount);
 
@@ -147,7 +165,7 @@ int run_brain_modes_missing_falls_back(void) {
     /* No manifest anywhere: false, and the synthesized default mode. */
     modes_cleanup();
     memset(&m, 0xAB, sizeof(m));
-    UT_ASSERT_MSG(!brainListLoadModes(MODES_BRAIN_DIR, &m),
+    UT_ASSERT_MSG(!brainListLoadModes(modes_brain_name(), &m),
                   "a brain with no modes.txt must report false");
     if (assert_is_synthesized_default(&m) != 0) return 1;
 
@@ -161,13 +179,13 @@ int run_brain_modes_missing_falls_back(void) {
     if (assert_is_synthesized_default(&m) != 0) return 1;
 
     /* An unreadable NULL out pointer is refused rather than crashed on. */
-    UT_ASSERT(!brainListLoadModes(MODES_BRAIN_DIR, NULL));
+    UT_ASSERT(!brainListLoadModes(modes_brain_name(), NULL));
 
     /* A file that exists but says nothing usable also falls back, because
      * an empty mode list would leave the lobby with nothing to render. */
     UT_ASSERT(modes_write("# only a comment\n\n   \n") == 0);
     memset(&m, 0xAB, sizeof(m));
-    UT_ASSERT_MSG(!brainListLoadModes(MODES_BRAIN_DIR, &m),
+    UT_ASSERT_MSG(!brainListLoadModes(modes_brain_name(), &m),
                   "a manifest with no usable mode must report false");
     if (assert_is_synthesized_default(&m) != 0) return 1;
 
@@ -195,7 +213,7 @@ int run_brain_modes_malformed_lines_skipped(void) {
         "levels = one:One, two:Two\n"
         "default = nosuchlevel\n") == 0);      /* unknown -> last level    */
 
-    UT_ASSERT(brainListLoadModes(MODES_BRAIN_DIR, &m));
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
     /* "bad key" is not a legal section key, so it is gone and the survivors
      * are contiguous. "empty" STAYS, which is a change: a mode may declare no
      * levels at all, and that says the brain has one way of playing and no
@@ -256,7 +274,7 @@ int run_brain_modes_counts_clamped(void) {
     UT_ASSERT(pos < sizeof(buf));
     UT_ASSERT(modes_write(buf) == 0);
 
-    UT_ASSERT(brainListLoadModes(MODES_BRAIN_DIR, &m));
+    UT_ASSERT(brainListLoadModes(modes_brain_name(), &m));
     UT_ASSERT_MSG(m.modeCount == BRAIN_MODES_MAX,
                   "kept %d modes, expected the %d cap",
                   m.modeCount, BRAIN_MODES_MAX);

@@ -1145,12 +1145,20 @@ ServerSim *ut_make_running_sim(const char *player_name) {
     return sim;
 }
 
+/* Name of the test run_one is currently in, for fixtures that need a path
+ * of their own — see utCurrentTestName in test_harness.h. */
+static const char *s_currentTest = "none";
+
+const char *utCurrentTestName(void) { return s_currentTest; }
+
 static int run_one(const char *name) {
     int i;
     for (i = 0; i < NUM_TESTS; i++) {
         if (strcmp(s_tests[i].name, name) == 0) {
             fprintf(stderr, "RUN  %s\n", s_tests[i].name);
+            s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
+            s_currentTest = "none";
             fprintf(stderr, "%s %s\n", rc == 0 ? "PASS" : "FAIL",
                     s_tests[i].name);
             return rc;
