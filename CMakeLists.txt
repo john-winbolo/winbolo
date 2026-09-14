@@ -4964,6 +4964,8 @@ set(_unit_test_names
     lobby_template_cancel_keeps_empty_team
     lobby_template_cancel_chain_rolls_back
     lobby_template_commit_keeps_new_lobby
+    lobby_template_cancel_restores_path_inmem
+    lobby_template_cancel_restores_path_random
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready

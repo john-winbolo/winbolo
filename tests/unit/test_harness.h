@@ -2190,6 +2190,8 @@ int run_lobby_template_cancel_keeps_trim(void);
 int run_lobby_template_cancel_keeps_empty_team(void);
 int run_lobby_template_cancel_chain_rolls_back(void);
 int run_lobby_template_commit_keeps_new_lobby(void);
+int run_lobby_template_cancel_restores_path_inmem(void);
+int run_lobby_template_cancel_restores_path_random(void);
 
 /* The unfielded seat (test_unfielded_seat.c): a seat a bot holds with no
  * bot manager entry, no ClientSim and no tank behind it. What it counts for,

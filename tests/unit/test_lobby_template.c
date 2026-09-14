@@ -46,6 +46,11 @@
  * run_lobby_template_commit_keeps_new_lobby
  *                                       — a commit keeps the previewed map's
  *                                         lobby and restores nothing
+ * run_lobby_template_cancel_restores_path_inmem
+ *                                       — a cancel after an uploaded-map
+ *                                         preview gives the map's file back
+ * run_lobby_template_cancel_restores_path_random
+ *                                       — and after a generated-map preview
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -64,6 +69,8 @@
                                     * and the template entry points */
 #include "server_sim_scenario.h"
 #include "server_sim_join.h"       /* serverSimFindFreeSlot */
+#include "mapgen.h"                /* MapGenConfig, mapGenDefaultConfig — the
+                                    * generated-map preview */
 #include "game_sim.h"
 #include "everard_map.h"
 #include "test_harness.h"
@@ -769,6 +776,91 @@ int run_lobby_template_commit_keeps_new_lobby(void) {
     UT_ASSERT(serverSimRevertPreview(sim));
     UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 4,
                   "a cancel after a commit gave back %d seats, expected 4",
+                  ltSeats(sim, LT_HORDE));
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* ── A cancel gives the map's own file back too ───────────────────── */
+
+/* The live map came from a file, which is where a scenario is found beside
+ * it. These sims are built from bytes, so name the file the way a file-map
+ * commit would have left it. */
+#define LT_MAP_PATH "data/maps/Wave Defense.map"
+
+/* Put the sim where a host is when they go looking at another map: the live
+ * map came from a file, the template is seated, and one team is trimmed to
+ * two. That is the state a cancel has to bring back. */
+static void ltSeatOnFileMap(ServerSim *sim, ScnLobbyTemplate *t) {
+    SDL_strlcpy(sim->mapFilePath, LT_MAP_PATH, sizeof(sim->mapFilePath));
+    ltTemplate(t, 4, 4, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+    ltTrimTo(sim, LT_HORDE, 2);
+}
+
+/* An uploaded map previews from bytes, which leaves nothing to look beside
+ * while it stands. Cancelling has to put the file back, or the map-changed
+ * callback looks for a script beside nothing, drops the scenario, and the
+ * seats have no template to be restored against. */
+int run_lobby_template_cancel_restores_path_inmem(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_restores_path_inmem"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltSeatOnFileMap(sim, &t);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 2);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+
+    UT_ASSERT(ltPreview(sim, "Uploaded"));
+    UT_ASSERT(serverSimRevertPreview(sim));
+
+    UT_ASSERT_MSG(strcmp(sim->mapFilePath, LT_MAP_PATH) == 0,
+                  "the cancel left the map file as '%s', expected '%s'",
+                  sim->mapFilePath, LT_MAP_PATH);
+    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 2,
+                  "the trim to two came back as %d",
+                  ltSeats(sim, LT_HORDE));
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A generated map is the other one with no file of its own. It never clears
+ * the path while it stands, so here the cancel is what loses it. */
+int run_lobby_template_cancel_restores_path_random(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    MapGenConfig     cfg;
+
+    UT_ASSERT(ltMakeBrainFile("cancel_restores_path_random"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltSeatOnFileMap(sim, &t);
+    UT_ASSERT(ltSeats(sim, LT_HORDE) == 2);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+
+    cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+    cfg.seed = 20260914u;
+    UT_ASSERT(serverSimReloadRandomMap(sim, &cfg));
+    UT_ASSERT(serverSimHasPreviewMap(sim));
+
+    UT_ASSERT(serverSimRevertPreview(sim));
+    UT_ASSERT_MSG(strcmp(sim->mapFilePath, LT_MAP_PATH) == 0,
+                  "the cancel left the map file as '%s', expected '%s'",
+                  sim->mapFilePath, LT_MAP_PATH);
+    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 2,
+                  "the trim to two came back as %d",
                   ltSeats(sim, LT_HORDE));
 
     serverSimDestroy(sim);
