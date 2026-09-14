@@ -96,9 +96,10 @@
  *                                       answers is not resolved
  *
  * A script has no way to reach the engine yet, so the lifecycle cases read
- * what ran two ways: a hook appends a character to this case's record file,
- * and allow_extra_teams — the one policy the host registers — answers from
- * the globals the hooks left behind.
+ * what ran two ways: a hook prints a marked line, caught off the server
+ * console the scenario sandbox routes print to, and allow_extra_teams — the
+ * one policy the host registers — answers from the globals the hooks left
+ * behind.
  */
 
 #include <stdint.h>
@@ -230,32 +231,51 @@ static bool shAskExtraTeams(ServerSim *sim) {
 
 /* ── What a hook left behind ──────────────────────────────────────── */
 
-/* No Lua function reaches the engine yet, so a hook says it ran by
- * appending a character to a file. The name is the case's own: CTest runs
- * cases as separate processes in one directory, so a shared name is a race
- * rather than a fixture. */
-static void shScript(char *out, size_t outLen, const char *record,
-                     const char *body) {
+/* No Lua function reaches the engine yet, so a hook says it ran by printing
+ * a marked line. A scenario state has no io, and its print goes to the
+ * server console, which the watcher below catches. The mark is what tells a
+ * hook's line from the host's own: both arrive on the same console. */
+#define SH_NOTE_MARK "note:"
+
+static char   shNote[8192];
+static size_t shNoteLen;
+
+static void shNoteReset(void) {
+    shNote[0] = '\0';
+    shNoteLen = 0;
+}
+
+/* One console line, kept if a hook wrote it. A record past the buffer is
+   truncated rather than overrunning it. */
+static void shNoteLine(const char *msg) {
+    size_t mark = strlen(SH_NOTE_MARK);
+    size_t room;
+    size_t n;
+
+    if (msg == NULL || strncmp(msg, SH_NOTE_MARK, mark) != 0) {
+        return;
+    }
+    n    = strlen(msg + mark);
+    room = sizeof(shNote) - 1 - shNoteLen;
+    if (n > room) {
+        n = room;
+    }
+    memcpy(shNote + shNoteLen, msg + mark, n);
+    shNoteLen += n;
+    shNote[shNoteLen] = '\0';
+}
+
+static void shScript(char *out, size_t outLen, const char *body) {
     snprintf(out, outLen,
              "local function note(s)\n"
-             "  local f = io.open(\"%s\", \"a\")\n"
-             "  if f then f:write(s) f:close() end\n"
+             "  print(\"" SH_NOTE_MARK "\" .. tostring(s))\n"
              "end\n"
-             "%s", record, body);
+             "%s", body);
 }
 
 /* The record so far, or "" when no hook has written one. */
-static void shRead(const char *record, char *out, size_t outLen) {
-    FILE  *f = fopen(record, "rb");
-    size_t n;
-
-    out[0] = '\0';
-    if (f == NULL) {
-        return;
-    }
-    n = fread(out, 1, outLen - 1, f);
-    fclose(f);
-    out[n] = '\0';
+static void shRead(char *out, size_t outLen) {
+    snprintf(out, outLen, "%s", shNote);
 }
 
 /* ── A moment inside the round start ──────────────────────────────── */
@@ -1031,8 +1051,7 @@ int run_scenario_host_reload_bad_api(void) {
  * start and "x" lost. Two rounds therefore read "acac", and a "p" in the
  * third place is the first round's global reaching the second. */
 int run_scenario_host_fresh_globals_per_round(void) {
-    static const char *const kMap    = "scnhost_fresh.map";
-    static const char *const kRecord = "scnhost_fresh.record";
+    static const char *const kMap  = "scnhost_fresh.map";
     static const char *const kBody =
         "scenario = { name = \"Fresh\", api = 1 }\n"
         "function on_setup()\n"
@@ -1048,34 +1067,39 @@ int run_scenario_host_fresh_globals_per_round(void) {
     ScenarioHost *h;
     char          err[512];
 
-    remove(kRecord);
-    shScript(lua, sizeof(lua), kRecord, kBody);
+    shNoteReset();
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     serverSimTick(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "ac") == 0,
                   "the first round recorded '%s', expected 'ac': the setup "
                   "found no global and the start found the one it set", got);
 
     serverSimStartGame(sim);
     serverSimTick(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "acac") == 0,
                   "two rounds recorded '%s', expected 'acac': a 'p' in the "
                   "third place is the first round's global still there in "
                   "the second", got);
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }
 
@@ -1095,8 +1119,7 @@ int run_scenario_host_fresh_globals_per_round(void) {
  * it is there before the setup is called, which is the point of calling the
  * setup after it. */
 int run_scenario_host_setup_in_window(void) {
-    static const char *const kMap    = "scnhost_window.map";
-    static const char *const kRecord = "scnhost_window.record";
+    static const char *const kMap  = "scnhost_window.map";
     static const char *const kBody =
         "scenario = { name = \"Window\", api = 1,\n"
         "             rules = { tank_death_ticks = 400 } }\n"
@@ -1112,17 +1135,21 @@ int run_scenario_host_setup_in_window(void) {
     ScenarioHost *h;
     char          err[512];
 
-    remove(kRecord);
-    shScript(lua, sizeof(lua), kRecord, kBody);
+    shNoteReset();
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "s") == 0,
                   "the round recorded '%s', expected 's': on_setup did not "
                   "run from the round start", got);
@@ -1132,10 +1159,11 @@ int run_scenario_host_setup_in_window(void) {
                   "window was shut across the call",
                   (int)sim->sim.rules.tank_death_ticks, SH_WINDOW_DEATH);
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
 
     /* The second half, on its own sim and its own script. */
     UT_ASSERT(shPut(kRaiserMap, kRaiser));
@@ -1165,8 +1193,7 @@ int run_scenario_host_setup_in_window(void) {
  * belongs to neither those nor the start itself: it belongs to the first
  * tick after the round is running, and to that one alone. */
 int run_scenario_host_start_on_first_running_tick(void) {
-    static const char *const kMap    = "scnhost_first_tick.map";
-    static const char *const kRecord = "scnhost_first_tick.record";
+    static const char *const kMap  = "scnhost_first_tick.map";
     static const char *const kBody =
         "scenario = { name = \"First\", api = 1 }\n"
         "function on_start() note(\"s\") end\n";
@@ -1177,11 +1204,15 @@ int run_scenario_host_start_on_first_running_tick(void) {
     char          err[512];
     int           i;
 
-    remove(kRecord);
-    shScript(lua, sizeof(lua), kRecord, kBody);
+    shNoteReset();
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -1192,34 +1223,35 @@ int run_scenario_host_start_on_first_running_tick(void) {
     for (i = 0; i < 5; i++) {
         serverSimTick(sim);
     }
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(got[0] == '\0',
                   "five lobby ticks recorded '%s': on_start ran before the "
                   "round did", got);
 
     serverSimStartGame(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(got[0] == '\0',
                   "the round start recorded '%s': on_start belongs to the "
                   "first running tick, not to the start", got);
 
     serverSimTick(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "s") == 0,
                   "the first running tick recorded '%s', expected 's'", got);
 
     for (i = 0; i < 10; i++) {
         serverSimTick(sim);
     }
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "s") == 0,
                   "eleven running ticks recorded '%s', expected the one 's': "
                   "on_start ran more than once", got);
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }
 
@@ -1353,8 +1385,7 @@ int run_scenario_host_error_limit_boundary(void) {
  * again — which is also what says the first round's silence was the scenario
  * being off rather than the hook never working. */
 int run_scenario_host_disabled_stops_hooks(void) {
-    static const char *const kMap    = "scnhost_off.map";
-    static const char *const kRecord = "scnhost_off.record";
+    static const char *const kMap  = "scnhost_off.map";
     static const char *const kBody =
         "scenario = { name = \"Off\", api = 1 }\n"
         "function allow_extra_teams() error(\"boom\") end\n"
@@ -1367,11 +1398,15 @@ int run_scenario_host_disabled_stops_hooks(void) {
     char          err[512];
     int           i;
 
-    remove(kRecord);
-    shScript(lua, sizeof(lua), kRecord, kBody);
+    shNoteReset();
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -1388,7 +1423,7 @@ int run_scenario_host_disabled_stops_hooks(void) {
         serverSimTick(sim);
     }
 
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(got[0] == '\0',
                   "ten running ticks recorded '%s': a switched-off round ran "
                   "on_start", got);
@@ -1404,7 +1439,7 @@ int run_scenario_host_disabled_stops_hooks(void) {
     /* The next round: a fresh VM, the count at zero, the hooks running. */
     serverSimStartGame(sim);
     serverSimTick(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "s") == 0,
                   "the round after recorded '%s', expected 's': being off is "
                   "the round's, not the attachment's", got);
@@ -1412,10 +1447,11 @@ int run_scenario_host_disabled_stops_hooks(void) {
                   "%d lines reached the game, expected the one from the first "
                   "round", text.count);
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }
 
@@ -1807,8 +1843,7 @@ int run_scenario_host_metatable_not_read(void) {
  * same file and still runs, which is what says the round got as far as the
  * hooks at all. */
 int run_scenario_host_hook_via_global_metatable(void) {
-    static const char *const kMap    = "scnhost_mt_hook.map";
-    static const char *const kRecord = "scnhost_mt_hook.record";
+    static const char *const kMap  = "scnhost_mt_hook.map";
     static const char *const kBody =
         "scenario = { name = \"Hooked\", api = 1 }\n"
         "function on_start() note(\"T\") end\n"
@@ -1822,31 +1857,36 @@ int run_scenario_host_hook_via_global_metatable(void) {
     ScenarioHost *h;
     char          err[512];
 
-    remove(kRecord);
-    shScript(lua, sizeof(lua), kRecord, kBody);
+    shNoteReset();
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(got[0] == '\0',
                   "the round start recorded '%s': on_setup was taken from the "
                   "_G metatable", got);
 
     serverSimTick(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "T") == 0,
                   "the first running tick recorded '%s', expected the one 'T' "
                   "from the hook the file writes as a global", got);
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }
 
@@ -1965,30 +2005,26 @@ int run_scenario_host_enabled_again(void) {
  * running — the name and the description the lobby shows, and the regions
  * every tick would walk for a round with no script to tell about them.
  *
- * The marker file is what makes the same bytes load once and raise the next
- * time. The host reads the file at the attach and runs those bytes at every
- * start, so the difference between the two rounds has to be something the
- * chunk itself can see. */
+ * The seated player is what makes the same bytes load twice and raise the
+ * second time. The host reads the file at the attach and runs those bytes at
+ * every start, so the difference between the two rounds has to be something
+ * the chunk itself can see: the attach and the first start run with nobody
+ * on the field, and slot 0 is seated between the rounds. */
 int run_scenario_host_failed_start_drops_manifest(void) {
-    static const char *const kMap    = "scnhost_failed_start.map";
-    static const char *const kMarker = "scnhost_failed_start.marker";
-    char                    lua[1024];
+    static const char *const kMap = "scnhost_failed_start.map";
+    static const char *const kLua =
+        "if game.num_players() > 0 then error(\"not this round\") end\n"
+        "scenario = { name = \"Standing\", api = 1,\n"
+        "             description = \"Hold the keep\",\n"
+        "             regions = { keep = { x = 100, y = 100,\n"
+        "                                  w = 12, h = 12 } } }\n"
+        "function allow_extra_teams() return false end\n";
     ServerSim              *sim;
     ScenarioHost           *h;
     const ScenarioManifest *m;
-    FILE                   *f;
     char                    err[512];
 
-    remove(kMarker);
-    snprintf(lua, sizeof(lua),
-             "local stop = io.open(\"%s\", \"r\")\n"
-             "if stop then stop:close() error(\"not this round\") end\n"
-             "scenario = { name = \"Standing\", api = 1,\n"
-             "             description = \"Hold the keep\",\n"
-             "             regions = { keep = { x = 100, y = 100,\n"
-             "                                  w = 12, h = 12 } } }\n"
-             "function allow_extra_teams() return false end\n", kMarker);
-    UT_ASSERT(shPut(kMap, lua));
+    UT_ASSERT(shPut(kMap, kLua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
 
@@ -2010,11 +2046,13 @@ int run_scenario_host_failed_start_drops_manifest(void) {
                   "the first round answered the classic yes, so its script "
                   "never ran at all");
 
-    /* Written between the rounds, so the next start is the one that
-       raises. */
-    f = fopen(kMarker, "wb");
-    UT_ASSERT_MSG(f != NULL, "the marker file could not be written");
-    fclose(f);
+    /* Seated between the rounds, so the next start is the one that raises.
+       A seat taken this way is taken on the field, which is what the chunk
+       counts. */
+    serverSimAddPlayer(sim, 0, "Tester", false);
+    UT_ASSERT_MSG(serverSimIsSeatFielded(sim, 0),
+                  "the case seated nobody, so both rounds look the same to "
+                  "the chunk");
 
     serverSimStartGame(sim);
     serverSimTick(sim);
@@ -2035,7 +2073,6 @@ int run_scenario_host_failed_start_drops_manifest(void) {
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kMarker);
     return 0;
 }
 
@@ -2053,8 +2090,7 @@ int run_scenario_host_failed_start_drops_manifest(void) {
  * have been refused by the round's state in any case, so the sentence it
  * carries is what says which refusal it was. */
 int run_scenario_host_reload_applies_nothing(void) {
-    static const char *const kMap    = "scnhost_reload_writes.map";
-    static const char *const kRecord = "scnhost_reload_writes.record";
+    static const char *const kMap   = "scnhost_reload_writes.map";
     static const char *const kFirst =
         "scenario = { name = \"Quiet\", api = 1 }\n";
     static const char *const kBody =
@@ -2073,10 +2109,14 @@ int run_scenario_host_reload_applies_nothing(void) {
     char          err[512];
     BYTE          before;
 
-    remove(kRecord);
+    shNoteReset();
     UT_ASSERT(shPut(kMap, kFirst));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    /* The edited file's top level runs inside the reload, and what it writes
+       down arrives as a console line from the check's own state. */
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -2086,13 +2126,13 @@ int run_scenario_host_reload_applies_nothing(void) {
     shWatchText(sim, &text);
     before = serverSimGetNumPlayers(sim);
 
-    shScript(lua, sizeof(lua), kRecord, kBody);
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     err[0] = '\0';
     UT_ASSERT_MSG(scenarioHostReload(h, err, sizeof(err)),
                   "the reload was refused: %s", err);
 
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strstr(got, "msg=SCN_OP_WRONG_STATE") != NULL,
                   "the top level's line to the players answered '%s', and a "
                   "reload sends none", got);
@@ -2114,9 +2154,10 @@ int run_scenario_host_reload_applies_nothing(void) {
     UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Loud") == 0,
                   "the round after the reload reads '%s'", scenarioHostName(h));
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }

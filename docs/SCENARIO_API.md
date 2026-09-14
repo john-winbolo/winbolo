@@ -62,12 +62,28 @@ start of every round, each time in a Lua state of its own. That means:
 
 The file may be up to 1 MiB.
 
-**A scenario is trusted the way a brain is.** The script runs with Lua's
-full standard library, with no time limit and no memory cap. A file beside a
-map is run by whoever hosts that map, so run only scripts you would run as a
-program. Every host that opens a map from a file looks beside it: the
-dedicated server, the desktop client hosting a single-player or LAN game, and
-the headless runner.
+**What a script is given.** The state a scenario runs in opens `string`,
+`table`, `math`, `os`, `coroutine` and the base functions, and nothing else.
+There is no `io`, so a script cannot read or write a file. There is no
+`package` and no `require`, so it cannot load another module. There is no
+`debug`, and on a LuaJIT host no `ffi`, no `jit` and no `bit`. `load`,
+`loadstring`, `dofile`, `loadfile` and `string.dump` are gone with them, and
+`os` keeps only `time`, `date`, `clock` and `difftime`. `math.random` works
+and is seeded for you; `math.randomseed` is not there to reseed it.
+`collectgarbage` answers every option but `"stop"`, which raises. `utf8` is
+present only on hosts built against PUC-Lua — a LuaJIT host has none, so a
+script that wants it must ask. Your file is loaded as text: a precompiled
+chunk is refused at the door, so ship the source. `print` goes to the server
+console rather than to the host's stdout, which is how a script says
+something to the operator.
+
+**A scenario is still trusted the way a brain is**, with no time limit and no
+memory cap. A file beside a map is run by whoever hosts that map, at the
+server's own privilege, so run only scripts you would run as a program — the
+library above narrows what a script can reach, not who is answerable for it.
+Every host that opens a map from a file looks beside it: the dedicated
+server, the desktop client hosting a single-player or LAN game, and the
+headless runner.
 
 **Reloading after an edit.** On a dedicated server the console command
 `reload` reads the file again, checks that it loads, and swaps it in for the

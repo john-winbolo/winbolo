@@ -2537,6 +2537,15 @@ int run_scenario_lua_detail_carries_the_number(void);
 int run_scenario_lua_teleport_start_refuses_bad_index(void);
 int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 
+/* The library a scenario state is opened with (test_scenario_sandbox.c):
+ * the names the whitelist takes and the ones it keeps, the precompiled
+ * chunk the loader refuses, collectgarbage without "stop", and print on
+ * the server console. */
+int run_scenario_sandbox_removed_names_are_nil(void);
+int run_scenario_sandbox_bytecode_chunk_refused(void);
+int run_scenario_sandbox_collectgarbage_stop_refused(void);
+int run_scenario_sandbox_print_reaches_the_console(void);
+
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full
  * queue does with the event that finds no room. */

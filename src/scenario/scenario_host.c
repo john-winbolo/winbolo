@@ -93,6 +93,7 @@
 #include "scenario_manifest.h"
 #include "scenario_events.h"
 #include "scenario_lua.h"
+#include "scenario_sandbox.h"      /* the libraries a scenario state gets */
 #include "scenario_validate.h"     /* ScnParseReport, and the parse this file
                                     * shares with the validator */
 
@@ -537,8 +538,11 @@ static void scnSeedRandom(lua_State *L) {
 
     /* The two reads in this file that still run a metamethod, and the pair
        for which that costs nothing: this runs inside the boot, ahead of the
-       chunk, so math holds what luaL_openlibs put there a line ago and no
-       script has had a statement in which to touch it. */
+       chunk, so math holds what the whitelist opened a line ago and no
+       script has had a statement in which to touch it.
+       math.randomseed is one of the names the whitelist takes, which is why
+       the seal runs after this call rather than inside the open: the seed is
+       drawn here and the function is gone before the chunk can reach it. */
     lua_getglobal(L, "math");
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "randomseed");
@@ -593,8 +597,9 @@ lua_State *scnNewVm(void) {
         return NULL;
     }
     lua_atpanic(L, scnPanic);
-    luaL_openlibs(L);
+    scnSandboxOpenLibs(L);
     scnSeedRandom(L);
+    scnSandboxSealRandom(L);
     return L;
 }
 
@@ -634,10 +639,15 @@ static const char *scnLuaError(lua_State *L) {
  *
  * chunkName carries the leading '@' that tells Lua the name is a file, so
  * an error reads as path:line: message — the same text a chunk loaded
- * straight from the file produces. */
+ * straight from the file produces.
+ *
+ * Text only. A precompiled chunk is a stream the VM trusts and does not
+ * check, so bytes that arrived inside a map file are refused at the load
+ * rather than read as instructions. Every state the host boots comes through
+ * here, the validator's included, so WinBoloDS -validate refuses one too. */
 bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
                  const char *chunkName, char *err, size_t errLen) {
-    if (luaL_loadbuffer(L, src, srcLen, chunkName) != 0) {
+    if (luaL_loadbufferx(L, src, srcLen, chunkName, "t") != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
         return false;

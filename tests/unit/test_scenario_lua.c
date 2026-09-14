@@ -270,30 +270,71 @@ static void slDrop(const char *mapPath) {
     remove(path);
 }
 
-/* A hook says what it read by writing a line to this case's own file. The
- * names are per-case on purpose: CTest runs cases as separate processes in
- * one directory, so a shared name is a race rather than a fixture. */
-static void slScript(char *out, size_t outLen, const char *record,
-                     const char *body) {
-    snprintf(out, outLen,
-             "local function note(s)\n"
-             "  local f = io.open(\"%s\", \"a\")\n"
-             "  if f then f:write(s) f:close() end\n"
-             "end\n"
-             "%s", record, body);
+/* A hook says what it read by printing a marked line. A scenario state has
+ * no io, and its print goes to the server console, which the watcher below
+ * catches. The mark is what tells a hook's line from the host's own: both
+ * arrive on the same console. */
+#define SL_NOTE_MARK "note:"
+
+static char   slNote[8192];
+static size_t slNoteLen;
+
+static void slNoteReset(void) {
+    slNote[0] = '\0';
+    slNoteLen = 0;
 }
 
-static void slRead(const char *record, char *out, size_t outLen) {
-    FILE  *f = fopen(record, "rb");
+/* One console line, kept if a hook wrote it. A record past the buffer is
+   truncated rather than overrunning it. */
+static void slNoteLine(const char *msg) {
+    size_t mark = strlen(SL_NOTE_MARK);
+    size_t room;
     size_t n;
 
-    out[0] = '\0';
-    if (f == NULL) {
+    if (msg == NULL || strncmp(msg, SL_NOTE_MARK, mark) != 0) {
         return;
     }
-    n = fread(out, 1, outLen - 1, f);
-    fclose(f);
-    out[n] = '\0';
+    n    = strlen(msg + mark);
+    room = sizeof(slNote) - 1 - slNoteLen;
+    if (n > room) {
+        n = room;
+    }
+    memcpy(slNote + slNoteLen, msg + mark, n);
+    slNoteLen += n;
+    slNote[slNoteLen] = '\0';
+}
+
+/* Only consoleMessage is replaced, never the ctx beside it, which the sim's
+   other callbacks read. */
+static void (*slConsolePrev)(void *ctx, char *msg) = NULL;
+
+static void slConsoleCb(void *ctx, char *msg) {
+    if (slConsolePrev != NULL) {
+        slConsolePrev(ctx, msg);
+    }
+    slNoteLine(msg);
+}
+
+static void slWatchConsole(ServerSim *sim) {
+    slConsolePrev = sim->sim.callbacks.consoleMessage;
+    sim->sim.callbacks.consoleMessage = slConsoleCb;
+}
+
+static void slUnwatchConsole(ServerSim *sim) {
+    sim->sim.callbacks.consoleMessage = slConsolePrev;
+    slConsolePrev = NULL;
+}
+
+static void slScript(char *out, size_t outLen, const char *body) {
+    snprintf(out, outLen,
+             "local function note(s)\n"
+             "  print(\"" SL_NOTE_MARK "\" .. tostring(s))\n"
+             "end\n"
+             "%s", body);
+}
+
+static void slRead(char *out, size_t outLen) {
+    snprintf(out, outLen, "%s", slNote);
 }
 
 /* The one question the sim asks, asked the way the lobby asks it: through
@@ -851,8 +892,7 @@ int run_scenario_lua_shape_error_counts(void) {
  * script's own table set: the round start applies the table and the setup
  * call reads it back off the sim. */
 int run_scenario_lua_rule_reads_the_table(void) {
-    static const char *const kMap    = "scnlua_rule.map";
-    static const char *const kRecord = "scnlua_rule.record";
+    static const char *const kMap  = "scnlua_rule.map";
     static const char *const kBody =
         "scenario = {\n"
         "  name = \"Rules\",\n"
@@ -870,16 +910,19 @@ int run_scenario_lua_rule_reads_the_table(void) {
     ScenarioHost *h;
     char          err[512];
 
-    remove(kRecord);
-    slScript(lua, sizeof(lua), kRecord, kBody);
+    slNoteReset();
+    slScript(lua, sizeof(lua), kBody);
     UT_ASSERT(slPut(kMap, lua));
     sim = slLobbySim();
     UT_ASSERT(sim != NULL);
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    slWatchConsole(sim);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
-    slRead(kRecord, got, sizeof(got));
+    slRead(got, sizeof(got));
 
     UT_ASSERT_MSG(strncmp(got, "9|false|", 8) == 0,
                   "the setup read '%s', expected the script's 9 and a raise "
@@ -887,10 +930,11 @@ int run_scenario_lua_rule_reads_the_table(void) {
     UT_ASSERT_MSG(strstr(got, "no rule is named 'no_rule'") != NULL,
                   "the raise does not name the rule: %s", got);
 
+    slUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     slDrop(kMap);
-    remove(kRecord);
+    slNoteReset();
     return 0;
 }
 
@@ -902,8 +946,7 @@ int run_scenario_lua_rule_reads_the_table(void) {
  * region names in the order the row promises rather than the order the
  * script's table happened to iterate in. */
 int run_scenario_lua_tags_and_regions(void) {
-    static const char *const kMap    = "scnlua_tags.map";
-    static const char *const kRecord = "scnlua_tags.record";
+    static const char *const kMap  = "scnlua_tags.map";
     static const char *const kBody =
         "scenario = {\n"
         "  name = \"Tagged\",\n"
@@ -935,16 +978,19 @@ int run_scenario_lua_tags_and_regions(void) {
     ScenarioHost *h;
     char          err[512];
 
-    remove(kRecord);
-    slScript(lua, sizeof(lua), kRecord, kBody);
+    slNoteReset();
+    slScript(lua, sizeof(lua), kBody);
     UT_ASSERT(slPut(kMap, lua));
     sim = slLobbySim();
     UT_ASSERT(sim != NULL);
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    slWatchConsole(sim);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
-    slRead(kRecord, got, sizeof(got));
+    slRead(got, sizeof(got));
 
     UT_ASSERT_MSG(
         strcmp(got,
@@ -952,10 +998,11 @@ int run_scenario_lua_tags_and_regions(void) {
             == 0,
         "the setup read '%s'", got);
 
+    slUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     slDrop(kMap);
-    remove(kRecord);
+    slNoteReset();
     return 0;
 }
 
