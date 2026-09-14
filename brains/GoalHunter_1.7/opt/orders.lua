@@ -35,6 +35,7 @@ local cpf        = require("cpathfinder")
 local ally_state = require("ally_state")
 local print2     = require("print2")
 local bit        = require('bitcompat')
+local CMDS       = require("commands")
 
 local M = {}
 
@@ -331,6 +332,11 @@ function M.parse(text, roster, all_roster)
       end
     end
     if ok and #pns > 0 then return { select = pns } end
+    -- The OLD operator commands ("!stop", "!status", "!cp:5", "!cb:all") now
+    -- carry the same "!" an order does, and they have no verb of ours. They
+    -- belong to commands.lua, so hand the line on in silence rather than
+    -- answering "didn't understand" and swallowing it.
+    if forced and CMDS.parse(text) then return nil end
     -- A known shape with an unknown verb still deserves an answer.
     local p1 = M.match_name(toks[1], roster)
     if forced or WHOWORDS[toks[1]] or p1 ~= nil then

@@ -3273,7 +3273,7 @@ function Brain.think(info)
 
   local open_msg_this_tick = false
   if state.send_open_msg then
-    send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use 'start' to begin)."
+    send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use '!start' to begin)."
                              or C.BRAIN_NAME .. " loaded."
     msg_dest = bit.lshift(1, state.player_number)
     state.send_open_msg = false
@@ -3306,9 +3306,10 @@ function Brain.think(info)
         end
 
         -- Chat ORDERS first ("attack 5", "all defend 3", "socrates
-        -- retreat"). The old operator commands below are all "verb:N" forms,
-        -- which never start with a bare verb word, so the two parsers cannot
-        -- both claim a line. The TEAM CHECK is _from_ally: an enemy typing
+        -- retreat"). The old operator commands below now need a leading "!"
+        -- too, and orders.lua hands any "!" line it has no verb for straight
+        -- through, so the two parsers cannot both claim a line. The TEAM
+        -- CHECK is _from_ally: an enemy typing
         -- "attack 5" in all chat is ignored in silence.
         local _ord_took = false
         if C.BOT_COMMANDS_ENABLED then

@@ -11,9 +11,16 @@ local TAG = "[" .. C.BRAIN_NAME .. "]"
 local M = {}
 
 -- Parse a message and return a command table, or nil if not a command
+-- EVERY sender must lead with "!", humans included. These commands are hard
+-- locks: pick_goal hands back the command goal before goal selection runs, so
+-- there is no flee, no refuel and no survival exception behind them. A chat
+-- word like "stop" said in passing must not freeze a whole team of bots, so
+-- the "!" is what separates an order from ordinary talk.
 function M.parse(text)
   if not text then return nil end
   local lower = text:lower():match("^%s*(.-)%s*$")  -- trim + lowercase
+  if lower:sub(1, 1) ~= "!" then return nil end
+  lower = lower:sub(2):match("^%s*(.-)%s*$")
 
   local base_id = lower:match("^base:(%d+)$")
   if base_id then

@@ -476,6 +476,42 @@ local took_shot = ORD.on_chat(st, w, inf, 9, "!goto 15 15", 400, false, false)
 check("an enemy's three shots are ignored",
       took_shot == false and st.orders == nil, tostring(took_shot))
 
+-- =========================================================================
+-- THE OLD OPERATOR COMMANDS.  They now need a leading "!" from everybody,
+-- and they are commands.lua's, not orders.lua's. Two things have to hold:
+-- orders.lua must hand a "!" line it has no verb for straight through in
+-- silence (nil, not "didn't understand", which would swallow it), and a
+-- bare word must not be a command any more.
+-- =========================================================================
+print("orders.lua — the old operator commands pass through")
+local CMDS = require("commands")
+
+for _, line in ipairs({ "!stop", "!start", "!status", "!cp:5", "!cb:all",
+                        "!cb:3", "!pill:2", "!base:1", "!bpc:4", "!pp:6",
+                        "!watch:7" }) do
+  check(line .. " is not answered by orders.lua", P(line) == nil, shape(P(line)))
+  check(line .. " is a command", CMDS.parse(line) ~= nil, "nil")
+end
+
+-- A "!" line that is neither an order nor a command still gets an answer.
+check("!wibble still answered", shape(P("!wibble")) == "reply:didn't understand",
+      shape(P("!wibble")))
+-- And the orders themselves are untouched by the pass-through.
+check("!attack 5 still an order", shape(P("!attack 5")) == "attack who=auto tgt=pill:5",
+      shape(P("!attack 5")))
+
+print("commands.lua — a bare word is ordinary chat")
+for _, line in ipairs({ "stop", "start", "status", "cp:5", "cb:all", "cb:3",
+                        "pill:2", "base:1", "bpc:4", "pp:6", "watch:7",
+                        "  STOP  " }) do
+  check("bare " .. line .. " is ignored", CMDS.parse(line) == nil, "a command")
+end
+-- Leading and trailing space around the "!" form is still fine.
+check("'  !STOP  ' is a command",
+      (CMDS.parse("  !STOP  ") or {}).cmd == "stop", "?")
+check("'! cp:5' is a command",
+      (CMDS.parse("! cp:5") or {}).cmd == "cp", "?")
+
 print("orders.lua — focus pricing")
 local C = require("constants")
 check("no focus -> x1", ORD.focus_mult({}, "attack_pill") == 1.0, "?")
