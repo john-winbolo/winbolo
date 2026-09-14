@@ -158,6 +158,14 @@ diff_sorted_lobby() {
 # seeing it means the socket is up and there is no need to sleep and hope.
 # Fails if the DS dies or never prints one, which is what a bad map, a
 # missing brain or any other startup failure looks like from here.
+#
+# Readiness is not the whole story, though, which is why every caller still
+# sleeps a beat after this returns. The port line is printed from bind(),
+# which is early: the spectator ring, the upload config and the rest of
+# serverInstanceStartup still follow it. These captures are event-ordered and
+# were recorded against a client that connected a beat after the server
+# settled, so keep that beat. Without it the alliance scenarios pick up an
+# extra CTRL_ALLIANCE_LEAVE.
 await_ds_port() {
   local errfile="$1"
   local ds_pid="$2"
@@ -302,12 +310,7 @@ run_events_udp() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   local rc=0
   "$BIN" --server 127.0.0.1 --port "$port" --brain "$brain" \
@@ -426,12 +429,7 @@ run_events_cmd_udp() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   local rc=0
   "$BIN" --server 127.0.0.1 --port "$port" \
@@ -479,12 +477,7 @@ run_events_cmd_udp_server_only() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   local rc=0
   "$BIN" --server 127.0.0.1 --port "$port" \
@@ -533,12 +526,7 @@ run_events_cmd_udp_two_clients() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
@@ -616,12 +604,7 @@ run_events_cmd_udp_two_clients_lobby() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
@@ -699,12 +682,7 @@ run_events_cmd_udp_three_clients() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   # Stagger joins by 0.3s each so slot assignment is deterministic
   # (c1→0, c2→1, c3→2). Distinct --name args so the server doesn't
@@ -789,12 +767,7 @@ run_events_udp_two_clients_ticklimit() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --brain "$brain" \
@@ -879,12 +852,7 @@ run_captures_udp_two_clients() {
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
-  # The port line is printed from bind(), which is early: the spectator ring,
-  # the upload config and the rest of serverInstanceStartup still follow it.
-  # These captures are event-ordered and were recorded against a client that
-  # connected a beat after the server settled, so keep that beat. Without it
-  # the alliance scenarios pick up an extra CTRL_ALLIANCE_LEAVE.
-  sleep 0.5
+  sleep 0.5  # settle; see await_ds_port
 
   # Client 1 first, then a brief delay so it lands in slot 0 deterministically
   # before client 2 joins into slot 1. Distinct --name args so the server

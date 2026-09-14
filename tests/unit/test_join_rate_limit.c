@@ -261,8 +261,14 @@ int run_join_rate_limit(void) {
 
     if (challengeCount < 1) {
         loopbackHarnessStop(&h);
-        UT_FAIL("no JOIN drew a challenge from the 127.0.0.1 burst within "
-                "%d pumps", JRL_PUMP_MAX);
+        /* Report the pumps actually run and the time they took, not the
+         * pump ceiling: the loop also exits on the time budget, so on a
+         * loaded machine it gives up well short of JRL_PUMP_MAX and naming
+         * only the ceiling would misdescribe the run that failed. */
+        UT_FAIL("no JOIN drew a challenge from the 127.0.0.1 burst in %d pumps "
+                "/ %llu ms (limits: %d pumps, %d ms)",
+                pump, (unsigned long long)burstElapsedMs,
+                JRL_PUMP_MAX, JRL_TIME_BUDGET_MS);
     }
     if (challengeCount > burstAllowed) {
         loopbackHarnessStop(&h);

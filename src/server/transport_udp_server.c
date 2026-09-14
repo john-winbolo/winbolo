@@ -251,6 +251,10 @@ void transportUdpServerDestroy(void) {
         closesocket(udpServer.sock);
         udpServer.sock = INVALID_SOCKET;
     }
+    /* The bound port is only meaningful while the socket is open, so clear it
+     * with the socket rather than leaving a stale number for
+     * transportUdpServerGetBoundPort to hand out after teardown. */
+    udpServer.boundPort = 0;
     {
         ServerSim *activeSim = serverSimGetActive();
         for (i = 0; i < MAX_TANKS; i++) {

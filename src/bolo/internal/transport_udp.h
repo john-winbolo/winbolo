@@ -532,17 +532,17 @@ typedef struct UdpServerClient {
                                   * when no subscription is active. */
 } UdpServerClient;
 
+/* The port the server's socket is actually bound to, valid once
+ * transportUdpServerCreate has returned true. With a requested port of 0
+ * this is the OS-assigned one; otherwise it is the requested port. */
+unsigned short transportUdpServerGetBoundPort(void);
+
 /* Creates a server-side UDP transport.
  * Binds to the given port and starts accepting connections.
  * sim: the authoritative ServerSim that inputs will be applied to.
  *      sim->maxPlayers is the join-slot cap (set by the lifecycle layer
  *      before calling here).
  * password: game password (empty string if none). */
-/* The port the server's socket is actually bound to, valid once
- * transportUdpServerCreate has returned true. With a requested port of 0
- * this is the OS-assigned one; otherwise it is the requested port. */
-unsigned short transportUdpServerGetBoundPort(void);
-
 bool transportUdpServerCreate(unsigned short port,
                               const char *addrToUse,
                               struct ServerSim *sim,
