@@ -22,6 +22,7 @@ document is the stable reference for the rules themselves.
 |---|---|---|
 | `src/bolo/` | T1 + T2 + T3 + T4 | Owns T2; contributes to all tiers. |
 | `src/bolo/scenario_api/` | T1 + T4 | A third header directory beside `public/` and `internal/`. Holds the scenario write funnel (`serverSimApplyScenarioOp`), the policy vtable and tick registrations, and the POD types those calls take. Read by the `scenario_host` profile (the scenario runtime), by `sim_owner` to implement the funnel, and by `unittests` to drive it; nothing else sees it. Not in `public/` because these are server-authoritative entry points on the same footing as the lifecycle start functions — a frontend that wants to change the world sends a command, and a scenario is the one caller whose intent is applied to the sim directly. See "Privileged exceptions". |
+| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table, marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, and checks a script for `-validate`. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, reload, last error), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest, mapeditor or the log viewer. |
 | `src/gui/` | T1 + T3 + T4 | The desktop renderer. Cannot reach into sim internals. |
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
@@ -2101,6 +2102,34 @@ something a frontend legitimately makes — at that point the calls
 that qualify move to `public/` under the ordinary T1 rule and the
 directory keeps only what is left.
 
+**The consumer: `src/scenario/`.** `scenario_static` is the one
+target under the `scenario_host` profile and the proof that the two
+headers build against `public/` alone. Its shape follows from the
+profile: every read a binding makes is a T1 accessor on
+`server_sim.h`; every write goes through `serverSimApplyScenarioOp`;
+events arrive through the ordinary subscriber bus; and the sim
+reaches back into the host only through registered pointers
+(`serverSimSetScenarioTick`, `serverSimSetScenarioRoundStart`,
+`serverSimSetScenarioMapChanged`, the policy vtable), because the sim
+library cannot link the scenario library. The lobby template goes the
+other way as data: the host hands the sim a `ScnLobbyTemplate` by
+value and the sim seats and reconciles it without calling out. The
+frontend-facing header is `scenario_host.h`, which includes
+`server_sim.h` and nothing from this directory, so the dedicated
+server, the desktop host and the headless runner attach a scenario
+without seeing the funnel.
+
+Two things the profile does not enforce, so review does. There is no
+`include_rules` CTest entry proving `scenario_host` cannot see
+`internal/` — only the `gui` direction is proved — so a stray internal
+include in `src/scenario/` fails the build today but nothing would go
+red if the profile were widened to admit it. And `scenario_static`
+publishes its own directory to whatever links it, so a frontend target
+that also links `lua_static` could include `scenario_lua.h` or
+`scenario_manifest.h`; those headers are the library's and the unit
+tests' by intent, and a frontend that reaches for one is reaching past
+`scenario_host.h` for a reason that wants a T1 accessor instead.
+
 ### Adding a new exception
 
 A new exception requires the same structure: a directory with its
@@ -2197,6 +2226,8 @@ src/bolo/public/       — T1 + T3 + T4 headers
 src/bolo/internal/     — T2 headers
 src/bolo/scenario_api/ — the scenario write and policy surface
 src/bolo/              — sim .c files only (no headers)
+src/scenario/          — the scenario runtime; public/ + scenario_api/
+                         on its path, nothing in internal/
 ```
 
 External targets get `src/bolo/public/` on their include path —
@@ -2215,8 +2246,8 @@ not `#include "internal/tank.h"`).
 The single point of policy for include paths is
 `cmake/bolo_lib.cmake`'s `bolo_apply_include_rules(target, profile)`
 helper. Every target in the tree — desktop, iOS, Android, wasm,
-server, headless, logviewer, gym, braintest, mapeditor — is wired
-through it.
+server, headless, logviewer, gym, braintest, mapeditor, the scenario
+runtime — is wired through it.
 
 ## Enforcement
 
