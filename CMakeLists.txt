@@ -1331,7 +1331,7 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
         set(SENTRY_BACKEND "crashpad" CACHE STRING "" FORCE)
     endif()
     FetchContent_MakeAvailable(sentry)
-    if(MSVC)
+    if(MSVC AND TARGET sentry)
         # The WinHTTP transport assigns in conditions; LTCG diagnoses C4706.
         target_compile_options(sentry PRIVATE /wd4706)
     endif()
