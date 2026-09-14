@@ -94,11 +94,61 @@ than an error — so a verdict that runs long is not truncated, it is never
 said, and the runner reports a round that gave no verdict. Say the numbers in
 as few words as they need.
 
-**A bot's reply does not come back.** GoalHunter answers a command by
-sending its reply to its own seat (`msg_dest = 1 << player_number`), which
-is a local echo: nothing is published, so `on_chat` never sees it and no
-round can wait for it. Decide the verdict on what the bot *does*, not on
-what it says.
+**An ORDER's reply does come back; an operator command's does not.** The old
+operator commands (`cp:5`, `attack:5`, `stop`) answer to the bot's own seat
+(`msg_dest = 1 << player_number`), a local echo that is never published, so
+`on_chat` never sees one. The bot-command lines in `orders.lua` are the other
+way round: acks, "released", "Busy (...)" and the group line go to the ALLIES
+mask so a human can read them, and a scenario's `on_chat` sees every one. The
+order tests below are read off those lines.
+
+**Every chat line reaches `on_chat` twice.** One line said by a seat arrives
+as two identical `on_chat` calls on the same tick — the server fans it down
+two paths. A round that counts answers has to treat the same sender, text and
+tick as one line, which every order test does with a small `fresh()` helper.
+
+**A bot's line can be starved.** A brain has ONE message slot per think, and
+the internal channel (the state slate, the known-world digest, the order
+verbs) takes it first; the order say-queue only gets a turn when nothing else
+went out. On a map with two pillboxes to keep allies posted about, the slate
+took every slot and a bot's ack and "Leaving ..." line were never said at all.
+Keep a round's world small, and do not build a verdict on a line that only
+gets said when the channel is quiet.
+
+**A bot only knows a pillbox it or an ally has SEEN.** An order naming one
+nobody has seen is answered "pill #0 not known yet" and goes nowhere — and
+only the team's SPEAKING bot (the lowest player number) says that line, so a
+round whose only listener is not the speaker gets silence instead. Twelve to
+twenty squares is known in these rounds; forty-six is not.
+
+**A bot's chat line is only read as an order if it starts with `!`.** A
+headless round has no human in it, so the speaker is another seated bot, and
+`orders.lua` drops an unforced line from a bot on purpose — otherwise one
+bot's ack would be read as the next bot's order.
+
+## What cannot be tested from here yet
+
+The bot-command PING — a tile ping that carries a verb, and the caution ping
+that cancels or retreats — has no scenario op behind it. `game.say` puts a
+chat line on the wire and `game.shell_expired` posts a shell expiry, but
+nothing in `docs/SCENARIO_API.md` publishes an `EVENT_PING`, so a script
+cannot make a seat ping a square. Every ping path in `orders.lua` — the verb
+table by tile, select-by-ping, the repeat ping that adds a bot, the caution
+ping — is therefore untested here, and will stay that way until the API grows
+a ping op. The chat forms of the same orders are what these rounds cover.
+
+## The arena the order tests share
+
+`order_*.map` is one generated map: a 64-square grass island from (96,96) to
+(159,159), two neutral bases out to the west at (104,112) and (104,144), no
+pillboxes of its own, and four starts in the sea either side. It is symmetric
+about y = 127, so `mapCenter` shifts nothing and every square in a script is
+the square the round uses. Each round teleports its three seats onto named
+squares, recalls their builders, fills their stocks and places the pillboxes
+it needs, so the geometry at the moment of the order is exact.
+
+Two of them differ: `order_cancel` uses the same map, and `order_enemy_ignored`
+uses `-teams 2,1` in its `.args` to seat two bots on team 1 and one on team 2.
 
 ## The tests
 
@@ -106,3 +156,10 @@ what it says.
 |---|---|
 | `three_shots_go_there` | Three shells that run their full range onto one open square are an order, and a bot obeys it. The scenario posts the three through `game.shell_expired` — a script cannot make a seat fire a gun — from the seat of one bot, so the OTHER bot is the only one that hears the line (a sender never receives its own) and the round has exactly one bot that could go. It must get within two squares of the target and still be near it three seconds later. |
 | `say_stop_halts_bot` | A chat line from a seat reaches a bot's brain and it obeys. One of two identical bots is told `stop` over broadcast chat; after that its tank never turns again and the other's turns constantly. Facing is the signal rather than position, because a Bolo tank handed no key keeps the speed it had and coasts straight. |
+| `order_attack_pill` | `!attack 0`, with no who-word, is taken by exactly ONE bot, and that bot goes. Three seats, the pill twelve squares from one of them and twenty from the others; the speaker never hears its own line, so two bots bid and one wins. Arrival is read at eight squares rather than four: attack_pill is a shooting goal and stands off at five to seven. |
+| `order_all_attack` | `!all attack 0` puts every free bot on the same pill with no auction, and the lowest player number among them says ONE line for the group — "2 on pill #0" — instead of one ack each. Both bots have to reach the standoff ring. |
+| `order_nearby` | `!nearby attack 0` reaches only bots within ten squares OF THE TARGET. One seat is six squares out and takes it; the seat that hears it from twenty-four squares away answers nothing and is still nineteen squares out twelve hundred ticks later. A dead pillbox is put beside the far seat so that staying away is a choice it had something else to do with. |
+| `order_by_name` | A bot's name in front of the verb addresses that bot alone, and the name may be a PREFIX: the round works out the shortest prefix of seat 0's name no other bot shares and orders that. Seat 0 is the FAR bot, so an auction would have given the job to seat 1 — the ack from seat 0 and silence from seat 1 can only be the name. |
+| `order_cancel` | `!cancel all` reaches the bot holding an order and it answers "released", which `orders.lua` says from one place only: `release_held`, which is also the only code that empties the order slot. Where the tank goes afterwards is logged and not asserted — the design says goal selection simply reruns, and on a map with one pillbox a released bot heads for it again of its own accord. |
+| `order_enemy_ignored` | The team check is on the SENDER. With `-teams 2,1` the enemy seat says `!attack 0` to everyone and gets nothing back — no ack, no "didn't understand". Then an ALLY says the same line in the same words and it is taken in twenty-four ticks, so the silence was the team check rather than a line nobody could act on. |
+| `order_retreat_busy` | `!<name> retreat` reaches the named bot and it answers with the goal the verb really turns into: "take_cover #", with no number because the goal has nothing to number. A bot that was already busy would answer "Busy (<reason>)" instead, and none of busy's reasons — man out of the tank, a capture in its last phase — can be set up from outside a round, so this one asks only whether a named retreat lands. |
