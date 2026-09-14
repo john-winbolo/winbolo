@@ -1373,6 +1373,9 @@ static const LangEntry langTable[] = {
     /* Title of the docs dialog a bot's announce line in team chat opens.
        {string1} is the brain's name, so "GoalHunter commands". */
     {2173, "{string1} commands"},
+    /* A general Copy button: the docs dialog puts its whole body on the
+       clipboard with it. */
+    {2174, "Copy"},
     /* Balance from WBN */
     {1345, "Balance from WBN"},
     {1346, "Balance teams from WBN"},

@@ -1537,6 +1537,11 @@
  * brain's own commands.txt. {string1} = the brain's name ("GoalHunter"). */
 #define STR_DLGLOBBY_BOT_DOCS_TITLE         2173
 
+/* A general "Copy" button label, for any dialog that puts its body on the
+ * clipboard. STR_LV_COPY is the same word but belongs to the log viewer's
+ * events panel; this one is not tied to a screen. */
+#define STR_COPY                            2174
+
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
 #define STR_DLGLOBBY_BAL_BTN                1345

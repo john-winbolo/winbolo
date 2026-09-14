@@ -25,6 +25,7 @@
  *                position into the chat box.
  *********************************************************/
 
+#include <cfloat>  /* FLT_MIN — the "fill the width" size for a child widget */
 #include <cstdio>  /* snprintf — formats the "@mm:ss " token */
 
 #include <SDL3/SDL.h>
@@ -220,14 +221,26 @@ static void lobbyRenderChatDocsBlock(const char *begin, const char *end,
 
 /* The docs dialog. Call it at the lobby window's own id scope, never inside
  * the chat child: BeginPopupModal only finds a popup opened at the same
- * scope. Shaped like the About box's markdown popup — a viewport-relative
- * modal, a scrolling child for the body, and a DialogFooter Close so a
- * controller has something focusable to leave by. */
+ * scope. A viewport-relative modal, the docs in a read-only text box, and a
+ * DialogFooter so a controller has something focusable to leave by.
+ *
+ * THE BODY IS AN INPUT BOX, NOT A LABEL. It used to be a wrapped
+ * TextUnformatted, which a mouse cannot select: the one thing a player wants
+ * from a page of bot commands is to take a line out of it. A read-only
+ * InputTextMultiline selects and copies with the usual keys and gestures and
+ * still cannot be edited. InputTextMultiline has no word wrap, which is fine
+ * here — commands.txt ships wrapped at about 78 columns — and a line that
+ * does run long gets the horizontal scrollbar the widget brings with it.
+ * The Copy button beside Close puts the whole text on the clipboard at once. */
 void lobbyChatDocsRenderModal(ClientSim *cs) {
     char        title[160];
     MessageArgs args;
     bool        open = true;
     const ImGuiStyle *st;
+    const char *docs;
+    size_t      docsLen;
+    bool        escaped;
+    int         footer;
     float       footerH;
     ImVec2      vp;
 
@@ -259,20 +272,31 @@ void lobbyChatDocsRenderModal(ClientSim *cs) {
     st      = &ImGui::GetStyle();
     footerH = st->ItemSpacing.y * 3.0f + 1.0f +
               ImGui::GetFrameHeightWithSpacing();
-    if (ImGui::BeginChild("##body", ImVec2(0.0f, -footerH), false,
-                          ImGuiWindowFlags_HorizontalScrollbar)) {
-        const char *docs = clientSimGetLobbyBrainDocs(cs, s_docs.openIdx);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(docs != NULL ? docs : "");
-        ImGui::PopTextWrapPos();
-    }
-    ImGui::EndChild();
 
-    /* A real Close button, not only the title-bar X: Escape inside the
-     * scrolling child is eaten by ImGui's nav-cancel, so a controller (and a
-     * player who has scrolled the body) needs something to leave by. */
-    if (WBUI::DialogFooter(NULL, langGetText(STR_CLOSE)) != WBUI::FOOTER_NONE ||
-        !open) {
+    docs    = clientSimGetLobbyBrainDocs(cs, s_docs.openIdx);
+    if (docs == NULL) docs = "";
+    docsLen = SDL_strlen(docs);
+    /* The cast is safe under ReadOnly: ImGui never writes back through the
+     * buffer, it only reads it to lay the text out and to feed the
+     * clipboard. The size still has to count the terminator. */
+    ImGui::InputTextMultiline("##body", const_cast<char *>(docs), docsLen + 1,
+                              ImVec2(-FLT_MIN, -footerH),
+                              ImGuiInputTextFlags_ReadOnly);
+
+    /* A real Close button, not only the title-bar X: Escape inside the body
+     * is eaten by ImGui's nav-cancel, so a controller (and a player who has
+     * scrolled the body) needs something to leave by.
+     *
+     * DialogFooter's LEFT slot is its cancel slot, and Escape returns
+     * FOOTER_CANCEL from it whether or not the button was clicked — so on its
+     * own a footer with Copy on the left would copy when the player pressed
+     * Escape. CancelKeyPressed is the same question DialogFooter asks itself,
+     * asked one call earlier, which tells the two apart. */
+    escaped = WBUI::CancelKeyPressed();
+    footer  = WBUI::DialogFooter(langGetText(STR_COPY), langGetText(STR_CLOSE));
+    if (footer == WBUI::FOOTER_CANCEL && !escaped) {
+        ImGui::SetClipboardText(docs);
+    } else if (footer != WBUI::FOOTER_NONE || !open) {
         s_docs.open = false;
         ImGui::CloseCurrentPopup();
     }
