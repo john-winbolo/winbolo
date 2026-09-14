@@ -37,6 +37,15 @@
  * malformed write of the same setting is still CMD_REJECT_INVALID.
  * run_lobby_scenario_boot_sets_type        — and the same type on a server
  *                                            that booted onto the map
+ * run_lobby_scenario_identity_strips_controls
+ *                                          — control bytes in the three
+ *                                            strings become spaces before
+ *                                            they reach the event
+ * run_lobby_scenario_nolobby_boot_seats_template
+ *                                          — a boot that skips the lobby is
+ *                                            running with the scenario's
+ *                                            seats and their tanks already
+ *                                            in the round
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -82,9 +91,11 @@
 #define LS_SCN_NAME_LEN 4
 #define LS_SCN_FILE_LEN 8
 #define LS_SCN_DESC_LEN 8
+/* source(1) + extraTeams(1), the three strings, and the base game type(1)
+ * behind them. */
 #define LS_SCRIPTED_BODY_LEN                                                \
     (LS_PLAIN_BODY_LEN + 1 + 1 + (1 + LS_SCN_NAME_LEN)                      \
-     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN))
+     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN) + 1)
 
 /* Distinct values throughout, so a pair of fields swapped between the event
  * and the bytes shows up as two mismatches rather than cancelling out. The
@@ -238,6 +249,7 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
     snprintf(in.u.lobbySettings.scenarioDescription,
              sizeof(in.u.lobbySettings.scenarioDescription), "%s", LS_SCN_DESC);
     in.u.lobbySettings.scenarioExtraTeams = true;
+    in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
 
     UT_ASSERT(benc(&in, NULL, got, sizeof(got), &gotLen) == ENCODE_OK);
     UT_ASSERT_MSG(gotLen == LS_SCRIPTED_BODY_LEN,
@@ -259,6 +271,13 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
     want[pos++] = LS_SCN_DESC_LEN;
     memcpy(want + pos, LS_SCN_DESC, LS_SCN_DESC_LEN);
     pos += LS_SCN_DESC_LEN;
+    /* 78 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 103: the
+       base game type is last of the tail, so nothing ahead of it moved when
+       it was added. */
+    UT_ASSERT_MSG(pos == 103,
+                  "the base game type should be at offset 103, not %u",
+                  (unsigned)pos);
+    want[pos++] = (uint8_t)gameStrictTournament;
     UT_ASSERT_MSG(pos == LS_SCRIPTED_BODY_LEN,
                   "the case's own expected bytes came to %u, not %d",
                   (unsigned)pos, LS_SCRIPTED_BODY_LEN);
@@ -290,6 +309,7 @@ int run_lobby_scenario_settings_roundtrip(void) {
     snprintf(in.u.lobbySettings.scenarioDescription,
              sizeof(in.u.lobbySettings.scenarioDescription), "%s", LS_SCN_DESC);
     in.u.lobbySettings.scenarioExtraTeams = true;
+    in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
 
     UT_ASSERT(benc(&in, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
     memset(&out, 0, sizeof(out));
@@ -310,6 +330,11 @@ int run_lobby_scenario_settings_roundtrip(void) {
                   out.u.lobbySettings.scenarioDescription);
     UT_ASSERT_MSG(out.u.lobbySettings.scenarioExtraTeams,
                   "the extra-teams flag did not survive");
+    UT_ASSERT_MSG(out.u.lobbySettings.scenarioBaseGame ==
+                      (uint8_t)gameStrictTournament,
+                  "the base game type came back as %u, wanted %u",
+                  (unsigned)out.u.lobbySettings.scenarioBaseGame,
+                  (unsigned)gameStrictTournament);
     /* And the fields ahead of the tail are still themselves. */
     UT_ASSERT(out.u.lobbySettings.lobbyLineOfSight == 1);
     UT_ASSERT(out.u.lobbySettings.voiceMode == serverVoiceOff);
@@ -329,6 +354,9 @@ int run_lobby_scenario_settings_roundtrip(void) {
                       (int)plainOut.u.lobbySettings.scenarioSource);
         UT_ASSERT_MSG(plainOut.u.lobbySettings.scenarioName[0] == '\0',
                       "a no-scenario body left a name behind");
+        UT_ASSERT_MSG(plainOut.u.lobbySettings.scenarioBaseGame == 0,
+                      "a no-scenario body decoded to base game type %u",
+                      (unsigned)plainOut.u.lobbySettings.scenarioBaseGame);
     }
     return 0;
 }
@@ -735,5 +763,162 @@ int run_lobby_scenario_boot_sets_type(void) {
                   (int)sim->preScenarioGameType);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 9. Control characters never reach the event ──────────────────── */
+
+/* The three strings come out of a Lua table an author wrote, and the lobby
+   draws the description as a single wrapped block inside a panel of a fixed
+   height, so a newline in it grows the panel past its bounds. Every byte
+   below 0x20 and the byte 0x7F becomes a space where the sim is told, which
+   is the one place the headless log and the lobby both read from. The text
+   keeps its length: each byte is replaced, never dropped. */
+int run_lobby_scenario_identity_strips_controls(void) {
+    static const char kDesc[] = "Hold\nthe\rbase\there\x7Fnow";
+    static const char kWant[] = "Hold the base here now";
+    ServerSim   *sim = lsLobbySim();
+    ControlEvent evt;
+    const char  *got;
+    size_t       i;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sizeof(kDesc) == sizeof(kWant),
+                  "setup: the two fixtures must be the same length");
+
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Wave\tDefense",
+                                 "wave\vdefense.lua", kDesc, true);
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+
+    got = evt.u.lobbySettings.scenarioDescription;
+    UT_ASSERT_MSG(strcmp(got, kWant) == 0,
+                  "the description reached the event as \"%s\", wanted \"%s\"",
+                  got, kWant);
+    UT_ASSERT_MSG(strlen(got) == strlen(kDesc),
+                  "the description came to %u bytes and went in as %u — the "
+                  "bytes are replaced, not dropped",
+                  (unsigned)strlen(got), (unsigned)strlen(kDesc));
+    for (i = 0; got[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)got[i];
+        UT_ASSERT_MSG(c >= 0x20 && c != 0x7F,
+                      "byte %u of the description is 0x%02X",
+                      (unsigned)i, (unsigned)c);
+    }
+
+    /* The name and the file name go through the same copy, so a tab in one
+       and a vertical tab in the other are spaces too. */
+    UT_ASSERT_MSG(strcmp(evt.u.lobbySettings.scenarioName,
+                         "Wave Defense") == 0,
+                  "the name reached the event as \"%s\"",
+                  evt.u.lobbySettings.scenarioName);
+    UT_ASSERT_MSG(strcmp(evt.u.lobbySettings.scenarioFileName,
+                         "wave defense.lua") == 0,
+                  "the file name reached the event as \"%s\"",
+                  evt.u.lobbySettings.scenarioFileName);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 10. A boot that skips the lobby seats before it starts ────────── */
+
+/* A server started with no lobby runs its round's start inside
+   serverSimApplyInstanceConfig, so the scenario's opening roster has to be in
+   the lobby before that call reaches the start: the start builds a tank for
+   every fielded seat that exists when it runs, and for no other. The seating
+   also reads the bot brain path and the AI level the same call has just
+   written out of the config, which is why it belongs in there rather than in
+   any of the hosts.
+
+   The template's team names no brain of its own, so the seat falls back to
+   the server's — the value the config carries. A seating placed ahead of that
+   write would find it empty and refuse the seat, which is what this case
+   would catch. */
+#define LS_BOOT_TEAM 3
+
+static void lsBootCfg(ServerInstanceConfig *cfg, const char *brain) {
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->skipLobby    = true;
+    cfg->botBrainPath = brain;
+    cfg->botAiType    = (BYTE)aiFull;
+}
+
+int run_lobby_scenario_nolobby_boot_seats_template(void) {
+    static const char *const kBrain = "test_lobby_scenario_boot_brain.lua";
+    ServerSim           *sim;
+    ScnLobbyTemplate     t;
+    ServerInstanceConfig cfg;
+    int                  seat  = -1;
+    int                  seats = 0;
+    int                  i;
+
+    {
+        FILE *f = fopen(kBrain, "wb");
+        UT_ASSERT_MSG(f != NULL, "setup: could not write the brain fixture");
+        fputs("-- fixture\n", f);
+        fclose(f);
+    }
+    /* The stub stands in for a real brain VM. Unarmed it refuses, every
+       fielded seat is refused with it, and the case would prove nothing. */
+    ut_brain_stub_arm(true);
+
+    sim = lsLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(serverSimGetBotBrainPath(sim) == NULL ||
+                      serverSimGetBotBrainPath(sim)[0] == '\0',
+                  "setup: the sim already carries a brain path, so the "
+                  "fallback this case is about would pass either way");
+    lsAttachIdentity(sim);
+
+    memset(&t, 0, sizeof(t));
+    t.numTeams         = 1;
+    t.teams[0].id      = LS_BOOT_TEAM;
+    t.teams[0].bots    = 1;
+    t.teams[0].maxBots = 1;
+    t.teams[0].fielded = true;
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+
+    lsBootCfg(&cfg, kBrain);
+    serverSimApplyInstanceConfig(sim, &cfg);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "a boot that skips the lobby left the sim in state %d",
+                  (int)serverSimGetState(sim));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i] && sim->lobbyPlayers[i].keepSeat &&
+            sim->lobbyPlayers[i].teamNumber == LS_BOOT_TEAM) {
+            seats++;
+            if (seat < 0) seat = i;
+        }
+    }
+    UT_ASSERT_MSG(seats == 1,
+                  "the template's one fielded team took %d seats", seats);
+    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)seat),
+                  "seat %d does not read as a bot", seat);
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "seat %d is not on the field", seat);
+    UT_ASSERT_MSG(sim->sim.tanks[seat] != NULL,
+                  "seat %d went into the round with no tank: the round "
+                  "started before the seat was there to build one for", seat);
+    serverSimDestroy(sim);
+
+    /* And the same config on a sim with no template: nothing is seated and
+       the round starts all the same, so a plain server is untouched. */
+    sim = lsLobbySim();
+    UT_ASSERT(sim != NULL);
+    lsBootCfg(&cfg, kBrain);
+    serverSimApplyInstanceConfig(sim, &cfg);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "a boot with no scenario left the sim in state %d",
+                  (int)serverSimGetState(sim));
+    for (i = 0; i < MAX_TANKS; i++) {
+        UT_ASSERT_MSG(!sim->playerConnected[i],
+                      "a boot with no scenario template seated slot %d", i);
+    }
+    serverSimDestroy(sim);
+
+    ut_brain_stub_arm(false);
+    remove(kBrain);
     return 0;
 }

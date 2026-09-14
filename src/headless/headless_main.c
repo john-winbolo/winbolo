@@ -502,6 +502,8 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
                          LOBBY_SCENARIO_DESC_LEN);
         fprintf(f, ",\"scenarioExtraTeams\":%s",
                 evt->u.lobbySettings.scenarioExtraTeams ? "true" : "false");
+        fprintf(f, ",\"scenarioBaseGame\":%d",
+                (int)evt->u.lobbySettings.scenarioBaseGame);
       }
       break;
 
@@ -2290,8 +2292,18 @@ static void applyViewPolicyOptions(ServerSim *sim) {
 }
 
 /* Set up the server sim, transport, and client sim from cached map.
- * Called at initial startup and on each reset. */
-static bool fastModeSetupGame(void) {
+ * Called at the run's first setup and again on each reset, so the two cannot
+ * drift: a step added to one of them is added to both.
+ *
+ * withBotBrain carries the CLI's brain path and AI level into the config,
+ * which only the first setup does. The apply writes those two fields only
+ * when the config carries them, so they survive the zeroed config a reset
+ * starts from and the sim keeps running the brains it was given. */
+static bool fastModeSetupGame(bool withBotBrain) {
+  /* No command stream means no lobby: the round starts inside the startup
+     below. Read once here because the seating further down asks it too. */
+  const bool skipLobby = (cmdStream == NULL);
+
   {
     /* Scripted scenarios stay in lobby state until the cmd stream
      * issues start_game (cfg.lobbyEnabled drives SetLobbyEnabled(true)
@@ -2302,12 +2314,29 @@ static bool fastModeSetupGame(void) {
     ServerInstanceConfig cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.acceptRemoteClients = false;
-    if (cmdStream != NULL) {
-      cfg.lobbyEnabled = true;
-    } else {
+    if (skipLobby) {
       cfg.skipLobby    = true;
+    } else {
+      cfg.lobbyEnabled = true;
+    }
+    /* The bot brain and the AI level go over together: a sim with a path and
+     * no level runs no brains, and a level with no path has none to run. Left
+     * out, both stay as serverSimCreate left them — no bot AI, which is what
+     * every run of this binary has had. */
+    if (withBotBrain && optBotBrain[0] != '\0') {
+      cfg.botBrainPath = optBotBrain;
+      cfg.botAiType    = (BYTE)aiYes;
     }
     applyViewPolicyOptions(fastServerSim);
+    /* A run with no command stream skips the lobby, so its round starts
+       inside the startup below and the scenario's own settings have to be in
+       force before it: the round is built and the first tanks placed in
+       there, and a game type set afterwards would never be asked for. A
+       --cmd-stdin run stays in the lobby and takes them further down, with
+       the seating. */
+    if (scenarioHost != NULL && skipLobby) {
+      serverSimScenarioApplyLobbyRules(fastServerSim);
+    }
     serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
@@ -2326,11 +2355,44 @@ static bool fastModeSetupGame(void) {
   }
   clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
+  /* The slot the join took, which is not always 0: a run that skips the lobby
+     has its scenario's seats already in the roster by here, and they were
+     taken from the bottom. The input packets this loop builds carry this
+     number, and the sim's own view follows it. */
+  playerNum = clientSimGetMyPlayerNum(humanSim);
+  serverSimSetViewPlayer(fastServerSim, playerNum);
   /* The brain this harness drives reads each sound's map square. The slot is
    * an ordinary local player, not a bot-manager bot, so without this the
    * server would send it a near/far tier and a bearing instead. */
-  serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
-                           true);
+  serverSimSetSoundSquares(fastServerSim, playerNum, true);
+
+  /* The lobby a scenario asks for. Its template reached the sim at the attach
+   * and stays there, so a reset seats it again as the first setup did.
+   *
+   * After the local player joins, not before: a seat is taken from the first
+   * free slot, so seating a horde first would put it in slot 0 and leave this
+   * process's own player somewhere above it. A map with no scenario has no
+   * template, and this seats nothing.
+   *
+   * Not on a run that skipped the lobby: its round started inside the startup
+   * above, and the startup seated the template itself on the way in so the
+   * round could build a tank for every fielded seat. Seating again now would
+   * empty those seats and rebuild them inside a round already running,
+   * leaving them with no tanks.
+   *
+   * And the lobby's own settings, in the order a map commit does the two: the
+   * map change seats the template and the rules follow it. Without this a run
+   * booted onto a scripted map stays on the game type it started with, so
+   * gameTypeResolve is never asked and the game the scenario declares is
+   * ignored for the whole run. A run that skipped the lobby has already had
+   * them applied, above the startup where its round begins; the call here
+   * then finds the game type scripted already and changes nothing. */
+  if (scenarioHost != NULL) {
+    if (!skipLobby) {
+      serverSimScenarioSeatLobby(fastServerSim);
+    }
+    serverSimScenarioApplyLobbyRules(fastServerSim);
+  }
 
   /* Legacy subscriber handle — connect's auto-subscriber registration
    * supersedes the explicit headlessControlSub bookkeeping. Keep the
@@ -2440,75 +2502,9 @@ static int runFastMode(void) {
 
   /* Initial game setup. Scripted scenarios (--cmd-stdin) stay in
    * lobby state so add_bot / set_team / start_game ops can drive
-   * the lifecycle transitions deterministically. */
-  {
-    ServerInstanceConfig cfg;
-    memset(&cfg, 0, sizeof(cfg));
-    cfg.acceptRemoteClients = false;
-    if (cmdStream != NULL) {
-      cfg.lobbyEnabled = true;
-    } else {
-      cfg.skipLobby    = true;
-    }
-    /* The bot brain and the AI level go over together: a sim with a path and
-     * no level runs no brains, and a level with no path has none to run. Left
-     * out, both stay as serverSimCreate left them — no bot AI, which is what
-     * every run of this binary has had. The reset path below starts the sim
-     * again with a zeroed config, and both fields survive that: the apply
-     * writes them only when the config carries them. */
-    if (optBotBrain[0] != '\0') {
-      cfg.botBrainPath = optBotBrain;
-      cfg.botAiType    = (BYTE)aiYes;
-    }
-    applyViewPolicyOptions(fastServerSim);
-    /* A run with no command stream skips the lobby, so its round starts
-       inside the startup below and the scenario's own settings have to be in
-       force before it: the round is built and the first tanks placed in
-       there, and a game type set afterwards would never be asked for. A
-       --cmd-stdin run stays in the lobby and takes them further down, with
-       the seating. */
-    if (scenarioHost != NULL && cfg.skipLobby) {
-      serverSimScenarioApplyLobbyRules(fastServerSim);
-    }
-    serverInstanceStartup(fastServerSim, &cfg);
-  }
-  serverSimSetViewPlayer(fastServerSim, 0);
-  transportActive = TRUE;
-  playerNum = 0;
-  humanSim = clientSimAlloc();
-  clientSimCreate(humanSim);
-  /* Observer must be set before connect so register-time sync events
-   * are observed. Preserved across clientSimCreate's memset. */
-  if (logEventsFile != NULL) {
-    clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
-  }
-  clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
-  clientSimSetAiType(humanSim, optAi);
-  /* The brain this harness drives reads each sound's map square. The slot is
-   * an ordinary local player, not a bot-manager bot, so without this the
-   * server would send it a near/far tier and a bearing instead. */
-  serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
-                           true);
-  /* The lobby a scenario asks for. Its template reached the sim at the attach
-   * above; seating it is the separate step made wherever a lobby is built, and
-   * this is where this binary builds one.
-   *
-   * After the local player joins, not before: a seat is taken from the first
-   * free slot, so seating a horde first would put it in slot 0 and leave this
-   * process's own player somewhere above it. A map with no scenario has no
-   * template, and this seats nothing. */
-  /* And the lobby's own settings, in the order a map commit does the two:
-   * the map change seats the template and the rules follow it. Without this
-   * a run booted onto a scripted map stays on the game type it started with,
-   * so gameTypeResolve is never asked and the game the scenario declares is
-   * ignored for the whole run. A run that skipped the lobby has already had
-   * them applied, above the startup where its round begins; the call here
-   * then finds the game type scripted already and changes nothing. */
-  if (scenarioHost != NULL) {
-    serverSimScenarioSeatLobby(fastServerSim);
-    serverSimScenarioApplyLobbyRules(fastServerSim);
-  }
-  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
+   * the lifecycle transitions deterministically. The --reset path runs the
+   * same helper, so the two come up the same way. */
+  fastModeSetupGame(true);
 
   if (!optQuiet) {
     fprintf(stderr, "Game ready. Entering fast loop.\n");
@@ -2592,7 +2588,7 @@ static int runFastMode(void) {
         if (rc == STDIN_RESET) {
           /* Reset: tear down and recreate game from cached map */
           fastModeTeardownGame();
-          fastModeSetupGame();
+          fastModeSetupGame(false);
           tickCount = 0;
           simTickCounter = 0;
           pumpTick = 0;

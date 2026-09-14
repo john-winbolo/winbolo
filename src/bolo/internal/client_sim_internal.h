@@ -540,6 +540,14 @@ struct ClientSim {
     char     lobbyMapListReqPath[256];
     bool     lobbyMapListInFlight; /* true after send, false on response */
 
+    /* Monotonic counter ticked every time the server's view of its map
+     * directory changes under us: a completed MAP_LIST_RSP, a completed
+     * MAP_SEARCH_RSP, and a finished upload (which lands a new file in the
+     * directory and so makes the cached listing stale). The map chooser
+     * keeps its own last-seen value and re-runs its listing when the two
+     * differ, instead of re-enumerating on every frame. */
+    uint32_t lobbyMapListSeq;
+
     /* Monotonic counter incremented whenever the client receives a
      * PACKET_LOBBY_MAP_CHANGE (i.e. the server told us to invalidate
      * and re-download the map). UI poll-and-compare against a cached

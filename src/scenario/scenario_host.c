@@ -2379,6 +2379,14 @@ static void scnRoundBootLocked(ScenarioHost *h) {
        set rather than releasing it. */
     scenarioLuaTimersDrop(h->L, &h->timers);
 
+    /* An empty queue, on both channels: what the last round raised is no
+       business of this one. Before the chunk as well as before the rules and
+       the setup call, because the subscriber is registered at the attach and
+       stays registered across a round boundary — so an op the chunk's top
+       level issues raises an event straight away, and a reset behind the
+       chunk would wipe it before the round's first drain ever saw it. */
+    scenarioEventsReset(&h->events);
+
     L = scnBootVm(h);
     if (L == NULL) {
         scnSay(h->lastError, sizeof(h->lastError),
@@ -2421,16 +2429,10 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     h->disabled     = false;
     h->startPending = true;
 
-    /* And with an empty queue, on both channels: what the last round raised
-       is no business of this one. Before the rules and the setup call, so
-       anything those do raise is this round's and reaches its first
-       drain. */
-    scenarioEventsReset(&h->events);
-
-    /* The same for the roster copy the team change is measured against, and
-       for the state on_end watches: both are this round's, and both are
-       read before the round is running, so a setup that moves a seat or
-       ends the round is itself the first change either of them sees. */
+    /* The roster copy the team change is measured against, and the state
+       on_end watches: both are this round's, and both are read before the
+       round is running, so a setup that moves a seat or ends the round is
+       itself the first change either of them sees. */
     scnSeedTeams(h);
     h->lastState = serverSimGetState(h->sim);
 
@@ -2524,17 +2526,18 @@ void scenarioHostSetEnabled(bool enabled) {
     scnEnabled = enabled;
 }
 
-/* Whether a file is there, without reading a byte of it. The refusal below
- * is the only caller: it says which script a map lost and must not say it
- * about a map that never had one. */
+/* Whether a regular file is there, without opening it. The map lister asks
+ * this once per entry on its way through a directory, so it is a stat and
+ * not an open. A directory carrying the script's name is not a script:
+ * calling one present would have the refusal below name a script a map
+ * never had. */
 static bool scnScriptExists(const char *path) {
-    FILE *f = fopen(path, "rb");
+    SDL_PathInfo info;
 
-    if (f == NULL) {
+    if (!SDL_GetPathInfo(path, &info)) {
         return false;
     }
-    fclose(f);
-    return true;
+    return info.type == SDL_PATHTYPE_FILE;
 }
 
 bool scenarioHostMapHasScript(const char *mapPath) {

@@ -257,9 +257,10 @@ bool clientSimCreate(ClientSim *cs) {
     cs->sim.scenarioSpawnLoadout[i] = 0;
   }
 
-  /* A client is never handed a lobby template, so this stays 0 and a
-     scripted round resolves as gameOpen through the same code the server
-     runs. */
+  /* A client is never handed a lobby template; the game a scenario declared
+     reaches it on the settings tail instead. Until a settings event lands
+     this is 0, and a scripted round resolves as gameOpen through the same
+     code the server runs. */
   cs->sim.scenarioBaseGame = (gameType)0;
 
   /* Initialize GameSim identity and callbacks */
@@ -2717,6 +2718,9 @@ const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs) {
 }
 bool clientSimGetLobbyMapListInFlight(const ClientSim *cs) {
   return cs->lobbyMapListInFlight;
+}
+uint32_t clientSimGetLobbyMapListSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyMapListSeq : 0;
 }
 uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
   return cs ? cs->lobbyMapChangeSeq : 0;

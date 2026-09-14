@@ -27,6 +27,9 @@
  * run_scripted_game_type_plain_map_clears_base
  *                                — a plain map after a scripted one keeps
  *                                  no base game type
+ * run_scripted_game_type_client_follows_settings
+ *                                — and a joined client, which learns the
+ *                                  base game off the settings tail
  */
 
 #include <stdbool.h>
@@ -42,6 +45,10 @@
 #include "bolo_rand.h"           /* bolo_srand */
 #include "server_sim.h"          /* ut_make_running_sim, serverSimGetGameSim */
 #include "server_sim_scenario.h" /* serverSimSetScenarioLobbyTemplate */
+#include "client_sim.h"          /* clientSimAlloc, clientSimGetGameSim */
+#include "client_sim_control.h"  /* clientSimApplyControl */
+#include "control_event.h"
+#include "transport_control_codec.h"
 #include "test_harness.h"
 
 /* How many PRNG seeds the start cases walk. Each one is a whole run of the
@@ -279,5 +286,118 @@ int run_scripted_game_type_plain_map_clears_base(void) {
     }
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── A joined client resolves the same way ────────────────────────── */
+
+/* No client is ever handed a lobby template, so the settings tail is the
+ * only place one learns the game underneath a scripted round. The event
+ * goes through the codec body here, so what the client is given is what the
+ * wire carries: a body with the tail, then a body without one. */
+int run_scripted_game_type_client_follows_settings(void) {
+    ControlEncodeBodyFn benc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_SETTINGS);
+    ControlDecodeBodyFn bdec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+    uint8_t      body[MAX_CONTROL_PACKET];
+    size_t       bodyLen = 0;
+    ControlEvent in;
+    ControlEvent out;
+    ClientSim   *cs;
+    GameSim     *gs;
+    SgItems      scripted;
+    SgItems      strict;
+    SgItems      open;
+
+    UT_ASSERT(benc != NULL && bdec != NULL);
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    gs = clientSimGetGameSim(cs);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(gs->scenarioBaseGame == (gameType)0,
+                  "a fresh client already carries base game type %d",
+                  (int)gs->scenarioBaseGame);
+
+    /* The settings a server running a scripted map that declared strict
+       sends: the lobby type is gameScripted for the whole of the round, and
+       the base game rides the scenario tail behind it. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SETTINGS;
+    snprintf(in.u.lobbySettings.mapName,
+             sizeof(in.u.lobbySettings.mapName), "%s", "ScriptedMap");
+    in.u.lobbySettings.lobbyGameType    = gameScripted;
+    in.u.lobbySettings.scenarioSource   = lobbyScenarioMap;
+    snprintf(in.u.lobbySettings.scenarioName,
+             sizeof(in.u.lobbySettings.scenarioName), "%s", "Wave");
+    in.u.lobbySettings.scenarioBaseGame = (uint8_t)gameStrictTournament;
+
+    UT_ASSERT(benc(&in, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(bdec(body, bodyLen, &out),
+                  "the scripted settings body did not decode");
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT_MSG(gs->scenarioBaseGame == gameStrictTournament,
+                  "the base game off the settings tail reached the client as "
+                  "%d, wanted %d",
+                  (int)gs->scenarioBaseGame, (int)gameStrictTournament);
+
+    /* The loadout this client would predict for its first life, asked the
+       way a spawn asks: gameScripted in, the declared game's amounts out. */
+    sgItems(gs, gameScripted, &scripted);
+    sgItems(gs, gameStrictTournament, &strict);
+    UT_ASSERT_MSG(sgSameItems(&scripted, &strict),
+                  "a client on a scripted round declaring strict predicted "
+                  "%u/%u/%u/%u (shells/mines/armour/trees), and strict hands "
+                  "out %u/%u/%u/%u",
+                  (unsigned)scripted.shells, (unsigned)scripted.mines,
+                  (unsigned)scripted.armour, (unsigned)scripted.trees,
+                  (unsigned)strict.shells, (unsigned)strict.mines,
+                  (unsigned)strict.armour, (unsigned)strict.trees);
+    /* And not the open amounts it would have predicted with nothing on the
+       tail — the two differ, so the case above is not passing by accident. */
+    sgItems(gs, gameOpen, &open);
+    UT_ASSERT_MSG(!sgSameItems(&scripted, &open),
+                  "strict and open hand out the same %u shells here, so this "
+                  "case cannot tell them apart",
+                  (unsigned)open.shells);
+
+    /* The same client told about a plain map. That body carries no scenario
+       tail at all, so the base game has to go back to 0 and the prediction
+       back to open. */
+    {
+        ControlEvent plainIn;
+        ControlEvent plainOut;
+        size_t       plainLen = 0;
+
+        memset(&plainIn, 0, sizeof(plainIn));
+        plainIn.type = CTRL_LOBBY_SETTINGS;
+        snprintf(plainIn.u.lobbySettings.mapName,
+                 sizeof(plainIn.u.lobbySettings.mapName), "%s", "PlainMap");
+        plainIn.u.lobbySettings.lobbyGameType = gameOpen;
+        UT_ASSERT(benc(&plainIn, NULL, body, sizeof(body), &plainLen) ==
+                  ENCODE_OK);
+        UT_ASSERT_MSG(plainLen < bodyLen,
+                      "the plain body came to %u bytes and the scripted one "
+                      "to %u — the plain body must carry no tail",
+                      (unsigned)plainLen, (unsigned)bodyLen);
+        memset(&plainOut, 0, sizeof(plainOut));
+        UT_ASSERT(bdec(body, plainLen, &plainOut));
+        clientSimApplyControl(cs, &plainOut);
+
+        UT_ASSERT_MSG(gs->scenarioBaseGame == (gameType)0,
+                      "a plain map left the base game type %d on the client",
+                      (int)gs->scenarioBaseGame);
+        sgItems(gs, gameScripted, &scripted);
+        sgItems(gs, gameOpen, &open);
+        UT_ASSERT_MSG(sgSameItems(&scripted, &open),
+                      "after a plain map the client predicted %u shells for a "
+                      "scripted round, expected the open game's %u",
+                      (unsigned)scripted.shells, (unsigned)open.shells);
+    }
+
+    clientSimDestroy(cs);
     return 0;
 }

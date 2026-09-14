@@ -367,8 +367,9 @@ struct GameSim {
        declared. game being gameScripted sends every site that picks
        behaviour from the game type here instead, through gameTypeResolve,
        and 0 there reads as gameOpen. The server writes it from the lobby
-       template the host hands over; the client's stays 0, which is why a
-       client needs no template of its own to resolve a scripted round. */
+       template the host hands over; a client is handed no template and
+       writes it from the scenario tail of the lobby settings instead, so
+       both resolve a scripted round the same way. */
     gameType    scenarioBaseGame;
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
        returns this fixed start (not the open-game algorithm). The GUI raises

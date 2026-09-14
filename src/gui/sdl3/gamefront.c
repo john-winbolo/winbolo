@@ -2001,11 +2001,20 @@ bool gameFrontSetDlgState(openingStates newState) {
              * AI level the seating reads are in the sim from the startup's
              * config, and the bot pool has been up since the client booted.
              *
+             * Not on a tutorial, which is the one path here that skips the
+             * lobby: its round started inside the startup above, and the
+             * startup seated the template itself on the way in so the round
+             * could build a tank for every fielded seat. Seating again now
+             * would empty those seats and rebuild them inside a round
+             * already running, leaving them with no tanks.
+             *
              * A map with no scenario has no template and this seats nothing;
              * a game that skipped the lobby has already had the settings
              * applied above and the second call changes nothing. */
             if (spScenarioHost != NULL) {
-              serverSimScenarioSeatLobby(spServerSim);
+              if (!isTutorial) {
+                serverSimScenarioSeatLobby(spServerSim);
+              }
               serverSimScenarioApplyLobbyRules(spServerSim);
             }
             threadsReleaseMutex();

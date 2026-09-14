@@ -5098,6 +5098,9 @@ set(_unit_test_names
     scenario_round_boot_before_tanks
     scenario_round_boot_publishes_rules_once
     scenario_setup_events_off_the_wire
+    scenario_setup_terrain_raises_map_events
+    scenario_setup_terrain_reaches_shadow
+    scenario_round_start_clears_seat_holders
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -5199,6 +5202,7 @@ set(_unit_test_names
     scripted_game_type_strict_ignores_base
     scripted_game_type_start_follows_base
     scripted_game_type_plain_map_clears_base
+    scripted_game_type_client_follows_settings
     lobby_scenario_settings_plain_bytes
     lobby_scenario_settings_scripted_bytes
     lobby_scenario_settings_roundtrip
@@ -5208,6 +5212,8 @@ set(_unit_test_names
     lobby_scenario_refuses_ai_none
     lobby_scenario_refuses_game_type
     lobby_scenario_boot_sets_type
+    lobby_scenario_identity_strips_controls
+    lobby_scenario_nolobby_boot_seats_template
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready
@@ -5328,6 +5334,7 @@ set(_unit_test_names
     scenario_host_boot_failure_still_starts
     scenario_host_round_after_scenario_is_classic
     scenario_host_tag_follows_switch
+    scenario_host_chunk_events_reach_hooks
     scenario_host_metatable_raises
     scenario_host_metatable_not_read
     scenario_host_hook_via_global_metatable
@@ -5347,6 +5354,7 @@ set(_unit_test_names
     scenario_validate_syntax_error_line
     scenario_validate_lines_point_at_the_key
     scenario_validate_wave_defense
+    scenario_validate_unknown_game
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -5365,6 +5373,7 @@ set(_unit_test_names
     scenario_lua_detail_carries_the_number
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
+    scenario_lua_game_type_resolves_scripted
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

@@ -1053,6 +1053,12 @@ bool        clientSimGetLobbyMapListScripted(const ClientSim *cs, int idx);
 bool        clientSimGetLobbyMapListReady(const ClientSim *cs);
 const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs);
 bool        clientSimGetLobbyMapListInFlight(const ClientSim *cs);
+/* Monotonic counter, ticked whenever the server's map directory changes
+ * under the client: a completed MAP_LIST_RSP, a completed MAP_SEARCH_RSP,
+ * or a finished upload (which invalidates the cached listing as well as
+ * bumping this). A caller holding its own last-seen value re-reads the
+ * caches when the two differ; only movement matters. 0 for a NULL cs. */
+uint32_t    clientSimGetLobbyMapListSeq(const ClientSim *cs);
 
 /* Monotonic counter, ticked on every PACKET_LOBBY_MAP_CHANGE the
  * client receives. UI code can cache the last-seen value to detect

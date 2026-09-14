@@ -349,6 +349,7 @@ int run_lobby_settings_scenario_apply(void) {
             "Hold the base against ten waves.",
             sizeof(in.u.lobbySettings.scenarioDescription) - 1);
     in.u.lobbySettings.scenarioExtraTeams = true;
+    in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
 
     cs = fresh_client_sim();
     UT_ASSERT(cs != NULL);
@@ -376,6 +377,14 @@ int run_lobby_settings_scenario_apply(void) {
     UT_ASSERT_MSG(clientSimGetLobbyGameType(cs) == gameScripted,
                   "the scripted game type did not reach the client (got %d)",
                   (int)clientSimGetLobbyGameType(cs));
+    /* The base game lands on the GameSim, where gameTypeResolve reads it —
+       the client predicts its first life's loadout and start through there,
+       and the lobby mirrors have nowhere to put it. */
+    UT_ASSERT_MSG(clientSimGetGameSim(cs)->scenarioBaseGame ==
+                      gameStrictTournament,
+                  "the base game type reached the client as %d, wanted %d",
+                  (int)clientSimGetGameSim(cs)->scenarioBaseGame,
+                  (int)gameStrictTournament);
 
     /* The same client, told about a map with no scenario. Everything the
        previous settings left has to go, or the lobby keeps naming a
@@ -404,6 +413,9 @@ int run_lobby_settings_scenario_apply(void) {
                       clientSimGetLobbyScenarioDescription(cs));
         UT_ASSERT_MSG(!clientSimGetLobbyScenarioExtraTeams(cs),
                       "a plain map left the extra-teams flag set");
+        UT_ASSERT_MSG(clientSimGetGameSim(cs)->scenarioBaseGame == (gameType)0,
+                      "a plain map left the base game type %d behind",
+                      (int)clientSimGetGameSim(cs)->scenarioBaseGame);
     }
 
     /* And the whole way round: a scripted event that has been through the
@@ -426,6 +438,12 @@ int run_lobby_settings_scenario_apply(void) {
                              "Hold the base against ten waves.") == 0,
                       "the description off the wire reached the client as "
                       "\"%s\"", clientSimGetLobbyScenarioDescription(wireCs));
+        UT_ASSERT_MSG(clientSimGetGameSim(wireCs)->scenarioBaseGame ==
+                          gameStrictTournament,
+                      "the base game off the wire reached the client as %d, "
+                      "wanted %d",
+                      (int)clientSimGetGameSim(wireCs)->scenarioBaseGame,
+                      (int)gameStrictTournament);
         clientSimDestroy(wireCs);
     }
 

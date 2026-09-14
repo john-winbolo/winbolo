@@ -2161,6 +2161,66 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* The bot worker pool and the per-brain overrides, before the startup
+     below. A startup that skips the lobby builds the seats a scenario's
+     template asks for and starts the round inside itself, so the pool has
+     to be up and the overrides in place before the first brain is made.
+     None of this reads the sim — the pool init takes a thread count and
+     the overrides are process-wide — so early costs nothing. The -bots
+     loop that adds the operator's own bots still runs after the startup. */
+  {
+    int threadsArg = 0;
+    int argNum = findArg(argc, argv, "threads");
+    if (argNum != ARG_NOT_FOUND) {
+      threadsArg = atoi((char *)argv[argNum]);
+    }
+    /* Determinism aids for A/B measurement runs. Neither has any effect
+     * unless asked for, and both are honest about what they are: the tier pin
+     * changes what the brain DOES, the Lua seed changes what it draws. Timing
+     * telemetry keeps reporting real measured values either way. */
+    {
+      int argNum = findArg(argc, argv, "brain-tier");
+      if (argNum != ARG_NOT_FOUND) {
+        int tier = atoi((char *)argv[argNum]);
+        if (tier < 1 || tier > 10) {
+          fprintf(stderr, "-brain-tier must be 1..10 (got %d)\n", tier);
+          return 0;
+        }
+        botManagerSetBrainTierOverride(tier);
+        fprintf(stderr, "Brain capacity tier pinned to %d "
+                        "(dynamic controller disabled)\n", tier);
+      }
+      argNum = findArg(argc, argv, "brain-lua-seed");
+      if (argNum != ARG_NOT_FOUND) {
+        long ls = strtol((char *)argv[argNum], NULL, 0);
+        botManagerSetBrainLuaSeed(ls);
+        fprintf(stderr, "Brain math.random seeded from %ld (+ player number)\n", ls);
+      }
+      /* NOTE: argExist prepends the "-" itself — passing the name with a
+       * leading dash made it look for "--brain-no-budget-kill" and the flag
+       * was silently dead (found 20260831: killbot.log full of 3ms kills in
+       * runs that passed it). */
+      if (argExist(argc, argv, "brain-no-budget-kill") == TRUE) {
+        /* Reuses the slow-mo path: a 1000 ms budget, which no real tick
+         * approaches, so the watchdog never truncates a think mid-computation
+         * -- including the abort-flag polls inside the C pathfinder and
+         * worldsim, which otherwise cut their results at a wall-clock-
+         * dependent instruction. Still finite, so a genuinely hung brain is
+         * aborted rather than hanging the server. */
+        botManagerSetSlowMoDebug(1);
+        fprintf(stderr, "Brain budget kill disabled (1000 ms per-bot budget); "
+                        "consecutive-crash kick also suppressed\n");
+      }
+    }
+    if (!botManagerInit(threadsArg)) {
+      fprintf(stderr, "Error initializing bot manager\n");
+#ifdef USING_SDL
+      SDL_Quit();
+#endif
+      return 0;
+    }
+  }
+
   {
     ServerInstanceConfig instCfg;
     UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
@@ -2348,59 +2408,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* Initialize and add bot players */
-  {
-    int threadsArg = 0;
-    int argNum = findArg(argc, argv, "threads");
-    if (argNum != ARG_NOT_FOUND) {
-      threadsArg = atoi((char *)argv[argNum]);
-    }
-    /* Determinism aids for A/B measurement runs. Neither has any effect
-     * unless asked for, and both are honest about what they are: the tier pin
-     * changes what the brain DOES, the Lua seed changes what it draws. Timing
-     * telemetry keeps reporting real measured values either way. */
-    {
-      int argNum = findArg(argc, argv, "brain-tier");
-      if (argNum != ARG_NOT_FOUND) {
-        int tier = atoi((char *)argv[argNum]);
-        if (tier < 1 || tier > 10) {
-          fprintf(stderr, "-brain-tier must be 1..10 (got %d)\n", tier);
-          return 0;
-        }
-        botManagerSetBrainTierOverride(tier);
-        fprintf(stderr, "Brain capacity tier pinned to %d "
-                        "(dynamic controller disabled)\n", tier);
-      }
-      argNum = findArg(argc, argv, "brain-lua-seed");
-      if (argNum != ARG_NOT_FOUND) {
-        long ls = strtol((char *)argv[argNum], NULL, 0);
-        botManagerSetBrainLuaSeed(ls);
-        fprintf(stderr, "Brain math.random seeded from %ld (+ player number)\n", ls);
-      }
-      /* NOTE: argExist prepends the "-" itself — passing the name with a
-       * leading dash made it look for "--brain-no-budget-kill" and the flag
-       * was silently dead (found 20260831: killbot.log full of 3ms kills in
-       * runs that passed it). */
-      if (argExist(argc, argv, "brain-no-budget-kill") == TRUE) {
-        /* Reuses the slow-mo path: a 1000 ms budget, which no real tick
-         * approaches, so the watchdog never truncates a think mid-computation
-         * -- including the abort-flag polls inside the C pathfinder and
-         * worldsim, which otherwise cut their results at a wall-clock-
-         * dependent instruction. Still finite, so a genuinely hung brain is
-         * aborted rather than hanging the server. */
-        botManagerSetSlowMoDebug(1);
-        fprintf(stderr, "Brain budget kill disabled (1000 ms per-bot budget); "
-                        "consecutive-crash kick also suppressed\n");
-      }
-    }
-    if (!botManagerInit(threadsArg)) {
-      fprintf(stderr, "Error initializing bot manager\n");
-#ifdef USING_SDL
-      SDL_Quit();
-#endif
-      return 0;
-    }
-  }
 
   /* The lobby the scenario asks for. Its template reached the sim at the
      attach far above; seating it is the separate step made wherever a lobby
@@ -2410,10 +2417,7 @@ int main(int argc, char **argv) {
 
      Here rather than beside the attach because a team the template fields
      with no brain of its own falls back to the server's, and that path and
-     the bot AI level are written into the sim by the startup above. A seat
-     that fields also builds its bot through the manager, which the block
-     above has just brought up. Seated before either, a fielded team would
-     quietly seat nothing.
+     the bot AI level are written into the sim by the startup above.
 
      Before the operator's -bots, which take the seats above these.
 
@@ -2421,6 +2425,12 @@ int main(int argc, char **argv) {
      binary plays as well as hosts and its player has to hold slot 0, which a
      horde seated first would take. Nobody plays from here — every
      participant joins over the wire — so there is no slot to keep back.
+
+     Not on a server that skipped the lobby: its round started inside the
+     startup above, and the startup seated the template itself on the way in
+     so the round could build a tank for every fielded seat. Seating again
+     now would empty those seats and rebuild them inside a round already
+     running, leaving the scenario's own bots with no tanks.
 
      A map with no scenario has no template and this seats nothing. */
   /* And the lobby's own settings, in the order a map commit does the two:
@@ -2432,7 +2442,9 @@ int main(int argc, char **argv) {
      here then finds the lobby on the scripted type already and changes
      nothing. */
   if (scenarioHost != NULL) {
-    serverSimScenarioSeatLobby(serverSim);
+    if (!skipLobby) {
+      serverSimScenarioSeatLobby(serverSim);
+    }
     serverSimScenarioApplyLobbyRules(serverSim);
   }
 

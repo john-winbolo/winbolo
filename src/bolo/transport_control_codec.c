@@ -510,11 +510,13 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * more, which is what keeps a plain map's body the length it has always
  * been. source(1) + extraTeams(1), then the three strings, each a one-byte
  * length and that many bytes with no terminator — the same shape the team
- * name and the bot name use in this file. */
+ * name and the bot name use in this file — and last the base game type(1),
+ * appended behind the strings so none of the offsets ahead of it move. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
            + (1 + (LOBBY_SCENARIO_FILE_LEN - 1))                           \
-           + (1 + (LOBBY_SCENARIO_DESC_LEN - 1)))
+           + (1 + (LOBBY_SCENARIO_DESC_LEN - 1))                           \
+           + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -534,7 +536,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
         ? strnlen(evt->u.lobbySettings.scenarioDescription,
                   LOBBY_SCENARIO_DESC_LEN - 1) : 0;
     const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD
-        + (hasScenario ? (2 + 3 + scnNameLen + scnFileLen + scnDescLen) : 0);
+        + (hasScenario ? (2 + 3 + 1 + scnNameLen + scnFileLen + scnDescLen)
+                       : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     memset(buf + pos, 0, MAP_STR_SIZE);
@@ -597,10 +600,25 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
                    scnDescLen);
             pos += scnDescLen;
         }
+        /* Behind the strings, so the offsets above keep the places they
+           already had. The game underneath a scripted round: a client
+           resolves gameScripted through this to know what its first life is
+           handed before any snapshot arrives. */
+        buf[pos++] = evt->u.lobbySettings.scenarioBaseGame;
     }
     *outLen = pos;
     return ENCODE_OK;
 }
+
+/* Compile-time guarantee that the lobby-settings worst case — every optional
+ * field written and a full-length scenario tail behind them — fits
+ * MAX_CONTROL_PACKET, which keeps the runtime ENCODE_OVERFLOW path in the
+ * body encoder unreachable as long as the three scenario strings keep their
+ * lengths. */
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + LOBBY_SETTINGS_WIRE_PAYLOAD +
+        LOBBY_SETTINGS_WIRE_SCENARIO_MAX <= MAX_CONTROL_PACKET,
+    lobby_settings_worst_case_fits_MAX_CONTROL_PACKET);
 
 static EncodeResult encodeLobbySettings(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
@@ -2342,6 +2360,9 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
             pos += descLen;
         }
         outEvt->u.lobbySettings.scenarioDescription[descLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioBaseGame = buf[pos++];
     }
     return true;
 }

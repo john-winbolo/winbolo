@@ -464,6 +464,13 @@ typedef struct ControlEvent {
             bool     scenarioExtraTeams;  /* the manifest's extra_teams: may a
                                            * host add teams beyond the
                                            * scenario's own */
+            /* The game type the scenario declared, as a gameType value, 0 for
+             * none. lobbyGameType reads gameScripted for the whole of a
+             * scripted round, and this is the game underneath it — what every
+             * site that picks behaviour from the game type resolves to. A
+             * client needs it to predict its first life's loadout and its
+             * start before the first snapshot lands. */
+            uint8_t  scenarioBaseGame;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

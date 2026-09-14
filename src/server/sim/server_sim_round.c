@@ -1253,9 +1253,36 @@ static void serverSimScenarioStartCall(ServerSim *sim, void (*call)(void *ctx),
     }
     eventsBefore             = sim->eventCount;
     sim->scenarioSetupWindow = true;
+    /* Terrain written from here is recorded the way a running frame records
+       it. Only a running tick installs the map-change callback, and a start
+       is not one — it is reached from the countdown branch, which returns
+       before the install, and from a command handler, which runs outside a
+       tick altogether — so without this every square the call writes reaches
+       the server's own map and no client's. simMapChangeCallback records into
+       the active sim, so that is pointed at this one first, as the tick does
+       at its top. Put back to none rather than to what was there: both
+       installs are inside a running tick and neither reaches a start, so
+       there is never anything here to restore. */
+    serverSimSetActive(sim);
+    mapSetChangeCallback(simMapChangeCallback);
     call(ctx);
+    mapSetChangeCallback(NULL);
     sim->scenarioSetupWindow = false;
     sim->eventCount          = eventsBefore;
+}
+
+/* The two per-seat holders a scenario writes into, back to the values a fresh
+ * sim has. Each is written by the roster drain and read once, by the seat it
+ * names, on that seat's next placement or spawn — so a value written for a
+ * seat that never took it would otherwise be spent on the opening placement of
+ * the round after. MAX_STARTS is the start holder's "none": 0 is a start. */
+static void serverSimResetScenarioSeats(ServerSim *sim) {
+    BYTE i;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->sim.scenarioStartIdx[i]     = MAX_STARTS;
+        sim->sim.scenarioSpawnLoadout[i] = 0;
+    }
 }
 
 void serverSimStartGameInPlace(ServerSim *sim) {
@@ -1267,6 +1294,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * one — the round after a scripted one, and a round whose scenario failed
      * to boot — which would otherwise play by the last script's numbers. */
     simRulesClassic(&sim->sim.rules);
+    serverSimResetScenarioSeats(sim);
 
     /* Held for the whole start so the all-ready detector refuses to run
      * while the roster and the state are being rebuilt. */
@@ -1383,6 +1411,13 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     serverSimScenarioStartCall(sim, sim->scenarioRoundStart,
                                sim->scenarioRoundStartCtx);
 
+    /* Each slot's copy of the terrain takes what the boot and the setup
+     * wrote. This path is not reached from a tick, so the end-of-frame pass
+     * that does this for a running frame never sees those squares, and a copy
+     * left behind is what the map handed to anyone downloading it from here
+     * on is compressed from. */
+    serverSimShadowTick(sim);
+
     /* And the table the round is starting on, beside the phase. The twin of
      * the publish at the end of serverSimStartGame: this path does not run
      * that function, so it states the table itself. Between the two of them
@@ -1406,6 +1441,7 @@ void serverSimStartGame(ServerSim *sim) {
      * whatever table the sim is on, and the map a round is starting on is
      * capped by that round's rules and not by the previous round's. */
     simRulesClassic(&sim->sim.rules);
+    serverSimResetScenarioSeats(sim);
 
     /* Held for the whole start, as in serverSimStartGameInPlace. */
     sim->startInProgress = true;

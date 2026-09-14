@@ -844,6 +844,7 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
     if (finalFlag) {
         cs->lobbyMapListReady = true;
         cs->lobbyMapListInFlight = false;
+        cs->lobbyMapListSeq++;
     }
 }
 
@@ -1006,6 +1007,7 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     if (finalFlag) {
         cs->lobbyMapSearchReady = true;
         cs->lobbyMapSearchInFlight = false;
+        cs->lobbyMapListSeq++;
     }
 }
 
@@ -3128,6 +3130,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                        buf + PACKET_HEADER_SIZE + 2, plen);
             }
             c->clientSim->lobbyMapUploadStatus = 3;
+            /* The server's map directory just gained a file, so whatever
+             * listing the chooser has cached is now short by one. Drop the
+             * ready flag so the next enumerate re-asks, and tick the
+             * counter the chooser watches so an enumerate happens. */
+            c->clientSim->lobbyMapListReady = false;
+            c->clientSim->lobbyMapListSeq++;
         } else {
             c->clientSim->lobbyMapUploadStatus = 4;
             c->clientSim->lobbyMapUploadRejectCode = status;

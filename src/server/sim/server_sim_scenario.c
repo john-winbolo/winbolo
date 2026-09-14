@@ -3127,6 +3127,30 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
     sim->sim.scenarioBaseGame = (gameType)t->baseGameType;
 }
 
+/* One of the three identity strings, copied with every control character
+   turned into a space. The text comes out of a Lua table an author wrote and
+   is drawn as a single wrapped block: the lobby draws the description inside
+   a panel of a fixed height, so a newline in it grows the panel past its
+   bounds. Done here rather than in the decoder, so the headless log and the
+   lobby read the same text. The length does not change: each byte is
+   replaced, never dropped. */
+static void scnCopyIdentityText(char *dst, size_t dstLen, const char *src) {
+    size_t i;
+
+    if (dstLen == 0) {
+        return;
+    }
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+    for (i = 0; i + 1 < dstLen && src[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)src[i];
+        dst[i] = (c < 0x20 || c == 0x7F) ? ' ' : (char)c;
+    }
+    dst[i] = '\0';
+}
+
 void serverSimSetScenarioIdentity(ServerSim *sim,
                                   LobbyScenarioSource source,
                                   const char *name,
@@ -3143,18 +3167,12 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
     }
     sim->scenarioIdentity.source     = source;
     sim->scenarioIdentity.extraTeams = extraTeams;
-    if (name != NULL) {
-        strncpy(sim->scenarioIdentity.name, name,
-                sizeof(sim->scenarioIdentity.name) - 1);
-    }
-    if (fileName != NULL) {
-        strncpy(sim->scenarioIdentity.fileName, fileName,
-                sizeof(sim->scenarioIdentity.fileName) - 1);
-    }
-    if (description != NULL) {
-        strncpy(sim->scenarioIdentity.description, description,
-                sizeof(sim->scenarioIdentity.description) - 1);
-    }
+    scnCopyIdentityText(sim->scenarioIdentity.name,
+                        sizeof(sim->scenarioIdentity.name), name);
+    scnCopyIdentityText(sim->scenarioIdentity.fileName,
+                        sizeof(sim->scenarioIdentity.fileName), fileName);
+    scnCopyIdentityText(sim->scenarioIdentity.description,
+                        sizeof(sim->scenarioIdentity.description), description);
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

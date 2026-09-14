@@ -408,9 +408,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         /* The scenario the map is running. A body with no scenario tail
-         * decodes with the source at lobbyScenarioNone and the strings
-         * empty, so these five assignments are the whole of it — a plain
-         * lobby needs no branch. */
+         * decodes with the source at lobbyScenarioNone, the strings empty
+         * and the base game 0, so these assignments are the whole of it —
+         * a plain lobby needs no branch. */
         cs->lobbyScenarioSource = (uint8_t)evt->u.lobbySettings.scenarioSource;
         cs->lobbyScenarioExtraTeams = evt->u.lobbySettings.scenarioExtraTeams;
         SDL_strlcpy(cs->lobbyScenarioName, evt->u.lobbySettings.scenarioName,
@@ -421,6 +421,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         SDL_strlcpy(cs->lobbyScenarioDescription,
                     evt->u.lobbySettings.scenarioDescription,
                     sizeof(cs->lobbyScenarioDescription));
+        /* The game underneath a scripted round goes onto the GameSim itself,
+         * because that is where gameTypeResolve reads it — the loadout this
+         * client predicts its first life with, the start it predicts, and
+         * the tournament stat block at game over all go through there. A
+         * plain lobby leaves 0, which resolves as open. */
+        cs->sim.scenarioBaseGame =
+            (gameType)evt->u.lobbySettings.scenarioBaseGame;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
         /* The policy byte is stored raw, with no range check. This mirror
          * drives nothing the server does not enforce for itself, so a value

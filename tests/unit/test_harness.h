@@ -2195,6 +2195,9 @@ int run_scenario_setup_window_holds_publish(void);
 int run_scenario_round_boot_before_tanks(void);
 int run_scenario_round_boot_publishes_rules_once(void);
 int run_scenario_setup_events_off_the_wire(void);
+int run_scenario_setup_terrain_raises_map_events(void);
+int run_scenario_setup_terrain_reaches_shadow(void);
+int run_scenario_round_start_clears_seat_holders(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -2324,7 +2327,8 @@ int run_scenario_roster_spawn_loadout_not_next_life(void);
  * the settings body with and without one, byte for byte; the scripted game
  * type a commit sets and gives back, the same type on a server that booted
  * onto the map with no commit to set it, and the same again on a lobby the
- * last player has left; and the settings a scenario does not go with. */
+ * last player has left; the settings a scenario does not go with; and the
+ * control characters that never reach the event. */
 int run_lobby_scenario_settings_plain_bytes(void);
 int run_lobby_scenario_settings_scripted_bytes(void);
 int run_lobby_scenario_settings_roundtrip(void);
@@ -2334,6 +2338,8 @@ int run_lobby_scenario_refuses_ranked(void);
 int run_lobby_scenario_refuses_ai_none(void);
 int run_lobby_scenario_refuses_game_type(void);
 int run_lobby_scenario_boot_sets_type(void);
+int run_lobby_scenario_identity_strips_controls(void);
+int run_lobby_scenario_nolobby_boot_seats_template(void);
 
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that
@@ -2358,13 +2364,14 @@ int run_lobby_template_cancel_restores_path_random(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
- * start, and the value going with the template when a plain map is
- * committed. */
+ * start, the value going with the template when a plain map is committed,
+ * and a client resolving it off the settings tail. */
 int run_scripted_game_type_loadout_follows_base(void);
 int run_scripted_game_type_no_base_is_open(void);
 int run_scripted_game_type_strict_ignores_base(void);
 int run_scripted_game_type_start_follows_base(void);
 int run_scripted_game_type_plain_map_clears_base(void);
+int run_scripted_game_type_client_follows_settings(void);
 
 /* The unfielded seat (test_unfielded_seat.c): a seat a bot holds with no
  * bot manager entry, no ClientSim and no tank behind it. What it counts for,
@@ -2564,6 +2571,7 @@ int run_scenario_host_opening_tank_under_rules(void);
 int run_scenario_host_boot_failure_still_starts(void);
 int run_scenario_host_round_after_scenario_is_classic(void);
 int run_scenario_host_tag_follows_switch(void);
+int run_scenario_host_chunk_events_reach_hooks(void);
 
 /* A metatable on the script's own tables (test_scenario_host.c): what the
    host's reads of the declared data do and do not run. */
@@ -2593,6 +2601,7 @@ int run_scenario_validate_bound_false_with_tags(void);
 int run_scenario_validate_syntax_error_line(void);
 int run_scenario_validate_lines_point_at_the_key(void);
 int run_scenario_validate_wave_defense(void);
+int run_scenario_validate_unknown_game(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
@@ -2616,6 +2625,7 @@ int run_scenario_lua_shape_raises_refusal_does_not(void);
 int run_scenario_lua_detail_carries_the_number(void);
 int run_scenario_lua_teleport_start_refuses_bad_index(void);
 int run_scenario_lua_spawn_bot_refuses_bad_start(void);
+int run_scenario_lua_game_type_resolves_scripted(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

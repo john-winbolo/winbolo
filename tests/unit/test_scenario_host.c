@@ -87,6 +87,10 @@
  * run_scenario_host_round_after_scenario_is_classic
  *                                     — and so does the round started after
  *                                       the scenario is detached
+ * run_scenario_host_chunk_events_reach_hooks
+ *                                     — an event raised by an op the chunk's
+ *                                       own top level issued reaches the
+ *                                       round's hook at the first drain
  *
  * and the switch that decides whether a script is loaded at all:
  *
@@ -2506,5 +2510,66 @@ int run_scenario_host_tag_follows_switch(void) {
     UT_ASSERT_MSG(!offPlain,
                   "a map with nothing beside it read as scripted with "
                   "scripts off");
+    return 0;
+}
+
+/* ── 29. An op from the chunk's top level reaches the round ────────── */
+
+/* The subscriber is registered at the attach and stays registered across a
+ * round boundary, so an op the chunk's top level issues raises its event
+ * into the host's queue straight away — before the round's hooks have even
+ * been resolved. That event is the round's own: emptying the queue behind
+ * the chunk would take it away before the first drain and the hook would
+ * never be called for something the script itself did. */
+int run_scenario_host_chunk_events_reach_hooks(void) {
+    static const char *const kMap    = "scnhost_chunk_event.map";
+    static const char *const kRecord = "scnhost_chunk_event.record";
+    static const char *const kBody =
+        "scenario = { name = \"Chunk\", api = 1 }\n"
+        "game.set_base_owner(1, 0)\n"
+        "function on_base_captured(n, o, w, s) note(\"c\") end\n";
+    char              lua[1024];
+    char              got[64];
+    ServerSim        *sim;
+    ScenarioHost     *h;
+    ServerSimBaseInfo info;
+    char              err[512];
+
+    remove(kRecord);
+    shScript(lua, sizeof(lua), kRecord, kBody);
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+
+    /* The deal itself, so a hook that never runs below is read as the event
+       being lost rather than as the op having been refused. */
+    UT_ASSERT_MSG(serverSimGetBaseInfo(sim, 1, &info),
+                  "the map has no base 1 for the chunk to deal");
+    UT_ASSERT_MSG(info.owner == 0,
+                  "base 1 reads owner %u after the start, expected seat 0: "
+                  "the op the chunk's top level issued was refused",
+                  (unsigned)info.owner);
+
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(got[0] == '\0',
+                  "the round start recorded '%s': a hook belongs to the "
+                  "first drain, not to the start", got);
+
+    serverSimTick(sim);
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "c") == 0,
+                  "the first tick recorded '%s', expected the one 'c': the "
+                  "event the chunk's own op raised never reached the round's "
+                  "hook", got);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    remove(kRecord);
     return 0;
 }

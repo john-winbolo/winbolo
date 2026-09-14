@@ -66,6 +66,15 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
    * (today's dedicated-server-with-no-cfg-fields behaviour). */
   if (cfg->skipLobby) {
     serverSimSetLobbyEnabled(sim, false);
+    /* The lobby the attached scenario asks for, seated here and not by the
+       caller, because this is the only point that is after both of the things
+       it needs and before the thing that needs it. A team the template fields
+       with no brain of its own falls back to the server's, and that path and
+       the bot AI level were written a few lines above; the start below builds
+       a tank for every fielded seat, and only for the seats that already
+       exist when it runs. With no scenario attached there is no template and
+       this seats nothing, so a plain server is unchanged. */
+    serverSimScenarioSeatLobby(sim);
     serverSimStartGame(sim);
     /* serverSimStartGame latches hadPlayersEver = TRUE, but a map-rotation
      * server's first round boots up empty and waits for joiners. Left set, the
