@@ -60,6 +60,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* SOCKET and struct sockaddr_in, for loopbackRecvFromServer below. Tests that
+ * drive the harness server with a raw socket of their own need these anyway,
+ * and the header is self-guarded, so pulling it in here costs them nothing. */
+#include "platform_net.h"
+
 struct ServerSim;
 struct ClientSim;
 
@@ -134,6 +139,29 @@ int loopbackHarnessPumpUntil(LoopbackHarness *h, int maxIters,
  * serverInstanceTick as the harness keeps pumping. Returns false if the
  * client has not yet been assigned a slot. */
 bool loopbackHarnessTriggerGameStart(LoopbackHarness *h);
+
+/* Receive the next datagram on `s` that actually came from `server`, into buf
+ * (at most cap bytes). Returns the byte count, or <= 0 when nothing the server
+ * sent is waiting — so a caller polling a non-blocking socket can write
+ * `while ((n = loopbackRecvFromServer(s, in, sizeof(in), &addr)) > 0)` exactly
+ * where it used to write the bare recvfrom.
+ *
+ * Tests that speak to the harness server over a raw socket bind that socket to
+ * an ephemeral 127.0.0.1 port, and a full `ctest -j` run has dozens of other
+ * loopback servers on the same interface sending JOIN_CHALLENGEs, JOIN_ACCEPTs
+ * and the rest at ephemeral ports of their own. One addressed to a port this
+ * test happens to hold arrives looking exactly like the reply it asked for,
+ * and counting it means asserting on evidence our server never produced — a
+ * false pass for a test proving a reply came, a false failure for one proving
+ * none did.
+ *
+ * A datagram from anyone else is consumed and dropped here rather than
+ * returned, so a stray neither reaches the caller nor ends its drain loop
+ * early: the loop keeps reading until the socket is genuinely empty, which is
+ * also what keeps a socket buffer from filling for callers that only want to
+ * discard. `server` must not be NULL. */
+int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
+                           const struct sockaddr_in *server);
 
 /* Tear down client, server (stops the recv thread), sim and threads, and
  * clear the WB_NETIMPAIR environment override. Safe on a zeroed or

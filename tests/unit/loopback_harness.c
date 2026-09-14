@@ -326,6 +326,29 @@ bool loopbackHarnessTriggerGameStart(LoopbackHarness *h) {
     return true;
 }
 
+int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
+                           const struct sockaddr_in *server) {
+    for (;;) {
+        struct sockaddr_in from;
+        socklen_t fromLen = (socklen_t)sizeof(from);
+        int n;
+
+        memset(&from, 0, sizeof(from));
+        n = (int)recvfrom(s, (char *)buf, cap, 0,
+                          (struct sockaddr *)&from, &fromLen);
+        if (n <= 0) {
+            return n;   /* nothing waiting, or the socket gave up */
+        }
+        if (from.sin_addr.s_addr == server->sin_addr.s_addr &&
+            from.sin_port == server->sin_port) {
+            return n;
+        }
+        /* Somebody else's datagram. It has been read out of the socket
+         * buffer, and going round again is what makes that a drop rather
+         * than a short return that would strand the rest of the queue. */
+    }
+}
+
 void loopbackHarnessStop(LoopbackHarness *h) {
     if (h == NULL) return;
     /* Second client first: it leaves while the server is still up, so its
