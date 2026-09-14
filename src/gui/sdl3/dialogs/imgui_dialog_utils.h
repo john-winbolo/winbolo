@@ -204,12 +204,17 @@ static inline SDL_Texture *imguiLoadSvgIcon(SDL_Renderer *rend, const char *path
     return tex;
 }
 
-/* Like imguiLoadSvgIcon, but treats the rasterised SVG as an alpha mask
- * and forces the colour channels to white, returning a surface that owns
- * its pixels. The surface form exists for renderer-independent caches
- * (the brain icon the tank-label caches texture per renderer); most call
- * sites want the imguiLoadSvgIconWhite texture wrapper below. */
-static inline SDL_Surface *imguiLoadSvgIconWhiteSurface(const char *path, int size) {
+/* Rasterise an SVG to an RGBA32 surface the caller owns. `whiten` forces the
+ * colour channels to white, leaving the alpha as the only information — for a
+ * monochrome badge that has to read against an arbitrary background and be
+ * tinted at draw time. Without it the artwork keeps its own colours, which is
+ * what multi-colour art needs: a tint can darken a texture but never brighten
+ * it, so a whitened chip cannot be turned back into a chip.
+ *
+ * One body for both because the two differ by that loop alone; they were
+ * copies of each other, which is two places to fix a rasterisation bug in. */
+static inline SDL_Surface *imguiRasterizeSvgSurface(const char *path, int size,
+                                                    bool whiten) {
     NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
     if (!image) return nullptr;
     if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
@@ -226,15 +231,32 @@ static inline SDL_Surface *imguiLoadSvgIconWhiteSurface(const char *path, int si
                   (unsigned char *)surface->pixels, w, h, surface->pitch);
     nsvgDeleteRasterizer(rast);
     nsvgDelete(image);
-    for (int yy = 0; yy < h; ++yy) {
-        unsigned char *row = (unsigned char *)surface->pixels + (size_t)yy * (size_t)surface->pitch;
-        for (int xx = 0; xx < w; ++xx) {
-            row[xx * 4 + 0] = 255;
-            row[xx * 4 + 1] = 255;
-            row[xx * 4 + 2] = 255;
+    if (whiten) {
+        for (int yy = 0; yy < h; ++yy) {
+            unsigned char *row = (unsigned char *)surface->pixels + (size_t)yy * (size_t)surface->pitch;
+            for (int xx = 0; xx < w; ++xx) {
+                row[xx * 4 + 0] = 255;
+                row[xx * 4 + 1] = 255;
+                row[xx * 4 + 2] = 255;
+            }
         }
     }
     return surface;
+}
+
+/* imguiLoadSvgIcon as a SURFACE, with the artwork's own colours kept. For
+ * renderer-independent caches — the tank label textures its icons per
+ * renderer, so it needs a surface, and the bot chip it draws is multi-colour
+ * artwork that a white mask would flatten. */
+static inline SDL_Surface *imguiLoadSvgIconSurface(const char *path, int size) {
+    return imguiRasterizeSvgSurface(path, size, false);
+}
+
+/* The same, as an alpha mask with the colour channels forced white. The
+ * surface form exists for renderer-independent caches; most call sites want
+ * the imguiLoadSvgIconWhite texture wrapper below. */
+static inline SDL_Surface *imguiLoadSvgIconWhiteSurface(const char *path, int size) {
+    return imguiRasterizeSvgSurface(path, size, true);
 }
 
 /* Force-white SVG rasterisation as a texture on the given renderer. Use for

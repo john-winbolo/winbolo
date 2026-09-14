@@ -109,9 +109,11 @@ bool lobbyBotPoolsLoadFromFile(const char *path,
 
     defs = (LobbyBotPoolDef *)calloc((size_t)poolCap, sizeof(*defs));
     nameArrays = (const char ***)calloc((size_t)poolCap, sizeof(*nameArrays));
+    /* The free casts below avoid MSVC C4090 for pointers to const strings.
+     * Only the allocated pointer arrays are freed; cJSON owns the strings. */
     if (!defs || !nameArrays) {
         free(defs);
-        free(nameArrays);
+        free((void *)nameArrays);
         cJSON_Delete(root);
         return false;
     }
@@ -138,7 +140,7 @@ bool lobbyBotPoolsLoadFromFile(const char *path,
                 names[nameN++] = nameNode->valuestring;
             }
         }
-        if (nameN == 0) { free(names); continue; }
+        if (nameN == 0) { free((void *)names); continue; }
 
         labelNode = cJSON_GetObjectItemCaseSensitive(poolItem, "label");
         defs[poolN].label =
@@ -154,7 +156,7 @@ bool lobbyBotPoolsLoadFromFile(const char *path,
     }
 
     for (i = 0; i < poolN; i++) free((void *)nameArrays[i]);
-    free(nameArrays);
+    free((void *)nameArrays);
     free(defs);
     cJSON_Delete(root);
 

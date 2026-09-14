@@ -1513,8 +1513,13 @@
 /* Gear-hover tooltip: "Currently: <bot name> . <difficulty>" ({string1}). */
 #define STR_DLGLOBBY_BOTCFG_CURRENTLY       1847
 
-/* Middle bot difficulty (wire value 1; Easy / Hard reuse 1337 / 1339). */
-#define STR_DLGLOBBY_BOTCFG_MEDIUM          2164
+/* Middle bot difficulty (wire value 1; Easy / Hard reuse 1337 / 1339).
+ * 2172, not 2164: main's #323 claimed 2164 for STR_DLGPLAYERS_SELECT while
+ * this branch was out, and the two defines live far enough apart in this
+ * file that the merge kept both without a conflict. langGetText linear-scans
+ * and returns the first hit, so the collision would have drawn the Players
+ * panel's "Select:" as "Medium". The already-merged id keeps 2164. */
+#define STR_DLGLOBBY_BOTCFG_MEDIUM          2172
 
 /* Bot difficulty blurbs: tagline (leading token coloured) + description. */
 #define STR_BOT_DIFF_TAG_EASY               2165
@@ -1765,6 +1770,11 @@
    voice/chat mute above) */
 #define STR_PLAYER_TIP_PING_SHOWN               2162
 #define STR_PLAYER_TIP_PING_MUTED               2163
+
+/* Players panel — the label in front of the All/None/Allies/Nearby row.
+   Carries its own colon: a language that does not use one, or that puts a
+   space before it, has nowhere to say so if the colon is added in code. */
+#define STR_DLGPLAYERS_SELECT                   2164
 
 /* Players panel — per-player playback volume slider */
 #define STR_PLAYER_TIP_VOICE_VOLUME             2090

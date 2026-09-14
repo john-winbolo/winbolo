@@ -125,6 +125,12 @@ typedef struct NSVGgradient {
 	NSVGgradientStop stops[1];
 } NSVGgradient;
 
+// WinBolo: MSVC's C mode warns about this anonymous union. Scope the exception
+// to the declaration so including NanoSVG does not disable C4201 in caller code.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4201)
+#endif
 typedef struct NSVGpaint {
 	signed char type;
 	union {
@@ -132,6 +138,9 @@ typedef struct NSVGpaint {
 		NSVGgradient* gradient;
 	};
 } NSVGpaint;
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 typedef struct NSVGpath
 {

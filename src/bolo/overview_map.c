@@ -171,9 +171,8 @@ static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
  * else may touch it, or the memory stops being a record of what was seen.
  * Returns TRUE if any byte came out different.
  *
- * A live rect grants sight along with the ground. The flags are assigned
- * rather than merged, so the last rect stamped over a square decides both
- * bits.
+ * A live rect grants sight along with the ground. Both bits come from the
+ * mask this rect is stamped with, so what the caller passes decides them.
  *
  * vis is the rect's sight mask - one byte per square, indexed over this rect
  * the way sight.h describes - and NULL for a rect nothing blocks sight in. A
@@ -637,6 +636,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   bool hideOn;         /* Is sight hiding squares inside the live blocks */
   const BYTE *visPtr;  /* The mask the rect being stamped is masked with */
   BYTE vis[SIGHT_MASK_BYTES]; /* One block's mask, rebuilt for each of them */
+  BYTE sightUnion[MAP_ARRAY_SIZE * MAP_ARRAY_SIZE / 8]; /* Current sight bits */
   int idx;       /* Which prevLive rect the replay is up to */
   int i;         /* Looping variable */
 
@@ -852,9 +852,18 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   hideOn = (in->lineOfSight != lineOfSightOff && om->liveCount > 0);
   om->hiddenActive = hideOn;
 
-  for (i = 0; i < om->liveCount; i++) {
-    visPtr = NULL;
-    if (hideOn == TRUE) {
+  /* Build this frame's union before stamping any live region. A blocked line
+   * from one observer cannot take away another observer's clear sight. Start
+   * fresh each update so a moving or departing observer leaves no stale sight.
+   * One bit per map square keeps the scratch buffer to 8 KiB. */
+  if (hideOn == TRUE) {
+    memset(sightUnion, 0, sizeof(sightUnion));
+    for (i = 0; i < om->liveCount; i++) {
+      const OverviewRect *r = &om->live[i];
+      int x;
+      int y;
+      int pos = 0;
+
       /* Every square seen until something says otherwise, so a block
        * sightBuildMask refuses reads as nothing being hidden rather than as
        * whatever the last one left behind. No block reaches here that it can
@@ -863,6 +872,31 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
       memset(vis, 1, sizeof(vis));
       sightBuildMask(&sim->mp, om->live[i].originX, om->live[i].originY,
                      &om->live[i], vis);
+      for (y = r->top; y <= r->bottom; y++) {
+        for (x = r->left; x <= r->right; x++, pos++) {
+          int square = y * MAP_ARRAY_SIZE + x;
+          if (vis[pos] != 0) {
+            sightUnion[square >> 3] |= (BYTE)(1u << (square & 7));
+          }
+        }
+      }
+    }
+  }
+
+  for (i = 0; i < om->liveCount; i++) {
+    visPtr = NULL;
+    if (hideOn == TRUE) {
+      const OverviewRect *r = &om->live[i];
+      int x;
+      int y;
+      int pos = 0;
+
+      for (y = r->top; y <= r->bottom; y++) {
+        for (x = r->left; x <= r->right; x++, pos++) {
+          int square = y * MAP_ARRAY_SIZE + x;
+          vis[pos] = (BYTE)((sightUnion[square >> 3] >> (square & 7)) & 1u);
+        }
+      }
       visPtr = vis;
     }
     if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE, visPtr) ==

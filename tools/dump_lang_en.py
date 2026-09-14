@@ -55,12 +55,13 @@ def parse_lang_h(path):
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    # A trailing comment is allowed after the value. lang.h carries several
-    # (e.g. STR_DLGGAMESETUP_RADIO4 2099 /* was 1987: collided ... */), and
-    # anchoring to end-of-line silently treated those IDs as NAMELESS: the
-    # symbol vanished from lang_names.inc and K_LANG_NAME_TABLE_SIZE dropped,
-    # while the round-trip check stayed green because both generated files
-    # agreed with each other.
+    # A trailing comment on the same line is allowed. Without that tail this
+    # anchored at the number and silently DROPPED every id written as
+    #     #define STR_SOMETHING  1234   /* what it is for */
+    # A dropped id is not an error here: the entry simply never reaches
+    # en.txt or lang_names.inc, and K_LANG_NAME_TABLE_SIZE comes out one
+    # short, so the table looks internally consistent and the string is gone.
+    # That is how STR_DLGGAMESETUP_RADIO4 was lost once already.
     define_re = re.compile(
         r"^\s*#define\s+([A-Z][A-Z0-9_]*)\s+(\d+)\s*(?:/\*.*?\*/|//.*)?\s*$")
     comment_re = re.compile(r"^\s*/\*\s*(.+?)\s*\*/\s*$")
