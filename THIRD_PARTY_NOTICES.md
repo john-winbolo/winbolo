@@ -99,6 +99,9 @@ WinBolo uses the following third-party libraries and code.
 - License: Zlib
 - https://github.com/memononen/nanosvg
 - Author: Mikko Mononen
+- Modified for WinBolo: nanosvg.h wraps the NSVGpaint anonymous union in
+  `#pragma warning(push/disable: 4201/pop)` under `_MSC_VER`, so including
+  the header does not disable C4201 in caller code. Re-apply on upgrade.
 
 ### stb_image
 - Location: src/third_party/stb/
