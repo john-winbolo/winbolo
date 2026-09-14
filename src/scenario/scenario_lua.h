@@ -263,6 +263,56 @@ const char *scenarioLuaBuiltActionWord(int action);
  *********************************************************/
 const char *scenarioLuaDeathCauseWord(int cause);
 
+/* ── The words a policy question reads as ───────────────────────────── */
+
+/*********************************************************
+ *NAME:          scenarioLuaBuildOrderWord
+ *PURPOSE:
+ *  What a build order is called, as the word can_build is
+ *  handed. The same six request codes the event word above
+ *  takes, spelled as the order rather than as the job: a
+ *  pill order is "pill", because the engine has not yet
+ *  decided whether the square makes it a repair. NULL for a
+ *  number that names no order.
+ *********************************************************/
+const char *scenarioLuaBuildOrderWord(int action);
+
+/*********************************************************
+ *NAME:          scenarioLuaCaptureKindWord
+ *PURPOSE:
+ *  What is being taken, as the word can_capture is handed.
+ *  NULL for a kind the surface does not name.
+ *********************************************************/
+const char *scenarioLuaCaptureKindWord(int kind);
+
+/*********************************************************
+ *NAME:          scenarioLuaDieKindWord
+ *PURPOSE:
+ *  What the blow would destroy, as the word can_die is
+ *  handed. NULL for a kind the surface does not name.
+ *********************************************************/
+const char *scenarioLuaDieKindWord(int kind);
+
+/*********************************************************
+ *NAME:          scenarioLuaDamageSourceWord
+ *PURPOSE:
+ *  What inflicted a hit, as the word can_die is handed for a
+ *  builder or a pill — a tank's cause reads through
+ *  scenarioLuaDeathCauseWord instead, and the two vocabularies
+ *  spell a shell and a mine the same way. NULL for a source
+ *  the site could not name, DMG_SRC_UNKNOWN included.
+ *********************************************************/
+const char *scenarioLuaDamageSourceWord(int source);
+
+/*********************************************************
+ *NAME:          scenarioLuaAnnounceKindWord
+ *PURPOSE:
+ *  Which newswire-worthy fact is being put to the announce
+ *  policy, as the word the script is handed. NULL for a kind
+ *  the surface does not name.
+ *********************************************************/
+const char *scenarioLuaAnnounceKindWord(int kind);
+
 /* ── The rule names ─────────────────────────────────────────────────── */
 
 /*********************************************************

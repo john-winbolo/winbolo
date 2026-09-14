@@ -344,18 +344,10 @@ static const char *scnBuilderStateWord(BuilderState s) {
 
 /* The job a builder is on, or NULL for one on none. The words are the
  * builder actions an order is given in, so a job read off a builder is a
- * word an order takes. */
+ * word an order takes — which is why this and the order word below are one
+ * table. builderJobNone names no order and falls out of it. */
 static const char *scnBuilderJobWord(BuilderJob j) {
-    switch (j) {
-        case builderJobTrees:    return "trees";
-        case builderJobRoad:     return "road";
-        case builderJobBuilding: return "building";
-        case builderJobPill:     return "pill";
-        case builderJobMine:     return "mine";
-        case builderJobBoat:     return "boat";
-        case builderJobNone:     return NULL;
-    }
-    return NULL;
+    return scenarioLuaBuildOrderWord((int)j);
 }
 
 const char *scenarioLuaBuiltActionWord(int action) {
@@ -387,6 +379,68 @@ const char *scenarioLuaDeathCauseWord(int cause) {
         case LAST_DEATH_BY_SHELL:   return "shell";
         case LAST_DEATH_BY_SCRIPT:  return "script";
         default:                    return NULL;
+    }
+}
+
+/* ── The words a policy question reads as ─────────────────────────── */
+
+/* The order, not the job. The event word above reads a fact the engine has
+   already settled and spells a pill build "repair", because that is the only
+   thing it can have been; this reads what the player asked for, before the
+   engine substitutes a harvest for a road on forest or a repair for a
+   placement, so a pill order is "pill". */
+const char *scenarioLuaBuildOrderWord(int action) {
+    switch (action) {
+        case builderJobTrees:    return "trees";
+        case builderJobRoad:     return "road";
+        case builderJobBuilding: return "building";
+        case builderJobPill:     return "pill";
+        case builderJobMine:     return "mine";
+        case builderJobBoat:     return "boat";
+        default:                 return NULL;
+    }
+}
+
+const char *scenarioLuaCaptureKindWord(int kind) {
+    switch (kind) {
+        case CAPTURE_KIND_PILL: return "pill";
+        case CAPTURE_KIND_BASE: return "base";
+        default:                return NULL;
+    }
+}
+
+const char *scenarioLuaDieKindWord(int kind) {
+    switch (kind) {
+        case DIE_KIND_TANK:    return "tank";
+        case DIE_KIND_BUILDER: return "builder";
+        case DIE_KIND_PILL:    return "pill";
+        default:               return NULL;
+    }
+}
+
+/* A shell and a mine are spelled here as a tank's cause spells them, so a
+   script reads one vocabulary across the three kinds a death comes in.
+   DMG_SRC_UNKNOWN has no word on purpose: what the script is handed for it is
+   nil, which says what the value says. */
+const char *scenarioLuaDamageSourceWord(int source) {
+    switch (source) {
+        case DMG_SRC_SHELL: return "shell";
+        case DMG_SRC_MINE:  return "mine";
+        default:            return NULL;
+    }
+}
+
+const char *scenarioLuaAnnounceKindWord(int kind) {
+    switch (kind) {
+        case ANNOUNCE_KIND_JOINED:        return "joined";
+        case ANNOUNCE_KIND_LEFT:          return "left";
+        case ANNOUNCE_KIND_BASE_CAPTURED: return "base_captured";
+        case ANNOUNCE_KIND_PILL_CAPTURED: return "pill_captured";
+        case ANNOUNCE_KIND_BUILDER_LOST:  return "builder_lost";
+        case ANNOUNCE_KIND_NAME_CHANGED:  return "name_changed";
+        case ANNOUNCE_KIND_ALLIANCE:      return "alliance";
+        case ANNOUNCE_KIND_VOTE:          return "vote";
+        default:                          return NULL;
     }
 }
 

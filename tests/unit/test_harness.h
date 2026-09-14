@@ -2293,6 +2293,21 @@ int run_scenario_policy_can_capture(void);
 int run_scenario_policy_kill_ops_ignore_can_die(void);
 int run_scenario_policy_combat_null_is_classic(void);
 
+/* The same rows answered from a script rather than from a vtable a case wrote
+ * (test_scenario_policy_lua.c): the host's lookup, the arguments a script is
+ * handed at each site, what a script that answers nil gets, the op a policy
+ * may not issue while it is answering, and the raise that counts toward the
+ * error limit. */
+int run_scenario_policy_lua_allow_base_win(void);
+int run_scenario_policy_lua_can_respawn(void);
+int run_scenario_policy_lua_can_build(void);
+int run_scenario_policy_lua_can_capture(void);
+int run_scenario_policy_lua_announce(void);
+int run_scenario_policy_lua_can_die(void);
+int run_scenario_policy_lua_nil_is_classic(void);
+int run_scenario_policy_lua_op_in_policy(void);
+int run_scenario_policy_lua_error_counts(void);
+
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than
  * on the control stream, with every byte of each event — the ones past

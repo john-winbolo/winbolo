@@ -44,7 +44,7 @@
  *  before the chunk runs. Those rows read and never write:
  *  what the sim sees from here is one SCN_OP_SET_RULE per
  *  rule, one SCN_OP_MSG_ALL for a line the players are owed,
- *  and the answer to the one policy registered below.
+ *  and the answers to the policy questions registered below.
  *
  *  The sidecar is read from disk once, at attach. Every round
  *  after that runs the bytes the host is holding, so a round
@@ -1802,13 +1802,88 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
 
 /* ── The policy ───────────────────────────────────────────────────── */
 
-/* May a slot be put on a team that no other slot is on? The lobby asks this
- * from the GUI thread while the sim ticks on another, which is the reason
- * the lock below exists at all.
+/* The decisions the sim puts to the script. Each is asked at the engine's
+ * own site, between the sim's policy enter and leave, so an op issued from
+ * inside an answer is refused SCN_OP_IN_POLICY by the funnel rather than
+ * mutating state the caller is halfway through reading.
  *
- * Classic is yes, and an absent function, a nil answer and an error all
- * come to it. An error counts toward the limit; the other two are not
- * failures and leave the count alone. */
+ * Classic is what a script that says nothing gets, and there are four ways
+ * to say nothing: no function of that name, a scenario switched off for the
+ * round, a nil return, and a call that raises. Only the raise is a failure,
+ * and only the raise counts toward the limit.
+ *
+ * The lobby asks allow_extra_teams from the GUI thread while the sim ticks on
+ * another, which is the reason the VM lock exists at all. The lock knows the
+ * thread that holds it, so a question the engine asks from inside an op a
+ * script issued — an alliance line published from a set_team, say — enters
+ * the lock it is already inside rather than stopping dead on it.
+ *
+ * A name is looked up per call rather than held as a reference the way a
+ * hook is. There is no one moment every policy could be resolved at: the
+ * lobby asks before a round has booted its VM, and each round start boots a
+ * fresh one, so the lookup goes to whichever state is current. */
+
+/* Push the policy function of this name, ready for its arguments. False when
+ * there is nothing to call, which is the ordinary case: a scenario defines
+ * the few policies it cares about and none of the rest.
+ *
+ * The caller holds the VM lock, and must reach scnPolicyBool for every true
+ * this answers — the function it pushed is on the stack until then. */
+static bool scnPolicyBegin(ScenarioHost *h, const char *name) {
+    if (h->disabled || h->L == NULL) {
+        return false;
+    }
+    scnRawGlobal(h->L, name);
+    if (lua_isfunction(h->L, -1)) {
+        return true;
+    }
+    lua_pop(h->L, 1);
+    return false;
+}
+
+/* Make the call with the nargs the caller has pushed since, and read the one
+ * boolean back. A raise carries the error count toward the limit and answers
+ * classic; a return puts the count back to zero, and answers classic only
+ * where the script answered nil. */
+static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
+                          bool classic) {
+    bool answer = classic;
+
+    if (lua_pcall(h->L, nargs, 1, 0) != 0) {
+        scnErrorRaised(h, name, scnLuaError(h->L));
+        lua_pop(h->L, 1);
+        return classic;
+    }
+    if (!lua_isnil(h->L, -1)) {
+        answer = lua_toboolean(h->L, -1) != 0;
+    }
+    lua_pop(h->L, 1);
+    scnErrorCleared(h);
+    return answer;
+}
+
+/* An item index as Lua counts them, or nil for a number that is no index.
+ * Pills, bases and starts are 1-based in Lua and 0-based on the policy
+ * surface; the build order's "no pill" sentinel is neither and must not be
+ * turned into one. */
+static void scnPushItemIndex(ScenarioHost *h, BYTE idx, int count) {
+    if ((int)idx < count) {
+        lua_pushinteger(h->L, scenarioLuaIndexToScript((int)idx));
+    } else {
+        lua_pushnil(h->L);
+    }
+}
+
+/* A word, or nil where the site named nothing this surface spells. */
+static void scnPushWord(ScenarioHost *h, const char *word) {
+    if (word != NULL) {
+        lua_pushstring(h->L, word);
+    } else {
+        lua_pushnil(h->L);
+    }
+}
+
+/* May a slot be put on a team that no other slot is on? */
 static bool scnAllowExtraTeams(void *ctx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
     bool          allow = true;
@@ -1817,25 +1892,154 @@ static bool scnAllowExtraTeams(void *ctx) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (!h->disabled && h->L != NULL) {
-        scnRawGlobal(h->L, "allow_extra_teams");
-        if (lua_isfunction(h->L, -1)) {
-            if (lua_pcall(h->L, 0, 1, 0) != 0) {
-                scnErrorRaised(h, "allow_extra_teams", scnLuaError(h->L));
-                lua_pop(h->L, 1);
-            } else {
-                if (!lua_isnil(h->L, -1)) {
-                    allow = lua_toboolean(h->L, -1) != 0;
-                }
-                lua_pop(h->L, 1);
-                scnErrorCleared(h);
-            }
-        } else {
-            lua_pop(h->L, 1);
-        }
+    if (scnPolicyBegin(h, "allow_extra_teams")) {
+        allow = scnPolicyBool(h, "allow_extra_teams", 0, true);
     }
     scnLockLeave(&h->lock);
     return allow;
+}
+
+/* May the round end on one side owning every base? False takes the sweep out
+ * of the round's endings and leaves every other one alone. */
+static bool scnAllowBaseWin(void *ctx) {
+    ScenarioHost *h     = (ScenarioHost *)ctx;
+    bool          allow = true;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "allow_base_win")) {
+        allow = scnPolicyBool(h, "allow_base_win", 0, true);
+    }
+    scnLockLeave(&h->lock);
+    return allow;
+}
+
+/* May this dead tank come back? Asked on the last tick of the death wait, so
+ * a no holds the tank where it is and the question is put again next tick. */
+static bool scnCanRespawn(void *ctx, BYTE player) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "can_respawn")) {
+        lua_pushinteger(h->L, (lua_Integer)player);
+        may = scnPolicyBool(h, "can_respawn", 1, true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this build order go ahead? The action is the one the player asked for,
+ * before the engine's substitutions, and a request code this surface has no
+ * word for is not put to the script at all: an order nobody can name is one
+ * a policy cannot answer about, and the classic answer is to allow it. */
+static bool scnCanBuild(void *ctx, BYTE player, BYTE action, BYTE x, BYTE y,
+                        BYTE idx) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaBuildOrderWord((int)action);
+    bool          may  = true;
+
+    if (h == NULL || word == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "can_build")) {
+        lua_pushinteger(h->L, (lua_Integer)player);
+        lua_pushstring(h->L, word);
+        lua_pushinteger(h->L, (lua_Integer)x);
+        lua_pushinteger(h->L, (lua_Integer)y);
+        scnPushItemIndex(h, idx, MAX_PILLS);
+        may = scnPolicyBool(h, "can_build", 5, true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this pill or base change hands? A no leaves the objective where it is
+ * and does not stop the tank. */
+static bool scnCanCapture(void *ctx, BYTE kind, BYTE idx, BYTE player) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaCaptureKindWord((int)kind);
+    bool          may  = true;
+
+    if (h == NULL || word == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "can_capture")) {
+        lua_pushstring(h->L, word);
+        scnPushItemIndex(h, idx,
+                         (kind == CAPTURE_KIND_PILL) ? MAX_PILLS : MAX_BASES);
+        lua_pushinteger(h->L, (lua_Integer)player);
+        may = scnPolicyBool(h, "can_capture", 3, true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this newswire-worthy fact be shown to players? What the subject counts
+ * as depends on the kind: a capture's is the objective, which Lua counts from
+ * one, and every other kind's is a player slot or a team, which it does
+ * not. */
+static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaAnnounceKindWord((int)kind);
+    bool          show = true;
+
+    if (h == NULL || word == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "announce")) {
+        lua_pushstring(h->L, word);
+        if (kind == ANNOUNCE_KIND_BASE_CAPTURED) {
+            scnPushItemIndex(h, subject, MAX_BASES);
+        } else if (kind == ANNOUNCE_KIND_PILL_CAPTURED) {
+            scnPushItemIndex(h, subject, MAX_PILLS);
+        } else {
+            lua_pushinteger(h->L, (lua_Integer)subject);
+        }
+        lua_pushinteger(h->L, (lua_Integer)actor);
+        show = scnPolicyBool(h, "announce", 3, true);
+    }
+    scnLockLeave(&h->lock);
+    return show;
+}
+
+/* May this blow destroy what it landed on? A tank's cause is a death cause
+ * and a builder's or a pill's is a damage source; the two vocabularies spell
+ * a shell and a mine alike, so the script reads one set of words, and a
+ * cause the site could not name reaches it as nil. */
+static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
+                      BYTE cause) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaDieKindWord((int)kind);
+    bool          may  = true;
+
+    if (h == NULL || word == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "can_die")) {
+        lua_pushstring(h->L, word);
+        if (kind == DIE_KIND_PILL) {
+            scnPushItemIndex(h, index, MAX_PILLS);
+        } else {
+            lua_pushinteger(h->L, (lua_Integer)index);
+        }
+        lua_pushinteger(h->L, (lua_Integer)killer);
+        scnPushWord(h, (kind == DIE_KIND_TANK)
+                           ? scenarioLuaDeathCauseWord((int)cause)
+                           : scenarioLuaDamageSourceWord((int)cause));
+        may = scnPolicyBool(h, "can_die", 4, true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
 }
 
 /* A round the scenario takes no part in: no hooks, no policy answers, and
@@ -2133,10 +2337,22 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->active   = true;
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
-    /* One entry filled and the rest left NULL, which is what the sim reads
-       as the classic rule. The lobby asks this one before a round starts,
-       so it is registered here rather than at the first start. */
+    /* Registered here rather than at the first round start: the lobby asks
+       two of these — the extra team and the player cap — before a round
+       exists, and every row answers classic on its own while the host has no
+       round's VM to ask.
+
+       maxPlayers stays NULL. It is the one row of the policy table with no
+       Lua function behind it: the cap is a number in the manifest, and the
+       lobby template carries it to serverSimFindFreeSlot, which applies it.
+       A pointer here would be a second path to the same answer. */
     h->policy.allowExtraTeams = scnAllowExtraTeams;
+    h->policy.allowBaseWin    = scnAllowBaseWin;
+    h->policy.canRespawn      = scnCanRespawn;
+    h->policy.canBuild        = scnCanBuild;
+    h->policy.canCapture      = scnCanCapture;
+    h->policy.announce        = scnAnnounce;
+    h->policy.canDie          = scnCanDie;
     h->policy.ctx             = h;
 
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);

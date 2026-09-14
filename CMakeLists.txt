@@ -3404,6 +3404,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # classic, with the two kill ops shown to reach the death bodies without
     # asking, and once more with nothing registered.
     tests/unit/test_scenario_policy_combat.c
+    # The same rows answered from a script instead: the host's lookup, the
+    # words and indices a script is handed at each site, nil as the classic
+    # answer, the op a policy may not issue while it is answering, and the
+    # raise that counts toward the error limit.
+    tests/unit/test_scenario_policy_lua.c
     # The in-process game-event channel: the second subscriber callback, and
     # the captures and builder death that reach it from GameSim callbacks
     # rather than from an event built in shared code, byte for byte as before.
@@ -5027,6 +5032,15 @@ set(_unit_test_names
     scenario_policy_can_capture
     scenario_policy_kill_ops_ignore_can_die
     scenario_policy_combat_null_is_classic
+    scenario_policy_lua_allow_base_win
+    scenario_policy_lua_can_respawn
+    scenario_policy_lua_can_build
+    scenario_policy_lua_can_capture
+    scenario_policy_lua_announce
+    scenario_policy_lua_can_die
+    scenario_policy_lua_nil_is_classic
+    scenario_policy_lua_op_in_policy
+    scenario_policy_lua_error_counts
     game_event_channel_base_captured
     game_event_channel_pill_captured
     game_event_channel_lgm_lost

@@ -706,6 +706,25 @@ typedef struct {
     BYTE slot;
 } ScnOpOut;
 
+/* canDie kind — what the blow would destroy. index is the tank slot for a
+ * tank and for the builder riding in it, and the pill index for a pill. */
+#define DIE_KIND_TANK    0
+#define DIE_KIND_BUILDER 1
+#define DIE_KIND_PILL    2
+
+/* canCapture kind — what is being taken, with index the pill or base. */
+#define CAPTURE_KIND_PILL 0
+#define CAPTURE_KIND_BASE 1
+
+/* What inflicted a hit. Mirrors ATTR_SRC_* on-disk. The stats funnel records
+ * one of these with every blow, and canDie is handed one as the cause of a
+ * builder's or a pill's death — a tank's cause is a LAST_DEATH_BY_* instead.
+ * Here rather than beside DMG_TARGET_* in game_sim.h because the policy
+ * surface hands them out and the host cannot see internal/. */
+#define DMG_SRC_UNKNOWN 0
+#define DMG_SRC_SHELL   1
+#define DMG_SRC_MINE    2
+
 /* announce kind — which newswire-worthy fact is being put to the policy.
  * The values are the policy's own vocabulary and never reach the wire; what
  * travels is the one-byte answer.
