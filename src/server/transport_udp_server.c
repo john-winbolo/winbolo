@@ -846,6 +846,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
     int i;
 
     if (!udpServer.running) return;
+    udpServerExpireUploads(SDL_GetTicks());
 
     /* Outside a running game this is the once-per-tick path, so voice is
      * carried from here — ahead of the standalone PACKET_CHANNEL frames

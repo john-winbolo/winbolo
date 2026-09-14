@@ -1751,6 +1751,11 @@
 #define STR_PLAYER_TIP_PING_SHOWN               2162
 #define STR_PLAYER_TIP_PING_MUTED               2163
 
+/* Players panel — the label in front of the All/None/Allies/Nearby row.
+   Carries its own colon: a language that does not use one, or that puts a
+   space before it, has nowhere to say so if the colon is added in code. */
+#define STR_DLGPLAYERS_SELECT                   2164
+
 /* Players panel — per-player playback volume slider */
 #define STR_PLAYER_TIP_VOICE_VOLUME             2090
 

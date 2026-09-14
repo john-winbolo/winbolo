@@ -419,6 +419,10 @@ typedef struct {
                                        * a witness for the no-progress timer,
                                        * never the source of the percentage   */
 
+#if WB_ENABLE_NETIMPAIR
+    uint8_t test_drop_upload_packet;
+#endif
+
 #ifdef __EMSCRIPTEN__
     /* WS↔UDP relay metadata frame (type 0x01). The relay sends exactly one
      * as the first datagram, before any game traffic. Consumed once at the
@@ -523,7 +527,7 @@ static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
 
 /* Forward decl: defined alongside the upload state machine below;
  * called from the connected-state branch of udpClientTick. */
-static void udpClientUploadPump(TransportUdpClientCtx *c);
+static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now);
 
 /* connId rides the wire as two 32-bit halves through the existing packU32
  * helpers — low half first, then high. Server send/read must agree with these. */
@@ -1872,6 +1876,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 #endif
     uint8_t pktType = getPacketType(buf, len);
 
+#if WB_ENABLE_NETIMPAIR
+    if (pktType != 0 && pktType == c->test_drop_upload_packet) return;
+#endif
+
     c->packetsRecvThisSec++;
     c->bytesRecvThisSec += len;
 
@@ -3079,6 +3087,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_LOBBY_MAP_UPLOAD_ACK: {
         /* [header 8] [status 1]. 0 = ok, non-zero = reject. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
+        if (c->clientSim->lobbyMapUploadStatus != 1) break;
         uint8_t status = buf[PACKET_HEADER_SIZE];
         if (status == 0) {
             c->clientSim->lobbyMapUploadStatus = 2;
@@ -3094,6 +3103,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * matching local file. Caller should fall back to a regular
          * UPLOAD_BEGIN. UI pump notices the flag next frame. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
+        if (c->clientSim->lobbyMapUploadStatus != 1) break;
         /* nameLen + name bytes are informational here (echoes the
          * client's announce), we just flip the fallback flag. */
         c->clientSim->lobbyMapUseLocalNeedsFallback = true;
@@ -3103,6 +3113,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_LOBBY_MAP_UPLOAD_DONE: {
         /* [header 8] [status 1] [pathLen 1] [path N] */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
+        if (c->clientSim->lobbyMapUploadStatus != 1 &&
+            c->clientSim->lobbyMapUploadStatus != 2) break;
         uint8_t status = buf[PACKET_HEADER_SIZE];
         uint8_t plen   = buf[PACKET_HEADER_SIZE + 1];
         if (len < PACKET_HEADER_SIZE + 2 + plen) break;
@@ -3576,7 +3588,7 @@ static bool udpClientTick(void *ctx) {
         }
 
         /* Drive in-flight lobby map upload (no-op when none active). */
-        udpClientUploadPump(c);
+        udpClientUploadPump(c, SDL_GetTicks());
 
         /* Retransmit head of the outbound command queue if the head
          * entry was sent more than 80ms ago and is still unacked. */
@@ -4687,7 +4699,7 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
 static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
                                       uint32_t totalLen,
                                       const char *name) {
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255];
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 4];
     int nameLen, len;
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
@@ -4703,6 +4715,10 @@ static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
     buf[PACKET_HEADER_SIZE + 4] = (uint8_t)nameLen;
     if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 5, name, nameLen);
     len = PACKET_HEADER_SIZE + 5 + nameLen;
+    /* Drop any abandoned upload tail without reusing its sequence numbers.
+     * The receiver adopts this boundary before acknowledging BEGIN. */
+    packU32(buf + len, channelResetSend(&c->channelMux, CHANNEL_BULK));
+    len += 4;
     udpClientSendTo(c, buf, len);
 
     if (c->clientSim) {
@@ -4846,9 +4862,9 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
 
 /* Per-tick pump. Drives the upload through the USE_LOCAL → BEGIN →
  * bulk-stream → DONE/REJECT lifecycle. */
-static void udpClientUploadPump(TransportUdpClientCtx *c) {
+static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now) {
     uint8_t st;
-    uint64_t now, sinceProgress, sinceStart;
+    uint64_t sinceProgress, sinceStart;
     bool advanced, timedOut;
 
     if (!c->uploadActive) return;
@@ -4872,7 +4888,6 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
      * channel as one final forward-progress event: thereafter we only wait
      * for MAP_UPLOAD_DONE, and the stall timer must not count against a
      * server merely slow to load + reply. */
-    now = SDL_GetTicks();
     {
         uint32_t acked = c->channelMux.ch[CHANNEL_BULK].ackedSeq;
         advanced = (c->uploadPrevStatus != st) ||
@@ -4904,6 +4919,11 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
         timedOut = true;
     }
     if (timedOut) {
+        c->clientSim->lobbyMapUploadStatus = 4;
+        c->clientSim->lobbyMapUploadRejectCode = LOBBY_REJECT_INVALID;
+        c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
+        c->clientSim->lobbyMapUseLocalNeedsFallback = false;
+        channelResetSend(&c->channelMux, CHANNEL_BULK);
         udpClientUploadCleanup(c);
         return;
     }
@@ -4952,6 +4972,23 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
         }
     }
 }
+
+#if WB_ENABLE_NETIMPAIR
+/* Drive the production watchdog without sleeping, and drop only the chosen
+ * upload reply so tests can keep connection liveness traffic flowing. */
+void transportUdpClientTestUploadTimeout(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint64_t now_ms = SDL_GetTicks();
+    udpClientUploadPump(c, now_ms);
+    udpClientUploadPump(c, now_ms);
+    udpClientUploadPump(c, now_ms + UPLOAD_STALL_TIMEOUT_MS + 1);
+}
+
+void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_drop_upload_packet = packet_type;
+}
+#endif
 
 bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      const uint8_t *buf,

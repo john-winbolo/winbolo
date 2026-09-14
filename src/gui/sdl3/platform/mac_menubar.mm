@@ -76,6 +76,7 @@ extern "C" void sdl3ImguiShowChangeName(void);
 
 extern "C" void sdl3ImguiShowSendMsg(bool open);
 extern "C" void sdl3ImguiShowPlayersPanel(bool open);
+extern "C" void sdl3ImguiTogglePlayersPanel(void);
 extern "C" void sdl3ImguiSendMsgShortcut(void);
 extern "C" void clientSimCheckAllNonePlayers(struct ClientSim *cs, bool check);
 extern "C" void clientSimCheckAlliedPlayers(struct ClientSim *cs);
@@ -124,6 +125,7 @@ static NSMenuItem *s_sysInfoItem             = nil;
 static NSMenuItem *s_netInfoItem             = nil;
 static NSMenuItem *s_gameInfoItem            = nil;
 static NSMenuItem *s_sendMsgItem             = nil;
+static NSMenuItem *s_playersPanelItem        = nil;
 static NSMenuItem *s_mapOverviewItem         = nil;
 static NSMenuItem *s_overviewInWindowItem    = nil;
 static NSMenuItem *s_fullScreenItem          = nil;
@@ -459,7 +461,21 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 }
 - (void)onShowPlayersPanel:(id)sender {
     (void)sender;
-    sdl3ImguiShowPlayersPanel(true);
+    /* Two behaviours behind one action, the same two the in-window bar has.
+       A click on the menu item toggles: the tick this item carries has to be
+       able to come off again, and clicking a ticked item is an explicit "put
+       it away". The ⇧⌘P key equivalent AppKit hangs off this same item shows
+       and raises instead, for the reason the in-window shortcut does — that
+       key press lands on the main window, so a toggle would close the pop-out
+       the player was asking to bring forward. AppKit sends both through this
+       one selector; the event that triggered it tells them apart, a key-down
+       for the equivalent and a mouse event for the click. */
+    NSEvent *trigger = [NSApp currentEvent];
+    if (trigger && [trigger type] == NSEventTypeKeyDown) {
+        sdl3ImguiShowPlayersPanel(true);
+    } else {
+        sdl3ImguiTogglePlayersPanel();
+    }
 }
 - (void)onSelectAllPlayers:(id)sender {
     (void)sender;
@@ -1251,8 +1267,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [playersMenu addItem:sendMsgItem];
     s_sendMsgItem = sendMsgItem;
 
-    /* Players Panel — ⇧⌘P. Show-and-raise with no check state, so no
-     * stored item pointer and nothing in the menu-state sync. */
+    /* Players Panel — ⇧⌘P. A checked toggle like its in-window twin, so the
+     * item pointer is kept for the per-frame refresh to tick. */
     NSMenuItem *playersPanelItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_PLAYERS_PANEL)
         action:@selector(onShowPlayersPanel:)
@@ -1260,6 +1276,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [playersPanelItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
     [playersPanelItem setTarget:g_bridge];
     [playersMenu addItem:playersPanelItem];
+    s_playersPanelItem = playersPanelItem;
 
     [playersMenu addItem:[NSMenuItem separatorItem]];
 
@@ -1503,6 +1520,7 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_fullScreenItem)            [s_fullScreenItem            setState:(s->fullScreenOn          ? NSControlStateValueOn : NSControlStateValueOff)];
 
     if (s_sendMsgItem)               [s_sendMsgItem               setState:(s->sendMsgOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_playersPanelItem)          [s_playersPanelItem          setState:(s->playersPanelShown     ? NSControlStateValueOn : NSControlStateValueOff)];
 
     if (s_messageLabelsMenu) {
         for (NSMenuItem *item in [s_messageLabelsMenu itemArray]) {
@@ -1523,10 +1541,15 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
         [s_noOwnLabelItem setState:(s->noOwnLabel ? NSControlStateValueOn : NSControlStateValueOff)];
     }
 
-    /* Alliance gating — same predicate on both Request items (WinBolo
-     * and Players menus) so they enable/disable in lockstep. */
-    BOOL canRequest = (s->canRequest && !s->inCooldown && !s->hasAllies) ? YES : NO;
-    BOOL canLeave   = s->hasAllies ? YES : NO;
+    /* Alliance items — both answers arrive decided from
+     * populateMacMenuState, which asks the same allianceActionState the
+     * in-window bars ask. Nothing is re-derived here: combining the flags
+     * locally is exactly how this bar came to grey Request whenever you had
+     * an ally, and to ignore ranked games, while the in-window bar did
+     * neither. Same predicate on both Request items (WinBolo and Players
+     * menus) so those two enable and disable together as well. */
+    BOOL canRequest = s->canRequest ? YES : NO;
+    BOOL canLeave   = s->canLeave   ? YES : NO;
     if (s_winboloRequestAllianceItem) [s_winboloRequestAllianceItem setEnabled:canRequest];
     if (s_winboloLeaveAllianceItem)   [s_winboloLeaveAllianceItem   setEnabled:canLeave];
     if (s_playersRequestAllianceItem) [s_playersRequestAllianceItem setEnabled:canRequest];

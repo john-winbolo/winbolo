@@ -1332,6 +1332,10 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
         set(SENTRY_BACKEND "crashpad" CACHE STRING "" FORCE)
     endif()
     FetchContent_MakeAvailable(sentry)
+    if(MSVC AND TARGET sentry)
+        # The WinHTTP transport assigns in conditions; LTCG diagnoses C4706.
+        target_compile_options(sentry PRIVATE /wd4706)
+    endif()
 
     set(HAVE_SENTRY TRUE)
 endif()
@@ -1364,10 +1368,13 @@ if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     # PIC so the static lib can also link into shared targets (winbolo_gym).
     if(TARGET plum)
         set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        # MSVC: libplum's pcp.h has a zero-sized array (C4200) which our
-        # /WX-as-error policy rejects. Disable just that warning for plum.
+        # libplum uses a zero-sized array (C4200) and assignments in conditions
+        # (C4706, also diagnosed during LTCG). Allow these in the dependency.
+        # Older Windows SDK headers also trigger C5105. Keep this suppression
+        # private to plum for all MSVC generators, including Ninja where the
+        # Visual Studio generator's selected-SDK variable is unavailable.
         if(MSVC)
-            target_compile_options(plum PRIVATE /wd4200)
+            target_compile_options(plum PRIVATE /wd4200 /wd4706 /wd5105)
         endif()
     endif()
     set(HAVE_LIBPLUM TRUE)
@@ -4239,6 +4246,10 @@ set(_unit_test_names
     map_convert_file_to_compressed
     map_read_memory_rejects_garbage
     upload_busy_predicate
+    upload_lost_ack_retry
+    upload_timeout_releases_other_player
+    upload_lost_done_retry
+    upload_partial_timeout_retry
     upload_filename_safe
     lobby_bot_name_rejects_reserved_prefix
     lobby_bot_name_rejects_disallowed_char

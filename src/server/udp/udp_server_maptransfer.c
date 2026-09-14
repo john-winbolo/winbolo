@@ -82,9 +82,27 @@ void udpServerClearClientUploadState(int idx) {
     if (idx < 0 || idx >= MAX_TANKS) return;
     udpServer.clientUploadActive[idx]   = false;
     udpServer.clientUploadTotal[idx]    = 0;
+    udpServer.upload_last_progress_ms[idx] = 0;
     udpServer.clientUploadName[idx][0]  = '\0';
     udpServer.clientReqCooldownTicks[idx] = 0;
     bulkReceiverInit(&udpServer.bulkRecvUp[idx]);
+}
+
+/* Upload activity is independent of connection liveness: pings must not keep
+ * an abandoned BEGIN reserved. Keep the expired stream's framing while
+ * discarding its body, so a late fragment cannot install the abandoned map. */
+void udpServerExpireUploads(uint64_t now_ms) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!udpServer.clientUploadActive[i] ||
+            now_ms - udpServer.upload_last_progress_ms[i] <= SERVER_UPLOAD_IDLE_TIMEOUT_MS) continue;
+        udpServer.clientUploadActive[i] = false;
+        udpServer.clientUploadTotal[i] = 0;
+        udpServer.clientUploadName[i][0] = '\0';
+        udpServer.upload_last_progress_ms[i] = 0;
+        udpServer.bulkRecvUp[i].dst = NULL;
+        WB_LOG_WARN(WB_LOG_CAT_NET, "upload timed out: slot=%d", i);
+    }
 }
 
 /* Authority check used by every lobby command handler.
@@ -398,6 +416,9 @@ void serverDrainBulk(ServerSim *sim, int clientIdx) {
     sink.ctx = &ctx;
     while (channelReceive(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
                           chanBuf, &chanLen)) {
+        if (udpServer.clientUploadActive[clientIdx] && chanLen > 0) {
+            udpServer.upload_last_progress_ms[clientIdx] = SDL_GetTicks();
+        }
         bulkReceiverFeed(&udpServer.bulkRecvUp[clientIdx], chanBuf, chanLen,
                          &sink);
     }
