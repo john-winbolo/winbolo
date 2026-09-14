@@ -229,8 +229,11 @@ typedef enum {
 /* Per-fragment payload cap for CTRL_LOBBY_BRAIN_DOCS_CHUNK, and the size
  * of one brain's whole text blob on the wire:
  *   [announceLen 2 BE][announce][docsLen 2 BE][docs]
- * At 900 bytes a fragment the worst case is ceil(8708/900) = 10 fragments
- * per brain, so the seq/count byte is never near its limit. */
+ * The blob is at most 2 + 512 + 2 + 16384 = 16900 bytes, so at 900 bytes a
+ * fragment the worst case is ceil(16900/900) = 19 fragments per brain and
+ * the seq/count byte is never near its limit. The fragment cap itself does
+ * NOT move with BRAIN_DOCS_MAX: it is what makes one fragment plus its
+ * header fit a single control datagram. */
 #define LOBBY_BRAIN_DOCS_FRAG_MAX 900
 #define LOBBY_BRAIN_DOCS_WIRE_MAX (2 + BRAIN_ANNOUNCE_MAX + 2 + BRAIN_DOCS_MAX)
 

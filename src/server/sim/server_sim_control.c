@@ -450,14 +450,15 @@ void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
  *
  * announce.txt and commands.txt are read off the server's disk here, at the
  * moment they are sent, rather than being kept in the ServerSim: the table is
- * ~139 KB, the send happens twice in a lobby's life (a join, and the return
+ * ~264 KB, the send happens twice in a lobby's life (a join, and the return
  * from a round), and a file the operator edits between rounds is then picked
  * up without a restart.
  *
  * Unlike about.txt these DO travel: the server chooses the brain, so a client
  * that does not have it installed would otherwise have nothing to show.
  * Only brains that actually ship a file are sent, so the usual cost is one
- * brain's ten fragments, not sixteen brains' worth. */
+ * brain's handful of fragments (19 at the very most), not sixteen brains'
+ * worth. */
 void serverSimEmitBrainDocs(const ServerSim *sim,
                             void (*deliver)(void *, const struct ControlEvent *),
                             void *ctx) {

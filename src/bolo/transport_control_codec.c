@@ -1039,7 +1039,9 @@ static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
 /* PACKET_LOBBY_BRAIN_DOCS_CHUNK wire format:
  *   [header 8] [brainIdx 1] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
  * One slice of ONE brain's announce.txt + commands.txt blob. Worst case on
- * the wire is 8 + 5 + 900 = 913 bytes, well inside MAX_CONTROL_PACKET. */
+ * the wire is 8 + 5 + 900 = 913 bytes, well inside MAX_CONTROL_PACKET: the
+ * fragment cap bounds the datagram, and the blob's own size only decides how
+ * MANY fragments there are (19 at the current caps). */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyBrainDocsChunkBody(const ControlEvent *evt,
@@ -1080,6 +1082,17 @@ static EncodeResult encodeLobbyBrainDocsChunk(const ControlEvent *evt,
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 5 + LOBBY_BRAIN_DOCS_FRAG_MAX <= MAX_CONTROL_PACKET,
     brain_docs_chunk_fits_MAX_CONTROL_PACKET);
+
+/* The fragment cap above bounds ONE datagram; this one bounds how many of
+ * them a brain's whole blob needs. seq and count are single bytes, so the
+ * blob may not want more than 255 fragments:
+ *   (2 + 512 + 2 + 16384 + 899) / 900 = 19 today.
+ * Raising BRAIN_DOCS_MAX past about 229 KB breaks the build here rather than
+ * wrapping the seq byte and reassembling two brains' texts into one. */
+BOLO_STATIC_ASSERT(
+    (LOBBY_BRAIN_DOCS_WIRE_MAX + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+        LOBBY_BRAIN_DOCS_FRAG_MAX <= 255,
+    brain_docs_blob_fits_255_fragments);
 
 static EncodeResult encodeRoundStats(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,

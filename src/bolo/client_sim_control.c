@@ -73,7 +73,7 @@ static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
  * that brain as they were, so a malformed stream cannot half-replace a text.
  *
  * The whole table is allocated on first use: almost no ClientSim ever meets a
- * brain that ships these files, and the table is ~139 KB. */
+ * brain that ships these files, and the table is ~264 KB. */
 static void clientSimInstallBrainTexts(ClientSim *cs, uint8_t brainIdx,
                                        const uint8_t *blob, uint32_t len) {
     uint32_t pos = 0;

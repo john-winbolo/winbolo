@@ -516,7 +516,7 @@ struct ClientSim {
      * way about.txt is, because the SERVER chooses the brain and a client
      * need not have that brain installed at all.
      *
-     * Heap-held rather than inline: the whole table is ~139 KB and almost
+     * Heap-held rather than inline: the whole table is ~264 KB and almost
      * every ClientSim ever made (headless runs, unit tests, the recorder)
      * never sees a brain that ships the files. The pointer is allocated on
      * the first text that arrives, survives clientSimCreate's memset the way

@@ -744,7 +744,7 @@ int run_lobby_brain_docs_chunk_codec_roundtrip(void) {
     in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
     in.u.lobbyBrainDocsChunk.brainIdx = BRAIN_LIST_MAX - 1;
     in.u.lobbyBrainDocsChunk.seq      = 3;
-    in.u.lobbyBrainDocsChunk.count    = 10;
+    in.u.lobbyBrainDocsChunk.count    = 19;
     in.u.lobbyBrainDocsChunk.fragLen  = LOBBY_BRAIN_DOCS_FRAG_MAX;
     for (i = 0; i < LOBBY_BRAIN_DOCS_FRAG_MAX; i++) {
         in.u.lobbyBrainDocsChunk.frag[i] = (uint8_t)(i & 0xFF);
@@ -754,7 +754,7 @@ int run_lobby_brain_docs_chunk_codec_roundtrip(void) {
     UT_ASSERT(out.type == CTRL_LOBBY_BRAIN_DOCS_CHUNK);
     UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == BRAIN_LIST_MAX - 1);
     UT_ASSERT(out.u.lobbyBrainDocsChunk.seq   == 3);
-    UT_ASSERT(out.u.lobbyBrainDocsChunk.count == 10);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count == 19);
     UT_ASSERT_MSG(out.u.lobbyBrainDocsChunk.fragLen == LOBBY_BRAIN_DOCS_FRAG_MAX,
                   "fragLen %u", (unsigned)out.u.lobbyBrainDocsChunk.fragLen);
     UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag,
@@ -830,6 +830,67 @@ int run_lobby_brain_docs_chunk_codec_roundtrip(void) {
         /* Out of range is empty too, not a read past the table. */
         UT_ASSERT(clientSimGetLobbyBrainAnnounce(cs, -1)[0] == '\0');
         UT_ASSERT(clientSimGetLobbyBrainDocs(cs, BRAIN_LIST_MAX)[0] == '\0');
+        clientSimDestroy(cs);
+    }
+
+    /* THE WORST CASE, end to end. Both texts at their cap make the largest
+     * blob the wire ever carries: 2 + 512 + 2 + 16384 = 16900 bytes, which
+     * is 19 fragments of 900. The count has to land inside the single seq
+     * byte, every fragment has to survive the codec, and the reassembled
+     * docs string has to come back whole — a docs cap raised past what the
+     * client buffer or the seq byte can hold would fail right here. */
+    {
+        ClientSim *cs = fresh_client_sim();
+        /* static: 16900 bytes is more than belongs on a test's stack. */
+        static uint8_t blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
+        size_t aLen = BRAIN_ANNOUNCE_MAX, dLen = BRAIN_DOCS_MAX;
+        size_t blen = 0, off = 0;
+        int nChunks, ci;
+        UT_ASSERT(cs != NULL);
+
+        blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(aLen & 0xFF);
+        for (i = 0; i < (int)aLen; i++) blob[blen + i] = (uint8_t)('A' + (i % 26));
+        blen += aLen;
+        blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(dLen & 0xFF);
+        for (i = 0; i < (int)dLen; i++) blob[blen + i] = (uint8_t)('a' + (i % 26));
+        blen += dLen;
+        UT_ASSERT_MSG(blen == (size_t)LOBBY_BRAIN_DOCS_WIRE_MAX,
+                      "worst-case blob is %u bytes, want %u",
+                      (unsigned)blen, (unsigned)LOBBY_BRAIN_DOCS_WIRE_MAX);
+
+        nChunks = (int)((blen + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+                        LOBBY_BRAIN_DOCS_FRAG_MAX);
+        UT_ASSERT_MSG(nChunks == 19, "expected 19 fragments, got %d", nChunks);
+        UT_ASSERT_MSG(nChunks <= 255, "fragment count %d does not fit a byte",
+                      nChunks);
+
+        for (ci = 0; ci < nChunks; ci++) {
+            size_t fl = blen - off;
+            if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) fl = LOBBY_BRAIN_DOCS_FRAG_MAX;
+            memset(&in, 0, sizeof(in));
+            in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+            in.u.lobbyBrainDocsChunk.brainIdx = 1;
+            in.u.lobbyBrainDocsChunk.seq      = (uint8_t)ci;
+            in.u.lobbyBrainDocsChunk.count    = (uint8_t)nChunks;
+            in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)fl;
+            memcpy(in.u.lobbyBrainDocsChunk.frag, blob + off, fl);
+            UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+            clientSimApplyControl(cs, &out);
+            off += fl;
+        }
+
+        UT_ASSERT_MSG(strlen(clientSimGetLobbyBrainAnnounce(cs, 1)) == aLen,
+                      "announce length %u, want %u",
+                      (unsigned)strlen(clientSimGetLobbyBrainAnnounce(cs, 1)),
+                      (unsigned)aLen);
+        UT_ASSERT_MSG(strlen(clientSimGetLobbyBrainDocs(cs, 1)) == dLen,
+                      "docs length %u, want %u",
+                      (unsigned)strlen(clientSimGetLobbyBrainDocs(cs, 1)),
+                      (unsigned)dLen);
+        UT_ASSERT(memcmp(clientSimGetLobbyBrainDocs(cs, 1),
+                         blob + 2 + aLen + 2, dLen) == 0);
         clientSimDestroy(cs);
     }
     return 0;

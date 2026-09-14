@@ -87,7 +87,7 @@ bool brainListLoadColor(const char *name, uint32_t *rgb);
  * The caps below are what the wire carries; a longer file is truncated at
  * the cap and the read says so, so the truncation is never silent. */
 #define BRAIN_ANNOUNCE_MAX  512    /* announce.txt bytes, NUL not counted */
-#define BRAIN_DOCS_MAX     8192    /* commands.txt bytes, NUL not counted */
+#define BRAIN_DOCS_MAX    16384    /* commands.txt bytes, NUL not counted */
 
 /* Read a brain's announce.txt and commands.txt out of its DIRECTORY
  * ("brains/GoalHunter_1.7", or the server's own brainPaths[i]). Either out
