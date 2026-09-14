@@ -46,12 +46,23 @@ typedef enum {
 
 /* Which block of squares the map overview keeps live around the player's
  * own tank. Expanded is everything the classic 15x15 view could scroll
- * to; Classic narrows it to the window that view is actually showing.
+ * to; Classic narrows it to the window that view is actually showing;
+ * None does not offer the map overview or the full-screen map at all.
  * Zero is today's behaviour, so a zero-initialized server and a client
- * decoding a payload without the field both land on Expanded. */
+ * decoding a payload without the field both land on Expanded.
+ *
+ * None is last so Expanded and Classic keep the wire values they have
+ * always had. A client built before None existed clamps an unknown value
+ * against its own COUNT and reads 2 as Expanded — see
+ * client_sim_control.c — so it offers the overview on a server that has
+ * turned it off. That is the old behaviour of every such client (classic
+ * mode was only ever a convenience rule, never a guarantee about a
+ * modified client), so it is not worth a protocol bump; nothing else in
+ * this file's history has taken one for an appended enum value. */
 typedef enum {
     overviewWindowExpanded = 0,
     overviewWindowClassic  = 1,
+    overviewWindowNone     = 2,
     OVERVIEW_WINDOW_COUNT
 } OverviewWindow;
 

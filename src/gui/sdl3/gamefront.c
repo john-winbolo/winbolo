@@ -2202,7 +2202,9 @@ static int viewPolicyFromPrefWord(const char *word, int fallback) {
 /* The overview window in the same word form, one of the two
  * OverviewWindow names rather than its byte. */
 static const char *overviewWindowPrefWord(int window) {
-  return (window == overviewWindowClassic) ? "Classic" : "Expanded";
+  return (window == overviewWindowNone)    ? "None"
+       : (window == overviewWindowClassic) ? "Classic"
+                                           : "Expanded";
 }
 
 /* Reads back what overviewWindowPrefWord wrote. Any other word returns
@@ -2210,6 +2212,7 @@ static const char *overviewWindowPrefWord(int window) {
 static int overviewWindowFromPrefWord(const char *word, int fallback) {
   if (strcmp(word, "Expanded") == 0) return overviewWindowExpanded;
   if (strcmp(word, "Classic")  == 0) return overviewWindowClassic;
+  if (strcmp(word, "None")     == 0) return overviewWindowNone;
   return fallback;
 }
 
@@ -2275,6 +2278,122 @@ void gameFrontSetLineOfSight(int mode) {
   bool on = (mode != lineOfSightOff);
   gameFrontLineOfSight = mode;
   prefsSetString("GAME OPTIONS", "Line Of Sight", TRUEFALSE_TO_STR(on));
+}
+
+/* ── Visibility preset and the remembered custom set ──────────────
+ * The keys above record the values a hosted game starts with, one per
+ * setting. These two record what the host chose rather than what it came
+ * out as: which named preset is in force, and — when none of them is —
+ * the whole hand-made set, kept under its own keys so picking a preset
+ * and picking Custom back again lands where the host left it.
+ *
+ * The custom set is only written while the host is actually on Custom, so
+ * it survives a trip through the presets and through a restart. */
+int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
+VisibilitySettings gameFrontVisibilityCustom;
+bool               gameFrontVisibilityCustomSaved = FALSE;
+
+/* The seven [GAME OPTIONS] visibility globals as one set, and back. Every
+ * caller below works in the set rather than in the globals, so a setting
+ * added to the struct is added in one place here. */
+void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
+  if (out == NULL) return;
+  memset(out, 0, sizeof(*out));
+  out->policy[viewCategoryPill]    = (uint8_t)gameFrontViewPillPolicy;
+  out->policy[viewCategoryBase]    = (uint8_t)gameFrontViewBasePolicy;
+  out->policy[viewCategoryAlly]    = (uint8_t)gameFrontViewAllyPolicy;
+  out->decaySecs[viewCategoryPill] = (uint16_t)gameFrontViewPillDecaySecs;
+  out->decaySecs[viewCategoryBase] = (uint16_t)gameFrontViewBaseDecaySecs;
+  out->decaySecs[viewCategoryAlly] = (uint16_t)gameFrontViewAllyDecaySecs;
+  out->classicMode                 = gameFrontClassicMode;
+  out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
+  out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
+  out->alliesInTrees               = gameFrontAlliesInTrees;
+}
+
+/* Writes a whole set through the per-setting setters above, so the keys
+ * that record the current values are kept up to date by the same code
+ * that has always written them. */
+static void gameFrontPutVisibilitySettings(const VisibilitySettings *v) {
+  if (v == NULL) return;
+  gameFrontSetViewPillPolicy((int)v->policy[viewCategoryPill]);
+  gameFrontSetViewBasePolicy((int)v->policy[viewCategoryBase]);
+  gameFrontSetViewAllyPolicy((int)v->policy[viewCategoryAlly]);
+  gameFrontSetViewPillDecaySecs((int)v->decaySecs[viewCategoryPill]);
+  gameFrontSetViewBaseDecaySecs((int)v->decaySecs[viewCategoryBase]);
+  gameFrontSetViewAllyDecaySecs((int)v->decaySecs[viewCategoryAlly]);
+  gameFrontSetAlliesInTrees(v->alliesInTrees);
+  gameFrontSetOverviewWindow((int)v->overviewWindow);
+  gameFrontSetLineOfSight((int)v->lineOfSight);
+  gameFrontSetClassicMode(v->classicMode);
+}
+
+void gameFrontSetVisibilityPreset(int preset) {
+  gameFrontVisibilityPreset = preset;
+  prefsSetString("GAME OPTIONS", "Visibility Preset",
+                 visibilityPresetPrefWord((VisibilityPreset)preset));
+}
+
+void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
+  char buf[16];
+
+  if (v == NULL) return;
+  gameFrontVisibilityCustom      = *v;
+  gameFrontVisibilityCustomSaved = TRUE;
+  prefsSetString("GAME OPTIONS", "Custom Pill View",
+                 viewPolicyPrefWord((int)v->policy[viewCategoryPill]));
+  prefsSetString("GAME OPTIONS", "Custom Base View",
+                 viewPolicyPrefWord((int)v->policy[viewCategoryBase]));
+  prefsSetString("GAME OPTIONS", "Custom Ally View",
+                 viewPolicyPrefWord((int)v->policy[viewCategoryAlly]));
+  intToStr(viewDecayClamp((int)v->decaySecs[viewCategoryPill]), buf,
+           sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Custom Pill View Decay", buf);
+  intToStr(viewDecayClamp((int)v->decaySecs[viewCategoryBase]), buf,
+           sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Custom Base View Decay", buf);
+  intToStr(viewDecayClamp((int)v->decaySecs[viewCategoryAlly]), buf,
+           sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Custom Ally View Decay", buf);
+  prefsSetString("GAME OPTIONS", "Custom Classic Mode",
+                 TRUEFALSE_TO_STR(v->classicMode));
+  prefsSetString("GAME OPTIONS", "Custom Allies In Trees",
+                 TRUEFALSE_TO_STR(v->alliesInTrees));
+  prefsSetString("GAME OPTIONS", "Custom Overview Window",
+                 overviewWindowPrefWord((int)v->overviewWindow));
+  prefsSetString("GAME OPTIONS", "Custom Line Of Sight",
+                 TRUEFALSE_TO_STR(v->lineOfSight != (uint8_t)lineOfSightOff));
+}
+
+/* Remembers a visibility set as the host's choice. Three things move
+ * together, which is why they are one call rather than three: the seven
+ * per-setting keys, so a game hosted again in this same session starts
+ * there without a restart; which named set it is, so a preset that is
+ * later given a different value follows the choice rather than the
+ * values; and, when it is none of them, the set itself.
+ *
+ * Called from every place a host changes visibility — the hosting
+ * settings dialog, which edits these globals, and the lobby, which reads
+ * the live settings off its own client. Each write only touches the INI
+ * when the value moves, so calling it per frame costs a compare. */
+void gameFrontRememberVisibility(const VisibilitySettings *v) {
+  VisibilitySettings cur;
+  VisibilityPreset   p;
+
+  if (v == NULL) return;
+  gameFrontGetVisibilitySettings(&cur);
+  if (!visibilitySettingsEqual(&cur, v)) {
+    gameFrontPutVisibilitySettings(v);
+  }
+  p = visibilityPresetMatch(v);
+  if ((int)p != gameFrontVisibilityPreset) {
+    gameFrontSetVisibilityPreset((int)p);
+  }
+  if (p == visibilityPresetCustom &&
+      (!gameFrontVisibilityCustomSaved ||
+       !visibilitySettingsEqual(v, &gameFrontVisibilityCustom))) {
+    gameFrontSetVisibilityCustom(v);
+  }
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -3679,6 +3798,102 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontLineOfSight = YESNO_TO_TRUEFALSE(buff[0])
                                ? lineOfSightBuildingsAndTrees
                                : lineOfSightOff;
+
+    /* The remembered custom set, read whether or not it is the one in
+     * force: the lobby needs it to put "Custom: ..." in the dropdown and
+     * to go back to it when the host picks that row. An absent "Custom
+     * Pill View" is how an INI that predates the presets — or one whose
+     * owner has never left the presets — says there is no custom set;
+     * every other Custom key then defaults to the value next to it, so a
+     * half-written section still reads as something sane. */
+    gameFrontGetVisibilitySettings(&gameFrontVisibilityCustom);
+    prefsGetString("GAME OPTIONS", "Custom Pill View", "", buff, FILENAME_MAX);
+    gameFrontVisibilityCustomSaved = (buff[0] != '\0');
+    if (gameFrontVisibilityCustomSaved) {
+      static const struct {
+        const char  *policyKey;
+        const char  *decayKey;
+        ViewCategory cat;
+      } customPrefs[] = {
+        { "Custom Pill View", "Custom Pill View Decay", viewCategoryPill },
+        { "Custom Base View", "Custom Base View Decay", viewCategoryBase },
+        { "Custom Ally View", "Custom Ally View Decay", viewCategoryAlly },
+      };
+      for (int ci = 0; ci < (int)(sizeof(customPrefs) / sizeof(customPrefs[0]));
+           ci++) {
+        ViewCategory cat = customPrefs[ci].cat;
+        prefsGetString("GAME OPTIONS", customPrefs[ci].policyKey,
+                       viewPolicyPrefWord(
+                           (int)gameFrontVisibilityCustom.policy[cat]),
+                       buff, FILENAME_MAX);
+        gameFrontVisibilityCustom.policy[cat] = (uint8_t)viewPolicyFromPrefWord(
+            buff, (int)gameFrontVisibilityCustom.policy[cat]);
+        intToStr((int)gameFrontVisibilityCustom.decaySecs[cat], def,
+                 sizeof(def));
+        prefsGetString("GAME OPTIONS", customPrefs[ci].decayKey, def, buff,
+                       FILENAME_MAX);
+        gameFrontVisibilityCustom.decaySecs[cat] =
+            (uint16_t)viewDecayClamp(atoi(buff));
+      }
+      prefsGetString("GAME OPTIONS", "Custom Classic Mode",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.classicMode),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.classicMode = YESNO_TO_TRUEFALSE(buff[0]);
+      prefsGetString("GAME OPTIONS", "Custom Allies In Trees",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.alliesInTrees),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.alliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+      prefsGetString("GAME OPTIONS", "Custom Overview Window",
+                     overviewWindowPrefWord(
+                         (int)gameFrontVisibilityCustom.overviewWindow),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.overviewWindow =
+          (uint8_t)overviewWindowFromPrefWord(
+              buff, (int)gameFrontVisibilityCustom.overviewWindow);
+      prefsGetString("GAME OPTIONS", "Custom Line Of Sight",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.lineOfSight !=
+                                      (uint8_t)lineOfSightOff),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.lineOfSight =
+          YESNO_TO_TRUEFALSE(buff[0]) ? (uint8_t)lineOfSightBuildingsAndTrees
+                                      : (uint8_t)lineOfSightOff;
+    }
+
+    /* What the host last chose, which is what a game hosted from here
+     * starts on. The seven keys above have already put the last values on
+     * the globals; this writes the chosen set over them, so a preset that
+     * is later given a different value follows the host's choice rather
+     * than the values it happened to have when they made it. An INI with
+     * no "Visibility Preset" key — every INI that predates this — reads as
+     * whichever preset the seven values already add up to, so nothing
+     * moves on the first run. */
+    {
+      VisibilitySettings cur;
+      VisibilityPreset   fallback;
+      VisibilityPreset   chosen;
+
+      gameFrontGetVisibilitySettings(&cur);
+      fallback = visibilityPresetMatch(&cur);
+      prefsGetString("GAME OPTIONS", "Visibility Preset",
+                     visibilityPresetPrefWord(fallback), buff, FILENAME_MAX);
+      chosen = visibilityPresetFromPrefWord(buff, fallback);
+      gameFrontVisibilityPreset = (int)chosen;
+      if (chosen == visibilityPresetCustom) {
+        if (gameFrontVisibilityCustomSaved) {
+          gameFrontPutVisibilitySettings(&gameFrontVisibilityCustom);
+        }
+      } else {
+        VisibilitySettings want;
+        if (visibilityPresetSettings(chosen, &want)) {
+          /* A preset says nothing about the decay seconds, so the host's
+           * own stay where the keys above left them. */
+          want.decaySecs[viewCategoryPill] = cur.decaySecs[viewCategoryPill];
+          want.decaySecs[viewCategoryBase] = cur.decaySecs[viewCategoryBase];
+          want.decaySecs[viewCategoryAlly] = cur.decaySecs[viewCategoryAlly];
+          gameFrontPutVisibilitySettings(&want);
+        }
+      }
+    }
   }
 
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);

@@ -90,7 +90,11 @@ BOLO_STATIC_ASSERT(2 * OVERVIEW_CLASSIC_HALF + 1 <= SIGHT_MAX_SIDE,
                    classic_block_fits_the_sight_mask);
 
 bool overviewWindowFollowsView(OverviewWindow w) {
-  return w == overviewWindowClassic;
+  /* None is asked this because the server still builds a block for it: the
+   * client never draws one, so the narrow block is the right answer - the
+   * least to keep live for a window nothing is going to show. Only Expanded
+   * asks for the wide one. */
+  return w != overviewWindowExpanded;
 }
 
 /* Brings an inclusive rect back inside the map. Shared so a block placed by

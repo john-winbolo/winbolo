@@ -136,6 +136,9 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
                              &out->classicMode, &out->alliesInTrees);
   infoPacketReadViewPolicies2(info, len,
                               &out->overviewWindow, &out->lineOfSight);
+  /* Same tier: a packet that reaches the view byte said something about
+   * the rules, and a shorter one said nothing and took the stand-in. */
+  out->hasViewInfo = (len >= (size_t)INFO_PACKET_PRE_VIEWS2_SIZE);
   out->hasRichInfo = rich;
 }
 
@@ -377,6 +380,7 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   out->maxPlayers = 0;
   out->timeLimit = 0;
   out->hasRichInfo = false;
+  out->hasViewInfo = false;
 
   if (bolo_net_init() != 0) {
     return FALSE;
@@ -485,6 +489,8 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
                                &out->classicMode, &out->alliesInTrees);
     infoPacketReadViewPolicies2(info, (size_t)len,
                                 &out->overviewWindow, &out->lineOfSight);
+    /* Same tier - see discoveryFillServerFromInfoPacket. */
+    out->hasViewInfo = ((size_t)len >= (size_t)INFO_PACKET_PRE_VIEWS2_SIZE);
     out->hasRichInfo = rich;
     WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
                  address, port, out->rttMs,

@@ -1990,7 +1990,7 @@ static void printUsage(const char *prog) {
     "  --alliesintrees   Send allied tanks standing in trees to their allies\n"
     "                    instead of withholding them (off by default, and off\n"
     "                    under --classicmode)\n"
-    "  --overviewwindow M  Map overview live block: expanded, classic (default)\n"
+    "  --overviewwindow M  Map overview live block: expanded, classic (default), none\n"
     "  --lineofsight     Buildings and stands of trees block sight inside the\n"
     "                    live block (off by default, and off under\n"
     "                    --classicmode)\n"
@@ -2022,6 +2022,7 @@ static bool parseViewPolicyWord(const char *word, ViewPolicy *out) {
 static bool parseOverviewWindowWord(const char *word, OverviewWindow *out) {
   if (strcmp(word, "expanded") == 0) *out = overviewWindowExpanded;
   else if (strcmp(word, "classic") == 0) *out = overviewWindowClassic;
+  else if (strcmp(word, "none") == 0) *out = overviewWindowNone;
   else {
     fprintf(stderr, "Error: unknown overview window '%s' (use: expanded, classic)\n", word);
     return FALSE;
