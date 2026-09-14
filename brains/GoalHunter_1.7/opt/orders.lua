@@ -560,9 +560,15 @@ local function tx(state, msg)
   o.out[#o.out + 1] = msg
 end
 
+-- Queue one human-facing line. The queue holds 6 lines and drains one per
+-- think (init.lua gives it the chat slot ahead of the internal traffic).
+-- When it overflows we drop the OLDEST line, not the newest: a fresh ack is
+-- the line the player is waiting for, and a stale "Busy" from ten seconds
+-- ago must never keep it out.
 local function say(state, line)
   local o = S(state)
-  if #o.say < 6 then o.say[#o.say + 1] = line end
+  o.say[#o.say + 1] = line
+  while #o.say > 6 do table.remove(o.say, 1) end
 end
 
 -- Roster of allied BOTS (who-words and cancel target).  Self included.

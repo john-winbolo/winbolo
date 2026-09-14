@@ -10082,6 +10082,50 @@ function Brain.think(info)
     -- state._repo_outbox, drained into the batch below.
     reposition_vote.update(state, world, info, now)
 
+    -- ── Who owns this think's one chat slot: the human or the bots? ──
+    -- A brain says at most one thing per think. The internal channel (the
+    -- /info state slate, the known-world digest, the vote and blitz verbs)
+    -- used to take that slot every think on a busy map, so an order ack and
+    -- the "Leaving pill 5 for pill 7" line queued in state.orders.say never
+    -- got out for the rest of the round: the brain log showed the order
+    -- taken and released, and the player heard nothing. The design asks for
+    -- one line per order, so the human line goes first.
+    --
+    -- Deferring the internal traffic is safe because every producer below
+    -- only clears its "needs send" flag when try_send accepts, so a refusal
+    -- costs it a think and nothing else. One sender still outranks a say
+    -- line: an order VERB (obd/obc/obr) queued this think. The auction those
+    -- verbs run is what makes the ack correct, so they keep their place and
+    -- the say line waits a think.
+    --
+    -- The deferral is ONE think, never two in a row: a think that pushed the
+    -- internal traffic aside sets _chat_yielded_internal, and the next think
+    -- hands the slot straight back. So no internal send is ever more than a
+    -- think (2 ticks) later than it would have been, which is what keeps the
+    -- deadlines intact:
+    --   * the 30 s slate heartbeat fires at 1500 ticks and an ally only drops
+    --     our slot at SQUAD_ALLY_MAX_AGE (1750), so 2 ticks spends 2 of a
+    --     250-tick margin;
+    --   * the reposition vote closes its window at 10 ticks
+    --     (C.REPOSITION_VOTE_WINDOW_TICKS), so a ballot held 2 ticks still
+    --     lands inside it — where a six-line burst draining one line per
+    --     think would have held it 12 ticks and let a bad reposition pass
+    --     unopposed.
+    -- A burst therefore alternates: say line, internal traffic, say line.
+    local _say_first = false
+    local _internal_deferred = false
+    do
+      local _ord     = state.orders
+      local _ord_out = _ord and _ord.out
+      local _ord_say = _ord and _ord.say
+      if (not send_msg)
+         and _ord_say and #_ord_say > 0 and (info.allies or 0) ~= 0
+         and not (_ord_out and #_ord_out > 0)
+         and not state._chat_yielded_internal then
+        _say_first = true
+      end
+    end
+
     local _batch, _batch_used = {}, 0
     local _BATCH_MAX = C.MSG_BATCH_MAX or 124
     local function try_send(msg, dest)
@@ -10094,6 +10138,10 @@ function Brain.think(info)
         send_msg = msg; msg_dest = dest
         return true
       end
+      -- A human-facing order line owns the slot this think (see _say_first).
+      -- Refusing here is what defers the internal traffic: every caller keeps
+      -- its payload and offers it again next think.
+      if _say_first then _internal_deferred = true; return false end
       local sep = (#_batch > 0) and #comms.MSG_SEP or 0
       -- The FIRST message is always accepted, even if it alone exceeds the cap
       -- (matches pre-batch behavior — the wire truncates and the *_OVERFLOW
@@ -10470,18 +10518,26 @@ function Brain.think(info)
     -- build_kw_message DRAINS the entries it packs, so only build it when the
     -- batch is empty (it'll definitely fit as the first message) — otherwise a
     -- failed try_send would silently lose the drained changes.
+    -- Same reason we skip it when a say line owns the slot (_say_first): the
+    -- try_send would refuse and the drained changes would be gone.
     if world._kw_dirty and next(world._kw_dirty) ~= nil then
-      if #_batch == 0 then
+      if #_batch == 0 and not _say_first then
         local kwmsg = W.build_kw_message(world)
         if kwmsg and try_send(kwmsg, 0) then
           local rem = 0; for _ in pairs(world._kw_dirty) do rem = rem + 1 end
           print2(string.format("KW_TX t=%d pn=%s remain=%d msg=%s", now, tostring(state.player_number), rem, kwmsg))
         end
       else
+        if _say_first then _internal_deferred = true end
         local pend = 0; for _ in pairs(world._kw_dirty) do pend = pend + 1 end
-        print2(string.format("KW_STARVE t=%d pn=%s pending=%d (batch busy)", now, tostring(state.player_number), pend))
+        print2(string.format("KW_STARVE t=%d pn=%s pending=%d (%s)", now, tostring(state.player_number), pend,
+          _say_first and "order line has the slot" or "batch busy"))
       end
     end
+
+    -- Record whether we pushed internal traffic aside, so the next think
+    -- hands the slot back to it (see _say_first above).
+    state._chat_yielded_internal = _internal_deferred
 
     -- Finalize the internal-channel batch into the single outbound buffer.
     -- Anything that didn't fit left its producer's "needs send" flag set and
@@ -10514,12 +10570,15 @@ function Brain.think(info)
     -- heartbeat is at most 30 s away so the slot frees up quickly.
     -- Order acks / status lines. Sent to the ALLIES mask (humans AND bots)
     -- rather than the internal channel so a human -- or a test seat -- sees
-    -- them. One per tick; the rest wait for a free slot (the list is short and
-    -- self-limiting at 6 entries, see orders.lua say()).
+    -- them. ONE per think, always: _say_first above only clears the slot for
+    -- the line, it does not let a second one out. The rest wait for the next
+    -- think (the list is short and holds at most 6 entries, see orders.lua
+    -- say(), which now drops the OLDEST line when it overflows).
     if not send_msg and state.orders and state.orders.say
        and #state.orders.say > 0 and (info.allies or 0) ~= 0 then
       send_msg = table.remove(state.orders.say, 1)
       msg_dest = info.allies
+      print2(string.format("ORDER_SAY t=%d %s", now, send_msg))
     end
 
     if not send_msg and state.pending_human_goal_msg then
