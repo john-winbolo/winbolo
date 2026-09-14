@@ -426,9 +426,12 @@ void tankCreate(GameSim *sim, tank *value) {
   BYTE shellsAmount;
   BYTE armourAmount;
   BYTE treesAmount;
-  BYTE x;    /* Things to pass to get the player start position */
-  BYTE y;
-  TURNTYPE dir;
+  /* Initialised because they are read whatever startsGetStart does with
+     them; it writes all three unless there is no list to pick from, which is
+     where a joining client asks before its map has arrived. */
+  BYTE x = 0;    /* Things to pass to get the player start position */
+  BYTE y = 0;
+  TURNTYPE dir = (TURNTYPE)0;
 
   sim->tankShuttingDown = FALSE;
 
@@ -1602,9 +1605,11 @@ void tankDeath(GameSim *sim, tank *value) {
   BYTE minesAmount;
   BYTE armourAmount;
   BYTE treesAmount;
-  BYTE x;       /* New location of the tank */
-  BYTE y;
-  TURNTYPE dir;
+  /* Initialised because they are read whatever startsGetStart does with
+     them; it writes all three unless there is no list to pick from. */
+  BYTE x = 0;   /* New location of the tank */
+  BYTE y = 0;
+  TURNTYPE dir = (TURNTYPE)0;
 
   /* Client path (legacy single-player or networked client) */
   if (!isServer) {

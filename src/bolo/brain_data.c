@@ -94,30 +94,52 @@
 *  bottomPos - bottom position on the map to get data from
 *********************************************************/
 void brainDataMakeViewData(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos) {
-  BYTE count1; /* Looping variable */
-  BYTE count2; /* Looping variable */
-  BYTE pos;    /* Upto position    */
+  int count1;  /* Looping variable */
+  int count2;  /* Looping variable */
+  int pos;     /* Upto position    */
   GameSim *gs = clientSimGetGameSim(cs);
 
+  /* The counters are int because both bounds are inclusive and a rect that
+   * reaches the map edge arrives here as 255: brainDataMakeInfo clamps the
+   * 29x29 window's origin to 227, so a tank on map row 241 or below is passed
+   * bottomPos == 255, and a BYTE counter tested `<= 255` holds for every value
+   * it can take — the loop never ended. The far column did the same to the
+   * inner loop.
+   *
+   * Play never puts a tank out there; the reachable part of a map stops well
+   * short of the edge. What reaches it is the brain's FIRST pass, which runs
+   * before the tank has an authoritative position. A client that creates its
+   * tank before its map has arrived has no starts list, startsGetStart returns
+   * without writing, and tankCreate places the tank on the uninitialised
+   * locals it passed in. That is leftover stack, so which square it names
+   * depends on what ran before: about one join in eight was out at the edge
+   * under the baseline harness, every join under a debugger. A client that
+   * drew one spun at 100% of a core inside brainsHandlerStart rather than
+   * reaching its game loop, socket unread, deaf to the server leaving.
+   *
+   * pos is an int for a duller reason: the rect is view_width by view_height
+   * squares, 841 of them for the tank window, and a BYTE index wrapped at 256
+   * so five sixths of the buffer kept the zeros memset put there while the
+   * first 256 bytes were overwritten three times over. */
   pos = 0;
-  for (count1=topPos;count1<=bottomPos;count1++) {
-    for (count2=leftPos;count2<=rightPos;count2++) {
-      if (basesExistPos(&gs->bs, count2, count1) == TRUE) {
+  for (count1 = topPos; count1 <= bottomPos; count1++) {
+    for (count2 = leftPos; count2 <= rightPos; count2++) {
+      if (basesExistPos(&gs->bs, (BYTE)count2, (BYTE)count1) == TRUE) {
         buff[pos] = BREFBASE_T;
-      } else if (pillsViewExistPos(&gs->pb, count2, count1) == TRUE) {
+      } else if (pillsViewExistPos(&gs->pb, (BYTE)count2, (BYTE)count1) == TRUE) {
         /* The brain's view of the map is the bot's screen, so it shows a pill
          * at the square it was last seen on, exactly as a human's does. The
          * bot's movement still asks pillsExistPos through mapGetSpeed and
          * friends, so it is no more blocked by one than a human is. */
         buff[pos] = BPILLBOX_T;
       } else {
-        buff[pos] = mapGetPos(&gs->mp, count2, count1);
+        buff[pos] = mapGetPos(&gs->mp, (BYTE)count2, (BYTE)count1);
         if (buff[pos] == DEEP_SEA) {
           buff[pos] = BDEEPSEA;
         } else if (buff[pos] >= MINE_START && buff[pos] <= MINE_END) {
           buff[pos] = buff[pos] - MINE_SUBTRACT;
         }
-        if (minesExistPos(&gs->mns, &gs->mp, count2, count1) == TRUE) {
+        if (minesExistPos(&gs->mns, &gs->mp, (BYTE)count2, (BYTE)count1) == TRUE) {
           buff[pos] |= TERRAIN_MINE;
         }
       }
@@ -441,35 +463,42 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
      * read as terrain. Heap contents vary with allocation history, so on a
      * threaded bot host this was also a source of run-to-run divergence.
      *
-     * SHIFT the origin rather than shrinking the window: the fill below is
-     * inclusive on both ends (30x30 into the 30x30 buffer), so shrinking
-     * would leave part of the buffer unwritten and change the stride the
-     * brain reads with. Shifting keeps every row full, keeps view_width /
-     * view_height at their long-standing 29, and still contains the tank
-     * (which is at most 14 tiles from an edge). Behaviour for a tank away
-     * from the edges is bit-for-bit unchanged. */
+     * SHIFT the origin rather than shrinking the window: shifting keeps every
+     * row full, keeps view_width / view_height at their long-standing 29, and
+     * still contains the tank (which is at most 14 tiles from an edge).
+     * Behaviour for a tank away from the edges is bit-for-bit unchanged. */
     *(value->pillview) = 0x8000;
     {
       BYTE vleft = (tx > 14) ? (BYTE)(tx - 14) : 0;
       BYTE vtop  = (ty > 14) ? (BYTE)(ty - 14) : 0;
-      /* 255 - 29 = 226: the largest origin whose inclusive right/bottom edge
-       * (origin + 29) still fits in a BYTE without wrapping. */
-      if (vleft > 226) vleft = 226;
-      if (vtop  > 226) vtop  = 226;
+      /* 255 - 28 = 227: the largest origin whose inclusive right/bottom edge
+       * (origin + view_width - 1) still fits in a BYTE without wrapping. */
+      if (vleft > 227) vleft = 227;
+      if (vtop  > 227) vtop  = 227;
       value->view_left = vleft;
       value->view_top  = vtop;
     }
     value->view_width = 29;
     value->view_height = 29;
   }
-  //value->viewdata = malloc((value->view_width+1) * (value->view_height+1));
+  /* The buffer is the largest window any branch above asks for; the fill
+   * writes view_width * view_height of it and braincore hands the brain
+   * exactly that many bytes, which is the length brain.h documents. The far
+   * edges below are inclusive, hence the -1: passing view_left + view_width
+   * described a 30-square row for a 29-square window, so the rows the brain
+   * read were a square out of step with the ones written, and the last row
+   * ran off the end of what it was given. */
   value->viewdata = malloc(30 * 30);
   /* Belt-and-braces: no path may ever hand the brain uninitialised heap as
    * terrain, even if some future view rect comes out empty. */
   if (value->viewdata != NULL) {
     memset(value->viewdata, 0, 30 * 30);
   }
-  brainDataMakeViewData(csPtr, value->viewdata, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+  brainDataMakeViewData(csPtr, value->viewdata,
+                        value->view_left,
+                        (BYTE) (value->view_left + value->view_width - 1),
+                        value->view_top,
+                        (BYTE) (value->view_top + value->view_height - 1));
 
   /* From Bolo Version History:
   Added option to give Brains an advantage to make them more

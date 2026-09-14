@@ -46,7 +46,10 @@ static int file_exists(const char *path) {
 }
 
 static void cleanup(const char *jsonPath) {
-    char corruptPath[1024];
+    /* Over the 1024 the callers give utScratchPath, plus ".corrupt": a
+     * scratch path carries the whole build directory, so an equal-sized
+     * buffer could truncate and silently miss the file. */
+    char corruptPath[1100];
     snprintf(corruptPath, sizeof(corruptPath), "%s.corrupt", jsonPath);
     unlink(jsonPath);
     unlink(corruptPath);
@@ -55,7 +58,8 @@ static void cleanup(const char *jsonPath) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_roundtrip(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_roundtrip.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -94,7 +98,8 @@ int run_prefs_api_roundtrip(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_defaults(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_defaults.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -117,8 +122,9 @@ int run_prefs_api_defaults(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_corrupt_backup(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_corrupt.json";
-    char corruptPath[1024];
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
+    char corruptPath[1100];  /* jsonPath + ".corrupt" — see cleanup() */
     snprintf(corruptPath, sizeof(corruptPath), "%s.corrupt", jsonPath);
     cleanup(jsonPath);
 
@@ -150,7 +156,8 @@ int run_prefs_api_corrupt_backup(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_debounce(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_debounce.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -186,7 +193,8 @@ int run_prefs_api_debounce(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_shutdown_flush(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_shutdown_flush.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -213,7 +221,8 @@ int run_prefs_api_shutdown_flush(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_upload_excludes_local(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_upload.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -283,7 +292,8 @@ int run_prefs_api_upload_excludes_local(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_sync_dirty(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_syncdirty.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -323,7 +333,8 @@ int run_prefs_api_sync_dirty(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_device_identity(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_device.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -352,7 +363,8 @@ int run_prefs_api_device_identity(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_adopt_server(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_adopt.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
@@ -414,7 +426,8 @@ int run_prefs_api_adopt_server(void) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_api_mark_synced(void) {
-    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_marksynced.json";
+    char jsonPath[1024];
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     cleanup(jsonPath);
 
     prefsInit(jsonPath);
