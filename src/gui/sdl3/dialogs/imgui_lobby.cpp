@@ -212,6 +212,9 @@ static void lobbyFrameInitState(ClientSim *cs) {
  * MapChooserState caches stay populated (next open re-uses the discovered
  * map list / preview view); only the visibility / focus / pending-action
  * flags reset. */
+/* Defined below, beside the poll that uses the same two records. */
+static void lobbyBotAnnounceReset(void);
+
 extern "C" void imguiLobbyFrameReset(void) {
     if (s_lf.mapPreviewTex) {
         SDL_DestroyTexture(s_lf.mapPreviewTex);
@@ -258,6 +261,10 @@ extern "C" void imguiLobbyFrameReset(void) {
 
     lobbyCommandReset();
 
+    /* A new lobby is a new audience: every bot's brain announces itself
+       again. lobbyChatReset above already dropped the clickable blocks. */
+    lobbyBotAnnounceReset();
+
     s_lf.active = false;
 }
 
@@ -296,6 +303,88 @@ static void lobbyVoiceHintPoll(ClientSim *cs) {
 }
 #endif
 
+/* ── A bot's announce line in team chat ───────────────────────────────
+ *
+ * A brain may ship an announce.txt. When a bot running it is on YOUR team in
+ * the lobby, that text goes into the TEAM chat as a line from the bot, and
+ * the line opens the brain's commands.txt when clicked (lobby_chat.cpp).
+ *
+ * Said ONCE PER BRAIN, not once per bot: a four-bot team all on GoalHunter is
+ * one message, not four. The per-slot record below is what makes that a
+ * decision and not an accident — a slot is only looked at on the frame its
+ * (bot, team, brain) shape changes, so the poll does no work at all on a
+ * settled lobby, and a bot removed and re-added is looked at again.
+ *
+ * File-statics rather than prefs: a lobby re-entered is a fresh audience, and
+ * lobbyChatDocsReset (through lobbyChatReset) clears the registry with them. */
+static uint8_t s_announceSeen[MAX_TANKS];     /* brainIdx + 1, 0 = not seen */
+static bool    s_announceBrain[BRAIN_LIST_MAX];
+
+static void lobbyBotAnnounceReset(void) {
+    memset(s_announceSeen, 0, sizeof(s_announceSeen));
+    memset(s_announceBrain, 0, sizeof(s_announceBrain));
+}
+
+static void lobbyBotAnnouncePoll(ClientSim *cs) {
+    if (cs == NULL || !clientSimIsInLobby(cs)) return;
+    /* A spectator holds no slot, so it is on nobody's team and is told
+     * nothing; team 0 is "unassigned" and is not a team either. */
+    if (clientSimIsSpectator(cs)) return;
+
+    const ClientLobbySlot *mine =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    if (mine == NULL || !mine->connected || mine->teamNumber == 0) return;
+
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    if (bl == NULL || bl->count <= 0) return;
+
+    for (BYTE slot = 0; slot < MAX_TANKS; slot++) {
+        const ClientLobbySlot *s = clientSimGetLobbySlot(cs, slot);
+        uint8_t idx;
+        uint8_t stamp;
+
+        if (s == NULL || !s->connected || !s->isBot ||
+            s->teamNumber != mine->teamNumber) {
+            s_announceSeen[slot] = 0;      /* gone, or not ours any more */
+            continue;
+        }
+        idx = clientSimGetLobbyBotBrain(cs, slot);
+        if (idx == 0xFF || idx >= bl->count) idx = 0;   /* server default */
+        stamp = (uint8_t)(idx + 1);
+        if (s_announceSeen[slot] == stamp) continue;    /* already looked at */
+        s_announceSeen[slot] = stamp;
+
+        if (s_announceBrain[idx]) continue;             /* this brain spoke */
+        {
+            const char *announce = clientSimGetLobbyBrainAnnounce(cs, idx);
+            const char *docs     = clientSimGetLobbyBrainDocs(cs, idx);
+            char        base[BRAIN_LIST_NAME_LEN];
+            char        line[LOBBY_CHAT_DOCS_LINE_MAX];
+            const char *history;
+
+            if (announce == NULL || announce[0] == '\0') continue;
+            s_announceBrain[idx] = true;
+
+            /* The name on the line is the BOT's, so it reads like the bot
+             * talking; the dialog is titled after the BRAIN, because the docs
+             * belong to the brain and not to one bot. */
+            brainListSplitVersion(bl->entries[idx].name, base, sizeof(base));
+            SDL_snprintf(line, sizeof(line), "%s: %s", s->playerName, announce);
+
+            clientSimAppendLobbyTeamChat(cs, s->playerName, announce);
+
+            /* Register only what actually landed: a chat buffer near full
+             * drops the append silently, and a registration for text that is
+             * not in the blob would simply never match. */
+            history = clientSimGetLobbyTeamChatHistory(cs);
+            if (history != NULL && SDL_strstr(history, line) != NULL &&
+                docs != NULL && docs[0] != '\0') {
+                lobbyChatDocsRegister((int)idx, base, line);
+            }
+        }
+    }
+}
+
 /* Build the lobby UI into the currently-active ImGui frame. See
  * imgui_lobby.h for the host contract. Returns LOBBY_FRAME_LEFT once the
  * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
@@ -313,6 +402,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
        function, so one call covers the blocking lobby and the in-game seam. */
     lobbyVoiceHintPoll(cs);
 #endif
+
+    /* Same place, same reason: a bot that has just joined your team says what
+       its brain can do, once, in team chat. */
+    lobbyBotAnnouncePoll(cs);
 
     SDL_Window   *window   = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -2160,6 +2253,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 lobbyChooseMapOpen(cs, renderer);
             }
         }
+
+        /* --- A bot's brain docs, opened from its announce line in team
+           chat. Here, at the lobby window's own id scope: the click that
+           asks for it happens inside the chat child, and BeginPopupModal
+           only finds a popup opened at its own scope. --- */
+        lobbyChatDocsRenderModal(cs);
 
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];

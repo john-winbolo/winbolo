@@ -72,6 +72,42 @@ bool brainListLoadMeta(const char *name,
 bool brainListLoadColor(const char *name, uint32_t *rgb);
 
 
+/* ── announce.txt / commands.txt: what a brain tells the lobby ────────
+ *
+ * Two more plain-text files a brain may ship beside about.txt:
+ *
+ *   announce.txt   one short message, blank lines allowed. The lobby drops
+ *                  it into TEAM chat, as a line from the bot, the first time
+ *                  a bot running this brain joins the reader's team.
+ *   commands.txt   the long docs behind that line. Clicking the chat line
+ *                  opens them in a dialog.
+ *
+ * Unlike about.txt these DO go over the wire (CTRL_LOBBY_BRAIN_DOCS_CHUNK),
+ * because the server picks the brain and a client need not have it on disk.
+ * The caps below are what the wire carries; a longer file is truncated at
+ * the cap and the read says so, so the truncation is never silent. */
+#define BRAIN_ANNOUNCE_MAX  512    /* announce.txt bytes, NUL not counted */
+#define BRAIN_DOCS_MAX     8192    /* commands.txt bytes, NUL not counted */
+
+/* Read a brain's announce.txt and commands.txt out of its DIRECTORY
+ * ("brains/GoalHunter_1.7", or the server's own brainPaths[i]). Either out
+ * buffer may be NULL; both are cleared and NUL-terminated on return. Pass
+ * announceSz/docsSz as the full buffer size INCLUDING the NUL. Returns true
+ * iff at least one of the two files was found and had content.
+ * *truncated (optional) is set true when a file was longer than its buffer. */
+bool brainListLoadTexts(const char *brainDir,
+                        char *announce, size_t announceSz,
+                        char *docs, size_t docsSz,
+                        bool *truncated);
+
+/* Same, keyed off the brain's init.lua path ("Brains/GoalHunter_1.7/init.lua")
+ * — the shape brainListScan stores and the server holds in brainPaths[]. */
+bool brainListLoadTextsForPath(const char *brainPath,
+                               char *announce, size_t announceSz,
+                               char *docs, size_t docsSz,
+                               bool *truncated);
+
+
 /* ── Bot modes and their difficulty levels ────────────────────────────
  *
  * A brain says for itself which MODES it can be run in, and which

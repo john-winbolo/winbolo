@@ -754,6 +754,18 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               progress keeps what it started
                                               with. */
 
+#define PACKET_LOBBY_BRAIN_DOCS_CHUNK  222  /* server → client: one fragment
+                                              of ONE brain's lobby texts.
+                                              { brainIdx 1, seq 1, count 1,
+                                                fragLen 2 BE, frag N }.
+                                              The reassembled blob is
+                                              { announceLen 2 BE, announce,
+                                                docsLen 2 BE, docs } — the
+                                              brain's announce.txt and
+                                              commands.txt. Sent beside the
+                                              brain list, once per brain that
+                                              ships the files. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

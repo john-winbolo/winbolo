@@ -201,6 +201,16 @@ typedef enum {
      * and replayed into a joining client's sync so it arrives with the
      * table the round is already using. */
     CTRL_SIM_RULES,
+    /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — one fragment of ONE brain's lobby
+     * texts: its announce.txt line and its commands.txt docs. Sent per
+     * BRAIN, not per bot, alongside the brain list, and only for the
+     * brains that ship the files. The client reassembles fragments
+     * seq 0..count-1 for brainIdx, then installs both strings.
+     *
+     * Appended at the END of this enum on purpose: the tables in
+     * transport_control_codec.c are indexed by it, so a new type goes
+     * last rather than shifting the ones already there. */
+    CTRL_LOBBY_BRAIN_DOCS_CHUNK,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -215,6 +225,14 @@ typedef enum {
  * MAX_CONTROL_PACKET). A 64 KiB catalog therefore needs at most
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
+
+/* Per-fragment payload cap for CTRL_LOBBY_BRAIN_DOCS_CHUNK, and the size
+ * of one brain's whole text blob on the wire:
+ *   [announceLen 2 BE][announce][docsLen 2 BE][docs]
+ * At 900 bytes a fragment the worst case is ceil(8708/900) = 10 fragments
+ * per brain, so the seq/count byte is never near its limit. */
+#define LOBBY_BRAIN_DOCS_FRAG_MAX 900
+#define LOBBY_BRAIN_DOCS_WIRE_MAX (2 + BRAIN_ANNOUNCE_MAX + 2 + BRAIN_DOCS_MAX)
 
 /* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
  * ride the wire, so they are written out rather than left to the order
@@ -577,6 +595,18 @@ typedef struct ControlEvent {
             uint16_t fragLen;
             uint8_t  frag[LOBBY_BOT_POOL_CHUNK_FRAG_MAX];
         } lobbyBotPoolChunk;
+
+        /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — fragment `seq` of `count` of the
+         * lobby texts belonging to brain `brainIdx` (an index into the
+         * brain catalogue CTRL_LOBBY_BRAIN_LIST carries). fragLen bytes
+         * live in frag[]. */
+        struct {
+            uint8_t  brainIdx;
+            uint8_t  seq;
+            uint8_t  count;
+            uint16_t fragLen;
+            uint8_t  frag[LOBBY_BRAIN_DOCS_FRAG_MAX];
+        } lobbyBrainDocsChunk;
 
         /* CTRL_SERVER_TEXT — server-originated chat broadcast.
          * Mirrors what UDP clients receive as

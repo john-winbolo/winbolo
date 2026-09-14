@@ -1533,6 +1533,10 @@
  * data (brains/<brain>/modes.txt), not strings, so this is the only one. */
 #define STR_DLGLOBBY_BOTCFG_MODE            2171
 
+/* Title of the dialog a bot's announce line in lobby team chat opens: the
+ * brain's own commands.txt. {string1} = the brain's name ("GoalHunter"). */
+#define STR_DLGLOBBY_BOT_DOCS_TITLE         2173
+
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
 #define STR_DLGLOBBY_BAL_BTN                1345

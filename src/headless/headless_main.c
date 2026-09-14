@@ -368,6 +368,11 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
    * stream to keep the baselines stable and content-independent. */
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
 
+  /* Same story for the per-brain lobby texts (announce.txt/commands.txt):
+   * they are lobby display data whose fragment count depends on which
+   * brains exist on the machine the baseline runs on. */
+  if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
+
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
    * and --server alike). Pre-snapshot events log tick 0. */
@@ -660,6 +665,10 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
     case CTRL_VOICE_TALKING:
       fprintf(f, ",\"talking\":%u",
               (unsigned)evt->u.voiceTalking.talking);
+      break;
+
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+      /* Dropped above; never reaches the body writer. */
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

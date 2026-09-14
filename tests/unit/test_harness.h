@@ -120,6 +120,7 @@ int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
+int run_lobby_brain_docs_chunk_codec_roundtrip(void);
 int run_lobby_sync_complete_codec_roundtrip(void);
 int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
@@ -431,6 +432,7 @@ int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
+int run_brain_list_texts_read(void);
 
 /* A brain's mode manifest (test_brain_modes.c): brains/<brain>/modes.txt,
  * the API by which a brain tells the lobby which modes it has and which

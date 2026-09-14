@@ -202,6 +202,9 @@ bool clientSimCreate(ClientSim *cs) {
   struct ServerSim *savedBoundServerSim = cs->boundServerSim;
   SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
   BrainList savedBrainList = cs->lobbyBrainList;
+  /* The per-brain lobby texts arrive with that list and are never resent,
+   * so they have to survive the memset for the same reason it does. */
+  struct ClientBrainTexts *savedBrainTexts = cs->lobbyBrainTexts;
   ControlObserverCb savedObserverCb  = cs->controlObserverCb;
   void             *savedObserverCtx = cs->controlObserverCtx;
   ControlObserverCb savedTransportObserverCb  = cs->transportObserverCb;
@@ -217,6 +220,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->boundServerSim     = savedBoundServerSim;
   cs->autoSubHandle      = savedAutoSubHandle;
   cs->lobbyBrainList     = savedBrainList;
+  cs->lobbyBrainTexts    = savedBrainTexts;
   cs->controlObserverCb  = savedObserverCb;
   cs->controlObserverCtx = savedObserverCtx;
   cs->transportObserverCb  = savedTransportObserverCb;
@@ -513,6 +517,11 @@ static void clientSimDestroyContents(ClientSim *cs) {
   if (cs->brainBuildInfo != NULL) {
     free(cs->brainBuildInfo);
     cs->brainBuildInfo = NULL;
+  }
+
+  if (cs->lobbyBrainTexts != NULL) {
+    free(cs->lobbyBrainTexts);
+    cs->lobbyBrainTexts = NULL;
   }
 
   /* Free any captured-but-undrained spectator seed/records. */
@@ -2681,6 +2690,22 @@ uint8_t clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
   return &cs->lobbyBrainList;
+}
+
+/* The brain's announce.txt / commands.txt as the server shipped them. Both
+ * return "" — never NULL — when the index is out of range, when no brain has
+ * sent any text yet, or when this particular brain ships no such file, so a
+ * caller can test the first byte instead of guarding two ways. */
+const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return "";
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return "";
+  return cs->lobbyBrainTexts->announce[brainIdx];
+}
+
+const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return "";
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return "";
+  return cs->lobbyBrainTexts->docs[brainIdx];
 }
 
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {

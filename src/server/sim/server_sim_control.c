@@ -31,6 +31,7 @@
 #include "server_sim_internal.h"
 #include "round_stats_derive.h"     /* roundStatsApplyRecord — serverSimAddEvent's per-round stats funnel */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolsSerialize — the bot-pool catalog streamed during sync */
+#include "brain_list.h"            /* brainListLoadTextsForPath — the brains' lobby texts */
 #include "client_sim_control.h"     /* clientSimApplyControl — the in-process subscriber's deliver */
 #include "transport_control_codec.h"   /* the body encoders the ring keyframe's control snapshot writes */
 #include "log_internal.h"           /* serverSimSerializeControlSnapshot prototype */
@@ -445,6 +446,87 @@ void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbyBrainList.list = sim->brainList;
 }
 
+/* ── The brains' lobby texts ─────────────────────────────────────────
+ *
+ * announce.txt and commands.txt are read off the server's disk here, at the
+ * moment they are sent, rather than being kept in the ServerSim: the table is
+ * ~139 KB, the send happens twice in a lobby's life (a join, and the return
+ * from a round), and a file the operator edits between rounds is then picked
+ * up without a restart.
+ *
+ * Unlike about.txt these DO travel: the server chooses the brain, so a client
+ * that does not have it installed would otherwise have nothing to show.
+ * Only brains that actually ship a file are sent, so the usual cost is one
+ * brain's ten fragments, not sixteen brains' worth. */
+void serverSimEmitBrainDocs(const ServerSim *sim,
+                            void (*deliver)(void *, const struct ControlEvent *),
+                            void *ctx) {
+    char *announce = NULL, *docs = NULL;
+    uint8_t *blob = NULL;
+    int i;
+    if (sim == NULL || deliver == NULL) return;
+    if (sim->brainList.count <= 0) return;
+
+    announce = (char *)malloc(BRAIN_ANNOUNCE_MAX + 1);
+    docs     = (char *)malloc(BRAIN_DOCS_MAX + 1);
+    blob     = (uint8_t *)malloc(LOBBY_BRAIN_DOCS_WIRE_MAX);
+    if (announce == NULL || docs == NULL || blob == NULL) {
+        free(announce); free(docs); free(blob);
+        return;
+    }
+
+    for (i = 0; i < sim->brainList.count && i < BRAIN_LIST_MAX; i++) {
+        bool truncated = false;
+        size_t aLen, dLen, blen;
+        int nChunks, ci;
+        size_t off;
+        if (!brainListLoadTextsForPath(sim->brainPaths[i],
+                                       announce, (size_t)BRAIN_ANNOUNCE_MAX + 1,
+                                       docs, (size_t)BRAIN_DOCS_MAX + 1,
+                                       &truncated)) {
+            continue;                      /* this brain ships neither file */
+        }
+        if (truncated) {
+            WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                           "brain '%s': announce.txt/commands.txt is longer "
+                           "than the wire allows (%d / %d bytes) and was cut",
+                           sim->brainList.entries[i].name,
+                           BRAIN_ANNOUNCE_MAX, BRAIN_DOCS_MAX);
+        }
+        aLen = strlen(announce);
+        dLen = strlen(docs);
+        blen = 0;
+        blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(aLen & 0xFF);
+        memcpy(blob + blen, announce, aLen); blen += aLen;
+        blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(dLen & 0xFF);
+        memcpy(blob + blen, docs, dLen); blen += dLen;
+
+        nChunks = (int)((blen + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+                        LOBBY_BRAIN_DOCS_FRAG_MAX);
+        if (nChunks <= 0 || nChunks > 255) continue;
+        off = 0;
+        for (ci = 0; ci < nChunks; ci++) {
+            ControlEvent evt;
+            size_t fl = blen - off;
+            if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) fl = LOBBY_BRAIN_DOCS_FRAG_MAX;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+            evt.u.lobbyBrainDocsChunk.brainIdx = (uint8_t)i;
+            evt.u.lobbyBrainDocsChunk.seq      = (uint8_t)ci;
+            evt.u.lobbyBrainDocsChunk.count    = (uint8_t)nChunks;
+            evt.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)fl;
+            memcpy(evt.u.lobbyBrainDocsChunk.frag, blob + off, fl);
+            deliver(ctx, &evt);
+            off += fl;
+        }
+    }
+    free(announce);
+    free(docs);
+    free(blob);
+}
+
 /* Fill a CTRL_GAME_VOTE_STATE event for the given vote kind. Returns false
  * if there's no snapshot (caller must not deliver). Mirrors the inline
  * publish at publishGameVoteState. */
@@ -653,6 +735,11 @@ static void serverSimSyncSubscriber(
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         deliver(ctx, &evt);
+
+        /* The brains' own lobby texts, straight after the list they index
+         * into: the lobby turns a bot's announce line into team chat and
+         * hangs its commands docs off it. Same lobby-only gate. */
+        serverSimEmitBrainDocs(sim, deliver, ctx);
 
         /* Bot-pool catalog: the server's themed naming pools (loaded from
          * -botnames / data/bot_names.json), zlib-compressed and streamed

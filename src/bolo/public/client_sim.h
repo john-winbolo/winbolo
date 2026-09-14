@@ -1032,6 +1032,17 @@ uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
 
+/* A brain's LOBBY TEXTS, indexed the same way as the brain list above.
+ *   announce — the brain's announce.txt: the message the lobby drops into
+ *              team chat when a bot running this brain joins your team.
+ *   docs     — the brain's commands.txt: the long text that message opens.
+ * Both come from the server (CTRL_LOBBY_BRAIN_DOCS_CHUNK) rather than off the
+ * local disk, because the server picks the brain and this machine need not
+ * have it. Both always return a NUL-terminated string, "" when there is
+ * nothing, so a caller tests the first byte rather than for NULL. */
+const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx);
+const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx);
+
 /* Last finished round's scoreboard + awards, or NULL if none has been
  * received since the last countdown (round-only scope). */
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs);

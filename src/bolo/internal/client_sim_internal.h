@@ -38,6 +38,7 @@
 #include "brain_list.h"
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
 #include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
+#include "control_event.h"  /* LOBBY_BRAIN_DOCS_WIRE_MAX */
 #include "upload_policy.h"
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT — server view-rule mirror */
 #include "ping_display.h"  /* PingDisplay — per-slot ping readout smoothing */
@@ -133,6 +134,13 @@ typedef struct {
      * lobby and the delayed game view. */
     bool                  liveLobby;
 } ClientSpectatorFeed;
+
+/* Per-brain lobby texts, held on the heap and hung off ClientSim.
+ * Indexed exactly like lobbyBrainList.entries[]. See lobbyBrainTexts. */
+struct ClientBrainTexts {
+    char announce[BRAIN_LIST_MAX][BRAIN_ANNOUNCE_MAX + 1];
+    char docs    [BRAIN_LIST_MAX][BRAIN_DOCS_MAX + 1];
+};
 
 struct ClientSim {
     GameSim     sim;    /* MUST be first member */
@@ -495,6 +503,35 @@ struct ClientSim {
      * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the
      * AiConfig "Bot Code" combo. */
     BrainList lobbyBrainList;
+
+    /* Per-brain LOBBY TEXTS, indexed exactly like lobbyBrainList.entries[]:
+     * the brain's announce.txt (the one line the lobby drops into team chat
+     * when a bot running it joins your team) and its commands.txt (the docs
+     * that line opens). Both arrive as CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments
+     * beside the brain list, one stream per brain. An empty string means the
+     * brain ships no such file — that is the normal case, and the lobby then
+     * says nothing for that brain.
+     *
+     * They come over the wire rather than being read off the local disk the
+     * way about.txt is, because the SERVER chooses the brain and a client
+     * need not have that brain installed at all.
+     *
+     * Heap-held rather than inline: the whole table is ~139 KB and almost
+     * every ClientSim ever made (headless runs, unit tests, the recorder)
+     * never sees a brain that ships the files. The pointer is allocated on
+     * the first text that arrives, survives clientSimCreate's memset the way
+     * lobbyBrainList does, and is freed in clientSimDestroy. */
+    struct ClientBrainTexts *lobbyBrainTexts;
+
+    /* Reassembly of ONE brain's text blob. lobbyBrainDocsExpected == 0 is
+     * idle (so a memset-to-zero is a clean idle state). Fragments ride the
+     * reliable, ordered control channel, so seq is monotonic and brainIdx is
+     * constant within a stream; any mismatch aborts the stream. */
+    uint8_t  lobbyBrainDocsIdx;
+    uint8_t  lobbyBrainDocsExpected;
+    uint8_t  lobbyBrainDocsNextSeq;
+    uint32_t lobbyBrainDocsBlobLen;
+    uint8_t  lobbyBrainDocsBlob[LOBBY_BRAIN_DOCS_WIRE_MAX];
 
     /* Last finished round's scoreboard + awards, received via
      * CTRL_ROUND_STATS at game over. Round-only: cleared when the next

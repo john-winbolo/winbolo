@@ -3581,6 +3581,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
+    tests/unit/test_brain_list_texts.c
     tests/unit/test_brain_modes.c
     tests/unit/test_brain_view_data.c
     tests/unit/test_bolo_rand.c

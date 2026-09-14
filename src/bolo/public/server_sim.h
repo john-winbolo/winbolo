@@ -1725,6 +1725,16 @@ void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, struct ControlE
 void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, struct ControlEvent *evt);
 void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent *evt);
 
+/* Stream every brain's LOBBY TEXTS (announce.txt + commands.txt) as
+ * CTRL_LOBBY_BRAIN_DOCS_CHUNK events through `deliver`. Read off disk at call
+ * time, one stream per brain, and only for brains that ship at least one of
+ * the two files — so a server whose brains carry none emits nothing. Called
+ * beside the brain list: once into a joiner's sync replay, and once on the
+ * broadcast bus when a round hands the lobby back. */
+void serverSimEmitBrainDocs(const ServerSim *sim,
+                            void (*deliver)(void *, const struct ControlEvent *),
+                            void *ctx);
+
 /*********************************************************
  * Read accessors.
  *
