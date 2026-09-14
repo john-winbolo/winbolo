@@ -2976,16 +2976,18 @@ static void renderPlayersContent(ClientSim *cs) {
 
         /* Platform / WBN / Steam icons (brain icon for bots). Every icon in
          * that run is WBN_ICON_SIZE tall, so one placement covers the run:
-         * renderPlayerName holds the y it is called at across its own
+         * keepIconY holds the y this call starts at across the run's own
          * SameLine calls, which would otherwise drop icons two and three
-         * back onto the line's top. */
-        cyAbs((float)WBN_ICON_SIZE);
-        /* A bot's chip is the green one or the red one to match the alliance
+         * back onto the line's top.
+         *
+         * A bot's chip is the green one or the red one to match the alliance
          * mark in front of the name, so the row says whose side it is on
          * twice over rather than showing a neutral glyph beside a coloured
          * star. Your own row can hold no bot, so the self case never arises. */
-        renderPlayerNameSetBotAlly(isAlly[i]);
-        renderPlayerNameKeepY(NULL, s_playerFlags[i], s_playerClientType[i], "", false);
+        cyAbs((float)WBN_ICON_SIZE);
+        RenderPlayerNameOpts nameOpts = { isAlly[i], true };
+        renderPlayerNameEx(NULL, s_playerFlags[i], s_playerClientType[i], "",
+                           false, &nameOpts);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
         char defLabel[16];
@@ -5021,9 +5023,10 @@ static void renderMenuBar(ClientSim *cs) {
                 ensurePlatformIconsLoaded();
                 uint8_t pflags = s_playerFlags[i];
                 uint8_t pct    = s_playerClientType[i];
-                /* Same chip the panel gives it. */
-                renderPlayerNameSetBotAlly(isAlly[i]);
-                renderPlayerName(NULL, pflags, pct, "", false);
+                /* Same chip the panel gives it. This row starts its icon run
+                 * on the line's top, so it does not ask to keep the y. */
+                RenderPlayerNameOpts nameOpts = { isAlly[i], false };
+                renderPlayerNameEx(NULL, pflags, pct, "", false, &nameOpts);
 
                 ImGuiContext &g = *GImGui;
                 float checkSz = g.FontSize * 0.866f;
@@ -7896,66 +7899,42 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     return true;
 }
 
-/* Set for the length of one renderPlayerName call by renderPlayerNameKeepY
- * below, and by nothing else. */
-static bool s_playerNameKeepIconY = false;
-
-/* Which of the two bot chips the NEXT renderPlayerName call draws, and only
- * that one: it is reset as the chip is drawn, so a caller that says nothing
- * cannot inherit the last one's answer. The default is the red chip, which
- * is what a caller that knows nothing about alliances should show.
- *
- * Set rather than passed because renderPlayerName takes a player's flags,
- * not their slot, so it cannot ask who is allied with whom — and giving it
- * the slot would mean changing all six other call sites in the lobby, the
- * recap and the mobile list. The answer is the caller's to know: the panel
- * and the menu already work out isAlly for the mark in front of the name. */
-static bool s_playerNameBotIsAlly = false;
-
-void renderPlayerNameSetBotAlly(bool isAlly) {
-    s_playerNameBotIsAlly = isAlly;
-}
-
-/* renderPlayerName with every icon in the run held at the y it is called at,
- * rather than snapping to the line's top on each SameLine.
- *
- * A separate entry point, not a parameter: sdl3imgui.h is an extern "C"
- * header included by C translation units, where a default argument will not
- * compile, and adding a required parameter would mean editing all six other
- * call sites — in the lobby, the recap and the mobile list — which this
- * change has no business touching. */
-void renderPlayerNameKeepY(const char *name, uint8_t flags, uint8_t clientType,
-                           const char *countryCode, bool showCountry) {
-    s_playerNameKeepIconY = true;
-    renderPlayerName(name, flags, clientType, countryCode, showCountry);
-    s_playerNameKeepIconY = false;
-}
-
+/* The plain form: every choice at its default, which is what the lobby, the
+ * recap and the spectator list all want. */
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
+    renderPlayerNameEx(name, flags, clientType, countryCode, showCountry, NULL);
+}
+
+void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
+                        const char *countryCode, bool showCountry,
+                        const RenderPlayerNameOpts *opts) {
     ensurePlatformIconsLoaded();
     ensureWbnIconsLoaded();
     const int iconSlot = activeIconSlot();
+    /* opts is optional, so read both choices once here and let the rest of
+     * the function work from plain locals. */
+    const bool botIsAlly = opts && opts->botIsAlly;
+    const bool keepY     = opts && opts->keepIconY;
     /* SameLine puts the cursor back on the LINE's top. That is right for
      * every caller that starts its run there, which is all of them but one:
      * the players panel centres the run inside a row taller than the icons,
      * and on the line's top the first icon sits on the row's midline while
      * the rest snap above it.
      *
-     * Held behind a flag rather than made the rule, because the rule is not
+     * Asked for per call rather than made the rule, because the rule is not
      * free: restoring the caller's y also moves the icons for the lobby, the
      * recap and the mobile list, all of which share this function. Those are
-     * not this change's to move. Only the panel asks, through
-     * renderPlayerNameKeepY. */
-    const bool  keepY  = s_playerNameKeepIconY;
+     * not this change's to move. Only the panel asks. */
     const float iconY  = ImGui::GetCursorPosY();
     auto sameLineKeepY = [keepY, iconY]() {
         ImGui::SameLine();
         if (keepY) ImGui::SetCursorPosY(iconY);
     };
-    SDL_Texture *botChip = s_playerNameBotIsAlly ? s_iconBotChipGreen[iconSlot]
-                                                 : s_iconBotChipRed[iconSlot];
-    s_playerNameBotIsAlly = false;   /* one call only; see the setter */
+    /* The red chip is the default because it is what a caller that knows
+     * nothing about alliances should show. */
+    SDL_Texture *botChip = botIsAlly ? s_iconBotChipGreen[iconSlot]
+                                     : s_iconBotChipRed[iconSlot];
     if ((flags & PLAYER_FLAG_BOT) && botChip) {
         /* Bot slot: the chip stands in for the platform badge — a computer
          * player runs on no platform worth naming — and the WBN/Steam badges

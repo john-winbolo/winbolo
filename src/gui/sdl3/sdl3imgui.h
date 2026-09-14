@@ -433,47 +433,58 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);
 
 /*********************************************************
-*NAME:          renderPlayerNameKeepY
+*NAME:          RenderPlayerNameOpts
 *AUTHOR:        Andrew Roth
 *CREATION DATE: 12/9/26
-*LAST MODIFIED: 12/9/26
+*LAST MODIFIED: 14/9/26
 *PURPOSE:
-* renderPlayerName with every icon in the run held at the y it is called at,
-* instead of snapping back to the line's top on each SameLine.
+* The optional, per-call choices renderPlayerNameEx offers, in one struct so
+* that a caller says everything it wants in the call itself.
 *
-* For a caller that centres the icon run inside a row taller than the icons:
-* on the line's top the first icon lands on the row's midline and the rest
-* sit above it. A caller that starts its run at the line's top wants
-* renderPlayerName and sees no difference between the two.
-*
-*ARGUMENTS: as renderPlayerName
-*********************************************************/
-void renderPlayerNameKeepY(const char *name, uint8_t flags, uint8_t clientType,
-                           const char *countryCode, bool showCountry);
-
-/*********************************************************
-*NAME:          renderPlayerNameSetBotAlly
-*AUTHOR:        Andrew Roth
-*CREATION DATE: 12/9/26
-*LAST MODIFIED: 12/9/26
-*PURPOSE:
-* Which of the two bot chips the NEXT renderPlayerName call draws, and only
-* that one — it is reset as the chip is drawn, so a caller that sets nothing
-* cannot inherit the last caller's answer. The default is the red chip.
-*
-* The green and red chips are separate artwork, drawn as authored rather
-* than one shape recoloured: each is gold pins around a dark body with a
-* coloured die, and a tinted silhouette loses all of it.
-*
-* Set rather than passed as an argument because renderPlayerName is given a
-* player's flags, not their slot, so it cannot work out who is allied with
-* whom. The caller can: both the players panel and the in-game player menu
-* already compute that for the mark they draw in front of the name.
+* A struct and not two more parameters because this header has C linkage, so
+* a default argument will not compile and every new choice would otherwise
+* have to be spelled out at all seven call sites. Callers pass NULL for the
+* plain behaviour, and the next flag added here changes neither the
+* signature nor any call site that does not want it.
 *
 *ARGUMENTS:
-* isAlly - true for the green chip, false for the red one
+* botIsAlly  - true draws the green bot chip instead of the red one. Which
+*              chip a bot gets is the caller's to know: renderPlayerNameEx is
+*              given a player's flags, not their slot, so it cannot work out
+*              who is allied with whom, while the players panel and the
+*              in-game player menu already compute that for the mark they
+*              draw in front of the name. The green and red chips are
+*              separate artwork, drawn as authored rather than one shape
+*              recoloured: each is gold pins around a dark body with a
+*              coloured die, and a tinted silhouette loses all of it.
+* keepIconY  - true holds every badge in the run at the y the call started
+*              at, instead of snapping back to the line's top on each
+*              SameLine. For a caller that centres the run inside a row
+*              taller than the icons: on the line's top the first icon lands
+*              on the row's midline and the rest sit above it. A caller that
+*              starts its run at the line's top sees no difference.
 *********************************************************/
-void renderPlayerNameSetBotAlly(bool isAlly);
+typedef struct RenderPlayerNameOpts {
+    bool botIsAlly;   /* green chip rather than red for a bot */
+    bool keepIconY;   /* hold every badge at the starting y */
+} RenderPlayerNameOpts;
+
+/*********************************************************
+*NAME:          renderPlayerNameEx
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 14/9/26
+*PURPOSE:
+* renderPlayerName with the per-call choices in RenderPlayerNameOpts. This
+* is where the drawing actually happens; renderPlayerName is the same call
+* with no options.
+*
+*ARGUMENTS: as renderPlayerName, plus
+*  opts - the choices for this call, or NULL for both false
+*********************************************************/
+void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
+                        const char *countryCode, bool showCountry,
+                        const RenderPlayerNameOpts *opts);
 
 #if defined(WINBOLO_VOICE)
 /*********************************************************
