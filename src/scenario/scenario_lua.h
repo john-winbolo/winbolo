@@ -313,6 +313,18 @@ const char *scenarioLuaDamageSourceWord(int source);
  *********************************************************/
 const char *scenarioLuaAnnounceKindWord(int kind);
 
+/*********************************************************
+ *NAME:          scenarioLuaLoadoutFromWord
+ *PURPOSE:
+ *  The game type a loadout word names — "open",
+ *  "tournament" or "strict" — for a spawn_loadout answer
+ *  handed back as a word rather than as four amounts. The
+ *  same three words a spawn op takes, read from the one
+ *  table. False for a word the set does not hold, which the
+ *  host answers classic for.
+ *********************************************************/
+bool scenarioLuaLoadoutFromWord(const char *word, int *out);
+
 /* ── The rule names ─────────────────────────────────────────────────── */
 
 /*********************************************************

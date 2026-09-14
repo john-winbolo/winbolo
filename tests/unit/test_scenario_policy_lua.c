@@ -37,6 +37,24 @@
  *   run_scenario_policy_lua_error_counts   — a policy that raises answers
  *       classic and counts toward the limit, which switches the scenario off
  *
+ * and the three that carry a value out rather than answering a bool:
+ *
+ *   run_scenario_policy_lua_choose_start   — a script names the start and
+ *       every tank it places lands there, the engine's own reservation
+ *       included
+ *   run_scenario_policy_lua_spawn_loadout  — both shapes of the answer, a
+ *       word and four amounts, at the create and at the respawn
+ *   run_scenario_policy_lua_damage_scale   — a blow priced at half and a
+ *       blow priced at nothing, read at the helper and watched at the site
+ *   run_scenario_policy_lua_value_classic  — nil, a raise, an answer the
+ *       site cannot use and no function at all: each of the three takes its
+ *       own classic answer, and damage_scale's is a hundred rather than the
+ *       zero a boolean classic answer would give
+ *   run_scenario_policy_lua_value_error_counts — a raise in damage_scale
+ *       counts toward the limit while every call prices a shell classically
+ *   run_scenario_policy_lua_value_in_policy — an op issued from inside the
+ *       loadout answer is refused
+ *
  * Every case drives the real call site: the win sweep, the death wait, a
  * build request, a tank driving onto a base, a player joining and a shell.
  *
@@ -64,9 +82,11 @@
 #include "game_sim.h"
 #include "bases.h"
 #include "bolo_map.h"
+#include "gametype.h"              /* TANK_FULL_* — the classic amounts */
 #include "lgm.h"
 #include "mines.h"
 #include "pillbox.h"
+#include "starts.h"
 #include "tank.h"
 #include "everard_map.h"
 #include "scenario_host.h"
@@ -140,12 +160,17 @@ static void plaRead(const char *record, char *out, size_t outLen) {
 
 /* A round with the scenario attached and one player in slot 0. The host is
    attached before the start, because the start is what boots the round's VM
-   and applies the table. */
-static ServerSim *plaSim(const char *mapPath, ScenarioHost **host) {
+   and applies the table.
+
+   Slot 0 is seated after the start rather than before it, so its tank is
+   built against the round's own VM — which is what the two policies on the
+   spawn path are asked through. */
+static ServerSim *plaSimOfType(const char *mapPath, ScenarioHost **host,
+                               gameType gt) {
     BYTE       emap[6000] = E_MAP;
     char       err[512];
     ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
-                                               gameOpen, false, 0, -1);
+                                               gt, false, 0, -1);
 
     *host = NULL;
     if (sim == NULL) {
@@ -162,6 +187,10 @@ static ServerSim *plaSim(const char *mapPath, ScenarioHost **host) {
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, PLA_SELF, "Tester", false);
     return sim;
+}
+
+static ServerSim *plaSim(const char *mapPath, ScenarioHost **host) {
+    return plaSimOfType(mapPath, host, gameOpen);
 }
 
 static void plaEnd(ServerSim *sim, ScenarioHost *host, const char *mapPath,
@@ -952,6 +981,445 @@ int run_scenario_policy_lua_error_counts(void) {
     plaRead(kRecord, rec, sizeof(rec));
     UT_ASSERT_MSG(rec[0] == '\0',
                   "the switched-off round ran the script again: %s", rec);
+
+    plaEnd(sim, h, kMap, kRecord);
+    return 0;
+}
+
+/* ── The three that carry a value out ─────────────────────────────────── */
+
+/* Which start a tank ended up at, as the nearest one to where it stands.
+   startsGetStart nudges a tank off an occupied square, so the square itself
+   is not the answer; the start it is nearest to is. */
+static int plaNearestStart(GameSim *gs, int mx, int my) {
+    BYTE n    = startsGetNumStarts(&gs->ss);
+    int  best = -1;
+    int  bestDist = 0;
+    BYTE i;
+
+    for (i = 0; i < n; i++) {
+        int dx   = (int)(*gs->ss).item[i].x - mx;
+        int dy   = (int)(*gs->ss).item[i].y - my;
+        int dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+        if (best < 0 || dist < bestDist) {
+            best     = (int)i;
+            bestDist = dist;
+        }
+    }
+    return best;
+}
+
+static int plaTankStart(GameSim *gs, BYTE slot) {
+    WORLD wx, wy;
+    if (gs->tanks[slot] == NULL) {
+        return -1;
+    }
+    tankGetWorld(&gs->tanks[slot], &wx, &wy);
+    return plaNearestStart(gs, (int)(wx >> M_W_SHIFT_SIZE),
+                           (int)(wy >> M_W_SHIFT_SIZE));
+}
+
+/* A death and the respawn that follows it, which is one of the three places
+   the engine hands out a loadout. */
+static void plaKillAndRespawn(GameSim *gs, BYTE slot) {
+    tankSetArmour(&gs->tanks[slot], 0);
+    tankSetDestroyed(&gs->tanks[slot], TRUE);
+    tankDeath(gs, &gs->tanks[slot]);
+}
+
+/* ================================================================
+ * 10. A script names the start, and every tank it places lands there.
+ *
+ * The script reads the number off the map rather than being handed one, so
+ * the case and the script agree about which start without either being told.
+ * ================================================================ */
+int run_scenario_policy_lua_choose_start(void) {
+    static const char *const kMap    = "scnpol_lua_start.map";
+    static const char *const kRecord = "scnpol_lua_start.record";
+    static const char *const kBody =
+        "scenario = { name = \"One Start\", api = 1 }\n"
+        "function on_choose_start(p)\n"
+        "  note(\"start \" .. p .. \"\\n\")\n"
+        "  return game.num_starts()\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    char          rec[4096];
+    BYTE          numStarts;
+    BYTE          slot;
+
+    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    sim = plaSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+
+    numStarts = startsGetNumStarts(&gs->ss);
+    UT_ASSERT_MSG(numStarts >= 3,
+                  "setup: the map must carry at least three starts, has %u",
+                  (unsigned)numStarts);
+
+    /* The last start, which the script names as num_starts() and the engine
+       holds at num_starts() - 1. */
+    UT_ASSERT_MSG(plaTankStart(gs, PLA_SELF) == (int)(numStarts - 1),
+                  "slot 0 landed nearest start %d, expected the named %u",
+                  plaTankStart(gs, PLA_SELF), (unsigned)(numStarts - 1));
+
+    /* A batch slot on the next seat, so the named start has the engine's own
+       reservation to beat rather than only a bare per-player pick. */
+    gs->pendingStartIdx[PLA_OTHER] = 0;
+    for (slot = PLA_OTHER; slot < 3; slot++) {
+        char name[16];
+        snprintf(name, sizeof(name), "P%u", (unsigned)slot);
+        serverSimAddPlayer(sim, slot, name, false);
+        UT_ASSERT_MSG(gs->tanks[slot] != NULL,
+                      "setup: slot %u should have a tank", (unsigned)slot);
+        UT_ASSERT_MSG(plaTankStart(gs, slot) == (int)(numStarts - 1),
+                      "slot %u landed nearest start %d, expected the named %u",
+                      (unsigned)slot, plaTankStart(gs, slot),
+                      (unsigned)(numStarts - 1));
+    }
+
+    plaRead(kRecord, rec, sizeof(rec));
+    UT_ASSERT_MSG(strstr(rec, "start 2\n") != NULL,
+                  "the script was asked \"%s\", expected a placement for "
+                  "slot 2", rec);
+
+    plaEnd(sim, h, kMap, kRecord);
+    return 0;
+}
+
+/* ================================================================
+ * 11. A script hands out the loadout, in both of its shapes.
+ *
+ * A strict tournament round, where the classic tank starts with nothing, so
+ * anything in a tank's stores came from the script.
+ * ================================================================ */
+int run_scenario_policy_lua_spawn_loadout(void) {
+    static const char *const kMap    = "scnpol_lua_loadout.map";
+    static const char *const kRecord = "scnpol_lua_loadout.record";
+    static const char *const kBody =
+        "scenario = { name = \"Armed\", api = 1 }\n"
+        "function spawn_loadout(p)\n"
+        "  note(\"loadout \" .. p .. \"\\n\")\n"
+        "  if p == 0 then return \"open\" end\n"
+        "  return { shells = 7, mines = 6, armour = 33, trees = 5 }\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    char          rec[4096];
+
+    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    sim = plaSimOfType(kMap, &h, gameStrictTournament);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    UT_ASSERT(gs->tanks[PLA_SELF] != NULL);
+
+    /* The word, at the create. */
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[PLA_SELF]) == TANK_FULL_SHELLS &&
+                  tankGetMines(&gs->tanks[PLA_SELF])  == TANK_FULL_MINES &&
+                  tankGetTrees(&gs->tanks[PLA_SELF])  == TANK_FULL_TREES,
+                  "an open loadout should have armed the tank in a strict "
+                  "round, which carries %u/%u/%u",
+                  (unsigned)tankGetShells(&gs->tanks[PLA_SELF]),
+                  (unsigned)tankGetMines(&gs->tanks[PLA_SELF]),
+                  (unsigned)tankGetTrees(&gs->tanks[PLA_SELF]));
+
+    /* And again at the respawn, which is the other place one is handed out. */
+    plaKillAndRespawn(gs, PLA_SELF);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[PLA_SELF]) == TANK_FULL_SHELLS,
+                  "a respawn under an open loadout should carry %d shells, "
+                  "carries %u", TANK_FULL_SHELLS,
+                  (unsigned)tankGetShells(&gs->tanks[PLA_SELF]));
+
+    /* The four amounts, at the same site and in the same round. */
+    serverSimAddPlayer(sim, PLA_OTHER, "Amounts", false);
+    UT_ASSERT(gs->tanks[PLA_OTHER] != NULL);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[PLA_OTHER]) == 7 &&
+                  tankGetMines(&gs->tanks[PLA_OTHER])  == 6 &&
+                  tankGetArmour(&gs->tanks[PLA_OTHER]) == 33 &&
+                  tankGetTrees(&gs->tanks[PLA_OTHER])  == 5,
+                  "the four amounts should have been handed over exactly, got "
+                  "%u/%u/%u/%u",
+                  (unsigned)tankGetShells(&gs->tanks[PLA_OTHER]),
+                  (unsigned)tankGetMines(&gs->tanks[PLA_OTHER]),
+                  (unsigned)tankGetArmour(&gs->tanks[PLA_OTHER]),
+                  (unsigned)tankGetTrees(&gs->tanks[PLA_OTHER]));
+
+    plaRead(kRecord, rec, sizeof(rec));
+    UT_ASSERT_MSG(strstr(rec, "loadout 1\n") != NULL,
+                  "the script was asked \"%s\", expected a loadout for slot 1",
+                  rec);
+
+    plaEnd(sim, h, kMap, kRecord);
+    return 0;
+}
+
+/* ================================================================
+ * 12. A script prices the blow.
+ *
+ * Read at the helper all three damage paths go through, and then watched
+ * doing its work: a victim at nothing takes a hundred shells and keeps every
+ * point of armour.
+ * ================================================================ */
+int run_scenario_policy_lua_damage_scale(void) {
+    static const char *const kMap    = "scnpol_lua_scale.map";
+    static const char *const kRecord = "scnpol_lua_scale.record";
+    static const char *const kBody =
+        "scenario = { name = \"Boss\", api = 1 }\n"
+        "function damage_scale(attacker, victim, cause)\n"
+        "  note(\"scale \" .. attacker .. \" \" .. victim .. \" \"\n"
+        "       .. tostring(cause) .. \"\\n\")\n"
+        "  if victim == 1 then return 50 end\n"
+        "  return 0\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    char          rec[4096];
+    BYTE          base, halved, none, armourBefore;
+    int           i;
+
+    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    sim = plaSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    serverSimAddPlayer(sim, PLA_OTHER, "Boss", false);
+    serverSimAddPlayer(sim, 2, "Immune", false);
+    UT_ASSERT(gs->tanks[PLA_OTHER] != NULL && gs->tanks[2] != NULL);
+
+    base = (BYTE)gs->rules.shell_damage;
+    UT_ASSERT_MSG(base > 1, "setup: a shell must do more than one point");
+
+    halved = tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
+                              LAST_DEATH_BY_SHELL);
+    UT_ASSERT_MSG(halved > 0 && halved < base,
+                  "a scale of fifty priced a shell at %u, which is not "
+                  "between one and the classic %u",
+                  (unsigned)halved, (unsigned)base);
+
+    none = tankDamageAmount(gs, base, PLA_SELF, 2, LAST_DEATH_BY_SHELL);
+    UT_ASSERT_MSG(none == 0,
+                  "a scale of zero priced a shell at %u, expected nothing",
+                  (unsigned)none);
+
+    plaRead(kRecord, rec, sizeof(rec));
+    UT_ASSERT_MSG(strstr(rec, "scale 0 1 shell\n") != NULL,
+                  "the script was asked \"%s\", expected a shell from slot 0 "
+                  "against slot 1", rec);
+
+    /* And the same answer doing its work at the site. */
+    armourBefore = tankGetArmour(&gs->tanks[2]);
+    UT_ASSERT_MSG(armourBefore > 0, "setup: the target must start with armour");
+    for (i = 0; i < 100; i++) {
+        WORLD tx, ty;
+        tankGetWorld(&gs->tanks[2], &tx, &ty);
+        tankIsTankHit(gs, &gs->tanks[2], tx, ty, (TURNTYPE)0, PLA_SELF);
+    }
+    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[2]) == armourBefore,
+                  "the armour bar moved from %u to %u under a scale of zero",
+                  (unsigned)armourBefore,
+                  (unsigned)tankGetArmour(&gs->tanks[2]));
+    UT_ASSERT_MSG(!tankIsDestroyed(&gs->tanks[2]),
+                  "a tank taking no damage must still be alive");
+
+    plaEnd(sim, h, kMap, kRecord);
+    return 0;
+}
+
+/* ================================================================
+ * 13. Nil, a raise and no function at all are the classic answer.
+ *
+ * The one that matters most is damage_scale: its classic answer is a
+ * hundred and its quiet answer is zero, so a policy falling through to the
+ * wrong one would make every tank in the round invulnerable without a single
+ * assertion moving. Each leg asserts the hundred rather than "not nothing".
+ * ================================================================ */
+
+/* One leg: a round under the script body given, with the three decisions
+   read back. Zero when every one of them was classic and one otherwise, so
+   the case below reads like the assertions it stands in for. */
+static int plaClassicLeg(const char *mapPath, const char *record,
+                         const char *body, const char *what) {
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    BYTE          base;
+
+    UT_ASSERT(plaPut(mapPath, record, body));
+    sim = plaSimOfType(mapPath, &h, gameStrictTournament);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    UT_ASSERT(gs->tanks[PLA_SELF] != NULL);
+
+    /* The loadout: a strict tournament tank is handed nothing. */
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[PLA_SELF]) == 0 &&
+                  tankGetMines(&gs->tanks[PLA_SELF]) == 0 &&
+                  tankGetTrees(&gs->tanks[PLA_SELF]) == 0,
+                  "%s: a strict tournament tank carries %u/%u/%u, expected "
+                  "nothing", what,
+                  (unsigned)tankGetShells(&gs->tanks[PLA_SELF]),
+                  (unsigned)tankGetMines(&gs->tanks[PLA_SELF]),
+                  (unsigned)tankGetTrees(&gs->tanks[PLA_SELF]));
+
+    /* The start: the engine picked one, so the tank stands at a live one. */
+    UT_ASSERT_MSG(plaTankStart(gs, PLA_SELF) >= 0,
+                  "%s: the tank was placed at no start at all", what);
+
+    /* The damage: a hundred, which is the classic amount, and emphatically
+       not the zero a boolean classic answer would have given. */
+    base = (BYTE)gs->rules.shell_damage;
+    serverSimAddPlayer(sim, PLA_OTHER, "Target", false);
+    UT_ASSERT_MSG(tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
+                                   LAST_DEATH_BY_SHELL) == base,
+                  "%s: a shell was priced at %u, expected the classic %u — a "
+                  "classic answer of zero would leave every tank in the round "
+                  "invulnerable", what,
+                  (unsigned)tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
+                                             LAST_DEATH_BY_SHELL),
+                  (unsigned)base);
+
+    plaEnd(sim, h, mapPath, record);
+    return 0;
+}
+
+int run_scenario_policy_lua_value_classic(void) {
+    static const char *const kNilBody =
+        "scenario = { name = \"Silent\", api = 1 }\n"
+        "function on_choose_start(p) note(\"start\\n\") return nil end\n"
+        "function spawn_loadout(p) note(\"loadout\\n\") return nil end\n"
+        "function damage_scale(a, v, c) note(\"scale\\n\") return nil end\n";
+    static const char *const kRaiseBody =
+        "scenario = { name = \"Boom\", api = 1 }\n"
+        "function on_choose_start(p) note(\"start\\n\") error(\"boom\") end\n"
+        "function spawn_loadout(p) note(\"loadout\\n\") error(\"boom\") end\n"
+        "function damage_scale(a, v, c) note(\"scale\\n\")\n"
+        "  error(\"boom\") end\n";
+    static const char *const kBadBody =
+        "scenario = { name = \"Nonsense\", api = 1 }\n"
+        "function on_choose_start(p) note(\"start\\n\") return 999 end\n"
+        "function spawn_loadout(p) note(\"loadout\\n\") return \"plenty\" end\n"
+        "function damage_scale(a, v, c) note(\"scale\\n\") return -5 end\n";
+    static const char *const kNoneBody =
+        "scenario = { name = \"Nothing\", api = 1 }\n";
+    char rec[4096];
+    int  rc;
+
+    rc = plaClassicLeg("scnpol_lua_vnil.map", "scnpol_lua_vnil.record",
+                       kNilBody, "a nil answer");
+    if (rc != 0) return rc;
+    rc = plaClassicLeg("scnpol_lua_vraise.map", "scnpol_lua_vraise.record",
+                       kRaiseBody, "a raise");
+    if (rc != 0) return rc;
+    rc = plaClassicLeg("scnpol_lua_vbad.map", "scnpol_lua_vbad.record",
+                       kBadBody, "an answer the site cannot use");
+    if (rc != 0) return rc;
+
+    /* And with no function of any of the three names, which is the ordinary
+       case and must reach the same place without the host looking anything
+       up. */
+    rc = plaClassicLeg("scnpol_lua_vnone.map", "scnpol_lua_vnone.record",
+                       kNoneBody, "no function at all");
+    if (rc != 0) return rc;
+
+    /* The three that defined the functions really were asked; the fourth
+       wrote no record because it defined none. */
+    plaRead("scnpol_lua_vnone.record", rec, sizeof(rec));
+    UT_ASSERT_MSG(rec[0] == '\0',
+                  "a script defining none of the three wrote \"%s\"", rec);
+    remove("scnpol_lua_vnone.record");
+    return 0;
+}
+
+/* ================================================================
+ * 14. A policy that raises counts, and the count switches the round off.
+ *
+ * damage_scale, because it is the one whose classic answer is a number
+ * rather than a no: every one of these calls prices a shell at the classic
+ * amount on its way to the limit.
+ * ================================================================ */
+int run_scenario_policy_lua_value_error_counts(void) {
+    static const char *const kMap    = "scnpol_lua_vcount.map";
+    static const char *const kRecord = "scnpol_lua_vcount.record";
+    static const char *const kBody =
+        "scenario = { name = \"Boom\", api = 1 }\n"
+        "function damage_scale(a, v, c)\n"
+        "  note(\"scale\\n\")\n"
+        "  error(\"boom\")\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    PlaText       text;
+    BYTE          base;
+    int           i;
+
+    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    sim = plaSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    serverSimAddPlayer(sim, PLA_OTHER, "Target", false);
+    UT_ASSERT(gs->tanks[PLA_OTHER] != NULL);
+    base = (BYTE)gs->rules.shell_damage;
+
+    plaWatchText(sim, &text);
+
+    /* Every one of them prices a shell classically on its way to the limit.
+       The count is not held to an exact call here: a pill firing during the
+       tick below would add an ask of its own, which can only bring the limit
+       forward, and the scenario is switched off once however many errors
+       reached it. */
+    for (i = 0; i < SCN_ERROR_LIMIT; i++) {
+        UT_ASSERT_MSG(tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
+                                       LAST_DEATH_BY_SHELL) == base,
+                      "error %d of %d priced a shell at anything but the "
+                      "classic %u", i + 1, SCN_ERROR_LIMIT, (unsigned)base);
+    }
+    serverSimTick(sim);
+    UT_ASSERT_MSG(text.count == 1,
+                  "%d errors in a row sent %d lines to the game, expected "
+                  "one", SCN_ERROR_LIMIT, text.count);
+    UT_ASSERT_MSG(strstr(text.last, "Boom") != NULL,
+                  "the line does not name the scenario: %s", text.last);
+
+    /* A switched-off round runs none of the script and still prices a shell
+       at the classic amount. */
+    UT_ASSERT_MSG(tankDamageAmount(gs, base, PLA_SELF, PLA_OTHER,
+                                   LAST_DEATH_BY_SHELL) == base,
+                  "the switched-off round priced a shell at anything but the "
+                  "classic %u", (unsigned)base);
+
+    plaEnd(sim, h, kMap, kRecord);
+    return 0;
+}
+
+/* ================================================================
+ * 15. An op issued from inside one of the three is refused.
+ * ================================================================ */
+int run_scenario_policy_lua_value_in_policy(void) {
+    static const char *const kMap    = "scnpol_lua_vinpolicy.map";
+    static const char *const kRecord = "scnpol_lua_vinpolicy.record";
+    static const char *const kBody =
+        "scenario = { name = \"Writes Back\", api = 1 }\n"
+        "function spawn_loadout(p)\n"
+        "  local ok, why = game.message(\"from inside a loadout\")\n"
+        "  note(\"policy \" .. tostring(ok) .. \" \" .. tostring(why)\n"
+        "       .. \"\\n\")\n"
+        "  return nil\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[4096];
+
+    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    sim = plaSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+
+    plaRead(kRecord, rec, sizeof(rec));
+    UT_ASSERT_MSG(strstr(rec, "policy nil SCN_OP_IN_POLICY\n") != NULL,
+                  "an op issued from inside a loadout answered \"%s\", "
+                  "expected nil and SCN_OP_IN_POLICY", rec);
 
     plaEnd(sim, h, kMap, kRecord);
     return 0;

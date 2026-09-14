@@ -1862,6 +1862,89 @@ static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
     return answer;
 }
 
+/* Make the call and leave the one answer on the stack for the caller to
+ * read, which is what a policy carrying a value out needs and a predicate
+ * does not. True with the answer at the top of the stack, and the caller
+ * pops it; false with the stack as it was.
+ *
+ * A raise counts toward the limit and a nil return does not, exactly as the
+ * boolean form has it — the difference is only that "said nothing" cannot be
+ * spelled as a value here, so it is spelled as false.
+ *
+ * The count is not put back to zero for an answer that arrived: whether the
+ * call succeeded is not yet known at this point, because the value still has
+ * to be one the site can use. The caller clears it where it takes the
+ * answer, so a script answering with something unusable every time climbs
+ * toward the limit rather than resetting itself on each call. */
+static bool scnPolicyAnswer(ScenarioHost *h, const char *name, int nargs) {
+    if (lua_pcall(h->L, nargs, 1, 0) != 0) {
+        scnErrorRaised(h, name, scnLuaError(h->L));
+        lua_pop(h->L, 1);
+        return false;
+    }
+    if (lua_isnil(h->L, -1)) {
+        lua_pop(h->L, 1);
+        scnErrorCleared(h);   /* no opinion is not a failure */
+        return false;
+    }
+    return true;
+}
+
+/* An answer the site cannot use: a start that is not on the map, a loadout
+ * table missing an amount, a percent outside what the damage arithmetic
+ * takes. Counted the way a raise is, because a script answering with
+ * something unusable every time is failing every call as surely as one that
+ * raises, and the operator needs to see which. The decision itself is the
+ * classic one, which the caller has already written down. */
+static void scnPolicyBadAnswer(ScenarioHost *h, const char *name,
+                               const char *detail) {
+    scnSay(h->lastError, sizeof(h->lastError),
+           "scenario: %s answered %s; the classic rule stands", name, detail);
+    scnErrorsCounted(h, 1);
+}
+
+/* The largest magnitude any policy answer can mean, so the cast below is
+ * always defined. Each caller bounds its own answer further. */
+#define SCN_POLICY_NUMBER_MAX 1000000.0
+
+/* The answer at the top of the stack as a whole number. False for anything
+ * that is not a number and for one no answer could mean, a NaN included —
+ * written as a negated in-range test so a NaN takes the false branch rather
+ * than falling through both.
+ *
+ * Truncates toward zero rather than asking Lua for an integer: PUC 5.4 reads
+ * 3.5 as no integer at all and LuaJIT reads it as 3, and a policy answers the
+ * same under either build. */
+static bool scnPolicyWhole(lua_State *L, long *out) {
+    lua_Number v;
+
+    if (lua_type(L, -1) != LUA_TNUMBER) {
+        return false;
+    }
+    v = lua_tonumber(L, -1);
+    if (!(v >= -SCN_POLICY_NUMBER_MAX && v <= SCN_POLICY_NUMBER_MAX)) {
+        return false;
+    }
+    *out = (long)v;
+    return true;
+}
+
+/* One amount out of a loadout table, raw so a metatable on the table the
+ * script returned cannot run script code in the middle of the read. False
+ * for a field that is absent or is not a stock a tank could hold. */
+static bool scnLoadoutAmount(ScenarioHost *h, const char *key, BYTE *out) {
+    long v  = 0;
+    bool ok = false;
+
+    scnRawField(h->L, -1, key);
+    if (scnPolicyWhole(h->L, &v) && v >= 0 && v <= 255) {
+        *out = (BYTE)v;
+        ok   = true;
+    }
+    lua_pop(h->L, 1);
+    return ok;
+}
+
 /* An item index as Lua counts them, or nil for a number that is no index.
  * Pills, bases and starts are 1-based in Lua and 0-based on the policy
  * surface; the build order's "no pill" sentinel is neither and must not be
@@ -2040,6 +2123,161 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
     }
     scnLockLeave(&h->lock);
     return may;
+}
+
+/* Where this tank starts. The one policy that keeps a prefix, because the
+ * arenas written against the prototype's surface already spell it this way.
+ *
+ * The script counts starts from one, as it counts pills and bases; the
+ * out-parameter is the engine's own 0-based index, so the number goes out
+ * through the read helper to be checked and the op helper to be handed over.
+ * A number naming no live start is refused here rather than left for the
+ * site's own fallback, so the operator is told which call named it. */
+static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
+    ScenarioHost *h     = (ScenarioHost *)ctx;
+    bool          named = false;
+
+    if (h == NULL || startIdx == NULL) {
+        return false;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "on_choose_start")) {
+        lua_pushinteger(h->L, (lua_Integer)player);
+        if (scnPolicyAnswer(h, "on_choose_start", 1)) {
+            ServerSimStartInfo info;
+            long               n    = 0;
+            BYTE               read = 0;
+
+            if (!scnPolicyWhole(h->L, &n)) {
+                scnPolicyBadAnswer(h, "on_choose_start",
+                                   "with no start number");
+            } else {
+                read = scenarioLuaIndexToRead((lua_Integer)n);
+                if (read == 0 ||
+                    !serverSimGetStartInfo(h->sim, read, &info) ||
+                    !info.active) {
+                    scnSay(h->lastError, sizeof(h->lastError),
+                           "scenario: on_choose_start named start %ld for "
+                           "player %d, which is not a live start; the engine "
+                           "picks", n, (int)player);
+                    scnErrorsCounted(h, 1);
+                } else {
+                    *startIdx = scenarioLuaIndexToOp((lua_Integer)n);
+                    named     = true;
+                    scnErrorCleared(h);
+                }
+            }
+            lua_pop(h->L, 1);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return named;
+}
+
+/* What this spawning tank is handed. Two shapes: a word naming the rules the
+ * loadout comes from, and a table of the four amounts. A word the set does
+ * not hold, a table missing an amount and anything that is neither are all
+ * answers the site cannot use, so the sim's own game type stands.
+ *
+ * All four amounts are required. A table naming some of them would leave the
+ * rest at nothing, and a tank spawning with no armour because a script wrote
+ * only its shells is a worse answer than being told the table is short. */
+static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
+    ScenarioHost *h        = (ScenarioHost *)ctx;
+    bool          answered = false;
+
+    if (h == NULL || out == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "spawn_loadout")) {
+        lua_pushinteger(h->L, (lua_Integer)player);
+        if (scnPolicyAnswer(h, "spawn_loadout", 1)) {
+            if (lua_type(h->L, -1) == LUA_TSTRING) {
+                const char *answer = lua_tostring(h->L, -1);
+                int         type   = 0;
+                if (scenarioLuaLoadoutFromWord(answer, &type)) {
+                    out->useGameType = 1;
+                    out->gameType    = (uint8_t)type;
+                    answered         = true;
+                    scnErrorCleared(h);
+                } else {
+                    scnSay(h->lastError, sizeof(h->lastError),
+                           "scenario: spawn_loadout answered '%.24s', which "
+                           "names no loadout; the game type stands",
+                           answer);
+                    scnErrorsCounted(h, 1);
+                }
+            } else if (lua_istable(h->L, -1)) {
+                ScnLoadout want;
+                memset(&want, 0, sizeof(want));
+                if (scnLoadoutAmount(h, "shells", &want.shells) &&
+                    scnLoadoutAmount(h, "mines",  &want.mines) &&
+                    scnLoadoutAmount(h, "armour", &want.armour) &&
+                    scnLoadoutAmount(h, "trees",  &want.trees)) {
+                    *out     = want;
+                    answered = true;
+                    scnErrorCleared(h);
+                } else {
+                    scnPolicyBadAnswer(h, "spawn_loadout",
+                                       "with a table that is not four amounts "
+                                       "of 0 to 255");
+                }
+            } else {
+                scnPolicyBadAnswer(h, "spawn_loadout",
+                                   "with neither a loadout word nor a table "
+                                   "of amounts");
+            }
+            lua_pop(h->L, 1);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return answered;
+}
+
+/* What this blow is worth against this victim, as a percent. A hundred is
+ * the classic amount and zero is a hit that costs no armour at all, so every
+ * way of saying nothing has to come to a hundred: a missing function, a nil
+ * answer, a raise and an answer outside the range below all leave the damage
+ * arithmetic exactly where it was. Falling through to a zero instead would
+ * make every tank in the round invulnerable and say nothing about it.
+ *
+ * The top of the range is a hundredfold. The site widens its own arithmetic
+ * and caps the result at 255, so nothing above that changes an outcome a
+ * smaller number has not already reached, and a bound is what keeps a number
+ * a script names inside an int. */
+#define SCN_DAMAGE_SCALE_MAX 10000
+
+static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
+    ScenarioHost *h    = (ScenarioHost *)ctx;
+    const char   *word = scenarioLuaDeathCauseWord((int)cause);
+    int           pct  = 100;
+
+    if (h == NULL || word == NULL) {
+        return 100;
+    }
+    scnLockEnter(&h->lock);
+    if (scnPolicyBegin(h, "damage_scale")) {
+        lua_pushinteger(h->L, (lua_Integer)attacker);
+        lua_pushinteger(h->L, (lua_Integer)victim);
+        lua_pushstring(h->L, word);
+        if (scnPolicyAnswer(h, "damage_scale", 3)) {
+            long v = 0;
+            if (scnPolicyWhole(h->L, &v) && v >= 0 &&
+                v <= SCN_DAMAGE_SCALE_MAX) {
+                pct = (int)v;
+                scnErrorCleared(h);
+            } else {
+                scnPolicyBadAnswer(h, "damage_scale",
+                                   "with no percent between 0 and "
+                                   "a hundredfold");
+            }
+            lua_pop(h->L, 1);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return pct;
 }
 
 /* A round the scenario takes no part in: no hooks, no policy answers, and
@@ -2353,6 +2591,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->policy.canCapture      = scnCanCapture;
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
+    h->policy.chooseStart     = scnChooseStart;
+    h->policy.spawnLoadout    = scnSpawnLoadout;
+    h->policy.damageScale     = scnDamageScale;
     h->policy.ctx             = h;
 
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);

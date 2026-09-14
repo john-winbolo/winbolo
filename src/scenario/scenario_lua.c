@@ -1092,6 +1092,25 @@ static int scnArgWord(lua_State *L, int idx, const char *name,
                                          name, word, set->what));
 }
 
+/* The same set, read by a caller with no lua_State argument to raise on: the
+   host asks the loadout policy and has to answer classic for a word the set
+   does not hold rather than stopping the script. One table serves both, so a
+   word a spawn op takes is a word the policy takes. */
+bool scenarioLuaLoadoutFromWord(const char *word, int *out) {
+    size_t i;
+
+    if (word == NULL || out == NULL) {
+        return false;
+    }
+    for (i = 0; i < kScnLoadouts.count; i++) {
+        if (strcmp(kScnLoadouts.rows[i].word, word) == 0) {
+            *out = kScnLoadouts.rows[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Who a line is addressed to. */
 typedef enum {
     SCN_LUA_TO_ALL,

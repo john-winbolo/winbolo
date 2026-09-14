@@ -5041,6 +5041,12 @@ set(_unit_test_names
     scenario_policy_lua_nil_is_classic
     scenario_policy_lua_op_in_policy
     scenario_policy_lua_error_counts
+    scenario_policy_lua_choose_start
+    scenario_policy_lua_spawn_loadout
+    scenario_policy_lua_damage_scale
+    scenario_policy_lua_value_classic
+    scenario_policy_lua_value_error_counts
+    scenario_policy_lua_value_in_policy
     game_event_channel_base_captured
     game_event_channel_pill_captured
     game_event_channel_lgm_lost

@@ -2308,6 +2308,18 @@ int run_scenario_policy_lua_nil_is_classic(void);
 int run_scenario_policy_lua_op_in_policy(void);
 int run_scenario_policy_lua_error_counts(void);
 
+/* And the three that carry a value out rather than answering a bool: the
+ * start a script names, the loadout in both of its shapes, and the percent a
+ * blow is priced at — each at its site, with nil, a raise, an answer the site
+ * cannot use and no function at all reaching that policy's own classic
+ * answer, which for damage_scale is a hundred and not a zero. */
+int run_scenario_policy_lua_choose_start(void);
+int run_scenario_policy_lua_spawn_loadout(void);
+int run_scenario_policy_lua_damage_scale(void);
+int run_scenario_policy_lua_value_classic(void);
+int run_scenario_policy_lua_value_error_counts(void);
+int run_scenario_policy_lua_value_in_policy(void);
+
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than
  * on the control stream, with every byte of each event — the ones past
