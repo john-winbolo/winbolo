@@ -1629,13 +1629,16 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
  * near the reservations its team already holds; a team written after that
  * call has missed the pick, and the bot is placed as though it had no team.
  *
- * No alliance rebake. A seat held for a wave was allied with its team when
- * the round started and keeps that through every unfielding, so a rebake per
- * spawn only republishes what every client already has — and each one is a
- * CTRL_ALLIANCE_RESET, which the receiver reads as every slot leaving its
- * alliance and joining again. A seat fielded for the first time mid-round
- * therefore starts unallied; when that wants fixing it is one rebake a tick
- * off a roster-dirty mark rather than one per bot. */
+ * The alliance is the one thing the add does not carry, so a seat new to the
+ * roster is allied with its team below. A seat that was already held is not:
+ * it was allied when the round started and keeps that through every
+ * unfielding, so accepting again would publish events for a state every
+ * client already holds.
+ *
+ * Per pair, and never a rebake of the whole matrix. The batched reset exists
+ * so that rebaking every slot costs one event instead of N×(N-1)/2; putting
+ * one seat on one team is a handful of accepts, and a reset would make every
+ * receiver drop and rebuild all sixteen slots for them. */
 static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const char *name, BYTE team,
                                  const ScnTable *init) {
@@ -1667,6 +1670,20 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
         return false;
     }
     transportUdpServerSetBotName(slot, name);
+    if (!wasHeld && team > 0 && team < MAX_TANKS) {
+        /* One accept per connected team member, down the same call a player's
+           own accept takes, so the server's bitmaps and every client's are
+           written by the same code. An accept merges the two sides' groups,
+           so the team comes out of this as one group whether or not it was
+           one going in. */
+        BYTE i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (i == slot) continue;
+            if (!sim->playerConnected[i]) continue;
+            if (sim->lobbyPlayers[i].teamNumber != team) continue;
+            serverSimAcceptAlliance(sim, i, slot);
+        }
+    }
     serverSimPublishLobbySlot(sim, slot);
     return true;
 }

@@ -3360,8 +3360,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # that drop a remainder rather than painting the map that replaced it.
     tests/unit/test_scenario_map_arms.c
     # The roster ops: the six arms, the refusals each one answers with, the
-    # queue that paces a spawn and a removal one to a tick, and the init
-    # table a spawned bot's brain is created with.
+    # queue that paces a spawn and a removal one to a tick, the init table a
+    # spawned bot's brain is created with, and the alliance a spawn onto a
+    # team publishes per pair.
     tests/unit/test_scenario_roster_arms.c
     # The unfielded seat: what a seat held without a bot in it counts for, the
     # start sequence walking past it, the spawn that fields it and the removal
@@ -4951,6 +4952,8 @@ set(_unit_test_names
     scenario_roster_spawn_lands
     scenario_roster_spawn_paced
     scenario_roster_team_during_add
+    scenario_roster_spawn_allies_team
+    scenario_roster_spawn_no_team_quiet
     scenario_roster_remove_bot
     scenario_roster_set_team
     scenario_lobby_add_bot

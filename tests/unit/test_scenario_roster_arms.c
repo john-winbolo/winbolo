@@ -22,6 +22,11 @@
  * run_scenario_roster_spawn_paced     — ten asked for at once, one a tick
  * run_scenario_roster_team_during_add — the team is in place as the add
  *                                       picks the slot's start
+ * run_scenario_roster_spawn_allies_team
+ *                                     — the bot is allied with its team, one
+ *                                       accept per member and no reset
+ * run_scenario_roster_spawn_no_team_quiet
+ *                                     — a spawn onto no team allies nothing
  * run_scenario_roster_remove_bot      — humans refused, the removal paced
  * run_scenario_roster_set_team        — the write, and a team off the end
  * run_scenario_lobby_add_bot          — the lobby add and its refusals
@@ -44,6 +49,7 @@
 #include "server_sim_scenario.h"
 #include "server_sim_join.h"       /* serverSimFindFreeSlot */
 #include "game_sim.h"
+#include "players.h"               /* playersIsAllie — the team's alliance */
 #include "tank.h"                  /* tankGetWorld */
 #include "starts.h"                /* startsGetNumStarts */
 #include "everard_map.h"
@@ -790,6 +796,150 @@ int run_scenario_roster_spawn_named_start(void) {
     UT_ASSERT_MSG(gs->scenarioStartIdx[slot] == MAX_STARTS,
                   "the spawn left its start slot set");
 
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* ── The team's alliance ─────────────────────────────────────────── */
+
+/* The two alliance events a spawn could publish, and who the last accept
+ * named. A reset carries the whole matrix and is what the spawn must never
+ * send: every receiver applies one by dropping all sixteen slots' alliances
+ * and taking them back. */
+typedef struct {
+    int  accepts;
+    int  resets;
+    BYTE lastAccepter;
+    BYTE lastNewMember;
+} RaAllyEvents;
+
+static void raCountAllyEvents(void *ctx, const ControlEvent *evt) {
+    RaAllyEvents *c = (RaAllyEvents *)ctx;
+    if (evt->type == CTRL_ALLIANCE_ACCEPT) {
+        c->accepts++;
+        c->lastAccepter  = evt->u.allianceAccept.acceptedBy;
+        c->lastNewMember = evt->u.allianceAccept.newMember;
+    } else if (evt->type == CTRL_ALLIANCE_RESET) {
+        c->resets++;
+    }
+}
+
+/* The first bot slot, or SCN_NONE. skip is a slot to walk past, so the
+ * second spawn of a case can be told from the first. */
+static BYTE raFirstBotSlot(ServerSim *sim, BYTE skip) {
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == skip) continue;
+        if (serverSimIsBot(sim, i)) return i;
+    }
+    return SCN_NONE;
+}
+
+int run_scenario_roster_spawn_allies_team(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    RaAllyEvents ev;
+    SubscriberHandle h;
+    BYTE team;
+    BYTE first = SCN_NONE;
+    BYTE second = SCN_NONE;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_allies_team"));
+    ut_brain_stub_arm(true);
+    sim = raRunningSim();
+    UT_ASSERT(sim != NULL);
+
+    /* The human's own team, read off the roster rather than assumed, so the
+       spawn below asks for the team somebody is already on. */
+    team = sim->lobbyPlayers[0].teamNumber;
+    UT_ASSERT_MSG(team > 0, "the human in slot 0 is on no team");
+
+    memset(&ev, 0, sizeof(ev));
+    h = serverSimRegisterSubscriber(sim, raCountAllyEvents, &ev);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    /* Registering replays the state of the game to the new subscriber; the
+       counts start from the spawn. */
+    memset(&ev, 0, sizeof(ev));
+
+    raSpawnOp(&op, SCN_NONE, team, "Ally1", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    first = raFirstBotSlot(sim, SCN_NONE);
+    UT_ASSERT_MSG(first != SCN_NONE, "the spawn never landed");
+
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, first),
+                  "the spawned bot in slot %u is not allied with the human on "
+                  "its own team %u", (unsigned)first, (unsigned)team);
+    UT_ASSERT_MSG(ev.accepts == 1,
+                  "the spawn published %d alliance accepts, expected 1 — one "
+                  "per connected member of the team", ev.accepts);
+    UT_ASSERT_MSG(ev.lastAccepter == 0 && ev.lastNewMember == first,
+                  "the accept named %u and %u, expected 0 and %u",
+                  (unsigned)ev.lastAccepter, (unsigned)ev.lastNewMember,
+                  (unsigned)first);
+    UT_ASSERT_MSG(ev.resets == 0,
+                  "the spawn published %d alliance resets", ev.resets);
+
+    /* A second bot on the same team: one accept per member already there, so
+       two, and all three read as allied. */
+    memset(&ev, 0, sizeof(ev));
+    raSpawnOp(&op, SCN_NONE, team, "Ally2", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    second = raFirstBotSlot(sim, first);
+    UT_ASSERT_MSG(second != SCN_NONE, "the second spawn never landed");
+
+    UT_ASSERT_MSG(ev.accepts == 2,
+                  "the second spawn published %d alliance accepts, expected 2",
+                  ev.accepts);
+    UT_ASSERT_MSG(ev.resets == 0,
+                  "the second spawn published %d alliance resets", ev.resets);
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, second),
+                  "the second bot is not allied with the human");
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, first, second),
+                  "the two bots on one team are not allied with each other");
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+int run_scenario_roster_spawn_no_team_quiet(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    RaAllyEvents ev;
+    SubscriberHandle h;
+    BYTE slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_no_team_quiet"));
+    ut_brain_stub_arm(true);
+    sim = raRunningSim();
+    UT_ASSERT(sim != NULL);
+
+    memset(&ev, 0, sizeof(ev));
+    h = serverSimRegisterSubscriber(sim, raCountAllyEvents, &ev);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(&ev, 0, sizeof(ev));
+
+    /* No team asked for, so there is nobody to be allied with. */
+    raSpawnOp(&op, SCN_NONE, 0, "Loner", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    slot = raFirstBotSlot(sim, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn never landed");
+
+    UT_ASSERT_MSG(ev.accepts == 0,
+                  "a spawn with no team published %d alliance accepts",
+                  ev.accepts);
+    UT_ASSERT_MSG(ev.resets == 0,
+                  "a spawn with no team published %d alliance resets",
+                  ev.resets);
+    UT_ASSERT_MSG(!playersIsAllie(&sim->sim.plyrs, 0, slot),
+                  "a bot spawned onto no team is allied with the human");
+
+    serverSimUnregisterSubscriber(sim, h);
     serverSimDestroy(sim);
     raDropBrainFile();
     return 0;

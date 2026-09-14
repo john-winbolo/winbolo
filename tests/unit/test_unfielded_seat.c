@@ -426,6 +426,7 @@ typedef struct {
     int playerLeave;
     int playerJoin;
     int allianceLeave;
+    int allianceAccept;
     int allianceReset;
 } UfEvents;
 
@@ -440,6 +441,7 @@ static void ufCountEvents(void *ctx, const ControlEvent *evt) {
         case CTRL_PLAYER_LEAVE:    c->playerLeave++;    break;
         case CTRL_PLAYER_JOIN:     c->playerJoin++;     break;
         case CTRL_ALLIANCE_LEAVE:  c->allianceLeave++;  break;
+        case CTRL_ALLIANCE_ACCEPT: c->allianceAccept++; break;
         case CTRL_ALLIANCE_RESET:  c->allianceReset++;  break;
         default: break;
     }
@@ -615,12 +617,16 @@ int run_unfielded_seat_spawn_keeps_alliances(void) {
                   "the spawn did not field the seat");
 
     /* The seat was allied with its team before the spawn and is allied with
-       it after, so the rebake had nothing to add. Each one is a matrix the
-       receiver applies by dropping every alliance and taking them all back,
-       which is what moves a viewer's pills. */
+       it after, so there is nothing to publish: not the batched matrix, which
+       every receiver applies by dropping all sixteen slots' alliances and
+       taking them back, and not a per-pair accept either. A seat new to the
+       roster is the one that needs those; this one is not. */
     UT_ASSERT_MSG(ev.allianceReset == 0,
                   "fielding a held seat published %d alliance resets",
                   ev.allianceReset);
+    UT_ASSERT_MSG(ev.allianceAccept == 0,
+                  "fielding a held seat published %d alliance accepts",
+                  ev.allianceAccept);
     UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, UF_SEAT),
                   "the fielded seat is no longer allied with its team");
 

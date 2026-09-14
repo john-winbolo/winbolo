@@ -2174,6 +2174,11 @@ int run_scenario_roster_spawn_refusals(void);
 int run_scenario_roster_spawn_lands(void);
 int run_scenario_roster_spawn_paced(void);
 int run_scenario_roster_team_during_add(void);
+/* A spawn allies the new bot with its team, one CTRL_ALLIANCE_ACCEPT per
+ * connected member and never the batched matrix; a spawn onto no team
+ * publishes neither. */
+int run_scenario_roster_spawn_allies_team(void);
+int run_scenario_roster_spawn_no_team_quiet(void);
 int run_scenario_roster_remove_bot(void);
 int run_scenario_roster_set_team(void);
 int run_scenario_lobby_add_bot(void);
