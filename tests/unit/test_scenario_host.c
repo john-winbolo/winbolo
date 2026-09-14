@@ -2227,21 +2227,25 @@ static void shSeat(ServerSim *sim, BYTE slot, const char *name) {
     serverSimAddPlayer(sim, slot, name, false);
 }
 
-/* The chunk counts its own runs through a file, so the state the policy is
- * asked on says which run it belongs to: the attach's chunk finds the file
- * empty and picks start 1, the round's chunk finds one line and picks the
- * last start on the map. The seat is taken before the start, so the tank the
- * start builds is placed by whichever of the two states the host was holding
- * when it asked — and only the round's own gives the last start.
+/* The chunk tells its two runs apart by the roster, so the state the policy
+ * is asked on says which run it belongs to: the attach's chunk finds nobody
+ * on the field and picks start 1, the round's chunk finds the seat taken
+ * below and picks the last start on the map. The seat is taken before the
+ * start, so the tank the start builds is placed by whichever of the two
+ * states the host was holding when it asked — and only the round's own gives
+ * the last start.
  *
  * This is the case that fails if the boot moves back behind the tanks: it
  * would be the attach's state answering, and slot 0 would open the round on
  * start 1. */
 int run_scenario_host_round_answers_its_own_start(void) {
-    static const char *const kMap    = "scnhost_own_start.map";
-    static const char *const kRecord = "scnhost_own_start.record";
+    static const char *const kMap  = "scnhost_own_start.map";
+    static const char *const kBody =
+        "scenario = { name = \"Own Start\", api = 1 }\n"
+        "note(\"run\\n\")\n"
+        "local pick = (game.num_players() == 0) and 1 or game.num_starts()\n"
+        "function on_choose_start(p) return pick end\n";
     char          lua[2048];
-    char          body[1024];
     char          got[256];
     ServerSim    *sim;
     ScenarioHost *h;
@@ -2250,21 +2254,8 @@ int run_scenario_host_round_answers_its_own_start(void) {
     BYTE          numStarts;
     int           landed;
 
-    remove(kRecord);
-    snprintf(body, sizeof(body),
-             "scenario = { name = \"Own Start\", api = 1 }\n"
-             "local runs = 0\n"
-             "do\n"
-             "  local f = io.open(\"%s\", \"r\")\n"
-             "  if f then\n"
-             "    for _ in f:lines() do runs = runs + 1 end\n"
-             "    f:close()\n"
-             "  end\n"
-             "end\n"
-             "note(\"run\\n\")\n"
-             "local pick = (runs == 0) and 1 or game.num_starts()\n"
-             "function on_choose_start(p) return pick end\n", kRecord);
-    shScript(lua, sizeof(lua), kRecord, body);
+    shNoteReset();
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
@@ -2275,9 +2266,12 @@ int run_scenario_host_round_answers_its_own_start(void) {
                   "setup: the map must carry at least three starts, has %u",
                   (unsigned)numStarts);
 
+    /* Before the attach: the chunk's top level writes its line as it runs. */
+    shWatchConsole(sim, shNoteLine);
+
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "run\n") == 0,
                   "the attach recorded '%s', expected one run of the chunk",
                   got);
@@ -2287,7 +2281,7 @@ int run_scenario_host_round_answers_its_own_start(void) {
                   "setup: the seat has a tank before the round started");
 
     serverSimStartGame(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "run\nrun\n") == 0,
                   "the round recorded '%s', expected the chunk run twice — "
                   "once at the attach and once for the round", got);
@@ -2300,10 +2294,11 @@ int run_scenario_host_round_answers_its_own_start(void) {
                   "state from before the round would have given",
                   landed, (unsigned)(numStarts - 1));
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }
 
@@ -2360,43 +2355,40 @@ int run_scenario_host_opening_tank_under_rules(void) {
 
 /* ── A boot that fails leaves a round to play ─────────────────────── */
 
-/* The chunk raises as soon as a file beside it exists, and the file is made
- * between two rounds — so the first round boots and plays by the script, and
- * the second round's boot does not. The boot now runs before anything is
- * placed, so what a failed one leaves behind has to be a round that still
- * starts: the state flips to running, the seat gets its tank, and the
- * scenario is simply not part of the round.
+/* The chunk raises as soon as a second seat is taken, and the second seat is
+ * taken between two rounds — so the first round boots and plays by the
+ * script, and the second round's boot does not. The boot now runs before
+ * anything is placed, so what a failed one leaves behind has to be a round
+ * that still starts: the state flips to running, the seat gets its tank, and
+ * the scenario is simply not part of the round.
  *
  * And the table that round plays by is the classic one. The first round's
  * script set a short shell load; the second round has no script to set one,
  * so a tank still carrying the short load would be the round before it
  * lending this one its rules. */
 int run_scenario_host_boot_failure_still_starts(void) {
-    static const char *const kMap    = "scnhost_boot_fail.map";
-    static const char *const kBreak  = "scnhost_boot_fail.break";
-    static const char *const kRecord = "scnhost_boot_fail.record";
+    static const char *const kMap = "scnhost_boot_fail.map";
     char          lua[2048];
     char          body[1024];
     char          got[256];
     ServerSim    *sim;
     ScenarioHost *h;
     char          err[512];
-    FILE         *f;
 
-    remove(kRecord);
-    remove(kBreak);
+    shNoteReset();
     snprintf(body, sizeof(body),
              "scenario = { name = \"Breaks\", api = 1,\n"
              "             rules = { tank_full_shells = %d } }\n"
-             "do\n"
-             "  local f = io.open(\"%s\", \"r\")\n"
-             "  if f then f:close() error(\"this round is not loading\") end\n"
+             "if game.num_players() > 1 then\n"
+             "  error(\"this round is not loading\")\n"
              "end\n"
-             "function on_setup() note(\"s\") end\n", SH_SHELLS_SET, kBreak);
-    shScript(lua, sizeof(lua), kRecord, body);
+             "function on_setup() note(\"s\") end\n", SH_SHELLS_SET);
+    shScript(lua, sizeof(lua), body);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -2406,7 +2398,7 @@ int run_scenario_host_boot_failure_still_starts(void) {
     /* The round the script does boot for, so the table the failed round is
        measured against is one a script really set. */
     serverSimStartGame(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "s") == 0,
                   "the first round recorded '%s', expected 's': the round the "
                   "script boots for did not run its setup", got);
@@ -2415,10 +2407,9 @@ int run_scenario_host_boot_failure_still_starts(void) {
                   "script's %d",
                   (int)sim->sim.rules.tank_full_shells, SH_SHELLS_SET);
 
-    remove(kRecord);
-    f = fopen(kBreak, "wb");
-    UT_ASSERT_MSG(f != NULL, "setup: the file the chunk trips on was not made");
-    fclose(f);
+    shNoteReset();
+    /* The second seat is what the next boot trips on. */
+    shSeat(sim, 1, "Other");
 
     serverSimStartGame(sim);
 
@@ -2428,7 +2419,7 @@ int run_scenario_host_boot_failure_still_starts(void) {
                   (int)serverSimGetState(sim));
     UT_ASSERT_MSG(sim->sim.tanks[0] != NULL,
                   "the start built no tank for seat 0 after the boot failed");
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(got[0] == '\0',
                   "the round recorded '%s': a scenario whose boot failed ran "
                   "its setup anyway", got);
@@ -2445,11 +2436,11 @@ int run_scenario_host_boot_failure_still_starts(void) {
                   (unsigned)tankGetShells(&sim->sim.tanks[0]),
                   TANK_FULL_SHELLS);
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kBreak);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }
 
@@ -2563,8 +2554,7 @@ int run_scenario_host_tag_follows_switch(void) {
  * the chunk would take it away before the first drain and the hook would
  * never be called for something the script itself did. */
 int run_scenario_host_chunk_events_reach_hooks(void) {
-    static const char *const kMap    = "scnhost_chunk_event.map";
-    static const char *const kRecord = "scnhost_chunk_event.record";
+    static const char *const kMap  = "scnhost_chunk_event.map";
     static const char *const kBody =
         "scenario = { name = \"Chunk\", api = 1 }\n"
         "game.set_base_owner(1, 0)\n"
@@ -2576,11 +2566,13 @@ int run_scenario_host_chunk_events_reach_hooks(void) {
     ServerSimBaseInfo info;
     char              err[512];
 
-    remove(kRecord);
-    shScript(lua, sizeof(lua), kRecord, kBody);
+    shNoteReset();
+    shScript(lua, sizeof(lua), kBody);
     UT_ASSERT(shPut(kMap, lua));
     sim = shSim();
     UT_ASSERT(sim != NULL);
+
+    shWatchConsole(sim, shNoteLine);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -2596,21 +2588,22 @@ int run_scenario_host_chunk_events_reach_hooks(void) {
                   "the op the chunk's top level issued was refused",
                   (unsigned)info.owner);
 
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(got[0] == '\0',
                   "the round start recorded '%s': a hook belongs to the "
                   "first drain, not to the start", got);
 
     serverSimTick(sim);
-    shRead(kRecord, got, sizeof(got));
+    shRead(got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "c") == 0,
                   "the first tick recorded '%s', expected the one 'c': the "
                   "event the chunk's own op raised never reached the round's "
                   "hook", got);
 
+    shUnwatchConsole(sim);
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
-    remove(kRecord);
+    shNoteReset();
     return 0;
 }
