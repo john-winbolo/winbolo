@@ -58,6 +58,23 @@
  * not exported, and a wire change here would otherwise go unnoticed. */
 #define JRL_BURST          5
 
+/* Mirrors JOIN_RL_REFILL_MS in udp_server_join.c, kept in sync by hand for
+ * the same reason. The bucket hands back one token every this many ms,
+ * measured from when the source was first seen, so a burst that takes
+ * longer than this to pump is legitimately allowed more than JRL_BURST
+ * through. The allowance below is computed from the elapsed time rather
+ * than assumed, which is what keeps this test from failing on a machine
+ * that pumps the loop slowly (a parallel ctest run, most often). */
+#define JRL_REFILL_MS      2000
+
+/* Stop pumping once the burst has had this long, measured from before the
+ * harness starts. Every challenge the limiter is going to issue has landed
+ * by ~10 ms — the harness comes up in single-digit ms and the whole burst
+ * is answered on the first pump — and a limiter that admitted too many
+ * does so on that same first pump, so this is roughly 40x what the case
+ * needs while still leaving 5x headroom before the first refill. */
+#define JRL_TIME_BUDGET_MS 400
+
 /* Distinct-port sources fired at the single 127.0.0.1 bucket. Comfortably
  * above the burst capacity and above what the bucket can admit, and well over
  * MAX_TANKS so a missing limiter would visibly over-accept. */
@@ -134,6 +151,16 @@ int run_join_rate_limit(void) {
     bool challenged[JRL_NUM_SOCKETS];
     int challengeCount = 0;
     int i, pump;
+    uint64_t burstStartMs;
+    uint64_t burstElapsedMs;
+    int burstAllowed;
+
+    /* Before the harness, not before the burst: the harness's own client
+     * joins from 127.0.0.1 as well, so its JOIN is what creates the bucket
+     * the burst below then shares, and the refill windows are counted from
+     * there. Taking the reading here can only over-state the bucket's age,
+     * which errs towards allowing more, never towards a false failure. */
+    burstStartMs = SDL_GetTicks();
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Joiner", /*lobbyMode*/ false,
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
@@ -164,6 +191,7 @@ int run_join_rate_limit(void) {
 
     for (pump = 0; pump < JRL_PUMP_MAX; pump++) {
         uint8_t in[1024];
+        if (SDL_GetTicks() - burstStartMs >= JRL_TIME_BUDGET_MS) break;
         /* Resend each not-yet-challenged socket's JOIN periodically to ride out
          * best-effort loopback delivery and the recv-thread drain. A JOIN the
          * limiter drops is silent (no challenge), so an un-challenged socket's
@@ -193,18 +221,34 @@ int run_join_rate_limit(void) {
 
     for (i = 0; i < JRL_NUM_SOCKETS; i++) closesocket(socks[i]);
 
+    /* What the bucket actually promised over the time the burst took: the
+     * capacity, plus a token for each whole refill window that elapsed
+     * while the burst was in flight. lastMs is set when the source is
+     * first seen and advanced only by refills, so the windows count from
+     * the harness's own JOIN, which is what burstStartMs precedes. A
+     * normally-paced run never reaches a refill and this is just
+     * JRL_BURST; a run held off the CPU long enough to earn a token
+     * (a loaded parallel ctest) gets that token counted rather than
+     * failing on it. */
+    burstElapsedMs = SDL_GetTicks() - burstStartMs;
+    burstAllowed   = JRL_BURST + (int)(burstElapsedMs / JRL_REFILL_MS);
+
     fprintf(stderr, "  join rate limit: %d/%d distinct-port JOINs challenged "
-            "(burst=%d)\n", challengeCount, JRL_NUM_SOCKETS, JRL_BURST);
+            "(burst=%d, %llu ms elapsed, allowed=%d)\n",
+            challengeCount, JRL_NUM_SOCKETS, JRL_BURST,
+            (unsigned long long)burstElapsedMs, burstAllowed);
 
     if (challengeCount < 1) {
         loopbackHarnessStop(&h);
         UT_FAIL("no JOIN drew a challenge from the 127.0.0.1 burst within "
                 "%d pumps", JRL_PUMP_MAX);
     }
-    if (challengeCount > JRL_BURST) {
+    if (challengeCount > burstAllowed) {
         loopbackHarnessStop(&h);
         UT_FAIL("rate limit let %d JOINs past the limiter from one source IP, "
-                "expected <= %d", challengeCount, JRL_BURST);
+                "expected <= %d (burst %d + %llu ms of refill)",
+                challengeCount, burstAllowed, JRL_BURST,
+                (unsigned long long)burstElapsedMs);
     }
 
     /* ---- (B) Distinct sources independent: 127.0.0.2 (Linux only) ---- */
