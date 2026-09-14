@@ -418,6 +418,10 @@ end
 
 -- djb2 over the canonical order key.  Kept under 8 decimal digits so the
 -- wire verbs stay short.
+-- THE ORDER ID: verb + who-word + target, and NOT the sender.  Two humans
+-- who ask for the same thing are asking for ONE job, so the second line is a
+-- repeat of the first (it refreshes the focus and gets the "Still on it."
+-- line) rather than a second order the bots would have to fight over.
 function M.order_id(sender, cmd)
   local w = cmd.who or {}
   local wk = w.mode or "auto"
@@ -428,7 +432,7 @@ function M.order_id(sender, cmd)
     wk = wk .. ":" .. table.concat(c, ",")
   end
   local t = cmd.target or {}
-  local key = string.format("%d|%s|%s|%s|%s", sender or 0, cmd.verb or "",
+  local key = string.format("%s|%s|%s|%s", cmd.verb or "",
                             wk, t.kind or "-", tostring(t.id or t.pn or "-"))
   local h = 5381
   for i = 1, #key do h = (h * 33 + key:byte(i)) % 16777213 end
@@ -717,6 +721,38 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   print2(string.format("ORDER_TAKE t=%d oid=%d kind=%s tid=%s cost=%.0f group=%s stolen=%s",
          now, spec.oid, spec.kind, tostring(spec.tid), cost or 0,
          tostring(group or false), tostring(stolen or false)))
+end
+
+-- THE SAME ORDER, SAID AGAIN, TO A BOT THAT ALREADY HOLDS IT.  The repeat
+-- refreshes the 60 s focus; it used to do that in silence, which reads like
+-- the bot never heard it.  The holder now says one short line back, in the
+-- shape of the acks but with no name in front of it.  A GROUP order answers
+-- once, from the LOWEST player number among the holders, the way the group
+-- ack does.  A bot that does not hold the order says nothing, so a repeat
+-- while the auction is still open is silent.
+-- ORDER_REPEAT_ACK_TICKS is the floor between two of these lines: a held key
+-- repeats the same line every tick otherwise.  One stamp per bot is enough
+-- because a bot holds one order at a time.
+local function repeat_ack(state, info, oid, now)
+  local o = S(state)
+  local h = o.held
+  if not h or h.oid ~= oid then return end
+  if (now - (o.rack or -1e9)) < (C.ORDER_REPEAT_ACK_TICKS or 50) then return end
+  local me = state.player_number
+  local low, n = nil, 0
+  for pn in pairs(o.gclaims[oid] or {}) do
+    n = n + 1
+    if not low or pn < low then low = pn end
+  end
+  if n > 1 then
+    if low ~= me then return end
+    say(state, string.format("Still on it. %d on %s #%s", n,
+                             h.tkind or "pill", tostring(h.tid)))
+  else
+    say(state, string.format("Still on it. %s #%s", h.kind, tostring(h.tid or "")))
+  end
+  o.rack = now
+  print2(string.format("ORDER_REPEAT t=%d oid=%d held=%d", now, oid, n))
 end
 
 -- =========================================================================
@@ -1142,6 +1178,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   -- Repeat of a live order we already hold = refresh the 60 s focus.
   if o.held and o.held.oid == spec.oid then
     o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+    repeat_ack(state, info, spec.oid, now)
     return true
   end
 
@@ -1242,6 +1279,11 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
     -- order are excluded at settle time (o.gclaims), so this only fills what
     -- is still open, and it refreshes the focus for the whole group.
     start_order(state, world, info, k.spec, { mode = "ping" }, now, a.want)
+    -- Mark the re-opened auction as a repeat: if it settles with nobody new
+    -- (every bot that could go already holds it), the holders answer instead
+    -- of the ping doing nothing visible.
+    local au = o.auctions[k.spec.oid]
+    if au then au.repeated = true end
     return
   end
 
@@ -1446,6 +1488,10 @@ function M.update(state, world, info, now)
           o.claims[oid] = { pn = rank[i].pn, cost = rank[i].c, tick = now }
         end
       end
+      -- A REPEAT PING with no room left: the extra slot found nobody (every
+      -- eligible bot already holds the order, or the rest cannot go), so the
+      -- holders answer it the way a repeated chat line is answered.
+      if a.repeated and #won == 0 then repeat_ack(state, info, oid, now) end
       o.auctions[oid] = nil
       print2(string.format("ORDER_SETTLE t=%d oid=%d want=%d held=%d winners=%s",
              now, oid, want, n_held, table.concat(won, ",")))

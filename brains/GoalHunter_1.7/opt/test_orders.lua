@@ -531,5 +531,93 @@ check("focus label",
         string.format("focus: x%.1f (bases)", C.FOCUS_OTHER_COST_MULT),
       ORD.focus_label({ _focus = "bases" }))
 
+-- =========================================================================
+-- THE SAME ORDER, SAID AGAIN.  The id is what decides it, and the id does
+-- not carry the sender: the same words from a second human are the same job.
+-- A bot that already holds the order refreshes its focus and says one short
+-- line back, no more often than ORDER_REPEAT_ACK_TICKS.
+-- =========================================================================
+print("orders.lua — the same order said again")
+
+check("the same line has the same id",
+      ORD.order_id(0, P("!attack 5")) == ORD.order_id(0, P("!attack 5")), "?")
+check("a second sender's copy has the same id",
+      ORD.order_id(0, P("!attack 5")) == ORD.order_id(3, P("!attack 5")), "?")
+check("another target has another id",
+      ORD.order_id(0, P("!attack 5")) ~= ORD.order_id(0, P("!attack 9")), "?")
+check("another who-word has another id",
+      ORD.order_id(0, P("!attack 5")) ~= ORD.order_id(0, P("!all attack 5")), "?")
+
+-- No allies, so the auction closes on the next update and this bot takes it.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "attack 5", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("the order is taken",
+      (st.orders.held or {}).kind == "attack_pill",
+      tostring((st.orders.held or {}).kind))
+
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "attack 5", 400, true, false)
+check("a repeat is answered",
+      st.orders.say[1] == "Still on it. attack_pill #5",
+      tostring(st.orders.say[1]))
+check("once", #st.orders.say == 1, tostring(#st.orders.say))
+check("and it refreshes the focus",
+      st.orders.held.expiry == 400 + C.ORDER_FOCUS_TICKS,
+      tostring(st.orders.held.expiry))
+check("the order is not retaken",
+      next(st.orders.auctions) == nil, "an auction")
+
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "attack 5", 400 + C.ORDER_REPEAT_ACK_TICKS - 1,
+            true, false)
+check("a repeat inside the window is silent", #st.orders.say == 0,
+      tostring(st.orders.say[1]))
+
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "attack 5", 400 + C.ORDER_REPEAT_ACK_TICKS,
+            true, false)
+check("a repeat after the window is answered",
+      st.orders.say[1] == "Still on it. attack_pill #5",
+      tostring(st.orders.say[1]))
+
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 3, "attack 5", 900, true, false)
+check("a second sender's repeat is a repeat",
+      st.orders.say[1] == "Still on it. attack_pill #5",
+      tostring(st.orders.say[1]))
+
+-- A bot that does NOT hold the order says nothing extra: while the auction
+-- is still open there is no holder, so a repeat is silent.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "attack 5", 100, true, false)
+ORD.on_chat(st, w, inf, 0, "attack 5", 105, true, false)
+check("a repeat during the auction is silent", #st.orders.say == 0,
+      tostring(st.orders.say[1]))
+
+-- The GROUP line: two bots hold it, the lower player number answers.  This
+-- bot is p1 and the other holder is p2, so this bot is the one that speaks.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "attack 5", 100, true, false)
+ORD.update(st, w, inf, 101)
+local oid = st.orders.held.oid
+st.orders.held.tkind = "pill"
+st.orders.gclaims[oid][2] = 10
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "attack 5", 400, true, false)
+check("two holders answer with the count",
+      st.orders.say[1] == "Still on it. 2 on pill #5",
+      tostring(st.orders.say[1]))
+
+-- The same, with a LOWER holder in the group: p0 speaks, not this bot.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "attack 5", 100, true, false)
+ORD.update(st, w, inf, 101)
+st.orders.gclaims[st.orders.held.oid][0] = 10
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "attack 5", 400, true, false)
+check("only the lowest player number answers", #st.orders.say == 0,
+      tostring(st.orders.say[1]))
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

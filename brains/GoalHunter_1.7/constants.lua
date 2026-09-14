@@ -4159,6 +4159,11 @@ M.ORDER_NEARBY_TILES    = 10     -- keel 10 (moot; master off)
 -- A line of only bot names SELECTS them; the sender's next order goes to the
 -- selected set with no auction.  The selection lapses after this.
 M.ORDER_SELECT_TICKS    = 500    -- keel 500 (moot; master off)
+-- The same order said again to a bot that already holds it refreshes the
+-- focus AND gets one "Still on it." line back.  This is the floor between
+-- two of those lines, so a key held down cannot fill the chat with them.
+-- 50 ticks = 1 s.
+M.ORDER_REPEAT_ACK_TICKS = 50    -- keel 50 (moot; master off)
 -- Price of an ordered goal the pools did not offer this tick (a defend_pill
 -- with no alarm, a take_cover with no trigger, an attack_tank out of engage
 -- range).  Low enough to beat the rejected strategic field, high enough that
@@ -4471,6 +4476,7 @@ M.PRESETS = {
     ORDER_TILE_COST               = 4,
     ORDER_NEARBY_TILES            = 10,
     ORDER_SELECT_TICKS            = 500,
+    ORDER_REPEAT_ACK_TICKS        = 50,
     ORDER_INJECT_COST             = 20,
     ORDER_REFUEL_SKIP_NO_SHELLS   = false,
     ORDER_STUCK_BUSY_TICKS        = 150,
