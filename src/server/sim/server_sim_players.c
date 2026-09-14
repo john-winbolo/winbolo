@@ -745,21 +745,17 @@ void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
     sim->lobbyPlayers[playerNum].ready = ready ? TRUE : FALSE;
 }
 
-void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
+static void acceptAllianceAndPublish(ServerSim *sim, BYTE accepter,
+                                     BYTE newMember, bool quiet) {
     GameSim *gs;
     ControlEvent evt;
-    if (sim == NULL) {
-        return;
-    }
     gs = serverSimGetGameSim(sim);
     playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, accepter, newMember, TRUE);
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_ACCEPT;
     evt.u.allianceAccept.acceptedBy = accepter;
     evt.u.allianceAccept.newMember  = newMember;
-    evt.u.allianceAccept.quiet =
-        serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE, newMember, accepter)
-            ? 0 : 1;
+    evt.u.allianceAccept.quiet = quiet ? 1 : 0;
     serverSimPublishControl(sim, &evt);
     /* WBN tracker + replay-log side effects live here so every input
      * source (UDP wire, local transport, headless cmd-stdin) fires
@@ -769,6 +765,25 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
     winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember,
                        botManagerIsBot(sim, accepter), botManagerIsBot(sim, newMember));
     logAddEvent(log_AllyAccept, accepter, newMember, 0, 0, 0, NULL);
+}
+
+void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
+    if (sim == NULL) {
+        return;
+    }
+    /* Somebody asked for this one, so whether it draws a line is the
+       announce policy's to answer. */
+    acceptAllianceAndPublish(sim, accepter, newMember,
+                             !serverSimAnnounce(sim, ANNOUNCE_KIND_ALLIANCE,
+                                                newMember, accepter));
+}
+
+void serverSimAcceptAllianceQuiet(ServerSim *sim, BYTE accepter,
+                                  BYTE newMember) {
+    if (sim == NULL) {
+        return;
+    }
+    acceptAllianceAndPublish(sim, accepter, newMember, true);
 }
 
 void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {

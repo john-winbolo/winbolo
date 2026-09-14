@@ -1635,10 +1635,10 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
  * unfielding, so accepting again would publish events for a state every
  * client already holds.
  *
- * Per pair, and never a rebake of the whole matrix. The batched reset exists
- * so that rebaking every slot costs one event instead of N×(N-1)/2; putting
- * one seat on one team is a handful of accepts, and a reset would make every
- * receiver drop and rebuild all sixteen slots for them. */
+ * One accept, and never a rebake of the whole matrix. The batched reset
+ * exists so that rebaking every slot costs one event instead of N×(N-1)/2;
+ * a reset here would make every receiver drop and rebuild all sixteen slots
+ * to learn one pair. */
 static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const char *name, BYTE team,
                                  const ScnTable *init) {
@@ -1671,17 +1671,24 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
     }
     transportUdpServerSetBotName(slot, name);
     if (!wasHeld && team > 0 && team < MAX_TANKS) {
-        /* One accept per connected team member, down the same call a player's
-           own accept takes, so the server's bitmaps and every client's are
-           written by the same code. An accept merges the two sides' groups,
-           so the team comes out of this as one group whether or not it was
-           one going in. */
+        /* One accept, with the first member found. An accept merges the two
+           sides' groups, so the new seat joins everyone that member is allied
+           with, and a team seated this way is one group by construction: each
+           bot was merged into it as it spawned. A team someone has since
+           split — a leave, a set_team — gives the seat one of its pieces,
+           which is still better than the nothing it used to get.
+
+           Quiet: putting a bot on its team is seating, not something a
+           player did. The lobby does the same job with a rebake, which
+           announces nothing, and a script with something to say has its own
+           message call. */
         BYTE i;
         for (i = 0; i < MAX_TANKS; i++) {
             if (i == slot) continue;
             if (!sim->playerConnected[i]) continue;
             if (sim->lobbyPlayers[i].teamNumber != team) continue;
-            serverSimAcceptAlliance(sim, i, slot);
+            serverSimAcceptAllianceQuiet(sim, i, slot);
+            break;
         }
     }
     serverSimPublishLobbySlot(sim, slot);

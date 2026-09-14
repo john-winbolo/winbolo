@@ -1474,6 +1474,18 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum);
 void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name);
 
 /*********************************************************
+ *NAME:          serverSimAcceptAllianceQuiet
+ *PURPOSE:
+ *  The same alliance accept, with the newswire line off.
+ *  For seating rather than for something somebody did: a
+ *  bot put on its team is setup, and the lobby path that
+ *  does the same job with a rebake draws nothing either.
+ *  The replay log and the tracker still record it.
+ *********************************************************/
+void serverSimAcceptAllianceQuiet(ServerSim *sim, BYTE accepter,
+                                  BYTE newMember);
+
+/*********************************************************
  *NAME:          serverSimFillGamePhaseEvent
  *               serverSimFillLobbySettingsEvent
  *               serverSimFillLobbySlotEvent
