@@ -37,6 +37,12 @@
  *********************************************************/
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
+/* SDL_SetMainReady() lives here, and SDL3's SDL.h does not pull SDL_main.h
+ * in the way SDL2's did -- so with SDL_MAIN_HANDLED set and this header
+ * missing, the call below was an implicit declaration. That is an error on
+ * clang 15+ and gcc 14+, which is every current macOS and most current
+ * Linux toolchains. */
+#include <SDL3/SDL_main.h>
 
 #include <stdbool.h>
 #include <stdint.h>
