@@ -2985,6 +2985,9 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
     if (t == NULL) {
         memset(&sim->scenarioLobby, 0, sizeof(sim->scenarioLobby));
         sim->scenarioLobbyValid = false;
+        /* A plain map committed after a scripted one must not keep the old
+           scenario's base game type. */
+        sim->sim.scenarioBaseGame = (gameType)0;
         return;
     }
     sim->scenarioLobby = *t;
@@ -2992,6 +2995,9 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
         sim->scenarioLobby.numTeams = MAX_TANKS;
     }
     sim->scenarioLobbyValid = true;
+    /* The one value on the template the sim core reads directly, so it is
+       kept where the spawn and start paths can see it without a ServerSim. */
+    sim->sim.scenarioBaseGame = (gameType)t->baseGameType;
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

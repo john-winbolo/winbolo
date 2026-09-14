@@ -206,6 +206,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.scenarioStartIdx[count] = MAX_STARTS;
     }
 
+    /* No scenario has declared a base game type yet, so a round that turns
+       out to be scripted plays open until a lobby template says otherwise. */
+    sim->sim.scenarioBaseGame = (gameType)0;
+
     /* "No tutorial progress yet" — memset would leave 0, which (being below
      * every stop row) would disable all tutorial stops. */
     sim->sim.tutorialMinRow = 0xFF;

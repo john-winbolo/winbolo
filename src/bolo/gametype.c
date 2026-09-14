@@ -71,6 +71,33 @@ gameType gameTypeGet(gameType *gmeType) {
 }
 
 /*********************************************************
+*NAME:          gameTypeResolve
+*AUTHOR:        John Morrison
+*PURPOSE:
+* The game type a site should pick its behaviour from.
+* Everything but gameScripted answers itself; gameScripted
+* answers the base game the scenario declared.
+*
+*ARGUMENTS:
+*  sim   - The game being played
+*  value - The game type to resolve
+*********************************************************/
+gameType gameTypeResolve(GameSim *sim, gameType value) {
+  gameType base;
+
+  if (value != gameScripted) {
+    return value;
+  }
+  base = (sim != NULL) ? sim->scenarioBaseGame : gameOpen;
+  if (base == gameTournament || base == gameStrictTournament) {
+    return base;
+  }
+  /* Nothing declared, or a word the engine has no behaviour for: the round
+     plays open. */
+  return gameOpen;
+}
+
+/*********************************************************
 *NAME:          gameTypeGetItems
 *AUTHOR:        John Morrison
 *CREATION DATE: 29/01/99
@@ -119,6 +146,13 @@ void gameTypeGetItems(GameSim *sim, gameType *gmeType, BYTE *shellsAmount, BYTE 
     *mines = 0;
     *trees = 0;
     break;
+  case gameScripted: {
+    /* The scenario's declared base game decides, so a scripted round hands
+       a tank what that game hands one. */
+    gameType base = gameTypeResolve(sim, gameScripted);
+    gameTypeGetItems(sim, &base, shellsAmount, mines, armour, trees);
+    break;
+  }
   case gameStrictTournament:
   default:
     /* gameStrictTournament */

@@ -1749,6 +1749,7 @@ static void renderGameInfoContent(ClientSim *cs) {
     langid gtStr = STR_DLGGAMEINFO_STRICT;
     if      (gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
     else if (gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
+    else if (gt == gameScripted)   gtStr = STR_DLGGAMEINFO_SCRIPTED;
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_GAMETYPE), langGetText(gtStr));
 
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_HIDDENMINES),

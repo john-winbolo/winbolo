@@ -362,6 +362,9 @@ static const char *scnGameTypeWord(gameType g) {
         case gameOpen:             return "open";
         case gameTournament:       return "tournament";
         case gameStrictTournament: return "strict";
+        /* The round's rules come from a scenario. What it plays under is
+           scenario.game, which the script already has. */
+        case gameScripted:         return "scripted";
     }
     return "open";
 }

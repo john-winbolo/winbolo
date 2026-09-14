@@ -2625,7 +2625,15 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        reach back into a host that is being replaced at that moment. */
     {
         ScnLobbyTemplate t;
+        int              base = 0;
         scnFillLobbyTemplate(&m.lobby, &t);
+        /* The game type the manifest names, read by the same words a spawn
+           op's loadout takes so one table answers both. A manifest naming
+           none, or a word that table does not hold, leaves it 0 and the
+           round plays open. */
+        if (m.game[0] != '\0' && scenarioLuaLoadoutFromWord(m.game, &base)) {
+            t.baseGameType = (uint8_t)base;
+        }
         serverSimSetScenarioLobbyTemplate(sim, &t);
     }
 

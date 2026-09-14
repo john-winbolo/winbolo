@@ -889,7 +889,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             localWon = (cs->myPlayerNum == first) ||
                        playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
 
-            gameType gt = gameTypeGet(&cs->sim.game);
+            gameType gt = gameTypeResolve(&cs->sim,
+                                          gameTypeGet(&cs->sim.game));
             BYTE numPlayers = playersGetNumPlayers(&cs->sim.plyrs);
 
             if (gt == gameTournament || gt == gameStrictTournament) {

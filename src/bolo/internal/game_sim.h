@@ -358,6 +358,13 @@ struct GameSim {
        by startsGetStart ahead of the placement policy and consumed there; the
        batch slot above is the engine choosing and stays below the policy. */
     BYTE        scenarioStartIdx[MAX_TANKS];
+    /* The base game type a scenario declared, 0 for no scenario or none
+       declared. game being gameScripted sends every site that picks
+       behaviour from the game type here instead, through gameTypeResolve,
+       and 0 there reads as gameOpen. The server writes it from the lobby
+       template the host hands over; the client's stays 0, which is why a
+       client needs no template of its own to resolve a scripted round. */
+    gameType    scenarioBaseGame;
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
        returns this fixed start (not the open-game algorithm). The GUI raises
        it from 0 (sea) to 1 (far bank) once the player passes the boat step.

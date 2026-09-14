@@ -71,10 +71,16 @@ typedef struct {
  * notion of a manifest, a script or Lua.
  *
  * maxPlayers is a cap on humans only; bots seat above it. 0 leaves the
- * server's own cap alone. */
+ * server's own cap alone.
+ *
+ * baseGameType is the game type the scenario declared, by the same words a
+ * spawn op's loadout takes. It is the host's one-way hand-over of that
+ * value: the sim keeps it where the spawn and start paths can read it when
+ * the round is gameScripted. 0 means none declared, which plays open. */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
+    uint8_t      baseGameType;   /* a gameType value, 0 for none */
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
 

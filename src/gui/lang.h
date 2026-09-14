@@ -2274,6 +2274,10 @@
 #define STR_PING_MOUSE_X2                   2151
 #define STR_DLGKEYSETUP_PING_ALT2           2152
 
+/* The fourth game type, beside STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT:
+ * what a round whose rules come from a scenario is called. */
+#define STR_DLGGAMEINFO_SCRIPTED            2173
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

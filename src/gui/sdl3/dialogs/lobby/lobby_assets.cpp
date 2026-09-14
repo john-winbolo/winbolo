@@ -37,6 +37,7 @@ const char *lobbyGameTypeStr(gameType gt) {
         case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
         case gameTournament:       return langGetText(STR_DLGGAMEINFO_TOURN);
         case gameStrictTournament: return langGetText(STR_DLGGAMEINFO_STRICT);
+        case gameScripted:         return langGetText(STR_DLGGAMEINFO_SCRIPTED);
         default:                   return langGetText(STR_UNKNOWN);
     }
 }

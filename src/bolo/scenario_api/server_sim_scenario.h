@@ -121,6 +121,11 @@ void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx
  *  Setting it does not seat anything by itself. The map
  *  commit seats it; a caller that wants the seats without a
  *  map change asks for them.
+ *
+ *  The template's base game type is kept on the game the
+ *  sim runs, where the spawn and start paths read it while
+ *  the round is gameScripted. Clearing the template clears
+ *  that too.
  *********************************************************/
 void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
                                        const ScnLobbyTemplate *t);

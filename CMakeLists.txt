@@ -3448,6 +3448,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    # The scripted game type: the fourth value resolving through the base game
+    # a scenario declared, at the loadout and at the start, and that value
+    # going when the template does.
+    tests/unit/test_scripted_game_type.c
     tests/unit/test_unfielded_seat.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
@@ -5135,6 +5139,11 @@ set(_unit_test_names
     lobby_template_commit_keeps_new_lobby
     lobby_template_cancel_restores_path_inmem
     lobby_template_cancel_restores_path_random
+    scripted_game_type_loadout_follows_base
+    scripted_game_type_no_base_is_open
+    scripted_game_type_strict_ignores_base
+    scripted_game_type_start_follows_base
+    scripted_game_type_plain_map_clears_base
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready

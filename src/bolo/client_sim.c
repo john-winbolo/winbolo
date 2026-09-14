@@ -255,6 +255,11 @@ bool clientSimCreate(ClientSim *cs) {
     cs->sim.scenarioStartIdx[i] = MAX_STARTS;
   }
 
+  /* A client is never handed a lobby template, so this stays 0 and a
+     scripted round resolves as gameOpen through the same code the server
+     runs. */
+  cs->sim.scenarioBaseGame = (gameType)0;
+
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
   cs->sim.isLocalTransport = true;

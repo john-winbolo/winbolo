@@ -2280,6 +2280,16 @@ int run_lobby_template_commit_keeps_new_lobby(void);
 int run_lobby_template_cancel_restores_path_inmem(void);
 int run_lobby_template_cancel_restores_path_random(void);
 
+/* The scripted game type (test_scripted_game_type.c): gameScripted resolving
+ * through the base game the scenario declared, at the loadout and at the
+ * start, and the value going with the template when a plain map is
+ * committed. */
+int run_scripted_game_type_loadout_follows_base(void);
+int run_scripted_game_type_no_base_is_open(void);
+int run_scripted_game_type_strict_ignores_base(void);
+int run_scripted_game_type_start_follows_base(void);
+int run_scripted_game_type_plain_map_clears_base(void);
+
 /* The unfielded seat (test_unfielded_seat.c): a seat a bot holds with no
  * bot manager entry, no ClientSim and no tank behind it. What it counts for,
  * what the start sequence does with it, the two ops that field and unfield

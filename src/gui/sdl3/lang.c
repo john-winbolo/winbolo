@@ -2117,6 +2117,7 @@ static const LangEntry langTable[] = {
     {2150, "Mouse 4"},
     {2151, "Mouse 5"},
     {2152, "Smart Ping Alternate Keys 2"},
+    {2173, "Scripted"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

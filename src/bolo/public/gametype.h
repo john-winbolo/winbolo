@@ -49,7 +49,8 @@
 typedef enum {
   gameOpen = 1,
   gameTournament,
-  gameStrictTournament
+  gameStrictTournament,
+  gameScripted
 } gameType;
 
 #endif
@@ -101,5 +102,21 @@ gameType gameTypeGet(gameType *gmeType);
 *********************************************************/
 struct GameSim;
 void gameTypeGetItems(struct GameSim *sim, gameType *gmeType, BYTE *shellsAmount, BYTE *mines, BYTE *armour, BYTE *trees);
+
+/*********************************************************
+*NAME:          gameTypeResolve
+*PURPOSE:
+* The game type a site should pick its behaviour from.
+* Every value but gameScripted answers itself. gameScripted
+* answers the base game type the scenario declared, which
+* the sim holds in scenarioBaseGame; nothing declared, or
+* something that is not one of the three the engine has
+* behaviour for, answers gameOpen.
+*
+*ARGUMENTS:
+*  sim   - The game being played
+*  value - The game type to resolve
+*********************************************************/
+gameType gameTypeResolve(struct GameSim *sim, gameType value);
 
 #endif /* GAMETYPE_H */
