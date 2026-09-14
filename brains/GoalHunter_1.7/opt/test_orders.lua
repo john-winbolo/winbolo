@@ -179,8 +179,11 @@ check("help with junk",   shape(P("help me")) == "reply:didn't understand", shap
 check("help: 4 lines",    #ORD.HELP == 4, tostring(#ORD.HELP))
 check("help lines fit the 128-byte chat max", (function()
   for _, l in ipairs(ORD.HELP) do if #l > 128 then return false end end
-  return #ORD.BANNER <= 128 and #ORD.BANNER_REPO <= 128
+  return true
 end)(), "?")
+-- The game-start banner is gone: the lobby says it now, out of announce.txt.
+check("no game-start banner constants",
+      ORD.BANNER == nil and ORD.BANNER_REPO == nil, "?")
 
 -- =========================================================================
 -- PING RULES.  A fake world: two pills, one base, three tanks.
@@ -406,20 +409,20 @@ inf.allies = 0x17
 ORD.on_chat(st, w, inf, 0, "help", 240, true, false)
 check("help answers 4 lines", #st.orders.say == 4, tostring(#st.orders.say))
 
--- the game-start banner: only with a human ally, only once, only from the
--- speaking bot.
+-- NOTHING is said at game start any more.  The brain's announce line and its
+-- docs are lobby text files now (announce.txt / commands.txt), so a bot that
+-- has heard no order stays silent through its first ticks, human ally or not.
 st, w, inf = ST(), W(), I()
 inf.allies = 0x17   -- p0 is a human ally (player_bots has no bit 0)
 ORD.update(st, w, inf, 50)
-check("banner: two lines at game start", #st.orders.say == 2, tostring(#st.orders.say))
-check("banner line 1", st.orders.say[1] == ORD.BANNER, tostring(st.orders.say[1]))
-check("banner line 2", st.orders.say[2] == ORD.BANNER_REPO, tostring(st.orders.say[2]))
-st.orders.say = {}
+check("no game-start line with a human ally", #st.orders.say == 0,
+      tostring(#st.orders.say))
 ORD.update(st, w, inf, 60)
-check("banner is said once", #st.orders.say == 0, tostring(#st.orders.say))
+check("still silent on the next tick", #st.orders.say == 0,
+      tostring(#st.orders.say))
 local st3 = ST()
 ORD.update(st3, W(), I({ allies = 0x16, player_bots = 0x16 }), 50)
-check("no banner with no human ally",
+check("no game-start line with no human ally",
       #st3.orders.say == 0, tostring(#st3.orders.say))
 
 -- =========================================================================

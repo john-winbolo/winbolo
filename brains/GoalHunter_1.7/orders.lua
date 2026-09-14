@@ -778,9 +778,12 @@ M.HELP = {
   "Ping a tile: nearest bot goes, ping again adds one. Ping bots to select them,",
   "then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
 }
-M.BANNER = "Commands available, say help for details."
-M.BANNER_REPO =
-  'Bot pillbox repositioning disabled with human allies. Say "reposition on" to enable.'
+-- There is NO game-start banner any more (Andrew, Sep 14).  The brain says
+-- what it can do in the LOBBY instead, through two text files it ships beside
+-- about.txt: announce.txt (the one short line the lobby drops into team chat
+-- when the bot joins your team) and commands.txt (the long docs the lobby
+-- opens when that line is clicked).  Those travel with the lobby brain
+-- metadata, not as chat, so the 128-byte chat cap does not apply to them.
 
 local FOCUS_CODE = { off = 0, bases = 1, pills = 2 }
 local CODE_FOCUS = { [1] = "bases", [2] = "pills" }
@@ -1601,19 +1604,11 @@ function M.update(state, world, info, now)
     o.sel = nil
   end
 
-  -- 6. THE SPEAKING BOT: the banner at game start and the latch heartbeat.
-  --    Only the lowest-numbered bot on the team talks, so a four-bot team
-  --    says each line once.
+  -- 6. THE SPEAKING BOT: the latch heartbeat.  Only the lowest-numbered bot
+  --    on the team talks, so a four-bot team says each line once.
+  --    Nothing is said at game start any more: the lobby carries the brain's
+  --    announce line and its docs (see the note beside M.HELP).
   if M.speaker(state, info) == me then
-    if not o.banner and U.human_ally_count(info) > 0 then
-      o.banner = true
-      say(state, M.BANNER)
-      -- Only when repositioning really is blocked and nobody has overridden
-      -- it; otherwise the line would be wrong.
-      if C.REPOSITION_DISABLE_WITH_HUMAN_ALLIES and o.repo_on == nil then
-        say(state, M.BANNER_REPO)
-      end
-    end
     -- Re-broadcast the team settings so a bot that joined or respawned late
     -- latches the same values. They ride their own verbs rather than the
     -- /info state slate, which is already close to the 124-byte batch budget.
