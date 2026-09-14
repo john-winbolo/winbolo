@@ -51,6 +51,12 @@ typedef struct BgGame {
      * checked separately from the generation. */
     GfxTextureFilter tilesFilter;
     BYTE         cameraPlayer;  /* Player slot to follow with camera */
+    int          zoomUser;      /* User zoom factor from the +/- keys.
+                                 * 0 = follow bgGameRender's fit-to-screen
+                                 * pick, which is the startup state. */
+    int          lastZoom;      /* Zoom factor the last render actually
+                                 * used, so the first +/- press can step
+                                 * from the fit the viewer is looking at. */
     WORLD        viewCenterX;   /* Camera world position */
     WORLD        viewCenterY;
     BYTE         numBots;       /* Number of bots added */
@@ -86,6 +92,16 @@ void bgGameTogglePause(BgGame *bg);
 /* Mark bg as hidden by a foreground game (SP or host). While hidden,
  * bgGameTick is a no-op. Independent of bgGameTogglePause. */
 void bgGameSetHiddenByForeground(BgGame *bg, bool hidden);
+
+/* Point the camera at the next occupied tank slot, wrapping from the last
+ * back to the first. No-op when the sim holds no tanks. */
+void bgGameCycleCamera(BgGame *bg);
+
+/* Step the user zoom by delta whole zoom factors (clamped), starting from
+ * the fit-to-screen factor the last render used. bgGameResetZoom puts it
+ * back on the fit. */
+void bgGameAdjustZoom(BgGame *bg, int delta);
+void bgGameResetZoom(BgGame *bg);
 
 /* Shared background game instance used across all pre-game dialogs */
 void bgGameSetShared(BgGame *bg);
