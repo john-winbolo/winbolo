@@ -1918,10 +1918,25 @@ int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
 int run_ping_dispatch_spam_30s_window(void);
 int run_ping_dispatch_new_round_clears_rate_limit(void);
+int run_ping_dispatch_smart_pings_off(void);
 int run_ping_reaches_team_only(void);
 int run_ping_mute_relay_skip(void);
 int run_ping_mute_client_mirror_cleared_on_leave(void);
 int run_ping_sender_name_empty_for_unused_slot(void);
+
+/* The two curves behind the smart ping's world marker
+ * (test_ping_marker_anim.c): the three-flash blink pingWorldMarkerAlpha
+ * draws it with, and the arrival ring's close and pulse from ringAnimAt.
+ * Both are pure functions of the ping's age, so a recording replays what
+ * was shown live — which is the property these pin. */
+int run_ping_world_marker_alpha(void);
+int run_ring_anim_at(void);
+
+/* The log_GameSettings blob (test_game_settings_blob.c): the real writer
+ * and the log viewer's real decode over the same bytes, including the
+ * offsets an older reader still indexes by and a short payload from a
+ * writer that predates the last two fields. */
+int run_game_settings_blob(void);
 
 /* Smart ping across the wire (test_ping_network.c): the full client -> server
  * -> client path over the real loopback UDP transport, driven through

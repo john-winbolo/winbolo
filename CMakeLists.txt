@@ -3850,6 +3850,17 @@ set(WINBOLO_UNITTESTS_SOURCES
     # gates, the per-player rate limit, the GameEvent it builds, and the
     # team-only delivery predicate both snapshot filters share.
     tests/unit/test_ping_dispatch.c
+    # The two pure curves the world marker is drawn from: the three-flash
+    # blink in ping_kinds.h and the arrival ring's close/pulse in
+    # ring_band.c. Both take a ping's age and nothing else.
+    tests/unit/test_ping_marker_anim.c
+    # ringAnimAt, for the test above. A leaf under the "Linked GUI sources"
+    # rule in docs/ARCHITECTURE.md: plain SDL, no ImGui, and it opens no
+    # window, renderer or device of its own.
+    src/gui/sdl3/ring_band.c
+    # The log_GameSettings blob: the dedicated log's writer and the log
+    # viewer's decode over the same bytes, old payload lengths included.
+    tests/unit/test_game_settings_blob.c
     # Smart ping over the wire: the full client -> server -> client path on the
     # real loopback UDP transport, driven through serverInstanceTick so the
     # per-frame event-buffer clear that drops a networked ping is exercised.
@@ -4069,6 +4080,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/global.c
     src/logviewer/clientmutex.c
     src/logviewer/dns.c
+    # log_GameSettings blob decode. Plain C with no bolo or ImGui headers,
+    # split out of imgui_game_info.cpp so test_game_settings_blob.c drives
+    # the code the Game Information panel runs rather than a copy of it.
+    src/logviewer/game_settings_blob.c
 )
 
 if(WB_NETDEBUG)
@@ -4917,10 +4932,14 @@ set(_unit_test_names
     ping_dispatch_rate_limit
     ping_dispatch_spam_30s_window
     ping_dispatch_new_round_clears_rate_limit
+    ping_dispatch_smart_pings_off
     ping_reaches_team_only
     ping_mute_relay_skip
     ping_mute_client_mirror_cleared_on_leave
     ping_sender_name_empty_for_unused_slot
+    ping_world_marker_alpha
+    ring_anim_at
+    game_settings_blob
     ping_network
     lang_name_table
     screencalc_river_road_counts_as_water
