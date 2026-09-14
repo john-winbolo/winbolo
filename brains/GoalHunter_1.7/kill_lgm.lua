@@ -549,6 +549,10 @@ function M.tuning()
     track_wu        = on and ((C.CAPTURE_LGM_HUNT_TRACK_TILES or 10) * 256) or nil,
     pick_near_pill  = on and (C.CAPTURE_LGM_HUNT_PICK_NEAREST_PILL and true or false) or false,
     hold_min_steps  = on and (C.CAPTURE_SIGHT_HOLD_MIN_STEPS or 2) or 2,
+    -- Aim target.  nil with the package off, which switches the whole
+    -- refinement search out and leaves the old aim exactly as it was.
+    aim_wu          = on and (C.LGM_KILL_AIM_WU or 64) or nil,
+    aim_throttle    = on and (C.LGM_KILL_AIM_THROTTLE and true or false) or false,
   }
   return _tuning
 end

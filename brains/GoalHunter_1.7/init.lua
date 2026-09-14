@@ -1908,6 +1908,11 @@ function Brain.think(info)
           tostring(_kt.on), tostring(C.MODE), tostring(C.DIFFICULTY),
           _kt.fire_wu, _kt.capture_fire_wu, _kt.engine_kill_wu))
         print2(string.format(
+          "[kill_lgm] aim target %s wu%s",
+          tostring(_kt.aim_wu or "-"),
+          _kt.aim_throttle and " (refinement may use the throttle)"
+                            or " (refinement never touches the throttle)"))
+        print2(string.format(
           "[kill_lgm] track %s, pick=%s, sight holds from %d steps",
           _kt.track_wu and string.format("%.1f tiles from the tank",
                                          _kt.track_wu / 256.0)
@@ -8188,6 +8193,150 @@ function Brain.think(info)
           taps = bit.bor(taps, tk)
         end
 
+        -- ── STEP 4b: aim refinement to a QUARTER TILE (C.LGM_KILL_AIM_WU) ──
+        -- Shoot at a tile, aim for a quarter tile.  While a candidate is being
+        -- hunted and the AIM ERROR -- the distance from the predicted impact
+        -- point to his predicted point -- is still above KT.aim_wu, every tick
+        -- picks the action that makes it smaller.  Nothing here delays or
+        -- suppresses a shot: STEP 5 runs next, reads the keys this block just
+        -- set (so its sl_eff is the refined length) and fires on THIS tick
+        -- whenever the error is inside the fire gate.
+        --
+        -- What bounded the error before (no code ever "held" the aim; these are
+        -- floors):  the sight steps in 128 wu units along the ray, so the
+        -- along-ray residual alone is up to 64 wu at the best rounding; and
+        -- steering's turn deadband is a flat 2 brads, which at this shot's
+        -- 6-7 tile range is about 80 wu sideways.
+        --
+        -- The search is the shape of the kill_lgm goal's 27-candidate search
+        -- above: for each (turn x throttle x sight) combination predict the
+        -- tank one THINK ahead, put the impact 128*sightLen along the new
+        -- heading, score by distance to the man, keep the minimum.  Which axes
+        -- we are allowed to move:
+        --   TURN     only when the hunt already owns the turn (steer "turn",
+        --            never the partial "nudge") and no U-turn is latched --
+        --            with the man behind us the turn is navigation's.  And
+        --            only outside the derived deadband, so the nose cannot
+        --            chatter: asin(aim_wu / dist) in brads, floored at 1 -- the
+        --            angle a quarter tile subtends at this range.
+        --   SIGHT    only when nobody asked for a range key this think (the
+        --            same yield rule STEP 4 uses).
+        --   THROTTLE only with C.LGM_KILL_AIM_THROTTLE (default OFF): a speed
+        --            step is worth ~2 wu of along-ray correction, and the
+        --            capture must never brake for the builder.
+        if KT.aim_wu and cand and tgt_wx then
+          local cur_dir = info.direction or 0
+          local cur_gun = info.gunrange or 14
+          -- info.speed is the engine speed x4 (brain_data.c: tankGetSpeed*4),
+          -- and a think is two engine ticks, so one think of travel is
+          -- speed/4 * 2 = speed/2 wu.
+          local cur_spd = (info.speed or 0) / 2
+          local aim_dir  = U.aim_at(info.tankx, info.tanky, tgt_wx, tgt_wy)
+          local aim_corr = U.adiff(cur_dir, aim_dir)
+          local tdx, tdy = tgt_wx - info.tankx, tgt_wy - info.tanky
+          local dist = math.sqrt(tdx * tdx + tdy * tdy)
+          -- The error as it stands, at the length this tick will really fly at
+          -- (the same sl_eff rule STEP 5 uses: a range key in this packet is
+          -- applied before the shot).
+          local rk0 = bit.bor(keys, taps)
+          local sl0 = cur_gun
+          if bit.band(rk0, KEY_MORERANGE) ~= 0 then sl0 = cur_gun + 1
+          elseif bit.band(rk0, KEY_LESSRANGE) ~= 0 then sl0 = cur_gun - 1 end
+          if sl0 < 2 then sl0 = 2 elseif sl0 > 14 then sl0 = 14 end
+          local r0 = cur_dir * C.TWO_PI / 256
+          local ex0 = info.tankx + math.sin(r0) * 128 * sl0 - tgt_wx
+          local ey0 = info.tanky - math.cos(r0) * 128 * sl0 - tgt_wy
+          clh.aim_err_wu = math.sqrt(ex0 * ex0 + ey0 * ey0)
+          clh.aim_wu     = KT.aim_wu
+          if clh.aim_err_wu > KT.aim_wu then
+            local dband = 1
+            if dist > 0 then
+              local s = KT.aim_wu / dist
+              if s > 1 then s = 1 end
+              dband = math.floor(math.asin(s) * 256 / C.TWO_PI)
+              if dband < 1 then dband = 1 end
+            end
+            clh.aim_dband = dband
+            -- steer == "turn" only, never "nudge": the nudge is a DELIBERATELY
+            -- partial lean that keeps the plow-through line to the corpse (it
+            -- is what replaced the old full-aim pin), so pointing the nose all
+            -- the way at the man on a nudge tick would undo it.
+            local own_turn = (clh.steer == "turn")
+                             and state._uturn == nil
+                             and math.abs(aim_corr) > dband
+            local own_gun  = bit.band(bit.bor(keys, taps),
+                                      bit.bor(KEY_MORERANGE, KEY_LESSRANGE)) == 0
+            -- Action tables built once per bot (no per-tick garbage), same
+            -- reason as the kill_lgm search's move tables.
+            local at = state._clh_aim_tables
+            if not at then
+              at = {
+                TURNS = { { k = 0,             d =  0 },
+                          { k = KEY_TURNLEFT,  d = -6 },
+                          { k = KEY_TURNRIGHT, d =  6 } },
+                SPEEDS = { { k = 0,          d =  0 },
+                           { k = KEY_FASTER, d =  2 },
+                           { k = KEY_SLOWER, d = -2 } },
+                -- One unit, not two: the search only ever TAPS the sight, so a
+                -- refinement step can never overshoot the way a held key does.
+                -- The coarse close is still STEP 4's (it may hold), and this
+                -- axis is only ours on a think STEP 4 asked for nothing.
+                GUNS = { { k = 0,             d =  0 },
+                         { k = KEY_MORERANGE, d =  1 },
+                         { k = KEY_LESSRANGE, d = -1 } },
+              }
+              state._clh_aim_tables = at
+            end
+            local best, best_turn, best_spd, best_gun = math.huge, 0, 0, 0
+            for _, t in ipairs(at.TURNS) do
+              if t.k == 0 or own_turn then
+                local nd = (cur_dir + t.d) % 256
+                local rr = nd * C.TWO_PI / 256
+                local shx, shy = math.sin(rr), -math.cos(rr)
+                for _, s in ipairs(at.SPEEDS) do
+                  if s.k == 0 or KT.aim_throttle then
+                    local nsp = cur_spd + s.d
+                    if nsp < 0 then nsp = 0 end
+                    local ptx = info.tankx + shx * nsp
+                    local pty = info.tanky + shy * nsp
+                    for _, g in ipairs(at.GUNS) do
+                      if g.k == 0 or own_gun then
+                        -- sl0, not cur_gun: a range key already in this packet
+                        -- is applied before the shot, so sl0 is the length the
+                        -- "hold the sight" candidate really flies at.
+                        local ng = sl0 + g.d
+                        if ng < 2 then ng = 2 elseif ng > 14 then ng = 14 end
+                        local dx = ptx + shx * 128 * ng - tgt_wx
+                        local dy = pty + shy * 128 * ng - tgt_wy
+                        local sc = dx * dx + dy * dy
+                        if sc < best then
+                          best, best_turn, best_spd, best_gun = sc, t.k, s.k, g.k
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+            clh.aim_pred_wu = math.sqrt(best)
+            -- Apply only the axes we were allowed to move.  A small heading
+            -- error gets a TAP (one packet, ~3 brads); a large one gets the key
+            -- HELD, the same split steering uses.
+            if own_turn and best_turn ~= 0 then
+              keys = bit.band(keys, bit.bnot(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))
+              taps = bit.band(taps, bit.bnot(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))
+              if math.abs(aim_corr) > 8 then keys = bit.bor(keys, best_turn)
+              else taps = bit.bor(taps, best_turn) end
+            end
+            if own_gun and best_gun ~= 0 then
+              taps = bit.bor(taps, best_gun)     -- one unit: never overshoot
+            end
+            if KT.aim_throttle and best_spd ~= 0 then
+              keys = bit.bor(keys, best_spd)
+            end
+          end
+        end
+
         -- ── STEP 5: opportunistic capture-target shot ─────────────────────
         -- Fire when the predicted impact lands within the LGM-kill fire gate of
         -- the man (open ground) or IN HIS EXACT TILE (solid square).  The gate is
@@ -8437,7 +8586,7 @@ function Brain.think(info)
           print2(string.format(
             "CAPTURE_LGM_HUNT t=%d pill=(%d,%d) src=%s lgm=(%s,%s) pd=%s d=%.1f"
             .. " nav=%s aim=%d err=%s tol=%d uturn=%s gun=%d spd=%d slower=%d"
-            .. " thr=%s steer=%s gate=%s verdict=%s",
+            .. " thr=%s steer=%s gate=%s verdict=%s aimerr=%s/%s dband=%s",
             now, clh.pmx, clh.pmy, clh.src,
             tostring(clh.lgm_mx), tostring(clh.lgm_my), tostring(clh.pill_d),
             clh.dist_wu / 256.0,
@@ -8445,7 +8594,9 @@ function Brain.think(info)
             clh.uturn and 1 or 0,
             info.gunrange or 0, info.speed or 0,
             ((bit.band(keys, KEY_SLOWER)) ~= 0) and 1 or 0,
-            tostring(clh.thr), clh.steer, gate, clh.verdict))
+            tostring(clh.thr), clh.steer, gate, clh.verdict,
+            clh.aim_err_wu and string.format("%.0f", clh.aim_err_wu) or "-",
+            tostring(clh.aim_wu or "-"), tostring(clh.aim_dband or "-")))
         end
       end
     elseif state._clh_verdict ~= nil then
@@ -9107,6 +9258,10 @@ function Brain.think(info)
                    cr, cg, cb, 230)
         viz.circle("kill_lgm_engage", sx, sy, _kt.engine_kill_wu / 256.0,
                    cr, cg, cb, 150)
+        if _kt.aim_wu then                      -- innermost: what the aim is for
+          viz.circle("kill_lgm_engage", sx, sy, _kt.aim_wu / 256.0,
+                     cr, cg, cb, 110)
+        end
         viz.circle("kill_lgm_engage", sx, sy, 0.08, cr, cg, cb, 255)
         viz.text("kill_lgm_engage", sx, sy + 0.6, label,
                  "center", cr, cg, cb, 255, 0.4)
@@ -9214,6 +9369,10 @@ function Brain.think(info)
                      cr, cg, cb, 220)
           viz.circle("kill_lgm_predict", px, py, kill_lgm.tuning().engine_kill_wu / 256.0,
                      cr, cg, cb, 150)
+          if kill_lgm.tuning().aim_wu then      -- innermost: the aim target
+            viz.circle("kill_lgm_predict", px, py,
+                       kill_lgm.tuning().aim_wu / 256.0, cr, cg, cb, 110)
+          end
           viz.circle("kill_lgm_predict", px, py, 0.10, cr, cg, cb, 255)
           viz.text("kill_lgm_predict", px, py - 0.55,
                    string.format("PRED ft=%d %s", elm.flight_ticks or 0,

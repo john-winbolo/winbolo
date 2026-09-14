@@ -4911,6 +4911,11 @@ local function steer_core(state, world, info, goal)
         viz.circle("kill_lgm_status", _cx, _cy,
                    _kt.engine_kill_wu / 256.0,
                    255, 200, 120, 130, false, false)          -- engine kill radius (amber)
+        if _kt.aim_wu then
+          viz.circle("kill_lgm_status", _cx, _cy,
+                     _kt.aim_wu / 256.0,
+                     255, 255, 160, 120, false, false)        -- aim target (pale)
+        end
       end
     end
 

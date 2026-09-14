@@ -1939,6 +1939,36 @@ M.LGM_KILL_IMPROVED    = true
 -- away shots that would have killed.  KEEL: 64.
 M.LGM_KILL_FIRE_WU     = 256  -- wu: take the shot inside one full tile
 
+-- ── Aim target: a QUARTER tile (2026-09-13, Andrew) ───────────────────────
+-- LGM_KILL_FIRE_WU says when the shot is worth taking.  This says when the AIM
+-- is finished.  Aim error = the distance from the predicted impact point (at
+-- the length the shot will actually fly at) to the man's predicted point.
+-- Above this the hunt keeps closing the error every tick; the shot still goes
+-- the moment the error is inside the FIRE gate, so "shoot at a tile, aim for a
+-- quarter tile" -- each shell is fired while the next one is being aimed better.
+--
+-- Why the aim needed help at all.  Nothing ever "held" the aim once a shot was
+-- allowed; these are floors the old code could not get under:
+--   * the gunsight steps in 128 wu units along the ray, so the along-the-ray
+--     residual alone is up to 64 wu at the best possible rounding;
+--   * steering's turn deadband is 2 brads for every goal, and at the 6-7 tile
+--     range this shot is taken at (~1700 wu) 2 brads is about 80 wu SIDEWAYS --
+--     on its own wider than the quarter tile we are asking for.
+-- The refinement search (init.lua STEP 4b) picks the turn and sight step that
+-- minimise the error, with a deadband derived from THIS knob and the range
+-- (asin(AIM_WU / dist), floored at 1 brad) instead of the flat 2.
+--
+-- Read only while LGM_KILL_IMPROVED is true.  No KEEL entry: the master being
+-- off is what keeps keel unchanged.
+M.LGM_KILL_AIM_WU      = 64   -- wu: keep refining until the impact is this close
+
+-- The refinement search's THROTTLE axis.  Off by design: a speed step moves the
+-- tank about 2 wu in a tick against an along-the-ray residual of up to 64 wu,
+-- while the capture-hunt's whole promise is that it never brakes for the
+-- builder (the throttle stays navigation's).  true opens the axis for a bench.
+-- Read only while LGM_KILL_IMPROVED is true.  No KEEL entry.
+M.LGM_KILL_AIM_THROTTLE = false
+
 -- The engine's real kill radius (lgm.c MAP_SQUARE_MIDDLE).  Not a tuning
 -- value -- it is what the engine does -- but it lives here so the debug
 -- overlay can draw "what would actually kill" next to "what we shoot at".
