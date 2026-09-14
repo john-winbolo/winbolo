@@ -203,6 +203,12 @@ typedef struct {
 /* Server-side global state */
 typedef struct UdpServerState {
     SOCKET sock;
+    /* The port bind() actually gave us, read back with getsockname(). Equal
+     * to the requested port in the normal case; with a requested port of 0
+     * it is the one the OS picked, which is the only place the real port
+     * exists. Anything that advertises where the server can be reached
+     * (mDNS, the tracker, WBN) must use this and not the request. */
+    unsigned short boundPort;
     bool running;
     UdpServerClient clients[MAX_TANKS];
     SpectatorConn   spectators[MAX_SPECTATORS];
