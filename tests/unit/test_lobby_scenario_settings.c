@@ -24,6 +24,7 @@
  * run_lobby_scenario_refuses_ranked        — both directions
  * run_lobby_scenario_refuses_ai_none       — and the policy that empties the
  *                                            roster of bots
+ * run_lobby_scenario_refuses_game_type     — and the type the commit set
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -40,7 +41,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimApplyLobbySetting, SetRanked */
 #include "server_sim_scenario.h"   /* serverSimSetScenarioIdentity */
 #include "mapgen.h"                /* MapGenConfig — the generated-map commit */
-#include "wire_limits.h"           /* LST_RANKED, LST_AI_POLICY */
+#include "wire_limits.h"           /* LST_RANKED, LST_AI_POLICY, LST_GAME_TYPE */
 #include "everard_map.h"
 #include "test_harness.h"
 
@@ -469,6 +470,59 @@ int run_lobby_scenario_refuses_ai_none(void) {
     UT_ASSERT_MSG(serverSimGetBotAiType(sim) == aiFull,
                   "a commit moved a policy that already allowed bots, to %d",
                   (int)serverSimGetBotAiType(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 7. The game type a scripted round is on ──────────────────────── */
+
+int run_lobby_scenario_refuses_game_type(void) {
+    ServerSim *sim = lsLobbySim();
+    /* gameOpen, gameTournament, gameStrictTournament — every value the
+       handler admits, each of which would take a scripted lobby off
+       gameScripted. */
+    const uint8_t types[3] = { (uint8_t)gameOpen, (uint8_t)gameTournament,
+                               (uint8_t)gameStrictTournament };
+    int i;
+
+    UT_ASSERT(sim != NULL);
+
+    /* With no scenario the three are the host's to pick between. */
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_GAME_TYPE,
+                                                 &types[i], 1),
+                      "game type %d was refused on a lobby with no scenario",
+                      (int)types[i]);
+        UT_ASSERT_MSG(serverSimGetGameType(sim) == (gameType)types[i],
+                      "game type %d was accepted but the lobby is on %d",
+                      (int)types[i], (int)serverSimGetGameType(sim));
+    }
+
+    /* A commit that attaches a scenario puts the lobby on scripted. */
+    lsAttachIdentity(sim);
+    UT_ASSERT(lsCommitMap(sim));
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
+                  "a commit with a scenario left the game type at %d",
+                  (int)serverSimGetGameType(sim));
+
+    /* And none of the three can take it off scripted while it is there. */
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(!serverSimApplyLobbySetting(sim, LST_GAME_TYPE,
+                                                  &types[i], 1),
+                      "game type %d was accepted on a lobby running a scenario",
+                      (int)types[i]);
+        UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
+                      "a refused game type moved the lobby to %d",
+                      (int)serverSimGetGameType(sim));
+    }
+
+    /* With the scenario gone the type is the host's again. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false);
+    UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &types[1], 1),
+                  "the game type stayed refused after the scenario went");
+    UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
 
     serverSimDestroy(sim);
     return 0;

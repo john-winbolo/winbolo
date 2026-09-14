@@ -1074,6 +1074,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_scenario_commit_sets_type",         run_lobby_scenario_commit_sets_type         },
     { "lobby_scenario_refuses_ranked",           run_lobby_scenario_refuses_ranked           },
     { "lobby_scenario_refuses_ai_none",          run_lobby_scenario_refuses_ai_none          },
+    { "lobby_scenario_refuses_game_type",        run_lobby_scenario_refuses_game_type        },
     { "lobby_template_map_commit_seats",         run_lobby_template_map_commit_seats         },
     { "lobby_template_return_reconciles",        run_lobby_template_return_reconciles        },
     { "lobby_template_return_unfields",          run_lobby_template_return_unfields          },

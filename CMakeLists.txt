@@ -5179,6 +5179,7 @@ set(_unit_test_names
     lobby_scenario_commit_sets_type
     lobby_scenario_refuses_ranked
     lobby_scenario_refuses_ai_none
+    lobby_scenario_refuses_game_type
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready

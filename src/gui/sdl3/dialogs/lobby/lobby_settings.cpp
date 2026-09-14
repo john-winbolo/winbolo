@@ -244,6 +244,13 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             /* Ranked games forbid the "Open" type — grey it out. */
             bool optDisabled = rankedNow && (gameType)enumVal == gameOpen;
             if ((gameType)enumVal == gameScripted) optDisabled = true;
+            /* A scripted lobby is on the type its map commit set, and the
+               server refuses every other value while the scenario is there.
+               Greying the whole group says so, rather than letting a row be
+               picked and snap back when the refusal arrives. */
+            if (clientSimGetLobbyGameType(cs) == gameScripted) {
+                optDisabled = true;
+            }
             if (optDisabled) ImGui::BeginDisabled();
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##gt%d", items[i], i);

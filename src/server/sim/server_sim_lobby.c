@@ -466,6 +466,11 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1 || value[0] < 1 || value[0] > 3) return false;
             if (serverSimGetRanked(sim) &&
                 (gameType)value[0] == gameOpen) return false;
+            /* A scripted round plays the game its scenario declared, and the
+               type that says so is the map commit's to set. Every value this
+               case admits would take the lobby off gameScripted, so while a
+               scenario is attached none of them is the host's to send. */
+            if (sim->scenarioIdentity.source != lobbyScenarioNone) return false;
             serverSimSetGameType(sim, (gameType)value[0]);
             return true;
         case LST_HIDDEN_MINES:
