@@ -66,6 +66,16 @@
  *                                       switches the scenario off and tells
  *                                       the players
  *
+ * and the switch that decides whether a script is loaded at all:
+ *
+ * run_scenario_host_disabled_refuses_script
+ *                                     — scripts off, and a map that has one
+ *                                       attaches nothing and says which file
+ * run_scenario_host_disabled_plain_map— scripts off, and a map with none
+ *                                       says nothing
+ * run_scenario_host_enabled_again     — the switch back on, and the attach
+ *                                       is as it was
+ *
  * and what a metatable on the script's own tables reaches and does not:
  *
  * run_scenario_host_metatable_raises  — an __index that raises, on _G and on
@@ -1829,5 +1839,112 @@ int run_scenario_host_hook_via_global_metatable(void) {
     serverSimDestroy(sim);
     shDrop(kMap);
     remove(kRecord);
+    return 0;
+}
+
+/* ── 24. Scripts off, with a script beside the map ────────────────── */
+
+/* The switch is file-scope state on the library and CTest runs cases as
+ * separate processes, but a case is not the only thing in its process: the
+ * three cases below put it back to enabled before their first assert, so a
+ * failure leaves it where the rest of the run expects it rather than off. */
+int run_scenario_host_disabled_refuses_script(void) {
+    static const char *const kMap = "scnhost_off_script.map";
+    static const char *const kLua =
+        "scenario = { name = \"Refused\", api = 1 }\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    scenarioHostSetEnabled(false);
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+
+    /* Everything the case has to put back, ahead of the first assert. */
+    scenarioHostSetEnabled(true);
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+
+    UT_ASSERT_MSG(h == NULL,
+                  "a script was attached with scripts off");
+    UT_ASSERT_MSG(err[0] != '\0',
+                  "the refusal produced no operator line");
+    UT_ASSERT_MSG(strstr(err, "scnhost_off_script") != NULL,
+                  "the line does not name the map's script: %s", err);
+    UT_ASSERT_MSG(strstr(err, SCN_SIDECAR_SUFFIX) != NULL,
+                  "the line does not name the file: %s", err);
+    return 0;
+}
+
+/* ── 25. Scripts off, with nothing beside the map ─────────────────── */
+
+/* The ordinary map, which must stay as quiet as it was: an operator
+ * rotating through a directory of plain maps should see nothing at all. */
+int run_scenario_host_disabled_plain_map(void) {
+    static const char *const kMap = "scnhost_off_plain.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    shDrop(kMap);                /* whatever an earlier run left beside it */
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    scenarioHostSetEnabled(false);
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+
+    scenarioHostSetEnabled(true);
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+
+    UT_ASSERT_MSG(h == NULL, "a map with no script beside it attached one");
+    UT_ASSERT_MSG(err[0] == '\0',
+                  "a map with no script beside it said '%s'", err);
+    return 0;
+}
+
+/* ── 26. And the switch back on ───────────────────────────────────── */
+
+int run_scenario_host_enabled_again(void) {
+    static const char *const kMap = "scnhost_off_then_on.map";
+    static const char *const kLua =
+        "scenario = { name = \"Back\", api = 1 }\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    char          name[SCN_SCENARIO_NAME_LEN];
+    bool          refusedWhileOff;
+    bool          attachedWhenOn;
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    scenarioHostSetEnabled(false);
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    refusedWhileOff = (h == NULL);
+    scenarioHostDetach(h);
+
+    err[0] = '\0';
+    scenarioHostSetEnabled(true);
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    attachedWhenOn = (h != NULL);
+    snprintf(name, sizeof(name), "%s", scenarioHostName(h));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+
+    UT_ASSERT_MSG(refusedWhileOff, "a script was attached with scripts off");
+    UT_ASSERT_MSG(attachedWhenOn,
+                  "the sidecar was refused with scripts on: %s", err);
+    UT_ASSERT_MSG(strcmp(name, "Back") == 0, "name read as '%s'", name);
     return 0;
 }

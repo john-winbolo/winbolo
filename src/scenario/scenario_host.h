@@ -112,6 +112,30 @@
 typedef struct ScenarioHost ScenarioHost;
 
 /*********************************************************
+ *NAME:          scenarioHostSetEnabled
+ *PURPOSE:
+ *  Whether scenarioHostAttach may load a script at all.
+ *  Enabled by default, so a server that says nothing runs
+ *  the scripts it always ran.
+ *
+ *  Off, every attach answers NULL before it reads anything
+ *  and every host in the process plays plain maps — the
+ *  dedicated server, the headless runner and the desktop
+ *  client's single-player host, none of which tests this
+ *  for itself.
+ *
+ *  A map that does have a script beside it is named through
+ *  the attach's err buffer, so a caller that already prints
+ *  a failed attach prints the refusal too. A map with no
+ *  script beside it says nothing.
+ *
+ *  Set it before the first attach: it is one answer for the
+ *  process, and a map committed later reads whatever it
+ *  last said.
+ *********************************************************/
+void scenarioHostSetEnabled(bool enabled);
+
+/*********************************************************
  *NAME:          scenarioHostAttach
  *PURPOSE:
  *  Looks for a sidecar beside mapPath, reads it, boots a VM,
@@ -132,6 +156,10 @@ typedef struct ScenarioHost ScenarioHost;
  *  an api newer than this server — and writes one operator
  *  line to err saying which, with the file and the line where
  *  Lua has one.
+ *
+ *  Returns NULL without reading the file when scripts are
+ *  off, writing a line to err naming the script the map has
+ *  and nothing at all for a map that has none.
  *
  *  err may be NULL only when errLen is 0.
  *********************************************************/
@@ -185,10 +213,14 @@ void scenarioHostDetach(ScenarioHost *h);
  *  which is why it cannot be the scenario itself. Call it
  *  once, after the first attach; pass a NULL slot to stop.
  *
- *  A sidecar that cannot be used is logged rather than
- *  returned: there is nobody to answer at the point a map
- *  is committed, and a bad sidecar still leaves a playable
- *  map.
+ *  Each commit says what it did: the scenario it attached
+ *  and the file it came from, the script it refused because
+ *  scripts are off, or the one it could not use. All three
+ *  are logged rather than returned, because there is nobody
+ *  to answer at the point a map is committed and a bad
+ *  sidecar still leaves a playable map. A map with no script
+ *  beside it says nothing, so a rotation over plain maps is
+ *  as quiet as it was.
  *********************************************************/
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot);
 

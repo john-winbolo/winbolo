@@ -1682,13 +1682,19 @@ bool gameFrontSetDlgState(openingStates newState) {
           serverSimSetQuiet(spServerSim, true);
           /* A scenario sidecar beside the map this game was built from. A
              random or built-in map has no file on disk, so it carries none.
-             No sidecar says nothing; one that cannot be used says why. */
+             No sidecar says nothing; one loaded, one that cannot be used and
+             one refused because scripts are off each say so. The switch is
+             the library's, so this path has no test of its own. */
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
             spScenarioHost = scenarioHostAttach(spServerSim, fileName,
                                                 scenarioErr,
                                                 sizeof(scenarioErr));
-            if (spScenarioHost == NULL && scenarioErr[0] != '\0') {
+            if (spScenarioHost != NULL) {
+              WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
+                          scenarioHostName(spScenarioHost),
+                          scenarioHostSidecarPath(spScenarioHost));
+            } else if (scenarioErr[0] != '\0') {
               WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
             }
           }
@@ -2834,7 +2840,11 @@ bool gameFrontSetupServer(void) {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
                                         scenarioErr, sizeof(scenarioErr));
-    if (spScenarioHost == NULL && scenarioErr[0] != '\0') {
+    if (spScenarioHost != NULL) {
+      WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
+                  scenarioHostName(spScenarioHost),
+                  scenarioHostSidecarPath(spScenarioHost));
+    } else if (scenarioErr[0] != '\0') {
       WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
     }
   }

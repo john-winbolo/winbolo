@@ -590,6 +590,9 @@ void printArgs() {
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
+  fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
+  fprintf(stderr, "                has a script says which one was not loaded.\n");
   fprintf(stderr, "-validate <File> - Check the scenario sidecar beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
@@ -1572,17 +1575,26 @@ int main(int argc, char **argv) {
     serverMessageConsoleMessage(serverSim, "Geo lookup database not found — country codes will be XX.\n");
   }
 
+  /* -noscenarios: run every map plainly, whatever sits beside it. Set on the
+     library before the first attach, so the map commits that follow answer to
+     it as well. */
+  if (argExist(argc, argv, "noscenarios") == TRUE) {
+    scenarioHostSetEnabled(false);
+  }
+
   /* A scenario sidecar beside the map, when the map came from a file and one
      is there. No sidecar is the ordinary case and says nothing; a sidecar
-     that cannot be used says why, and the server runs the map plainly. */
+     that cannot be used says why, as does one -noscenarios turned down, and
+     the server runs the map plainly. */
   if (scenarioMapPath[0] != '\0') {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(serverSim, scenarioMapPath,
                                       scenarioErr, sizeof(scenarioErr));
     if (scenarioHost != NULL) {
-      char line[640];
-      snprintf(line, sizeof(line), "Scenario loaded: %s",
-               scenarioHostName(scenarioHost));
+      char line[SCN_SIDECAR_PATH_MAX + 128];
+      snprintf(line, sizeof(line), "Scenario loaded: %s (from %s)",
+               scenarioHostName(scenarioHost),
+               scenarioHostSidecarPath(scenarioHost));
       serverMessageConsoleMessage(serverSim, line);
     } else if (scenarioErr[0] != '\0') {
       serverMessageConsoleMessage(serverSim, scenarioErr);

@@ -5064,6 +5064,9 @@ set(_unit_test_names
     scenario_host_metatable_raises
     scenario_host_metatable_not_read
     scenario_host_hook_via_global_metatable
+    scenario_host_disabled_refuses_script
+    scenario_host_disabled_plain_map
+    scenario_host_enabled_again
     scenario_validate_clean
     scenario_validate_api_too_new
     scenario_validate_lobby_shape

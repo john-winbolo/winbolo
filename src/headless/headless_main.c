@@ -141,6 +141,8 @@ static bool optQuiet = FALSE;
 static bool optFast = FALSE;
 static char optMap[512] = "";
 static bool optStdin = FALSE;
+/* Run the map plainly, whatever sidecar sits beside it. */
+static bool optNoScenarios = false;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -1968,6 +1970,9 @@ static void printUsage(const char *prog) {
     "                    what turns bot AI on for the fast-mode sim. Not --brain,\n"
     "                    which is this process's own player. A scenario's lobby\n"
     "                    seats and its spawns both need this\n"
+    "  --noscenarios     Do not load the scenario script beside the map. Every\n"
+    "                    map, including one committed later, plays plainly. A map\n"
+    "                    that has a script says which one was not loaded\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
@@ -2116,6 +2121,8 @@ static bool parseArgs(int argc, char **argv) {
       optLineOfSight = true;
     } else if (strcmp(argv[i], "--classicmode") == 0) {
       optClassicMode = true;
+    } else if (strcmp(argv[i], "--noscenarios") == 0) {
+      optNoScenarios = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -2344,13 +2351,20 @@ static int runFastMode(void) {
 
   /* A scenario sidecar beside the map, if one is there. No sidecar is the
      ordinary case and says nothing; a sidecar that cannot be used says why,
-     and the run plays the map plainly. */
+     as does one --noscenarios turned down, and the run plays the map
+     plainly. The switch is set on the library before the first attach, so
+     the map commits that follow answer to it as well. */
+  if (optNoScenarios) {
+    scenarioHostSetEnabled(false);
+  }
   {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(fastServerSim, optMap,
                                       scenarioErr, sizeof(scenarioErr));
     if (scenarioHost != NULL) {
-      fprintf(stderr, "Scenario loaded: %s\n", scenarioHostName(scenarioHost));
+      fprintf(stderr, "Scenario loaded: %s (from %s)\n",
+              scenarioHostName(scenarioHost),
+              scenarioHostSidecarPath(scenarioHost));
     } else if (scenarioErr[0] != '\0') {
       fprintf(stderr, "%s\n", scenarioErr);
     }

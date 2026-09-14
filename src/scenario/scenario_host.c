@@ -1982,6 +1982,40 @@ static void scnRoundStart(void *ctx) {
 
 /* ── The frontend surface ─────────────────────────────────────────── */
 
+/* Whether an attach may load a script at all.
+ *
+ * On the library rather than on each caller, so the desktop client's own
+ * host answers to it without a copy of the test, and so turning scripts off
+ * for one more frontend later is a call rather than a patch to that
+ * frontend.
+ *
+ * File scope rather than a member of the host or the sim, because what it
+ * decides is whether a host should exist: a copy on the host would sit on
+ * the thing it said not to build, and a copy on the sim would have to be
+ * set on each one before the map that sim was built from was read. One
+ * process runs one server, and this is that server's answer.
+ *
+ * Written once at startup, before a sim exists, and read from the map
+ * commit thereafter. */
+static bool scnEnabled = true;
+
+void scenarioHostSetEnabled(bool enabled) {
+    scnEnabled = enabled;
+}
+
+/* Whether a file is there, without reading a byte of it. The refusal below
+ * is the only caller: it says which script a map lost and must not say it
+ * about a map that never had one. */
+static bool scnSidecarExists(const char *path) {
+    FILE *f = fopen(path, "rb");
+
+    if (f == NULL) {
+        return false;
+    }
+    fclose(f);
+    return true;
+}
+
 ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen) {
     char             sidecar[SCN_SIDECAR_PATH_MAX];
@@ -2001,6 +2035,17 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         return NULL;
     }
     if (!scnSidecarPath(mapPath, sidecar, sizeof(sidecar))) {
+        return NULL;
+    }
+    /* Off, and the file is not read, parsed or run. The name above is string
+       work on the map path and touches no disk; the one question asked here
+       is whether there is a file, which is what tells a map that lost a
+       script apart from a map that never had one. */
+    if (!scnEnabled) {
+        if (scnSidecarExists(sidecar)) {
+            scnFmt(err, errLen,
+                   "scenario: scripts are off; %s was not loaded", sidecar);
+        }
         return NULL;
     }
     /* The one read of the file. No sidecar is the ordinary case: the map
@@ -2244,8 +2289,17 @@ static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
 
     err[0] = '\0';
     *slot = scenarioHostAttach(sim, mapPath, err, sizeof(err));
-    if (*slot == NULL && err[0] != '\0') {
-        /* Said rather than returned: a map commit has nobody to answer. */
+    /* Said rather than returned: a map commit has nobody to answer, and
+       until this line an operator rotating through a directory had no way
+       of telling which rounds ran a script. The attach names both the
+       scenario and the file it came from; a refusal and a file that cannot
+       be used arrive in err already said. A map with no script beside it
+       sets neither and stays quiet, which is what keeps a rotation over
+       plain maps as silent as it was. */
+    if (*slot != NULL) {
+        scnSay(NULL, 0, "scenario: %s loaded from %s",
+               scenarioHostName(*slot), scenarioHostSidecarPath(*slot));
+    } else if (err[0] != '\0') {
         scnSay(NULL, 0, "%s", err);
     }
 }
