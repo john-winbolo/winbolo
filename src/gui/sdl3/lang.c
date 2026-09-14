@@ -1443,7 +1443,7 @@ static const LangEntry langTable[] = {
     {2179, "Max view"},
     {2180, "Like expanded, with additional visibility provided by bases and allies."},
     {2181, "Line of sight"},
-    {2182, "Like max view, but line of sight restriction:\nWalls, pillboxes, and trees 2 tiles thick block visibility."},
+    {2182, "Like max view, but only what your tank can actually see:\nBuildings, and two squares of trees in a row, hide what is behind them."},
     {2183, "Custom"},
     {2184, "Your own set. Changing anything here picks this row."},
     {2185, "Details"},
@@ -1456,6 +1456,7 @@ static const LangEntry langTable[] = {
     {2192, "- Always: on the map overview all the time.\n- Key: only while you are watching that one through its view key.\n- Decay: for a while after one of your tanks was last near it.\n- Off: never."},
     {2193, "None"},
     {2194, "This server does not report its visibility settings."},
+    {2195, "Expanded (full 29x29 view around tank)"},
     /* Settings > Display & Sound > Full Screen */
     {2013, "Full Screen"},
     {2014, "Newswire transparency"},

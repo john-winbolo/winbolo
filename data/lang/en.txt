@@ -1531,7 +1531,7 @@ STR_DLGLOBBY_PRESET_EXPANDED_DESC=Like "Classic with overview" but able to see a
 STR_DLGLOBBY_PRESET_MAXVIEW=Max view
 STR_DLGLOBBY_PRESET_MAXVIEW_DESC=Like expanded, with additional visibility provided by bases and allies.
 STR_DLGLOBBY_PRESET_SIGHT=Line of sight
-STR_DLGLOBBY_PRESET_SIGHT_DESC=Like max view, but line of sight restriction:\nWalls, pillboxes, and trees 2 tiles thick block visibility.
+STR_DLGLOBBY_PRESET_SIGHT_DESC=Like max view, but only what your tank can actually see:\nBuildings, and two squares of trees in a row, hide what is behind them.
 STR_DLGLOBBY_PRESET_CUSTOM=Custom
 STR_DLGLOBBY_PRESET_CUSTOM_DESC=Your own set. Changing anything here picks this row.
 STR_DLGLOBBY_VIS_DETAILS_BTN=Details
@@ -1544,6 +1544,7 @@ STR_DLGLOBBY_VIS_SHORT_OVERVIEW=Overview
 STR_DLGLOBBY_VIEW_POLICY_TIP=- Always: on the map overview all the time.\n- Key: only while you are watching that one through its view key.\n- Decay: for a while after one of your tanks was last near it.\n- Off: never.
 STR_DLGLOBBY_WINDOW_NONE=None
 STR_DLGBROWSER_VIEWS_UNKNOWN=This server does not report its visibility settings.
+STR_DLGLOBBY_WINDOW_EXPANDED_LONG=Expanded (full 29x29 view around tank)
 
 # Settings > Display & Sound > Full Screen
 STR_DLGSETTINGS_FULLSCREEN=Full Screen

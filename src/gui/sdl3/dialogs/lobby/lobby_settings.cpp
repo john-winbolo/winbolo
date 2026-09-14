@@ -463,7 +463,10 @@ void lobbyVisibilityColumnText(const VisibilitySettings *v, int column,
                      langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
     } else if (column == 4 &&
                v->overviewWindow == (uint8_t)overviewWindowExpanded) {
-        SDL_snprintf(out, outSize, "%s (Full 29x29 view around tank)", word);
+        /* The whole sentence is one string, not the Expanded word plus a
+         * translated suffix, so a translator can order the parts freely. */
+        SDL_snprintf(out, outSize, "%s",
+                     langGetText(STR_DLGLOBBY_WINDOW_EXPANDED_LONG));
     } else {
         SDL_snprintf(out, outSize, "%s", word);
     }

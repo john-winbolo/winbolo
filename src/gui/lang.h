@@ -1637,6 +1637,11 @@
  * learned the fields. Such a game is named Classic, which is what it
  * plays like, and this says why there is nothing behind the name. */
 #define STR_DLGBROWSER_VIEWS_UNKNOWN             2194
+/* The Expanded overview window spelled out in full, for the one column
+ * cell that has room to say what the mode gives you. One whole sentence
+ * rather than the Expanded word plus a suffix, so a translator can put
+ * the parts in whatever order the language wants. */
+#define STR_DLGLOBBY_WINDOW_EXPANDED_LONG        2195
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014

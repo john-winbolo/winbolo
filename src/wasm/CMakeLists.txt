@@ -191,6 +191,7 @@ set(WBN_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/winbolonet_wasm.c)
 # GUI sources (SDL3) — excluding files we replace (winbolo.c, gamefront.c, sound.c, netclient.c, clientmutex.c, dns_lookups.c)
 set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
+    ${SRC_ROOT}/gui/visibility_presets.c
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
