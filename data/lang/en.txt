@@ -286,7 +286,6 @@ STR_DLGGAMEINFO_UNLIMITED=Unlimited
 
 # Players panel
 STR_DLGPLAYERS_TITLE=Players
-STR_DLGPLAYERS_SELECT=Select:
 STR_DLGPLAYERS_ALL=All
 STR_DLGPLAYERS_NONE=None
 STR_DLGPLAYERS_ALLIES=Allies
@@ -1678,6 +1677,7 @@ STR_PLAYER_TIP_VOICE_SELF_NOMIC=You have no microphone
 STR_PLAYER_TIP_VOICE_SELF_MUTED=Your microphone is off — click to unmute
 STR_PLAYER_TIP_PING_SHOWN=Pings shown — click to hide this player's pings
 STR_PLAYER_TIP_PING_MUTED=Pings hidden — click to show this player's pings
+STR_DLGPLAYERS_SELECT=Select:
 
 # Players panel — per-player playback volume slider
 STR_PLAYER_TIP_VOICE_VOLUME=Voice chat volume
