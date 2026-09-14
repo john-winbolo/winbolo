@@ -82,6 +82,13 @@ void brainCoreRegisterVizRegister(struct lua_State *L);
 void brainCoreRegisterPanelRegister(struct lua_State *L);
 void brainCoreRegisterShotSimPoiRegister(struct lua_State *L);
 void brainCoreRegisterVizDetail(struct lua_State *L);
+/* Flush hook the crash-log writer calls before it writes, so a brain's own
+ * buffered output reaches disk first. Installed by the same frontend code
+ * that registers the bindings above (luabrainshandler.c hands it the brain
+ * C library's naOptLogFlushSync), which is why the declaration belongs here
+ * and not only on internal/braincore.h — that header is T2 and a frontend
+ * never sees it. Full contract documented there. */
+void brainCoreSetLogFlushHook(void (*fn)(void));
 bool brainCoreCallThink(struct lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(struct lua_State *L, BrainInfo *info, const char *method);
 
