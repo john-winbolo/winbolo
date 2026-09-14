@@ -31,6 +31,9 @@
 #include "bot_manager.h"
 #include "bot_worker_pool.h"   /* botWorkerPoolDestroy */
 #include "server_sim_join.h"   /* addPlayerInternal, fillAndPublishPlayerJoin, serverSimAssignLobbyStartOnJoin */
+#include "server_sim_scenario.h"  /* serverSimAddUnfieldedSeat and
+                                   * serverSimUnfieldBot, which are defined
+                                   * here and declared for a scenario */
 
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
                      const ServerSimBotConfig *cfg) {

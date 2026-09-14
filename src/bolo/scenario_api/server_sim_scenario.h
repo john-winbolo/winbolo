@@ -126,6 +126,37 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
                                        const ScnLobbyTemplate *t);
 
 /*********************************************************
+ *NAME:          serverSimAddUnfieldedSeat
+ *PURPOSE:
+ *  Seat a bot in the lobby without putting it on the
+ *  field: the roster gains a connected bot seat with the
+ *  name and team given, and nothing else is built — no
+ *  brain, no ClientSim, no tank. The seat shows in the
+ *  roster, counts as ready, is skipped by the start
+ *  sequence, and is fielded later by a spawn naming it.
+ *  Returns false for an out-of-range or occupied seat.
+ *********************************************************/
+bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
+                               const char *name, BYTE teamNumber);
+
+/*********************************************************
+ *NAME:          serverSimUnfieldBot
+ *PURPOSE:
+ *  Take a seat off the field without taking it out of the
+ *  game: the bot, the tank, the man and the base timer go;
+ *  the roster entry, the identity, the team and the
+ *  alliance stay. One CTRL_LOBBY_SLOT says the seat is no
+ *  longer fielded — no leave event goes out, nothing the
+ *  seat owns changes hands and no client is resynced. A
+ *  spawn naming the seat fields it again.
+ *  No-op for an empty seat or one already off the field.
+ *
+ *  Taking the seat itself out is serverSimRemoveBot, which
+ *  is what a host's remove, a kick and a disconnect use.
+ *********************************************************/
+void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioMapChanged
  *PURPOSE:
  *  Registers the callback a committed map change invokes,
