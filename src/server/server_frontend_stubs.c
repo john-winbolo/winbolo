@@ -188,7 +188,39 @@ void messageInboxClear(MessageState *ms) {
 /* clientBuildInputPacket lives in client_snapshot.c; brainDataMakeInfo
    and brainDataExtractInfo live in brain_data.c (both linked into
    WinBoloDS). */
-void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) { (void)ms; (void)msgType; (void)top; (void)bottom; }
+/* clientMessageAdd — the display streams are stubbed, the brain inbox is not.
+ *
+ * A line from a player slot (player0Message .. player15Message) is chat one
+ * seat said to another, and on a hosted bot that is not a HUD line: it is the
+ * order the bot was given. The canonical clientMessageAdd in src/bolo/
+ * messages.c pushes those into the brain inbox before it draws anything, and
+ * dropping the whole call on the server build dropped the push with it — so
+ * every human order typed at a bot on a dedicated server arrived at the
+ * ClientSim, passed its delivery filter, and went nowhere. Bot-to-bot /info
+ * traffic never showed the hole, because botManagerDeliverInternalMessage
+ * calls messageInboxPush itself and never comes through here.
+ *
+ * The four display streams above a player slot — newswire, assistant, AI and
+ * network — stay no-ops: those really are HUD lines, and the server draws no
+ * HUD. Keep the push below in step with inboxPushFromBottom in
+ * src/bolo/messages.c, as the ring above is kept in step with its ring. */
+void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) {
+  char   pbuf[BRAIN_INBOX_MSG_LEN];
+  size_t len;
+  (void)top;
+  if (ms == NULL || bottom == NULL) return;
+  if (msgType < player0Message || msgType > player15Message) return;
+  /* The pascal string the ring holds: one length byte, then the bytes. The
+     clamp is written here rather than left to utilCtoPString, which takes no
+     size and would run off the end of a line longer than a chat line — every
+     caller on this build is inside the cap, and the clamp says so. */
+  len = strlen(bottom);
+  if (len > BRAIN_INBOX_MSG_LEN - 2) len = BRAIN_INBOX_MSG_LEN - 2;
+  pbuf[0] = (char)len;
+  memcpy(pbuf + 1, bottom, len);
+  pbuf[len + 1] = '\0';
+  messageInboxPush(ms, (BYTE)(msgType - player0Message), pbuf);
+}
 void clientSoundDist(GameSim *sim, sndEffects value, BYTE tier, BYTE dir) { (void)sim; (void)value; (void)tier; (void)dir; }
 void clientSoundDistLocal(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }
 

@@ -2414,6 +2414,7 @@ int run_scenario_comms_msg_team(void);
 int run_scenario_comms_msg_player(void);
 int run_scenario_comms_sound(void);
 int run_scenario_comms_log(void);
+int run_scenario_comms_say(void);
 int run_scenario_comms_arm_records(void);
 int run_scenario_comms_decoder_dest_player(void);
 int run_scenario_comms_apply_non_zero_slot(void);

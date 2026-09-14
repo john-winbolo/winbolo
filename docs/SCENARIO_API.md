@@ -864,11 +864,47 @@ Field your first wave, and move seats between teams, from `on_start`.
 | Call | What it does |
 |---|---|
 | `game.message(text[, target])` | A line to everyone, to one seat with a number, or to a team with `{ team = t }`. `nil` and `"all"` both mean everyone. |
+| `game.say(p, text[, target])` | A chat line seat `p` says, exactly as a player typing would: to its own team with no target, to everyone with `"all"`, or to one seat with a number. |
 | `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
+
+`message` and `say` are two different voices, and the difference decides
+whether a bot hears the line at all.
+
+- **`message` is the server talking.** It writes a server line: the newswire
+  a player reads, with no sender beside it. A brain never sees it — a brain's
+  inbox is fed from chat alone — and `on_chat` does not fire for it.
+- **`say` is a seat talking.** It writes that seat's own chat, down the same
+  path a typed line takes, so it lands in the receiving brains' inboxes as
+  `info.messages` with `sender` set to `p`, and `on_chat(p, text, true)`
+  fires. This is how a scripted round hands a bot the order a human ally
+  would have typed.
+
+`say` has the three destinations a player has and no more. No target is the
+seat's own team, `"all"` is everyone, and a seat number is that seat. A team
+the sender is not on is not among them, because the chat path refuses a line
+addressed to one whoever sends it. A sender never receives its own line, so
+a scenario can tell one bot something without telling the one it spoke
+through.
+
+`say` is refused when `p`, or a named target, is a seat with nobody in it
+(`SCN_OP_NO_SUCH_PLAYER`), when a team line comes from a seat on no team and
+so has nobody to say it to (`SCN_OP_RANGE`), when the line is empty
+(`SCN_OP_BAD_CALL`, since every receiver drops a chat body of no length), and
+when the line is longer than a chat line can be (`SCN_OP_TOO_BIG`). A seat
+held without a bot in it — `fielded = false` — is a seat for this purpose, so
+a scenario can keep one back purely to speak from.
+
+One caution about team chat. A receiver decides whether a team line is for it
+from its own copy of the roster, which it builds from lobby-slot events. A
+round started with no lobby at all — `-nolobby`, which is how a headless test
+starts a round with no human to ready up — publishes none of those, so every
+seat's copy says team 0 and the team filter drops the line. The op is
+accepted, because the server's own roster does carry the team; it is the
+receiver that never sees it. Use `"all"` or a seat number there.
 
 `end_round` is how a scenario wins or loses a round. It stops play there and
 then, and the line it carries is shown in the lobby exactly as written — the
@@ -1221,7 +1257,9 @@ Named so you do not spend an afternoon looking for them:
   may put a seat on a team nobody is on is still decided by the
   `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
-- **Bot hints.** There is no call that speaks to a bot's brain.
+- **Bot hints.** There is no call that hands a bot's brain a structured
+  hint. `say` reaches a brain through its chat inbox, which is the
+  channel a human ally has, and nothing beyond it.
 - **Presentation.** A panel, a score line, a newswire line and a map marker
   have no calls yet.
 - **Triggers.** A `scenario.triggers` table is not read, and a script that

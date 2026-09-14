@@ -1148,6 +1148,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_comms_msg_player",               run_scenario_comms_msg_player               },
     { "scenario_comms_sound",                    run_scenario_comms_sound                    },
     { "scenario_comms_log",                      run_scenario_comms_log                      },
+    { "scenario_comms_say",                      run_scenario_comms_say                      },
     { "scenario_comms_arm_records",              run_scenario_comms_arm_records              },
     { "scenario_comms_decoder_dest_player",      run_scenario_comms_decoder_dest_player      },
     { "scenario_comms_apply_non_zero_slot",      run_scenario_comms_apply_non_zero_slot      },

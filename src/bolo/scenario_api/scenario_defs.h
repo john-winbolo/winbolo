@@ -181,6 +181,7 @@ typedef enum {
     SCN_OP_MSG_ALL,
     SCN_OP_MSG_TEAM,
     SCN_OP_MSG_PLAYER,
+    SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
 
@@ -433,6 +434,22 @@ typedef struct {
     char text[SCN_TEXT_MAX];
 } ScnOpMsgPlayer;
 
+/* A chat line said by a seat, not by the server. slot is who said it, and
+ * mode is who hears it: a player's three destinations are their own team,
+ * the whole game, and one other seat. A team other than the sender's own is
+ * not among them — the chat path refuses a line addressed to a team the
+ * sender is not on, whoever sends it. */
+#define SCN_SAY_TEAM   0    /* the sender's own team */
+#define SCN_SAY_ALL    1    /* everyone */
+#define SCN_SAY_PLAYER 2    /* one seat, named by target */
+
+typedef struct {
+    BYTE slot;
+    BYTE mode;
+    BYTE target;                /* the seat, under SCN_SAY_PLAYER */
+    char text[SCN_TEXT_MAX];
+} ScnOpMsgSay;
+
 typedef struct {
     BYTE sound;     /* an sndEffects value */
     BYTE x, y;      /* 0xFF, 0xFF = everywhere */
@@ -670,6 +687,7 @@ typedef struct {
         ScnOpMsgAll            msgAll;
         ScnOpMsgTeam           msgTeam;
         ScnOpMsgPlayer         msgPlayer;
+        ScnOpMsgSay            msgSay;
         ScnOpSound             sound;
         ScnOpLog               log;
         ScnOpPanel             panel;

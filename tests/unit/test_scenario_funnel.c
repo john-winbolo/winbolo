@@ -69,6 +69,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_MSG_ALL,
     SCN_OP_MSG_TEAM,
     SCN_OP_MSG_PLAYER,
+    SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
     SCN_OP_PANEL,
@@ -152,6 +153,7 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_MSG_ALL ||            /* test_scenario_comms_arms.c */
            t == SCN_OP_MSG_TEAM ||
            t == SCN_OP_MSG_PLAYER ||
+           t == SCN_OP_MSG_SAY ||
            t == SCN_OP_SOUND ||
            t == SCN_OP_LOG ||
            t == SCN_OP_END_ROUND ||          /* test_scenario_flow_arms.c */

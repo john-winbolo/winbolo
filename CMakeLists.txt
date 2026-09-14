@@ -5257,6 +5257,7 @@ set(_unit_test_names
     scenario_comms_msg_player
     scenario_comms_sound
     scenario_comms_log
+    scenario_comms_say
     scenario_comms_arm_records
     scenario_comms_decoder_dest_player
     scenario_comms_apply_non_zero_slot

@@ -439,6 +439,9 @@ static const char *const kSlEveryRow =
     "  lobby_remove_bot = function() return game.lobby_remove_bot(9) end,\n"
     "  lobby_set_team = function() return game.lobby_set_team(9, 2) end,\n"
     "  message     = function() return game.message(\"hello\") end,\n"
+    /* Seat 9 is empty, so the row is exercised and refused before the line
+       reaches the chat dispatcher, which this fixture has no round for. */
+    "  say         = function() return game.say(9, \"hello\") end,\n"
     "  sound       = function() return game.sound(\"shoot_self\") end,\n"
     "  log         = function() return game.log(\"hello\") end,\n"
     "  set_game_time = function() return game.set_game_time(1000) end,\n"

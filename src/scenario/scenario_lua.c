@@ -2437,6 +2437,70 @@ static int scnLuaMessage(lua_State *L) {
     return scnDone(L, &op, "%d bytes to %d", (int)len, (int)to);
 }
 
+/* A line one seat says.
+ *
+ * The line game.message writes is the server's, and a server line never
+ * enters a brain's inbox: a brain reads chat. This is a seat's own chat
+ * line, so a scripted round can hand a bot exactly what a human ally typing
+ * would hand it, from a seat nobody is sitting in. It fires on_chat too,
+ * with the sender named and scripted true.
+ *
+ * Who hears it is the three a player has: their own team with no target,
+ * the whole game with "all", and one seat with a seat number. A team the
+ * sender is not on is not among them, because the chat path refuses a line
+ * addressed to one whoever sends it.
+ */
+static int scnLuaSay(lua_State *L) {
+    ScenarioOp  op;
+    size_t      len  = 0;
+    lua_Integer p    = scnArgInt(L, 1, "p");
+    const char *text = scnArgText(L, 2, "text", &len);
+    BYTE        mode = SCN_SAY_TEAM;
+    lua_Integer to   = 0;
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (len >= SCN_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                          (int)len, (int)SCN_TEXT_MAX - 1);
+    }
+    /* A line with nothing in it arrives nowhere: every receiver drops a chat
+       body of no length. Refused here rather than accepted and lost. */
+    if (len == 0) {
+        return scnRefused(L, SCN_OP_BAD_CALL, "the line is empty");
+    }
+    /* No target is the seat's own team, which is what a scenario handing a
+       bot an order almost always wants. */
+    if (!lua_isnoneornil(L, 3)) {
+        if (lua_type(L, 3) == LUA_TSTRING) {
+            const char *word = lua_tostring(L, 3);
+            if (strcmp(word, "all") != 0 && strcmp(word, "team") != 0) {
+                return scnRefused(L, SCN_OP_BAD_CALL,
+                                  "target is \"%s\", not \"all\" or \"team\"",
+                                  word);
+            }
+            mode = (strcmp(word, "all") == 0) ? SCN_SAY_ALL : SCN_SAY_TEAM;
+        } else {
+            to = scnArgInt(L, 3, "target");
+            if (!scnFitsByte(to)) {
+                return scnRefused(L, SCN_OP_NO_SUCH_PLAYER,
+                                  "target %d is not a seat", (int)to);
+            }
+            mode = SCN_SAY_PLAYER;
+        }
+    }
+    memset(&op, 0, sizeof(op));
+    op.type            = SCN_OP_MSG_SAY;
+    op.u.msgSay.slot   = (BYTE)p;
+    op.u.msgSay.mode   = mode;
+    op.u.msgSay.target = (BYTE)to;
+    memcpy(op.u.msgSay.text, text, len + 1);
+    return scnDone(L, &op, "%d bytes from player %d, mode %d", (int)len,
+                   (int)p, (int)mode);
+}
+
 static int scnLuaSound(lua_State *L) {
     ScenarioOp  op;
     int         sound = scnArgWord(L, 1, "name", &kScnSounds);
@@ -3004,6 +3068,11 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "message", scnLuaMessage,
       "message(text[, target]) — a line to everyone, to one seat with a "
       "number, or to a team with { team = t }." },
+    { "say", scnLuaSay,
+      "say(p, text[, target]) — a chat line seat p says: to its own team "
+      "with no target, to everyone with \"all\", or to one seat with a "
+      "number. Unlike message, which is the server talking, this reaches a "
+      "bot's inbox and fires on_chat." },
     { "sound", scnLuaSound,
       "sound(name[, x, y]) — play one of the server's sounds, at a square "
       "or everywhere." },

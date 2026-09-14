@@ -52,6 +52,7 @@
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
+#include "client_command.h" /* CMD_CHAT and the team destination the say arm builds */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
  * cannot see the channel sizes. This is where the two meet: one panel
@@ -2405,6 +2406,78 @@ static ScnOpResult scenarioOpMsgPlayer(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* Say something as a seat says it.
+ *
+ * The three arms above are the server talking: they publish CTRL_SERVER_TEXT,
+ * which a client shows on its newswire and a bot brain never sees, because a
+ * brain's inbox is fed from chat alone. This one is a player talking. It is
+ * the op a test uses to hand a bot the line a human ally would type, from a
+ * seat with nobody in it.
+ *
+ * The line is handed to the dispatcher's own CMD_CHAT arm rather than
+ * published here, so it takes the path a typed line takes and no other: the
+ * same destination checks, the same CTRL_CHAT, the same log entry, and from
+ * there the same MessageState inbox every brain reads. Everything the arm
+ * would refuse is refused above it, so the dispatcher's answer is only ever
+ * OK.
+ *
+ * A seat with no team has nobody to say a team line to, which is a refusal
+ * rather than a line the whole game hears: SCN_SAY_ALL is the mode for that.
+ */
+static ScnOpResult scenarioOpMsgSay(ServerSim *sim, const ScnOpMsgSay *p) {
+    ClientCommand cmd;
+    size_t        len;
+
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+    len = strlen(p->text);
+    /* An empty line is no line: every receiver drops a chat body of no
+       length, so it would be accepted here and arrive nowhere. */
+    if (len == 0) {
+        return SCN_OP_BAD_CALL;
+    }
+    if (len > (size_t)PACKET_MAX_CHAT_MESSAGE) {
+        len = (size_t)PACKET_MAX_CHAT_MESSAGE;
+    }
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_CHAT;
+    switch (p->mode) {
+        case SCN_SAY_ALL:
+            cmd.u.chat.destPlayer = 0xFF;
+            break;
+        case SCN_SAY_PLAYER:
+            if (p->target >= MAX_TANKS || !sim->playerConnected[p->target]) {
+                return SCN_OP_NO_SUCH_PLAYER;
+            }
+            cmd.u.chat.destPlayer = p->target;
+            break;
+        case SCN_SAY_TEAM:
+        default: {
+            /* Team 0 is unassigned, and the destination byte only reaches
+               team 16, one past the last team ServerSim.teams[] is keyed
+               by. */
+            BYTE team = sim->lobbyPlayers[p->slot].teamNumber;
+            if (team == 0 || team >= MAX_TANKS) {
+                return SCN_OP_RANGE;
+            }
+            cmd.u.chat.destPlayer = (BYTE)(CHAT_DEST_TEAM_BASE + team);
+            break;
+        }
+    }
+    cmd.u.chat.bodyLen = (uint16_t)len;
+    memcpy(cmd.u.chat.body, p->text, len);
+
+    if (serverSimApplyCommand(sim, (int)p->slot, &cmd) != CMD_OK) {
+        return SCN_OP_WRONG_STATE;
+    }
+    return SCN_OP_OK;
+}
+
 /* Play a sound, at a square or at everyone.
  *
  * 0xFF, 0xFF is the square that is nowhere: soundPickOffer hands it to every
@@ -2977,6 +3050,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpMsgTeam(sim, &op->u.msgTeam);
         case SCN_OP_MSG_PLAYER:
             return scenarioOpMsgPlayer(sim, &op->u.msgPlayer);
+        case SCN_OP_MSG_SAY:
+            return scenarioOpMsgSay(sim, &op->u.msgSay);
         case SCN_OP_SOUND:
             return scenarioOpSound(sim, &op->u.sound);
         case SCN_OP_LOG:
