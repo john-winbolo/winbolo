@@ -6,10 +6,12 @@
 -- the bot that answers.
 --
 -- The ack a bot says carries the REAL goal name out of goals.lua rather than
--- the word that was typed — "Encore! take_cover #" for this line, the empty
--- number being a goal with nothing to number. That is what the round reads,
--- because it is the one place an outside observer can see which goal the
--- verb turned into.
+-- the word that was typed — "Encore! take_cover" for this line. A tile order
+-- says the bare word: retreat has no target at all, and "go there and hold"
+-- carries the SQUARE as its target id (mx * 256 + my), so the number the ack
+-- used to print was meaningless to the player who typed the line (Andrew,
+-- Sep 14). The word itself is still what the round reads, because it is the
+-- one place an outside observer can see which goal the verb turned into.
 --
 -- The name is taken as a prefix, the same way order_by_name takes it, and
 -- seat 2 speaks so seats 0 and 1 are the ones who hear it.

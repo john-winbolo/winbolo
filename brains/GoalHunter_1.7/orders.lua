@@ -698,6 +698,28 @@ local function player_name(info, pn)
   return (info.player_names and info.player_names[(pn or 0) + 1]) or ("p" .. tostring(pn))
 end
 
+-- HOW A GOAL IS NAMED IN A SPOKEN LINE.
+-- Every other order points at a numbered thing, so "attack_pill #5" reads
+-- straight.  A TILE order does not: take_cover covers both `retreat` (no
+-- target at all) and "go there and hold" (whose target id is the SQUARE,
+-- packed as mx * 256 + my), so the same format said "take_cover #30325",
+-- a number that means nothing to the human who typed the line.  Andrew,
+-- Sep 14: say just the word.  Used by every line that prints the goal.
+local function goal_label(kind, tid)
+  if kind == "take_cover" then return "take_cover" end
+  return string.format("%s #%s", tostring(kind), tostring(tid or ""))
+end
+M.goal_label = goal_label
+
+-- The GROUP lines name the target CLASS ("3 on pill #5") rather than the
+-- goal, because several bots on one pill read better that way.  A tile order
+-- has no class either, so it falls back to the same bare word.
+local function group_label(kind, tkind, tid)
+  if kind == "take_cover" then return "take_cover" end
+  return string.format("%s #%s", tkind or "pill", tostring(tid or ""))
+end
+M.group_label = group_label
+
 -- =========================================================================
 -- INBOUND /info obd | obc | obr  (called from comms.process_message)
 -- =========================================================================
@@ -775,8 +797,8 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   if o.held and o.held.oid ~= spec.oid then
     -- Latest order wins.  Say what we are leaving so the human can follow it.
     local old = o.held
-    say(state, string.format("Leaving %s #%s for %s #%s",
-        old.kind, tostring(old.tid), spec.kind, tostring(spec.tid)))
+    say(state, string.format("Leaving %s for %s",
+        goal_label(old.kind, old.tid), goal_label(spec.kind, spec.tid)))
     release_held(state, info, nil, true)
   end
   o.held = {
@@ -801,8 +823,8 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   if group then
     o.announce[spec.oid] = { due = now + (C.ORDER_AUCTION_TICKS or 10), spec = spec }
   else
-    say(state, string.format("%s %s #%s", M.ack_for(my_name(state, info)),
-        spec.kind, tostring(spec.tid or "")))
+    say(state, string.format("%s %s", M.ack_for(my_name(state, info)),
+        goal_label(spec.kind, spec.tid)))
   end
   print2(string.format("ORDER_TAKE t=%d oid=%d kind=%s tid=%s cost=%.0f group=%s stolen=%s",
          now, spec.oid, spec.kind, tostring(spec.tid), cost or 0,
@@ -832,10 +854,10 @@ local function repeat_ack(state, info, oid, now)
   end
   if n > 1 then
     if low ~= me then return end
-    say(state, string.format("Still on it. %d on %s #%s", n,
-                             h.tkind or "pill", tostring(h.tid)))
+    say(state, string.format("Still on it. %d on %s", n,
+                             group_label(h.kind, h.tkind, h.tid)))
   else
-    say(state, string.format("Still on it. %s #%s", h.kind, tostring(h.tid or "")))
+    say(state, string.format("Still on it. %s", goal_label(h.kind, h.tid)))
   end
   o.rack = now
   print2(string.format("ORDER_REPEAT t=%d oid=%d held=%d", now, oid, n))
@@ -1637,11 +1659,11 @@ function M.update(state, world, info, now)
       end
       if low == me and n > 0 and o.held and o.held.oid == oid then
         if n > 1 then
-          say(state, string.format("%d on %s #%s", n, an.spec.tkind or "pill",
-                                   tostring(an.spec.tid)))
+          say(state, string.format("%d on %s", n,
+              group_label(an.spec.kind, an.spec.tkind, an.spec.tid)))
         else
-          say(state, string.format("%s %s #%s", M.ack_for(my_name(state, info)),
-              an.spec.kind, tostring(an.spec.tid or "")))
+          say(state, string.format("%s %s", M.ack_for(my_name(state, info)),
+              goal_label(an.spec.kind, an.spec.tid)))
         end
       end
       o.announce[oid] = nil
@@ -1671,7 +1693,17 @@ function M.update(state, world, info, now)
     end
   end
 
-  -- 4. Live order housekeeping: expiry, target taken, refuel pause.
+  -- 4. Live order housekeeping: THE JOB IS DONE, expiry, refuel pause.
+  --
+  -- AN ORDER ENDS THE MOMENT ITS TARGET CONDITION IS MET, on the tick the
+  -- world shows it — not when the 60 s focus runs out.  Andrew watched a bot
+  -- sit on a pill it had already swept until the timer let it go (Sep 14).
+  -- Every test below reads the world and the perception this tick, so a group
+  -- of bots on one order all let go on the same tick: they see one world.
+  --
+  -- The lines said here are the ones that were always said.  A met goal adds
+  -- no new line of its own: the slot clears and goal selection picks up again
+  -- on the next tick.
   local h = o.held
   if h then
     local done, why = false, nil
@@ -1681,9 +1713,35 @@ function M.update(state, world, info, now)
       local p = world.pills[h.tid]
       if not p then
         done, why = true, "order lapsed"
-      elseif (h.kind == "attack_pill" or h.kind == "capture_pill")
-             and p.owner == "friendly" and not p.in_tank then
-        done, why = true, string.format("%s #%d done", h.kind, h.tid)
+      else
+        -- ATTACK -> SWEEP, in place.  A pill shot to zero armour cannot be
+        -- attacked any further; the natural next move is to pick it up, which
+        -- is what capture_pill does.  The order KEEPS ITS ID and its sender,
+        -- so there is no second ack and no second auction — it is the same
+        -- job, carried on.  A dead pill needs no shells, so the refuel pause
+        -- goes with it.
+        if h.kind == "attack_pill" and (p.health or 0) == 0 and not p.in_tank then
+          h.kind         = "capture_pill"
+          h.needs_shells = false
+          h.refuel_said  = nil
+          state._order   = h
+          print2(string.format("ORDER_CONVERT t=%d oid=%d attack_pill->capture_pill pill=%d",
+                 now, h.oid, h.tid))
+        end
+        if h.kind == "attack_pill" or h.kind == "capture_pill" then
+          -- DONE is any of three things, and they are all "there is nothing
+          -- left to go and do at that square":
+          --   * the pill flew our flag again (someone swept it, us or an ally)
+          --   * it is off the map, in SOMEBODY's tank (in_tank) -- a carried
+          --     pill cannot be attacked or swept by anyone
+          --   * it is in OUR OWN cargo, which is the same in_tank flag: a pill
+          --     we are carrying reads as "allied", never "friendly", which is
+          --     exactly why the old owner-only test never fired for the bot
+          --     that did the sweeping.
+          if p.in_tank or p.owner == "friendly" then
+            done, why = true, string.format("%s #%d done", h.kind, h.tid)
+          end
+        end
       end
     elseif h.tkind == "base" and h.tid then
       local b = world.bases[h.tid]
@@ -1691,7 +1749,24 @@ function M.update(state, world, info, now)
          and b.owner == "friendly" then
         done, why = true, string.format("base #%d done", h.tid)
       end
+    elseif h.tkind == "tank" and h.tid then
+      -- A NAMED TANK.  From inside the brain a dead tank and one that drove
+      -- out of sight look the same: it stops appearing in the object scan,
+      -- and its ghost (the remembered position perception keeps for a while)
+      -- ages out too.  M.target_tile reads both lists, so "target_tile has
+      -- no answer" is the one test that covers both.  A short blink behind a
+      -- forest must not end the order, so it has to hold for
+      -- ORDER_TANK_LOST_TICKS.
+      if M.target_tile(world, state, h) then
+        h.tank_seen = now
+      elseif (now - (h.tank_seen or h.since or now))
+             >= (C.ORDER_TANK_LOST_TICKS or 500) then
+        done, why = true, string.format("Lost %s", player_name(info, h.tid))
+      end
     end
+    -- defend_pill and take_cover (a retreat, and "go there and hold") are NOT
+    -- in this list on purpose.  Holding the spot IS the job, so they run to
+    -- the timer the way they always did.
     if done then
       say(state, why)
       release_held(state, info, nil, true)

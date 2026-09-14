@@ -175,9 +175,19 @@ WHAT THE BOTS SAY
 
   Got it! attack_pill #5        one bot took it. The wording changes with the
                                 bot's name theme.
-  3 on pill 5                   a group order, said once by one bot.
+  Got it! take_cover            a retreat, or a "go there and hold", has no
+                                number to say: just the word.
+  3 on pill #5                  a group order, said once by one bot.
   Still on it. attack_pill #5   you asked for something it already holds.
-  Leaving pill 5 for pill 7     a newer order replaced the old one.
+  Leaving attack_pill #5 for capture_pill #7
+                                a newer order replaced the old one.
+  capture_pill #5 done          the job is finished, so the order is over.
+                                A bot does not wait out the clock: the tick
+                                the pill is yours, or is in somebody's tank,
+                                the order ends and the bot picks its own goal
+                                again.
+  Lost Hannibal                 the tank it was sent after died or has been
+                                out of sight for ten seconds.
   Busy (man_out)                it cannot take an order right now.
   Awaiting command              it is selected and waiting.
   Standing by                   the selection ran out.

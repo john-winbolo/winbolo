@@ -763,5 +763,182 @@ check("`all repositioning on` latches", st._repo_override == true,
 check("and confirms it the same way",
       st.orders.say[1] == "Repositioning on.", tostring(st.orders.say[1]))
 
+-- =========================================================================
+-- AN ORDER ENDS WHEN ITS JOB IS DONE.  Not when the 60 s focus runs out:
+-- the housekeeping pass reads the world every tick and clears the slot the
+-- moment the target condition is met, so goal selection starts again on the
+-- next tick.  W()'s pill 5 is a live hostile pill, pill 7 a dead one and
+-- pill 9 is already ours.
+-- =========================================================================
+print("orders.lua -- an order ends when the job is done")
+
+-- 1. SWEEP: the pill flies our flag -> the slot clears.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "sweep 7", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: the sweep order is held",
+      (st.orders.held or {}).kind == "capture_pill",
+      tostring((st.orders.held or {}).kind))
+w.pills[7].owner = "friendly"
+st.orders.say = {}
+ORD.update(st, w, inf, 102)
+check("a swept pill ends the order on the next tick", st.orders.held == nil,
+      st.orders.held and st.orders.held.kind or "nil")
+check("and it says the line it always said",
+      st.orders.say[1] == "capture_pill #7 done", tostring(st.orders.say[1]))
+
+-- 2. SWEEP: the pill is picked up into a tank -> the slot clears.  A pill in
+--    our OWN cargo reads as "allied", never "friendly", which is why the
+--    owner-only test never fired for the bot that did the sweeping.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "sweep 7", 100, true, false)
+ORD.update(st, w, inf, 101)
+w.pills[7].in_tank = true
+w.pills[7].owner   = "allied"
+ORD.update(st, w, inf, 102)
+check("a pill in our cargo ends the order", st.orders.held == nil,
+      st.orders.held and st.orders.held.kind or "nil")
+
+-- 3. A pill that has left the world altogether ends it too.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "sweep 7", 100, true, false)
+ORD.update(st, w, inf, 101)
+w.pills[7] = nil
+ORD.update(st, w, inf, 102)
+check("a pill that is gone ends the order", st.orders.held == nil, "?")
+
+-- 4. ATTACK -> SWEEP, in place.  A pill shot to zero armour cannot be
+--    attacked any further, so the held order becomes capture_pill on the SAME
+--    pill: same order id, no second ack.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "attack 5", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: the attack order is held",
+      (st.orders.held or {}).kind == "attack_pill",
+      tostring((st.orders.held or {}).kind))
+local conv_oid = st.orders.held.oid
+st.orders.say = {}
+w.pills[5].health = 0
+ORD.update(st, w, inf, 102)
+check("a dead pill turns attack into sweep",
+      (st.orders.held or {}).kind == "capture_pill",
+      tostring((st.orders.held or {}).kind))
+check("the order keeps its id", (st.orders.held or {}).oid == conv_oid,
+      tostring((st.orders.held or {}).oid))
+check("and says nothing about it", #st.orders.say == 0,
+      tostring(st.orders.say[1]))
+check("a dead pill needs no shells",
+      st.orders.held.needs_shells == false,
+      tostring(st.orders.held.needs_shells))
+w.pills[5].owner = "friendly"
+ORD.update(st, w, inf, 103)
+check("and the converted order ends when the pill is ours",
+      st.orders.held == nil, "?")
+check("under its new name",
+      st.orders.say[1] == "capture_pill #5 done", tostring(st.orders.say[1]))
+
+-- 5. A BASE: friendly owner ends it.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "capture base 3", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: the base order is held",
+      (st.orders.held or {}).kind == "capture_base",
+      tostring((st.orders.held or {}).kind))
+w.bases[3].owner = "friendly"
+ORD.update(st, w, inf, 102)
+check("a captured base ends the order", st.orders.held == nil, "?")
+
+-- 6. A NAMED TANK.  target_tile reads the live and ghost lists; when neither
+--    has it the tank is dead or out of sight, and the order ends after
+--    ORDER_TANK_LOST_TICKS -- not before.
+st, w, inf = ST(), W(), I({ allies = 0 })
+st.perc = { enemy_tanks = { { id = 7, mx = 14, my = 14 } }, ghost_tanks = {} }
+ORD.on_chat(st, w, inf, 0, "attack hannibal", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: the tank order is held",
+      (st.orders.held or {}).kind == "attack_tank"
+      and st.orders.held.tid == 7,
+      tostring((st.orders.held or {}).kind))
+st.perc.enemy_tanks = {}
+ORD.update(st, w, inf, 101 + C.ORDER_TANK_LOST_TICKS - 1)
+check("a tank out of sight for less than the window is still the target",
+      st.orders.held ~= nil, "released")
+st.orders.say = {}
+ORD.update(st, w, inf, 101 + C.ORDER_TANK_LOST_TICKS)
+check("a tank lost for the whole window ends the order",
+      st.orders.held == nil, "held")
+check("and the bot says it lost the tank",
+      st.orders.say[1] == "Lost Hannibal", tostring(st.orders.say[1]))
+
+-- 7. HOLDING A SPOT IS THE JOB.  defend_pill runs to the timer even though
+--    its pill is friendly from the first tick.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "defend 9", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: the defend order is held",
+      (st.orders.held or {}).kind == "defend_pill",
+      tostring((st.orders.held or {}).kind))
+ORD.update(st, w, inf, 500)
+check("a friendly pill does not end a defend order",
+      st.orders.held ~= nil, "released")
+
+-- 8. And so does take_cover: a retreat holds its spot to the timer.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates retreat", 100, true, false)
+check("setup: the retreat is held",
+      (st.orders.held or {}).kind == "take_cover",
+      tostring((st.orders.held or {}).kind))
+ORD.update(st, w, inf, 500)
+check("a retreat runs to the timer", st.orders.held ~= nil, "released")
+
+-- =========================================================================
+-- THE ACK FOR A TILE ORDER.  retreat and "go there and hold" both run as
+-- take_cover, whose target id is the packed square (mx * 256 + my).  Printing
+-- it said "take_cover #30325", a number that means nothing to the human who
+-- typed the line.  Andrew, Sep 14: say just the word.
+-- =========================================================================
+print("orders.lua -- the take_cover ack carries no number")
+
+check("goal_label: a tile order is the bare word",
+      ORD.goal_label("take_cover", 100 * 256 + 99) == "take_cover",
+      ORD.goal_label("take_cover", 100 * 256 + 99))
+check("goal_label: everything else keeps its number",
+      ORD.goal_label("attack_pill", 5) == "attack_pill #5",
+      ORD.goal_label("attack_pill", 5))
+check("group_label: a tile order is the bare word",
+      ORD.group_label("take_cover", "here", 100 * 256 + 99) == "take_cover",
+      ORD.group_label("take_cover", "here", 100 * 256 + 99))
+check("group_label: everything else names the target class",
+      ORD.group_label("attack_pill", "pill", 5) == "pill #5",
+      ORD.group_label("attack_pill", "pill", 5))
+
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates retreat", 100, true, false)
+check("a retreat acks with the bare word",
+      st.orders.say[1] ~= nil
+      and st.orders.say[1]:sub(-#" take_cover") == " take_cover"
+      and st.orders.say[1]:find("#", 1, true) == nil,
+      tostring(st.orders.say[1]))
+-- "GO THERE AND HOLD": the tile really is in the order id, and it still must
+-- not reach the chat.  A repeat of it is the one that gets the "Still on it."
+-- line, because `retreat` always drops what it holds before it starts.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: the go-there order is held",
+      (st.orders.held or {}).kind == "take_cover",
+      tostring((st.orders.held or {}).kind))
+check("a go-there order acks with the bare word",
+      st.orders.say[1] ~= nil
+      and st.orders.say[1]:sub(-#" take_cover") == " take_cover"
+      and st.orders.say[1]:find("#", 1, true) == nil,
+      tostring(st.orders.say[1]))
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100 + C.ORDER_REPEAT_ACK_TICKS,
+            true, false)
+check("and the repeat line carries no number either",
+      st.orders.say[1] == "Still on it. take_cover",
+      tostring(st.orders.say[1]))
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

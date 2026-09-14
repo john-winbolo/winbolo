@@ -4164,6 +4164,12 @@ M.ORDER_SELECT_TICKS    = 500    -- keel 500 (moot; master off)
 -- two of those lines, so a key held down cannot fill the chat with them.
 -- 50 ticks = 1 s.
 M.ORDER_REPEAT_ACK_TICKS = 50    -- keel 50 (moot; master off)
+-- `attack <tank name>`: how long the named tank may be missing before the
+-- order ends.  From inside the brain a dead tank and one that drove out of
+-- sight look the same -- it drops out of the object scan and its remembered
+-- ghost ages out -- so one timer covers both.  Long enough that a blink
+-- behind a forest is not the end of the job.  500 ticks = 10 s.
+M.ORDER_TANK_LOST_TICKS = 500    -- keel 500 (moot; master off)
 -- Price of an ordered goal the pools did not offer this tick (a defend_pill
 -- with no alarm, a take_cover with no trigger, an attack_tank out of engage
 -- range).  Low enough to beat the rejected strategic field, high enough that
@@ -4477,6 +4483,7 @@ M.PRESETS = {
     ORDER_NEARBY_TILES            = 10,
     ORDER_SELECT_TICKS            = 500,
     ORDER_REPEAT_ACK_TICKS        = 50,
+    ORDER_TANK_LOST_TICKS         = 500,
     ORDER_INJECT_COST             = 20,
     ORDER_REFUEL_SKIP_NO_SHELLS   = false,
     ORDER_STUCK_BUSY_TICKS        = 150,
