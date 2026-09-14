@@ -5143,6 +5143,8 @@ set(_unit_test_names
     scenario_lua_queued_answers_queued
     scenario_lua_shape_raises_refusal_does_not
     scenario_lua_detail_carries_the_number
+    scenario_lua_teleport_start_refuses_bad_index
+    scenario_lua_spawn_bot_refuses_bad_start
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

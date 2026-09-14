@@ -2455,6 +2455,8 @@ int run_scenario_lua_add_answers_its_index(void);
 int run_scenario_lua_queued_answers_queued(void);
 int run_scenario_lua_shape_raises_refusal_does_not(void);
 int run_scenario_lua_detail_carries_the_number(void);
+int run_scenario_lua_teleport_start_refuses_bad_index(void);
+int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

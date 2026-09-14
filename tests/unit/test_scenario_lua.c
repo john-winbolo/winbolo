@@ -60,6 +60,13 @@
  * run_scenario_lua_detail_carries_the_number
  *                                      — the sentence a refusal carries
  *                                        holds the number that mattered
+ * run_scenario_lua_teleport_start_refuses_bad_index
+ *                                      — a start number no start could have
+ *                                        is refused rather than read as
+ *                                        "the engine picks"
+ * run_scenario_lua_spawn_bot_refuses_bad_start
+ *                                      — and the same numbers in a spawn's
+ *                                        table, where zero keeps its meaning
  *
  * and, run from the lobby case because it is the same subject: a row with a
  * state guard answers the state before its own arguments, while a row over
@@ -1773,5 +1780,156 @@ static int slStatePrecedence(void) {
 
     lua_close(L);
     serverSimDestroy(round);
+    return 0;
+}
+
+/* ── 16. A start number no start could have ───────────────────────── */
+
+/* The two rows that take a start read either a start the map could have or
+ * the absence of one, and nothing in between. -1, 1e300, a fraction and a
+ * NaN all used to reach the payload as "no start named", so a script asking
+ * for a start that cannot exist was handed the one the engine would have
+ * picked and told nothing.
+ *
+ * Zero is where the two rows differ. spawn_bot reads a start of zero as no
+ * start named, which is what a table leaving the field out comes to;
+ * teleport_to_start has the argument's own absence for that, so a zero
+ * written there is a number that names no start. */
+static const SlRefusal kSlTeleportStarts[] = {
+    { "a start before the first",
+      "res, code, detail = game.teleport_to_start(0, -1)\n",
+      SCN_OP_NO_SUCH_ITEM },
+    { "start zero, which numbers no start",
+      "res, code, detail = game.teleport_to_start(0, 0)\n",
+      SCN_OP_NO_SUCH_ITEM },
+    { "a start past every index",
+      "res, code, detail = game.teleport_to_start(0, 1e300)\n",
+      SCN_OP_NO_SUCH_ITEM },
+    { "a start that is no number at all",
+      "res, code, detail = game.teleport_to_start(0, 0/0)\n",
+      SCN_OP_NO_SUCH_ITEM },
+    { "a start with a fraction in it",
+      "res, code, detail = game.teleport_to_start(0, 1.5)\n",
+      SCN_OP_NO_SUCH_ITEM },
+};
+
+int run_scenario_lua_teleport_start_refuses_bad_index(void) {
+    ServerSim       *sim;
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    char             detail[256];
+    char             code[64];
+    int              r;
+
+    r = slRefusals(kSlTeleportStarts,
+                   sizeof(kSlTeleportStarts) / sizeof(kSlTeleportStarts[0]),
+                   true);
+    if (r != 0) {
+        return r;
+    }
+
+    sim = ut_make_running_sim("Seat0");
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(slRun(L,
+                        "local a, b, c = game.teleport_to_start(0, -1)\n"
+                        "named = c\n"
+                        /* The documented way of leaving the pick to the
+                           engine, which is no n at all. */
+                        "local d, e = game.teleport_to_start(0)\n"
+                        "absent = e or \"\"\n",
+                        err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+
+    slGlobalStr(L, "named", detail, sizeof(detail));
+    UT_ASSERT_MSG(strstr(detail, "-1") != NULL,
+                  "the refusal does not say which start was asked for: %s",
+                  detail);
+
+    slGlobalStr(L, "absent", code, sizeof(code));
+    UT_ASSERT_MSG(
+        strcmp(code, scenarioLuaResultName(SCN_OP_NO_SUCH_ITEM)) != 0,
+        "teleport_to_start with no n answered '%s': the absent argument is "
+        "how a script asks the engine to pick", code);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 17. And the same number in a spawn's table ───────────────────── */
+
+static const SlRefusal kSlSpawnStarts[] = {
+    { "a bot on a start before the first",
+      "res, code, detail = game.spawn_bot({ team = 2, start = -1 })\n",
+      SCN_OP_NO_SUCH_ITEM },
+    { "a bot on a start past every index",
+      "res, code, detail = game.spawn_bot({ team = 2, start = 1e300 })\n",
+      SCN_OP_NO_SUCH_ITEM },
+    { "a bot on a start that is no number at all",
+      "res, code, detail = game.spawn_bot({ team = 2, start = 0/0 })\n",
+      SCN_OP_NO_SUCH_ITEM },
+    { "a bot on a start with a fraction in it",
+      "res, code, detail = game.spawn_bot({ team = 2, start = 1.5 })\n",
+      SCN_OP_NO_SUCH_ITEM },
+};
+
+int run_scenario_lua_spawn_bot_refuses_bad_start(void) {
+    ServerSim       *sim;
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    char             detail[256];
+    char             code[64];
+    int              r;
+
+    r = slRefusals(kSlSpawnStarts,
+                   sizeof(kSlSpawnStarts) / sizeof(kSlSpawnStarts[0]), true);
+    if (r != 0) {
+        return r;
+    }
+
+    sim = ut_make_running_sim("Seat0");
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(slRun(L,
+                        "local a, b, c = game.spawn_bot({ team = 2,"
+                        " start = -1 })\n"
+                        "named = c\n"
+                        /* The two documented ways of leaving the pick to the
+                           engine: the field at zero, and no field. */
+                        "local d, e = game.spawn_bot({ team = 2, start = 0 })\n"
+                        "zero = e or \"\"\n"
+                        "local f, g = game.spawn_bot({ team = 2 })\n"
+                        "absent = g or \"\"\n",
+                        err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+
+    slGlobalStr(L, "named", detail, sizeof(detail));
+    UT_ASSERT_MSG(strstr(detail, "-1") != NULL,
+                  "the refusal does not say which start was asked for: %s",
+                  detail);
+
+    slGlobalStr(L, "zero", code, sizeof(code));
+    UT_ASSERT_MSG(
+        strcmp(code, scenarioLuaResultName(SCN_OP_NO_SUCH_ITEM)) != 0,
+        "a spawn with start = 0 answered '%s': zero is how a table asks the "
+        "engine to pick", code);
+    slGlobalStr(L, "absent", code, sizeof(code));
+    UT_ASSERT_MSG(
+        strcmp(code, scenarioLuaResultName(SCN_OP_NO_SUCH_ITEM)) != 0,
+        "a spawn with no start answered '%s'", code);
+
+    lua_close(L);
+    serverSimDestroy(sim);
     return 0;
 }

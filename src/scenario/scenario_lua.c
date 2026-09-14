@@ -219,6 +219,20 @@ static lua_Integer scnArgInt(lua_State *L, int idx, const char *name) {
     return scnWhole(lua_tonumber(L, idx));
 }
 
+/* The number an argument arrived as, untouched, with the same raise for a
+ * mistyped one that scnArgInt makes. For a row whose own test has to see the
+ * number before the conversion above folds the ends of the range and a NaN
+ * onto values that mean something else. */
+static lua_Number scnArgNumber(lua_State *L, int idx, const char *name) {
+    if (lua_type(L, idx) != LUA_TNUMBER) {
+        return (lua_Number)luaL_argerror(
+            L, idx,
+            lua_pushfstring(L, "%s must be a number, got %s", name,
+                            luaL_typename(L, idx)));
+    }
+    return lua_tonumber(L, idx);
+}
+
 /* An argument a row may be called without. Absent and nil are the same
  * thing: a script writing nil for a field it does not care about means what
  * a script leaving the field off means. */
@@ -235,6 +249,27 @@ static lua_Integer scnOptInt(lua_State *L, int idx, const char *name,
  * 0 or as the square at the top corner. */
 static bool scnFitsByte(lua_Integer v) {
     return v >= 0 && v <= 255;
+}
+
+/* A start a script named, as the number the payload carries. True with the
+ * index written to out; false for a number no start could ever have.
+ *
+ * The raw number is what is tested. Every other argument goes through the
+ * whole-number conversion above, which answers the bottom of the range for a
+ * NaN and the top of it for 1e300, and the index rule turns both of those
+ * into SCN_LUA_NO_ITEM — which is the very value the two rows that take a
+ * start read as "no start named, let the engine pick". A start asked for by
+ * a number that names none is a refusal, not a free choice, so the test
+ * comes before the conversion rather than after it.
+ *
+ * The caller has already dealt with its own way of naming no start: an
+ * argument that is absent, or a spawn's zero. */
+static bool scnStartIndex(lua_Number v, BYTE *out) {
+    if (!(v >= 1.0 && v <= 255.0) || v != (lua_Number)(lua_Integer)v) {
+        return false;
+    }
+    *out = scenarioLuaIndexToOp((lua_Integer)v);
+    return true;
 }
 
 /* A true or false argument. A number is not one, because 0 is true in Lua
@@ -1321,21 +1356,30 @@ static int scnLuaTeleport(lua_State *L) {
 
 static int scnLuaTeleportToStart(lua_State *L) {
     ScenarioOp  op;
-    lua_Integer p = scnArgInt(L, 1, "p");
-    lua_Integer n = scnOptInt(L, 2, "n", 0);
+    lua_Integer p     = scnArgInt(L, 1, "p");
+    BYTE        start = SCN_NONE;   /* no n: the engine picks */
+    lua_Number  n     = 0;
 
     if (!scnFitsByte(p)) {
         return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
                           (int)p);
     }
+    if (!lua_isnoneornil(L, 2)) {
+        n = scnArgNumber(L, 2, "n");
+        if (!scnStartIndex(n, &start)) {
+            return scnRefused(L, SCN_OP_NO_SUCH_ITEM,
+                              "start %f is no start: they are numbered 1 to "
+                              "255", n);
+        }
+    }
     memset(&op, 0, sizeof(op));
-    op.type                = SCN_OP_TANK_TELEPORT;
-    op.u.tankTeleport.slot = (BYTE)p;
-    op.u.tankTeleport.mode = SCN_TELEPORT_START;
-    op.u.tankTeleport.dir  = SCN_NONE;
-    /* No start named leaves the engine its own pick. */
-    op.u.tankTeleport.start =
-        lua_isnoneornil(L, 2) ? SCN_NONE : scenarioLuaIndexToOp(n);
+    op.type                 = SCN_OP_TANK_TELEPORT;
+    op.u.tankTeleport.slot  = (BYTE)p;
+    op.u.tankTeleport.mode  = SCN_TELEPORT_START;
+    op.u.tankTeleport.dir   = SCN_NONE;
+    op.u.tankTeleport.start = start;
+    /* Whole by now, or the row has already answered, so the sentence a
+       refusal from the funnel carries reads as a start number. */
     return scnDone(L, &op, "player %d to start %d", (int)p, (int)n);
 }
 
@@ -1987,6 +2031,25 @@ static lua_Integer scnFieldInt(lua_State *L, int idx, const char *key,
     return v;
 }
 
+/* The number a field arrived as, untouched. The field form of scnArgNumber,
+ * and there for the same reason. */
+static lua_Number scnFieldNumber(lua_State *L, int idx, const char *key,
+                                 lua_Number def) {
+    lua_Number v = def;
+
+    lua_getfield(L, idx, key);
+    if (!lua_isnil(L, -1)) {
+        if (lua_type(L, -1) != LUA_TNUMBER) {
+            luaL_argerror(L, idx,
+                          lua_pushfstring(L, "t.%s must be a number, got %s",
+                                          key, luaL_typename(L, -1)));
+        }
+        v = lua_tonumber(L, -1);
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
 static bool scnFieldBool(lua_State *L, int idx, const char *key, bool def) {
     bool v = def;
 
@@ -2102,8 +2165,10 @@ static int scnLuaSpawnBot(lua_State *L) {
     ScnOpOut    out;
     ScnOpResult r;
     char        badKey[SCN_TABLE_KEY_LEN + 1];
-    size_t      len  = 0;
-    lua_Integer team, slot, start;
+    size_t      len   = 0;
+    BYTE        start = SCN_NONE;   /* no start named: the engine picks */
+    lua_Number  n;
+    lua_Integer team, slot;
     int         loadout;
 
     scnArgTable(L, 1, "t");
@@ -2132,14 +2197,20 @@ static int scnLuaSpawnBot(lua_State *L) {
                           (int)slot);
     }
     /* A start of nothing is the engine's own pick, which is also what the
-       script's own numbering makes of zero. */
-    start   = scnFieldInt(L, 1, "start", 0);
+       script's own numbering makes of zero. Any other number has to name a
+       start that could exist; one that could not is refused here rather than
+       reaching the op as another way of saying "you pick". */
+    n = scnFieldNumber(L, 1, "start", 0);
+    if (n != 0 && !scnStartIndex(n, &start)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_ITEM,
+                          "start %f is no start: they are numbered 1 to 255, "
+                          "and 0 leaves the pick to the engine", n);
+    }
     loadout = scnFieldWord(L, 1, "loadout", &kScnLoadouts, 0);
 
     op.u.rosterSpawnBot.team    = (BYTE)team;
     op.u.rosterSpawnBot.slot    = (BYTE)slot;
-    op.u.rosterSpawnBot.start   =
-        (start == 0) ? SCN_NONE : scenarioLuaIndexToOp(start);
+    op.u.rosterSpawnBot.start   = start;
     op.u.rosterSpawnBot.loadout = (BYTE)loadout;
     if (!scnFieldTable(L, 1, "init", &op.u.rosterSpawnBot.init, badKey,
                        sizeof(badKey))) {
