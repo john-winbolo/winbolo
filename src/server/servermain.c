@@ -1671,7 +1671,7 @@ int main(int argc, char **argv) {
     {
       const char *chosen = scannedFiles[bolo_rand_below((uint32_t)scannedCount)];
       snprintf(scenarioMapPath, sizeof(scenarioMapPath), "%s", chosen);
-      serverSim = serverSimCreate(chosen, game, hiddenMines, srtDelay, gmeLen);
+      serverSim = serverSimCreate((char *)chosen, game, hiddenMines, srtDelay, gmeLen);
     }
     if (serverSim == NULL) {
       int i;

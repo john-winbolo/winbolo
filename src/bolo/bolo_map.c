@@ -592,16 +592,25 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     }
   }
 
-  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD and clear mines */
   if (returnValue == TRUE) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
       BYTE t;
       if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      /* A carried pill's x/y is the square it was picked up from, not a square
+       * it is on: pillsSetPillCompressData marks every pill in a blob active,
+       * while inTank rides in from the wire. Writing terrain there would stomp
+       * ground that legitimately holds a mine the server still knows about,
+       * and mapCalcChecksum masks mines away, so the divergence would never
+       * resync. */
+      if ((*pb)->item[pi].inTank != FALSE) continue;
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      } else if (t >= MINE_START && t <= MINE_END) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = t - MINE_SUBTRACT;
       }
     }
   }
@@ -1601,9 +1610,15 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 
   /* Each of the four world structures arrives as a pointer to its handle, so
    * either level can be NULL when the game is torn down under a caller that is
-   * still holding it. Nothing below checks: the three compress setters and the
-   * (*value)->mapItem reads all dereference straight away. Refuse instead, so
-   * the caller gets its FALSE rather than a crash inside the loader. */
+   * still holding it, or when a caller races a teardown and hands over a
+   * destroyed sim's world. Nothing below checks: the three compress setters and
+   * the (*value)->mapItem reads all dereference straight away. Refuse instead,
+   * so the caller gets its FALSE rather than a crash inside the loader.
+   *
+   * Both levels are checked, and the outer pointers are the only ones logged. A
+   * caller handing over a NULL GameSim produces handle pointers that are its
+   * small field offsets (0/8/16/24) — non-null but garbage — and dereferencing
+   * those to log them is how the first version of this guard itself crashed. */
   if (value == NULL || *value == NULL ||
       pb == NULL || *pb == NULL ||
       bs == NULL || *bs == NULL ||
@@ -1619,23 +1634,6 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
    * passes a full compressed map; only short/garbage input is rejected here. */
   if (input == NULL ||
       inputLen < (int)(SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)) {
-    return FALSE;
-  }
-
-  /* Structure handles must be live too — a caller racing a teardown
-   * (or handing over a destroyed sim's world) used to crash on a null
-   * handle deref inside the copy loops below. Refuse instead. */
-  /* A caller handing over a NULL GameSim produces handle pointers that
-   * are its small field offsets (0/8/16/24) — non-null but garbage, so
-   * only dereference after checking BOTH levels, and log the outer
-   * pointers only (dereferencing them here is how the first version of
-   * this guard itself crashed). */
-  if (value == NULL || *value == NULL || pb == NULL || *pb == NULL ||
-      bs == NULL || *bs == NULL || ss == NULL || *ss == NULL) {
-    WB_LOG_ERROR(WB_LOG_CAT_SIM,
-        "mapLoadCompressedMap: null world handle (map@%p pills@%p "
-        "bases@%p starts@%p) — load refused",
-        (void *)value, (void *)pb, (void *)bs, (void *)ss);
     return FALSE;
   }
 
@@ -1686,16 +1684,25 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     }
   }
 
-  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD and clear mines */
   if (returnValue == TRUE) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
       BYTE t;
       if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      /* A carried pill's x/y is the square it was picked up from, not a square
+       * it is on: pillsSetPillCompressData marks every pill in a blob active,
+       * while inTank rides in from the wire. Writing terrain there would stomp
+       * ground that legitimately holds a mine the server still knows about,
+       * and mapCalcChecksum masks mines away, so the divergence would never
+       * resync. */
+      if ((*pb)->item[pi].inTank != FALSE) continue;
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      } else if (t >= MINE_START && t <= MINE_END) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = t - MINE_SUBTRACT;
       }
     }
   }
