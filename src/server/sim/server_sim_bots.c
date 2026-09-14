@@ -126,6 +126,55 @@ bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
+void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->playerConnected[playerNum]) return;
+    if (!sim->lobbyPlayers[playerNum].fielded) return;
+
+    /* The mirror of serverSimAddBot's occupied-seat branch above: that one
+       builds the tank, the man and the base timer for a seat the roster
+       already holds, and this one takes the same three back along with the
+       bot that was driving them. Everything the roster knows stays — the
+       connection, the players-table identity, the team, the alliance — so
+       there is no leave to announce, nothing the seat owns changes hands,
+       and no client has to be resynced to find that out. */
+    if (botManagerIsBot(sim, playerNum)) {
+        botManagerRemoveBotKeepSeat(sim, playerNum);
+    }
+    /* As the fielding path does before it builds one: the routing the tank
+       teardown reaches out through reads the active sim. */
+    serverSimSetActive(sim);
+    if (sim->sim.tanks[playerNum] != NULL) {
+        tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
+        sim->sim.tanks[playerNum] = NULL;
+    }
+    if (sim->sim.lgmen[playerNum] != NULL) {
+        lgmDestroy(&sim->sim.lgmen[playerNum]);
+        sim->sim.lgmen[playerNum] = NULL;
+    }
+    /* A seat with no tank must not go on speeding the bases up for everyone
+       who has one — the same reason serverSimAddUnfieldedSeat takes the
+       timer back. */
+    basesRemoveTimer(&sim->sim, (int)playerNum);
+
+    /* The queue the bot that just went left behind: kept, its last few
+       inputs would be applied to the tank the next fielding builds. */
+    sim->inputQueueHead[playerNum] = 0;
+    sim->inputQueueTail[playerNum] = 0;
+    sim->lastProcessedInput[playerNum] = 0;
+    sim->lastInputButtons[playerNum] = 0;
+    sim->lastActionAppliedTick[playerNum] = 0;
+    sim->pendingHarvestActions[playerNum] = 0;
+    sim->pendingHarvestBuildAction[playerNum] = 0;
+    sim->pendingHarvestBuildX[playerNum] = 0;
+    sim->pendingHarvestBuildY[playerNum] = 0;
+    sim->inputBufferFilled[playerNum] = 0;
+    sim->inputDryTicks[playerNum] = 0;
+
+    sim->lobbyPlayers[playerNum].fielded = false;
+    serverSimPublishLobbySlot(sim, playerNum);
+}
+
 void serverSimSetBotAiType(ServerSim *sim, aiType ai) {
     sim->botAiType = ai;
 }

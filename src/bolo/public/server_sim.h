@@ -939,6 +939,23 @@ bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
                                const char *name, BYTE teamNumber);
 
 /*********************************************************
+ *NAME:          serverSimUnfieldBot
+ *PURPOSE:
+ *  Take a seat off the field without taking it out of the
+ *  game: the bot, the tank, the man and the base timer go;
+ *  the roster entry, the identity, the team and the
+ *  alliance stay. One CTRL_LOBBY_SLOT says the seat is no
+ *  longer fielded — no leave event goes out, nothing the
+ *  seat owns changes hands and no client is resynced. A
+ *  spawn naming the seat fields it again.
+ *  No-op for an empty seat or one already off the field.
+ *
+ *  Taking the seat itself out is serverSimRemoveBot, which
+ *  is what a host's remove, a kick and a disconnect use.
+ *********************************************************/
+void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
  *NAME:          serverSimRefreshWbnLobbyInfo
  *PURPOSE:
  *  Rebuilds the WinBolo.net lobby snapshot from current sim

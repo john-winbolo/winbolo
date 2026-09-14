@@ -2126,6 +2126,12 @@ int run_pill_armour_scale_client_caps(void);
  * (test_loopback_entity_change.c): the client's list follows the server's. */
 int run_loopback_entity_change(void);
 
+/* A scenario's changeover over the real loopback transport
+ * (test_loopback_scenario_seat.c): the pillbox a human holds keeps its owner
+ * while a held seat is fielded and taken off again, with no full sync in the
+ * middle to cover a migration. */
+int run_loopback_scenario_seat_keeps_pills(void);
+
 /* The rules table over the real loopback transport
  * (test_loopback_sim_rules.c): a mid-round change reaching a connected
  * client, a joiner arriving on the changed table, a server-only rule
@@ -2203,6 +2209,9 @@ int run_unfielded_seat_all_ready(void);
 int run_unfielded_seat_start_skips_it(void);
 int run_unfielded_seat_spawn_fields_it(void);
 int run_unfielded_seat_survives_remove(void);
+int run_unfielded_seat_unfield_is_quiet(void);
+int run_unfielded_seat_unfield_keeps_sync(void);
+int run_unfielded_seat_spawn_keeps_alliances(void);
 int run_unfielded_seat_on_the_wire(void);
 
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a

@@ -437,6 +437,21 @@ void botMsgDebugLog(const char *fmt, ...);
 void botManagerRemoveBot(struct ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
+ *NAME:          botManagerRemoveBotKeepSeat
+ *PURPOSE:
+ *  Destroys a bot's brain, transport and ClientSim and
+ *  frees its pool entry, leaving the player in the
+ *  ServerSim. For a seat that is being taken off the field
+ *  and kept: the roster entry, the team and the alliance
+ *  are the caller's to keep.
+ *
+ *ARGUMENTS:
+ *  sim       - The ServerSim
+ *  playerNum - Player slot whose bot goes
+ *********************************************************/
+void botManagerRemoveBotKeepSeat(struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
  *NAME:          botManagerDestroy
  *PURPOSE:
  *  Removes all active bots.

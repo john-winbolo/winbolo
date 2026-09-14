@@ -24,6 +24,13 @@
  * run_unfielded_seat_spawn_fields_it — the spawn builds the bot in the seat
  * run_unfielded_seat_survives_remove — the seat comes back, the ordinary
  *                                      bot's seat does not
+ * run_unfielded_seat_unfield_is_quiet— one event out, and the team, the
+ *                                      alliance and the name all still there
+ * run_unfielded_seat_unfield_keeps_sync
+ *                                    — no client is resynced for it
+ * run_unfielded_seat_spawn_keeps_alliances
+ *                                    — fielding one publishes no alliance
+ *                                      reset
  * run_unfielded_seat_on_the_wire     — the byte, set and clear
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
@@ -41,6 +48,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetBotAiType, CheckAllReady */
 #include "server_sim_scenario.h"
 #include "bot_manager.h"           /* botManagerIsBot — the pool's own answer */
+#include "players.h"               /* playersIsAllie — the seat keeps its team */
 #include "client_sim.h"
 #include "control_event.h"
 #include "transport_control_codec.h"
@@ -402,6 +410,221 @@ int run_unfielded_seat_survives_remove(void) {
                   "removing an ordinary bot must empty its seat, slot %u",
                   (unsigned)plain);
 
+    serverSimDestroy(sim);
+    ufDropBrainFile();
+    return 0;
+}
+
+/* ── Taking the seat off the field ────────────────────────────────── */
+
+/* Every control event the sim publishes, kept by type, so a case can say
+ * both how many went out and which. */
+typedef struct {
+    int total;
+    int lobbySlot;
+    int lobbySlotSeat;   /* CTRL_LOBBY_SLOT naming UF_SEAT               */
+    int playerLeave;
+    int playerJoin;
+    int allianceLeave;
+    int allianceReset;
+} UfEvents;
+
+static void ufCountEvents(void *ctx, const ControlEvent *evt) {
+    UfEvents *c = (UfEvents *)ctx;
+    c->total++;
+    switch (evt->type) {
+        case CTRL_LOBBY_SLOT:
+            c->lobbySlot++;
+            if (evt->u.lobbySlot.playerNum == UF_SEAT) c->lobbySlotSeat++;
+            break;
+        case CTRL_PLAYER_LEAVE:    c->playerLeave++;    break;
+        case CTRL_PLAYER_JOIN:     c->playerJoin++;     break;
+        case CTRL_ALLIANCE_LEAVE:  c->allianceLeave++;  break;
+        case CTRL_ALLIANCE_RESET:  c->allianceReset++;  break;
+        default: break;
+    }
+}
+
+/* A running round with the human and the held seat on one team, the seat
+ * fielded by a spawn. The team is shared so there is an alliance to lose:
+ * the round start bakes one from the two matching team numbers. */
+static ServerSim *ufFieldedSeatSim(void) {
+    ServerSim *sim = ufLobbySim();
+    ScenarioOp op;
+
+    if (sim == NULL) return NULL;
+    if (!serverSimAddUnfieldedSeat(sim, UF_SEAT, UF_NAME, UF_TEAM)) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    /* The brain the seat is written to run, as the lobby template writes it
+       when it seats one. */
+    SDL_strlcpy(sim->seatBrain[UF_SEAT], ufBrainPath,
+                sizeof(sim->seatBrain[UF_SEAT]));
+    serverSimSetTeamBatch(sim, 0, UF_TEAM);
+    serverSimStartGame(sim);
+
+    ufSpawnOp(&op, UF_SEAT);
+    if (serverSimApplyScenarioOp(sim, &op, NULL) != SCN_OP_QUEUED) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    serverSimTick(sim);
+    if (!sim->lobbyPlayers[UF_SEAT].fielded) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    return sim;
+}
+
+int run_unfielded_seat_unfield_is_quiet(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    UfEvents ev;
+    SubscriberHandle h;
+    char name[PLAYER_NAME_LEN];
+
+    UT_ASSERT(ufMakeBrainFile("unfield_is_quiet"));
+    ut_brain_stub_arm(true);
+    sim = ufFieldedSeatSim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, UF_SEAT),
+                  "the round start did not ally the seat with its team");
+
+    memset(&ev, 0, sizeof(ev));
+    h = serverSimRegisterSubscriber(sim, ufCountEvents, &ev);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    /* Registering replays the state of the game to the new subscriber, which
+       is not what is being counted. */
+    memset(&ev, 0, sizeof(ev));
+
+    /* A tick with nothing asked of it, so the count below is the removal's
+       own and not the tick's. */
+    serverSimTick(sim);
+    UT_ASSERT_MSG(ev.total == 0, "a quiet tick published %d control events",
+                  ev.total);
+
+    ufRemoveOp(&op, UF_SEAT);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+
+    UT_ASSERT_MSG(!sim->lobbyPlayers[UF_SEAT].fielded,
+                  "the removal left the seat on the field");
+    UT_ASSERT_MSG(ev.total == 1,
+                  "taking the seat off the field published %d control events, "
+                  "expected 1", ev.total);
+    UT_ASSERT_MSG(ev.lobbySlotSeat == 1,
+                  "the one event was not the seat's CTRL_LOBBY_SLOT");
+    UT_ASSERT_MSG(ev.playerLeave == 0, "the seat published a leave");
+    UT_ASSERT_MSG(ev.playerJoin == 0, "the seat published a join");
+    UT_ASSERT_MSG(ev.allianceLeave == 0,
+                  "the seat published an alliance leave");
+    UT_ASSERT_MSG(ev.allianceReset == 0,
+                  "the seat published an alliance reset");
+
+    /* Team, alliance and identity as they were. */
+    UT_ASSERT_MSG(sim->playerConnected[UF_SEAT], "the seat left the roster");
+    UT_ASSERT_MSG(sim->lobbyPlayers[UF_SEAT].teamNumber == UF_TEAM,
+                  "the seat is on team %u, expected %u",
+                  (unsigned)sim->lobbyPlayers[UF_SEAT].teamNumber,
+                  (unsigned)UF_TEAM);
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, UF_SEAT),
+                  "the seat lost the alliance it kept its team through");
+    ufSeatName(sim, UF_SEAT, name, sizeof(name));
+    UT_ASSERT_MSG(strcmp(name, UF_NAME) == 0,
+                  "the seat is called '%s', expected '%s'", name, UF_NAME);
+    /* And the brain it was written to run, which is what fields it again. */
+    UT_ASSERT_MSG(strcmp(sim->seatBrain[UF_SEAT], ufBrainPath) == 0,
+                  "the seat is written to run '%s', expected '%s'",
+                  sim->seatBrain[UF_SEAT], ufBrainPath);
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    ufDropBrainFile();
+    return 0;
+}
+
+/* ── Nobody is resynced for it ────────────────────────────────────── */
+
+int run_unfielded_seat_unfield_keeps_sync(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    uint32_t before[MAX_TANKS];
+    BYTE i;
+
+    UT_ASSERT(ufMakeBrainFile("unfield_keeps_sync"));
+    ut_brain_stub_arm(true);
+    sim = ufFieldedSeatSim();
+    UT_ASSERT(sim != NULL);
+
+    /* The unit sim has no wire client to build a snapshot for, so the clocks
+       are written here rather than waited for: a departure memsets the whole
+       array, which forces a full base and pill sync with a whole-map checksum
+       to every client on the next tick. Distinct values, so a clock restarted
+       from another slot's is caught too. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->lastFullSyncTick[i] = (uint32_t)(1000 + i);
+        before[i] = sim->lastFullSyncTick[i];
+    }
+
+    ufRemoveOp(&op, UF_SEAT);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    UT_ASSERT(!sim->lobbyPlayers[UF_SEAT].fielded);
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        UT_ASSERT_MSG(sim->lastFullSyncTick[i] == before[i],
+                      "slot %u's full-sync clock moved from %u to %u — the "
+                      "unfield forced a resync",
+                      (unsigned)i, (unsigned)before[i],
+                      (unsigned)sim->lastFullSyncTick[i]);
+    }
+
+    serverSimDestroy(sim);
+    ufDropBrainFile();
+    return 0;
+}
+
+/* ── Fielding one leaves the alliances alone ──────────────────────── */
+
+int run_unfielded_seat_spawn_keeps_alliances(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    UfEvents ev;
+    SubscriberHandle h;
+
+    UT_ASSERT(ufMakeBrainFile("spawn_keeps_alliances"));
+    ut_brain_stub_arm(true);
+    sim = ufLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(serverSimAddUnfieldedSeat(sim, UF_SEAT, UF_NAME, UF_TEAM));
+    serverSimSetTeamBatch(sim, 0, UF_TEAM);
+    serverSimStartGame(sim);
+    UT_ASSERT(playersIsAllie(&sim->sim.plyrs, 0, UF_SEAT));
+
+    memset(&ev, 0, sizeof(ev));
+    h = serverSimRegisterSubscriber(sim, ufCountEvents, &ev);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    /* The registration's own replay is not what is being counted. */
+    memset(&ev, 0, sizeof(ev));
+
+    ufSpawnOp(&op, UF_SEAT);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sim->lobbyPlayers[UF_SEAT].fielded,
+                  "the spawn did not field the seat");
+
+    /* The seat was allied with its team before the spawn and is allied with
+       it after, so the rebake had nothing to add. Each one is a matrix the
+       receiver applies by dropping every alliance and taking them all back,
+       which is what moves a viewer's pills. */
+    UT_ASSERT_MSG(ev.allianceReset == 0,
+                  "fielding a held seat published %d alliance resets",
+                  ev.allianceReset);
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, UF_SEAT),
+                  "the fielded seat is no longer allied with its team");
+
+    serverSimUnregisterSubscriber(sim, h);
     serverSimDestroy(sim);
     ufDropBrainFile();
     return 0;

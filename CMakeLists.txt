@@ -3365,7 +3365,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_scenario_roster_arms.c
     # The unfielded seat: what a seat held without a bot in it counts for, the
     # start sequence walking past it, the spawn that fields it and the removal
-    # that gives it back, and the byte that carries it to clients.
+    # that gives it back, what that removal costs — one event, no resync — and
+    # the byte that carries the seat to clients.
     # The lobby template: the engine seating a scenario's teams at a map
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
@@ -3577,6 +3578,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
+    # A scenario's changeover from a connected client: the pillbox a human
+    # holds keeps its owner while a held seat is fielded and taken off again,
+    # with no full sync in the middle to cover a migration.
+    tests/unit/test_loopback_scenario_seat.c
     # The rules table over the wire: a mid-round change reaching a connected
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
@@ -4917,6 +4922,7 @@ set(_unit_test_names
     scenario_entity_publish
     scenario_entity_add_out_null
     loopback_entity_change
+    loopback_scenario_seat_keeps_pills
     pill_armour_scale_classic_cap
     pill_armour_scale_raised_cap
     pill_armour_scale_client_caps
@@ -4972,6 +4978,9 @@ set(_unit_test_names
     unfielded_seat_start_skips_it
     unfielded_seat_spawn_fields_it
     unfielded_seat_survives_remove
+    unfielded_seat_unfield_is_quiet
+    unfielded_seat_unfield_keeps_sync
+    unfielded_seat_spawn_keeps_alliances
     unfielded_seat_on_the_wire
     scenario_comms_msg_all
     scenario_comms_msg_team

@@ -1629,10 +1629,13 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
  * near the reservations its team already holds; a team written after that
  * call has missed the pick, and the bot is placed as though it had no team.
  *
- * The alliance rebake still belongs here, after the add. serverSimAddBot
- * does not bake alliances, and a rebake before the add cannot reach a slot
- * that is not in the game yet — so this is the first point where the bot
- * can be allied with the team it just joined. */
+ * No alliance rebake. A seat held for a wave was allied with its team when
+ * the round started and keeps that through every unfielding, so a rebake per
+ * spawn only republishes what every client already has — and each one is a
+ * CTRL_ALLIANCE_RESET, which the receiver reads as every slot leaving its
+ * alliance and joining again. A seat fielded for the first time mid-round
+ * therefore starts unallied; when that wants fixing it is one rebake a tick
+ * off a roster-dirty mark rather than one per bot. */
 static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const char *name, BYTE team,
                                  const ScnTable *init) {
@@ -1664,9 +1667,6 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
         return false;
     }
     transportUdpServerSetBotName(slot, name);
-    if (team > 0) {
-        serverSimReapplyTeamAlliances(sim);
-    }
     serverSimPublishLobbySlot(sim, slot);
     return true;
 }
@@ -1689,16 +1689,10 @@ static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
  * is emptied, which is what a remove has always done. */
 static void scenarioTakeBotOut(ServerSim *sim, BYTE slot) {
     if (sim->lobbyPlayers[slot].keepSeat && sim->lobbyPlayers[slot].fielded) {
-        char name[PLAYER_NAME_LEN];
-        char brain[SCN_PATH_MAX];
-        BYTE team = sim->lobbyPlayers[slot].teamNumber;
-        playersGetPlayerName(&sim->sim.plyrs, slot, name, sizeof(name), TRUE);
-        /* The seat keeps what it was written to run, so the next thing to
-           field it starts the same bot the last one did. */
-        SDL_strlcpy(brain, sim->seatBrain[slot], sizeof(brain));
-        serverSimRemoveBot(sim, slot);
-        serverSimAddUnfieldedSeat(sim, slot, name, team);
-        SDL_strlcpy(sim->seatBrain[slot], brain, sizeof(sim->seatBrain[slot]));
+        /* Off the field where it sits. The seat keeps its name, its team and
+           the brain it was written to run, so the next thing to field it
+           starts the same bot the last one did. */
+        serverSimUnfieldBot(sim, slot);
         return;
     }
     serverSimRemoveBot(sim, slot);

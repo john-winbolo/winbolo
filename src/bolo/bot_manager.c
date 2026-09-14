@@ -1336,12 +1336,11 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
                    (unsigned)fromPlayer, (unsigned)allies, delivered, msg);
 }
 
-void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
-    BotContext *bot;
-    if (sim == NULL || playerNum >= MAX_TANKS) return;
-    bot = &sim->botMgr.bots[playerNum];
-    if (!bot->active) return;
-
+/* Everything the pool holds for one bot: the brain, the control
+ * subscription and the ClientSim. The player itself is the caller's to
+ * deal with — botManagerRemoveBot takes it out of the game, and
+ * botManagerRemoveBotKeepSeat leaves it in the roster. */
+static void botTearDownRunner(ServerSim *sim, BotContext *bot) {
     luaBrainInstanceDestroy(&bot->brain);
     serverSimUnregisterSubscriber(sim, bot->controlSub);
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -1352,12 +1351,37 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
      * and would double-free. */
     clientSimDestroy(bot->cs);
     bot->cs = NULL;
+}
+
+void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
+    BotContext *bot;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->active) return;
+
+    botTearDownRunner(sim, bot);
+    /* Still active here: serverSimRemovePlayer asks whether the slot it is
+     * emptying was a bot, and the pool's answer is the one it reads. */
     serverSimRemovePlayer(sim, playerNum);
 
     bot->active = false;
     sim->botMgr.numBots--;
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d removed", playerNum);
+}
+
+void botManagerRemoveBotKeepSeat(ServerSim *sim, BYTE playerNum) {
+    BotContext *bot;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->active) return;
+
+    botTearDownRunner(sim, bot);
+
+    bot->active = false;
+    sim->botMgr.numBots--;
+
+    WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d off the field", playerNum);
 }
 
 void botManagerDestroy(ServerSim *sim) {
