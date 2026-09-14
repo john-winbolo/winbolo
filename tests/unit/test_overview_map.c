@@ -637,6 +637,89 @@ int run_overview_regions(void) {
 
         }
 
+        /* Overlapping observers share sight in both directions across a wall.
+         * Losing an observer must remove only the sight it contributed. */
+        {
+            int x;
+            int y;
+            BYTE heldTile;
+            uint32_t generation;
+
+            gs->pb->numPills = 1;
+            gs->pb->active[0] = TRUE;
+            gs->pb->item[0].owner = 0;
+            gs->pb->item[0].armour = PILLBOX_15;
+            gs->pb->item[0].inTank = FALSE;
+            gs->pb->item[0].x = 105;
+            gs->pb->item[0].y = 100;
+            gs->bs->numBases = 0;
+            for (x = 86; x <= 120; x++) {
+                for (y = 86; y <= 114; y++) {
+                    mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, GRASS, TRUE, TRUE);
+                }
+            }
+            mapSetPos(gs, &gs->mp, 103, 100, BUILDING, TRUE, TRUE);
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            fog.window = overviewWindowExpanded;
+            fog.lineOfSight = lineOfSightBuildingsAndTrees;
+            fog.policy[viewCategoryPill] = viewPolicyAlways;
+            fog.policy[viewCategoryBase] = viewPolicyOff;
+            fog.policy[viewCategoryAlly] = viewPolicyOff;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT(om->liveCount == 2);
+            UT_ASSERT_MSG(overviewEntityIsVisible(om, 101, 100),
+                          "the pill across the wall hid the tank's clear sight");
+            UT_ASSERT_MSG(overviewEntityIsVisible(om, 106, 100),
+                          "the tank's wall hid the pill's clear sight");
+            UT_ASSERT((om->flags[101][100] & OVERVIEW_F_HIDDEN) == 0);
+            UT_ASSERT((om->flags[106][100] & OVERVIEW_F_HIDDEN) == 0);
+            generation = om->generation;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->generation == generation,
+                          "unchanged overlapping sight invalidated the map");
+
+            /* Two pill regions must agree regardless of their list order. */
+            gs->pb->numPills = 2;
+            gs->pb->active[1] = TRUE;
+            gs->pb->item[1] = gs->pb->item[0];
+            gs->pb->item[1].x = 100;
+            overviewMapUpdate(om, gs, 0, &fog, FALSE, 0, 0, 0);
+            UT_ASSERT(overviewEntityIsVisible(om, 101, 100));
+            UT_ASSERT(overviewEntityIsVisible(om, 106, 100));
+            gs->pb->item[0].x = 100;
+            gs->pb->item[1].x = 105;
+            overviewMapUpdate(om, gs, 0, &fog, FALSE, 0, 0, 0);
+            UT_ASSERT(overviewEntityIsVisible(om, 101, 100));
+            UT_ASSERT(overviewEntityIsVisible(om, 106, 100));
+            gs->pb->numPills = 1;
+            gs->pb->item[0].x = 105;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+
+            /* Stop watching the pill, then change ground it alone could see.
+             * The remaining tank region must hide it and retain its memory. */
+            fog.policy[viewCategoryPill] = viewPolicyOff;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            heldTile = om->tile[106][100];
+            mapSetPos(gs, &gs->mp, 106, 100, DEEP_SEA, TRUE, TRUE);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT(!overviewEntityIsVisible(om, 106, 100));
+            UT_ASSERT((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0);
+            UT_ASSERT(om->tile[106][100] == heldTile);
+
+            /* Moving the tank to the other side also revokes its old sight,
+             * even though the square remains inside both region rectangles. */
+            fog.policy[viewCategoryPill] = viewPolicyAlways;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 105, 100);
+            UT_ASSERT(!overviewEntityIsVisible(om, 101, 100));
+            UT_ASSERT((om->flags[101][100] & OVERVIEW_F_HIDDEN) != 0);
+            UT_ASSERT(overviewEntityIsVisible(om, 106, 100));
+            fog.lineOfSight = lineOfSightOff;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 105, 100);
+            UT_ASSERT(overviewEntityIsVisible(om, 101, 100));
+            UT_ASSERT((om->flags[101][100] & OVERVIEW_F_HIDDEN) == 0);
+        }
+
         free(om);
     }
 
