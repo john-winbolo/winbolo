@@ -252,22 +252,52 @@ if(WINBOLO_LUAJIT AND (EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
     set(WINBOLO_LUAJIT OFF)
 endif()
 
-# Deterministic VM: build LuaJIT with LUAJIT_SECURITY_PRNG=0 so the string
-# hash seed is fixed instead of drawn from OS entropy at process start. With
-# the default (secure) seeding, pairs() iteration order over hash tables
-# differs EVERY RUN — which reordered the brains' /info broadcasts and eval
-# scan orders and made identical -seed games diverge (found 20260831: two
-# same-seed runs split within 6 game-seconds; first observable diff was
-# /info key order). Trusted-brain game servers don't need hash-flood
-# hardening; reproducible A/B runs matter more. OFF restores stock seeding.
+# Measurement builds only: LUAJIT_SECURITY_PRNG=0 fixes LuaJIT's string-hash
+# seed instead of drawing it from OS entropy at VM creation. With stock
+# seeding, pairs() order over hash tables differs every run, which reorders
+# the brains' /info broadcasts and eval scans and makes identical -seed games
+# diverge (found 20260831: two same-seed runs split within 6 game-seconds,
+# first observable diff being /info key order). Turn this ON for an A/B run
+# and leave it off otherwise.
+#
+# OFF by default, and it should stay that way, for two reasons.
+#
+# It is not a free knob. The fixed seed is what a hash-flooding attack needs
+# to be reproducible, and brains do hash attacker-controlled strings: human
+# chat reaches a bot's inbox and GoalHunter parses it into table keys
+# (ally_state.lua's slot.info[key] = value). The per-tick budget hook caps
+# the damage at a killed think rather than a stalled server, so the exposure
+# is small -- but it is not zero, and it is on a shipped client and a public
+# dedicated server. LuaJIT's own lj_arch.h is explicit: "Important note to
+# distro maintainers: DO NOT change the defaults for a regular distro build
+# -- neither upwards, nor downwards!"
+#
+# And it is the wrong tool for the job. lj_prng.c says so at the branch this
+# define selects: "BTW: This is NOT the way to get predictable table
+# iteration, predictable trace generation, predictable bytecode generation,
+# etc." A fixed seed makes pairs() order repeatable BETWEEN RUNS OF THE SAME
+# BINARY and nothing more -- it is not stable across a LuaJIT upgrade, a
+# rebuild with different flags, or a 32/64-bit change, so a reference
+# baseline recorded under it is only comparable to runs from that same
+# build. The durable fix is for the brain not to depend on pairs() order
+# where that order is OBSERVABLE: iterate an array, or sort the keys, in
+# those paths. Doing that would let this option be deleted.
+#
+# Costs nothing at runtime either way: lj_prng_seed_secure runs once per
+# lua_newstate (lj_state.c) -- one entropy read per brain, not per think --
+# and the hashing on the hot path is identical under both settings.
 option(WINBOLO_LUAJIT_DETERMINISTIC
-       "Fixed LuaJIT string-hash/PRNG seed so same-seed games replay identically" ON)
+       "Fixed LuaJIT string-hash/PRNG seed for A/B measurement runs (insecure; see comment)" OFF)
 
 if(WINBOLO_LUAJIT)
     include(ExternalProject)
     message(STATUS "WINBOLO_LUAJIT: building LuaJIT ${WINBOLO_LUAJIT_LUAJIT_TAG} from source (native build system)")
     if(WINBOLO_LUAJIT_DETERMINISTIC)
-        message(STATUS "WINBOLO_LUAJIT_DETERMINISTIC: LUAJIT_SECURITY_PRNG=0 (fixed seed)")
+        # A warning, not a status line: this is now opt-in and it weakens the
+        # VM. A release build should never print it.
+        message(WARNING "WINBOLO_LUAJIT_DETERMINISTIC=ON: LUAJIT_SECURITY_PRNG=0 "
+                        "(fixed string-hash seed). For A/B measurement runs only "
+                        "-- do not ship a build with this set.")
     endif()
 
     # 1. LuaJIT source (no CMakeLists of its own — MakeAvailable only populates).

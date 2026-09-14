@@ -14,6 +14,21 @@ that plays.  With the determinism flags on --
     -brain-no-budget-kill -brain-lua-seed <n> -asap
 
 -- one seed is one canonical game, so the check is a plain file compare of two
+
+BUILD REQUIREMENT
+-----------------
+Run this against a build configured with
+
+    cmake -DWINBOLO_LUAJIT_DETERMINISTIC=ON ...
+
+Without it LuaJIT seeds its string hash from OS entropy at every VM creation,
+pairs() order over hash tables changes run to run, and the brain's /info
+broadcast and eval scan orders change with it -- so two runs of the SAME brain
+on the SAME seed diverge and this check reports a difference that is not there.
+The flag is OFF by default because a fixed hash seed weakens a shipped build
+(see the comment on the option in CMakeLists.txt); it is a measurement setting,
+not a product one.
+
 `-snapjson -snapinterval 1` streams: run the setup once plain (opt/, no
 recorder) and once with -brain-debug (root files, recorder on) and diff.
 
