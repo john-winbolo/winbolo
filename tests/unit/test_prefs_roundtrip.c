@@ -31,16 +31,23 @@ int run_prefs_keys_roundtrip(void)     { return 0; }
 
 #include "common/prefs.h"
 
-/* Each test uses its own document so parallel test runs can't collide. */
-static const char *PATH_DOCUMENT = "/tmp/winbolo_ut_prefs_document.json";
-static const char *PATH_KEYS     = "/tmp/winbolo_ut_prefs_keys.json";
+/* Each test gets its own document from utScratchPath — private to this
+ * process, so a second ctest run cannot land on the same file. The two
+ * absolute /tmp paths that used to live here were shared by every checkout
+ * on the machine, and two worktrees running this test at once failed it
+ * about half the time. */
+#define PREFS_LEAF "prefs.json"
 
 /* Sentinel returned when a key/section is absent. Distinct from any
  * value written so a missing-vs-empty mix-up can't pass silently. */
 #define UNSET "<unset>"
 
 static void cleanup(const char *path) {
-    char sibling[512];
+    /* Comfortably over the 1024 the callers give utScratchPath, plus the
+     * longest suffix below. A scratch path carries the whole build
+     * directory now, so the old 512 could have truncated and left the
+     * sibling behind without saying so. */
+    char sibling[1100];
     unlink(path);
     snprintf(sibling, sizeof(sibling), "%s.tmp", path);
     unlink(sibling);
@@ -51,8 +58,11 @@ static void cleanup(const char *path) {
 /* -------------------------------------------------------------------- */
 
 int run_prefs_document_roundtrip(void) {
-    cleanup(PATH_DOCUMENT);
-    prefsInit(PATH_DOCUMENT);
+    char path[1024];
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), PREFS_LEAF));
+    cleanup(path);
+    prefsInit(path);
 
     /* The canonical prefs document: section/key/value triples written
      * through the prefs API, then read back and compared. */
@@ -103,15 +113,18 @@ int run_prefs_document_roundtrip(void) {
                   "missing section should return default, got '%s'", buf);
 
     prefsShutdown();
-    cleanup(PATH_DOCUMENT);
+    cleanup(path);
     return 0;
 }
 
 /* -------------------------------------------------------------------- */
 
 int run_prefs_keys_roundtrip(void) {
-    cleanup(PATH_KEYS);
-    prefsInit(PATH_KEYS);
+    char path[1024];
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), PREFS_LEAF));
+    cleanup(path);
+    prefsInit(path);
 
     /* Every [KEYS] binding gameFrontPutPrefs persists. Each gets a
      * distinct numeric value so a write that clobbers an earlier key
@@ -148,7 +161,7 @@ int run_prefs_keys_roundtrip(void) {
     }
 
     prefsShutdown();
-    cleanup(PATH_KEYS);
+    cleanup(path);
     return 0;
 }
 

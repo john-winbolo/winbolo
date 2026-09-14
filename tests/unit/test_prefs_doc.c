@@ -174,8 +174,10 @@ int run_prefs_doc_save_atomic(void) { return 0; }
 #include <unistd.h>
 
 int run_prefs_doc_save_atomic(void) {
-    const char *jsonPath   = "/tmp/winbolo_ut_prefsdoc_main.json";
-    char tmpSibling[256];
+    char jsonPath[1024];
+    char tmpSibling[1100];
+
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
     snprintf(tmpSibling, sizeof(tmpSibling), "%s.tmp", jsonPath);
 
     unlink(jsonPath);

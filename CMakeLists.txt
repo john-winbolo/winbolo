@@ -3353,6 +3353,7 @@ endforeach()
 set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_main.c
     tests/unit/test_stubs.c
+    tests/unit/scratch_dir.c
     tests/unit/test_transport_local_passive_threads.c
     tests/unit/test_sp_subscriber_delivery.c
     tests/unit/test_active_sim_lifetime.c
@@ -4101,6 +4102,11 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # differential test at the committed fixture directory.
     WB_WIRE_CORPUS_CAPTURE=1
     WB_WIRE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wire"
+    # Root for every scratch file a test writes, under the BUILD dir rather
+    # than the source tree or /tmp: two worktrees then cannot pick the same
+    # path. scratch_dir.c adds a pid and the test name beneath it and sweeps
+    # its own subtree at exit.
+    WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
