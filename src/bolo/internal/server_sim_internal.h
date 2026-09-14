@@ -684,13 +684,15 @@ struct ServerSim {
      * Ready-click crash was exactly this: botManagerOnGameStart walked a
      * half-removed bot.)
      *
-     * scenarioSetupWindow is open across the round-start callback, at a
-     * point in the start where the world and the roster are already
-     * built. A start is not a settled point and startInProgress refuses
-     * every op, but the one thing that guard exists for is the roster
-     * edit re-entering the all-ready detector mid-start. So while the
-     * window is open the funnel admits every op except the six roster
-     * handlers, which keep refusing.
+     * scenarioSetupWindow is open across each of the two calls a start
+     * makes into the scenario: the boot, ahead of the start batch, where
+     * the round's own Lua state and its rules come into force, and the
+     * round-start callback after it, at a point where the world and the
+     * roster are already built. A start is not a settled point and
+     * startInProgress refuses every op, but the one thing that guard
+     * exists for is the roster edit re-entering the all-ready detector
+     * mid-start. So while the window is open the funnel admits every op
+     * except the six roster handlers, which keep refusing.
      *
      * scenarioActing is who caused what the engine is about to publish.
      * Neither event channel carries an actor — a ControlEvent has no
@@ -708,6 +710,11 @@ struct ServerSim {
     bool                   startInProgress;
     void                 (*scenarioTick)(void *ctx);
     void                  *scenarioTickCtx;
+    /* The round's own state, booted before the start places anything, so
+       the seats already in the round are placed and armed by the round
+       being started rather than by the one before it. */
+    void                 (*scenarioRoundBoot)(void *ctx);
+    void                  *scenarioRoundBootCtx;
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
     /* Asked of each map the lister finds, so an entry can say whether it is

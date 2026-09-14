@@ -21,6 +21,8 @@
 #include "server_sim_lifecycle.h"
 #include "server_sim_scenario.h"
 #include "control_event.h"
+#include "bases.h"                 /* the list a setup deals out */
+#include "input_packet.h"          /* SnapshotHeader, EVENT_BASE_CAPTURED */
 #include "everard_map.h"
 #include "test_harness.h"
 
@@ -957,5 +959,359 @@ int run_scenario_setup_window_holds_publish(void) {
 
     serverSimUnregisterSubscriber(sim, h);
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── The boot, ahead of the tanks ──────────────────────────────────── */
+
+/* Where each of the two calls a start makes into the scenario landed, and
+ * what the world looked like from inside it. One counter for both, so the
+ * order is a fact rather than two separate "it ran" flags. */
+typedef struct {
+    ServerSim  *sim;
+    int         seq;
+    int         bootAt;
+    int         setupAt;
+    int         bootTanks;
+    int         setupTanks;
+    bool        bootWindow;
+    bool        setupWindow;
+    ScnOpResult bootRule;
+    ScnOpResult setupRule;
+} BootWatch;
+
+/* The tanks that exist right now, counted rather than looked up. */
+static int bwTanks(const ServerSim *sim) {
+    int i;
+    int n = 0;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->sim.tanks[i] != NULL) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* The seats the start is about to build a tank for. */
+static int bwFielded(const ServerSim *sim) {
+    int i;
+    int n = 0;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i] && sim->lobbyPlayers[i].fielded) {
+            n++;
+        }
+    }
+    return n;
+}
+
+static void bwBoot(void *ctx) {
+    BootWatch *w = (BootWatch *)ctx;
+    w->bootAt     = ++w->seq;
+    w->bootTanks  = bwTanks(w->sim);
+    w->bootWindow = w->sim->scenarioSetupWindow;
+    w->bootRule   = swSetRule(w->sim, SCN_RULE_tank_reload_ticks,
+                              (double)SW_RELOAD_SET);
+}
+
+static void bwSetup(void *ctx) {
+    BootWatch *w = (BootWatch *)ctx;
+    w->setupAt     = ++w->seq;
+    w->setupTanks  = bwTanks(w->sim);
+    w->setupWindow = w->sim->scenarioSetupWindow;
+    w->setupRule   = swSetRule(w->sim, SCN_RULE_tank_death_ticks,
+                               (double)SW_DEATH_SET);
+}
+
+/* One start's worth of the two calls: the boot comes first and finds no tank
+ * built, the setup comes second and finds one for every fielded seat, and
+ * the window is open across both. A boot that ran after the tanks would have
+ * answered this round's placements with the state the host was holding from
+ * the last one, which is the whole reason it sits where it does. */
+static int bwCheckOrder(ServerSim *sim, bool inPlace, const char *which) {
+    BootWatch w;
+    int       fielded;
+
+    memset(&w, 0, sizeof(w));
+    w.sim   = sim;
+    fielded = bwFielded(sim);
+    UT_ASSERT_MSG(fielded == 1,
+                  "%s: the fixture seats %d players, expected 1 — the tank "
+                  "counts below are measured against it", which, fielded);
+    UT_ASSERT_MSG(bwTanks(sim) == 0,
+                  "%s: %d tanks before the start, expected none", which,
+                  bwTanks(sim));
+
+    serverSimSetScenarioRoundBoot(sim, bwBoot, &w);
+    serverSimSetScenarioRoundStart(sim, bwSetup, &w);
+    if (inPlace) {
+        serverSimStartGameInPlace(sim);
+    } else {
+        serverSimStartGame(sim);
+    }
+
+    UT_ASSERT_MSG(w.bootAt == 1,
+                  "%s: the boot ran %s, expected first of the two",
+                  which, w.bootAt == 0 ? "not at all" : "second");
+    UT_ASSERT_MSG(w.setupAt == 2,
+                  "%s: the setup ran %s, expected second of the two",
+                  which, w.setupAt == 0 ? "not at all" : "first");
+    UT_ASSERT_MSG(w.bootTanks == 0,
+                  "%s: the boot found %d tanks already built, expected none — "
+                  "it must run before the start places anything",
+                  which, w.bootTanks);
+    UT_ASSERT_MSG(w.setupTanks == fielded,
+                  "%s: the setup found %d tanks, expected the %d fielded "
+                  "seats", which, w.setupTanks, fielded);
+    UT_ASSERT_MSG(w.bootWindow,
+                  "%s: the setup window was shut inside the boot", which);
+    UT_ASSERT_MSG(w.setupWindow,
+                  "%s: the setup window was shut inside the setup call", which);
+    UT_ASSERT_MSG(w.bootRule == SCN_OP_OK,
+                  "%s: SCN_OP_SET_RULE answered %d inside the boot, expected "
+                  "SCN_OP_OK", which, (int)w.bootRule);
+    UT_ASSERT_MSG(!sim->scenarioSetupWindow,
+                  "%s left the setup window open", which);
+    return 0;
+}
+
+int run_scenario_round_boot_before_tanks(void) {
+    ServerSim *inPlace = makeLobbySim();
+    ServerSim *fullReset;
+    int        rc;
+
+    UT_ASSERT(inPlace != NULL);
+    rc = bwCheckOrder(inPlace, true, "serverSimStartGameInPlace");
+    if (rc != 0) return rc;
+    serverSimDestroy(inPlace);
+
+    fullReset = makeLobbySim();
+    UT_ASSERT(fullReset != NULL);
+    rc = bwCheckOrder(fullReset, false, "serverSimStartGame");
+    if (rc != 0) return rc;
+    serverSimDestroy(fullReset);
+    return 0;
+}
+
+/* A rule set from the boot and another from the setup cost one
+ * CTRL_SIM_RULES between them — the one the start publishes at its end,
+ * carrying both. The hold has to cover the boot as well as the setup call:
+ * a round that states its table twice is a round whose clients apply it
+ * twice, the second time against a world the first has already clamped. */
+static int bwCheckPublishOnce(ServerSim *sim, bool inPlace, const char *which) {
+    BootWatch        w;
+    RulesCount       c;
+    SubscriberHandle h;
+
+    memset(&w, 0, sizeof(w));
+    memset(&c, 0, sizeof(c));
+    w.sim = sim;
+
+    /* Registered before the counting starts: the registration replays the
+       sim's current state to the new subscriber, and that replay is not a
+       publish this case is counting. */
+    h = serverSimRegisterSubscriber(sim, rulesCountDeliver, &c);
+    UT_ASSERT_MSG(h != SUBSCRIBER_HANDLE_INVALID, "%s: no subscriber slot",
+                  which);
+    c.armed = true;
+
+    serverSimSetScenarioRoundBoot(sim, bwBoot, &w);
+    serverSimSetScenarioRoundStart(sim, bwSetup, &w);
+    if (inPlace) {
+        serverSimStartGameInPlace(sim);
+    } else {
+        serverSimStartGame(sim);
+    }
+
+    UT_ASSERT_MSG(w.bootRule == SCN_OP_OK,
+                  "%s: the rule set from the boot answered %d", which,
+                  (int)w.bootRule);
+    UT_ASSERT_MSG(w.setupRule == SCN_OP_OK,
+                  "%s: the rule set from the setup answered %d", which,
+                  (int)w.setupRule);
+    UT_ASSERT_MSG(sim->sim.rules.tank_reload_ticks == SW_RELOAD_SET,
+                  "%s: the table holds %ld for tank_reload_ticks, expected "
+                  "%d — the boot's set never happened, so the count below "
+                  "proves nothing", which,
+                  (long)sim->sim.rules.tank_reload_ticks, SW_RELOAD_SET);
+    UT_ASSERT_MSG(sim->sim.rules.tank_death_ticks == SW_DEATH_SET,
+                  "%s: the table holds %ld for tank_death_ticks, expected %d",
+                  which, (long)sim->sim.rules.tank_death_ticks, SW_DEATH_SET);
+    UT_ASSERT_MSG(c.rules == 1,
+                  "%s delivered %d CTRL_SIM_RULES events, expected the 1 the "
+                  "start publishes itself", which, c.rules);
+
+    serverSimUnregisterSubscriber(sim, h);
+    return 0;
+}
+
+int run_scenario_round_boot_publishes_rules_once(void) {
+    ServerSim *inPlace = makeLobbySim();
+    ServerSim *fullReset;
+    int        rc;
+
+    UT_ASSERT(inPlace != NULL);
+    rc = bwCheckPublishOnce(inPlace, true, "serverSimStartGameInPlace");
+    if (rc != 0) return rc;
+    serverSimDestroy(inPlace);
+
+    fullReset = makeLobbySim();
+    UT_ASSERT(fullReset != NULL);
+    rc = bwCheckPublishOnce(fullReset, false, "serverSimStartGame");
+    if (rc != 0) return rc;
+    serverSimDestroy(fullReset);
+    return 0;
+}
+
+/* ── What a setup arranges, and how it reaches a client ────────────── */
+
+/* A setup that deals every base on the map to seat 0, and a count of the
+ * captures the engine raised while it did. The count is taken at the write
+ * site — the game-event channel a subscriber is handed each event on as it
+ * is raised — so it says the captures really happened rather than that a
+ * buffer still holds them. */
+typedef struct {
+    ServerSim *sim;
+    int        dealt;        /* bases the setup handed over */
+    int        raised;       /* EVENT_BASE_CAPTURED seen as they were raised */
+    bool       armed;
+} DealWatch;
+
+static void dealDeliverControl(void *ctx, const struct ControlEvent *evt) {
+    (void)ctx;
+    (void)evt;
+}
+
+static void dealDeliverEvent(void *ctx, const GameEvent *evt) {
+    DealWatch *w = (DealWatch *)ctx;
+    if (w->armed && evt->type == EVENT_BASE_CAPTURED) {
+        w->raised++;
+    }
+}
+
+/* The op counts bases from zero; the list counts from one, which is what
+   basesIsActive is asked. */
+static void dealSetup(void *ctx) {
+    DealWatch *w = (DealWatch *)ctx;
+    BYTE       n = basesGetNumBases(&w->sim->sim.bs);
+    BYTE       i;
+
+    /* Counted across the deal and nothing else, so what the rest of the
+       start raises is not mistaken for it. */
+    w->armed = true;
+    for (i = 0; i < n; i++) {
+        ScenarioOp op;
+        if (basesIsActive(&w->sim->sim.bs, (BYTE)(i + 1)) == FALSE) {
+            continue;
+        }
+        memset(&op, 0, sizeof(op));
+        op.type                     = SCN_OP_BASE_SET_OWNER;
+        op.u.baseSetOwner.base      = i;
+        op.u.baseSetOwner.owner     = 0;
+        op.u.baseSetOwner.keepStock = false;
+        if (serverSimApplyScenarioOp(w->sim, &op, NULL) == SCN_OP_OK) {
+            w->dealt++;
+        }
+    }
+    w->armed = false;
+}
+
+/* One snapshot for seat 0, and what it carries: the bases it holds and the
+ * captures in front of them. */
+static int dealSnapshot(ServerSim *sim, int *ownedOut, int *capturesOut) {
+    SnapshotHeader      hdr;
+    TankSnapshot        tk[MAX_TANKS];
+    ShellSnapshot       sh[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot te[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot        bo[MAX_SNAPSHOT_BASES];
+    PillSnapshot        po[MAX_SNAPSHOT_PILLS];
+    GameEvent           ev[MAX_SNAPSHOT_EVENTS];
+    int                 i;
+
+    memset(&hdr, 0, sizeof(hdr));
+    serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh,
+                           MAX_SNAPSHOT_SHELLS, te, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                           bo, MAX_SNAPSHOT_BASES, po, MAX_SNAPSHOT_PILLS,
+                           ev, MAX_SNAPSHOT_EVENTS, false);
+
+    *ownedOut = 0;
+    for (i = 0; i < (int)hdr.baseCount; i++) {
+        if (bo[i].owner == 0) {
+            (*ownedOut)++;
+        }
+    }
+    *capturesOut = 0;
+    for (i = 0; i < (int)hdr.reliableEventCount; i++) {
+        if (ev[i].type == EVENT_BASE_CAPTURED) {
+            (*capturesOut)++;
+        }
+    }
+    return (int)hdr.baseCount;
+}
+
+static int dealCheck(ServerSim *sim, bool inPlace, const char *which) {
+    DealWatch        w;
+    SubscriberHandle h;
+    int              owned = 0;
+    int              captures = 0;
+    int              inSnapshot;
+
+    memset(&w, 0, sizeof(w));
+    w.sim = sim;
+    h = serverSimRegisterSubscriber(sim, dealDeliverControl, &w);
+    UT_ASSERT_MSG(h != SUBSCRIBER_HANDLE_INVALID, "%s: no subscriber slot",
+                  which);
+    UT_ASSERT_MSG(serverSimSetSubscriberEventDeliver(sim, h, dealDeliverEvent),
+                  "%s: the game-event channel was refused", which);
+
+    serverSimSetScenarioRoundStart(sim, dealSetup, &w);
+    if (inPlace) {
+        serverSimStartGameInPlace(sim);
+    } else {
+        serverSimStartGame(sim);
+    }
+
+    UT_ASSERT_MSG(w.dealt > 1,
+                  "%s: the setup dealt %d bases, expected the map's whole "
+                  "list — with nothing dealt the snapshot below proves "
+                  "nothing", which, w.dealt);
+    UT_ASSERT_MSG(w.raised == w.dealt,
+                  "%s: %d bases dealt raised %d captures — the arrangement "
+                  "this case is about never happened", which, w.dealt,
+                  w.raised);
+
+    inSnapshot = dealSnapshot(sim, &owned, &captures);
+    UT_ASSERT_MSG(captures == 0,
+                  "%s: the opening snapshot carries %d base captures, "
+                  "expected none — what the setup arranged reached the "
+                  "client as gameplay traffic", which, captures);
+    UT_ASSERT_MSG(inSnapshot > 1,
+                  "%s: the opening snapshot carries %d bases, expected the "
+                  "map's list", which, inSnapshot);
+    UT_ASSERT_MSG(owned == inSnapshot,
+                  "%s: %d of the snapshot's %d bases read seat 0 as the "
+                  "owner, expected all of them — the arranged world did not "
+                  "ride the snapshot", which, owned, inSnapshot);
+
+    serverSimUnregisterSubscriber(sim, h);
+    return 0;
+}
+
+int run_scenario_setup_events_off_the_wire(void) {
+    ServerSim *inPlace = makeLobbySim();
+    ServerSim *fullReset;
+    int        rc;
+
+    UT_ASSERT(inPlace != NULL);
+    rc = dealCheck(inPlace, true, "serverSimStartGameInPlace");
+    if (rc != 0) return rc;
+    serverSimDestroy(inPlace);
+
+    fullReset = makeLobbySim();
+    UT_ASSERT(fullReset != NULL);
+    rc = dealCheck(fullReset, false, "serverSimStartGame");
+    if (rc != 0) return rc;
+    serverSimDestroy(fullReset);
     return 0;
 }

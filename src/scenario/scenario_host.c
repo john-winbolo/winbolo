@@ -11,12 +11,15 @@
  *  Finds the Lua script beside a map, boots a VM, runs its
  *  chunk, reads the scenario table it declares into one
  *  struct, and applies the rules that table sets through the
- *  op funnel from inside the sim's round-start callback.
+ *  op funnel from inside the sim's round-boot callback.
  *
- *  The round's shape: a fresh VM at every round start, so a
- *  fresh set of globals; the rules applied; on_setup called
- *  inside the setup window the start opens; the roster
- *  audited; on_start called on the first running tick;
+ *  The round's shape: a fresh VM at the boot the start makes
+ *  before it places anything, so a fresh set of globals and a
+ *  round whose own state answers the placements; the rules
+ *  applied there too, so the opening tanks are built under
+ *  them; on_setup called after the tanks, inside the setup
+ *  window the start opens; the roster audited; on_start
+ *  called on the first running tick;
  *  on_tick on every running one; and on_end where the round
  *  moves into game over. Every hook is optional — a scenario
  *  defines the few it cares about.
@@ -53,10 +56,10 @@
  *  edit made to the file while the server is up does not
  *  reach a round on its own.
  *
- *  Nothing here publishes. The round start opens its setup
- *  window across the callback, which holds the set-rule
- *  handler's own CTRL_SIM_RULES publish, and the publish the
- *  start makes immediately afterwards carries the whole
+ *  Nothing here publishes. The start opens its setup window
+ *  across both of the calls it makes here, which holds the
+ *  set-rule handler's own CTRL_SIM_RULES publish, and the
+ *  publish the start makes at its end carries the whole
  *  table. A publish from here would be a second one saying
  *  the same thing.
  *
@@ -2341,27 +2344,30 @@ static void scnSeedTeams(ScenarioHost *h) {
     }
 }
 
-/* The round start's work, with the VM lock already held.
+/* The round's own state, booted with the VM lock already held.
  *
  * A fresh VM for the round, the bytes read at attach run again in it, the
- * table read again, then the rules, then on_setup, then the audit. The
- * fresh VM is what gives the round a fresh set of globals: nothing the last
- * round's script left behind is reachable from this one.
+ * table read again, then the rules. The fresh VM is what gives the round a
+ * fresh set of globals: nothing the last round's script left behind is
+ * reachable from this one.
+ *
+ * The sim makes this call ahead of its start batch, before a start is picked
+ * or a tank is built, so on_choose_start and spawn_loadout for the seats
+ * already in the round are answered by the state that will play it and the
+ * opening tanks are built under the table this file asked for. on_setup is
+ * the other half of the round start and runs later, once there is a built
+ * world for it to arrange.
  *
  * Nothing here goes near the disk: this runs inside the start with the sim
  * mutex held. A round whose chunk fails says so and plays classic rather
- * than carrying the previous round's table into it.
- *
- * on_setup runs after the rules, so a script's setup sees the table the file
- * itself asked for, and inside the setup window the start holds open, so
- * the funnel takes the ops it issues — every one but the six roster ops,
- * which the window keeps refusing. */
-static void scnRoundStartLocked(ScenarioHost *h) {
+ * than carrying the previous round's table into it — and it fails before a
+ * tank exists, so a round it leaves behind is a plain one from its first
+ * placement onward. */
+static void scnRoundBootLocked(ScenarioHost *h) {
     lua_State       *L;
     ScenarioManifest fresh;
     ScnParseReport   rep;
     char             err[SCN_ERR_LEN];
-    bool             humans[MAX_TANKS];
 
     err[0] = '\0';
 
@@ -2423,8 +2429,8 @@ static void scnRoundStartLocked(ScenarioHost *h) {
 
     /* The same for the roster copy the team change is measured against, and
        for the state on_end watches: both are this round's, and both are
-       read before on_setup so a setup that moves a seat or ends the round
-       is itself the first change. */
+       read before the round is running, so a setup that moves a seat or
+       ends the round is itself the first change either of them sees. */
     scnSeedTeams(h);
     h->lastState = serverSimGetState(h->sim);
 
@@ -2435,13 +2441,40 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     memset(h->inRegion, 0, sizeof(h->inRegion));
 
     scnApplyRules(h);
+}
+
+/* on_setup, with the VM lock already held.
+ *
+ * The sim makes this call at the point in the start where the world, the
+ * tanks and the roster are built and the state already reads running, which
+ * is the world a setup is there to arrange. It runs after the rules, so a
+ * script's setup sees the table the file itself asked for, and inside the
+ * setup window the start holds open, so the funnel takes the ops it issues —
+ * every one but the six roster ops, which the window keeps refusing.
+ *
+ * A boot that failed left no hooks behind, so this is then a call that does
+ * nothing and the round plays on without the scenario. */
+static void scnRoundSetupLocked(ScenarioHost *h) {
+    bool humans[MAX_TANKS];
 
     scnRosterHumans(h, humans);
     scnHookRun(h, SCN_HOOK_SETUP);
     scnRosterAudit(h, humans);
 }
 
-/* The sim's round-start callback. */
+/* The sim's round-boot callback, ahead of the start batch. */
+static void scnRoundBoot(void *ctx) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
+
+    if (h == NULL) {
+        return;
+    }
+    scnLockEnter(&h->lock);
+    scnRoundBootLocked(h);
+    scnLockLeave(&h->lock);
+}
+
+/* The sim's round-start callback, after the tanks. */
 static void scnRoundStart(void *ctx) {
     ScenarioHost *h = (ScenarioHost *)ctx;
 
@@ -2449,7 +2482,7 @@ static void scnRoundStart(void *ctx) {
         return;
     }
     scnLockEnter(&h->lock);
-    scnRoundStartLocked(h);
+    scnRoundSetupLocked(h);
     scnLockLeave(&h->lock);
 }
 
@@ -2668,6 +2701,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->policy.damageScale     = scnDamageScale;
     h->policy.ctx             = h;
 
+    serverSimSetScenarioRoundBoot(sim, scnRoundBoot, h);
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);
     serverSimSetScenarioTick(sim, scnTick, h);
     /* And what a lobby host's reload request runs, so a player editing a
@@ -2875,6 +2909,7 @@ void scenarioHostDetach(ScenarioHost *h) {
        to release, so leaving it registered would hand the sim a dangling
        vtable the first time the lobby asked a question. */
     if (h->sim != NULL) {
+        serverSimSetScenarioRoundBoot(h->sim, NULL, NULL);
         serverSimSetScenarioRoundStart(h->sim, NULL, NULL);
         serverSimSetScenarioTick(h->sim, NULL, NULL);
         serverSimSetScenarioReload(h->sim, NULL, NULL);

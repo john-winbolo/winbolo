@@ -97,6 +97,23 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
                               void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioRoundBoot
+ *PURPOSE:
+ *  Registers the callback both authoritative round starts
+ *  invoke before the start batch and the tanks, which is
+ *  where the round's own Lua state, its chunk and its rules
+ *  come into force. The policies asked while the opening
+ *  tanks are built are therefore the round's own.
+ *
+ *  The setup window is open across the call, as it is across
+ *  the round start below, so the funnel takes the ops it
+ *  issues and the rules it sets wait for the one publish the
+ *  start makes at its end. NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
+                                   void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioRoundStart
  *PURPOSE:
  *  Registers the callback both authoritative round starts

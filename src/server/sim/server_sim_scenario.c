@@ -2702,11 +2702,14 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
     sim->sim.rules = copy;
     scenarioRecordRuleSet(p->rule, written);
     scenarioClampWorldToRules(sim);
-    /* Held while the setup window is open. The round start publishes the
-       table itself a few lines after the callback returns, and that publish
-       carries every field, so a scenario setting a dozen rules there would
-       otherwise send a dozen control events where one says the same thing.
-       Outside the window no publish follows, so the change states itself. */
+    /* Held while the setup window is open, which covers both the boot the
+       start makes ahead of its batch — where a script's own rules table is
+       applied — and the round-start callback after it. The start publishes
+       the table itself at its end, and that publish carries every field, so
+       a scenario setting a dozen rules there would otherwise send a dozen
+       control events where one says the same thing, and a round would state
+       its table twice. Outside the window no publish follows, so the change
+       states itself. */
     if (scenarioRuleIsCarried(p->rule) && !sim->scenarioSetupWindow) {
         serverSimPublishSimRules(sim);
     }
@@ -2815,14 +2818,15 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
      * state are all being rebuilt, so nothing may be written until it
      * finishes.
      *
-     * The setup window is the exception. It is open only across the
-     * round-start callback, which the start makes once the world, the
-     * tanks and the roster are built and the state already reads
-     * running, so an op issued from there has settled state to work on.
-     * The six roster ops are the exception to that: what the guard
-     * exists for is a roster edit re-entering the all-ready detector,
-     * which is as true inside the window as outside it, so they keep
-     * their refusal either way. */
+     * The setup window is the exception. It is open across each of the
+     * two calls a start makes into the scenario — the boot, where the
+     * round's state and its rules come into force ahead of the start
+     * batch, and the round-start callback the start makes once the
+     * world, the tanks and the roster are built and the state already
+     * reads running. The six roster ops are the exception to that: what
+     * the guard exists for is a roster edit re-entering the all-ready
+     * detector, which is as true inside the window as outside it, so
+     * they keep their refusal either way. */
     if (sim->startInProgress &&
         (!sim->scenarioSetupWindow || scenarioOpIsRoster(op->type))) {
         return SCN_OP_WRONG_STATE;
@@ -2972,6 +2976,13 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
     if (sim == NULL) return;
     sim->scenarioTick = tick;
     sim->scenarioTickCtx = ctx;
+}
+
+void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
+                                   void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioRoundBoot = roundBoot;
+    sim->scenarioRoundBootCtx = ctx;
 }
 
 void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx),

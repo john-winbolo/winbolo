@@ -1215,6 +1215,40 @@ void serverSimReassignStarts(ServerSim *sim) {
     }
 }
 
+/* One of the two calls a start makes into the scenario, with the setup window
+ * open across it and the frame's game events put back where they stood.
+ *
+ * The window is what lets the funnel take the ops the call issues, and it
+ * holds the set-rule handler's own publish: the start states the whole table
+ * once at its end, so a script setting a dozen rules costs one control event
+ * rather than a dozen.
+ *
+ * The event buffer is what the opening snapshot carries to every client, and
+ * a client draws its newswire line and counts its scoreboard from what it
+ * finds there. What a scenario arranges is the world the round begins in
+ * rather than something that happened in it, so the buffer is put back where
+ * it stood and the arrangement rides the snapshot's own tank, base and pill
+ * lists: sixteen bases dealt at setup arrive as sixteen owners with no run of
+ * captures in front of them. Only this call's own events go — the count is
+ * taken first, so anything the start itself raised is left where it is. The
+ * map events are left alone too: a terrain edit writes no newswire line and
+ * has no other way of reaching a client. And the host keeps what it heard,
+ * because a subscriber is handed an event as it is raised rather than out of
+ * this buffer, so the round's own hooks still see what its setup did. */
+static void serverSimScenarioStartCall(ServerSim *sim, void (*call)(void *ctx),
+                                       void *ctx) {
+    uint8_t eventsBefore;
+
+    if (call == NULL) {
+        return;
+    }
+    eventsBefore             = sim->eventCount;
+    sim->scenarioSetupWindow = true;
+    call(ctx);
+    sim->scenarioSetupWindow = false;
+    sim->eventCount          = eventsBefore;
+}
+
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
@@ -1263,6 +1297,13 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
+
+    /* The round's own Lua state, its chunk and its rules, before a start is
+     * picked or a tank is built: the seats fielded at the start are placed
+     * and armed by the policies of the round being started rather than by
+     * whatever state the host was still holding from the round before. */
+    serverSimScenarioStartCall(sim, sim->scenarioRoundBoot,
+                               sim->scenarioRoundBootCtx);
 
     /* Pre-compute start indices for the whole batch so teammates land
      * near each other and a team with a side keeps its side (see
@@ -1323,11 +1364,8 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * setup window is open across it, so the funnel takes the ops it
      * issues although the start has not finished; the publish below then
      * carries whatever rules those ops set. */
-    if (sim->scenarioRoundStart != NULL) {
-        sim->scenarioSetupWindow = true;
-        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
-        sim->scenarioSetupWindow = false;
-    }
+    serverSimScenarioStartCall(sim, sim->scenarioRoundStart,
+                               sim->scenarioRoundStartCtx);
 
     /* And the table the round is starting on, beside the phase. The twin of
      * the publish at the end of serverSimStartGame: this path does not run
@@ -1418,6 +1456,11 @@ void serverSimStartGame(ServerSim *sim) {
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
 
+    /* The round's own Lua state, its chunk and its rules, before a start is
+     * picked or a tank is built — as in serverSimStartGameInPlace. */
+    serverSimScenarioStartCall(sim, sim->scenarioRoundBoot,
+                               sim->scenarioRoundBootCtx);
+
     /* Pre-compute start indices for the whole batch so teammates land
      * near each other, rivals don't grab adjacent squares, and a team with
      * a side keeps its side (the tankCreate loop below runs synchronously,
@@ -1456,11 +1499,8 @@ void serverSimStartGame(ServerSim *sim) {
      * running, and the setup window is open across the call so the funnel
      * takes the ops it issues. The publish below carries whatever rules
      * those ops set. */
-    if (sim->scenarioRoundStart != NULL) {
-        sim->scenarioSetupWindow = true;
-        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
-        sim->scenarioSetupWindow = false;
-    }
+    serverSimScenarioStartCall(sim, sim->scenarioRoundStart,
+                               sim->scenarioRoundStartCtx);
 
     /* The table the round is starting on, stated here rather than by each
      * caller. This and serverSimStartGameInPlace are the two authoritative

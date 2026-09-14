@@ -5064,6 +5064,9 @@ set(_unit_test_names
     scenario_setup_window_shut_refuses_all
     scenario_setup_window_no_callback
     scenario_setup_window_holds_publish
+    scenario_round_boot_before_tanks
+    scenario_round_boot_publishes_rules_once
+    scenario_setup_events_off_the_wire
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -5286,6 +5289,9 @@ set(_unit_test_names
     scenario_host_vm_lock_second_thread
     scenario_host_audit_human_lost
     scenario_host_failed_start_drops_manifest
+    scenario_host_round_answers_its_own_start
+    scenario_host_opening_tank_under_rules
+    scenario_host_boot_failure_still_starts
     scenario_host_metatable_raises
     scenario_host_metatable_not_read
     scenario_host_hook_via_global_metatable

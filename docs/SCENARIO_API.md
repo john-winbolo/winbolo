@@ -340,13 +340,11 @@ rather than left to misbehave quietly.
 `scenario.lobby.max_players` is the one decision that is a number rather than
 a function; it is applied by the lobby without asking.
 
-**Which round answers.** The tanks for everyone seated when a round starts
-are built before the round's own Lua state is, so `on_choose_start` and
-`spawn_loadout` for those seats are answered by the state the server holds at
-that moment: the one the file was loaded into, for the first round, and the
-previous round's for later ones, with that round's globals. A seat that joins
-or respawns after the start is answered by the round's own state. Keep those
-two policies free of state that changes across a round.
+**Which round answers.** A round's own state is booted before the round places
+anything, so `on_choose_start` and `spawn_loadout` for the seats already in the
+round are answered by the state that is about to play it, with that round's
+globals, and the opening tanks are built under the rules the same file asked
+for. A seat that joins or respawns later is answered by the same state.
 
 ---
 

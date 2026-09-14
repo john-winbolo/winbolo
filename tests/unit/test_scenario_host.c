@@ -73,6 +73,16 @@
  *                                     — a start whose chunk raises leaves the
  *                                       host answering for no scenario at
  *                                       all, not for the round before it
+ * run_scenario_host_round_answers_its_own_start
+ *                                     — on_choose_start for a seat already in
+ *                                       the round is answered by the round's
+ *                                       own state, not the one before it
+ * run_scenario_host_opening_tank_under_rules
+ *                                     — the tanks the start builds are built
+ *                                       under the script's own table
+ * run_scenario_host_boot_failure_still_starts
+ *                                     — a round whose chunk raises still
+ *                                       starts, with its tanks and no setup
  *
  * and the switch that decides whether a script is loaded at all:
  *
@@ -118,6 +128,8 @@
 #include "control_event.h"         /* CTRL_SERVER_TEXT — where a client reads
                                     * the line a switched-off round sends */
 #include "game_sim.h"
+#include "gametype.h"              /* TANK_FULL_SHELLS — the classic load */
+#include "starts.h"                /* startsGetNumStarts — where a tank landed */
 #include "tank.h"                  /* tankIsDestroyed, TANK_DEATH_WAIT */
 #include "everard_map.h"
 #include "scenario_host.h"
@@ -2117,6 +2129,245 @@ int run_scenario_host_reload_applies_nothing(void) {
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
+    remove(kRecord);
+    return 0;
+}
+
+/* ── The round's own state answers its own start ──────────────────── */
+
+/* Which start a tank ended up at, as the nearest one to where it stands.
+   startsGetStart nudges a tank off an occupied square, so the square itself
+   is not the answer; the start it is nearest to is. Starts are 0-based here
+   and 1-based in a script, which is why the script's answer below is one
+   more than the index asserted. */
+static int shNearestStart(GameSim *gs, int mx, int my) {
+    BYTE n    = startsGetNumStarts(&gs->ss);
+    int  best = -1;
+    int  bestDist = 0;
+    BYTE i;
+
+    for (i = 0; i < n; i++) {
+        int dx   = (int)(*gs->ss).item[i].x - mx;
+        int dy   = (int)(*gs->ss).item[i].y - my;
+        int dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+        if (best < 0 || dist < bestDist) {
+            best     = (int)i;
+            bestDist = dist;
+        }
+    }
+    return best;
+}
+
+static int shTankStart(GameSim *gs, BYTE slot) {
+    WORLD wx, wy;
+    if (gs->tanks[slot] == NULL) {
+        return -1;
+    }
+    tankGetWorld(&gs->tanks[slot], &wx, &wy);
+    return shNearestStart(gs, (int)(wx >> M_W_SHIFT_SIZE),
+                          (int)(wy >> M_W_SHIFT_SIZE));
+}
+
+/* A seat taken before the round starts, so its tank is one the start itself
+   builds rather than one the join path builds afterwards. In the lobby state
+   serverSimAddPlayer seats the player fielded and leaves the tank to the
+   start, which is the arrangement every real round begins from. */
+static void shSeat(ServerSim *sim, BYTE slot, const char *name) {
+    serverSimAddPlayer(sim, slot, name, false);
+}
+
+/* The chunk counts its own runs through a file, so the state the policy is
+ * asked on says which run it belongs to: the attach's chunk finds the file
+ * empty and picks start 1, the round's chunk finds one line and picks the
+ * last start on the map. The seat is taken before the start, so the tank the
+ * start builds is placed by whichever of the two states the host was holding
+ * when it asked — and only the round's own gives the last start.
+ *
+ * This is the case that fails if the boot moves back behind the tanks: it
+ * would be the attach's state answering, and slot 0 would open the round on
+ * start 1. */
+int run_scenario_host_round_answers_its_own_start(void) {
+    static const char *const kMap    = "scnhost_own_start.map";
+    static const char *const kRecord = "scnhost_own_start.record";
+    char          lua[2048];
+    char          body[1024];
+    char          got[256];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    char          err[512];
+    BYTE          numStarts;
+    int           landed;
+
+    remove(kRecord);
+    snprintf(body, sizeof(body),
+             "scenario = { name = \"Own Start\", api = 1 }\n"
+             "local runs = 0\n"
+             "do\n"
+             "  local f = io.open(\"%s\", \"r\")\n"
+             "  if f then\n"
+             "    for _ in f:lines() do runs = runs + 1 end\n"
+             "    f:close()\n"
+             "  end\n"
+             "end\n"
+             "note(\"run\\n\")\n"
+             "local pick = (runs == 0) and 1 or game.num_starts()\n"
+             "function on_choose_start(p) return pick end\n", kRecord);
+    shScript(lua, sizeof(lua), kRecord, body);
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+
+    numStarts = startsGetNumStarts(&gs->ss);
+    UT_ASSERT_MSG(numStarts >= 3,
+                  "setup: the map must carry at least three starts, has %u",
+                  (unsigned)numStarts);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "run\n") == 0,
+                  "the attach recorded '%s', expected one run of the chunk",
+                  got);
+
+    shSeat(sim, 0, "Tester");
+    UT_ASSERT_MSG(gs->tanks[0] == NULL,
+                  "setup: the seat has a tank before the round started");
+
+    serverSimStartGame(sim);
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "run\nrun\n") == 0,
+                  "the round recorded '%s', expected the chunk run twice — "
+                  "once at the attach and once for the round", got);
+
+    UT_ASSERT_MSG(gs->tanks[0] != NULL, "the start built no tank for seat 0");
+    landed = shTankStart(gs, 0);
+    UT_ASSERT_MSG(landed == (int)(numStarts - 1),
+                  "seat 0 opened the round nearest start %d, expected the %u "
+                  "its own round's chunk named — start 1 is the answer the "
+                  "state from before the round would have given",
+                  landed, (unsigned)(numStarts - 1));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    remove(kRecord);
+    return 0;
+}
+
+/* ── The opening tanks are built under the round's rules ──────────── */
+
+/* Well below the classic load, and inside tank_full_shells' 0..255 row. */
+#define SH_SHELLS_SET 5
+
+/* The seat is taken before the round starts, so the tank the assertion reads
+ * is one the start built. A table applied after that build would leave it
+ * carrying the classic load, which is what this case names. */
+int run_scenario_host_opening_tank_under_rules(void) {
+    static const char *const kMap = "scnhost_open_tank.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Short Load\",\n"
+        "  api = 1,\n"
+        "  rules = { tank_full_shells = 5 },\n"
+        "}\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    UT_ASSERT_MSG(TANK_FULL_SHELLS != SH_SHELLS_SET,
+                  "setup: the script's load is the classic one, so the "
+                  "assertion below would pass either way");
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    shSeat(sim, 0, "Tester");
+    UT_ASSERT_MSG(sim->sim.tanks[0] == NULL,
+                  "setup: the seat has a tank before the round started");
+
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->sim.tanks[0] != NULL,
+                  "the start built no tank for seat 0");
+    UT_ASSERT_MSG(sim->sim.rules.tank_full_shells == SH_SHELLS_SET,
+                  "the round's tank_full_shells is %d, expected the script's "
+                  "%d", (int)sim->sim.rules.tank_full_shells, SH_SHELLS_SET);
+    UT_ASSERT_MSG(tankGetShells(&sim->sim.tanks[0]) == SH_SHELLS_SET,
+                  "the opening tank carries %u shells, expected the script's "
+                  "%d — it was built before the table was applied",
+                  (unsigned)tankGetShells(&sim->sim.tanks[0]), SH_SHELLS_SET);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── A boot that fails leaves a round to play ─────────────────────── */
+
+/* The chunk raises as soon as a file beside it exists, and the file is made
+ * after the attach — so the attach loads and the round's own boot does not.
+ * The boot now runs before anything is placed, so what it leaves behind has
+ * to be a round that still starts: the state flips to running, the seat gets
+ * its tank, and the scenario is simply not part of the round. */
+int run_scenario_host_boot_failure_still_starts(void) {
+    static const char *const kMap    = "scnhost_boot_fail.map";
+    static const char *const kBreak  = "scnhost_boot_fail.break";
+    static const char *const kRecord = "scnhost_boot_fail.record";
+    char          lua[2048];
+    char          body[1024];
+    char          got[256];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    FILE         *f;
+
+    remove(kRecord);
+    remove(kBreak);
+    snprintf(body, sizeof(body),
+             "scenario = { name = \"Breaks\", api = 1 }\n"
+             "do\n"
+             "  local f = io.open(\"%s\", \"r\")\n"
+             "  if f then f:close() error(\"this round is not loading\") end\n"
+             "end\n"
+             "function on_setup() note(\"s\") end\n", kBreak);
+    shScript(lua, sizeof(lua), kRecord, body);
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    shSeat(sim, 0, "Tester");
+    f = fopen(kBreak, "wb");
+    UT_ASSERT_MSG(f != NULL, "setup: the file the chunk trips on was not made");
+    fclose(f);
+
+    serverSimStartGame(sim);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the sim is in state %d, expected running: a boot that "
+                  "failed took the round with it",
+                  (int)serverSimGetState(sim));
+    UT_ASSERT_MSG(sim->sim.tanks[0] != NULL,
+                  "the start built no tank for seat 0 after the boot failed");
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(got[0] == '\0',
+                  "the round recorded '%s': a scenario whose boot failed ran "
+                  "its setup anyway", got);
+    UT_ASSERT_MSG(scenarioHostLastError(h)[0] != '\0',
+                  "the host reports no error, so the round above could be a "
+                  "scenario round that simply wrote nothing");
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    remove(kBreak);
     remove(kRecord);
     return 0;
 }

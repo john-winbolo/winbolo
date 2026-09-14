@@ -2155,6 +2155,9 @@ int run_scenario_setup_window_roster_refused(void);
 int run_scenario_setup_window_shut_refuses_all(void);
 int run_scenario_setup_window_no_callback(void);
 int run_scenario_setup_window_holds_publish(void);
+int run_scenario_round_boot_before_tanks(void);
+int run_scenario_round_boot_publishes_rules_once(void);
+int run_scenario_setup_events_off_the_wire(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -2515,6 +2518,9 @@ int run_scenario_host_vm_lock_same_thread(void);
 int run_scenario_host_vm_lock_second_thread(void);
 int run_scenario_host_audit_human_lost(void);
 int run_scenario_host_failed_start_drops_manifest(void);
+int run_scenario_host_round_answers_its_own_start(void);
+int run_scenario_host_opening_tank_under_rules(void);
+int run_scenario_host_boot_failure_still_starts(void);
 
 /* A metatable on the script's own tables (test_scenario_host.c): what the
    host's reads of the declared data do and do not run. */
