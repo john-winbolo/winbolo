@@ -223,7 +223,7 @@ local BASEWORDS = { base = true, bases = true }
 -- and `cancel all` does not touch them.  `take` is the focus alias.
 local SETTINGWORDS = {
   focus = true, take = true, reposition = true, repositioning = true,
-  help = true,
+  help = true, bot = true, botpings = true,
 }
 
 -- roster = ally BOTS (for `who` and for `cancel <bot name>`)
@@ -312,7 +312,8 @@ function M.parse(text, roster, all_roster)
   local si = 1
   for i = 2, #toks do
     if toks[i] == "focus" or toks[i] == "reposition"
-       or toks[i] == "repositioning" then
+       or toks[i] == "repositioning" or toks[i] == "bot"
+       or toks[i] == "botpings" then
       local subject_ok = true
       for j = 1, i - 1 do
         if not WHOWORDS[toks[j]] and M.match_name(toks[j], roster) == nil then
@@ -337,6 +338,16 @@ function M.parse(text, roster, all_roster)
   if toks[si] == "reposition" or toks[si] == "repositioning" then
     if toks[si + 1] == "on"  then return { setting = "reposition", value = true  } end
     if toks[si + 1] == "off" then return { setting = "reposition", value = false } end
+    return { reply = "didn't understand" }
+  end
+  -- "bot pings on|off" is the wording the docs use; "botpings on|off" is the
+  -- same command written as one word.  A bare "bot ..." that is not about
+  -- pings is not a setting at all, so it falls through to the verb scan.
+  if toks[si] == "botpings"
+     or (toks[si] == "bot" and toks[si + 1] == "pings") then
+    local w = (toks[si] == "botpings") and toks[si + 1] or toks[si + 2]
+    if w == "on"  then return { setting = "bot_pings", value = true  } end
+    if w == "off" then return { setting = "bot_pings", value = false } end
     return { reply = "didn't understand" }
   end
 
@@ -594,6 +605,18 @@ local function S(state)
           -- stage 2: team-wide latches + the ping anchors
           focus = nil,        -- nil | "bases" | "pills"  (nil = off)
           repo_on = nil,      -- nil = no override | true | false
+          -- "bot pings on|off".  nil = nobody has said either, so the game
+          -- runs on C.BOT_PINGS_DEFAULT.  Read through M.bot_pings_on.
+          bot_pings = nil,
+          -- Smart pings this bot wants the engine to place, oldest first.
+          -- init.lua drains ONE per think into the think output, which is
+          -- all the engine accepts; the engine drops extras anyway, so the
+          -- queue is capped short and the OLDEST goes when it overflows.
+          pings = {},
+          -- atk_ping[target key] = the tick this bot last put an ATTACK
+          -- marker on that target.  Stops a re-planned goal re-marking the
+          -- same pill on every replan.
+          atk_ping = {},
           banner = nil, latch_tx = 0, anchors = {} }
     state.orders = o
   end
@@ -614,6 +637,50 @@ local function say(state, line)
   local o = S(state)
   o.say[#o.say + 1] = line
   while #o.say > 6 do table.remove(o.say, 1) end
+end
+
+-- =========================================================================
+-- SMART PINGS THE BOT PLACES ITSELF
+--
+-- The engine takes one ping per think out of the think output (ping_kind,
+-- ping_x, ping_y) and turns it into a CMD_PING from THIS bot's own player
+-- slot.  So a bot's marker is drawn, team-filtered and recorded exactly like
+-- a marker a person placed, and the engine holds the bot to one ping every
+-- 25 ticks on top of the team-wide ping rate limit every sender obeys.
+--
+-- Queue one with M.ping(state, kind, mx, my); init.lua drains it with
+-- M.out_ping right before it returns.  The tile is turned into the WORLD
+-- units the engine wants here, at the tile CENTRE, so the marker sits on the
+-- square and not on its corner.
+-- =========================================================================
+
+-- kind is a PING_KIND_* the engine registered as a Lua global; mx, my are
+-- map squares.  Two queued pings are as many as are ever useful (the engine
+-- takes one a think and drops the rest inside its own gap), so the queue is
+-- short and the OLDEST goes first when it is full: a fresh marker says where
+-- the bot is going NOW.
+function M.ping(state, kind, mx, my)
+  if not kind or not mx or not my then return end
+  if mx < 0 or mx > 255 or my < 0 or my > 255 then return end
+  local o = S(state)
+  o.pings[#o.pings + 1] = { kind = kind,
+                            wx = math.floor(mx) * 256 + 128,
+                            wy = math.floor(my) * 256 + 128 }
+  while #o.pings > 2 do table.remove(o.pings, 1) end
+end
+
+-- Drain ONE queued ping into the think output table and hand the table back.
+-- Written as a fill-in-the-table call so init.lua's think needs no new local
+-- and no new upvalue for it (think sits at Lua's 60-upvalue cap).
+function M.out_ping(state, out)
+  local o = state and state.orders
+  local p = o and o.pings and table.remove(o.pings, 1)
+  if p then
+    out.ping_kind = p.kind
+    out.ping_x    = p.wx
+    out.ping_y    = p.wy
+  end
+  return out
 end
 
 -- Roster of allied BOTS (who-words and cancel target).  Self included.
@@ -755,6 +822,12 @@ function M.rx(sender, text, tick, state)
     o.rx[#o.rx + 1] = { kind = "repo", value = tonumber(r), from = sender, tick = tick }
     return true
   end
+  local g = text:match("^/info obg (%d)$")
+  if g then
+    local o = S(state)
+    o.rx[#o.rx + 1] = { kind = "bpings", value = tonumber(g), from = sender, tick = tick }
+    return true
+  end
   oid = text:match("^/info obr (%d+)$")
   if oid then
     local o = S(state)
@@ -820,6 +893,17 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
     say(state, string.format("%s %s", M.ack_for(my_name(state, info)),
         goal_label(spec.kind, spec.tid)))
   end
+  -- "ON MY WAY" — one marker on the place the order names, at the moment the
+  -- bot takes it.  This is NOT the "bot pings" setting: it answers a person
+  -- who just gave an order, so it is always sent, and on a GROUP order every
+  -- taker sends its own, which is what shows the human how many are coming.
+  -- The chat ack is unchanged and still carries the words.
+  do
+    local pmx, pmy = M.target_tile(world, state, spec)
+    if pmx and pmy then
+      M.ping(state, _G.PING_KIND_ON_MY_WAY or 4, pmx, pmy)
+    end
+  end
 end
 
 -- THE SAME ORDER, SAID AGAIN, TO A BOT THAT ALREADY HOLDS IT.  The repeat
@@ -872,7 +956,7 @@ end
 -- so each is split at a comma.  Four chunks, one per tick.
 M.HELP = {
   "Orders: [all|nearby|last|bot name, default nearest] attack|capture|sweep|decoy <pill#|base#|tank name>, defend <pill#>,",
-  "retreat, cancel [all|bot name], focus bases|pills|off, reposition on|off",
+  "retreat, cancel [all|bot name], focus bases|pills|off, reposition on|off, bot pings on|off",
   "Ping a tile: nearest bot goes, ping again adds one. Ping bots to select them,",
   "then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
 }
@@ -897,6 +981,42 @@ local function set_repo(state, on)
   local o = S(state)
   o.repo_on = on
   state._repo_override = on
+end
+local function set_bot_pings(state, on)
+  local o = S(state)
+  o.bot_pings = on
+end
+
+-- Is the team taking bot ATTACK markers?  Nobody has said either way until
+-- o.bot_pings is set, and then the game runs on the knob.
+function M.bot_pings_on(state)
+  local o = state and state.orders
+  if o and o.bot_pings ~= nil then return o.bot_pings end
+  return C.BOT_PINGS_DEFAULT and true or false
+end
+
+-- ATTACK MARKER, on every goal change to an attack.  init.lua calls this at
+-- the one point where state.goal takes a new kind or a new target, so an
+-- ordered attack and an attack the bot picked for itself both reach it.
+--
+-- Only while "bot pings" is on, and at most one marker per target per
+-- ORDER_PING_REPEAT_TICKS: a bot re-plans the same goal often, and a marker
+-- on every replan would bury the map.  The stamp is per BOT, because each bot
+-- keeps its own copy of this table, and per TARGET, so switching between two
+-- pills marks both.
+function M.attack_ping(state, goal, now)
+  if not C.BOT_COMMANDS_ENABLED then return end
+  if not goal then return end
+  if goal.kind ~= "attack_pill" and goal.kind ~= "attack_tank" then return end
+  if not M.bot_pings_on(state) then return end
+  local mx, my = goal.mx, goal.my
+  if not mx or not my then return end
+  local o   = S(state)
+  local key = goal.kind .. ":" .. tostring(goal.target_id or (mx * 256 + my))
+  local gap = C.ORDER_PING_REPEAT_TICKS or 1500
+  if o.atk_ping[key] and (now - o.atk_ping[key]) < gap then return end
+  o.atk_ping[key] = now
+  M.ping(state, _G.PING_KIND_ATTACK or 3, mx, my)
 end
 
 -- FOCUS pricing.  The OTHER class pays the multiplier; the focused class
@@ -1184,6 +1304,14 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     if M.speaker(state, info) == me then
       say(state, cmd.value and "Repositioning on." or "Repositioning off.")
       tx(state, string.format("/info obp %d", cmd.value and 1 or 0))
+    end
+    return true
+  end
+  if cmd.setting == "bot_pings" then
+    set_bot_pings(state, cmd.value)
+    if M.speaker(state, info) == me then
+      say(state, cmd.value and "Bot pings on." or "Bot pings off.")
+      tx(state, string.format("/info obg %d", cmd.value and 1 or 0))
     end
     return true
   end
@@ -1503,6 +1631,17 @@ function M.on_events(state, world, info, now)
       local kind   = d[2]
       local mx = bit.rshift((d[3] or 0) * 256 + (d[4] or 0), 8)
       local my = bit.rshift((d[5] or 0) * 256 + (d[6] or 0), 8)
+      -- A BOT'S OWN MARKER IS NEWS, NOT AN ORDER.  Bots now place ATTACK and
+      -- ON_MY_WAY markers themselves, and this bot sees its team-mates' and
+      -- its own come back through the same event array.  A marker from a bot
+      -- says where a bot is going; it never commands anybody.  So every ping
+      -- whose sender is a bot is read and dropped here, the BOT_COMMAND kind
+      -- included: bots do not send that kind, and if one ever did it would be
+      -- a bot ordering a bot, which nothing in this file is meant to do.
+      local bots = info.player_bots or 0
+      if bit.band(bots, bit.lshift(1, sender)) ~= 0 then
+        kind = nil
+      end
       -- TEAM CHECK: self or an ally. The server already filters a ping to the
       -- sender's team, but an order is a hard command so the brain checks too.
       if sender == me or bit.band(allies, bit.lshift(1, sender)) ~= 0 then
@@ -1552,6 +1691,8 @@ function M.update(state, world, info, now)
       set_focus(state, CODE_FOCUS[r.value] or "off")
     elseif r.kind == "repo" then
       set_repo(state, r.value == 1)
+    elseif r.kind == "bpings" then
+      set_bot_pings(state, r.value == 1)
     elseif r.kind == "release" then
       if o.claims[r.oid] and o.claims[r.oid].pn == r.from then o.claims[r.oid] = nil end
       -- Re-bid it: the holder dropped it and the job is still standing.
@@ -1778,11 +1919,15 @@ function M.update(state, world, info, now)
     -- Re-broadcast the team settings so a bot that joined or respawned late
     -- latches the same values. They ride their own verbs rather than the
     -- /info state slate, which is already close to the 124-byte batch budget.
-    if (o.focus or o.repo_on ~= nil) and now >= (o.latch_tx or 0) then
+    if (o.focus or o.repo_on ~= nil or o.bot_pings ~= nil)
+       and now >= (o.latch_tx or 0) then
       o.latch_tx = now + (C.ORDER_LATCH_REBROADCAST_TICKS or 1500)
       tx(state, string.format("/info obf %d", FOCUS_CODE[o.focus or "off"] or 0))
       if o.repo_on ~= nil then
         tx(state, string.format("/info obp %d", o.repo_on and 1 or 0))
+      end
+      if o.bot_pings ~= nil then
+        tx(state, string.format("/info obg %d", o.bot_pings and 1 or 0))
       end
     end
   end

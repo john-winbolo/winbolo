@@ -101,7 +101,11 @@ TEAM SETTINGS
   reposition on  let the bots move their own pillboxes. It is OFF while a
                  human is on the team. "repositioning on" says the same.
   reposition off stop them moving pillboxes again. "repositioning off" too.
-  Both settings take a subject and ignore it: they are team-wide, so
+  bot pings on   a bot puts an ATTACK marker on the map every time it starts
+                 attacking a pillbox or a tank, so you can see what the bots
+                 are going for without reading chat. "botpings on" too.
+  bot pings off  stop the attack markers. This is how a game starts.
+  These settings take a subject and ignore it: they are team-wide, so
   "socrates focus bases" and "last repositioning on" do what the bare lines do.
   help           the bots say a short version of this page in chat.
   A setting holds for the whole game, or until you change it.
@@ -151,6 +155,21 @@ within about two seconds. The bot within 10 tiles with the cheapest route
 drives there and holds. Forest does not count, and a shell that stops on a
 wall, a building, a pillbox, a base or a tank does not count. If no bot is in
 range, nothing happens and no bot speaks.
+
+
+MARKERS THE BOTS PLACE
+
+A bot that takes an order puts an ON MY WAY marker on the place the order
+names, at the moment it answers you. On a group order every bot that took it
+places one, so the map shows how many are coming. This always happens and has
+no setting.
+
+With "bot pings on" a bot also puts an ATTACK marker on a pillbox or a tank
+each time it starts attacking it, so you can watch what the bots are going for.
+The same bot does not mark the same target again for 30 seconds.
+
+A marker a bot places is news, not an order: the bots read each other's
+markers and do nothing about them.
 
 
 HOW AN ORDER RUNS

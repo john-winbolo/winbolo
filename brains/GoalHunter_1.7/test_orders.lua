@@ -202,6 +202,22 @@ check("socrates repositioning on",
 check("a subject with junk after it is still nonsense",
                                shape(P("socrates focus wibble"))    == "reply:didn't understand", shape(P("socrates focus wibble")))
 
+print("orders.lua — bot pings switch")
+check("bot pings on",  shape(P("bot pings on"))  == "set:bot_pings=true",  shape(P("bot pings on")))
+check("bot pings off", shape(P("bot pings off")) == "set:bot_pings=false", shape(P("bot pings off")))
+check("botpings on",   shape(P("botpings on"))   == "set:bot_pings=true",  shape(P("botpings on")))
+check("botpings off",  shape(P("botpings off"))  == "set:bot_pings=false", shape(P("botpings off")))
+check("BOT PINGS ON (case)", shape(P("BOT PINGS ON")) == "set:bot_pings=true", shape(P("BOT PINGS ON")))
+check("bot pings alone",  shape(P("bot pings")) == "reply:didn't understand", shape(P("bot pings")))
+check("bot pings wibble", shape(P("bot pings wibble")) == "reply:didn't understand", shape(P("bot pings wibble")))
+-- A subject in front is allowed and ignored, the same as focus: the setting
+-- is team-wide, so the subject cannot mean anything.
+check("socrates bot pings on",
+      shape(P("socrates bot pings on")) == "set:bot_pings=true", shape(P("socrates bot pings on")))
+check("all botpings off",
+      shape(P("all botpings off")) == "set:bot_pings=false", shape(P("all botpings off")))
+
+
 print("orders.lua — help")
 check("help",             shape(P("help")) == "help", shape(P("help")))
 check("help with junk",   shape(P("help me")) == "reply:didn't understand", shape(P("help me")))
@@ -939,6 +955,117 @@ ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100 + C.ORDER_REPEAT_ACK_TICKS,
 check("and the repeat line carries no number either",
       st.orders.say[1] == "Still on it. take_cover",
       tostring(st.orders.say[1]))
+
+print("orders.lua — the pings a bot places itself")
+
+-- The queue and the drain. One ping leaves per think, because that is all the
+-- think output carries, and the tile becomes the WORLD centre of the square.
+st = ST()
+ORD.ping(st, 3, 20, 30)
+local out = ORD.out_ping(st, {})
+check("a queued ping reaches the think output",
+      out.ping_kind == 3 and out.ping_x == 20 * 256 + 128
+      and out.ping_y == 30 * 256 + 128,
+      string.format("%s %s %s", tostring(out.ping_kind), tostring(out.ping_x),
+                    tostring(out.ping_y)))
+check("the queue is emptied by the drain",
+      ORD.out_ping(st, {}).ping_kind == nil, "?")
+check("no ping queued means no ping fields",
+      ORD.out_ping(ST(), {}).ping_kind == nil, "?")
+check("a ping off the map is dropped", (function()
+  local t = ST()
+  ORD.ping(t, 3, 300, 30)
+  ORD.ping(t, 3, 20, -1)
+  return ORD.out_ping(t, {}).ping_kind == nil
+end)(), "?")
+check("only the two freshest pings are kept", (function()
+  local t = ST()
+  ORD.ping(t, 3, 1, 1); ORD.ping(t, 3, 2, 2); ORD.ping(t, 3, 3, 3)
+  return ORD.out_ping(t, {}).ping_x == 2 * 256 + 128
+end)(), "?")
+
+-- TAKING AN ORDER places an ON MY WAY marker on the target, whatever the
+-- "bot pings" setting says: the marker answers a person who just gave an
+-- order. "!goto 15 15" is the plainest order with a place in it.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: a go-there order is held",
+      (st.orders.held or {}).kind == "take_cover",
+      tostring((st.orders.held or {}).kind))
+out = ORD.out_ping(st, {})
+check("taking an order places an ON MY WAY marker on the target",
+      out.ping_kind == 4 and out.ping_x == 15 * 256 + 128
+      and out.ping_y == 15 * 256 + 128,
+      string.format("%s %s %s", tostring(out.ping_kind), tostring(out.ping_x),
+                    tostring(out.ping_y)))
+
+-- ATTACK markers ride the team setting, and it is OFF until somebody says
+-- otherwise.
+st = ST()
+check("bot pings start at the knob",
+      ORD.bot_pings_on(st) == (C.BOT_PINGS_DEFAULT and true or false), "?")
+ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }, 100)
+check("with bot pings off no attack marker is placed",
+      ORD.out_ping(st, {}).ping_kind == nil, "?")
+
+-- With the setting on: one marker per target, and not again until
+-- ORDER_PING_REPEAT_TICKS has passed.
+st = ST()
+ORD.ping(st, 3, 1, 1)                 -- makes state.orders exist
+ORD.out_ping(st, {})
+st.orders.bot_pings = true
+ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }, 100)
+out = ORD.out_ping(st, {})
+check("with bot pings on an attack marker goes on the target",
+      out.ping_kind == 3 and out.ping_x == 20 * 256 + 128, tostring(out.ping_kind))
+ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 },
+                100 + (C.ORDER_PING_REPEAT_TICKS or 1500) - 1)
+check("the same target is not marked again inside the gap",
+      ORD.out_ping(st, {}).ping_kind == nil, "?")
+ORD.attack_ping(st, { kind = "attack_pill", target_id = 5, mx = 20, my = 20 },
+                100 + (C.ORDER_PING_REPEAT_TICKS or 1500))
+check("the same target is marked again once the gap is served",
+      ORD.out_ping(st, {}).ping_kind == 3, "?")
+ORD.attack_ping(st, { kind = "attack_tank", target_id = 9, mx = 60, my = 60 },
+                100 + (C.ORDER_PING_REPEAT_TICKS or 1500))
+check("a different target is marked straight away",
+      ORD.out_ping(st, {}).ping_x == 60 * 256 + 128, "?")
+ORD.attack_ping(st, { kind = "capture_pill", target_id = 7, mx = 40, my = 40 }, 9000)
+check("a goal that is not an attack is never marked",
+      ORD.out_ping(st, {}).ping_kind == nil, "?")
+
+-- THE LATCH. A late joiner catches the team's setting off its own /info verb.
+st = ST()
+ORD.rx(2, "/info obg 1", 100, st)
+ORD.update(st, W(), I(), 101)
+check("the obg latch turns bot pings on",
+      ORD.bot_pings_on(st) == true, tostring(ORD.bot_pings_on(st)))
+ORD.rx(2, "/info obg 0", 200, st)
+ORD.update(st, W(), I(), 201)
+check("the obg latch turns them off again",
+      ORD.bot_pings_on(st) == false, tostring(ORD.bot_pings_on(st)))
+
+-- A BOT'S OWN MARKER IS NEWS, NOT AN ORDER. p2 is a bot in this fixture
+-- (player_bots 0x16), so its BOT_COMMAND ping must start nothing at all.
+_G.EVENT_PING = 20
+_G.PING_KIND_BOT_COMMAND = 5
+_G.PING_KIND_CAUTION = 1
+st, w, inf = ST(), W(), I({ events = {
+  { type = 20, data = { 2, 5, 0, 20, 0, 20 } },   -- p2, a BOT, on the pill
+} })
+ORD.on_events(st, w, inf, 100)
+check("a bot's BOT_COMMAND marker starts no order",
+      st.orders == nil or next(st.orders.auctions or {}) == nil, "?")
+st, w, inf = ST(), W(), I({ player_bots = 0, events = {
+  { type = 20, data = { 2, 5, 0, 20, 0, 20 } },   -- the same, from a PERSON
+} })
+ORD.on_events(st, w, inf, 100)
+check("the same marker from a person still starts one",
+      st.orders ~= nil and next(st.orders.auctions or {}) ~= nil, "?")
+_G.EVENT_PING = nil
+_G.PING_KIND_BOT_COMMAND = nil
+_G.PING_KIND_CAUTION = nil
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

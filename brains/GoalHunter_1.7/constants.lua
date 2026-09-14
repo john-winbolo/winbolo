@@ -4237,6 +4237,21 @@ M.FOCUS_OTHER_COST_MULT = 3.0    -- keel 1.0 (no focus factor at all)
 -- slate, which is already close to the 124-byte batch budget.
 M.ORDER_LATCH_REBROADCAST_TICKS = 1500   -- keel 1500 (moot; master off) 30 s
 
+-- BOT PINGS.  When a team turns this on, a bot puts an ATTACK marker on the
+-- map every time it takes an attack_pill or attack_tank goal, so the team can
+-- see what the bots are going for without reading chat.  OFF by default: it
+-- is map clutter until somebody asks for it.  The team setting is
+-- "bot pings on" / "bot pings off"; this is the value a game starts at.
+--
+-- The ON_MY_WAY marker a bot places when it takes an ORDER is NOT covered by
+-- this switch.  That one answers a person who just gave the order, so it is
+-- always sent.
+M.BOT_PINGS_DEFAULT      = false  -- keel false
+-- Shortest gap between two ATTACK markers from the SAME bot about the SAME
+-- target.  A bot re-plans the same goal often, and without this every replan
+-- would put another marker on the same pill.  1500 ticks is 30 s.
+M.ORDER_PING_REPEAT_TICKS = 1500  -- keel 1500 (moot; master off) 30 s
+
 -- ══════════════════════════════════════════════════════════════════════════
 -- PRESETS — named bundles of constant overrides, applied per bot
 -- ══════════════════════════════════════════════════════════════════════════
@@ -4490,6 +4505,8 @@ M.PRESETS = {
     ORDER_PING_RING               = 1,
     ORDER_PING_MATCH_TICKS        = 3000,
     ORDER_LATCH_REBROADCAST_TICKS = 1500,
+    BOT_PINGS_DEFAULT             = false,
+    ORDER_PING_REPEAT_TICKS       = 1500,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the

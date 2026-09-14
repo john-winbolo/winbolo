@@ -3390,14 +3390,17 @@ function Brain.think(info)
     log.log_tick(state, info, state.goal, 0, 0, nil)
     if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
     state._think_attempt = nil   -- reached an exit: this think was not killed
-    return {
+    -- ORD.out_ping adds this think's one smart ping, if the bot queued one.
+    -- A paused bot still answers an order, so its "on my way" marker has to
+    -- leave on this path too.
+    return ORD.out_ping(state, {
       holdkeys    = 0,
       tapkeys     = 0,
       build       = nil,
       wantallies  = info.allies,
       messagedest = msg_dest,
       sendmessage = send_msg,
-    }
+    })
   end
 
   -- Pick up deferred arrival reply
@@ -5704,6 +5707,12 @@ function Brain.think(info)
         end
         state.goal = new_goal
         state.goal_set_tick = now
+        -- ATTACK MARKER. This is the one point where the goal takes a new
+        -- kind or a new target, whether the bot was ordered to it or picked
+        -- it for itself, so it is the one place the marker belongs. The
+        -- "bot pings" team setting and the per-target repeat gap are both
+        -- inside the call; it does nothing when the team has not asked.
+        ORD.attack_ping(state, new_goal, now)
         state.pf.status = "idle"
         state.pf_fail_logged = false
         state.pf_fail_count = 0
@@ -8437,15 +8446,18 @@ function Brain.think(info)
   -- Anything still set at the next think's top means that think was killed.
   state._think_attempt = nil
 
-  -- Output
-  return {
+  -- Output. ORD.out_ping takes ONE queued smart ping off state.orders and
+  -- writes ping_kind / ping_x / ping_y into this table; the engine turns it
+  -- into a CMD_PING from this bot's own player slot. It is written as a call
+  -- around the table so think needs no extra local and no extra upvalue.
+  return ORD.out_ping(state, {
     holdkeys    = keys,
     tapkeys     = taps,
     build       = build_cmd,
     wantallies  = info.allies,
     messagedest = msg_dest,
     sendmessage = send_msg,
-  }
+  })
 end
 
 
