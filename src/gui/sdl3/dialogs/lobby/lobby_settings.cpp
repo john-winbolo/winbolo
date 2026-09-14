@@ -235,21 +235,6 @@ void lobbyVisibilityDetailsLine(const VisibilitySettings *v, char *out,
     }
 }
 
-/* What the dropdown shows for a set: the preset's name, or "Custom: " and
- * the line above. */
-static void lobbyVisibilityLabel(const VisibilitySettings *v, char *out,
-                                 size_t outSize) {
-    VisibilityPreset p = visibilityPresetMatch(v);
-    if (p != visibilityPresetCustom) {
-        SDL_snprintf(out, outSize, "%s", langGetText(visibilityPresetNameId(p)));
-        return;
-    }
-    char line[192];
-    lobbyVisibilityDetailsLine(v, line, sizeof(line));
-    SDL_snprintf(out, outSize, "%s: %s",
-                 langGetText(STR_DLGLOBBY_PRESET_CUSTOM), line);
-}
-
 /* Keeps the INI's memory of the host's choice in step with the lobby.
  * Run every frame the form is drawn rather than off each control, so an
  * edit made anywhere — a preset, a Details control, another admin's
@@ -476,6 +461,9 @@ void lobbyVisibilityColumnText(const VisibilitySettings *v, int column,
         SDL_snprintf(out, outSize, "%s %u %s", word,
                      (unsigned)v->decaySecs[column],
                      langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+    } else if (column == 4 &&
+               v->overviewWindow == (uint8_t)overviewWindowExpanded) {
+        SDL_snprintf(out, outSize, "%s (Full 29x29 view around tank)", word);
     } else {
         SDL_snprintf(out, outSize, "%s", word);
     }
@@ -550,7 +538,7 @@ static float lobbyVisibilityValueColumnMinWidth(float s) {
      * and no sprite - there is none for that setting, so it must not be
      * charged for one. */
     if (windowW + combo > w) w = windowW + combo;
-    /* The two tick-box columns are narrower than either, so they never
+    /* The two Yes/No combo columns are narrower than either, so they never
      * decide this; the seconds row under a Decay combo is checked because
      * its first line is the field and its label. */
     secsField = ImGui::CalcTextSize("0000").x + st.FramePadding.x * 2.0f
@@ -589,8 +577,10 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
 
     if (disabled) ImGui::BeginDisabled();
     /* Never drawn as selected: the radio is what says which row is on, and
-     * a filled cell behind a checked radio says it twice. */
-    if (ImGui::Selectable("##row", false, ImGuiSelectableFlags_None,
+     * a filled cell behind a checked radio says it twice. DontClosePopups so
+     * clicking a preset row keeps the dialog open until Close or Esc. */
+    if (ImGui::Selectable("##row", false,
+                          ImGuiSelectableFlags_DontClosePopups,
                           ImVec2(cellW, rowH))
         && !sel) {
         clicked = true;
@@ -599,7 +589,9 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
      * EndDisabled so a non-host still gets to read what the row does. */
     bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     ImGui::SetCursorPos(start);
-    ImGui::RadioButton("##pick", sel);
+    if (ImGui::RadioButton("##pick", sel) && !sel) {
+        clicked = true;
+    }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(name);
@@ -716,9 +708,14 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
             }
         }
     } else if (c == 3) {
-        bool trees = live.alliesInTrees;
-        if (ImGui::Checkbox("##trees", &trees)) {
-            uint8_t v = trees ? 1 : 0;
+        const char *yesNo[] = {
+            langGetText(STR_YES),
+            langGetText(STR_NO),
+        };
+        int sel = live.alliesInTrees ? 0 : 1;
+        ImGui::SetNextItemWidth(ctrlW);
+        if (ImGui::Combo("##trees", &sel, yesNo, 2)) {
+            uint8_t v = (sel == 0) ? 1 : 0;
             lobbySendSetting(cs, LST_ALLIES_IN_TREES, &v, 1);
         }
         hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -737,10 +734,15 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
         }
         hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     } else {
-        bool sight = (live.lineOfSight != (uint8_t)lineOfSightOff);
-        if (ImGui::Checkbox("##sight", &sight)) {
-            uint8_t v = (uint8_t)(sight ? lineOfSightBuildingsAndTrees
-                                        : lineOfSightOff);
+        const char *yesNo[] = {
+            langGetText(STR_YES),
+            langGetText(STR_NO),
+        };
+        int sel = (live.lineOfSight != (uint8_t)lineOfSightOff) ? 0 : 1;
+        ImGui::SetNextItemWidth(ctrlW);
+        if (ImGui::Combo("##sight", &sel, yesNo, 2)) {
+            uint8_t v = (sel == 0) ? (uint8_t)lineOfSightBuildingsAndTrees
+                                   : (uint8_t)lineOfSightOff;
             lobbySendSetting(cs, LST_LINE_OF_SIGHT, &v, 1);
         }
         hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -761,6 +763,54 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
     ImGui::PopID();
 }
 
+/* Multi-row tooltip showing each setting in order with its icon and value.
+ * Used on the top server line's summary and on the Custom preset entry. */
+static void lobbyRenderVisibilityTooltip(const VisibilitySettings *v,
+                                         VisibilityPreset preset, float s) {
+    if (v == NULL) return;
+
+    ImGui::BeginTooltip();
+
+    /* The preset's own sentence first, the same one the Details table's
+     * row hover gives. Custom has no sentence about what it does — what
+     * it does is the rows under it — so it goes straight to them. */
+    if (preset != visibilityPresetCustom) {
+        ImGui::TextUnformatted(langGetText(visibilityPresetDescId(preset)));
+        ImGui::Separator();
+    }
+
+    /* One row per setting: every Details column in the table's order.
+     * The decay seconds ride inside the view rows' value words — where
+     * lobbyVisibilityColumnText puts them, and the only place they can
+     * go, since each of the three view settings carries its own.
+     *
+     * The values line up under one another rather than running on after
+     * their labels: six rows of two words each are read down the value
+     * column. The offset is measured off the longest label so a
+     * translation that needs more room gets it. */
+    {
+        const float startX = ImGui::GetCursorPosX();
+        float       labelW = 0.0f;
+        int c;
+
+        for (c = 0; c < VIS_COLUMN_COUNT; c++) {
+            float w = ImGui::CalcTextSize(
+                langGetText(lobbyVisibilityColumnLabelId(c))).x;
+            if (w > labelW) labelW = w;
+        }
+        labelW += 12.0f * s;
+
+        for (c = 0; c < VIS_COLUMN_COUNT; c++) {
+            ImGui::TextUnformatted(
+                langGetText(lobbyVisibilityColumnLabelId(c)));
+            ImGui::SameLine(startX + labelW);
+            lobbyRenderVisibilityColumn(v, c, s);
+        }
+    }
+
+    ImGui::EndTooltip();
+}
+
 /* The preset dropdown: the five named sets and Custom, each entry saying
  * on its own hover what it does. The lobby's Visibility row has one and so
  * does the Details popup when it is too narrow for the table, and they are
@@ -778,17 +828,10 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
                                        uint32_t visLocks, float s) {
     const ImGuiStyle &st = ImGui::GetStyle();
     VisibilitySettings live;
-    char customLine[192];
 
     lobbyVisibilityRead(cs, &live);
     VisibilityPreset livePreset = visibilityPresetMatch(&live);
     const char *preview = langGetText(visibilityPresetNameId(livePreset));
-
-    customLine[0] = '\0';
-    if (gameFrontVisibilityCustomSaved) {
-        lobbyVisibilityDetailsLine(&gameFrontVisibilityCustom, customLine,
-                                   sizeof(customLine));
-    }
 
     if (width <= 0.0f) {
         width = ImGui::CalcTextSize(
@@ -835,13 +878,23 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
             lobbyVisibilityApply(cs, &gameFrontVisibilityCustom);
         }
         /* Custom has no fixed description - what it does is the set itself,
-         * so the hover is that set spelled out. With none saved it says what
-         * the entry is for instead. */
+         * so the hover is that set spelled out with the same rich tooltip as
+         * the top server line. With none saved it says what the entry is for
+         * instead. */
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s",
-                              gameFrontVisibilityCustomSaved
-                                  ? customLine
-                                  : langGetText(STR_DLGLOBBY_PRESET_CUSTOM_DESC));
+            const VisibilitySettings *customSettings = NULL;
+            if (gameFrontVisibilityCustomSaved) {
+                customSettings = &gameFrontVisibilityCustom;
+            } else if (livePreset == visibilityPresetCustom) {
+                customSettings = &live;
+            }
+            if (customSettings != NULL) {
+                lobbyRenderVisibilityTooltip(customSettings,
+                                             visibilityPresetCustom, s);
+            } else {
+                ImGui::SetTooltip("%s",
+                                  langGetText(STR_DLGLOBBY_PRESET_CUSTOM_DESC));
+            }
         }
         ImGui::EndCombo();
     }
@@ -893,6 +946,48 @@ static void lobbyRenderVisibilityStackedForm(ClientSim *cs, bool effectiveHost,
                                       + 60.0f * s,
                                   s, false);
     }
+}
+
+/* Default natural dimensions of the visibility popup, worked out from its
+ * longest headers and labels so the table form fits whole on first open. */
+static ImVec2 lobbyVisibilityInitialWindowSize(float s) {
+    const ImGuiStyle &tst = ImGui::GetStyle();
+    float colW  = lobbyVisibilityValueColumnMinWidth(s);
+    float nameW = 0.0f;
+    float headW = colW;
+    int   c;
+
+    for (int p = 0; p <= (int)VISIBILITY_PRESET_COUNT; p++) {
+        int id = (p == (int)VISIBILITY_PRESET_COUNT)
+                     ? STR_DLGLOBBY_PRESET_CUSTOM
+                     : visibilityPresetNameId((VisibilityPreset)p);
+        float w = ImGui::CalcTextSize(langGetText(id)).x;
+        if (w > nameW) nameW = w;
+    }
+    nameW += ImGui::GetFrameHeight() + tst.ItemSpacing.x;
+
+    for (c = 0; c < VIS_COLUMN_COUNT; c++) {
+        float t = ImGui::CalcTextSize(langGetText(kVisColumns[c].header)).x;
+        if (t > headW) headW = t;
+    }
+
+    float naturalW = nameW + tst.CellPadding.x * 2.0f
+                   + ((float)VIS_COLUMN_COUNT
+                      * (headW + tst.CellPadding.x * 2.0f));
+    float rowH = ImGui::GetFrameHeight() + tst.CellPadding.y * 2.0f;
+    float bodyH = rowH * (float)(VISIBILITY_PRESET_COUNT + 2)
+                + ImGui::GetFrameHeight() + tst.ItemSpacing.y;
+
+    ImVec2 want(naturalW + tst.WindowPadding.x * 2.0f,
+                bodyH + tst.WindowPadding.y * 2.0f
+                      + ImGui::GetFrameHeight() * 2.0f
+                      + tst.ItemSpacing.y * 3.0f);
+    ImVec2 room = ImGui::GetMainViewport()->WorkSize;
+    room.x -= 40.0f * s;
+    room.y -= 40.0f * s;
+    if (want.x > room.x) want.x = room.x;
+    if (want.y > room.y) want.y = room.y;
+    return want;
 }
 
 /* Open state of the settings CollapsingHeader. File-scope rather than a
@@ -1357,14 +1452,31 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
          * own window and does not inherit the settings body's font scale.
          * Applied on appearing only, so a drag is never fought. */
         static ImVec2 s_visWinSize(0.0f, 0.0f);
-        if (s_visWinSize.x > 0.0f) {
+        static float  s_visTargetH = 0.0f;
+        static bool   s_visWinForceResize = false;
+
+        if (s_visWinSize.x <= 0.0f) {
+            ImGui::SetWindowFontScale(1.0f);
+            s_visWinSize = lobbyVisibilityInitialWindowSize(s);
+            ImGui::SetWindowFontScale(0.85f);
+            s_visTargetH = s_visWinSize.y;
+            s_visWinForceResize = true;
+        }
+
+        if (s_visWinForceResize) {
+            ImGui::SetNextWindowSize(s_visWinSize, ImGuiCond_Always);
+            s_visWinForceResize = false;
+        } else if (s_visWinSize.x > 0.0f) {
             ImGui::SetNextWindowSize(s_visWinSize, ImGuiCond_Appearing);
         }
-        /* A floor under the drag, so the window cannot be pulled down to a
-         * size neither body reads in. No ceiling: the viewport is the
-         * ceiling, and ImGui keeps the window inside it. */
-        ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f * s, 200.0f * s),
-                                            ImVec2(FLT_MAX, FLT_MAX));
+        /* Lock vertical height to programmatic / auto sizing so the user
+         * cannot vertically drag the height. Horizontal width resizing
+         * remains free. */
+        {
+            float lockH = (s_visTargetH > 0.0f) ? s_visTargetH : -1.0f;
+            ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f * s, lockH),
+                                                ImVec2(FLT_MAX,    lockH));
+        }
         /* Resizable on purpose: the table is six columns wide and a small
          * window cannot hold it, so the host is given the edge to drag
          * rather than a body that quietly hides its last two columns. */
@@ -1420,41 +1532,6 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 ImGui::SameLine();
                 ImGui::TextUnformatted(
                     langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
-            }
-
-            /* The first open sizes the window to the table it is there to
-             * show, held under the screen it has to fit on. Only once: from
-             * then on the size is the host's, dragged or remembered. */
-            if (s_visWinSize.x <= 0.0f) {
-                /* Opened at the width the headers read whole in, not at the
-                 * minimum: the minimum is what the table may be squeezed to,
-                 * and a first open showing "See allies i..." would be a poor
-                 * introduction to a column the host has never seen. */
-                float headW = colW;
-                for (c = 0; c < VIS_COLUMN_COUNT; c++) {
-                    float t = ImGui::CalcTextSize(
-                        langGetText(kVisColumns[c].header)).x;
-                    if (t > headW) headW = t;
-                }
-                float naturalW = nameW + tst.CellPadding.x * 2.0f
-                               + ((float)VIS_COLUMN_COUNT
-                                  * (headW + tst.CellPadding.x * 2.0f));
-                float rowH = ImGui::GetFrameHeight() + tst.CellPadding.y * 2.0f;
-                /* Header, five preset rows, and the Custom row at the height
-                 * a Decay cell grows it to, plus the window's own padding,
-                 * its title bar and the footer's button. */
-                float bodyH = rowH * (float)(VISIBILITY_PRESET_COUNT + 2)
-                            + ImGui::GetFrameHeight() + tst.ItemSpacing.y;
-                ImVec2 want(naturalW + tst.WindowPadding.x * 2.0f,
-                            bodyH + tst.WindowPadding.y * 2.0f
-                                  + ImGui::GetFrameHeight() * 2.0f
-                                  + tst.ItemSpacing.y * 3.0f);
-                ImVec2 room = ImGui::GetMainViewport()->WorkSize;
-                room.x -= 40.0f * s;
-                room.y -= 40.0f * s;
-                if (want.x > room.x) want.x = room.x;
-                if (want.y > room.y) want.y = room.y;
-                ImGui::SetWindowSize(want);
             }
 
             /* Table or stacked form, decided by the room there actually is
@@ -1576,11 +1653,6 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 ImGui::EndTable();
             }
 
-            /* What the host has dragged it to, for the next open. Read
-             * every frame rather than on the way out, because a popup can
-             * close by a click outside it as well as by the button. */
-            s_visWinSize = ImGui::GetWindowSize();
-
             /* A real Close button, not just the title-bar X: ImGui's
              * NavCancel leaves modals open, so a controller needs
              * something focusable to leave by. */
@@ -1588,6 +1660,42 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                                    /*confirmLabel*/ langGetText(STR_CLOSE))
                 != WBUI::FOOTER_NONE) {
                 ImGui::CloseCurrentPopup();
+            }
+
+            /* Fully programmatic height: calculate the exact height needed
+             * to fit the content, padding, and the Close button. When the
+             * content expands (e.g. Decay chosen) or contracts (e.g. Preset
+             * chosen), adapt the window height automatically. User vertical
+             * resizing is locked out via SetNextWindowSizeConstraints.
+             *
+             * What the host has dragged horizontally is read every frame
+             * for the next open, because a popup can close by a click
+             * outside it as well as by the button. */
+            {
+                float btnBottom = ImGui::GetItemRectMax().y + ImGui::GetScrollY();
+                float neededH   = (btnBottom - ImGui::GetWindowPos().y) + tst.WindowPadding.y;
+                float currentH  = ImGui::GetWindowHeight();
+                ImVec2 room     = ImGui::GetMainViewport()->WorkSize;
+                room.y -= 40.0f * s;
+                if (neededH > room.y) neededH = room.y;
+
+                s_visTargetH = neededH;
+
+                float currentW = ImGui::GetWindowWidth();
+                if (s_visWinSize.x > currentW && ImGui::IsWindowAppearing()) {
+                    currentW = s_visWinSize.x;
+                }
+
+                if (fabsf(neededH - currentH) > 1.0f) {
+                    ImVec2 newSize(currentW, neededH);
+                    ImGui::SetWindowSize(newSize);
+                    ImGui::SetScrollY(0.0f);
+                    s_visWinSize = newSize;
+                    s_visWinForceResize = true;
+                } else {
+                    s_visWinSize.x = currentW;
+                    s_visWinSize.y = neededH;
+                }
             }
             ImGui::EndPopup();
         }
@@ -1631,67 +1739,40 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 }
 
 /* ── Visibility summary ───────────────────────────────────────────
- * What the host has set, read only, on one line: the word Visibility and
- * the name of the set the values add up to, then the pill, base, allied
- * tank and tank-in-forest sprites, each followed by what it is set to,
- * with the seconds added under Decay and the whole group dimmed under
- * Off. Drawn on the lobby header line, which is how a joiner or spectator
- * — who never sees the settings panel — finds out what the host chose;
- * the host reads the same line above the panel rather than a second copy
- * inside it. Hovering a group names the setting and its value in full.
+ * What the host has set, read only: the word Visibility and the name of
+ * the set the values add up to, and nothing else on the line. Drawn on
+ * the lobby header line, which is how a joiner or spectator — who never
+ * sees the settings panel — finds out what the host chose; the host reads
+ * the same line above the panel rather than a second copy inside it.
  *
- * Every sprite-and-word pair comes from lobbyRenderVisibilityValue, which
- * is also what fills the Details table's value cells, so the two pictures
- * of the same setting cannot drift apart. The overview window and line of
- * sight are not on this line: there is no square to draw for either, and
- * the set's name already says which way they go. */
+ * What the name stands for is on the hover, which lists every visibility
+ * setting the lobby carries, one to a row, in the Details table's order
+ * and words and drawn by the same helper that fills that table's value
+ * cells — so the two pictures of the same setting cannot drift apart.
+ * The line itself used to carry four of them as sprites, which read well
+ * but was never all of them: a reader could not tell from it which way
+ * the overview window, line of sight or classic mode went. A name and a
+ * hover that holds the lot says more than four sprites did. */
 void lobbyRenderVisibilitySummary(ClientSim *cs, float s) {
     VisibilitySettings live;
     VisibilityPreset   preset;
-    const float iconSize = 16.0f * s;
-    const float textH    = ImGui::GetTextLineHeight();
-    const float textDrop = (iconSize > textH) ? (iconSize - textH) * 0.5f : 0.0f;
+    char head[224];
 
     lobbyVisibilityRead(cs, &live);
     preset = visibilityPresetMatch(&live);
 
     /* "Visibility: Max view". A joiner reads the name and knows what game
-     * this is; the sprites after it say exactly what that means. A set no
-     * preset names reads as Custom, and the hover spells it out in words. */
-    {
-        char head[224];
-        SDL_snprintf(head, sizeof(head), "%s: %s",
-                     langGetText(STR_DLGLOBBY_VISIBILITY_LBL),
-                     langGetText(visibilityPresetNameId(preset)));
-        /* No AlignTextToFramePadding here: the line's text-base offset is
-         * what the sprite drops are measured against, and setting it from
-         * inside would move them. */
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + textDrop);
-        ImGui::TextUnformatted(head);
-        if (ImGui::IsItemHovered()) {
-            char label[224];
-            lobbyVisibilityLabel(&live, label, sizeof(label));
-            ImGui::SetTooltip("%s: %s",
-                              langGetText(STR_DLGLOBBY_VISIBILITY_LBL), label);
-        }
-    }
+     * this is; a set no preset names reads as Custom. Either way the
+     * hover spells it out.
+     *
+     * No AlignTextToFramePadding here: the header line carries framed
+     * items, and their text-base offset already centres this against
+     * them. Setting it from inside would push it off them. */
+    SDL_snprintf(head, sizeof(head), "%s: %s",
+                 langGetText(STR_DLGLOBBY_VISIBILITY_LBL),
+                 langGetText(visibilityPresetNameId(preset)));
+    ImGui::TextUnformatted(head);
+    if (!ImGui::IsItemHovered()) return;
 
-    /* The first four columns of the Details table, in the same order and
-     * drawn by the same helper. */
-    for (int c = 0; c < 4; c++) {
-        const char  *word;
-        LobbyVisIcon icon;
-        bool         dim;
-
-        ImGui::SameLine(0, 12.0f * s);
-        lobbyRenderVisibilityColumn(&live, c, s);
-        if (ImGui::IsItemHovered()) {
-            /* The hover names the setting and its bare value; the seconds
-             * the line itself shows under Decay would only repeat here. */
-            lobbyVisibilityCellValue(&live, c, &icon, &word, &dim);
-            ImGui::SetTooltip("%s: %s",
-                              langGetText(lobbyVisibilityColumnLabelId(c)),
-                              word);
-        }
-    }
+    lobbyRenderVisibilityTooltip(&live, preset, s);
 }

@@ -1412,7 +1412,7 @@ static const LangEntry langTable[] = {
     {2011, "See allies in trees"},
     {2012, "Allied tanks won't be hidden by trees."},
     {2154, "Overview window"},
-    {2155, "Classic: a map overview window option, or full-screen (a playable map overview).\nEven in overview/full screen, tanks have to scroll to see around them.\nExpanded: Like \"Classic with overview\" but able to see all 29x29 tiles centered on your tank"},
+    {2155, "Classic: a map overview window option, or full-screen (a playable map overview).\nEven in overview/full screen, tanks have to scroll to see around them.\n\nExpanded: Like \"Classic with overview\" but able to see all 29x29 tiles centered on your tank"},
     {2156, "Line of sight"},
     {2157, "- Buildings hide the ground behind them.\n- Two squares of trees in a row hide what is behind them.\n- Trees within two squares of you never hide anything.\n- Off is the classic rule, and classic mode forces it off."},
     {2158, "Expanded"},
