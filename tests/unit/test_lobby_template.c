@@ -596,6 +596,14 @@ int run_lobby_template_cap_never_binds_bots(void) {
 
 /* ── A cancelled preview gives the host their lobby back ──────────── */
 
+/* Keep the lobby from starting itself. A scenario seat is ready the moment it
+ * is seated, so with the human ready too the next roster change meets an
+ * all-ready lobby and starts the round — and a map change is refused outside
+ * the lobby, which is where these cases do their previewing. */
+static void ltHoldInLobby(ServerSim *sim) {
+    sim->lobbyPlayers[0].ready = false;
+}
+
 /* Take a team down to n the way a host does, one seat at a time. */
 static void ltTrimTo(ServerSim *sim, BYTE team, int n) {
     while (ltSeats(sim, team) > n) {
@@ -624,11 +632,14 @@ int run_lobby_template_cancel_keeps_trim(void) {
     ltTemplate(&t, 6, 6, 1, 1);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
     UT_ASSERT(ltSeats(sim, LT_HORDE) == 6);
 
     /* The host trims the six raider seats to three. */
     ltTrimTo(sim, LT_HORDE, 3);
     UT_ASSERT(ltSeats(sim, LT_HORDE) == 3);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,
+                  "the lobby started itself, so there is no preview to make");
 
     UT_ASSERT(ltPreview(sim, "Preview"));
     UT_ASSERT_MSG(serverSimHasPreviewMap(sim),
@@ -663,10 +674,12 @@ int run_lobby_template_cancel_keeps_empty_team(void) {
     ltTemplate(&t, 4, 4, 1, 1);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
     UT_ASSERT(ltSeats(sim, LT_HORDE) == 4);
 
     ltTrimTo(sim, LT_HORDE, 0);
     UT_ASSERT(ltSeats(sim, LT_HORDE) == 0);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     UT_ASSERT(ltPreview(sim, "Preview"));
     UT_ASSERT(serverSimRevertPreview(sim));
@@ -697,8 +710,10 @@ int run_lobby_template_cancel_chain_rolls_back(void) {
     ltTemplate(&t, 5, 5, 1, 1);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
     ltTrimTo(sim, LT_HORDE, 2);
     UT_ASSERT(ltSeats(sim, LT_HORDE) == 2);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     UT_ASSERT(ltPreview(sim, "Preview one"));
     /* The first preview seated the five again; the host trims to four while
@@ -733,8 +748,10 @@ int run_lobby_template_commit_keeps_new_lobby(void) {
     ltTemplate(&t, 4, 4, 1, 1);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
     ltTrimTo(sim, LT_HORDE, 1);
     UT_ASSERT(ltSeats(sim, LT_HORDE) == 1);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     UT_ASSERT(ltPreview(sim, "Preview"));
     serverSimCommitPreview(sim);
