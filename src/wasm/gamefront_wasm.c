@@ -970,6 +970,58 @@ void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
 void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
 void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
 
+/* Visibility preset and the remembered custom set. Nothing persists in a
+ * browser tab, so these hold the choice for the session and no further. */
+int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
+VisibilitySettings gameFrontVisibilityCustom;
+bool               gameFrontVisibilityCustomSaved = FALSE;
+
+void gameFrontSetVisibilityPreset(int preset) {
+  gameFrontVisibilityPreset = preset;
+}
+
+void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
+  if (v == NULL) return;
+  gameFrontVisibilityCustom      = *v;
+  gameFrontVisibilityCustomSaved = TRUE;
+}
+
+void gameFrontRememberVisibility(const VisibilitySettings *v) {
+  VisibilityPreset p;
+
+  if (v == NULL) return;
+  gameFrontViewPillPolicy    = (int)v->policy[viewCategoryPill];
+  gameFrontViewBasePolicy    = (int)v->policy[viewCategoryBase];
+  gameFrontViewAllyPolicy    = (int)v->policy[viewCategoryAlly];
+  gameFrontViewPillDecaySecs = (int)v->decaySecs[viewCategoryPill];
+  gameFrontViewBaseDecaySecs = (int)v->decaySecs[viewCategoryBase];
+  gameFrontViewAllyDecaySecs = (int)v->decaySecs[viewCategoryAlly];
+  gameFrontClassicMode       = v->classicMode;
+  gameFrontAlliesInTrees     = v->alliesInTrees;
+  gameFrontOverviewWindow    = (int)v->overviewWindow;
+  gameFrontLineOfSight       = (int)v->lineOfSight;
+  p = visibilityPresetMatch(v);
+  gameFrontVisibilityPreset = (int)p;
+  if (p == visibilityPresetCustom) {
+    gameFrontSetVisibilityCustom(v);
+  }
+}
+
+void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
+  if (out == NULL) return;
+  memset(out, 0, sizeof(*out));
+  out->policy[viewCategoryPill]    = (uint8_t)gameFrontViewPillPolicy;
+  out->policy[viewCategoryBase]    = (uint8_t)gameFrontViewBasePolicy;
+  out->policy[viewCategoryAlly]    = (uint8_t)gameFrontViewAllyPolicy;
+  out->decaySecs[viewCategoryPill] = (uint16_t)gameFrontViewPillDecaySecs;
+  out->decaySecs[viewCategoryBase] = (uint16_t)gameFrontViewBaseDecaySecs;
+  out->decaySecs[viewCategoryAlly] = (uint16_t)gameFrontViewAllyDecaySecs;
+  out->classicMode                 = gameFrontClassicMode;
+  out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
+  out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
+  out->alliesInTrees               = gameFrontAlliesInTrees;
+}
+
 /* Steam rich presence — there is no Steam client behind a browser tab. */
 void gameFrontSetSteamPresenceMenu(void)           { }
 void gameFrontSetSteamPresenceLobby(ClientSim *cs) { (void)cs; }

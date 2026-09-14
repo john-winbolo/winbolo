@@ -2196,6 +2196,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         const char *windows[] = {
             langGetText(STR_DLGLOBBY_WINDOW_EXPANDED),
             langGetText(STR_DLGLOBBY_WINDOW_CLASSIC),
+            langGetText(STR_DLGLOBBY_WINDOW_NONE),
         };
         int window = gameFrontOverviewWindow;
         ImGui::PushID("overviewwindow");
@@ -2226,6 +2227,14 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             ImGui::SetTooltip("%s",
                               langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_TIP));
         }
+
+        /* The seven controls above are the lobby's Custom row in another
+         * shape, so the choice behind them is recorded the same way. Left
+         * out, a set made here would be overwritten on the next start by
+         * whatever preset was remembered before it. */
+        VisibilitySettings chosen;
+        gameFrontGetVisibilitySettings(&chosen);
+        gameFrontRememberVisibility(&chosen);
     }
 
     ImGui::Spacing();

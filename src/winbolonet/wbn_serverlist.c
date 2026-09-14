@@ -145,6 +145,14 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->allowSpectators = readBoolField(src, "allow_spectators");
     dst->classicMode     = readBoolField(src, "classicmode");
     dst->alliesInTrees   = readBoolField(src, "alliesintrees");
+
+    /* Whether the row carried the rules at all. Every reader above hands
+     * back a back-compatibility value for an absent key, so presence has
+     * to be asked separately. "pillview" stands for the set: a tracker
+     * either knows the visibility fields and sends them together, or
+     * knows none of them. */
+    dst->hasViewInfo = cJSON_IsNumber(
+        cJSON_GetObjectItemCaseSensitive(src, "pillview"));
     dst->spectatorCount  = readIntField(src, "spectator_count");
 
     dst->timeLimit   = readBoolField(src, "time_limit");

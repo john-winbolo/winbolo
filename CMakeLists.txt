@@ -912,6 +912,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
     src/gui/ui_mode.c
+    src/gui/visibility_presets.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/gui/sdl3/dialogs/imgui_welcome.cpp
     src/gui/sdl3/dialogs/imgui_mapchooser.cpp
@@ -1534,6 +1535,7 @@ set(CLIENT_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
+    src/gui/visibility_presets.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
@@ -3531,6 +3533,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
     tests/unit/test_fog_settings.c
+    # The named visibility sets the lobby offers, and the match that reads
+    # a live set of settings back as one of them.
+    tests/unit/test_visibility_presets.c
+    src/gui/visibility_presets.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
@@ -4369,6 +4375,12 @@ set(_unit_test_names
     fog_settings_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
+    visibility_preset_round_trip
+    visibility_preset_custom
+    visibility_preset_ignores_decay
+    visibility_preset_pref_words
+    info_packet_preset_round_trip
+    info_packet_absent_views_read_classic
     upload_cap_enforced
     map_field_clamps_evil
     map_field_clamps_passthrough

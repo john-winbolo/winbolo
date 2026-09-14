@@ -77,7 +77,8 @@ enum {
  * sight needs no mirror: the payload carries it as one bit. */
 enum {
     overviewWindowExpanded = 0,
-    overviewWindowClassic = 1
+    overviewWindowClassic = 1,
+    overviewWindowNone = 2
 };
 
 /* Bytes a log_GameSettings payload needs before it carries every field the
@@ -286,8 +287,13 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
     s_ranked = (payload[9] & 0x08) != 0;
     s_password_set = (payload[9] & 0x10) != 0;
     s_allow_new_players = (payload[9] & 0x20) != 0;
-    s_overview_window = (payload[9] & 0x40) ? overviewWindowClassic
-                                            : overviewWindowExpanded;
+    /* One bit for three values. Classic mode forces None, and classic
+     * mode has its own bit, so the pair reads back exactly except for a
+     * host who chose None without classic mode: that logs as Classic. */
+    s_overview_window = (payload[9] & 0x40)
+                            ? ((payload[1] & 0x40) ? overviewWindowNone
+                                                   : overviewWindowClassic)
+                            : overviewWindowExpanded;
     s_line_of_sight   = (payload[9] & 0x80) != 0;
 
     /* Time limit — recorded as whole minutes behind an enabled bit, where
@@ -494,7 +500,9 @@ void lv_imgui_game_info_window(void) {
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
                         langGetText(s_allies_in_trees ? STR_YES : STR_NO));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW),
-                        langGetText(s_overview_window == overviewWindowClassic
+                        langGetText(s_overview_window == overviewWindowNone
+                                        ? STR_DLGLOBBY_WINDOW_NONE
+                                    : s_overview_window == overviewWindowClassic
                                         ? STR_DLGLOBBY_WINDOW_CLASSIC
                                         : STR_DLGLOBBY_WINDOW_EXPANDED));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),

@@ -1510,18 +1510,41 @@ STR_DLGLOBBY_VIEW_DECAY=Decay
 STR_DLGLOBBY_VIEW_OFF=Off
 STR_DLGLOBBY_VIEW_DECAY_SECS=secs
 STR_DLGLOBBY_CLASSIC_MODE_CB=Classic mode
-STR_DLGLOBBY_CLASSIC_MODE_TIP=Sets Pill View to Key, and Base View and Allied Tank\nView to Off, and holds them there. Turning it off\nagain leaves those three where classic mode put them.\nIt also hides the Map Overview and the Full Screen\nmap on each player's own screen. The server sends the\nsame data either way, so this is a convenience rule,\nnot a guarantee about a modified client.
-STR_MENU_CLASSIC_MODE_TIP=The server has classic mode on, so this view is turned off.
+STR_DLGLOBBY_CLASSIC_MODE_TIP=- Pill View goes to Key; Base View and Allied Tank View go to Off.\n- Allies in trees goes off, and so does line of sight.\n- The overview window goes to None, so there is no Map Overview and no Full Screen map.\n- All of those are held there while classic mode is on.\n- Turning it off leaves those values where it put them.
+STR_MENU_CLASSIC_MODE_TIP=The server has the map overview turned off.
 STR_DLGLOBBY_ALLIES_TREES_CB=See allies in trees
-STR_DLGLOBBY_ALLIES_TREES_TIP=Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off.
+STR_DLGLOBBY_ALLIES_TREES_TIP=Allied tanks won't be hidden by trees.
 
 # Map overview live block, and what blocks sight inside it
 STR_DLGLOBBY_OVERVIEW_WINDOW=Overview window
-STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Which block of squares the Map Overview keeps live around\nyour own tank. Expanded is everything the classic view can\nscroll to; Classic narrows it to the window that view is\nshowing. Classic mode sets it to Classic and holds it there.\nThe server sends the same map data either way.
+STR_DLGLOBBY_OVERVIEW_WINDOW_TIP=Classic: a map overview window option, or full-screen (a playable map overview).\nEven in overview/full screen, tanks have to scroll to see around them.\n\nExpanded: Like "Classic with overview" but able to see all 29x29 tiles centered on your tank
 STR_DLGLOBBY_LINE_OF_SIGHT_CB=Line of sight
-STR_DLGLOBBY_LINE_OF_SIGHT_TIP=Buildings and stands of trees stop you seeing further into\nthe live block. Off is the classic rule, and classic mode\nforces it off. The server sends the same map data either\nway, so this is a convenience rule, not a guarantee about a\nmodified client.
+STR_DLGLOBBY_LINE_OF_SIGHT_TIP=- Buildings hide the ground behind them.\n- Two squares of trees in a row hide what is behind them.\n- Trees within two squares of you never hide anything.\n- Off is the classic rule, and classic mode forces it off.
 STR_DLGLOBBY_WINDOW_EXPANDED=Expanded
 STR_DLGLOBBY_WINDOW_CLASSIC=Classic
+STR_DLGLOBBY_PRESET_CLASSIC=Classic
+STR_DLGLOBBY_PRESET_CLASSIC_DESC=Standard bolo HUD view only.\nNo map overview, no full screen view, no extra bases/ally views.
+STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW=Classic with overview
+STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW_DESC=Like classic with a map overview window option, or full-screen (a playable map overview).\nEven in overview/full screen, tanks have to scroll to see around them.
+STR_DLGLOBBY_PRESET_EXPANDED=Expanded
+STR_DLGLOBBY_PRESET_EXPANDED_DESC=Like "Classic with overview" but able to see all 29x29 tiles centered on your tank.\nScrolling moves the entire map, and expanded with an always visible pill view.
+STR_DLGLOBBY_PRESET_MAXVIEW=Max view
+STR_DLGLOBBY_PRESET_MAXVIEW_DESC=Like expanded, with additional visibility provided by bases and allies.
+STR_DLGLOBBY_PRESET_SIGHT=Line of sight
+STR_DLGLOBBY_PRESET_SIGHT_DESC=Like max view, but only what your tank can actually see:\nBuildings, and two squares of trees in a row, hide what is behind them.
+STR_DLGLOBBY_PRESET_CUSTOM=Custom
+STR_DLGLOBBY_PRESET_CUSTOM_DESC=Your own set. Changing anything here picks this row.
+STR_DLGLOBBY_VIS_DETAILS_BTN=Details
+STR_DLGLOBBY_VIS_DETAILS_TIP=- Opens the visibility table.\n- Every preset with what it lets you see.\n- The last row is every setting on its own.
+STR_DLGLOBBY_VIS_PRESET_LOCKED_TIP=- The server has locked one or more visibility settings.\n- The presets are unavailable while that lock is on.
+STR_DLGLOBBY_VIS_SHORT_PILLS=Pills
+STR_DLGLOBBY_VIS_SHORT_BASES=Bases
+STR_DLGLOBBY_VIS_SHORT_ALLIES=Allies
+STR_DLGLOBBY_VIS_SHORT_OVERVIEW=Overview
+STR_DLGLOBBY_VIEW_POLICY_TIP=- Always: on the map overview all the time.\n- Key: only while you are watching that one through its view key.\n- Decay: for a while after one of your tanks was last near it.\n- Off: never.
+STR_DLGLOBBY_WINDOW_NONE=None
+STR_DLGBROWSER_VIEWS_UNKNOWN=This server does not report its visibility settings.
+STR_DLGLOBBY_WINDOW_EXPANDED_LONG=Expanded (full 29x29 view around tank)
 
 # Settings > Display & Sound > Full Screen
 STR_DLGSETTINGS_FULLSCREEN=Full Screen

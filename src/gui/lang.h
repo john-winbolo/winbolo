@@ -1605,6 +1605,43 @@
 #define STR_DLGLOBBY_LINE_OF_SIGHT_TIP      2157
 #define STR_DLGLOBBY_WINDOW_EXPANDED        2158
 #define STR_DLGLOBBY_WINDOW_CLASSIC         2159
+/* Visibility presets: the named sets the lobby dropdown offers, the row
+ * each one draws in the Details table, and the words the row that is not
+ * a preset needs. */
+#define STR_DLGLOBBY_PRESET_CLASSIC              2173
+#define STR_DLGLOBBY_PRESET_CLASSIC_DESC         2174
+#define STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW     2175
+#define STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW_DESC 2176
+#define STR_DLGLOBBY_PRESET_EXPANDED             2177
+#define STR_DLGLOBBY_PRESET_EXPANDED_DESC        2178
+#define STR_DLGLOBBY_PRESET_MAXVIEW              2179
+#define STR_DLGLOBBY_PRESET_MAXVIEW_DESC         2180
+#define STR_DLGLOBBY_PRESET_SIGHT                2181
+#define STR_DLGLOBBY_PRESET_SIGHT_DESC           2182
+#define STR_DLGLOBBY_PRESET_CUSTOM               2183
+#define STR_DLGLOBBY_PRESET_CUSTOM_DESC          2184
+#define STR_DLGLOBBY_VIS_DETAILS_BTN             2185
+#define STR_DLGLOBBY_VIS_DETAILS_TIP             2186
+#define STR_DLGLOBBY_VIS_PRESET_LOCKED_TIP       2187
+#define STR_DLGLOBBY_VIS_SHORT_PILLS             2188
+#define STR_DLGLOBBY_VIS_SHORT_BASES             2189
+#define STR_DLGLOBBY_VIS_SHORT_ALLIES            2190
+#define STR_DLGLOBBY_VIS_SHORT_OVERVIEW          2191
+#define STR_DLGLOBBY_VIEW_POLICY_TIP             2192
+/* The third overview window: no map overview and no full screen map. Its
+ * own id rather than a shared "None", the way every other value word here
+ * belongs to the setting it names. */
+#define STR_DLGLOBBY_WINDOW_NONE                 2193
+/* What a server browser row says when the game never advertised its
+ * visibility rules at all - an old server, or a tracker that has not
+ * learned the fields. Such a game is named Classic, which is what it
+ * plays like, and this says why there is nothing behind the name. */
+#define STR_DLGBROWSER_VIEWS_UNKNOWN             2194
+/* The Expanded overview window spelled out in full, for the one column
+ * cell that has room to say what the mode gives you. One whole sentence
+ * rather than the Expanded word plus a suffix, so a translator can put
+ * the parts in whatever order the language wants. */
+#define STR_DLGLOBBY_WINDOW_EXPANDED_LONG        2195
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014
@@ -2276,17 +2313,17 @@
 
 /* The fourth game type, beside STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT:
  * what a round whose rules come from a scenario is called. */
-#define STR_DLGGAMEINFO_SCRIPTED            2173
+#define STR_DLGGAMEINFO_SCRIPTED            2196
 
 /* The host's scripts preference, and the two lines the lobby draws about
  * the map's scenario: the one that names it, and the one that stands in
  * its place when the host has the preference switched off. */
-#define STR_DLGSETTINGS_HOSTING_SCRIPTS     2174
-#define STR_DLGLOBBY_SCENARIO_LBL           2175
-#define STR_DLGLOBBY_SCRIPTS_OFF            2176
+#define STR_DLGSETTINGS_HOSTING_SCRIPTS     2197
+#define STR_DLGLOBBY_SCENARIO_LBL           2198
+#define STR_DLGLOBBY_SCRIPTS_OFF            2199
 
 /* The lobby's reload button, for a host editing its map's script. */
-#define STR_DLGLOBBY_RELOAD_SCENARIO        2177
+#define STR_DLGLOBBY_RELOAD_SCENARIO        2200
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
