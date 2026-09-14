@@ -26,8 +26,9 @@
  *        oldest is kept, the drain runs the whole of it, and the drop is
  *        reported once
  * run_scenario_events_overflow_counts_errors
- *      — drops count toward SCN_ERROR_LIMIT, and enough of them in one tick
- *        switch the scenario off with a line the whole game reads
+ *      — a tick that dropped anything counts one error toward
+ *        SCN_ERROR_LIMIT, so it plays on from nothing and switches the
+ *        scenario off from one error short of the limit
  * run_scenario_events_no_scenario_delivers_nothing
  *      — a sim with no scenario has no event subscriber, so the fan-out
  *        returns before it walks the slots
@@ -58,6 +59,8 @@
 #include "server_sim_internal.h"   /* numEventSubscribers — the fan-out's own
                                     * test for whether anybody is listening */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled, StartGame */
+#include "server_sim_scenario.h"   /* the policy depth bracket the lobby's
+                                    * question is asked inside */
 #include "control_event.h"         /* CTRL_SERVER_TEXT */
 #include "input_packet.h"          /* GameEvent, EVENT_MINE_PLACED */
 #include "everard_map.h"
@@ -231,6 +234,25 @@ static void seWatchText(ServerSim *sim, SeText *t) {
     memset(t, 0, sizeof(*t));
     (void)serverSimRegisterSubscriber(sim, seTextCb, t);
     memset(t, 0, sizeof(*t));
+}
+
+/* ── The one question the sim asks ────────────────────────────────── */
+
+/* allow_extra_teams, asked the way the lobby asks it: through the registered
+   vtable with the sim's policy depth held across the call. A script that
+   raises here is how a case puts errors behind a round, and one that answers
+   is how it reads whether the round is still running its Lua at all. */
+static bool seAskExtraTeams(ServerSim *sim) {
+    bool allow;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->allowExtraTeams == NULL) {
+        return true;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->allowExtraTeams(sim->scenarioPolicy->ctx);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
 }
 
 /* ── 1. Published, queued, drained ────────────────────────────────── */
@@ -487,20 +509,26 @@ int run_scenario_events_overflow_boundary(void) {
     return 0;
 }
 
-/* ── 5. Drops count toward the error limit ────────────────────────── */
+/* ── 5. An overflowing tick counts one error ──────────────────────── */
 
-/* A tick that lost events says so once and counts one error per event, so a
- * round producing them faster than the queue holds them switches the
- * scenario off exactly as a script raising that many times would.
+/* However many events a tick loses, losing them is one thing that went
+ * wrong: the operator's line says how many and the count rises by one. So a
+ * round with nothing behind it plays on through an overflow, and one already
+ * a single error short of the limit is switched off by the same tick.
  *
  * The drain's count is exact here and the drop count is not: the queue is
  * already full when the tick begins, so everything the running frame raises
  * on its own is dropped too, and the case asks for at least the drops it
  * forced rather than exactly them. */
 int run_scenario_events_overflow_counts_errors(void) {
-    static const char *const kMap = "scnev_flood.map";
-    static const char *const kLua =
-        "scenario = { name = \"Flood\", api = 1 }\n";
+    static const char *const kFreshMap = "scnev_flood_fresh.map";
+    static const char *const kBrinkMap = "scnev_flood_brink.map";
+    static const char *const kFreshLua =
+        "scenario = { name = \"Flood\", api = 1 }\n"
+        "function allow_extra_teams() return false end\n";
+    static const char *const kBrinkLua =
+        "scenario = { name = \"Brink\", api = 1 }\n"
+        "function allow_extra_teams() error(\"boom\") end\n";
     ServerSim           *sim;
     ScenarioHost        *h;
     const ScnEventQueue *q;
@@ -509,12 +537,14 @@ int run_scenario_events_overflow_counts_errors(void) {
     int                  i;
     int                  total = SCN_EVENT_QUEUE_MAX + SCN_ERROR_LIMIT;
 
-    UT_ASSERT(sePut(kMap, kLua));
+    /* The first half: a round that has erred at nothing, and one tick that
+       loses more events than the limit is errors. */
+    UT_ASSERT(sePut(kFreshMap, kFreshLua));
     sim = seSim();
     UT_ASSERT(sim != NULL);
 
-    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    h = scenarioHostAttach(sim, kFreshMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     seWatchText(sim, &text);
 
@@ -532,15 +562,59 @@ int run_scenario_events_overflow_counts_errors(void) {
     UT_ASSERT_MSG(q->drained == (uint32_t)SCN_EVENT_QUEUE_MAX,
                   "the tick consumed %lu, expected the %d the queue was "
                   "holding", (unsigned long)q->drained, SCN_EVENT_QUEUE_MAX);
+    UT_ASSERT_MSG(text.count == 0,
+                  "%d lines reached the game: one overflowing tick counts one "
+                  "error and this round had none behind it", text.count);
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "dropped") != NULL,
+                  "the tick said nothing about what it lost: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(!seAskExtraTeams(sim),
+                  "the round answered the classic yes, so the overflow "
+                  "switched the scenario off");
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    seDrop(kFreshMap);
+
+    /* The second half: the same tick against a round one error short of the
+       limit, which is the error that reaches it. */
+    UT_ASSERT(sePut(kBrinkMap, kBrinkLua));
+    sim = seSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kBrinkMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    seWatchText(sim, &text);
+
+    for (i = 1; i < SCN_ERROR_LIMIT; i++) {
+        UT_ASSERT_MSG(seAskExtraTeams(sim),
+                      "error %d of %d answered anything but the classic yes",
+                      i, SCN_ERROR_LIMIT);
+    }
+    serverSimTick(sim);
+    UT_ASSERT_MSG(text.count == 0,
+                  "%d errors in a row sent %d lines to the game; the limit is "
+                  "%d", SCN_ERROR_LIMIT - 1, text.count, SCN_ERROR_LIMIT);
+
+    q = scenarioHostEventQueue(h);
+    UT_ASSERT(q != NULL);
+    for (i = 0; i < total; i++) {
+        seRaise(sim, (uint16_t)i);
+    }
+    UT_ASSERT_MSG(q->dropped > 0, "nothing was dropped filling the queue with "
+                                  "%d events", total);
+    serverSimTick(sim);
     UT_ASSERT_MSG(text.count == 1,
                   "%d lines reached the game, expected the one that says the "
-                  "scenario is off", text.count);
-    UT_ASSERT_MSG(strstr(text.last, "Flood") != NULL,
+                  "scenario is off: the overflow is the %dth error",
+                  text.count, SCN_ERROR_LIMIT);
+    UT_ASSERT_MSG(strstr(text.last, "Brink") != NULL,
                   "the line does not name the scenario: %s", text.last);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
-    seDrop(kMap);
+    seDrop(kBrinkMap);
     return 0;
 }
 

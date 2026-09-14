@@ -103,10 +103,12 @@
  * empties exactly what was waiting when it started.
  *
  * An event that arrives with the queue full is dropped rather than
- * overwriting one, and each drop counts toward SCN_ERROR_LIMIT: a round
- * that produces more events in one tick than this is producing them faster
- * than a script can answer them, and the numbers say so rather than the
- * oldest of them going quietly. */
+ * overwriting one, and the tick that lost them says how many and counts one
+ * error: a round that produces more events in one tick than this is
+ * producing them faster than a script can answer them, and the numbers say
+ * so rather than the oldest of them going quietly. A tick counts once
+ * however many it lost, so a round that keeps overflowing reaches
+ * SCN_ERROR_LIMIT over SCN_ERROR_LIMIT ticks rather than in one. */
 #define SCN_EVENT_QUEUE_MAX 256
 
 typedef struct ScenarioHost ScenarioHost;

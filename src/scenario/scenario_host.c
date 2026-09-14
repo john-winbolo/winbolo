@@ -1029,24 +1029,22 @@ static void scnDisable(ScenarioHost *h, const char *fmt, ...) {
     scnSay(h->lastError, sizeof(h->lastError), "scenario: %s", h->pending);
 }
 
-/* n more errors, for a caller that has already said its piece. Apart from a
- * hook or a policy raising, the other thing that counts is an event the
- * queue had no room for, and a tick that dropped many of those wants one
- * line rather than one per event. */
-static void scnErrorsCounted(ScenarioHost *h, unsigned n) {
-    if (n == 0) {
-        return;
-    }
-    /* A count that cannot wrap: past the limit the only thing left to do is
-       switch the scenario off, which the next line does. */
-    if (h->errors > UINT_MAX - n) {
-        h->errors = UINT_MAX;
-    } else {
-        h->errors += n;
+/* One more error, for a caller that has already said its piece. Apart from a
+ * hook or a policy raising, the other thing that counts is a tick that found
+ * the event queue full: however many events that tick lost, it is one thing
+ * that went wrong and it counts once, so a single overflow cannot take a
+ * scenario from nothing to switched off.
+ *
+ * The count cannot wrap. Past the limit the only thing left to do is switch
+ * the scenario off, which the next line does, and a switched-off round still
+ * counts the drops its queue goes on taking. */
+static void scnErrorCounted(ScenarioHost *h) {
+    if (h->errors < UINT_MAX) {
+        h->errors++;
     }
     if (h->errors >= SCN_ERROR_LIMIT) {
-        scnDisable(h, "%.32s is off for the rest of the round: %d errors in "
-                      "a row.", scnSubject(h), SCN_ERROR_LIMIT);
+        scnDisable(h, "%.32s is off for the rest of the round: %u errors in "
+                      "a row.", scnSubject(h), h->errors);
     }
 }
 
@@ -1058,7 +1056,7 @@ static void scnErrorRaised(ScenarioHost *h, const char *what,
                            const char *msg) {
     scnSay(h->lastError, sizeof(h->lastError), "scenario: %s raised: %s",
            what, msg);
-    scnErrorsCounted(h, 1);
+    scnErrorCounted(h);
 }
 
 /* A call that returned. The count is of errors in a row, so one success
@@ -1699,10 +1697,16 @@ static void scnRunTimers(ScenarioHost *h) {
     }
 }
 
-/* Say what the queue had no room for, once, and count each of them. The
- * drop itself happens inside a publish where there is nothing safe to say;
- * this runs at the tick, after the drain, so events the drain's own work
- * pushed past the end are reported in the tick they were lost in. */
+/* Say what the queue had no room for, once, and count the tick that lost
+ * them as one error. The drop itself happens inside a publish where there is
+ * nothing safe to say; this runs at the tick, after the drain, so events the
+ * drain's own work pushed past the end are reported in the tick they were
+ * lost in.
+ *
+ * One error and not one per event: a busy frame can lose hundreds at once,
+ * and counting each of them would switch a scenario off in a single tick
+ * over one overflow. The line still says how many were lost, which is the
+ * number an operator wants. */
 static void scnReportDrops(ScenarioHost *h) {
     uint32_t dropped = scenarioEventsTakeDropped(&h->events);
 
@@ -1712,7 +1716,7 @@ static void scnReportDrops(ScenarioHost *h) {
     scnSay(h->lastError, sizeof(h->lastError),
            "scenario: %lu events arrived with the queue full at %d and were "
            "dropped", (unsigned long)dropped, SCN_EVENT_QUEUE_MAX);
-    scnErrorsCounted(h, (unsigned)dropped);
+    scnErrorCounted(h);
 }
 
 /* ── The per-tick callback ────────────────────────────────────────── */
@@ -1900,7 +1904,7 @@ static void scnPolicyBadAnswer(ScenarioHost *h, const char *name,
                                const char *detail) {
     scnSay(h->lastError, sizeof(h->lastError),
            "scenario: %s answered %s; the classic rule stands", name, detail);
-    scnErrorsCounted(h, 1);
+    scnErrorCounted(h);
 }
 
 /* The largest magnitude any policy answer can mean, so the cast below is
@@ -2160,7 +2164,7 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
                            "scenario: on_choose_start named start %ld for "
                            "player %d, which is not a live start; the engine "
                            "picks", n, (int)player);
-                    scnErrorsCounted(h, 1);
+                    scnErrorCounted(h);
                 } else {
                     *startIdx = scenarioLuaIndexToOp((lua_Integer)n);
                     named     = true;
@@ -2207,7 +2211,7 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
                            "scenario: spawn_loadout answered '%.24s', which "
                            "names no loadout; the game type stands",
                            answer);
-                    scnErrorsCounted(h, 1);
+                    scnErrorCounted(h);
                 }
             } else if (lua_istable(h->L, -1)) {
                 ScnLoadout want;
