@@ -943,6 +943,10 @@ bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len
  * consecutive-mismatch streak that gates a new request. */
 void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
                                        uint32_t *mismatchStreak);
+#if WB_ENABLE_NETIMPAIR
+void transportUdpClientTestUploadTimeout(Transport *t);
+void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
+#endif
 /* Read a connected spectator's armed seed blob (the spectator-owned copy of the
  * delayed ring keyframe). Returns the blob pointer with *outLen set to its
  * length and *outKind to the in-flight BulkSender kind (BULK_KIND_SPEC_SEED once

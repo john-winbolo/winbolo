@@ -2004,7 +2004,10 @@ structs (`game_sim.h`, `players.h`, `tank.h`, `pillbox.h`,
 `server_sim_*` helper headers), the wire and transport layer
 (`transport.h`, `transport_udp.h`, `transport_udp_internal.h`,
 `channel_mux.h`, `bulk_transfer.h`, `netpacks.h`, `wire_codec.h`,
-`wire_messages.h`, the control and command codecs), the client's
+`wire_messages.h`, the control and command codecs;
+`transport_udp_server_internal.h` for the per-slot upload reservation
+and its expiry, which the loopback upload timeout tests drive with a
+synthetic clock and which no T1 call reports), the client's
 view and render internals (`viewport.h`, `overview_map.h`,
 `interpolation.h`, `scroll.h`, `messages.h`), and the bot and
 brain headers (`bot_manager.h`, `braincore.h`,

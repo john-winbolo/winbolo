@@ -4196,6 +4196,10 @@ set(_unit_test_names
     map_convert_file_to_compressed
     map_read_memory_rejects_garbage
     upload_busy_predicate
+    upload_lost_ack_retry
+    upload_timeout_releases_other_player
+    upload_lost_done_retry
+    upload_partial_timeout_retry
     upload_filename_safe
     lobby_bot_name_rejects_reserved_prefix
     lobby_bot_name_rejects_disallowed_char
