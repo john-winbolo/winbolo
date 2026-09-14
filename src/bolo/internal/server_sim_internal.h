@@ -721,6 +721,26 @@ struct ServerSim {
      * scenarioLobbyValid false means an ordinary lobby. */
     ScnLobbyTemplate       scenarioLobby;
     bool                   scenarioLobbyValid;
+    /* What the attached scenario is called, where it came from, and what it
+     * says about itself — the lobby's description of it, which the settings
+     * event carries to every client. Held apart from the template above
+     * because the template is seating: it reconciles and re-seats at points
+     * that have nothing to do with identity, and a scenario the host picks
+     * for itself will bring its identity from somewhere the map's template
+     * does not. source lobbyScenarioNone means no scenario is attached, and
+     * is the one thing every other site tests. */
+    struct {
+        LobbyScenarioSource source;
+        char                name[LOBBY_SCENARIO_NAME_LEN];
+        char                fileName[LOBBY_SCENARIO_FILE_LEN];
+        char                description[LOBBY_SCENARIO_DESC_LEN];
+        bool                extraTeams;
+    } scenarioIdentity;
+    /* The game type the lobby was on when a scripted map displaced it with
+     * gameScripted. A commit with no scenario puts this back. 0 means
+     * nothing is displaced, which is every lobby that has not had a scripted
+     * map committed into it. */
+    gameType               preScenarioGameType;
     /* The brain a seat was seeded with, so a seat held without a bot in it
      * still knows what to run when something fields it. Empty means the
      * server's own. */

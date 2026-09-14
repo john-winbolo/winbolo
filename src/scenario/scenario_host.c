@@ -1779,6 +1779,20 @@ static void scnTick(void *ctx) {
     scnLockLeave(&h->lock);
 }
 
+/* The file name out of a path. What the lobby says a scenario came from is a
+ * name; where the server keeps its maps is not something clients are told.
+ * Both separators, because a Windows server holds the other one. */
+static const char *scnFileNameOf(const char *path) {
+    const char *last = path;
+    const char *p;
+
+    if (path == NULL) return "";
+    for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') last = p + 1;
+    }
+    return last;
+}
+
 /* The lobby out of the manifest and into the shape the sim reads. A straight
  * copy of the four numbers and the brain, dropping the teams the sim has no
  * seat for: the manifest holds what the file said and this holds what the
@@ -2636,6 +2650,12 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         }
         serverSimSetScenarioLobbyTemplate(sim, &t);
     }
+    /* And what it is called, which the lobby says out loud. A scenario read
+       from beside a map names that file; the path it was found at is the
+       server's own business and does not go over. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, m.name,
+                                 scnFileNameOf(h->script), m.description,
+                                 m.lobby.extraTeams);
 
     /* The bus, in three steps and in this order. Registration hands the new
        subscriber the whole of the current server state through the control
@@ -2824,6 +2844,10 @@ void scenarioHostDetach(ScenarioHost *h) {
            host, not to the host, and it is the thing that will attach the
            next one. */
         serverSimSetScenarioLobbyTemplate(h->sim, NULL);
+        /* And what it was called, so a lobby left without a scenario says
+           it has none. */
+        serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
+                                     NULL, false);
         /* Both channels go with the slot, and an invalid handle is a
            no-op, so this needs no test of its own. */
         serverSimUnregisterSubscriber(h->sim, h->sub);

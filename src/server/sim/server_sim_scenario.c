@@ -3012,6 +3012,36 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
     sim->sim.scenarioBaseGame = (gameType)t->baseGameType;
 }
 
+void serverSimSetScenarioIdentity(ServerSim *sim,
+                                  LobbyScenarioSource source,
+                                  const char *name,
+                                  const char *fileName,
+                                  const char *description,
+                                  bool extraTeams) {
+    if (sim == NULL) return;
+    memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
+    if (source == lobbyScenarioNone) {
+        /* A detach, or a map with nothing beside it. Everything else the
+           caller passed goes with it rather than being kept beside a source
+           that says there is no scenario. */
+        return;
+    }
+    sim->scenarioIdentity.source     = source;
+    sim->scenarioIdentity.extraTeams = extraTeams;
+    if (name != NULL) {
+        strncpy(sim->scenarioIdentity.name, name,
+                sizeof(sim->scenarioIdentity.name) - 1);
+    }
+    if (fileName != NULL) {
+        strncpy(sim->scenarioIdentity.fileName, fileName,
+                sizeof(sim->scenarioIdentity.fileName) - 1);
+    }
+    if (description != NULL) {
+        strncpy(sim->scenarioIdentity.description, description,
+                sizeof(sim->scenarioIdentity.description) - 1);
+    }
+}
+
 void serverSimSetScenarioState(ServerSim *sim, void *state) {
     if (sim == NULL) return;
     sim->scenario = state;

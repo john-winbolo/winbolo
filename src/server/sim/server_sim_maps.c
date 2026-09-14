@@ -1171,6 +1171,47 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        that is already the new map's. */
     serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
 
+    /* Whoever owns the scenario has just attached the new map's or let the
+       previous one go, so the identity above is the new map's and this is
+       the point the lobby's own settings follow it.
+
+       The game type: a scripted round plays by what its scenario declared,
+       which gameTypeResolve reads, so the type itself says scripted. The
+       type the lobby was on is remembered rather than recomputed, because a
+       host may have picked one by hand and the operator's startup default —
+       what serverSimResetLobbyToDefaults restores — is not it. Only the
+       first scripted commit in a run of them remembers, so scripted map
+       after scripted map still gives the lobby's own type back at the end.
+
+       Ranked and a scenario do not go together: a scripted round is not a
+       measured one. The settings handler refuses ranked while a scenario is
+       attached, and this is the other direction — ranked already on when the
+       map arrives.
+
+       The AI policy: a scenario fields its own bots, and aiNone empties the
+       roster of them, so a policy that allows none is moved up to the one
+       that allows them plainly. A policy that already allows bots is the
+       operator's or the host's and is left alone. */
+    if (sim->scenarioIdentity.source != lobbyScenarioNone) {
+        if (gameTypeGet(&sim->sim.game) != gameScripted) {
+            sim->preScenarioGameType = gameTypeGet(&sim->sim.game);
+            serverSimSetGameType(sim, gameScripted);
+        }
+        if (serverSimGetRanked(sim)) {
+            serverSimSetRanked(sim, false);
+        }
+        if (serverSimGetBotAiType(sim) == aiNone) {
+            serverSimSetAiPolicy(sim, (uint8_t)aiYes);
+            serverSimSetBotAiType(sim, aiYes);
+        }
+    } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
+        serverSimSetGameType(sim,
+                             sim->preScenarioGameType != (gameType)0
+                                 ? sim->preScenarioGameType
+                                 : gameOpen);
+        sim->preScenarioGameType = (gameType)0;
+    }
+
     transportUdpServerOnLobbyMapChange(sim);
     {
         ControlEvent evt;

@@ -476,6 +476,11 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1 || value[0] > 3) return false;
             if (serverSimGetRanked(sim) &&
                 (aiType)value[0] != aiNone) return false;
+            /* A scenario fields its own bots, and this is the setting that
+               takes every bot off the roster, so a scripted lobby cannot be
+               put into it. */
+            if (sim->scenarioIdentity.source != lobbyScenarioNone &&
+                (aiType)value[0] == aiNone) return false;
             serverSimSetAiPolicy(sim, value[0]);
             serverSimSetBotAiType(sim, (aiType)value[0]);
             if ((aiType)value[0] == aiNone) {
@@ -521,6 +526,13 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
         case LST_RANKED: {
             if (len != 1) return false;
             bool r = value[0] != 0;
+            /* A scripted round is not a measured one, so ranked is refused
+               while a scenario is attached. The other direction — ranked
+               already on when a scripted map is committed — is answered at
+               the commit, which clears it. */
+            if (r && sim->scenarioIdentity.source != lobbyScenarioNone) {
+                return false;
+            }
             serverSimSetRanked(sim, r);
             if (r) {
                 serverSimSetAiPolicy(sim, (uint8_t)aiNone);

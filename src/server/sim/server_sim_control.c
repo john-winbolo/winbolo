@@ -290,6 +290,20 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.voiceMode = sim->voiceMode;
     evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
     evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
+    /* What the lobby's scenario is, straight off what whoever attached it
+       told the sim. A lobby with none leaves the source at lobbyScenarioNone
+       and the strings empty, which is what keeps those bytes off the wire. */
+    evt->u.lobbySettings.scenarioSource     = sim->scenarioIdentity.source;
+    evt->u.lobbySettings.scenarioExtraTeams = sim->scenarioIdentity.extraTeams;
+    snprintf(evt->u.lobbySettings.scenarioName,
+             sizeof(evt->u.lobbySettings.scenarioName), "%s",
+             sim->scenarioIdentity.name);
+    snprintf(evt->u.lobbySettings.scenarioFileName,
+             sizeof(evt->u.lobbySettings.scenarioFileName), "%s",
+             sim->scenarioIdentity.fileName);
+    snprintf(evt->u.lobbySettings.scenarioDescription,
+             sizeof(evt->u.lobbySettings.scenarioDescription), "%s",
+             sim->scenarioIdentity.description);
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {

@@ -505,13 +505,36 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
     (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1)
 
+/* The scenario tail, written only when the lobby has one. A lobby with no
+ * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
+ * more, which is what keeps a plain map's body the length it has always
+ * been. source(1) + extraTeams(1), then the three strings, each a one-byte
+ * length and that many bytes with no terminator — the same shape the team
+ * name and the bot name use in this file. */
+#define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
+    (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
+           + (1 + (LOBBY_SCENARIO_FILE_LEN - 1))                           \
+           + (1 + (LOBBY_SCENARIO_DESC_LEN - 1)))
+
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
                                             const struct UdpServerClient *recipient,
                                             uint8_t *buf, size_t bufCap,
                                             size_t *outLen) {
     (void)recipient;
-    const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD;
+    const bool hasScenario =
+        evt->u.lobbySettings.scenarioSource != lobbyScenarioNone;
+    const size_t scnNameLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioName,
+                  LOBBY_SCENARIO_NAME_LEN - 1) : 0;
+    const size_t scnFileLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioFileName,
+                  LOBBY_SCENARIO_FILE_LEN - 1) : 0;
+    const size_t scnDescLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioDescription,
+                  LOBBY_SCENARIO_DESC_LEN - 1) : 0;
+    const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD
+        + (hasScenario ? (2 + 3 + scnNameLen + scnFileLen + scnDescLen) : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     memset(buf + pos, 0, MAP_STR_SIZE);
@@ -554,6 +577,27 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = (uint8_t)evt->u.lobbySettings.voiceMode;
     buf[pos++] = evt->u.lobbySettings.lobbyOverviewWindow;
     buf[pos++] = evt->u.lobbySettings.lobbyLineOfSight;
+    /* Nothing past here for a lobby with no scenario. */
+    if (hasScenario) {
+        buf[pos++] = (uint8_t)evt->u.lobbySettings.scenarioSource;
+        buf[pos++] = evt->u.lobbySettings.scenarioExtraTeams ? 1 : 0;
+        buf[pos++] = (uint8_t)scnNameLen;
+        if (scnNameLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioName, scnNameLen);
+            pos += scnNameLen;
+        }
+        buf[pos++] = (uint8_t)scnFileLen;
+        if (scnFileLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioFileName, scnFileLen);
+            pos += scnFileLen;
+        }
+        buf[pos++] = (uint8_t)scnDescLen;
+        if (scnDescLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioDescription,
+                   scnDescLen);
+            pos += scnDescLen;
+        }
+    }
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -2257,6 +2301,47 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyLineOfSight = buf[pos++];
+    }
+    /* The scenario tail. A body that stops here came from a lobby with no
+     * scenario, and the memset above has already left every field of it
+     * empty with the source reading as lobbyScenarioNone. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioSource =
+            (LobbyScenarioSource)buf[pos++];
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioExtraTeams = buf[pos++] ? true : false;
+    }
+    if (len >= pos + 1) {
+        uint8_t nameLen = buf[pos++];
+        if (nameLen > LOBBY_SCENARIO_NAME_LEN - 1) return false;
+        if (len < pos + nameLen) return false;
+        if (nameLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioName, buf + pos, nameLen);
+            pos += nameLen;
+        }
+        outEvt->u.lobbySettings.scenarioName[nameLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        uint8_t fileLen = buf[pos++];
+        if (fileLen > LOBBY_SCENARIO_FILE_LEN - 1) return false;
+        if (len < pos + fileLen) return false;
+        if (fileLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioFileName, buf + pos, fileLen);
+            pos += fileLen;
+        }
+        outEvt->u.lobbySettings.scenarioFileName[fileLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        uint8_t descLen = buf[pos++];
+        if (descLen > LOBBY_SCENARIO_DESC_LEN - 1) return false;
+        if (len < pos + descLen) return false;
+        if (descLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioDescription, buf + pos,
+                   descLen);
+            pos += descLen;
+        }
+        outEvt->u.lobbySettings.scenarioDescription[descLen] = '\0';
     }
     return true;
 }

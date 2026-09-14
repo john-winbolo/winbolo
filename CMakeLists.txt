@@ -3452,6 +3452,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # a scenario declared, at the loadout and at the start, and that value
     # going when the template does.
     tests/unit/test_scripted_game_type.c
+    # What the lobby says about its scenario: the settings body with and
+    # without one, the scripted game type a commit sets and gives back, and
+    # the ranked and AI-policy settings a scenario does not go with.
+    tests/unit/test_lobby_scenario_settings.c
     tests/unit/test_unfielded_seat.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
@@ -5147,6 +5151,12 @@ set(_unit_test_names
     scripted_game_type_strict_ignores_base
     scripted_game_type_start_follows_base
     scripted_game_type_plain_map_clears_base
+    lobby_scenario_settings_plain_bytes
+    lobby_scenario_settings_scripted_bytes
+    lobby_scenario_settings_roundtrip
+    lobby_scenario_commit_sets_type
+    lobby_scenario_refuses_ranked
+    lobby_scenario_refuses_ai_none
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready

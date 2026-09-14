@@ -26,6 +26,7 @@
 
 #include "server_sim.h"
 #include "scenario_defs.h"
+#include "control_event.h"  /* LobbyScenarioSource — the identity setter's source */
 
 /*********************************************************
  *NAME:          serverSimApplyScenarioOp
@@ -129,6 +130,37 @@ void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx
  *********************************************************/
 void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
                                        const ScnLobbyTemplate *t);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioIdentity
+ *PURPOSE:
+ *  Tells the sim what the attached scenario is called and
+ *  where it came from, so the lobby can say so without
+ *  asking the host anything. The sim copies the strings,
+ *  truncating any that are longer than the lobby carries.
+ *
+ *  Separate from the lobby template: that is seating, and
+ *  it is re-applied at points that have nothing to do with
+ *  what the scenario is called.
+ *
+ *  source lobbyScenarioNone clears it, whatever the other
+ *  arguments say, and is what a detach passes. NULL for any
+ *  string is the empty one.
+ *
+ *ARGUMENTS:
+ *  sim         - The sim being told
+ *  source      - Where the scenario came from
+ *  name        - The scenario's name
+ *  fileName    - The file it came from, a name and not a path
+ *  description - What it says about itself
+ *  extraTeams  - Whether it lets a host add teams of its own
+ *********************************************************/
+void serverSimSetScenarioIdentity(ServerSim *sim,
+                                  LobbyScenarioSource source,
+                                  const char *name,
+                                  const char *fileName,
+                                  const char *description,
+                                  bool extraTeams);
 
 /*********************************************************
  *NAME:          serverSimAddUnfieldedSeat
