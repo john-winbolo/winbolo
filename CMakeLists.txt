@@ -3236,8 +3236,13 @@ enable_testing()
 # Not guarded on APPLE: the cost elsewhere is three sub-second process starts,
 # it warms the page cache on every platform, and a binary too broken to print
 # its own usage is worth catching before 600-odd tests try to use it.
-add_test(NAME warmup.headless  COMMAND $<TARGET_FILE:WinBoloHeadless> --help)
-add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -help)
+#
+# -nocrashreporting on the two that have it: both call sentryInit before they
+# parse anything, so even `--help` would otherwise open the one per-user crash
+# database every other process in the suite is also opening. Same reason
+# tests/baseline/run.sh passes it to every DS and client it starts.
+add_test(NAME warmup.headless  COMMAND $<TARGET_FILE:WinBoloHeadless> -nocrashreporting --help)
+add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -nocrashreporting -help)
 add_test(NAME warmup.unittests COMMAND $<TARGET_FILE:WinBoloUnitTests> --list)
 set_tests_properties(warmup.headless warmup.ds warmup.unittests
                      PROPERTIES FIXTURES_SETUP warm_binaries TIMEOUT 60)
