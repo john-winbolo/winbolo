@@ -759,7 +759,9 @@ maps/Wave Defense.scenario.lua:14: rules.tank_reload_ticks: tank_reload_ticks is
 ```
 
 and the command exits 0 for a map that is playable and 1 for one that is not.
-No round is run and no bot loads, so this is safe to run on anything.
+No round is run and no bot loads, but the file's top level does run, the same
+way it would at a round start — so a file you would not run is a file you
+should not check.
 
 The line number is found by looking for the key's own name in the source, so
 two things can lead it astray: a name written earlier in a comment or a string

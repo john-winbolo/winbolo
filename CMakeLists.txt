@@ -5061,6 +5061,9 @@ set(_unit_test_names
     scenario_host_vm_lock_same_thread
     scenario_host_vm_lock_second_thread
     scenario_host_audit_human_lost
+    scenario_host_metatable_raises
+    scenario_host_metatable_not_read
+    scenario_host_hook_via_global_metatable
     scenario_validate_clean
     scenario_validate_api_too_new
     scenario_validate_lobby_shape

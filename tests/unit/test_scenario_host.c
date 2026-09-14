@@ -66,6 +66,17 @@
  *                                       switches the scenario off and tells
  *                                       the players
  *
+ * and what a metatable on the script's own tables reaches and does not:
+ *
+ * run_scenario_host_metatable_raises  — an __index that raises, on _G and on
+ *                                       the scenario table: the host says
+ *                                       what it found and the process lives
+ * run_scenario_host_metatable_not_read— an __index that answers: the parse
+ *                                       takes nothing from it
+ * run_scenario_host_hook_via_global_metatable
+ *                                     — a hook name only a _G metatable
+ *                                       answers is not resolved
+ *
  * A script has no way to reach the engine yet, so the lifecycle cases read
  * what ran two ways: a hook appends a character to this case's record file,
  * and allow_extra_teams — the one policy the host registers — answers from
@@ -1639,5 +1650,184 @@ int run_scenario_host_audit_human_lost(void) {
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     shDrop(kMap);
+    return 0;
+}
+
+/* ── 21. A metatable that raises ──────────────────────────────────── */
+
+/* Two files, both of which ended the process before the reads below went
+ * raw: a __index that raises runs with no lua_pcall between it and the VM,
+ * and Lua's answer to that is to end the process.
+ *
+ * The first puts it on _G, which is what the host's global reads went
+ * through. The second puts it on the scenario table, which is what the
+ * field reads and the hook fallback went through. Neither file is anything
+ * but an ordinary script with a metatable on it. */
+int run_scenario_host_metatable_raises(void) {
+    static const char *const kGlobalMap = "scnhost_mt_globals.map";
+    static const char *const kGlobalLua =
+        "setmetatable(_G, { __index = function(t, k)\n"
+        "  error(\"_G.\" .. tostring(k) .. \" ran a metamethod\")\n"
+        "end })\n";
+    static const char *const kTableMap = "scnhost_mt_table.map";
+    static const char *const kTableLua =
+        "scenario = setmetatable({}, { __index = function(t, k)\n"
+        "  error(\"scenario.\" .. tostring(k) .. \" ran a metamethod\")\n"
+        "end })\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+    int                     i;
+
+    /* One: the scenario global is only reachable through the metatable, so
+       the raw read finds nothing and the attach is refused in words. */
+    UT_ASSERT(shPut(kGlobalMap, kGlobalLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kGlobalMap, err, sizeof(err));
+    UT_ASSERT_MSG(h == NULL,
+                  "a file whose scenario table is only behind a _G metatable "
+                  "was accepted");
+    UT_ASSERT_MSG(err[0] != '\0', "the refusal produced no operator line");
+    UT_ASSERT_MSG(strstr(err, "scnhost_mt_globals") != NULL,
+                  "the line does not name the file: %s", err);
+
+    serverSimDestroy(sim);
+    shDrop(kGlobalMap);
+
+    /* Two: the table is there and every field read of it would have run the
+       metamethod. The attach comes back, and what the metamethod would have
+       handed over is not in the manifest. */
+    UT_ASSERT(shPut(kTableMap, kTableLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kTableMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->name[0] == '\0', "name read as '%s'", m->name);
+
+    /* And again through the round start, which re-runs the chunk and is
+       where the hook fallback reads the same table. */
+    serverSimStartGame(sim);
+    for (i = 0; i < 5; i++) {
+        serverSimTick(sim);
+    }
+    UT_ASSERT_MSG(scenarioHostIsActive(h),
+                  "the round start left the host with no scenario");
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kTableMap);
+    return 0;
+}
+
+/* ── 22. A metatable that answers ─────────────────────────────────── */
+
+/* The other half of the same change. This __index raises nothing and hands
+ * back a value for every key the table does not carry; a raw read never
+ * asks it, so the manifest holds what the file wrote and nothing else. */
+int run_scenario_host_metatable_not_read(void) {
+    static const char *const kMap = "scnhost_mt_answers.map";
+    static const char *const kLua =
+        "local ghost = { max_players = 9, teams = { { id = 3 } } }\n"
+        "scenario = setmetatable({ name = \"Declared\", api = 1 }, {\n"
+        "  __index = function(t, k)\n"
+        "    if k == \"lobby\" then return ghost end\n"
+        "    return \"ghost\"\n"
+        "  end,\n"
+        "})\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(strcmp(m->name, "Declared") == 0,
+                  "name read as '%s': a key the file carries is still read",
+                  m->name);
+    UT_ASSERT_MSG(m->description[0] == '\0',
+                  "description read as '%s', which the file does not carry",
+                  m->description);
+    UT_ASSERT_MSG(m->game[0] == '\0',
+                  "game read as '%s', which the file does not carry", m->game);
+    UT_ASSERT_MSG(m->lobby.maxPlayers == 0,
+                  "max_players read as %u from a lobby the file does not "
+                  "carry", (unsigned)m->lobby.maxPlayers);
+    UT_ASSERT_MSG(m->lobby.numTeams == 0, "%u teams, expected none",
+                  (unsigned)m->lobby.numTeams);
+    UT_ASSERT_MSG(m->numRules == 0, "%u rules, expected none",
+                  (unsigned)m->numRules);
+    UT_ASSERT_MSG(m->numRegions == 0, "%u regions, expected none",
+                  (unsigned)m->numRegions);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 23. A hook behind a _G metatable ─────────────────────────────── */
+
+/* A hook name the script never wrote as a global, answered by a metatable
+ * on _G. The resolution reads the globals table itself, so the name is not
+ * there and the hook is not called. on_start is written as a global in the
+ * same file and still runs, which is what says the round got as far as the
+ * hooks at all. */
+int run_scenario_host_hook_via_global_metatable(void) {
+    static const char *const kMap    = "scnhost_mt_hook.map";
+    static const char *const kRecord = "scnhost_mt_hook.record";
+    static const char *const kBody =
+        "scenario = { name = \"Hooked\", api = 1 }\n"
+        "function on_start() note(\"T\") end\n"
+        "setmetatable(_G, { __index = function(t, k)\n"
+        "  if k == \"on_setup\" then return function() note(\"S\") end end\n"
+        "  return nil\n"
+        "end })\n";
+    char          lua[2048];
+    char          got[64];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    remove(kRecord);
+    shScript(lua, sizeof(lua), kRecord, kBody);
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+
+    serverSimStartGame(sim);
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(got[0] == '\0',
+                  "the round start recorded '%s': on_setup was taken from the "
+                  "_G metatable", got);
+
+    serverSimTick(sim);
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "T") == 0,
+                  "the first running tick recorded '%s', expected the one 'T' "
+                  "from the hook the file writes as a global", got);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    remove(kRecord);
     return 0;
 }

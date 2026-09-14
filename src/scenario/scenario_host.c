@@ -535,6 +535,10 @@ static void scnSeedRandom(lua_State *L) {
        PUC's hand math.randomseed the same value. */
     mixed &= 0x1FFFFFFFFFFFFFULL;
 
+    /* The two reads in this file that still run a metamethod, and the pair
+       for which that costs nothing: this runs inside the boot, ahead of the
+       chunk, so math holds what luaL_openlibs put there a line ago and no
+       script has had a statement in which to touch it. */
     lua_getglobal(L, "math");
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "randomseed");
@@ -550,11 +554,45 @@ static void scnSeedRandom(lua_State *L) {
     lua_pop(L, 1);               /* math, or whatever the global held */
 }
 
+/* Where an error with no lua_pcall between it and the VM ends up. Lua calls
+ * abort() if this returns, so it does not return.
+ *
+ * Every call this file makes into a script is a lua_pcall and every read of
+ * the script's own table is a raw one, so what is left to arrive here is
+ * what neither covers: a state out of memory, or an error raised by a C
+ * call made outside a protected one. Neither leaves a round to carry on
+ * with.
+ *
+ * Unwinding back to a caller was the other shape and is not what this does.
+ * The entries into the state are the sim's round-start callback with the
+ * sim mutex held, the tick, and a policy the lobby asks from another
+ * thread; a jump out of any of them leaves that mutex and the VM lock held
+ * and the round half applied, and the process is wedged rather than gone.
+ * This ends it instead, and says why first: today the operator is told
+ * nothing at all. The abort leaves a core behind to read it from. */
+static int scnPanic(lua_State *L) {
+    const char *msg = lua_tostring(L, -1);
+    char        line[SCN_ERR_LEN];
+
+    snprintf(line, sizeof(line), "scenario: Lua panic: %s",
+             (msg != NULL) ? msg : "unknown error");
+    /* Both, because the two hosts watch different ones: the dedicated server
+       and the headless runner have stderr, and the desktop client's console
+       is where the rest of this file's lines go. */
+    fprintf(stderr, "%s\n", line);
+    fflush(stderr);
+    serverSimConsoleMessage(line);
+    /* Last statement on purpose. abort does not return, and a return after
+       it is unreachable code, which this tree builds as an error. */
+    abort();
+}
+
 lua_State *scnNewVm(void) {
     lua_State *L = luaL_newstate();
     if (L == NULL) {
         return NULL;
     }
+    lua_atpanic(L, scnPanic);
     luaL_openlibs(L);
     scnSeedRandom(L);
     return L;
@@ -614,9 +652,50 @@ bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
 
 /* ── Reading the table ────────────────────────────────────────────── */
 
+/* The reads below want the value the file wrote and nothing else.
+ *
+ * lua_getfield runs __index, so a table carrying a metatable turns what the
+ * readers treat as a lookup into a call into script code: it runs with the
+ * game table in scope and the ops open, in the middle of a read that is not
+ * protected, and one that raises from there reaches scnPanic. A script
+ * needs no ill intent to have a metatable on it. These push the key and
+ * rawget instead, which asks the table only.
+ *
+ * A negative table index is biased by one for the key pushed ahead of it. A
+ * pseudo-index is absolute and left alone. */
+static void scnRawField(lua_State *L, int tbl, const char *key) {
+    if (tbl < 0 && tbl > LUA_REGISTRYINDEX) {
+        tbl -= 1;
+    }
+    lua_pushstring(L, key);
+    lua_rawget(L, tbl);
+}
+
+/* The globals table itself, for the same reason and with the same care: a
+ * script that puts a metatable on _G would otherwise have one run on every
+ * global the host reads. Where the table lives is the one place the two Lua
+ * builds differ — 5.1 and LuaJIT keep a pseudo-index for it, 5.4 keeps it
+ * in the registry — and WINBOLO_LUAJIT is what the tree tells them apart
+ * by, the same define the force-included shim is written against. */
+static void scnPushGlobals(lua_State *L) {
+#ifdef WINBOLO_LUAJIT
+    lua_pushvalue(L, LUA_GLOBALSINDEX);
+#else
+    lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+#endif
+}
+
+/* One global, left on the stack where lua_getglobal would have left it. */
+static void scnRawGlobal(lua_State *L, const char *name) {
+    scnPushGlobals(L);
+    lua_pushstring(L, name);
+    lua_rawget(L, -2);
+    lua_remove(L, -2);           /* the globals table, under the value */
+}
+
 static void scnReadStr(lua_State *L, int tbl, const char *key,
                        char *out, size_t outLen) {
-    lua_getfield(L, tbl, key);
+    scnRawField(L, tbl, key);
     if (lua_type(L, -1) == LUA_TSTRING) {
         const char *s = lua_tostring(L, -1);
         size_t      n = strlen(s);
@@ -631,7 +710,7 @@ static void scnReadStr(lua_State *L, int tbl, const char *key,
 
 static int scnReadInt(lua_State *L, int tbl, const char *key, int def) {
     int v = def;
-    lua_getfield(L, tbl, key);
+    scnRawField(L, tbl, key);
     if (lua_type(L, -1) == LUA_TNUMBER) {
         v = (int)lua_tointeger(L, -1);
     }
@@ -641,7 +720,7 @@ static int scnReadInt(lua_State *L, int tbl, const char *key, int def) {
 
 static bool scnReadBool(lua_State *L, int tbl, const char *key, bool def) {
     bool v = def;
-    lua_getfield(L, tbl, key);
+    scnRawField(L, tbl, key);
     if (lua_isboolean(L, -1)) {
         v = lua_toboolean(L, -1) ? true : false;
     }
@@ -652,7 +731,7 @@ static bool scnReadBool(lua_State *L, int tbl, const char *key, bool def) {
 static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     int lt;
 
-    lua_getfield(L, tbl, "lobby");
+    scnRawField(L, tbl, "lobby");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         return;
@@ -661,7 +740,7 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     lob->maxPlayers = (uint8_t)scnReadInt(L, lt, "max_players", 0);
     lob->extraTeams = scnReadBool(L, lt, "extra_teams", false);
 
-    lua_getfield(L, lt, "teams");
+    scnRawField(L, lt, "teams");
     if (lua_istable(L, -1)) {
         int teams = lua_gettop(L);
         int n     = (int)lua_rawlen(L, teams);
@@ -692,7 +771,7 @@ static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
                          ScnParseReport *rep) {
     int rules;
 
-    lua_getfield(L, tbl, "rules");
+    scnRawField(L, tbl, "rules");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         return;
@@ -753,7 +832,7 @@ static void scnReadTagKind(lua_State *L, int tags, const char *key,
                            const char *kind, ScnParseReport *rep) {
     int kt;
 
-    lua_getfield(L, tags, key);
+    scnRawField(L, tags, key);
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         return;
@@ -795,7 +874,7 @@ static void scnReadTags(lua_State *L, int tbl, ScenarioManifest *m,
                         ScnParseReport *rep) {
     int tags;
 
-    lua_getfield(L, tbl, "tags");
+    scnRawField(L, tbl, "tags");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         return;
@@ -814,7 +893,7 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
                            ScnParseReport *rep) {
     int rt;
 
-    lua_getfield(L, tbl, "regions");
+    scnRawField(L, tbl, "regions");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         return;
@@ -864,7 +943,7 @@ bool scnReadManifest(lua_State *L, ScenarioManifest *m,
 
     memset(m, 0, sizeof(*m));
 
-    lua_getglobal(L, "scenario");
+    scnRawGlobal(L, "scenario");
     if (!lua_istable(L, -1)) {
         scnFmt(err, errLen, "scenario: %s declares no scenario table", path);
         lua_pop(L, 1);
@@ -996,15 +1075,15 @@ static void scnErrorCleared(ScenarioHost *h) {
  * Absent is not an error and is the ordinary case: a scenario defines the
  * few hooks it cares about and none of the rest. */
 static int scnHookRef(lua_State *L, const char *name) {
-    lua_getglobal(L, name);
+    scnRawGlobal(L, name);
     if (lua_isfunction(L, -1)) {
         return luaL_ref(L, LUA_REGISTRYINDEX);
     }
     lua_pop(L, 1);
 
-    lua_getglobal(L, "scenario");
+    scnRawGlobal(L, "scenario");
     if (lua_istable(L, -1)) {
-        lua_getfield(L, -1, name);
+        scnRawField(L, -1, name);
         if (lua_isfunction(L, -1)) {
             int ref = luaL_ref(L, LUA_REGISTRYINDEX);
             lua_pop(L, 1);          /* the scenario table */
@@ -1739,7 +1818,7 @@ static bool scnAllowExtraTeams(void *ctx) {
     }
     scnLockEnter(&h->lock);
     if (!h->disabled && h->L != NULL) {
-        lua_getglobal(h->L, "allow_extra_teams");
+        scnRawGlobal(h->L, "allow_extra_teams");
         if (lua_isfunction(h->L, -1)) {
             if (lua_pcall(h->L, 0, 1, 0) != 0) {
                 scnErrorRaised(h, "allow_extra_teams", scnLuaError(h->L));

@@ -2355,6 +2355,12 @@ int run_scenario_host_vm_lock_same_thread(void);
 int run_scenario_host_vm_lock_second_thread(void);
 int run_scenario_host_audit_human_lost(void);
 
+/* A metatable on the script's own tables (test_scenario_host.c): what the
+   host's reads of the declared data do and do not run. */
+int run_scenario_host_metatable_raises(void);
+int run_scenario_host_metatable_not_read(void);
+int run_scenario_host_hook_via_global_metatable(void);
+
 /* The validator (test_scenario_validate.c): a sidecar read in a stub VM and
  * checked against the map, the lobby template and the rule catalogue, each
  * problem carrying the key it is against and the line it is on. */
