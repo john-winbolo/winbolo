@@ -14,6 +14,8 @@
 #include "imgui_comments.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
+/* Plain C, no bolo headers — see the note at the top of that header. */
+#include "../game_settings_blob.h"
 
 #include <cstdio>
 #include <cstring>
@@ -81,11 +83,6 @@ enum {
     overviewWindowNone = 2
 };
 
-/* Bytes a log_GameSettings payload needs before it carries every field the
- * panel reads. The layout is append-only, so a longer payload is a newer
- * writer and the trailing bytes are ignored. */
-#define GAME_SETTINGS_LEN 14
-
 /* Most bytes the event can carry — it frames the payload behind a single
  * length byte. Matches LV_GAME_SETTINGS_MAX in the log viewer's backend.h,
  * which this panel does not include. */
@@ -109,7 +106,10 @@ static bool s_ranked = false;
 static bool s_auto_lock = false;
 static bool s_password_set = false;
 static bool s_allow_new_players = false;
-static int  s_lobby_locks = 0;
+static uint32_t s_lobby_locks = 0;
+/* "Allow smart pings" as the round was played. A recording written before
+ * the settings-flags byte existed has none, and that reads as allowed. */
+static bool s_smart_pings_allowed = true;
 /* The four rows the header carries too. The event is what the round was
  * actually played under, so where it is present these win. */
 static char s_ev_game_type[32] = "";
@@ -135,6 +135,7 @@ void lv_imgui_game_info_clear(void) {
     s_num_players = 0;
     s_time_limit_is_live = false;
     s_have_settings = false;
+    s_smart_pings_allowed = true;
 }
 
 /* Called from lv_frontEndSetGameInformation in main.c */
@@ -239,26 +240,27 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
 /* Called every frame from the window body with whatever the decoder has
  * collected. Every multi-byte value in the payload is big-endian. */
 void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
-    if (payload == NULL || len < GAME_SETTINGS_LEN) {
+    LvGameSettings s;
+
+    if (!lvGameSettingsDecode(payload, len, &s)) {
         s_have_settings = false;
         return;
     }
 
-    /* Byte 0: two bits per category, then the two mode flags. */
-    s_view_policy[0] = payload[0] & 0x03;
-    s_view_policy[1] = (payload[0] >> 2) & 0x03;
-    s_view_policy[2] = (payload[0] >> 4) & 0x03;
-    s_classic_mode = (payload[0] & 0x40) != 0;
-    s_allies_in_trees = (payload[0] & 0x80) != 0;
+    s_view_policy[0] = s.viewPolicy[0];
+    s_view_policy[1] = s.viewPolicy[1];
+    s_view_policy[2] = s.viewPolicy[2];
+    s_classic_mode = s.classicMode;
+    s_allies_in_trees = s.alliesInTrees;
 
-    s_view_decay[0] = (payload[1] << 8) | payload[2];
-    s_view_decay[1] = (payload[3] << 8) | payload[4];
-    s_view_decay[2] = (payload[5] << 8) | payload[6];
+    s_view_decay[0] = s.viewDecay[0];
+    s_view_decay[1] = s.viewDecay[1];
+    s_view_decay[2] = s.viewDecay[2];
 
     /* Game type */
     {
         langid id;
-        switch (payload[7]) {
+        switch (s.gameType) {
             case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
             case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
             case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
@@ -270,7 +272,7 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
     /* Computer tanks */
     {
         langid id;
-        switch (payload[8]) {
+        switch (s.aiType) {
             case aiNone:         id = STR_NO;                  break;
             case aiYes:          id = STR_YES;                 break;
             case aiYesAdvantage: id = STR_DLGGAMEINFO_AIADV;   break;
@@ -282,34 +284,38 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
 
     /* Byte 9 flags */
     snprintf(s_ev_hidden_mines, sizeof(s_ev_hidden_mines), "%s",
-             langGetText((payload[9] & 0x01) ? STR_YES : STR_NO));
-    s_auto_lock = (payload[9] & 0x04) != 0;
-    s_ranked = (payload[9] & 0x08) != 0;
-    s_password_set = (payload[9] & 0x10) != 0;
-    s_allow_new_players = (payload[9] & 0x20) != 0;
+             langGetText((s.flags & 0x01) ? STR_YES : STR_NO));
+    s_auto_lock = (s.flags & 0x04) != 0;
+    s_ranked = (s.flags & 0x08) != 0;
+    s_password_set = (s.flags & 0x10) != 0;
+    s_allow_new_players = (s.flags & 0x20) != 0;
     /* One bit for three values. Classic mode forces None, and classic
      * mode has its own bit, so the pair reads back exactly except for a
      * host who chose None without classic mode: that logs as Classic. */
-    s_overview_window = (payload[9] & 0x40)
-                            ? ((payload[1] & 0x40) ? overviewWindowNone
-                                                   : overviewWindowClassic)
+    s_overview_window = (s.flags & 0x40)
+                            ? (s.classicMode ? overviewWindowNone
+                                             : overviewWindowClassic)
                             : overviewWindowExpanded;
-    s_line_of_sight   = (payload[9] & 0x80) != 0;
+    s_line_of_sight   = (s.flags & 0x80) != 0;
 
     /* Time limit — recorded as whole minutes behind an enabled bit, where
      * the header carries ticks. The minutes are meaningless with the bit
      * clear, so that case says unlimited rather than printing a number. */
-    if ((payload[9] & 0x02) == 0) {
+    if ((s.flags & 0x02) == 0) {
         snprintf(s_ev_time_limit, sizeof(s_ev_time_limit), "%s",
                  langGetText(STR_DLGGAMEINFO_UNLIMITED));
     } else {
         MessageArgs args = {};
-        args.number = (payload[10] << 8) | payload[11];
+        args.number = s.timeMinutes;
         snprintf(s_ev_time_limit, sizeof(s_ev_time_limit), "%s",
                  langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
     }
 
-    s_lobby_locks = (payload[12] << 8) | payload[13];
+    s_lobby_locks = s.lobbyLocks;
+    /* The label is "Allow smart pings", so the row says yes when the host
+     * left them on. A recording with no settings-flags byte decodes as
+     * allowed, which is what those servers did. */
+    s_smart_pings_allowed = !s.smartPingsOff;
     s_have_settings = true;
 }
 
@@ -507,6 +513,8 @@ void lv_imgui_game_info_window(void) {
                                         : STR_DLGLOBBY_WINDOW_EXPANDED));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),
                         langGetText(s_line_of_sight ? STR_YES : STR_NO));
+            ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_SMART_PINGS_CB),
+                        langGetText(s_smart_pings_allowed ? STR_YES : STR_NO));
             ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_RANKED),
                         langGetText(s_ranked ? STR_YES : STR_NO));
         }

@@ -120,4 +120,23 @@ void serverDedicatedLogSetServeMode(int mode);
 void serverDedicatedLogComposePath(const char *logArg, const char *autoBase,
                                    char *out, size_t outSize);
 
+/* Bytes of settings the log_GameSettings blob carries, after its length
+ * byte. The layout is written out in docs/replay-format.md; it is
+ * append-only, so a later field lands after the last one (offset 16 in
+ * the doc's numbering) and this grows with it. Here rather than beside the writer because the emit path compares
+ * blobs of this size against the last one it wrote. */
+#define LOG_SETTINGS_PAYLOAD_LEN 17
+
+/* Bits of the log_GameSettings settings-flags byte — the last byte of the
+ * blob, added once the flags byte at offset 9 filled up. An old recording
+ * does not carry the byte at all and a reader treats it as zero, so every
+ * bit here has to mean "off / classic behaviour" when clear. */
+#define LOG_SETTINGS_FLAG_SMART_PINGS_OFF 0x01u
+
+/* Build the log_GameSettings blob in the pascal form logAddEvent takes:
+ * out[0] is the byte count and out[1..] the fields, layout in
+ * docs/replay-format.md. out needs room for the count plus the payload.
+ * Exposed for tests; the log writer calls it on its own emit paths. */
+void serverDedicatedLogBuildSettings(struct ServerSim *sim, char *out);
+
 #endif /* SERVER_DEDICATED_LOG_H */

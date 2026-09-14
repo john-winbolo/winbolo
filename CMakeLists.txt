@@ -1632,6 +1632,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/global.c
     src/logviewer/labels.c
     src/logviewer/messages.c
+    src/logviewer/game_settings_blob.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
