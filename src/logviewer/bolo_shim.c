@@ -354,11 +354,20 @@ struct SDL_Surface *flagsGetSurface(const char countryCode[2]) {
   return NULL;
 }
 
-struct SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
+struct SDL_Surface *sdl3ImguiGetBotIconSurface(bool isAlly) {
+  (void)isAlly;
   return NULL;
 }
 
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
+  (void)playerNum;
+  return false;
+}
+
+/* The log viewer compiles tank_label.c, which asks this to pick a bot's chip.
+ * There are no alliances to report when replaying a recording, and the bot
+ * branch above never fires here anyway, so the red chip is the answer. */
+bool sdl3ImguiPlayerIsAlly(unsigned char playerNum) {
   (void)playerNum;
   return false;
 }

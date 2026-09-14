@@ -66,6 +66,34 @@ static inline void imguiApplyBoloTheme(void) {
     c[ImGuiCol_Border]       = ImVec4(0.22f, 0.24f, 0.28f, 0.60f);
     c[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
 
+    /* Player-list rows — the zebra banding.
+     *
+     * Set here, in the palette, and not in either list that draws one. Two
+     * lists show players: the lobby's team tables and the in-game players
+     * panel. Both read these two colours, so this is the one place a row
+     * shade is decided and the two cannot drift apart. Neither leaves the
+     * striping to ImGui — the lobby drives its own per player rather than
+     * per table row, so a bot's expanded form keeps its parent's shade, and
+     * the panel has no table to stripe at all. They agree because they read
+     * the same two names, not because ImGui paints for them.
+     *
+     * NOTE this moves the LOBBY too. Raising the alt row from six percent
+     * lifts its banding by the same amount, which is the point of putting
+     * the shade here rather than in one list.
+     *
+     * The theme used to set neither, which left ImGui's own — the first
+     * fully transparent, the second white at six percent. Six percent is
+     * under what the eye separates on a ground this dark, so both lists had
+     * striping in the code and very little of it on the screen.
+     *
+     * One row painted and one bare, rather than two shades: an overlay
+     * follows whatever window it lands on — the panel's WindowBg, a popup's
+     * PopupBg, a lobby team panel's transparent ChildBg over the lobby
+     * background — where a pair of fixed greys would suit one of them and
+     * fight the rest. */
+    c[ImGuiCol_TableRowBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_TableRowBgAlt]  = ImVec4(1.00f, 1.00f, 1.00f, 0.11f);
+
     /* Frames (input boxes, checkboxes, etc.) */
     c[ImGuiCol_FrameBg]        = ImVec4(0.16f, 0.17f, 0.20f, 1.00f);
     c[ImGuiCol_FrameBgHovered] = ImVec4(0.20f, 0.22f, 0.27f, 1.00f);
