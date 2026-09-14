@@ -570,6 +570,9 @@ bool              serverSimBotExecLua(ServerSim *sim, BYTE playerNum,
                                       const char *src);
 char             *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
                                             const char *src);
+bool              serverSimBotSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
+                                                 const char *name,
+                                                 const char *value);
 
 /* serverSimSetTeam: moved to internal/server_sim_lifecycle.h —
  * applied by UDP PACKET_LOBBY_TEAM_SET / PACKET_LOBBY_ADD_BOT

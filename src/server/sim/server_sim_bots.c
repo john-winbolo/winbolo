@@ -179,6 +179,11 @@ char *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
     return botManagerEvalLuaString(sim, playerNum, src);
 }
 
+bool serverSimBotSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
+                                    const char *name, const char *value) {
+    return botManagerSetLuaGlobalString(sim, playerNum, name, value);
+}
+
 void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
     if (path == NULL || path[0] == '\0') {
         sim->botBrainPath[0] = '\0';

@@ -887,6 +887,23 @@ int botManagerGetActiveBotCount(const struct ServerSim *sim);
 int botManagerActiveBotCountForLua(struct lua_State *L);
 
 /*********************************************************
+ *NAME:          botManagerSetLuaGlobalString
+ *PURPOSE:
+ *  Set a string-valued global in the bot's Lua state by
+ *  pushing the value on the stack. Use this instead of
+ *  building `_G.name="value"` source text, which breaks on
+ *  any value holding a backslash or a quote (Windows
+ *  paths). Returns false when the bot is inactive.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot
+ *  name      - Global name
+ *  value     - String value
+ *********************************************************/
+bool botManagerSetLuaGlobalString(struct ServerSim *sim, BYTE playerNum,
+                                  const char *name, const char *value);
+
+/*********************************************************
  *NAME:          botManagerEvalLuaString
  *PURPOSE:
  *  Compile + run a Lua chunk in the bot's state and return

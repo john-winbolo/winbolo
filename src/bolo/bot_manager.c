@@ -1027,10 +1027,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     if (brainRecordIsEnabled() && bot->brain.L != NULL) {
         const char *sdir = brainRecordGetSessionDir();
         if (sdir != NULL && sdir[0] != '\0') {
-            char setSession[600];
-            snprintf(setSession, sizeof(setSession),
-                     "_G.DEBUG_SESSION_DIR=\"%s\"", sdir);
-            botManagerExecLua(sim, playerNum, setSession);
+            botManagerSetLuaGlobalString(sim, playerNum,
+                                         "DEBUG_SESSION_DIR", sdir);
             botManagerExecLua(sim, playerNum,
                 "local ok,p=pcall(require,'print2'); "
                 "if ok and p.reset_log then p.reset_log() end");
@@ -1973,6 +1971,22 @@ bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
         lua_pop(L, 1);
         return false;
     }
+    return true;
+}
+
+bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
+                                  const char *name, const char *value) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    if (!sim->botMgr.bots[playerNum].active) return false;
+    if (!sim->botMgr.bots[playerNum].brain.running) return false;
+    lua_State *L = sim->botMgr.bots[playerNum].brain.L;
+    if (!L || !name || !value) return false;
+    /* Set the global through the stack, never by pasting the value into
+     * a source chunk: a Windows path such as C:\dbg\2026 holds \d and \2,
+     * which are not Lua escapes, so the chunk would fail to load and the
+     * global would silently stay unset. */
+    lua_pushstring(L, value);
+    lua_setglobal(L, name);
     return true;
 }
 

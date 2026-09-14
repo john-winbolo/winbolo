@@ -6306,12 +6306,11 @@ int main(int argc, char *argv[]) {
          * the path works for Lua's io.open under both Windows and bash
          * harnesses. */
         if (g_sessionDir[0]) {
-            char setSession[FILENAME_MAX + 64];
-            SDL_snprintf(setSession, sizeof(setSession),
-                         "_G.DEBUG_SESSION_DIR=\"%s\"", g_sessionDir);
             for (int i = 0; i < optNumPlayers; i++) {
                 if (serverSimIsBot(app.sim, (BYTE)i)) {
-                    serverSimBotExecLua(app.sim, (BYTE)i, setSession);
+                    serverSimBotSetLuaGlobalString(app.sim, (BYTE)i,
+                                                   "DEBUG_SESSION_DIR",
+                                                   g_sessionDir);
                     /* Tell the brain the SAME index BrainTest uses for the HUD
                      * "Bot: N" / Copy reference (= followBot, the tank slot), so
                      * its print2_bot<N>.log filename matches what you copy.
