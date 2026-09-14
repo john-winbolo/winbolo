@@ -2474,8 +2474,14 @@ static int runFastMode(void) {
    * free slot, so seating a horde first would put it in slot 0 and leave this
    * process's own player somewhere above it. A map with no scenario has no
    * template, and this seats nothing. */
+  /* And the lobby's own settings, in the order a map commit does the two:
+   * the map change seats the template and the rules follow it. Without this
+   * a run booted onto a scripted map stays on the game type it started with,
+   * so gameTypeResolve is never asked and the game the scenario declares is
+   * ignored for the whole run. */
   if (scenarioHost != NULL) {
     serverSimScenarioSeatLobby(fastServerSim);
+    serverSimScenarioApplyLobbyRules(fastServerSim);
   }
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 

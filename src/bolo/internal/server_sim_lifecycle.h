@@ -36,6 +36,14 @@ void serverSimScenarioSeatLobby(ServerSim *sim);
 void serverSimScenarioReconcileLobby(ServerSim *sim);
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
 
+/* The lobby's own settings brought into line with the scenario attached now
+ * — the game type, ranked and the AI policy. Both points a lobby first
+ * learns its scenario need it: a map commit, which calls it straight after
+ * OnMapChanged, and a server or headless run booting on a scripted map,
+ * which attaches and seats without any commit. Defined beside the seating
+ * in server_sim_scenario.c. */
+void serverSimScenarioApplyLobbyRules(ServerSim *sim);
+
 /* Whether the map at mapPath has a script beside it, asked through whatever
  * the process registered with serverSimSetScenarioMapScripted. False with
  * nothing registered, which is what a build carrying no scenario library

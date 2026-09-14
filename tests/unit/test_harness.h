@@ -2296,8 +2296,9 @@ int run_scenario_roster_spawn_loadout_not_next_life(void);
 
 /* What the lobby says about its scenario (test_lobby_scenario_settings.c):
  * the settings body with and without one, byte for byte; the scripted game
- * type a commit sets and gives back; and the settings a scenario does
- * not go with. */
+ * type a commit sets and gives back, and the same type on a server that
+ * booted onto the map with no commit to set it; and the settings a scenario
+ * does not go with. */
 int run_lobby_scenario_settings_plain_bytes(void);
 int run_lobby_scenario_settings_scripted_bytes(void);
 int run_lobby_scenario_settings_roundtrip(void);
@@ -2305,6 +2306,7 @@ int run_lobby_scenario_commit_sets_type(void);
 int run_lobby_scenario_refuses_ranked(void);
 int run_lobby_scenario_refuses_ai_none(void);
 int run_lobby_scenario_refuses_game_type(void);
+int run_lobby_scenario_boot_sets_type(void);
 
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that

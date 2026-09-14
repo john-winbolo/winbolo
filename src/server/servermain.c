@@ -2414,8 +2414,14 @@ int main(int argc, char **argv) {
      participant joins over the wire — so there is no slot to keep back.
 
      A map with no scenario has no template and this seats nothing. */
+  /* And the lobby's own settings, in the order a map commit does the two:
+     the map change seats the template and the rules follow it. Without this
+     a server booted onto a scripted map stays on the operator's game type,
+     so gameTypeResolve is never asked and the game the scenario declares is
+     ignored for the whole run. */
   if (scenarioHost != NULL) {
     serverSimScenarioSeatLobby(serverSim);
+    serverSimScenarioApplyLobbyRules(serverSim);
   }
 
   /* botBrainPath + botAiType were already pushed into the sim via the

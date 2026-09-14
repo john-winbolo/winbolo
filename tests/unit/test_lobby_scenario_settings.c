@@ -25,6 +25,8 @@
  * run_lobby_scenario_refuses_ai_none       — and the policy that empties the
  *                                            roster of bots
  * run_lobby_scenario_refuses_game_type     — and the type the commit set
+ * run_lobby_scenario_boot_sets_type        — and the same type on a server
+ *                                            that booted onto the map
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -523,6 +525,65 @@ int run_lobby_scenario_refuses_game_type(void) {
     UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &types[1], 1),
                   "the game type stayed refused after the scenario went");
     UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 8. The server that booted straight onto a scripted map ───────── */
+
+int run_lobby_scenario_boot_sets_type(void) {
+    ServerSim *sim = lsLobbySim();
+
+    UT_ASSERT(sim != NULL);
+
+    /* The boot shape: the sim is built and the identity attached, and no map
+       is ever committed. That is the whole of what a fresh boot does, and
+       before the rules were callable on their own the commit was the only
+       thing that reached them.
+
+       The type the sim is put on here stands in for the operator's
+       -gametype. Tournament rather than the gameOpen lsLobbySim() builds, so
+       the case can tell the remembered type from the default. */
+    serverSimSetGameType(sim, gameTournament);
+    lsAttachIdentity(sim);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
+                  "a boot onto a scripted map left the game type at %d",
+                  (int)serverSimGetGameType(sim));
+    /* Remembered with no special case for this path: the type the lobby was
+       on is the operator's, and that is exactly what a plain map committed
+       later has to give back. */
+    UT_ASSERT_MSG(sim->preScenarioGameType == gameTournament,
+                  "the boot remembered %d as the displaced type, wanted "
+                  "tournament (%d)",
+                  (int)sim->preScenarioGameType, (int)gameTournament);
+
+    /* And the give-back works from here as it does after a commit. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
+                                 false);
+    UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
+                  "a plain commit after a boot gave back game type %d, "
+                  "wanted the operator's tournament (%d)",
+                  (int)serverSimGetGameType(sim), (int)gameTournament);
+
+    serverSimDestroy(sim);
+
+    /* The same boot on a map with no scenario leaves the lobby alone. The
+       boot sites make the call whenever the process has a scenario library,
+       so a plain map reaches it with nothing attached. */
+    sim = lsLobbySim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetGameType(sim, gameStrictTournament);
+    serverSimScenarioApplyLobbyRules(sim);
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameStrictTournament,
+                  "a boot onto a plain map moved the game type to %d",
+                  (int)serverSimGetGameType(sim));
+    UT_ASSERT_MSG(sim->preScenarioGameType == (gameType)0,
+                  "a boot onto a plain map remembered %d as a displaced type",
+                  (int)sim->preScenarioGameType);
 
     serverSimDestroy(sim);
     return 0;
