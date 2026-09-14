@@ -6,7 +6,7 @@
  * their own and run a chunk, which is what lets a case compare what a row
  * marshalled against what the accessor behind it returned. The cases that
  * are about the host — the table on the round's own VM, and what the error
- * limit makes of a raise inside a row — attach a real sidecar.
+ * limit makes of a raise inside a row — attach a real script.
  *
  * run_scenario_lua_every_row_answers   — a script calls every row in the
  *                                        registry once and none of them
@@ -30,10 +30,10 @@
  * run_scenario_lua_shape_error_counts  — a mistyped argument raises naming
  *                                        the argument, and each raise
  *                                        counts one toward SCN_ERROR_LIMIT
- * run_scenario_lua_rule_reads_the_table— game.rule answers what the sidecar
+ * run_scenario_lua_rule_reads_the_table— game.rule answers what the script
  *                                        set, and a name that spells no
  *                                        rule raises
- * run_scenario_lua_tags_and_regions    — the tags and regions a sidecar
+ * run_scenario_lua_tags_and_regions    — the tags and regions a script
  *                                        declares read back, a square
  *                                        inside a region and one outside
  *
@@ -240,22 +240,22 @@ static ServerSim *slLobbySim(void) {
     return sim;
 }
 
-/* ── Sidecars, for the host-driven cases ──────────────────────────── */
+/* ── Scripts, for the host-driven cases ───────────────────────────── */
 
-static void slSidecarFor(const char *mapPath, char *out, size_t outLen) {
+static void slScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     if (n > 4) {
         n -= 4;                     /* drop ".map" */
     }
-    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SIDECAR_SUFFIX);
+    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
 static bool slPut(const char *mapPath, const char *lua) {
-    char  side[512];
+    char  path[512];
     FILE *f;
 
-    slSidecarFor(mapPath, side, sizeof(side));
-    f = fopen(side, "wb");
+    slScriptFor(mapPath, path, sizeof(path));
+    f = fopen(path, "wb");
     if (f == NULL) {
         return false;
     }
@@ -265,9 +265,9 @@ static bool slPut(const char *mapPath, const char *lua) {
 }
 
 static void slDrop(const char *mapPath) {
-    char side[512];
-    slSidecarFor(mapPath, side, sizeof(side));
-    remove(side);
+    char path[512];
+    slScriptFor(mapPath, path, sizeof(path));
+    remove(path);
 }
 
 /* A hook says what it read by writing a line to this case's own file. The
@@ -812,7 +812,7 @@ int run_scenario_lua_shape_error_counts(void) {
     sim = slLobbySim();
     UT_ASSERT(sim != NULL);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
 
@@ -848,7 +848,7 @@ int run_scenario_lua_shape_error_counts(void) {
 /* ── 8. A rule reads back ─────────────────────────────────────────── */
 
 /* Through the host, because the value the row answers is the one the
- * sidecar's own table set: the round start applies the table and the setup
+ * script's own table set: the round start applies the table and the setup
  * call reads it back off the sim. */
 int run_scenario_lua_rule_reads_the_table(void) {
     static const char *const kMap    = "scnlua_rule.map";
@@ -876,13 +876,13 @@ int run_scenario_lua_rule_reads_the_table(void) {
     sim = slLobbySim();
     UT_ASSERT(sim != NULL);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     slRead(kRecord, got, sizeof(got));
 
     UT_ASSERT_MSG(strncmp(got, "9|false|", 8) == 0,
-                  "the setup read '%s', expected the sidecar's 9 and a raise "
+                  "the setup read '%s', expected the script's 9 and a raise "
                   "for the name that spells no rule", got);
     UT_ASSERT_MSG(strstr(got, "no rule is named 'no_rule'") != NULL,
                   "the raise does not name the rule: %s", got);
@@ -896,11 +896,11 @@ int run_scenario_lua_rule_reads_the_table(void) {
 
 /* ── 9. Tags and regions ──────────────────────────────────────────── */
 
-/* The four manifest rows against a sidecar that declares one tag and two
+/* The four manifest rows against a script that declares one tag and two
  * regions: the tag on the pill it names, the same tag found by name, the
  * rectangle read back whole, a square inside it and one outside, and the
  * region names in the order the row promises rather than the order the
- * sidecar's table happened to iterate in. */
+ * script's table happened to iterate in. */
 int run_scenario_lua_tags_and_regions(void) {
     static const char *const kMap    = "scnlua_tags.map";
     static const char *const kRecord = "scnlua_tags.record";
@@ -941,7 +941,7 @@ int run_scenario_lua_tags_and_regions(void) {
     sim = slLobbySim();
     UT_ASSERT(sim != NULL);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     slRead(kRecord, got, sizeof(got));

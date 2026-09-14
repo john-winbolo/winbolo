@@ -3329,7 +3329,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
     tests/unit/test_scenario_host.c
-    # The validator: a sidecar read in a stub VM and checked against the map,
+    # The validator: a script read in a stub VM and checked against the map,
     # the lobby template and the rule catalogue, without a round being run.
     tests/unit/test_scenario_validate.c
     # The binding table: the game table a script reads the sim through, the
@@ -4011,7 +4011,7 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Committed skin fixture directory: the parity test opens
     # <dir>/basic and zips it into the working directory at run time.
     WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
-    # The maps the baseline runs play, and the scenario sidecars that sit
+    # The maps the baseline runs play, and the scenario scripts that sit
     # beside them: the validator case reads one from here.
     WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
 )
@@ -5092,7 +5092,7 @@ set(_unit_test_names
     scenario_host_syntax_error_line
     scenario_host_unknown_rule_key
     scenario_host_api_too_new
-    scenario_host_no_sidecar
+    scenario_host_no_script
     scenario_host_manifest_roundtrip
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach

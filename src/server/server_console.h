@@ -56,7 +56,7 @@ typedef struct {
   /* host <name> — hand the host role to the named player. Returns false
    * if there is no such player. */
   bool (*setHost)(const char *name);
-  /* reload — read the scenario sidecar beside the map again. Writes one
+  /* reload — read the scenario script beside the map again. Writes one
    * line into msg either way: what was re-read, or why nothing was.
    * Returns false when nothing changed.
    *

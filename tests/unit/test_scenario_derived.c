@@ -67,19 +67,19 @@
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
 
-static void sdSidecarFor(const char *mapPath, char *out, size_t outLen) {
+static void sdScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     if (n > 4) {
         n -= 4;                     /* drop ".map" */
     }
-    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SIDECAR_SUFFIX);
+    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
-/* The sidecar: the scenario table the case hands over, the note function
+/* The script: the scenario table the case hands over, the note function
  * every hook writes its line with, and the case's own body. */
 static bool sdPut(const char *mapPath, const char *record, const char *table,
                   const char *body) {
-    char  side[512];
+    char  path[512];
     char  lua[16384];
     FILE *f;
 
@@ -91,8 +91,8 @@ static bool sdPut(const char *mapPath, const char *record, const char *table,
              "end\n"
              "%s", table, record, body);
 
-    sdSidecarFor(mapPath, side, sizeof(side));
-    f = fopen(side, "wb");
+    sdScriptFor(mapPath, path, sizeof(path));
+    f = fopen(path, "wb");
     if (f == NULL) {
         return false;
     }
@@ -102,9 +102,9 @@ static bool sdPut(const char *mapPath, const char *record, const char *table,
 }
 
 static void sdDrop(const char *mapPath) {
-    char side[512];
-    sdSidecarFor(mapPath, side, sizeof(side));
-    remove(side);
+    char path[512];
+    sdScriptFor(mapPath, path, sizeof(path));
+    remove(path);
 }
 
 /* A sim that has not started, ready to be attached to and then started. The
@@ -323,7 +323,7 @@ int run_scenario_derived_timer_fires_on_its_tick(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
 
     UT_ASSERT_MSG(sdTickUntil(sim, kRecord, "fired ") >= 0,
@@ -382,7 +382,7 @@ int run_scenario_derived_timer_cancelled_and_stale(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
 
     /* Well past the two seconds the cancelled one was set for. */
@@ -443,7 +443,7 @@ int run_scenario_derived_timer_limit_boundary(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimTick(sim);
     sdRead(kRecord, rec, sizeof(rec));
@@ -493,7 +493,7 @@ int run_scenario_derived_timers_die_with_the_round(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     for (i = 0; i < 10; i++) {
@@ -562,7 +562,7 @@ int run_scenario_derived_region_enter_and_leave(void) {
     UT_ASSERT(sdPut(kMap, kRecord, table, kBody));
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
     UT_ASSERT_MSG(sdWaitForTank(sim), "slot 0 never got a tank");
@@ -622,7 +622,7 @@ int run_scenario_derived_region_enter_and_leave(void) {
  * the declared ones come out of, and finds the limit still lets a
  * replacement through — replacing costs no room. Then a second round, which
  * reads the scenario table over the whole list again and so begins with
- * only what the sidecar declares.
+ * only what the script declares.
  *
  * The rectangles are the case's own numbers and nothing is assumed about
  * the map underneath them: a region is arithmetic on two coordinates. */
@@ -666,7 +666,7 @@ int run_scenario_derived_define_region_adds_replaces_and_expires(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     sdRead(kRecord, rec, sizeof(rec));
 
@@ -770,7 +770,7 @@ int run_scenario_derived_region_loop_terminates(void) {
     UT_ASSERT(sdPut(kMap, kRecord, table, body));
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
     UT_ASSERT_MSG(sdWaitForTank(sim), "slot 0 never got a tank");
@@ -863,7 +863,7 @@ int run_scenario_derived_fixture_wins_without_on_tick(void) {
     UT_ASSERT(sdPut(kMap, kRecord, table, kBody));
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
     UT_ASSERT_MSG(sdWaitForTank(sim), "slot 0 never got a tank");

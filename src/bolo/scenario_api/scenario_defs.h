@@ -68,7 +68,7 @@ typedef struct {
 /* The lobby a scenario asks for. The host reads this out of its manifest and
  * hands the sim a copy, so the engine seats and reconciles it without calling
  * back into the host — the dependency points one way and the sim needs no
- * notion of a manifest, a sidecar or Lua.
+ * notion of a manifest, a script or Lua.
  *
  * maxPlayers is a cap on humans only; bots seat above it. 0 leaves the
  * server's own cap alone. */

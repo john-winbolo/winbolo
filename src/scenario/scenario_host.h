@@ -29,7 +29,7 @@
 #include "server_sim.h" /* ServerSim, and MAX_TANKS / MAX_PILLS / MAX_BASES /
                          * MAX_STARTS through global.h and types.h */
 
-/* The API version this server implements. A sidecar states the version it
+/* The API version this server implements. A script states the version it
  * was written against as scenario.api; one written against a newer server
  * than this is refused rather than half-understood. */
 #define SCENARIO_API_VERSION 1
@@ -50,7 +50,7 @@
  * script handed an id has been promised that call.
  *
  * Declared and defined regions share SCN_REGIONS_MAX above — the sixty-four
- * are the round's, however many of them the sidecar wrote down. */
+ * are the round's, however many of them the file wrote down. */
 #define SCN_TIMERS_MAX       64
 
 /* The text fields of the scenario table. The name is what a lobby row
@@ -72,19 +72,19 @@
  * covers the rule list, so a rule added to the list cannot overflow it. */
 #define SCN_MANIFEST_RULES_MAX 128
 
-/* A map path plus the sidecar suffix. Map paths reach the server from a
+/* A map path plus the script suffix. Map paths reach the server from a
  * command line, so this matches what those buffers hold. */
-#define SCN_SIDECAR_PATH_MAX 2304
+#define SCN_SCRIPT_PATH_MAX 2304
 
-/* The sidecar a map is looked for beside: X.map is accompanied by
+/* The script a map is looked for beside: X.map is accompanied by
  * X.scenario.lua. */
-#define SCN_SIDECAR_SUFFIX ".scenario.lua"
+#define SCN_SCRIPT_SUFFIX ".scenario.lua"
 
-/* The most a sidecar may hold. It is hand-written Lua, so a megabyte is far
+/* The most a script may hold. It is hand-written Lua, so a megabyte is far
  * more than one ever needs and still well inside the four a whole packaged
  * scenario is allowed on the wire. A file above it is refused rather than
  * read, because at that size it is not a script. */
-#define SCN_SIDECAR_MAX_BYTES (1024 * 1024)
+#define SCN_SCRIPT_MAX_BYTES (1024 * 1024)
 
 /* How many hook or policy calls may raise in a row before the scenario is
  * switched off for the rest of the round. Any call that returns normally
@@ -140,7 +140,7 @@ void scenarioHostSetEnabled(bool enabled);
 /*********************************************************
  *NAME:          scenarioHostAttach
  *PURPOSE:
- *  Looks for a sidecar beside mapPath, reads it, boots a VM,
+ *  Looks for a script beside mapPath, reads it, boots a VM,
  *  runs its chunk and reads its scenario table. Registers
  *  itself on the sim, so the round start that follows applies
  *  the scenario's rules.
@@ -150,9 +150,9 @@ void scenarioHostSetEnabled(bool enabled);
  *  server is up changes nothing until something asks the host
  *  to read it again.
  *
- *  Returns NULL when there is no sidecar, which is the
+ *  Returns NULL when there is no script, which is the
  *  ordinary case and not an error: err is left empty and the
- *  server runs a plain map. Returns NULL on a sidecar that
+ *  server runs a plain map. Returns NULL on a script that
  *  cannot be used — one too large to be a script, a syntax
  *  error, an error raised by the chunk, no scenario table, or
  *  an api newer than this server — and writes one operator
@@ -171,9 +171,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
 /*********************************************************
  *NAME:          scenarioHostReload
  *PURPOSE:
- *  Reads the sidecar from disk again and, if the new bytes
+ *  Reads the script from disk again and, if the new bytes
  *  are usable, keeps them in place of the ones the host was
- *  holding. Usable means: inside SCN_SIDECAR_MAX_BYTES, the
+ *  holding. Usable means: inside SCN_SCRIPT_MAX_BYTES, the
  *  chunk loads and runs, a scenario table comes out of it,
  *  and its api is not above this server's.
  *
@@ -193,7 +193,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen);
  *NAME:          scenarioHostDetach
  *PURPOSE:
  *  Takes the host off the sim, closes its VM, drops the
- *  sidecar bytes it was holding and frees it.
+ *  script's bytes it was holding and frees it.
  *  NULL is a no-op, so a caller that attached nothing can
  *  detach unconditionally on the way out.
  *********************************************************/
@@ -205,7 +205,7 @@ void scenarioHostDetach(ScenarioHost *h);
  *  Keeps *slot pointing at whichever scenario the sim's
  *  committed map has. Each time a map is committed the sim
  *  calls in here: the scenario the previous map had is
- *  detached, a sidecar beside the new file is looked for,
+ *  detached, a script beside the new file is looked for,
  *  and *slot is set to the result or to NULL when the map
  *  has none. The lobby the new scenario asks for is handed
  *  to the sim as part of that, and the sim seats it.
@@ -220,7 +220,7 @@ void scenarioHostDetach(ScenarioHost *h);
  *  scripts are off, or the one it could not use. All three
  *  are logged rather than returned, because there is nobody
  *  to answer at the point a map is committed and a bad
- *  sidecar still leaves a playable map. A map with no script
+ *  script still leaves a playable map. A map with no script
  *  beside it says nothing, so a rotation over plain maps is
  *  as quiet as it was.
  *********************************************************/
@@ -251,13 +251,13 @@ const char *scenarioHostName(const ScenarioHost *h);
 const char *scenarioHostDescription(const ScenarioHost *h);
 
 /*********************************************************
- *NAME:          scenarioHostSidecarPath
+ *NAME:          scenarioHostScriptPath
  *PURPOSE:
- *  The sidecar file the host read, for an operator asking
+ *  The script file the host read, for an operator asking
  *  which file is in play. "" when no scenario is attached;
  *  never NULL.
  *********************************************************/
-const char *scenarioHostSidecarPath(const ScenarioHost *h);
+const char *scenarioHostScriptPath(const ScenarioHost *h);
 
 /*********************************************************
  *NAME:          scenarioHostLastError

@@ -961,7 +961,7 @@ static int scnLuaRegion(lua_State *L) {
 }
 
 /* The names, in name order. The manifest holds regions in whatever order the
- * sidecar's table iterated in, which is not the same order under the two Lua
+ * script's table iterated in, which is not the same order under the two Lua
  * builds, so the array a script walks is sorted here and a script reading it
  * gets the same round twice. */
 static int scnLuaRegions(lua_State *L) {
@@ -2547,7 +2547,7 @@ static int scnLuaSetRule(lua_State *L) {
  * second region nobody was ever in.
  *
  * Declared and defined regions share the one list and the one limit. What a
- * script defines lasts the round: the next round start reads the sidecar's
+ * script defines lasts the round: the next round start reads the file's
  * regions over the whole list again. */
 static int scnLuaDefineRegion(lua_State *L) {
     const ScnLuaCtx   *c    = scnCtx(L);
@@ -2576,7 +2576,7 @@ static int scnLuaDefineRegion(lua_State *L) {
                           "the corner is %d,%d and a square runs 0 to 255",
                           (int)x, (int)y);
     }
-    /* A side is a byte here because it is a byte in the table a sidecar
+    /* A side is a byte here because it is a byte in the table a script
        declares, and the two are one list. A region that wants the whole of
        an axis is 255 wide and one column short of it, which is what a
        declared region has always been. */

@@ -8,7 +8,7 @@
  *Filename:      scenario_validate.h
  *Author:        John Morrison
  *Purpose:
- *  Reads the sidecar beside a map and says what is wrong
+ *  Reads the script beside a map and says what is wrong
  *  with it: the api it asks for, the lobby it seats, the
  *  rules it sets, the entities it tags and the rectangles it
  *  names, each problem as a key, a line and a message.
@@ -20,7 +20,7 @@
  *
  *  The manifest the checks ran against comes back beside
  *  them. It is the same struct the host reads at attach and
- *  the same one a package is written from, so a sidecar is
+ *  the same one a package is written from, so a script is
  *  read one way whether a round is being started on it or an
  *  author is being told about a typo in it.
  *
@@ -54,7 +54,7 @@ typedef struct {
 } ScnValidateIssue;
 
 typedef struct {
-    bool             haveManifest;   /* false when no sidecar, or it failed to run */
+    bool             haveManifest;   /* false when no script, or it failed to run */
     uint16_t         count;
     uint16_t         dropped;        /* problems past SCN_VALIDATE_ISSUES_MAX */
     ScnValidateIssue issues[SCN_VALIDATE_ISSUES_MAX];
@@ -65,21 +65,21 @@ typedef struct {
 /*********************************************************
  *NAME:          scenarioValidateMap
  *PURPOSE:
- *  Looks for a sidecar beside mapPath, runs its top-level
+ *  Looks for a script beside mapPath, runs its top-level
  *  chunk in a VM with a stub game table, reads the scenario
  *  table it declares into out->manifest, and checks that
  *  table against the map sim holds, the lobby it asks for
  *  and the rule catalogue.
  *
  *  Returns true for a map that is acceptable: one with no
- *  sidecar beside it at all — haveManifest false, no issues,
+ *  script beside it at all — haveManifest false, no issues,
  *  which is the ordinary case rather than a fault — or one
- *  whose sidecar produced no issue. False for a file that
+ *  whose script produced no issue. False for a file that
  *  could not be read, a chunk that did not run, and any
- *  sidecar with an issue against it. A NULL out or a NULL
+ *  script with an issue against it. A NULL out or a NULL
  *  mapPath returns false.
  *
- *  The manifest is filled for every sidecar that parsed,
+ *  The manifest is filled for every script that parsed,
  *  whether or not issues were found, so a caller that wants
  *  what the table says has it from the same call.
  *
@@ -128,19 +128,19 @@ typedef struct {
 struct lua_State;
 
 /*********************************************************
- *NAME:          scnSidecarPath
+ *NAME:          scnScriptPath
  *PURPOSE:
- *  The sidecar a map is looked for beside: .../X.map is
+ *  The script a map is looked for beside: .../X.map is
  *  accompanied by .../X.scenario.lua. A path that does not
  *  end in .map keeps its whole name and takes the suffix as
  *  it is. False when the result would not fit.
  *********************************************************/
-bool scnSidecarPath(const char *mapPath, char *out, size_t outLen);
+bool scnScriptPath(const char *mapPath, char *out, size_t outLen);
 
 /*********************************************************
  *NAME:          scnReadFile
  *PURPOSE:
- *  The whole sidecar, into a buffer the caller owns and
+ *  The whole script, into a buffer the caller owns and
  *  frees. False with err set when the file is there but
  *  cannot be used — too large to be a script, or unreadable
  *  — and false with err left empty when there is no file at

@@ -67,7 +67,7 @@ typedef struct {
  *
  * The manifest is not const: define_region writes a region into it, which is
  * the one row that writes here rather than through the op funnel. It is the
- * round's own copy of the table — a round start reads the sidecar's bytes
+ * round's own copy of the table — a round start reads the script's bytes
  * over it — so what a script defines lasts the round and no longer.
  *
  * timers may be NULL, which leaves a state with no timers: the row refuses
@@ -353,7 +353,7 @@ const char *scenarioLuaResultName(int result);
  *  The index of the rule a name spells, or -1 for a name
  *  that spells none. A rule's name in a script is its name
  *  in the rule list, so the list is the only place the
- *  spelling exists: the sidecar's rules table and the
+ *  spelling exists: the script's rules table and the
  *  game.rule row resolve a name through this one lookup.
  *********************************************************/
 int scenarioLuaRuleIndex(const char *name);

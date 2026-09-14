@@ -104,26 +104,26 @@
 
 /* ── Fixtures ─────────────────────────────────────────────────────────── */
 
-/* A sidecar sits beside the map: X.map is accompanied by X.scenario.lua. The
-   map file itself is never written — the host reads the sidecar beside a map
+/* A script sits beside the map: X.map is accompanied by X.scenario.lua. The
+   map file itself is never written — the host reads the script beside a map
    path and nothing else, and the sims here are built from the built-in map. */
-static void plaSidecarFor(const char *mapPath, char *out, size_t outLen) {
+static void plaScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     if (n > 4) {
         n -= 4;                     /* drop ".map" */
     }
-    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SIDECAR_SUFFIX);
+    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
 /* The script, with the note() every case writes its record through in front
    of it. */
 static bool plaPut(const char *mapPath, const char *record, const char *body) {
-    char  side[512];
+    char  path[512];
     FILE *f;
 
     remove(record);
-    plaSidecarFor(mapPath, side, sizeof(side));
-    f = fopen(side, "wb");
+    plaScriptFor(mapPath, path, sizeof(path));
+    f = fopen(path, "wb");
     if (f == NULL) {
         return false;
     }
@@ -138,9 +138,9 @@ static bool plaPut(const char *mapPath, const char *record, const char *body) {
 }
 
 static void plaDrop(const char *mapPath, const char *record) {
-    char side[512];
-    plaSidecarFor(mapPath, side, sizeof(side));
-    remove(side);
+    char path[512];
+    plaScriptFor(mapPath, path, sizeof(path));
+    remove(path);
     remove(record);
 }
 
@@ -180,7 +180,7 @@ static ServerSim *plaSimOfType(const char *mapPath, ScenarioHost **host,
     err[0] = '\0';
     *host = scenarioHostAttach(sim, mapPath, err, sizeof(err));
     if (*host == NULL) {
-        fprintf(stderr, "the sidecar was refused: %s\n", err);
+        fprintf(stderr, "the script was refused: %s\n", err);
         serverSimDestroy(sim);
         return NULL;
     }

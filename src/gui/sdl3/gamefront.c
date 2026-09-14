@@ -422,7 +422,7 @@ static bool s_joinAttemptFailed = FALSE;
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
 /* The scenario attached to spServerSim, if the map it was built from has
- * a sidecar beside it. NULL whenever there is no host to speak of, which
+ * a script beside it. NULL whenever there is no host to speak of, which
  * scenarioHostDetach treats as nothing to do. */
 static ScenarioHost *spScenarioHost = NULL;
 static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
@@ -1680,9 +1680,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           /* Embedded server: silence its console messages (Thread Manager
            * Startup, Game started!, …) — the client has no server console. */
           serverSimSetQuiet(spServerSim, true);
-          /* A scenario sidecar beside the map this game was built from. A
+          /* A scenario script beside the map this game was built from. A
              random or built-in map has no file on disk, so it carries none.
-             No sidecar says nothing; one loaded, one that cannot be used and
+             No script says nothing; one loaded, one that cannot be used and
              one refused because scripts are off each say so. The switch is
              the library's, so this path has no test of its own. */
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
@@ -1693,7 +1693,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             if (spScenarioHost != NULL) {
               WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
                           scenarioHostName(spScenarioHost),
-                          scenarioHostSidecarPath(spScenarioHost));
+                          scenarioHostScriptPath(spScenarioHost));
             } else if (scenarioErr[0] != '\0') {
               WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
             }
@@ -2835,7 +2835,7 @@ bool gameFrontSetupServer(void) {
   /* Embedded listen server: silence its console messages — no server console. */
   serverSimSetQuiet(spServerSim, true);
 
-  /* A scenario sidecar beside the map, as on the single-player path. */
+  /* A scenario script beside the map, as on the single-player path. */
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -2843,7 +2843,7 @@ bool gameFrontSetupServer(void) {
     if (spScenarioHost != NULL) {
       WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
                   scenarioHostName(spScenarioHost),
-                  scenarioHostSidecarPath(spScenarioHost));
+                  scenarioHostScriptPath(spScenarioHost));
     } else if (scenarioErr[0] != '\0') {
       WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
     }

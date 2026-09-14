@@ -75,19 +75,19 @@
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
 
-static void seSidecarFor(const char *mapPath, char *out, size_t outLen) {
+static void seScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     if (n > 4) {
         n -= 4;                     /* drop ".map" */
     }
-    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SIDECAR_SUFFIX);
+    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
 static bool sePut(const char *mapPath, const char *lua) {
-    char  side[512];
+    char  path[512];
     FILE *f;
-    seSidecarFor(mapPath, side, sizeof(side));
-    f = fopen(side, "wb");
+    seScriptFor(mapPath, path, sizeof(path));
+    f = fopen(path, "wb");
     if (f == NULL) {
         return false;
     }
@@ -97,9 +97,9 @@ static bool sePut(const char *mapPath, const char *lua) {
 }
 
 static void seDrop(const char *mapPath) {
-    char side[512];
-    seSidecarFor(mapPath, side, sizeof(side));
-    remove(side);
+    char path[512];
+    seScriptFor(mapPath, path, sizeof(path));
+    remove(path);
 }
 
 static ServerSim *seSim(void) {
@@ -290,7 +290,7 @@ int run_scenario_events_queued_then_drained(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
 
     q = scenarioHostEventQueue(h);
@@ -646,7 +646,7 @@ int run_scenario_events_no_scenario_delivers_nothing(void) {
                   sim->numEventSubscribers);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     UT_ASSERT_MSG(sim->numEventSubscribers == 1,
                   "an attached scenario left %d event subscribers, expected "
                   "the one it registers", sim->numEventSubscribers);
@@ -680,7 +680,7 @@ int run_scenario_events_lobby_tick_drains(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,
                   "the sim is in state %d, expected the lobby",
                   (int)serverSimGetState(sim));
@@ -731,7 +731,7 @@ int run_scenario_events_control_reaches_the_queue(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
 
     q = scenarioHostEventQueue(h);
@@ -801,7 +801,7 @@ int run_scenario_events_both_channels_in_publish_order(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
 
     q = scenarioHostEventQueue(h);

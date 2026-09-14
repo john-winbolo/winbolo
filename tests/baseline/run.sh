@@ -349,7 +349,7 @@ run_events_cmd_fast() {
   fi
 }
 
-# Run WinBoloHeadless --fast with a command stream and a scenario sidecar
+# Run WinBoloHeadless --fast with a command stream and a scenario script
 # beside the map, and look for the line the scenario ends the round with.
 # Arguments: name, map, command file, bot brain, ticks, the line to find.
 #
@@ -376,7 +376,7 @@ run_scenario_fast() {
   else
     echo "NO END"
     echo "    the round never said: $want"
-    # The attach line and any complaint about the sidecar go to stderr; the
+    # The attach line and any complaint about the script go to stderr; the
     # scenario's own console lines go to stdout.
     tail -10 "$ACTUAL/$name.err"
     tail -10 "$ACTUAL/$name.out"
@@ -905,8 +905,8 @@ BASE_YARD_MAP="$MAPS/Base Yard.map"
 PILL_YARD_MAP="$MAPS/Pill Yard.map"
 GRASS_FLAT_MAP="$MAPS/Grass Flat.map"
 WATCH_ROAD_MAP="$MAPS/Watch Road.map"
-# A copy of Slugfest IV with a scenario sidecar beside it. The copy is what
-# keeps the sidecar off the Slugfest cases: a scenario is found by the map's
+# A copy of Slugfest IV with a scenario script beside it. The copy is what
+# keeps the script off the Slugfest cases: a scenario is found by the map's
 # own file name.
 WAVE_DEFENSE_MAP="$MAPS/Wave Defense.map"
 

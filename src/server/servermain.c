@@ -270,7 +270,7 @@ static bool consoleOpReloadScenario(char *msg, size_t msgLen) {
            "Scenario '%s': %s re-read. The new settings take effect at the "
            "next round; the round in progress keeps the ones it started with.",
            scenarioHostName(scenarioHost),
-           scenarioHostSidecarPath(scenarioHost));
+           scenarioHostScriptPath(scenarioHost));
   return true;
 }
 
@@ -593,7 +593,7 @@ void printArgs() {
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
-  fprintf(stderr, "-validate <File> - Check the scenario sidecar beside a map and exit without\n");
+  fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
   fprintf(stderr, "                playable, 1 when it is not.\n");
@@ -1181,14 +1181,14 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
   return (window == overviewWindowClassic) ? "classic" : "expanded";
 }
 
-/* One map's scenario sidecar, checked and reported, for -validate. Returns
+/* One map's scenario script, checked and reported, for -validate. Returns
    what the process exits with: 0 for a map that is playable, 1 for one that is
    not. Nothing else in the server is running by the time this is called, and
    nothing it does starts anything. */
 static int validateMapAndReport(char *mapPath) {
   ServerSim *sim;
   ScnValidateResult result;
-  char sidecar[SCN_SIDECAR_PATH_MAX];
+  char script[SCN_SCRIPT_PATH_MAX];
   bool ok;
   uint16_t i;
 
@@ -1203,10 +1203,10 @@ static int validateMapAndReport(char *mapPath) {
      it. */
   setWriteToDebugFileStream(-1);
 
-  /* What the issues are printed against. A path with no room for a sidecar
+  /* What the issues are printed against. A path with no room for a script
      name is reported against the map's own name. */
-  if (scnSidecarPath(mapPath, sidecar, sizeof(sidecar)) == FALSE) {
-    snprintf(sidecar, sizeof(sidecar), "%s", mapPath);
+  if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
+    snprintf(script, sizeof(script), "%s", mapPath);
   }
 
   sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
@@ -1220,22 +1220,22 @@ static int validateMapAndReport(char *mapPath) {
   for (i = 0; i < result.count; i++) {
     const ScnValidateIssue *issue = &result.issues[i];
     if (issue->line > 0) {
-      fprintf(stderr, "%s:%d: %s: %s\n", sidecar, issue->line, issue->key,
+      fprintf(stderr, "%s:%d: %s: %s\n", script, issue->line, issue->key,
               issue->message);
     } else {
-      fprintf(stderr, "%s: %s: %s\n", sidecar, issue->key, issue->message);
+      fprintf(stderr, "%s: %s: %s\n", script, issue->key, issue->message);
     }
   }
 
   if (result.haveManifest == FALSE && result.count == 0) {
-    fprintf(stderr, "%s: no scenario sidecar beside it\n", mapPath);
+    fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
   } else if (ok == TRUE) {
-    fprintf(stderr, "%s: no problems\n", sidecar);
+    fprintf(stderr, "%s: no problems\n", script);
   } else if (result.dropped > 0) {
     fprintf(stderr, "%s: %u problems, and %u more than the list holds\n",
-            sidecar, (unsigned)result.count, (unsigned)result.dropped);
+            script, (unsigned)result.count, (unsigned)result.dropped);
   } else {
-    fprintf(stderr, "%s: %u problem%s\n", sidecar, (unsigned)result.count,
+    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result.count,
             (result.count == 1) ? "" : "s");
   }
 
@@ -1256,7 +1256,7 @@ int main(int argc, char **argv) {
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
   atexit(wb_log_shutdown);
 
-  /* -validate <map> checks a map's scenario sidecar and exits. It is answered
+  /* -validate <map> checks a map's scenario script and exits. It is answered
      here, ahead of the argument checks a server start needs, so a map can be
      checked without a port and a game type to go with it — and before any of
      the network, the tracker, mDNS or a window is brought up. */
@@ -1282,7 +1282,7 @@ int main(int argc, char **argv) {
   int32_t gmeLen;
   char pass[FILENAME_MAX]; /* Password */
   char mapName[2048];
-  /* The map file a scenario sidecar would sit beside, for the two start
+  /* The map file a scenario script would sit beside, for the two start
      paths that have one. -inbuilt and -randommap have no file on disk, so
      they carry no scenario. */
   char scenarioMapPath[2048] = "";
@@ -1582,8 +1582,8 @@ int main(int argc, char **argv) {
     scenarioHostSetEnabled(false);
   }
 
-  /* A scenario sidecar beside the map, when the map came from a file and one
-     is there. No sidecar is the ordinary case and says nothing; a sidecar
+  /* A scenario script beside the map, when the map came from a file and one
+     is there. No script is the ordinary case and says nothing; a script
      that cannot be used says why, as does one -noscenarios turned down, and
      the server runs the map plainly. */
   if (scenarioMapPath[0] != '\0') {
@@ -1591,10 +1591,10 @@ int main(int argc, char **argv) {
     scenarioHost = scenarioHostAttach(serverSim, scenarioMapPath,
                                       scenarioErr, sizeof(scenarioErr));
     if (scenarioHost != NULL) {
-      char line[SCN_SIDECAR_PATH_MAX + 128];
+      char line[SCN_SCRIPT_PATH_MAX + 128];
       snprintf(line, sizeof(line), "Scenario loaded: %s (from %s)",
                scenarioHostName(scenarioHost),
-               scenarioHostSidecarPath(scenarioHost));
+               scenarioHostScriptPath(scenarioHost));
       serverMessageConsoleMessage(serverSim, line);
     } else if (scenarioErr[0] != '\0') {
       serverMessageConsoleMessage(serverSim, scenarioErr);

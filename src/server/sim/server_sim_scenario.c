@@ -2704,7 +2704,7 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
 /* The same question the arm asks, without the answer landing anywhere. The
  * whole set is written into the copy before the check reads it, so a pair two
  * of the values break together is found although each of them passes alone —
- * which is what a sidecar's rules table needs asking of it before a round is
+ * which is what a script's rules table needs asking of it before a round is
  * ever started on it. */
 ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         const uint16_t *rules,

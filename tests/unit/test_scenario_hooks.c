@@ -61,18 +61,18 @@
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
 
-static void shkSidecarFor(const char *mapPath, char *out, size_t outLen) {
+static void shkScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     if (n > 4) {
         n -= 4;                     /* drop ".map" */
     }
-    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SIDECAR_SUFFIX);
+    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
-/* The sidecar: a scenario table, the note function every hook writes its
+/* The script: a scenario table, the note function every hook writes its
  * line with, and the hooks the case wants. */
 static bool shkPut(const char *mapPath, const char *record, const char *body) {
-    char  side[512];
+    char  path[512];
     char  lua[16384];
     FILE *f;
 
@@ -84,8 +84,8 @@ static bool shkPut(const char *mapPath, const char *record, const char *body) {
              "end\n"
              "%s", record, body);
 
-    shkSidecarFor(mapPath, side, sizeof(side));
-    f = fopen(side, "wb");
+    shkScriptFor(mapPath, path, sizeof(path));
+    f = fopen(path, "wb");
     if (f == NULL) {
         return false;
     }
@@ -95,9 +95,9 @@ static bool shkPut(const char *mapPath, const char *record, const char *body) {
 }
 
 static void shkDrop(const char *mapPath) {
-    char side[512];
-    shkSidecarFor(mapPath, side, sizeof(side));
-    remove(side);
+    char path[512];
+    shkScriptFor(mapPath, path, sizeof(path));
+    remove(path);
 }
 
 /* A sim that has not started, ready to be attached to and then started.
@@ -369,7 +369,7 @@ int run_scenario_hooks_every_hook_from_its_event(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     shkFlush(sim, kRecord);
 
@@ -459,7 +459,7 @@ int run_scenario_hooks_fire_one_tick_later(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     shkFlush(sim, kRecord);
 
@@ -531,7 +531,7 @@ int run_scenario_hooks_scripted_both_ways(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
     shkFlush(sim, kRecord);
@@ -618,7 +618,7 @@ int run_scenario_hooks_spawn_drain_is_scripted(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
     serverSimSetBotAiType(sim, aiFull);
@@ -696,7 +696,7 @@ int run_scenario_hooks_team_changed_on_difference(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     shkFlush(sim, kRecord);
 
@@ -785,7 +785,7 @@ int run_scenario_hooks_tick_and_end(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
     remove(kRecord);
@@ -860,7 +860,7 @@ int run_scenario_hooks_error_counts_and_disables(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     shkWatchText(sim, &text);
     shkFlush(sim, kRecord);

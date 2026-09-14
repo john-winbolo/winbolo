@@ -8,7 +8,7 @@
  *Filename:      scenario_manifest.h
  *Author:        John Morrison
  *Purpose:
- *  The scenario table a sidecar declares, as one POD struct.
+ *  The scenario table a script declares, as one POD struct.
  *  Lua is read into this at attach and again at each round
  *  start, both times from the bytes the host cached; every-
  *  thing past the read works on the struct and never on the
@@ -28,7 +28,7 @@
  *  is where an index becomes an op.
  *
  *  triggers is deliberately not here. Its schema is not
- *  settled, so the parser reads nothing from it and a sidecar
+ *  settled, so the parser reads nothing from it and a script
  *  that carries one is not refused for having it.
  *********************************************************/
 

@@ -1,30 +1,30 @@
 /*
- * The scenario host: a Lua sidecar beside a map, read into the manifest and
+ * The scenario host: a Lua script beside a map, read into the manifest and
  * applied to a round.
  *
- * Each case writes its own fixture sidecar and removes it afterwards. The
+ * Each case writes its own fixture script and removes it afterwards. The
  * names are per-case on purpose: CTest runs cases as separate processes in
  * one directory, so a shared fixture name is a race rather than a fixture.
  *
- * The map file itself is never written. The host reads the sidecar beside a
+ * The map file itself is never written. The host reads the script beside a
  * map path and nothing else, so a path that names no real map is enough to
  * drive it, and the sims here are built from the built-in map.
  *
  * run_scenario_host_metadata          — name, description, api, game and the
  *                                       lobby block arrive as written
- * run_scenario_host_rules_change_round— a rules sidecar changes how a round
+ * run_scenario_host_rules_change_round— a script's rules change how a round
  *                                       plays, observed on a tank
- * run_scenario_host_syntax_error_line — a broken sidecar is refused, naming
+ * run_scenario_host_syntax_error_line — a broken script is refused, naming
  *                                       the file and the line
  * run_scenario_host_unknown_rule_key  — a key that names no rule is refused
  *                                       by name and the rest still applies
  * run_scenario_host_api_too_new       — an api above this server's is
  *                                       refused; equal and below are not
- * run_scenario_host_no_sidecar        — no sidecar is not an error
+ * run_scenario_host_no_script        — no script is not an error
  * run_scenario_host_manifest_roundtrip— tags, regions and several teams
  * run_scenario_host_seed_reproducible — math.random is seeded from the
  *                                       process PRNG state, reproducibly
- * run_scenario_host_edit_after_attach — the sidecar is read once, so an
+ * run_scenario_host_edit_after_attach — the script is read once, so an
  *                                       edit does not reach the next round
  * run_scenario_host_reload_picks_up_edit
  *                                     — and reload is what reads it again
@@ -44,7 +44,7 @@
  *                                       for on_start and gone by the next
  *                                       round
  * run_scenario_host_setup_in_window   — on_setup runs, and the rules the
- *                                       sidecar set are in the round's
+ *                                       script set are in the round's
  *                                       table by the time it does
  * run_scenario_host_start_on_first_running_tick
  *                                     — on_start on the first running tick,
@@ -126,20 +126,20 @@
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
 
-/* A sidecar sits beside the map: X.map is accompanied by X.scenario.lua. */
-static void shSidecarFor(const char *mapPath, char *out, size_t outLen) {
+/* A script sits beside the map: X.map is accompanied by X.scenario.lua. */
+static void shScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     if (n > 4) {
         n -= 4;                     /* drop ".map" */
     }
-    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SIDECAR_SUFFIX);
+    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
 static bool shPut(const char *mapPath, const char *lua) {
-    char  side[512];
+    char  path[512];
     FILE *f;
-    shSidecarFor(mapPath, side, sizeof(side));
-    f = fopen(side, "wb");
+    shScriptFor(mapPath, path, sizeof(path));
+    f = fopen(path, "wb");
     if (f == NULL) {
         return false;
     }
@@ -149,9 +149,9 @@ static bool shPut(const char *mapPath, const char *lua) {
 }
 
 static void shDrop(const char *mapPath) {
-    char side[512];
-    shSidecarFor(mapPath, side, sizeof(side));
-    remove(side);
+    char path[512];
+    shScriptFor(mapPath, path, sizeof(path));
+    remove(path);
 }
 
 /* A sim that has not started, ready to be attached to and then started. */
@@ -326,7 +326,7 @@ int run_scenario_host_metadata(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     UT_ASSERT_MSG(scenarioHostIsActive(h), "the host reports no scenario");
     UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Survival") == 0,
                   "name read as '%s'", scenarioHostName(h));
@@ -360,14 +360,14 @@ int run_scenario_host_metadata(void) {
     return 0;
 }
 
-/* ── 2. A rules sidecar changes a round ───────────────────────────── */
+/* ── 2. A script's rules change a round ───────────────────────────── */
 
 /* Well above the classic wait, and inside tank_death_ticks' 0..65535 row. */
 #define SH_DEATH_SET       400
 #define SH_PAST_CLASSIC    (TANK_DEATH_WAIT + 20)
 #define SH_RESPAWN_GIVE_UP (SH_DEATH_SET * 4)
 
-/* The field the sidecar sets is checked by watching a tank rather than by
+/* The field the script sets is checked by watching a tank rather than by
    reading the table back: reading it back would say only that a write
    happened, not that the round plays differently for it. */
 int run_scenario_host_rules_change_round(void) {
@@ -390,7 +390,7 @@ int run_scenario_host_rules_change_round(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     /* The round start invokes the host, which applies the table. */
     serverSimStartGame(sim);
@@ -401,7 +401,7 @@ int run_scenario_host_rules_change_round(void) {
     UT_ASSERT_MSG(shKill(sim, 0) == SCN_OP_OK, "the kill was refused");
     UT_ASSERT_MSG(tankIsDestroyed(t), "the kill left the tank alive");
     UT_ASSERT_MSG(tankGetDeathWait(t) == SH_DEATH_SET,
-                  "the tank started a wait of %u, expected the sidecar's %d",
+                  "the tank started a wait of %u, expected the script's %d",
                   (unsigned)tankGetDeathWait(t), SH_DEATH_SET);
 
     for (frames = 0; frames < SH_PAST_CLASSIC; frames++) {
@@ -412,7 +412,7 @@ int run_scenario_host_rules_change_round(void) {
         }
     }
     UT_ASSERT_MSG(respawnedAt == 0,
-                  "the tank came back on frame %d — under the sidecar's %d it "
+                  "the tank came back on frame %d — under the script's %d it "
                   "should still be down past the classic wait of %d",
                   respawnedAt, SH_DEATH_SET, TANK_DEATH_WAIT);
 
@@ -424,11 +424,11 @@ int run_scenario_host_rules_change_round(void) {
         }
     }
     UT_ASSERT_MSG(respawnedAt != 0,
-                  "the tank was still down after %d frames with the sidecar's "
+                  "the tank was still down after %d frames with the script's "
                   "tank_death_ticks of %d", SH_RESPAWN_GIVE_UP, SH_DEATH_SET);
     UT_ASSERT_MSG(respawnedAt >= SH_DEATH_SET,
                   "the tank came back on frame %d, short of the %d the "
-                  "sidecar asked for", respawnedAt, SH_DEATH_SET);
+                  "script asked for", respawnedAt, SH_DEATH_SET);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
@@ -459,8 +459,8 @@ int run_scenario_host_syntax_error_line(void) {
 
     err[0] = '\0';
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h == NULL, "a sidecar that does not parse was accepted");
-    UT_ASSERT_MSG(err[0] != '\0', "a broken sidecar produced no operator line");
+    UT_ASSERT_MSG(h == NULL, "a script that does not parse was accepted");
+    UT_ASSERT_MSG(err[0] != '\0', "a broken script produced no operator line");
     UT_ASSERT_MSG(strstr(err, "scnhost_syntax") != NULL,
                   "the line does not name the file: %s", err);
     UT_ASSERT_MSG(strstr(err, ":5:") != NULL,
@@ -492,7 +492,7 @@ int run_scenario_host_unknown_rule_key(void) {
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL,
-                  "one bad key cost the whole sidecar: %s", err);
+                  "one bad key cost the whole script: %s", err);
     UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "tank_death_tick") != NULL,
                   "the refusal does not name the key: '%s'",
                   scenarioHostLastError(h));
@@ -510,7 +510,7 @@ int run_scenario_host_unknown_rule_key(void) {
     serverSimStartGame(sim);
     UT_ASSERT_MSG(sim->sim.rules.tank_reload_ticks == 7,
                   "tank_reload_ticks is %ld after the start, expected the 7 "
-                  "the sidecar set beside the bad key",
+                  "the script set beside the bad key",
                   (long)sim->sim.rules.tank_reload_ticks);
 
     scenarioHostDetach(h);
@@ -538,7 +538,7 @@ int run_scenario_host_api_too_new(void) {
     UT_ASSERT(shPut(kMap, lua));
     err[0] = '\0';
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h == NULL, "a sidecar written for a newer server was run");
+    UT_ASSERT_MSG(h == NULL, "a script written for a newer server was run");
     UT_ASSERT_MSG(err[0] != '\0', "the refusal produced no operator line");
     UT_ASSERT_MSG(strstr(err, "api") != NULL,
                   "the line does not mention the api: %s", err);
@@ -549,7 +549,7 @@ int run_scenario_host_api_too_new(void) {
              SCENARIO_API_VERSION);
     UT_ASSERT(shPut(kMap, lua));
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "a sidecar at this server's api was refused: %s",
+    UT_ASSERT_MSG(h != NULL, "a script at this server's api was refused: %s",
                   err);
     scenarioHostDetach(h);
 
@@ -559,7 +559,7 @@ int run_scenario_host_api_too_new(void) {
              SCENARIO_API_VERSION - 1);
     UT_ASSERT(shPut(kMap, lua));
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "a sidecar at an older api was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "a script at an older api was refused: %s", err);
     scenarioHostDetach(h);
 
     serverSimDestroy(sim);
@@ -567,9 +567,9 @@ int run_scenario_host_api_too_new(void) {
     return 0;
 }
 
-/* ── 6. No sidecar at all ─────────────────────────────────────────── */
+/* ── 6. No script at all ──────────────────────────────────────────── */
 
-int run_scenario_host_no_sidecar(void) {
+int run_scenario_host_no_script(void) {
     static const char *const kMap = "scnhost_none.map";
     ServerSim    *sim;
     ScenarioHost *h;
@@ -584,9 +584,9 @@ int run_scenario_host_no_sidecar(void) {
 
     err[0] = '\0';
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h == NULL, "a map with no sidecar produced a host");
+    UT_ASSERT_MSG(h == NULL, "a map with no script produced a host");
     UT_ASSERT_MSG(err[0] == '\0',
-                  "a map with no sidecar produced an operator line: %s", err);
+                  "a map with no script produced an operator line: %s", err);
     UT_ASSERT_MSG(!scenarioHostIsActive(h),
                   "a NULL host reports a scenario as active");
 
@@ -656,7 +656,7 @@ int run_scenario_host_manifest_roundtrip(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     m = scenarioHostManifest(h);
     UT_ASSERT(m != NULL);
 
@@ -757,14 +757,14 @@ int run_scenario_host_seed_reproducible(void) {
        reads is identical on both and nothing in between can move it. */
     bolo_srand(0xA11CEULL);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     snprintf(first, sizeof(first), "%s", scenarioHostName(h));
     scenarioHostDetach(h);
     UT_ASSERT_MSG(first[0] != '\0', "the chunk produced no draw");
 
     bolo_srand(0xA11CEULL);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused on the second boot: %s",
+    UT_ASSERT_MSG(h != NULL, "the script was refused on the second boot: %s",
                   err);
     snprintf(again, sizeof(again), "%s", scenarioHostName(h));
     scenarioHostDetach(h);
@@ -774,7 +774,7 @@ int run_scenario_host_seed_reproducible(void) {
 
     bolo_srand(0xB0BULL);
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused on the third boot: %s",
+    UT_ASSERT_MSG(h != NULL, "the script was refused on the third boot: %s",
                   err);
     snprintf(other, sizeof(other), "%s", scenarioHostName(h));
     scenarioHostDetach(h);
@@ -788,7 +788,7 @@ int run_scenario_host_seed_reproducible(void) {
     return 0;
 }
 
-/* ── 9. The sidecar is read once ──────────────────────────────────── */
+/* ── 9. The script is read once ───────────────────────────────────── */
 
 /* Two values apart, both inside tank_death_ticks' row: what the file held
    when the host read it, and what it was edited to afterwards. */
@@ -818,7 +818,7 @@ int run_scenario_host_edit_after_attach(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Cached") == 0,
                   "name read as '%s' before the edit", scenarioHostName(h));
 
@@ -893,7 +893,7 @@ int run_scenario_host_reload_picks_up_edit(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     UT_ASSERT(shPut(kMap, kSecond));
     err[0] = '\0';
@@ -941,12 +941,12 @@ int run_scenario_host_reload_bad_syntax(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     UT_ASSERT(shPut(kMap, kBroken));
     err[0] = '\0';
     UT_ASSERT_MSG(!scenarioHostReload(h, err, sizeof(err)),
-                  "a sidecar that does not parse was reloaded");
+                  "a script that does not parse was reloaded");
     UT_ASSERT_MSG(err[0] != '\0', "the refusal produced no operator line");
     UT_ASSERT_MSG(strstr(err, "scnhost_reload_syntax") != NULL,
                   "the line does not name the file: %s", err);
@@ -990,7 +990,7 @@ int run_scenario_host_reload_bad_api(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     snprintf(tooNew, sizeof(tooNew),
              "scenario = { name = \"After\", api = %d,\n"
@@ -999,7 +999,7 @@ int run_scenario_host_reload_bad_api(void) {
     UT_ASSERT(shPut(kMap, tooNew));
     err[0] = '\0';
     UT_ASSERT_MSG(!scenarioHostReload(h, err, sizeof(err)),
-                  "a sidecar written for a newer server was reloaded");
+                  "a script written for a newer server was reloaded");
     UT_ASSERT_MSG(err[0] != '\0', "the refusal produced no operator line");
     UT_ASSERT_MSG(strstr(err, "api") != NULL,
                   "the line does not mention the api: %s", err);
@@ -1055,7 +1055,7 @@ int run_scenario_host_fresh_globals_per_round(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     serverSimTick(sim);
@@ -1081,16 +1081,16 @@ int run_scenario_host_fresh_globals_per_round(void) {
 
 /* ── 14. on_setup inside the window, after the rules ──────────────── */
 
-/* The wait the sidecars below set, well above the classic one. */
+/* The wait the scripts below set, well above the classic one. */
 #define SH_WINDOW_DEATH 400
 
-/* Two halves. The first: on_setup runs, and the rule its own sidecar set is
+/* Two halves. The first: on_setup runs, and the rule its own script set is
  * in the round's table. The rule is what says the call sits inside the
  * setup window — the funnel refuses every op while a start is in progress
  * and the window is the one thing that lets a SCN_OP_SET_RULE through, so a
  * classic wait here would mean the window was shut.
  *
- * The second: the same sidecar with a setup that raises. The rule is in the
+ * The second: the same script with a setup that raises. The rule is in the
  * table all the same, so the table is not something the setup produces —
  * it is there before the setup is called, which is the point of calling the
  * setup after it. */
@@ -1119,7 +1119,7 @@ int run_scenario_host_setup_in_window(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     shRead(kRecord, got, sizeof(got));
@@ -1128,7 +1128,7 @@ int run_scenario_host_setup_in_window(void) {
                   "run from the round start", got);
     UT_ASSERT_MSG(sim->sim.rules.tank_death_ticks == SH_WINDOW_DEATH,
                   "the round's tank_death_ticks is %d, expected the "
-                  "sidecar's %d: the rule op was refused, so the setup "
+                  "script's %d: the rule op was refused, so the setup "
                   "window was shut across the call",
                   (int)sim->sim.rules.tank_death_ticks, SH_WINDOW_DEATH);
 
@@ -1137,17 +1137,17 @@ int run_scenario_host_setup_in_window(void) {
     shDrop(kMap);
     remove(kRecord);
 
-    /* The second half, on its own sim and its own sidecar. */
+    /* The second half, on its own sim and its own script. */
     UT_ASSERT(shPut(kRaiserMap, kRaiser));
     sim = shSim();
     UT_ASSERT(sim != NULL);
     h = scenarioHostAttach(sim, kRaiserMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     UT_ASSERT_MSG(sim->sim.rules.tank_death_ticks == SH_WINDOW_DEATH,
                   "a setup that raised left tank_death_ticks at %d, expected "
-                  "the sidecar's %d: the table is applied before the setup "
+                  "the script's %d: the table is applied before the setup "
                   "is called, so a setup that fails cannot take it away",
                   (int)sim->sim.rules.tank_death_ticks, SH_WINDOW_DEATH);
 
@@ -1184,7 +1184,7 @@ int run_scenario_host_start_on_first_running_tick(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,
                   "the sim is in state %d, expected the lobby",
                   (int)serverSimGetState(sim));
@@ -1257,7 +1257,7 @@ int run_scenario_host_error_limit_boundary(void) {
     sim = shSim();
     UT_ASSERT(sim != NULL);
     h = scenarioHostAttach(sim, kHitMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     shWatchText(sim, &text);
@@ -1312,7 +1312,7 @@ int run_scenario_host_error_limit_boundary(void) {
     sim = shSim();
     UT_ASSERT(sim != NULL);
     h = scenarioHostAttach(sim, kBackMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     shWatchText(sim, &text);
@@ -1374,7 +1374,7 @@ int run_scenario_host_disabled_stops_hooks(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     shWatchText(sim, &text);
@@ -1421,7 +1421,7 @@ int run_scenario_host_disabled_stops_hooks(void) {
 
 /* ── 18. The same thread, arriving at the lock twice ──────────────── */
 
-/* The sidecars for the two lock cases set one rule far outside any row's
+/* The scripts for the two lock cases set one rule far outside any row's
  * range. The funnel refuses it and the host writes a console line saying so
  * — on the round start's own thread, with the VM lock held and the round's
  * VM already in place. That line is the moment each case needs. */
@@ -1459,7 +1459,7 @@ int run_scenario_host_vm_lock_same_thread(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     shReentrySim    = sim;
     shReentrySeen   = 0;
@@ -1544,7 +1544,7 @@ int run_scenario_host_vm_lock_second_thread(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     shAsker.sim     = sim;
     shAsker.entered = SDL_CreateSemaphore(0);
@@ -1635,7 +1635,7 @@ int run_scenario_host_audit_human_lost(void) {
                   "the case seated nobody to lose");
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     shLossSim       = sim;
     shLossTaken     = 0;
@@ -1725,7 +1725,7 @@ int run_scenario_host_metatable_raises(void) {
 
     err[0] = '\0';
     h = scenarioHostAttach(sim, kTableMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     m = scenarioHostManifest(h);
     UT_ASSERT(m != NULL);
@@ -1771,7 +1771,7 @@ int run_scenario_host_metatable_not_read(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     m = scenarioHostManifest(h);
     UT_ASSERT(m != NULL);
@@ -1829,7 +1829,7 @@ int run_scenario_host_hook_via_global_metatable(void) {
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
-    UT_ASSERT_MSG(h != NULL, "the sidecar was refused: %s", err);
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
 
     serverSimStartGame(sim);
     shRead(kRecord, got, sizeof(got));
@@ -1884,7 +1884,7 @@ int run_scenario_host_disabled_refuses_script(void) {
                   "the refusal produced no operator line");
     UT_ASSERT_MSG(strstr(err, "scnhost_off_script") != NULL,
                   "the line does not name the map's script: %s", err);
-    UT_ASSERT_MSG(strstr(err, SCN_SIDECAR_SUFFIX) != NULL,
+    UT_ASSERT_MSG(strstr(err, SCN_SCRIPT_SUFFIX) != NULL,
                   "the line does not name the file: %s", err);
     return 0;
 }
@@ -1952,7 +1952,7 @@ int run_scenario_host_enabled_again(void) {
 
     UT_ASSERT_MSG(refusedWhileOff, "a script was attached with scripts off");
     UT_ASSERT_MSG(attachedWhenOn,
-                  "the sidecar was refused with scripts on: %s", err);
+                  "the script was refused with scripts on: %s", err);
     UT_ASSERT_MSG(strcmp(name, "Back") == 0, "name read as '%s'", name);
     return 0;
 }

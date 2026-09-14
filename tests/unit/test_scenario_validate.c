@@ -4,19 +4,19 @@
  */
 
 /*
- * The scenario validator: a sidecar read in a stub VM and checked against the
+ * The scenario validator: a script read in a stub VM and checked against the
  * map, the lobby template and the rule catalogue, each problem reported as a
  * key, a line and a message.
  *
- * Each case writes its own fixture sidecar and removes it afterwards. The
+ * Each case writes its own fixture script and removes it afterwards. The
  * names are per-case on purpose: CTest runs cases as separate processes in one
  * directory, so a shared fixture name is a race rather than a fixture.
  *
- * The map file itself is never written. The validator derives the sidecar's
+ * The map file itself is never written. The validator derives the script's
  * name from a map path and reads nothing else from it; the entity counts the
  * tag checks read come from the sim, which is built from the built-in map.
  *
- * run_scenario_validate_clean            — a sidecar with nothing wrong passes
+ * run_scenario_validate_clean            — a script with nothing wrong passes
  *                                          and hands back the table it parsed
  * run_scenario_validate_api_too_new      — an api above this server's
  * run_scenario_validate_lobby_shape      — the human cap, a team number used
@@ -39,7 +39,7 @@
  * run_scenario_validate_lines_point_at_the_key
  *                                        — the line each issue carries is the
  *                                          line its key is written on
- * run_scenario_validate_wave_defense     — the sidecar that ships beside Wave
+ * run_scenario_validate_wave_defense     — the script that ships beside Wave
  *                                          Defense.map, against that map
  */
 
@@ -59,7 +59,7 @@
 #include "scenario_validate.h"
 #include "test_harness.h"
 
-/* Where the maps the baseline runs play are kept, and the sidecars beside
+/* Where the maps the baseline runs play are kept, and the scripts beside
  * them. CMake passes the absolute path; the fallback is the path from the
  * source root, for a run started there. */
 #ifndef WB_BASELINE_MAPS_DIR
@@ -68,20 +68,20 @@
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
 
-/* A sidecar sits beside the map: X.map is accompanied by X.scenario.lua. */
-static void svSidecarFor(const char *mapPath, char *out, size_t outLen) {
+/* A script sits beside the map: X.map is accompanied by X.scenario.lua. */
+static void svScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     if (n > 4) {
         n -= 4;                     /* drop ".map" */
     }
-    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SIDECAR_SUFFIX);
+    snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
 static bool svPut(const char *mapPath, const char *lua) {
-    char  side[512];
+    char  path[512];
     FILE *f;
-    svSidecarFor(mapPath, side, sizeof(side));
-    f = fopen(side, "wb");
+    svScriptFor(mapPath, path, sizeof(path));
+    f = fopen(path, "wb");
     if (f == NULL) {
         return false;
     }
@@ -91,9 +91,9 @@ static bool svPut(const char *mapPath, const char *lua) {
 }
 
 static void svDrop(const char *mapPath) {
-    char side[512];
-    svSidecarFor(mapPath, side, sizeof(side));
-    remove(side);
+    char path[512];
+    svScriptFor(mapPath, path, sizeof(path));
+    remove(path);
 }
 
 static ServerSim *svSim(void) {
@@ -128,7 +128,7 @@ static void svList(const ScnValidateResult *r, char *out, size_t outLen) {
     }
 }
 
-/* ── 1. A sidecar with nothing wrong ──────────────────────────────── */
+/* ── 1. A script with nothing wrong ───────────────────────────────── */
 
 int run_scenario_validate_clean(void) {
     static const char *const kMap = "scnval_clean.map";
@@ -152,11 +152,11 @@ int run_scenario_validate_clean(void) {
 
     if (!scenarioValidateMap(sim, kMap, &r)) {
         svList(&r, seen, sizeof(seen));
-        UT_FAIL("a clean sidecar was refused: %s", seen);
+        UT_FAIL("a clean script was refused: %s", seen);
     }
-    UT_ASSERT_MSG(r.count == 0, "%u issues against a clean sidecar",
+    UT_ASSERT_MSG(r.count == 0, "%u issues against a clean script",
                   (unsigned)r.count);
-    UT_ASSERT_MSG(r.haveManifest, "a sidecar that parsed left no manifest");
+    UT_ASSERT_MSG(r.haveManifest, "a script that parsed left no manifest");
 
     /* The table comes back beside the verdict: this is the parse a package is
        written from as well as the one the checks ran against. */
@@ -192,10 +192,10 @@ int run_scenario_validate_api_too_new(void) {
     UT_ASSERT(sim != NULL);
 
     UT_ASSERT_MSG(!scenarioValidateMap(sim, kMap, &r),
-                  "a sidecar written for a newer server was accepted");
+                  "a script written for a newer server was accepted");
     UT_ASSERT_MSG(svFind(&r, "api") != NULL, "no issue under the api key");
     UT_ASSERT_MSG(r.haveManifest,
-                  "a sidecar that parsed left no manifest to read");
+                  "a script that parsed left no manifest to read");
 
     serverSimDestroy(sim);
     svDrop(kMap);
@@ -515,7 +515,7 @@ int run_scenario_validate_syntax_error_line(void) {
     UT_ASSERT(sim != NULL);
 
     UT_ASSERT_MSG(!scenarioValidateMap(sim, kMap, &r),
-                  "a sidecar that does not parse was accepted");
+                  "a script that does not parse was accepted");
     UT_ASSERT_MSG(r.count == 1, "%u issues against one syntax error",
                   (unsigned)r.count);
     UT_ASSERT_MSG(!r.haveManifest,
@@ -571,7 +571,7 @@ int run_scenario_validate_lines_point_at_the_key(void) {
     return 0;
 }
 
-/* ── 13. The sidecar that ships ───────────────────────────────────── */
+/* ── 13. The script that ships ────────────────────────────────────── */
 
 /* The one case that writes no fixture of its own: it reads the content beside
    its own map, against a sim built from that map, which is what an author
@@ -595,13 +595,13 @@ int run_scenario_validate_wave_defense(void) {
 
     if (!scenarioValidateMap(sim, mapPath, &r)) {
         svList(&r, seen, sizeof(seen));
-        UT_FAIL("the sidecar beside %s was refused: %s", mapPath, seen);
+        UT_FAIL("the script beside %s was refused: %s", mapPath, seen);
     }
-    UT_ASSERT_MSG(r.haveManifest, "no sidecar was found beside %s", mapPath);
-    UT_ASSERT_MSG(r.count == 0, "%u issues against the shipped sidecar",
+    UT_ASSERT_MSG(r.haveManifest, "no script was found beside %s", mapPath);
+    UT_ASSERT_MSG(r.count == 0, "%u issues against the shipped script",
                   (unsigned)r.count);
     UT_ASSERT_MSG(strcmp(r.manifest.name, "Wave Defense") == 0,
-                  "the sidecar calls itself '%s'", r.manifest.name);
+                  "the script calls itself '%s'", r.manifest.name);
 
     serverSimDestroy(sim);
     return 0;

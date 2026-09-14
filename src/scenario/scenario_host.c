@@ -8,7 +8,7 @@
  *Filename:      scenario_host.c
  *Author:        John Morrison
  *Purpose:
- *  Finds the Lua sidecar beside a map, boots a VM, runs its
+ *  Finds the Lua script beside a map, boots a VM, runs its
  *  chunk, reads the scenario table it declares into one
  *  struct, and applies the rules that table sets through the
  *  op funnel from inside the sim's round-start callback.
@@ -46,7 +46,7 @@
  *  rule, one SCN_OP_MSG_ALL for a line the players are owed,
  *  and the answers to the policy questions registered below.
  *
- *  The sidecar is read from disk once, at attach. Every round
+ *  The script is read from disk once, at attach. Every round
  *  after that runs the bytes the host is holding, so a round
  *  start touches no file: it runs inside the start with the
  *  sim mutex held, which is no place for disk work, and an
@@ -346,10 +346,10 @@ struct ScenarioHost {
      * table a round start reads in is the one the next call answers from. */
     ScnLuaCtx        lua;
 
-    char             sidecar[SCN_SIDECAR_PATH_MAX];
-    char            *src;     /* the sidecar's bytes, read once at attach */
+    char             script[SCN_SCRIPT_PATH_MAX];
+    char            *src;     /* the script's bytes, read once at attach */
     size_t           srcLen;
-    char             chunkName[SCN_SIDECAR_PATH_MAX + 2];
+    char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char             lastError[SCN_ERR_LEN];
     bool             active;
 
@@ -420,15 +420,15 @@ struct ScenarioHost {
     SubscriberHandle sub;
 };
 
-/* ── Finding the sidecar ──────────────────────────────────────────── */
+/* ── Finding the script ───────────────────────────────────────────── */
 
 /* .../X.map is accompanied by .../X.scenario.lua. A path that does not end
  * in .map keeps its whole name and takes the suffix as it is, so a caller
  * that hands over a name without an extension still resolves. */
-bool scnSidecarPath(const char *mapPath, char *out, size_t outLen) {
+bool scnScriptPath(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
     size_t base = n;
-    size_t suffix = strlen(SCN_SIDECAR_SUFFIX);
+    size_t suffix = strlen(SCN_SCRIPT_SUFFIX);
 
     if (n >= 4) {
         const char *ext = mapPath + n - 4;
@@ -443,17 +443,17 @@ bool scnSidecarPath(const char *mapPath, char *out, size_t outLen) {
         return false;
     }
     memcpy(out, mapPath, base);
-    memcpy(out + base, SCN_SIDECAR_SUFFIX, suffix + 1);
+    memcpy(out + base, SCN_SCRIPT_SUFFIX, suffix + 1);
     return true;
 }
 
-/* The whole sidecar, into a buffer the caller owns. Returns false with err
+/* The whole script, into a buffer the caller owns. Returns false with err
  * set when the file is there but cannot be used; returns false with err
  * left empty when there is no file at all, which is not a fault.
  *
- * Read in one go rather than streamed: a sidecar is a script, the cap below
- * is what says so, and a file above it is refused before a byte of it is
- * kept. */
+ * Read in one go rather than streamed: what is being read is hand-written
+ * Lua, the cap below is what says so, and a file above it is refused before
+ * a byte of it is kept. */
 bool scnReadFile(const char *path, char **out, size_t *outLen,
                  char *err, size_t errLen) {
     FILE  *f;
@@ -479,11 +479,11 @@ bool scnReadFile(const char *path, char **out, size_t *outLen,
         scnFmt(err, errLen, "scenario: %s could not be measured", path);
         return false;
     }
-    if (size > (long)SCN_SIDECAR_MAX_BYTES) {
+    if (size > (long)SCN_SCRIPT_MAX_BYTES) {
         fclose(f);
         scnFmt(err, errLen,
                "scenario: %s is %ld bytes and the limit is %ld — too large to "
-               "be a script", path, size, (long)SCN_SIDECAR_MAX_BYTES);
+               "be a script", path, size, (long)SCN_SCRIPT_MAX_BYTES);
         return false;
     }
     rewind(f);
@@ -602,7 +602,7 @@ lua_State *scnNewVm(void) {
  *
  * The game table goes on before the chunk runs, and every state this host
  * boots gets one: a script may read the game at the top level rather than
- * from a hook, and a sidecar that does must load the same way at an attach,
+ * from a hook, and a script that does must load the same way at an attach,
  * at a round start and at a reload's check.
  *
  * What the rows read through is the host's own struct, so a chunk that reads
@@ -765,7 +765,7 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
 }
 
 /* A key that names no rule is refused by name and the rest of the table
- * still applies: one bad line in a sidecar should not cost an author every
+ * still applies: one bad line in a script should not cost an author every
  * other line in it. */
 static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
                          ScnParseReport *rep) {
@@ -934,7 +934,7 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
 /* The whole table into the struct. A file with no scenario table at all is
  * refused: it ran, but it is not a scenario.
  *
- * triggers is not read. Its schema is not settled, so a sidecar that
+ * triggers is not read. Its schema is not settled, so a script that
  * carries one is neither parsed nor refused for it. */
 bool scnReadManifest(lua_State *L, ScenarioManifest *m,
                      const char *path, char *err, size_t errLen,
@@ -2338,8 +2338,8 @@ static void scnSeedTeams(ScenarioHost *h) {
  * mutex held. A round whose chunk fails says so and plays classic rather
  * than carrying the previous round's table into it.
  *
- * on_setup runs after the rules, so a script's setup sees the table its own
- * sidecar asked for, and inside the setup window the start holds open, so
+ * on_setup runs after the rules, so a script's setup sees the table the file
+ * itself asked for, and inside the setup window the start holds open, so
  * the funnel takes the ops it issues — every one but the six roster ops,
  * which the window keeps refusing. */
 static void scnRoundStartLocked(ScenarioHost *h) {
@@ -2370,7 +2370,7 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     rep.softLen = sizeof(h->lastError);
     rep.sink    = NULL;
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
-        !scnReadManifest(L, &fresh, h->sidecar, err, sizeof(err), &rep)) {
+        !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep)) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
         lua_close(L);
         scnRoundWithoutScenario(h);
@@ -2379,7 +2379,7 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     if (fresh.api > SCENARIO_API_VERSION) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: %s asks for api %d and this server is api %d",
-               h->sidecar, fresh.api, SCENARIO_API_VERSION);
+               h->script, fresh.api, SCENARIO_API_VERSION);
         lua_close(L);
         scnRoundWithoutScenario(h);
         return;
@@ -2389,7 +2389,7 @@ static void scnRoundStartLocked(ScenarioHost *h) {
         lua_close(h->L);
     }
     h->L        = L;
-    /* The whole table, read from the sidecar's bytes again — which is how a
+    /* The whole table, read from the script's bytes again — which is how a
        region the last round defined stops existing without anything here
        having to remove it. */
     h->manifest = fresh;
@@ -2465,7 +2465,7 @@ void scenarioHostSetEnabled(bool enabled) {
 /* Whether a file is there, without reading a byte of it. The refusal below
  * is the only caller: it says which script a map lost and must not say it
  * about a map that never had one. */
-static bool scnSidecarExists(const char *path) {
+static bool scnScriptExists(const char *path) {
     FILE *f = fopen(path, "rb");
 
     if (f == NULL) {
@@ -2477,8 +2477,8 @@ static bool scnSidecarExists(const char *path) {
 
 ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen) {
-    char             sidecar[SCN_SIDECAR_PATH_MAX];
-    char             chunkName[SCN_SIDECAR_PATH_MAX + 2];
+    char             script[SCN_SCRIPT_PATH_MAX];
+    char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char             soft[SCN_ERR_LEN];
     ScenarioManifest m;
     ScnParseReport   rep;
@@ -2493,7 +2493,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     if (sim == NULL || mapPath == NULL) {
         return NULL;
     }
-    if (!scnSidecarPath(mapPath, sidecar, sizeof(sidecar))) {
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
         return NULL;
     }
     /* Off, and the file is not read, parsed or run. The name above is string
@@ -2501,21 +2501,21 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        is whether there is a file, which is what tells a map that lost a
        script apart from a map that never had one. */
     if (!scnEnabled) {
-        if (scnSidecarExists(sidecar)) {
+        if (scnScriptExists(script)) {
             scnFmt(err, errLen,
-                   "scenario: scripts are off; %s was not loaded", sidecar);
+                   "scenario: scripts are off; %s was not loaded", script);
         }
         return NULL;
     }
-    /* The one read of the file. No sidecar is the ordinary case: the map
+    /* The one read of the file. No script is the ordinary case: the map
        plays as a plain map and the operator is told nothing, because there
        is nothing to tell. A file that is there and cannot be used sets err
        and is reported. */
-    if (!scnReadFile(sidecar, &src, &srcLen, err, errLen)) {
+    if (!scnReadFile(script, &src, &srcLen, err, errLen)) {
         return NULL;
     }
     /* The leading '@' is what makes Lua call this a file in its messages. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", sidecar);
+    snprintf(chunkName, sizeof(chunkName), "@%s", script);
 
     /* The host is built before the state is, because the game table's rows
        read through a struct on it and the table goes on before the chunk
@@ -2549,7 +2549,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     scnHooksForget(h);
     /* Neither of these is the zero calloc left: no subscriber is -1. */
     h->sub        = SUBSCRIBER_HANDLE_INVALID;
-    snprintf(h->sidecar, sizeof(h->sidecar), "%s", sidecar);
+    snprintf(h->script, sizeof(h->script), "%s", script);
     snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
 
     /* The one VM entry that takes no lock, because there is nothing yet to
@@ -2569,7 +2569,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, sidecar, err, errLen, &rep)) {
+        !scnReadManifest(L, &m, script, err, errLen, &rep)) {
         lua_close(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -2580,7 +2580,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               sidecar, m.api, SCENARIO_API_VERSION);
+               script, m.api, SCENARIO_API_VERSION);
         lua_close(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -2650,7 +2650,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         !serverSimSetSubscriberEventDeliver(sim, h->sub, scnDeliverEvent)) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: no subscriber slot for %s, so it sees no events",
-               sidecar);
+               script);
     }
     return h;
 }
@@ -2671,12 +2671,12 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         return false;
     }
 
-    if (!scnReadFile(h->sidecar, &src, &srcLen, err, errLen)) {
+    if (!scnReadFile(h->script, &src, &srcLen, err, errLen)) {
         /* A file that has gone leaves err empty, because at attach that is
            the ordinary case rather than a fault. Asked for by name it is a
            fault, so it is stated here. */
         if (err != NULL && errLen > 0 && err[0] == '\0') {
-            scnFmt(err, errLen, "scenario: %s is no longer there", h->sidecar);
+            scnFmt(err, errLen, "scenario: %s is no longer there", h->script);
         }
         return false;
     }
@@ -2686,7 +2686,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        error in it therefore changes nothing at all: the round that is
        running keeps its table, and so does the round after it.
 
-       The state carries the game table like any other, so a sidecar that
+       The state carries the game table like any other, so a script that
        reads the game at the top level loads here exactly as it loads at a
        round start rather than being turned down for a table this one
        state lacked.
@@ -2723,7 +2723,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, h->chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, h->sidecar, err, errLen, &rep)) {
+        !scnReadManifest(L, &m, h->script, err, errLen, &rep)) {
         lua_close(L);
         free(src);
         return false;
@@ -2732,7 +2732,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               h->sidecar, m.api, SCENARIO_API_VERSION);
+               h->script, m.api, SCENARIO_API_VERSION);
         lua_close(L);
         free(src);
         return false;
@@ -2782,7 +2782,7 @@ static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
        plain maps as silent as it was. */
     if (*slot != NULL) {
         scnSay(NULL, 0, "scenario: %s loaded from %s",
-               scenarioHostName(*slot), scenarioHostSidecarPath(*slot));
+               scenarioHostName(*slot), scenarioHostScriptPath(*slot));
     } else if (err[0] != '\0') {
         scnSay(NULL, 0, "%s", err);
     }
@@ -2847,8 +2847,8 @@ const char *scenarioHostDescription(const ScenarioHost *h) {
     return (h != NULL) ? h->manifest.description : "";
 }
 
-const char *scenarioHostSidecarPath(const ScenarioHost *h) {
-    return (h != NULL) ? h->sidecar : "";
+const char *scenarioHostScriptPath(const ScenarioHost *h) {
+    return (h != NULL) ? h->script : "";
 }
 
 const char *scenarioHostLastError(const ScenarioHost *h) {

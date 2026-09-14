@@ -8,7 +8,7 @@
  *Filename:      scenario_validate.c
  *Author:        John Morrison
  *Purpose:
- *  Checks a sidecar without running it as a scenario: the
+ *  Checks a script without running it as a scenario: the
  *  chunk is loaded and run once in a state of its own, so
  *  the scenario table it declares exists, and everything
  *  after that is read off the struct the parse produced.
@@ -478,8 +478,8 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
 
 bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
                          ScnValidateResult *out) {
-    char           sidecar[SCN_SIDECAR_PATH_MAX];
-    char           chunkName[SCN_SIDECAR_PATH_MAX + 2];
+    char           script[SCN_SCRIPT_PATH_MAX];
+    char           chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char           err[SCN_VALIDATE_LINE_LEN];
     char          *src    = NULL;
     size_t         srcLen = 0;
@@ -491,8 +491,8 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     }
     memset(out, 0, sizeof(*out));
 
-    if (!scnSidecarPath(mapPath, sidecar, sizeof(sidecar))) {
-        scnIssueAdd(out, "", "%s leaves no room for a sidecar name beside it",
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        scnIssueAdd(out, "", "%s leaves no room for a script name beside it",
                     mapPath);
         return false;
     }
@@ -500,7 +500,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     /* No file at all is the ordinary case: a plain map, and nothing to check
        about it. */
     err[0] = '\0';
-    if (!scnReadFile(sidecar, &src, &srcLen, err, sizeof(err))) {
+    if (!scnReadFile(script, &src, &srcLen, err, sizeof(err))) {
         if (err[0] == '\0') {
             return true;
         }
@@ -511,19 +511,19 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     L = scnNewVm();
     if (L == NULL) {
         free(src);
-        scnIssueAdd(out, "", "no memory for a Lua state to check %s", sidecar);
+        scnIssueAdd(out, "", "no memory for a Lua state to check %s", script);
         return false;
     }
     scnInstallStubGame(L);
 
     /* The top level and no further. What the chunk defines is what the table
        below is read out of; the functions it left behind are never called. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", sidecar);
+    snprintf(chunkName, sizeof(chunkName), "@%s", script);
     if (!scnRunChunk(L, src, srcLen, chunkName, err, sizeof(err))) {
         scnIssueAdd(out, "", "%s", err);
         if (out->count > 0) {
             out->issues[out->count - 1].line =
-                scnLineFromLuaError(err, sidecar);
+                scnLineFromLuaError(err, script);
         }
         lua_close(L);
         free(src);
@@ -533,7 +533,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     rep.soft    = NULL;
     rep.softLen = 0;
     rep.sink    = out;
-    if (!scnReadManifest(L, &out->manifest, sidecar, err, sizeof(err), &rep)) {
+    if (!scnReadManifest(L, &out->manifest, script, err, sizeof(err), &rep)) {
         scnIssueAdd(out, "", "%s", err);
         lua_close(L);
         free(src);

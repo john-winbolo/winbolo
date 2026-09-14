@@ -2384,7 +2384,7 @@ int run_scenario_host_rules_change_round(void);
 int run_scenario_host_syntax_error_line(void);
 int run_scenario_host_unknown_rule_key(void);
 int run_scenario_host_api_too_new(void);
-int run_scenario_host_no_sidecar(void);
+int run_scenario_host_no_script(void);
 int run_scenario_host_manifest_roundtrip(void);
 int run_scenario_host_seed_reproducible(void);
 int run_scenario_host_edit_after_attach(void);
@@ -2419,7 +2419,7 @@ int run_scenario_host_disabled_refuses_script(void);
 int run_scenario_host_disabled_plain_map(void);
 int run_scenario_host_enabled_again(void);
 
-/* The validator (test_scenario_validate.c): a sidecar read in a stub VM and
+/* The validator (test_scenario_validate.c): a script read in a stub VM and
  * checked against the map, the lobby template and the rule catalogue, each
  * problem carrying the key it is against and the line it is on. */
 int run_scenario_validate_clean(void);
@@ -2439,7 +2439,7 @@ int run_scenario_validate_wave_defense(void);
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
  * as, the whole-map string, a shape error against the error limit, and
- * the rules, tags and regions a sidecar declares read back. */
+ * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);

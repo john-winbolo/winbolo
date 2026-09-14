@@ -1154,7 +1154,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_host_syntax_error_line",         run_scenario_host_syntax_error_line         },
     { "scenario_host_unknown_rule_key",          run_scenario_host_unknown_rule_key          },
     { "scenario_host_api_too_new",               run_scenario_host_api_too_new               },
-    { "scenario_host_no_sidecar",                run_scenario_host_no_sidecar                },
+    { "scenario_host_no_script",                run_scenario_host_no_script                },
     { "scenario_host_manifest_roundtrip",        run_scenario_host_manifest_roundtrip        },
     { "scenario_host_seed_reproducible",         run_scenario_host_seed_reproducible         },
     { "scenario_host_edit_after_attach",         run_scenario_host_edit_after_attach         },

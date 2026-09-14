@@ -4,7 +4,7 @@
  *
  * The template reaches the sim as data — serverSimSetScenarioLobbyTemplate
  * takes a copy — so every case here builds one by hand and never needs a
- * sidecar, a manifest or a Lua VM. That is the shape under test as much as
+ * script, a manifest or a Lua VM. That is the shape under test as much as
  * the seating is: the engine applies this without calling back out.
  *
  * Three paths apply it. A committed map seats it from scratch. A lobby

@@ -1,12 +1,12 @@
 # One library under src/scenario/:
 #
-#   scenario_static — the scenario runtime. Finds the Lua sidecar beside a
+#   scenario_static — the scenario runtime. Finds the Lua script beside a
 #                     map, boots a VM, reads the scenario table it declares
 #                     and applies that table's rules through the op funnel
 #                     from the sim's round-start callback, holds the bus
 #                     events a round raises until the tick that drains them,
 #                     and puts the game table a script reads the sim through
-#                     on every state it boots. It also checks a sidecar
+#                     on every state it boots. It also checks a script
 #                     without running one: the same parse against a stub game
 #                     table, reported as a list of keys, lines and messages.
 #

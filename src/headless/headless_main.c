@@ -141,7 +141,7 @@ static bool optQuiet = FALSE;
 static bool optFast = FALSE;
 static char optMap[512] = "";
 static bool optStdin = FALSE;
-/* Run the map plainly, whatever sidecar sits beside it. */
+/* Run the map plainly, whatever script sits beside it. */
 static bool optNoScenarios = false;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
@@ -2349,8 +2349,8 @@ static int runFastMode(void) {
     return 1;
   }
 
-  /* A scenario sidecar beside the map, if one is there. No sidecar is the
-     ordinary case and says nothing; a sidecar that cannot be used says why,
+  /* A scenario script beside the map, if one is there. No script is the
+     ordinary case and says nothing; a script that cannot be used says why,
      as does one --noscenarios turned down, and the run plays the map
      plainly. The switch is set on the library before the first attach, so
      the map commits that follow answer to it as well. */
@@ -2364,7 +2364,7 @@ static int runFastMode(void) {
     if (scenarioHost != NULL) {
       fprintf(stderr, "Scenario loaded: %s (from %s)\n",
               scenarioHostName(scenarioHost),
-              scenarioHostSidecarPath(scenarioHost));
+              scenarioHostScriptPath(scenarioHost));
     } else if (scenarioErr[0] != '\0') {
       fprintf(stderr, "%s\n", scenarioErr);
     }
