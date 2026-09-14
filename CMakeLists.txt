@@ -3242,9 +3242,19 @@ set_tests_properties(warmup.headless warmup.ds warmup.unittests
 
 # Per-scenario CTest entries. Scenario names must stay in sync with the
 # dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
-# no shared state and parallelize freely. UDP scenarios share a hardcoded
-# port per helper, so each helper's scenarios get a matching RESOURCE_LOCK
-# — different helpers (different ports) still run concurrently.
+# no shared state and parallelize freely. UDP scenarios take whatever
+# port the OS hands their DS — run.sh launches it with -port 0 and reads the
+# port back off its stderr — so they hold no RESOURCE_LOCK and all of them
+# run concurrently.
+#
+# They used to pin a port per helper and lock the scenarios sharing it. That
+# lock only held those scenarios apart from each other: it said nothing about
+# the unit tests, whose loopback harness binds 127.0.0.1:0 dozens of times
+# over a -j run and could be handed the very port a scenario was about to
+# bind, nor about a second copy of the suite, which contended for all nine.
+# An OS-assigned port has none of those problems and needs no lock, which
+# also lets the two ~21 s lobby scenarios run side by side rather than in
+# sequence.
 set(_baseline_fast
     everard_island_1bot_idle
     everard_island_1bot_sit
@@ -3289,25 +3299,22 @@ set(_baseline_fast
     grass_flat_growth
     wave_defense_fast
 )
-set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
-set(_baseline_udp_50002 centralize_events_udp)
-set(_baseline_udp_50003
+set(_baseline_udp
+    ds_4bot_melee
+    ds_2v2_team
+    centralize_events_udp
     centralize_events_name_change_udp
     centralize_events_map_skip_udp
     centralize_events_alliance_leave_udp
-)
-set(_baseline_udp_50004 centralize_events_shutdown_udp)
-set(_baseline_udp_50005 centralize_events_alliance_2client_udp)
-set(_baseline_udp_50006 centralize_events_game_over_udp)
-set(_baseline_udp_50007
+    centralize_events_shutdown_udp
+    centralize_events_alliance_2client_udp
+    centralize_events_game_over_udp
     centralize_events_lobby_smoke_udp
     centralize_events_lobby_name_change_udp
-)
-set(_baseline_udp_50008
     centralize_events_chat_unicast_3client_udp
     centralize_events_chat_alliance_3client_udp
+    watch_road_capture_2client_udp
 )
-set(_baseline_udp_50009 watch_road_capture_2client_udp)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}
@@ -3320,18 +3327,15 @@ foreach(_name IN LISTS _baseline_fast)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
-foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008 50009)
-    foreach(_name IN LISTS _baseline_udp_${_port})
-        add_test(NAME baseline.${_name}
-                 COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
-                              --scenario ${_name}
-                              $<TARGET_FILE:WinBoloHeadless>
-                              $<TARGET_FILE:WinBoloDS>)
-        set_tests_properties(baseline.${_name} PROPERTIES
-                             TIMEOUT 60
-                             RESOURCE_LOCK "udp_${_port}"
-                             FIXTURES_REQUIRED warm_binaries)
-    endforeach()
+foreach(_name IN LISTS _baseline_udp)
+    add_test(NAME baseline.${_name}
+             COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+                          --scenario ${_name}
+                          $<TARGET_FILE:WinBoloHeadless>
+                          $<TARGET_FILE:WinBoloDS>)
+    set_tests_properties(baseline.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 # ---------------------------------------------------------------------------

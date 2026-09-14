@@ -145,8 +145,8 @@ static void rtCollect(LoopbackHarness *h, SOCKET sock,
                    (const struct sockaddr *)serverAddr, sizeof(*serverAddr));
         }
         loopbackHarnessPump(h);
-        while ((n = (int)recvfrom(sock, (char *)in, sizeof(in), 0,
-                                  NULL, NULL)) > 0) {
+        while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
+                                           serverAddr)) > 0) {
             uint8_t type = getPacketType(in, n);
             if (type == PACKET_JOIN_ACCEPT &&
                 n >= PACKET_HEADER_SIZE + 1 + 4 + 4 + 8) {
@@ -262,10 +262,13 @@ int run_map_reask_throttle(void) {
         for (p = 0; p < RT_PUMPS_EACH; p++) {
             uint8_t in[2048];
             loopbackHarnessPump(&h);
-            while ((int)recvfrom(sock, (char *)in, sizeof(in), 0,
-                                 NULL, NULL) > 0) {
+            while (loopbackRecvFromServer(sock, in, sizeof(in),
+                                          &serverAddr) > 0) {
                 /* Drained and dropped: this test asserts on the counter, and
-                 * an unread socket buffer would start discarding for us. */
+                 * an unread socket buffer would start discarding for us.
+                 * Another test's stray is dropped inside the call, so the
+                 * buffer still empties — only the loop's exit condition cares
+                 * who sent what. */
             }
         }
     }
