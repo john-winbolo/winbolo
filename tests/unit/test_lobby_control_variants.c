@@ -350,6 +350,137 @@ int run_lobby_settings_codec_and_apply(void) {
 }
 
 /* ================================================================
+ * CTRL_LOBBY_SETTINGS — the scenario the map is running, from the
+ * event onto the ClientSim and back out through the accessors.
+ *
+ * Both shapes, because the interesting half is the empty one: a
+ * settings body from a lobby with no scenario carries none of these
+ * bytes at all, so what the mirrors hold afterwards has to come from
+ * the decoder's own zeroing rather than from anything the apply path
+ * does. A lobby that had a scenario and then does not is the case
+ * that would leave a stale name on screen.
+ * ================================================================ */
+int run_lobby_settings_scenario_apply(void) {
+    ControlEvent in;
+    ClientSim   *cs;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SETTINGS;
+    strncpy(in.u.lobbySettings.mapName, "ScriptedMap",
+            sizeof(in.u.lobbySettings.mapName) - 1);
+    in.u.lobbySettings.lobbyGameType   = gameScripted;
+    in.u.lobbySettings.scenarioSource  = lobbyScenarioMap;
+    strncpy(in.u.lobbySettings.scenarioName, "Wave Defense",
+            sizeof(in.u.lobbySettings.scenarioName) - 1);
+    strncpy(in.u.lobbySettings.scenarioFileName, "wave.lua",
+            sizeof(in.u.lobbySettings.scenarioFileName) - 1);
+    strncpy(in.u.lobbySettings.scenarioDescription,
+            "Hold the base against ten waves.",
+            sizeof(in.u.lobbySettings.scenarioDescription) - 1);
+    in.u.lobbySettings.scenarioExtraTeams = true;
+    in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
+
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    clientSimApplyControl(cs, &in);
+
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioSource(cs) ==
+                      (uint8_t)lobbyScenarioMap,
+                  "the scenario source reached the client as %u, wanted %u",
+                  (unsigned)clientSimGetLobbyScenarioSource(cs),
+                  (unsigned)lobbyScenarioMap);
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioName(cs),
+                         "Wave Defense") == 0,
+                  "the scenario name reached the client as \"%s\"",
+                  clientSimGetLobbyScenarioName(cs));
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioFileName(cs),
+                         "wave.lua") == 0,
+                  "the scenario file name reached the client as \"%s\"",
+                  clientSimGetLobbyScenarioFileName(cs));
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioDescription(cs),
+                         "Hold the base against ten waves.") == 0,
+                  "the scenario description reached the client as \"%s\"",
+                  clientSimGetLobbyScenarioDescription(cs));
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioExtraTeams(cs),
+                  "the extra-teams flag did not reach the client");
+    UT_ASSERT_MSG(clientSimGetLobbyGameType(cs) == gameScripted,
+                  "the scripted game type did not reach the client (got %d)",
+                  (int)clientSimGetLobbyGameType(cs));
+    /* The base game lands on the GameSim, where gameTypeResolve reads it —
+       the client predicts its first life's loadout and start through there,
+       and the lobby mirrors have nowhere to put it. */
+    UT_ASSERT_MSG(clientSimGetGameSim(cs)->scenarioBaseGame ==
+                      gameStrictTournament,
+                  "the base game type reached the client as %d, wanted %d",
+                  (int)clientSimGetGameSim(cs)->scenarioBaseGame,
+                  (int)gameStrictTournament);
+
+    /* The same client, told about a map with no scenario. Everything the
+       previous settings left has to go, or the lobby keeps naming a
+       scenario that is not running. */
+    {
+        ControlEvent plain;
+        memset(&plain, 0, sizeof(plain));
+        plain.type = CTRL_LOBBY_SETTINGS;
+        strncpy(plain.u.lobbySettings.mapName, "PlainMap",
+                sizeof(plain.u.lobbySettings.mapName) - 1);
+        plain.u.lobbySettings.lobbyGameType = gameTournament;
+        clientSimApplyControl(cs, &plain);
+
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioSource(cs) ==
+                          (uint8_t)lobbyScenarioNone,
+                      "a plain map left the source at %u",
+                      (unsigned)clientSimGetLobbyScenarioSource(cs));
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioName(cs)[0] == '\0',
+                      "a plain map left the scenario name \"%s\" behind",
+                      clientSimGetLobbyScenarioName(cs));
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioFileName(cs)[0] == '\0',
+                      "a plain map left the scenario file name \"%s\" behind",
+                      clientSimGetLobbyScenarioFileName(cs));
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioDescription(cs)[0] == '\0',
+                      "a plain map left the description \"%s\" behind",
+                      clientSimGetLobbyScenarioDescription(cs));
+        UT_ASSERT_MSG(!clientSimGetLobbyScenarioExtraTeams(cs),
+                      "a plain map left the extra-teams flag set");
+        UT_ASSERT_MSG(clientSimGetGameSim(cs)->scenarioBaseGame == (gameType)0,
+                      "a plain map left the base game type %d behind",
+                      (int)clientSimGetGameSim(cs)->scenarioBaseGame);
+    }
+
+    /* And the whole way round: a scripted event that has been through the
+       codec applies the same, so the tail the encoder writes is the tail
+       the mirrors end up holding. */
+    {
+        ControlEvent out;
+        ClientSim   *wireCs;
+        memset(&out, 0, sizeof(out));
+        UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
+                      "the scripted settings event did not survive the codec");
+        wireCs = fresh_client_sim();
+        UT_ASSERT(wireCs != NULL);
+        clientSimApplyControl(wireCs, &out);
+        UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioName(wireCs),
+                             "Wave Defense") == 0,
+                      "the name off the wire reached the client as \"%s\"",
+                      clientSimGetLobbyScenarioName(wireCs));
+        UT_ASSERT_MSG(strcmp(clientSimGetLobbyScenarioDescription(wireCs),
+                             "Hold the base against ten waves.") == 0,
+                      "the description off the wire reached the client as "
+                      "\"%s\"", clientSimGetLobbyScenarioDescription(wireCs));
+        UT_ASSERT_MSG(clientSimGetGameSim(wireCs)->scenarioBaseGame ==
+                          gameStrictTournament,
+                      "the base game off the wire reached the client as %d, "
+                      "wanted %d",
+                      (int)clientSimGetGameSim(wireCs)->scenarioBaseGame,
+                      (int)gameStrictTournament);
+        clientSimDestroy(wireCs);
+    }
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
  * CTRL_LOBBY_TEAM_META — `in_use` is not on the wire; the decoder
  * reconstructs it from (nameLen>0 || color!=0 || pool!=0 ||
  * startSide!=0). Sub-cases exercise both sides of that branch, plus

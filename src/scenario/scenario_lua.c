@@ -362,6 +362,11 @@ static const char *scnGameTypeWord(gameType g) {
         case gameOpen:             return "open";
         case gameTournament:       return "tournament";
         case gameStrictTournament: return "strict";
+        /* The one caller resolves gameScripted before it gets here, so this
+           arm is only what keeps the switch covering the enumeration. A
+           scripted round plays under the base game it declared, and "open"
+           is what an undeclared one plays. */
+        case gameScripted:         return "open";
     }
     return "open";
 }
@@ -522,7 +527,11 @@ static int scnLuaTeamSize(lua_State *L) {
 
 /* The game type the humans are playing under. A scenario that asks for one
  * in its table is what the round runs, so that is what a script reads back;
- * a scenario that asks for none reads the sim's own. */
+ * a scenario that asks for none reads the sim's own, resolved the way every
+ * other site resolves it. The resolve is what keeps "scripted" off this row:
+ * a scripted round's own game type is gameScripted, and the word a script
+ * wants back is the base game it plays — the same three words the loadout
+ * table in a spawn_bot call holds. */
 static int scnLuaGameType(lua_State *L) {
     const ScnLuaCtx *c = scnCtx(L);
 
@@ -530,7 +539,9 @@ static int scnLuaGameType(lua_State *L) {
         lua_pushstring(L, c->manifest->game);
         return 1;
     }
-    lua_pushstring(L, scnGameTypeWord(serverSimGetGameType(c->sim)));
+    lua_pushstring(L, scnGameTypeWord(
+        gameTypeResolve(serverSimGetGameSim(c->sim),
+                        serverSimGetGameType(c->sim))));
     return 1;
 }
 
@@ -2808,8 +2819,9 @@ static const ScnLuaRow kScnLuaRows[] = {
       "team_size(t) — how many seats sit on team t, playing the round or "
       "not." },
     { "game_type", scnLuaGameType,
-      "game_type() — the rules the humans play under: \"open\", "
-      "\"tournament\" or \"strict\"." },
+      "game_type() — the rules the humans play under, as one of \"open\", "
+      "\"tournament\" and \"strict\": the game type the table names, or the "
+      "one the round is playing when it names none." },
     { "map_name", scnLuaMapName,
       "map_name() — what the map is called." },
     { "map_tile", scnLuaMapTile,

@@ -44,6 +44,7 @@
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
 #include "input_packet.h"  /* PING_SPAM_MAX_30S — client render backstop ring */
+#include "control_event.h" /* LOBBY_SCENARIO_*_LEN — the scenario mirror below */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -538,6 +539,9 @@ struct ClientSim {
     char     lobbyMapListNames[LOBBY_MAP_LIST_MAX][LOBBY_MAP_LIST_NAME_LEN];
     uint8_t  lobbyMapListIsFolder[LOBBY_MAP_LIST_MAX];
     int64_t  lobbyMapListModTime[LOBBY_MAP_LIST_MAX];
+    /* The map has a script beside it on the server. False for a folder, and
+       false throughout from a server that runs no scenario library. */
+    bool     lobbyMapListScripted[LOBBY_MAP_LIST_MAX];
     bool     lobbyMapListReady;     /* true once a response arrives */
     /* Most-recently requested path (set when the client sends
      * MAP_LIST_REQ; cleared when the matching response arrives). The
@@ -545,6 +549,14 @@ struct ClientSim {
      * to decide whether to re-issue a request on path change. */
     char     lobbyMapListReqPath[256];
     bool     lobbyMapListInFlight; /* true after send, false on response */
+
+    /* Monotonic counter ticked every time the server's view of its map
+     * directory changes under us: a completed MAP_LIST_RSP, a completed
+     * MAP_SEARCH_RSP, and a finished upload (which lands a new file in the
+     * directory and so makes the cached listing stale). The map chooser
+     * keeps its own last-seen value and re-runs its listing when the two
+     * differ, instead of re-enumerating on every frame. */
+    uint32_t lobbyMapListSeq;
 
     /* Monotonic counter incremented whenever the client receives a
      * PACKET_LOBBY_MAP_CHANGE (i.e. the server told us to invalidate
@@ -638,6 +650,18 @@ struct ClientSim {
                                     * (Balance from WBN) when the host
                                     * process isn't signed in to WBN. */
     uint32_t lobbyServerLocks;
+
+    /* The scenario the lobby's map is running, mirrored from
+     * CTRL_LOBBY_SETTINGS. lobbyScenarioSource is a LobbyScenarioSource
+     * value stored raw; 0 is "no scenario" and the three strings are then
+     * empty. A settings body from a lobby with no scenario carries none of
+     * these bytes at all, and the decoder's memset leaves exactly that, so
+     * a plain lobby needs no special case here. */
+    uint8_t  lobbyScenarioSource;
+    char     lobbyScenarioName[LOBBY_SCENARIO_NAME_LEN];
+    char     lobbyScenarioFileName[LOBBY_SCENARIO_FILE_LEN];
+    char     lobbyScenarioDescription[LOBBY_SCENARIO_DESC_LEN];
+    bool     lobbyScenarioExtraTeams;
 
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */

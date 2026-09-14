@@ -253,7 +253,15 @@ bool clientSimCreate(ClientSim *cs) {
   for (int i = 0; i < MAX_TANKS; i++) {
     cs->sim.pendingStartIdx[i] = MAX_STARTS;
     cs->sim.scenarioStartIdx[i] = MAX_STARTS;
+    /* No spawn has named a loadout, so every seat asks the policy. */
+    cs->sim.scenarioSpawnLoadout[i] = 0;
   }
+
+  /* A client is never handed a lobby template; the game a scenario declared
+     reaches it on the settings tail instead. Until a settings event lands
+     this is 0, and a scripted round resolves as gameOpen through the same
+     code the server runs. */
+  cs->sim.scenarioBaseGame = (gameType)0;
 
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
@@ -2586,6 +2594,11 @@ BYTE     clientSimGetLobbyHostSlot(const ClientSim *cs)             { return cs 
 bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
 bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
 bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
+uint8_t  clientSimGetLobbyScenarioSource(const ClientSim *cs)        { return cs ? cs->lobbyScenarioSource : (uint8_t)0; }
+const char *clientSimGetLobbyScenarioName(const ClientSim *cs)       { return cs ? cs->lobbyScenarioName : ""; }
+const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs)   { return cs ? cs->lobbyScenarioFileName : ""; }
+const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs){ return cs ? cs->lobbyScenarioDescription : ""; }
+bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs ? cs->lobbyScenarioExtraTeams : false; }
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
@@ -2697,6 +2710,10 @@ int64_t clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx) {
   if (idx < 0 || idx >= cs->lobbyMapListCount) return 0;
   return cs->lobbyMapListModTime[idx];
 }
+bool clientSimGetLobbyMapListScripted(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return false;
+  return cs->lobbyMapListScripted[idx];
+}
 bool clientSimGetLobbyMapListReady(const ClientSim *cs) {
   return cs->lobbyMapListReady;
 }
@@ -2705,6 +2722,9 @@ const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs) {
 }
 bool clientSimGetLobbyMapListInFlight(const ClientSim *cs) {
   return cs->lobbyMapListInFlight;
+}
+uint32_t clientSimGetLobbyMapListSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyMapListSeq : 0;
 }
 uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
   return cs ? cs->lobbyMapChangeSeq : 0;

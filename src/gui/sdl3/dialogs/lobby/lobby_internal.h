@@ -507,6 +507,10 @@ SDL_Texture *lobbyBuildMapPreview(SDL_Renderer *renderer,
 
 /* assets */
 const char *lobbyGameTypeStr(gameType gt);
+/* The map's scenario — its name and its description — or, for a host who
+ * has the scripts preference switched off, a line saying so. Draws nothing
+ * for a joiner on a map with no scenario. */
+void lobbyRenderScenarioLine(ClientSim *cs);
 const char *lobbyAiTypeStr(uint8_t ai);
 void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize);
 SDL_Texture *lobbyGetTankSelf04Texture(SDL_Renderer *renderer);

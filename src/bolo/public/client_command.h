@@ -78,7 +78,8 @@ typedef enum {
     CMD_PLAYER_MUTE,
     CMD_VOICE_STATE,
     CMD_PING,
-    CMD_PLAYER_PING_MUTE
+    CMD_PLAYER_PING_MUTE,
+    CMD_LOBBY_RELOAD_SCENARIO
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -110,7 +111,13 @@ typedef enum {
      * already reached. Surfaced to the host via the reject toast as a
      * dedicated "bot limit reached" line rather than the generic
      * CMD_REJECT_INVALID. */
-    CMD_REJECT_BOT_LIMIT
+    CMD_REJECT_BOT_LIMIT,
+    /* A lobby setting the map's scenario fixes: the game type, ranked,
+     * and the AI policy that would take every bot off the roster. The
+     * toast says the scenario decides it rather than the generic
+     * "invalid", which tells a host nothing about a setting that was
+     * theirs a map ago. Appended: the values ride the wire. */
+    CMD_REJECT_SCENARIO
 } CmdResult;
 
 /* CMD_TEAM_SET — set the team number for a lobby slot. Sender must
@@ -283,6 +290,13 @@ typedef struct {
 typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCancel;
+
+/* The lobby host asking the server to read its map's script again. Nothing
+ * to carry: which script is the server's own business, and the answer comes
+ * back as a line addressed to whoever asked. */
+typedef struct {
+    uint8_t _unused;
+} CmdLobbyReloadScenario;
 
 typedef struct {
     uint8_t _unused;
@@ -463,6 +477,7 @@ typedef struct ClientCommand {
         CmdLobbyAddBot         lobbyAddBot;
         CmdLobbySetMap         lobbySetMap;
         CmdLobbyPreviewCancel  lobbyPreviewCancel;
+        CmdLobbyReloadScenario lobbyReloadScenario;
         CmdLobbyPreviewCommit  lobbyPreviewCommit;
         CmdLobbyPreviewRandom  lobbyPreviewRandom;
         CmdLobbyKick           lobbyKick;

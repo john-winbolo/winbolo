@@ -2011,7 +2011,7 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     return;
   }
 
-  if (sim->game == gameOpen) {
+  if (gameTypeResolve(sim, sim->game) == gameOpen) {
     startsGetStartOpen(sim, value, x, y, dir, playerNum);
   } else {
     startsGetStartTournament(sim, value, x, y, dir, playerNum);

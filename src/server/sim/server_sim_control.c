@@ -82,8 +82,17 @@ void serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
-     * so any state-load/replay re-emit can't double-count. */
-    if (sim->state == serverStateRunning) {
+     * so any state-load/replay re-emit can't double-count.
+     *
+     * And never while the scenario setup window is open. The state already
+     * reads running when the round start makes its calls into the scenario,
+     * so sixteen bases dealt at setup would otherwise credit a seat with
+     * sixteen captures at tick 0 and put sixteen lines on the round's
+     * timeline. What a script arranges before the round is nobody's doing.
+     * The boot call is inside the window too, which is the same case. The
+     * event still lands in the frame buffer below, where the start's own
+     * truncation takes it back out. */
+    if (sim->state == serverStateRunning && !sim->scenarioSetupWindow) {
         const uint8_t *d = event->data;
         switch (event->type) {
         case EVENT_TANK_KILLED: {
@@ -291,6 +300,25 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
     evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
     evt->u.lobbySettings.lobbySmartPingsOff  = sim->smartPingsOff;
+    /* What the lobby's scenario is, straight off what whoever attached it
+       told the sim. A lobby with none leaves the source at lobbyScenarioNone
+       and the strings empty, which is what keeps those bytes off the wire. */
+    evt->u.lobbySettings.scenarioSource     = sim->scenarioIdentity.source;
+    evt->u.lobbySettings.scenarioExtraTeams = sim->scenarioIdentity.extraTeams;
+    snprintf(evt->u.lobbySettings.scenarioName,
+             sizeof(evt->u.lobbySettings.scenarioName), "%s",
+             sim->scenarioIdentity.name);
+    snprintf(evt->u.lobbySettings.scenarioFileName,
+             sizeof(evt->u.lobbySettings.scenarioFileName), "%s",
+             sim->scenarioIdentity.fileName);
+    snprintf(evt->u.lobbySettings.scenarioDescription,
+             sizeof(evt->u.lobbySettings.scenarioDescription), "%s",
+             sim->scenarioIdentity.description);
+    /* The game underneath a scripted round, from where the spawn and start
+       paths read it. lobbyGameType above says gameScripted for the whole of
+       such a round, and a client that only had that would predict its first
+       life as open. */
+    evt->u.lobbySettings.scenarioBaseGame = (uint8_t)sim->sim.scenarioBaseGame;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {

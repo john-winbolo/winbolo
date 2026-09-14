@@ -331,7 +331,14 @@ void lobbyRenderAllowNewPlayersRow(ClientSim *cs,
         LobbyRankedEligibility re = lobbyComputeRankedEligibility(cs);
 
         bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_RANKED) != 0;
-        bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
+        /* A scripted round is not a measured one, so the server refuses
+           ranked while a scenario is attached — and the commit that attached
+           one already took ranked off, so the only move left from here is
+           the refused one. Greyed on the same test the server applies rather
+           than letting the box be ticked and snap back. */
+        bool scenarioBlock = clientSimGetLobbyScenarioSource(cs) != 0;
+        bool canToggle = effectiveHost && !botsBlock && !rankedLocked &&
+                         !scenarioBlock;
         if (!canToggle) ImGui::BeginDisabled();
         char rankedId[64];
         SDL_snprintf(rankedId, sizeof(rankedId), "%s##ranked", langGetText(STR_DLGLOBBY_RANKED));
@@ -346,6 +353,8 @@ void lobbyRenderAllowNewPlayersRow(ClientSim *cs,
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
             } else if (!effectiveHost) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST));
+            } else if (scenarioBlock) {
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_REJECT_SCENARIO));
             } else if (botsBlock) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_BOTS));
             } else if (rankedV && !re.sizesEligible) {

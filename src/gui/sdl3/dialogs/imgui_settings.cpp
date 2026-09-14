@@ -1972,6 +1972,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         ImGui::EndDisabled();
     }
 
+    /* ---- Map scripts ---- */
+    {
+        bool runScripts = gameFrontHostingScripts;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_SCRIPTS),
+                            &runScripts)) {
+            gameFrontSetHostingScripts(runScripts);
+        }
+    }
+
     /* ---- Map uploads ---- */
     {
         /* Combo display order is Off / Allow / Persist, but the enum values

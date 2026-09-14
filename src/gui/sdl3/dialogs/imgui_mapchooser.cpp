@@ -663,6 +663,7 @@ static void discoverMapsRecursive(MapChooserState *state,
          * preview-side breadcrumb. */
         SDL_strlcpy(e->name, name, sizeof(e->name));
         e->modTime = (int64_t)pi.modify_time;
+        e->scripted = mapChooserMapHasScript(full);
         size_t dlen = SDL_strlen(e->name);
         if (dlen > 4 &&
             SDL_strcasecmp(e->name + dlen - 4, ".map") == 0) {
@@ -1155,6 +1156,7 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
             SDL_strlcpy(e->path, full, sizeof(e->path));
             SDL_strlcpy(e->name, name, sizeof(e->name));
             e->modTime  = (int64_t)pi.modify_time;
+            e->scripted = mapChooserMapHasScript(full);
             size_t dlen = SDL_strlen(e->name);
             if (dlen > 4 &&
                 SDL_strcasecmp(e->name + dlen - 4, ".map") == 0) {
@@ -1214,6 +1216,7 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
                     SDL_strlcpy(e->path, full, sizeof(e->path));
                     SDL_strlcpy(e->name, disp, sizeof(e->name));
                     e->modTime = (int64_t)pi.modify_time;
+                    e->scripted = mapChooserMapHasScript(full);
                 }
                 SDL_free(plist);
             }
@@ -2411,6 +2414,15 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                           + iconSz + 8.0f);
                 }
                 ImGui::TextUnformatted(displayBuf);
+                /* A map with a script beside it says so, quietly: one dim
+                 * word after the name rather than a column of its own, so
+                 * the list reads the same for the plain maps that are most
+                 * of it. */
+                if (ent.scripted && !ent.isFolder) {
+                    ImGui::SameLine(0.0f, 6.0f);
+                    ImGui::TextDisabled("%s",
+                        langGetText(STR_DLGGAMEINFO_SCRIPTED));
+                }
                 /* Folder icon drawn directly into the space we just
                  * skipped, at row baseline. */
                 if (wantFolderIcon) {

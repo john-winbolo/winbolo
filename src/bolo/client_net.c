@@ -625,6 +625,13 @@ void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendLobbyReloadScenario(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  ClientCommand cmd = { .type = CMD_LOBBY_RELOAD_SCENARIO };
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */

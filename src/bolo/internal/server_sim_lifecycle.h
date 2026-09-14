@@ -24,17 +24,25 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
  * rebuilt. The sim owns all of this — none of it calls back into whoever
  * read the scenario off disk.
  *
- * SeatLobby empties the seats the scenario put there and seats the template
- * again from scratch. ReconcileLobby is the softer one a returning round
- * gets: it keeps what the host did between rounds, cuts a team back to
- * maxBots, and returns the seats a script fielded to being held.
- * ClearSeats is the first half of SeatLobby on its own. OnMapChanged tells
- * whoever owns the scenario about the new map and then seats what they
- * leave behind. */
+ * ReconcileLobby is the softer one a returning round gets: it keeps what the
+ * host did between rounds, cuts a team back to maxBots, and returns the
+ * seats a script fielded to being held. ClearSeats is the first half of
+ * serverSimScenarioSeatLobby on its own. OnMapChanged tells whoever owns the
+ * scenario about the new map and then seats what they leave behind.
+ *
+ * serverSimScenarioSeatLobby and serverSimScenarioApplyLobbyRules are on
+ * server_sim.h instead: a process booting onto a scripted map makes both
+ * calls itself, and the dedicated server, the headless runner and the
+ * desktop host see only the public header. */
 void serverSimScenarioClearSeats(ServerSim *sim);
-void serverSimScenarioSeatLobby(ServerSim *sim);
 void serverSimScenarioReconcileLobby(ServerSim *sim);
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
+
+/* Whether the map at mapPath has a script beside it, asked through whatever
+ * the process registered with serverSimSetScenarioMapScripted. False with
+ * nothing registered, which is what a build carrying no scenario library
+ * answers for every map. */
+bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath);
 
 /* The pair a preview and its cancel use. SeatCounts reads the template seats
  * each team holds into out[], indexed by team id and MAX_TANKS long, and
@@ -157,7 +165,17 @@ void lobbyAutoUnreadyOnChange(ServerSim *sim);
  * humans' ready state before returning true. Returns false on
  * malformed payload, out-of-range value, or cross-setting invariant
  * rejection (e.g. ranked forbids gameOpen / non-aiNone / autoLock
- * off). */
+ * off, or the map's scenario fixes the value).
+ *
+ * The Result form is that same call saying why it refused, so the
+ * sender can be told: CMD_REJECT_SCENARIO for one of the three the
+ * attached scenario fixes — the game type, ranked, and the AI policy
+ * that runs no bots — and CMD_REJECT_INVALID for everything else. The
+ * command dispatcher calls that one; the bool is the same answer with
+ * the reason dropped. */
+CmdResult serverSimApplyLobbySettingResult(ServerSim *sim,
+                                           uint8_t lst,
+                                           const uint8_t *value, size_t len);
 bool serverSimApplyLobbySetting(ServerSim *sim,
                                 uint8_t lst,
                                 const uint8_t *value, size_t len);

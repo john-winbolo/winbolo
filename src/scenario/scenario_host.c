@@ -11,12 +11,15 @@
  *  Finds the Lua script beside a map, boots a VM, runs its
  *  chunk, reads the scenario table it declares into one
  *  struct, and applies the rules that table sets through the
- *  op funnel from inside the sim's round-start callback.
+ *  op funnel from inside the sim's round-boot callback.
  *
- *  The round's shape: a fresh VM at every round start, so a
- *  fresh set of globals; the rules applied; on_setup called
- *  inside the setup window the start opens; the roster
- *  audited; on_start called on the first running tick;
+ *  The round's shape: a fresh VM at the boot the start makes
+ *  before it places anything, so a fresh set of globals and a
+ *  round whose own state answers the placements; the rules
+ *  applied there too, so the opening tanks are built under
+ *  them; on_setup called after the tanks, inside the setup
+ *  window the start opens; the roster audited; on_start
+ *  called on the first running tick;
  *  on_tick on every running one; and on_end where the round
  *  moves into game over. Every hook is optional — a scenario
  *  defines the few it cares about.
@@ -53,10 +56,10 @@
  *  edit made to the file while the server is up does not
  *  reach a round on its own.
  *
- *  Nothing here publishes. The round start opens its setup
- *  window across the callback, which holds the set-rule
- *  handler's own CTRL_SIM_RULES publish, and the publish the
- *  start makes immediately afterwards carries the whole
+ *  Nothing here publishes. The start opens its setup window
+ *  across both of the calls it makes here, which holds the
+ *  set-rule handler's own CTRL_SIM_RULES publish, and the
+ *  publish the start makes at its end carries the whole
  *  table. A publish from here would be a second one saying
  *  the same thing.
  *
@@ -1779,6 +1782,20 @@ static void scnTick(void *ctx) {
     scnLockLeave(&h->lock);
 }
 
+/* The file name out of a path. What the lobby says a scenario came from is a
+ * name; where the server keeps its maps is not something clients are told.
+ * Both separators, because a Windows server holds the other one. */
+static const char *scnFileNameOf(const char *path) {
+    const char *last = path;
+    const char *p;
+
+    if (path == NULL) return "";
+    for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') last = p + 1;
+    }
+    return last;
+}
+
 /* The lobby out of the manifest and into the shape the sim reads. A straight
  * copy of the four numbers and the brain, dropping the teams the sim has no
  * seat for: the manifest holds what the file said and this holds what the
@@ -2327,27 +2344,30 @@ static void scnSeedTeams(ScenarioHost *h) {
     }
 }
 
-/* The round start's work, with the VM lock already held.
+/* The round's own state, booted with the VM lock already held.
  *
  * A fresh VM for the round, the bytes read at attach run again in it, the
- * table read again, then the rules, then on_setup, then the audit. The
- * fresh VM is what gives the round a fresh set of globals: nothing the last
- * round's script left behind is reachable from this one.
+ * table read again, then the rules. The fresh VM is what gives the round a
+ * fresh set of globals: nothing the last round's script left behind is
+ * reachable from this one.
+ *
+ * The sim makes this call ahead of its start batch, before a start is picked
+ * or a tank is built, so on_choose_start and spawn_loadout for the seats
+ * already in the round are answered by the state that will play it and the
+ * opening tanks are built under the table this file asked for. on_setup is
+ * the other half of the round start and runs later, once there is a built
+ * world for it to arrange.
  *
  * Nothing here goes near the disk: this runs inside the start with the sim
  * mutex held. A round whose chunk fails says so and plays classic rather
- * than carrying the previous round's table into it.
- *
- * on_setup runs after the rules, so a script's setup sees the table the file
- * itself asked for, and inside the setup window the start holds open, so
- * the funnel takes the ops it issues — every one but the six roster ops,
- * which the window keeps refusing. */
-static void scnRoundStartLocked(ScenarioHost *h) {
+ * than carrying the previous round's table into it — and it fails before a
+ * tank exists, so a round it leaves behind is a plain one from its first
+ * placement onward. */
+static void scnRoundBootLocked(ScenarioHost *h) {
     lua_State       *L;
     ScenarioManifest fresh;
     ScnParseReport   rep;
     char             err[SCN_ERR_LEN];
-    bool             humans[MAX_TANKS];
 
     err[0] = '\0';
 
@@ -2358,6 +2378,14 @@ static void scnRoundStartLocked(ScenarioHost *h) {
        level belongs to that one, which is why the failure paths empty the
        set rather than releasing it. */
     scenarioLuaTimersDrop(h->L, &h->timers);
+
+    /* An empty queue, on both channels: what the last round raised is no
+       business of this one. Before the chunk as well as before the rules and
+       the setup call, because the subscriber is registered at the attach and
+       stays registered across a round boundary — so an op the chunk's top
+       level issues raises an event straight away, and a reset behind the
+       chunk would wipe it before the round's first drain ever saw it. */
+    scenarioEventsReset(&h->events);
 
     L = scnBootVm(h);
     if (L == NULL) {
@@ -2401,16 +2429,10 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     h->disabled     = false;
     h->startPending = true;
 
-    /* And with an empty queue, on both channels: what the last round raised
-       is no business of this one. Before the rules and the setup call, so
-       anything those do raise is this round's and reaches its first
-       drain. */
-    scenarioEventsReset(&h->events);
-
-    /* The same for the roster copy the team change is measured against, and
-       for the state on_end watches: both are this round's, and both are
-       read before on_setup so a setup that moves a seat or ends the round
-       is itself the first change. */
+    /* The roster copy the team change is measured against, and the state
+       on_end watches: both are this round's, and both are read before the
+       round is running, so a setup that moves a seat or ends the round is
+       itself the first change either of them sees. */
     scnSeedTeams(h);
     h->lastState = serverSimGetState(h->sim);
 
@@ -2421,13 +2443,40 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     memset(h->inRegion, 0, sizeof(h->inRegion));
 
     scnApplyRules(h);
+}
+
+/* on_setup, with the VM lock already held.
+ *
+ * The sim makes this call at the point in the start where the world, the
+ * tanks and the roster are built and the state already reads running, which
+ * is the world a setup is there to arrange. It runs after the rules, so a
+ * script's setup sees the table the file itself asked for, and inside the
+ * setup window the start holds open, so the funnel takes the ops it issues —
+ * every one but the six roster ops, which the window keeps refusing.
+ *
+ * A boot that failed left no hooks behind, so this is then a call that does
+ * nothing and the round plays on without the scenario. */
+static void scnRoundSetupLocked(ScenarioHost *h) {
+    bool humans[MAX_TANKS];
 
     scnRosterHumans(h, humans);
     scnHookRun(h, SCN_HOOK_SETUP);
     scnRosterAudit(h, humans);
 }
 
-/* The sim's round-start callback. */
+/* The sim's round-boot callback, ahead of the start batch. */
+static void scnRoundBoot(void *ctx) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
+
+    if (h == NULL) {
+        return;
+    }
+    scnLockEnter(&h->lock);
+    scnRoundBootLocked(h);
+    scnLockLeave(&h->lock);
+}
+
+/* The sim's round-start callback, after the tanks. */
 static void scnRoundStart(void *ctx) {
     ScenarioHost *h = (ScenarioHost *)ctx;
 
@@ -2435,8 +2484,23 @@ static void scnRoundStart(void *ctx) {
         return;
     }
     scnLockEnter(&h->lock);
-    scnRoundStartLocked(h);
+    scnRoundSetupLocked(h);
     scnLockLeave(&h->lock);
+}
+
+/* The sim's reload callback, for a lobby host asking through the command bus
+ * rather than through a server console. scenarioHostReload takes the lock for
+ * itself, so this is the call and nothing else. */
+static bool scnReloadCb(void *ctx, char *err, size_t errLen) {
+    ScenarioHost *h = (ScenarioHost *)ctx;
+
+    if (h == NULL) {
+        if (err != NULL && errLen > 0) {
+            snprintf(err, errLen, "No scenario is attached to this map");
+        }
+        return false;
+    }
+    return scenarioHostReload(h, err, errLen);
 }
 
 /* ── The frontend surface ─────────────────────────────────────────── */
@@ -2462,17 +2526,48 @@ void scenarioHostSetEnabled(bool enabled) {
     scnEnabled = enabled;
 }
 
-/* Whether a file is there, without reading a byte of it. The refusal below
- * is the only caller: it says which script a map lost and must not say it
- * about a map that never had one. */
+/* Whether a regular file is there, without opening it. The map lister asks
+ * this once per entry on its way through a directory, so it is a stat and
+ * not an open. A directory carrying the script's name is not a script:
+ * calling one present would have the refusal below name a script a map
+ * never had. */
 static bool scnScriptExists(const char *path) {
-    FILE *f = fopen(path, "rb");
+    SDL_PathInfo info;
 
-    if (f == NULL) {
+    if (!SDL_GetPathInfo(path, &info)) {
         return false;
     }
-    fclose(f);
-    return true;
+    return info.type == SDL_PATHTYPE_FILE;
+}
+
+bool scenarioHostMapHasScript(const char *mapPath) {
+    char script[SCN_SCRIPT_PATH_MAX];
+
+    if (mapPath == NULL || mapPath[0] == '\0') {
+        return false;
+    }
+    /* What the tag means is that picking this map here runs its script, so a
+       process with scripts off answers no for every map: the attach would
+       refuse the file and the map would play plain. Without this the chooser
+       marks maps Scripted on a server that will not run one. */
+    if (!scnEnabled) {
+        return false;
+    }
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        return false;
+    }
+    return scnScriptExists(script);
+}
+
+/* The lister's question, in the shape the sim's setter takes. No context:
+   finding a script is a fact about a path and about nothing else. */
+static bool scnMapScriptedCb(void *ctx, const char *mapPath) {
+    (void)ctx;
+    return scenarioHostMapHasScript(mapPath);
+}
+
+void scenarioHostRegisterMapScripted(ServerSim *sim) {
+    serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, NULL);
 }
 
 ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
@@ -2616,8 +2711,12 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->policy.damageScale     = scnDamageScale;
     h->policy.ctx             = h;
 
+    serverSimSetScenarioRoundBoot(sim, scnRoundBoot, h);
     serverSimSetScenarioRoundStart(sim, scnRoundStart, h);
     serverSimSetScenarioTick(sim, scnTick, h);
+    /* And what a lobby host's reload request runs, so a player editing a
+       script has the loop the server console already has. */
+    serverSimSetScenarioReload(sim, scnReloadCb, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
     /* The lobby goes over as data rather than as another callback: the sim
        seats and reconciles it at every point a lobby is built, and a question
@@ -2625,9 +2724,23 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        reach back into a host that is being replaced at that moment. */
     {
         ScnLobbyTemplate t;
+        int              base = 0;
         scnFillLobbyTemplate(&m.lobby, &t);
+        /* The game type the manifest names, read by the same words a spawn
+           op's loadout takes so one table answers both. A manifest naming
+           none, or a word that table does not hold, leaves it 0 and the
+           round plays open. */
+        if (m.game[0] != '\0' && scenarioLuaLoadoutFromWord(m.game, &base)) {
+            t.baseGameType = (uint8_t)base;
+        }
         serverSimSetScenarioLobbyTemplate(sim, &t);
     }
+    /* And what it is called, which the lobby says out loud. A scenario read
+       from beside a map names that file; the path it was found at is the
+       server's own business and does not go over. */
+    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, m.name,
+                                 scnFileNameOf(h->script), m.description,
+                                 m.lobby.extraTeams);
 
     /* The bus, in three steps and in this order. Registration hands the new
        subscriber the whole of the current server state through the control
@@ -2655,8 +2768,29 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     return h;
 }
 
+/* The file name at the end of a path. What a reload says goes to whoever
+   asked for it as a single 128-byte line, and Lua puts the chunk's name at
+   the front of every message it raises — so a script under a deep map
+   directory would spend the whole line on a path the asker cannot see
+   anyway, leaving no room for the line number and the error itself. The
+   round boot keeps the full path: that one goes to the operator's console,
+   where the path is the useful part. */
+static const char *scnFileName(const char *path) {
+    const char *base = path;
+    const char *p;
+
+    for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') {
+            base = p + 1;
+        }
+    }
+    return base;
+}
+
 bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             soft[SCN_ERR_LEN];
+    char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
+    const char      *name;
     ScenarioManifest m;
     ScnParseReport   rep;
     ScnLuaCtx        check;
@@ -2670,13 +2804,16 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     if (h == NULL) {
         return false;
     }
+    name = scnFileName(h->script);
+    /* The leading '@' is what makes Lua call this a file in its messages. */
+    snprintf(chunkName, sizeof(chunkName), "@%s", name);
 
     if (!scnReadFile(h->script, &src, &srcLen, err, errLen)) {
         /* A file that has gone leaves err empty, because at attach that is
            the ordinary case rather than a fault. Asked for by name it is a
            fault, so it is stated here. */
         if (err != NULL && errLen > 0 && err[0] == '\0') {
-            scnFmt(err, errLen, "scenario: %s is no longer there", h->script);
+            scnFmt(err, errLen, "scenario: %s is no longer there", name);
         }
         return false;
     }
@@ -2722,8 +2859,8 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     rep.soft    = soft;
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
-    if (!scnRunChunk(L, src, srcLen, h->chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, h->script, err, errLen, &rep)) {
+    if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
+        !scnReadManifest(L, &m, name, err, errLen, &rep)) {
         lua_close(L);
         free(src);
         return false;
@@ -2732,7 +2869,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               h->script, m.api, SCENARIO_API_VERSION);
+               name, m.api, SCENARIO_API_VERSION);
         lua_close(L);
         free(src);
         return false;
@@ -2806,8 +2943,10 @@ void scenarioHostDetach(ScenarioHost *h) {
        to release, so leaving it registered would hand the sim a dangling
        vtable the first time the lobby asked a question. */
     if (h->sim != NULL) {
+        serverSimSetScenarioRoundBoot(h->sim, NULL, NULL);
         serverSimSetScenarioRoundStart(h->sim, NULL, NULL);
         serverSimSetScenarioTick(h->sim, NULL, NULL);
+        serverSimSetScenarioReload(h->sim, NULL, NULL);
         serverSimSetScenarioPolicy(h->sim, NULL);
         /* The lobby goes with them. What is already seated is left where it
            is — emptying the roster is the map change's business, and a
@@ -2816,6 +2955,10 @@ void scenarioHostDetach(ScenarioHost *h) {
            host, not to the host, and it is the thing that will attach the
            next one. */
         serverSimSetScenarioLobbyTemplate(h->sim, NULL);
+        /* And what it was called, so a lobby left without a scenario says
+           it has none. */
+        serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
+                                     NULL, false);
         /* Both channels go with the slot, and an invalid handle is a
            no-op, so this needs no test of its own. */
         serverSimUnregisterSubscriber(h->sim, h->sub);

@@ -120,6 +120,11 @@ typedef struct LobbyChooserTabs {
 #ifndef __EMSCRIPTEN__
     MapChooserState wbn           = {};
 #endif
+    /* Last clientSimGetLobbyMapListSeq the Server Maps tab enumerated on.
+     * The listing a network client shows arrives over the wire, so the rows
+     * change with no user action on this tab; comparing against the live
+     * value re-runs the provider on that edge instead of every frame. */
+    uint32_t        serverMapSeq  = 0;
     bool            inited        = false;
     int             activeTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
 } LobbyChooserTabs;
@@ -329,6 +334,8 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
                     clientSimGetLobbyMapListIsFolder(cs, i);
                 serverEntries[got].modTime =
                     clientSimGetLobbyMapListModTime(cs, i);
+                serverEntries[got].scripted =
+                    clientSimGetLobbyMapListScripted(cs, i);
                 got++;
             }
         }
@@ -339,6 +346,7 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
         memset(e, 0, sizeof(*e));
         e->isFolder = serverEntries[i].isFolder;
         e->modTime  = serverEntries[i].modTime;
+        e->scripted = serverEntries[i].scripted;
         if (e->isFolder) {
             SDL_strlcpy(e->name, serverEntries[i].name, sizeof(e->name));
             if (inSub) {
@@ -784,6 +792,21 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
 
     if (state->provider.refreshEveryFrame) {
         mapChooserRefresh(state);
+    } else if (state == &s_chooserTabs.server) {
+        /* Server Maps is the one tab whose rows can change with nothing
+         * happening here: on a network client the listing, the recursive
+         * search results and the effect of a finished upload all arrive
+         * asynchronously. clientSimGetLobbyMapListSeq moves on each of
+         * those, so one enumerate per move covers them; the provider's own
+         * send-if-the-cache-does-not-match logic issues the request when
+         * that enumerate finds a stale cache, and the reply's tick brings
+         * us back here once to show it. */
+        ClientSim *listCs = (ClientSim *)state->provider.ctx;
+        uint32_t   seq = listCs ? clientSimGetLobbyMapListSeq(listCs) : 0;
+        if (seq != s_chooserTabs.serverMapSeq) {
+            s_chooserTabs.serverMapSeq = seq;
+            mapChooserRefresh(state);
+        }
     }
     mapChooserRender(state, renderer, availW, availH, s);
 
@@ -870,16 +893,12 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooserTabs.server.provider.generatePreview      = lobbyServerMapsGeneratePreview;
         s_chooserTabs.server.provider.cacheScope           = "server";
         s_chooserTabs.server.provider.ctx                  = s_chooser.cs;
-        /* Network clients fetch the map list over the wire via
-         * PACKET_LOBBY_MAP_LIST_REQ; the response lands asynchronously
-         * after lobbyChooseMapEnsureInit's one-shot discoverMaps has
-         * already returned an empty list. Without refreshEveryFrame
-         * the chooser never re-polls the cache and shows nothing for
-         * the lifetime of the dialog. The provider's own in-flight
-         * gate prevents request spam. SP-host's synchronous branch
-         * pays a no-op per-frame discoverMaps; the in-process scan
-         * is already cheap so leave the flag on unconditionally. */
-        s_chooserTabs.server.provider.refreshEveryFrame    = true;
+        /* No per-frame enumerate here. The in-process branch of the
+         * provider scans the map directory and tests every file for a
+         * script beside it, which is not something to repeat at frame
+         * rate; the network branch is driven instead by the map-list
+         * counter lobbyRenderMapTab watches, which moves once per
+         * completed reply. */
         SDL_strlcpy(s_chooserTabs.server.crumbsRootLabel, "Maps",
                     sizeof(s_chooserTabs.server.crumbsRootLabel));
         /* Upload provider: local-filesystem scan via the chooser's
@@ -974,6 +993,15 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
 #ifndef __EMSCRIPTEN__
     s_chooserTabs.wbn.provider.ctx     = cs;
 #endif
+    /* Re-enumerate Server Maps on every open. EnsureInit's discover runs
+     * once per process, so without this a second opening of the dialog
+     * would show whatever the directory held the first time — and the
+     * selection match below reads the rows this produces. Seeding the
+     * watched counter from the cs that is bound now keeps a rebound cs
+     * (its counters back at zero) from looking like "no change". */
+    s_chooserTabs.serverMapSeq = cs ? clientSimGetLobbyMapListSeq(cs) : 0;
+    mapChooserRefresh(&s_chooserTabs.server);
+
     /* Snapshot the currently active map so Cancel can restore it
      * once an undo packet exists. */
     const char *cur = cs ? clientSimGetMapName(cs) : "";

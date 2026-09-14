@@ -33,6 +33,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and serverLifecycleGet*Stats via server_lifecycle.h */
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
+#include "sim_rules.h"              /* simRulesClassic — the table a round starts from */
 #include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetAddEvent, WINBOLO_NET_EVENT_WIN */
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
@@ -137,6 +138,14 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
        the map's own lobby rather than a bare one — the scenario is still
        attached, only its lobby was swept. */
     serverSimScenarioSeatLobby(sim);
+
+    /* And the settings the scenario asks for, in the order a map commit does
+       the two. The restore above put the operator's game type, ranked flag
+       and AI policy back, which are the settings a scripted map displaces:
+       without this the lobby would be left on them with the scenario still
+       attached. The operator's type is what is remembered as displaced here,
+       and it is what a plain map committed later gives back. */
+    serverSimScenarioApplyLobbyRules(sim);
 
     serverSimPublishLobbySettings(sim);
     serverSimWbnLobbyUpdate(sim, FALSE);
@@ -1217,8 +1226,77 @@ void serverSimReassignStarts(ServerSim *sim) {
     }
 }
 
+/* One of the two calls a start makes into the scenario, with the setup window
+ * open across it and the frame's game events put back where they stood.
+ *
+ * The window is what lets the funnel take the ops the call issues, and it
+ * holds the set-rule handler's own publish: the start states the whole table
+ * once at its end, so a script setting a dozen rules costs one control event
+ * rather than a dozen.
+ *
+ * The event buffer is what the opening snapshot carries to every client, and
+ * a client draws its newswire line and counts its scoreboard from what it
+ * finds there. What a scenario arranges is the world the round begins in
+ * rather than something that happened in it, so the buffer is put back where
+ * it stood and the arrangement rides the snapshot's own tank, base and pill
+ * lists: sixteen bases dealt at setup arrive as sixteen owners with no run of
+ * captures in front of them. Only this call's own events go — the count is
+ * taken first, so anything the start itself raised is left where it is. The
+ * map events are left alone too: a terrain edit writes no newswire line and
+ * has no other way of reaching a client. And the host keeps what it heard,
+ * because a subscriber is handed an event as it is raised rather than out of
+ * this buffer, so the round's own hooks still see what its setup did. */
+static void serverSimScenarioStartCall(ServerSim *sim, void (*call)(void *ctx),
+                                       void *ctx) {
+    uint8_t eventsBefore;
+
+    if (call == NULL) {
+        return;
+    }
+    eventsBefore             = sim->eventCount;
+    sim->scenarioSetupWindow = true;
+    /* Terrain written from here is recorded the way a running frame records
+       it. Only a running tick installs the map-change callback, and a start
+       is not one — it is reached from the countdown branch, which returns
+       before the install, and from a command handler, which runs outside a
+       tick altogether — so without this every square the call writes reaches
+       the server's own map and no client's. simMapChangeCallback records into
+       the active sim, so that is pointed at this one first, as the tick does
+       at its top. Put back to none rather than to what was there: both
+       installs are inside a running tick and neither reaches a start, so
+       there is never anything here to restore. */
+    serverSimSetActive(sim);
+    mapSetChangeCallback(simMapChangeCallback);
+    call(ctx);
+    mapSetChangeCallback(NULL);
+    sim->scenarioSetupWindow = false;
+    sim->eventCount          = eventsBefore;
+}
+
+/* The two per-seat holders a scenario writes into, back to the values a fresh
+ * sim has. Each is written by the roster drain and read once, by the seat it
+ * names, on that seat's next placement or spawn — so a value written for a
+ * seat that never took it would otherwise be spent on the opening placement of
+ * the round after. MAX_STARTS is the start holder's "none": 0 is a start. */
+static void serverSimResetScenarioSeats(ServerSim *sim) {
+    BYTE i;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->sim.scenarioStartIdx[i]     = MAX_STARTS;
+        sim->sim.scenarioSpawnLoadout[i] = 0;
+    }
+}
+
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
+
+    /* Every round opens on the classic table. A scenario writes its own over
+     * this at the boot call below, so a scripted round plays by its script
+     * either way; what this settles is the round that has no script to write
+     * one — the round after a scripted one, and a round whose scenario failed
+     * to boot — which would otherwise play by the last script's numbers. */
+    simRulesClassic(&sim->sim.rules);
+    serverSimResetScenarioSeats(sim);
 
     /* Held for the whole start so the all-ready detector refuses to run
      * while the roster and the state are being rebuilt. */
@@ -1265,6 +1343,13 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
+
+    /* The round's own Lua state, its chunk and its rules, before a start is
+     * picked or a tank is built: the seats fielded at the start are placed
+     * and armed by the policies of the round being started rather than by
+     * whatever state the host was still holding from the round before. */
+    serverSimScenarioStartCall(sim, sim->scenarioRoundBoot,
+                               sim->scenarioRoundBootCtx);
 
     /* Pre-compute start indices for the whole batch so teammates land
      * near each other and a team with a side keeps its side (see
@@ -1325,11 +1410,15 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * setup window is open across it, so the funnel takes the ops it
      * issues although the start has not finished; the publish below then
      * carries whatever rules those ops set. */
-    if (sim->scenarioRoundStart != NULL) {
-        sim->scenarioSetupWindow = true;
-        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
-        sim->scenarioSetupWindow = false;
-    }
+    serverSimScenarioStartCall(sim, sim->scenarioRoundStart,
+                               sim->scenarioRoundStartCtx);
+
+    /* Each slot's copy of the terrain takes what the boot and the setup
+     * wrote. This path is not reached from a tick, so the end-of-frame pass
+     * that does this for a running frame never sees those squares, and a copy
+     * left behind is what the map handed to anyone downloading it from here
+     * on is compressed from. */
+    serverSimShadowTick(sim);
 
     /* And the table the round is starting on, beside the phase. The twin of
      * the publish at the end of serverSimStartGame: this path does not run
@@ -1347,6 +1436,14 @@ void serverSimStartGame(ServerSim *sim) {
        identity (name, country, clientType, clientFlags) is preserved across
        the reset by serverSimResetGameWorld, so it no longer needs saving. */
     bool savedConnected[MAX_TANKS];
+
+    /* The classic table, as in serverSimStartGameInPlace and for the same
+     * reason. Before serverSimResetGameWorld below as well as before the
+     * boot call: the reload in there caps the map's pills and bases against
+     * whatever table the sim is on, and the map a round is starting on is
+     * capped by that round's rules and not by the previous round's. */
+    simRulesClassic(&sim->sim.rules);
+    serverSimResetScenarioSeats(sim);
 
     /* Held for the whole start, as in serverSimStartGameInPlace. */
     sim->startInProgress = true;
@@ -1420,6 +1517,11 @@ void serverSimStartGame(ServerSim *sim) {
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
 
+    /* The round's own Lua state, its chunk and its rules, before a start is
+     * picked or a tank is built — as in serverSimStartGameInPlace. */
+    serverSimScenarioStartCall(sim, sim->scenarioRoundBoot,
+                               sim->scenarioRoundBootCtx);
+
     /* Pre-compute start indices for the whole batch so teammates land
      * near each other, rivals don't grab adjacent squares, and a team with
      * a side keeps its side (the tankCreate loop below runs synchronously,
@@ -1458,11 +1560,8 @@ void serverSimStartGame(ServerSim *sim) {
      * running, and the setup window is open across the call so the funnel
      * takes the ops it issues. The publish below carries whatever rules
      * those ops set. */
-    if (sim->scenarioRoundStart != NULL) {
-        sim->scenarioSetupWindow = true;
-        sim->scenarioRoundStart(sim->scenarioRoundStartCtx);
-        sim->scenarioSetupWindow = false;
-    }
+    serverSimScenarioStartCall(sim, sim->scenarioRoundStart,
+                               sim->scenarioRoundStartCtx);
 
     /* The table the round is starting on, stated here rather than by each
      * caller. This and serverSimStartGameInPlace are the two authoritative

@@ -358,6 +358,19 @@ struct GameSim {
        by startsGetStart ahead of the placement policy and consumed there; the
        batch slot above is the engine choosing and stays below the policy. */
     BYTE        scenarioStartIdx[MAX_TANKS];
+    /* The game type a scenario op named for the one tank a spawn is about to
+       build, 0 for none. serverSimCbSpawnLoadout reads it ahead of the
+       spawn-loadout policy and clears it as it reads, so it is spent on the
+       tank that spawn builds and never reaches the seat's next life. */
+    BYTE        scenarioSpawnLoadout[MAX_TANKS];
+    /* The base game type a scenario declared, 0 for no scenario or none
+       declared. game being gameScripted sends every site that picks
+       behaviour from the game type here instead, through gameTypeResolve,
+       and 0 there reads as gameOpen. The server writes it from the lobby
+       template the host hands over; a client is handed no template and
+       writes it from the scenario tail of the lobby settings instead, so
+       both resolve a scripted round the same way. */
+    gameType    scenarioBaseGame;
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
        returns this fixed start (not the open-game algorithm). The GUI raises
        it from 0 (sea) to 1 (far bank) once the player passes the boat step.

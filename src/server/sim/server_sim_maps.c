@@ -965,6 +965,10 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
         e->isFolder = isDir;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = isDir ? 0 : (int64_t)info.size;
+        /* A folder is never scripted; the question is about a map file, and
+           `child` is the full path the answer needs. */
+        e->scripted = isDir ? false
+                            : serverSimScenarioMapIsScripted(sim, child);
     }
     SDL_free(list);
 
@@ -1057,6 +1061,9 @@ static void searchDirRecursive(const char *fullRoot,
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = (int64_t)info.size;
+        /* Written rather than left alone: the caller's array is not zeroed,
+           and the search's own results do not carry the flag. */
+        e->scripted = false;
     }
     SDL_free(list);
 }
@@ -1170,6 +1177,13 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        template they leave; the settings publish below then carries a lobby
        that is already the new map's. */
     serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+
+    /* Whoever owns the scenario has just attached the new map's or let the
+       previous one go, so the identity above is the new map's and this is
+       the point the lobby's own settings follow it. A server booting straight
+       onto a scripted map makes the same call for itself, having had no
+       commit to reach it through. */
+    serverSimScenarioApplyLobbyRules(sim);
 
     transportUdpServerOnLobbyMapChange(sim);
     {
