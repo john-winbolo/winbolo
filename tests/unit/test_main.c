@@ -76,6 +76,7 @@ static const UnitTestEntry s_tests[] = {
     { "prefs_api_mark_synced",           run_prefs_api_mark_synced           },
     { "join_running_phase_not_lobby",    run_join_running_phase_not_lobby    },
     { "lobby_settings_codec_and_apply",  run_lobby_settings_codec_and_apply  },
+    { "lobby_settings_scenario_apply",   run_lobby_settings_scenario_apply   },
     { "lobby_team_meta_codec_and_apply", run_lobby_team_meta_codec_and_apply },
     { "lobby_bot_config_codec_and_apply",run_lobby_bot_config_codec_and_apply},
     { "lobby_bot_brain_codec_and_apply", run_lobby_bot_brain_codec_and_apply },

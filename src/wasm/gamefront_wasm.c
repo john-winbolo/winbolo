@@ -217,6 +217,7 @@ bool gameFrontUseNatTraversal = FALSE;
  * the desktop build would. */
 unsigned short gameFrontHostingPort             = 27500;
 bool           gameFrontHostingAllowSpec        = TRUE;
+bool           gameFrontHostingScripts          = TRUE;
 int            gameFrontHostingMaxSpec          = 16;
 int            gameFrontHostingUploadPolicy     = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles   = 64;
@@ -936,6 +937,7 @@ uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
  * these only hold the value for the session the dialogs read it back in. */
 void gameFrontSetHostingPort(unsigned short port)    { gameFrontHostingPort = port; }
 void gameFrontSetHostingAllowSpec(bool allow)        { gameFrontHostingAllowSpec = allow; }
+void gameFrontSetHostingScripts(bool allow)          { gameFrontHostingScripts = allow; }
 void gameFrontSetHostingMaxSpec(int maxSpec)         { gameFrontHostingMaxSpec = maxSpec; }
 void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPolicy = policy; }
 void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }

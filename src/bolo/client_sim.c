@@ -2589,6 +2589,11 @@ BYTE     clientSimGetLobbyHostSlot(const ClientSim *cs)             { return cs 
 bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
 bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
 bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
+uint8_t  clientSimGetLobbyScenarioSource(const ClientSim *cs)        { return cs ? cs->lobbyScenarioSource : (uint8_t)0; }
+const char *clientSimGetLobbyScenarioName(const ClientSim *cs)       { return cs ? cs->lobbyScenarioName : ""; }
+const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs)   { return cs ? cs->lobbyScenarioFileName : ""; }
+const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs){ return cs ? cs->lobbyScenarioDescription : ""; }
+bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs ? cs->lobbyScenarioExtraTeams : false; }
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }

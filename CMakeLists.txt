@@ -4200,6 +4200,7 @@ set(_unit_test_names
     prefs_api_mark_synced
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
+    lobby_settings_scenario_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply

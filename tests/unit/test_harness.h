@@ -94,6 +94,9 @@ int run_prefs_api_adopt_server(void);
 int run_prefs_api_mark_synced(void);
 int run_join_running_phase_not_lobby(void);
 int run_lobby_settings_codec_and_apply(void);
+/* The scenario the settings event names, onto the ClientSim and back out
+ * through the accessors — with a scenario and then without one. */
+int run_lobby_settings_scenario_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);

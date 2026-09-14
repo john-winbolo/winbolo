@@ -2278,6 +2278,13 @@
  * what a round whose rules come from a scenario is called. */
 #define STR_DLGGAMEINFO_SCRIPTED            2173
 
+/* The host's scripts preference, and the two lines the lobby draws about
+ * the map's scenario: the one that names it, and the one that stands in
+ * its place when the host has the preference switched off. */
+#define STR_DLGSETTINGS_HOSTING_SCRIPTS     2174
+#define STR_DLGLOBBY_SCENARIO_LBL           2175
+#define STR_DLGLOBBY_SCRIPTS_OFF            2176
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

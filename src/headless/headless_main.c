@@ -482,6 +482,27 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (int)evt->u.lobbySettings.netStat,
               evt->u.lobbySettings.hasLobby ? "true" : "false",
               (int)evt->u.lobbySettings.voiceMode);
+      /* The scenario the map is running, written only when there is one, so
+         a round with none puts down exactly the line it always has and an
+         existing recording still reads the same. No scenario keys means no
+         scenario. This is the rule the wire already follows: the settings
+         encoder appends the scenario tail only when the source is set, so
+         the recording and the packet say the same thing. */
+      if (evt->u.lobbySettings.scenarioSource != lobbyScenarioNone) {
+        fprintf(f, ",\"scenarioSource\":%d",
+                (int)evt->u.lobbySettings.scenarioSource);
+        fprintf(f, ",\"scenarioName\":");
+        logEventsJsonStr(f, evt->u.lobbySettings.scenarioName,
+                         LOBBY_SCENARIO_NAME_LEN);
+        fprintf(f, ",\"scenarioFileName\":");
+        logEventsJsonStr(f, evt->u.lobbySettings.scenarioFileName,
+                         LOBBY_SCENARIO_FILE_LEN);
+        fprintf(f, ",\"scenarioDescription\":");
+        logEventsJsonStr(f, evt->u.lobbySettings.scenarioDescription,
+                         LOBBY_SCENARIO_DESC_LEN);
+        fprintf(f, ",\"scenarioExtraTeams\":%s",
+                evt->u.lobbySettings.scenarioExtraTeams ? "true" : "false");
+      }
       break;
 
     case CTRL_LOBBY_MAP_CHANGE:

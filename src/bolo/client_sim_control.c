@@ -407,6 +407,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyAllowNewPlayers = evt->u.lobbySettings.lobbyAllowNewPlayers;
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
+        /* The scenario the map is running. A body with no scenario tail
+         * decodes with the source at lobbyScenarioNone and the strings
+         * empty, so these five assignments are the whole of it — a plain
+         * lobby needs no branch. */
+        cs->lobbyScenarioSource = (uint8_t)evt->u.lobbySettings.scenarioSource;
+        cs->lobbyScenarioExtraTeams = evt->u.lobbySettings.scenarioExtraTeams;
+        SDL_strlcpy(cs->lobbyScenarioName, evt->u.lobbySettings.scenarioName,
+                    sizeof(cs->lobbyScenarioName));
+        SDL_strlcpy(cs->lobbyScenarioFileName,
+                    evt->u.lobbySettings.scenarioFileName,
+                    sizeof(cs->lobbyScenarioFileName));
+        SDL_strlcpy(cs->lobbyScenarioDescription,
+                    evt->u.lobbySettings.scenarioDescription,
+                    sizeof(cs->lobbyScenarioDescription));
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
         /* The policy byte is stored raw, with no range check. This mirror
          * drives nothing the server does not enforce for itself, so a value

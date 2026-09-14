@@ -44,6 +44,7 @@
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
 #include "input_packet.h"  /* PING_SPAM_MAX_30S — client render backstop ring */
+#include "control_event.h" /* LOBBY_SCENARIO_*_LEN — the scenario mirror below */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -628,6 +629,18 @@ struct ClientSim {
                                     * (Balance from WBN) when the host
                                     * process isn't signed in to WBN. */
     uint32_t lobbyServerLocks;
+
+    /* The scenario the lobby's map is running, mirrored from
+     * CTRL_LOBBY_SETTINGS. lobbyScenarioSource is a LobbyScenarioSource
+     * value stored raw; 0 is "no scenario" and the three strings are then
+     * empty. A settings body from a lobby with no scenario carries none of
+     * these bytes at all, and the decoder's memset leaves exactly that, so
+     * a plain lobby needs no special case here. */
+    uint8_t  lobbyScenarioSource;
+    char     lobbyScenarioName[LOBBY_SCENARIO_NAME_LEN];
+    char     lobbyScenarioFileName[LOBBY_SCENARIO_FILE_LEN];
+    char     lobbyScenarioDescription[LOBBY_SCENARIO_DESC_LEN];
+    bool     lobbyScenarioExtraTeams;
 
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */

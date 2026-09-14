@@ -253,6 +253,7 @@ bool gameFrontUseNatTraversal = TRUE;
  * hard-coded listen-server behaviour plus the newly-exposed knobs. */
 unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
 bool           gameFrontHostingAllowSpec       = TRUE;
+bool           gameFrontHostingScripts         = TRUE;
 int            gameFrontHostingMaxSpec         = 16;
 int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles  = 64;
@@ -1687,6 +1688,11 @@ bool gameFrontSetDlgState(openingStates newState) {
              No script says nothing; one loaded, one that cannot be used and
              one refused because scripts are off each say so. The switch is
              the library's, so this path has no test of its own. */
+          /* The host's own preference, set on the library before the attach
+             so the map commits that follow answer to it as well. Set both
+             ways, because unlike a command-line switch this can be turned
+             back on without restarting. */
+          scenarioHostSetEnabled(gameFrontHostingScripts);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
             spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -2115,6 +2121,11 @@ void gameFrontSetHostingPort(unsigned short port) {
 void gameFrontSetHostingAllowSpec(bool allow) {
   gameFrontHostingAllowSpec = allow;
   prefsSetString("HOSTING", "Allow Spectators", TRUEFALSE_TO_STR(allow));
+}
+
+void gameFrontSetHostingScripts(bool allow) {
+  gameFrontHostingScripts = allow;
+  prefsSetString("HOSTING", "Run Map Scripts", TRUEFALSE_TO_STR(allow));
 }
 
 void gameFrontSetHostingMaxSpec(int maxSpec) {
@@ -2959,7 +2970,9 @@ bool gameFrontSetupServer(void) {
   /* Embedded listen server: silence its console messages — no server console. */
   serverSimSetQuiet(spServerSim, true);
 
-  /* A scenario script beside the map, as on the single-player path. */
+  /* A scenario script beside the map, as on the single-player path, and the
+     same host preference deciding whether it runs at all. */
+  scenarioHostSetEnabled(gameFrontHostingScripts);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -3205,6 +3218,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
   prefsGetString("HOSTING", "Allow Spectators", "Yes", buff, FILENAME_MAX);
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
   {
     int m = atoi(buff);
@@ -3931,6 +3946,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Port", buff);
   prefsSetString("HOSTING", "Allow Spectators",
                             TRUEFALSE_TO_STR(gameFrontHostingAllowSpec));
+  prefsSetString("HOSTING", "Run Map Scripts",
+                            TRUEFALSE_TO_STR(gameFrontHostingScripts));
   intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
   prefsSetString("HOSTING", "Max Spectators", buff);
   prefsSetString("HOSTING", "Upload Policy",

@@ -946,6 +946,18 @@ bool        clientSimGetLobbyAllowNewPlayers(const ClientSim *cs);
 bool        clientSimGetLobbyWbnAvailable(const ClientSim *cs);
 uint32_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 
+/* The scenario the lobby's map is running, mirrored via
+ * CTRL_LOBBY_SETTINGS. The source is 0 when there is no scenario, and
+ * non-zero values follow the LobbyScenarioSource enum in control_event.h
+ * (1=beside the map, 2=one the host picked). The three strings are empty
+ * whenever the source is 0, and never NULL. extraTeams is what the
+ * scenario says about a host adding teams of its own. */
+uint8_t     clientSimGetLobbyScenarioSource(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioName(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs);
+bool        clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs);
+
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
