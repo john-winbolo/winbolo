@@ -1,0 +1,8 @@
+# wave_defense_fast scenario (--fast only):
+# readies the local player and starts the game. Everything after that is the
+# scenario beside the map: it fields each wave of raiders into the seats its
+# lobby is holding, and ends the round itself once the last wave is held.
+# No exit line — the run is bounded by --ticks, which is set past the last
+# wave so the round reaches its own end first.
+{"tick": 10, "op": "set_ready", "slot": 0, "ready": true}
+{"tick": 20, "op": "start_game"}

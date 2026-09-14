@@ -27,9 +27,13 @@
 #include <string.h>
 
 #include "server_sim_internal.h"
+#include "server_sim_shared.h"  /* serverSimSetActive — the fielding path's tank build */
 #include "bot_manager.h"
 #include "bot_worker_pool.h"   /* botWorkerPoolDestroy */
 #include "server_sim_join.h"   /* addPlayerInternal, fillAndPublishPlayerJoin, serverSimAssignLobbyStartOnJoin */
+#include "server_sim_scenario.h"  /* serverSimAddUnfieldedSeat and
+                                   * serverSimUnfieldBot, which are defined
+                                   * here and declared for a scenario */
 
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
                      const ServerSimBotConfig *cfg) {
@@ -40,7 +44,29 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
         return false;
     }
     if (sim->playerConnected[playerNum]) {
-        return false;
+        /* The one occupied seat an add may land on is one held for a bot
+           that is not on the field yet, and landing on it is what fields
+           it. The roster already holds the seat, its name and its team, and
+           every client was told about all three when it was seated, so
+           there is no join to announce and nothing to pick again. What the
+           seat lacks is the tank, which a fielding inside a round has to
+           build here — a fielding in the lobby gets one from the start
+           sequence with everybody else's. */
+        if (sim->lobbyPlayers[playerNum].fielded) {
+            return false;
+        }
+        playersSetClientFlags(&sim->sim.plyrs, playerNum, PLAYER_FLAG_BOT);
+        sim->lobbyPlayers[playerNum].fielded = true;
+        sim->lobbyPlayers[playerNum].isBot   = true;
+        sim->lobbyPlayers[playerNum].ready   = true;
+        if (sim->state == serverStateRunning &&
+            sim->sim.tanks[playerNum] == NULL) {
+            serverSimSetActive(sim);
+            tankCreate(&sim->sim, &sim->sim.tanks[playerNum]);
+            sim->sim.lgmen[playerNum] = lgmCreate(playerNum);
+            basesUpdateTimer(&sim->sim, playerNum);
+        }
+        return true;
     }
 
     /* Stamp PLAYER_FLAG_BOT before addPlayerInternal so the log_PlayerJoined
@@ -59,6 +85,97 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
      * default team. The slot republishes on its next lobby change. */
     serverSimAssignLobbyStartOnJoin(sim, playerNum);
     return true;
+}
+
+bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
+                               const char *name, BYTE teamNumber) {
+    if (sim == NULL || playerNum >= MAX_TANKS || name == NULL) {
+        return false;
+    }
+    if (sim->playerConnected[playerNum]) {
+        return false;
+    }
+
+    /* The same stamp a fielded bot gets, for the same reason: the join event
+       below carries the bot identity. */
+    playersSetClientFlags(&sim->sim.plyrs, playerNum, PLAYER_FLAG_BOT);
+    addPlayerInternal(sim, playerNum, name, NULL, false);
+    fillAndPublishPlayerJoin(sim, playerNum);
+
+    sim->lobbyPlayers[playerNum].isBot      = true;
+    sim->lobbyPlayers[playerNum].ready      = true;
+    sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
+    sim->lobbyPlayers[playerNum].fielded    = false;
+    sim->lobbyPlayers[playerNum].keepSeat   = true;
+    /* A seat outside a round still reserves a start, so the bot that fields
+       it lands with the rest of its team rather than wherever is free at the
+       moment the wave arrives. Re-picked with the final team in hand, as the
+       fielded add does. */
+    serverSimAssignLobbyStartOnJoin(sim, playerNum);
+    /* addPlayerInternal builds a tank for a slot that joins mid-round, and
+       arms that slot's base restock cycle with it. This seat is not on the
+       field, so both go back: a seat with no tank must not go on speeding
+       the bases up for everyone who has one. */
+    if (sim->sim.tanks[playerNum] != NULL) {
+        tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
+        sim->sim.tanks[playerNum] = NULL;
+    }
+    if (sim->sim.lgmen[playerNum] != NULL) {
+        lgmDestroy(&sim->sim.lgmen[playerNum]);
+        sim->sim.lgmen[playerNum] = NULL;
+    }
+    basesRemoveTimer(&sim->sim, (int)playerNum);
+    serverSimPublishLobbySlot(sim, playerNum);
+    return true;
+}
+
+void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->playerConnected[playerNum]) return;
+    if (!sim->lobbyPlayers[playerNum].fielded) return;
+
+    /* The mirror of serverSimAddBot's occupied-seat branch above: that one
+       builds the tank, the man and the base timer for a seat the roster
+       already holds, and this one takes the same three back along with the
+       bot that was driving them. Everything the roster knows stays — the
+       connection, the players-table identity, the team, the alliance — so
+       there is no leave to announce, nothing the seat owns changes hands,
+       and no client has to be resynced to find that out. */
+    if (botManagerIsBot(sim, playerNum)) {
+        botManagerRemoveBotKeepSeat(sim, playerNum);
+    }
+    /* As the fielding path does before it builds one: the routing the tank
+       teardown reaches out through reads the active sim. */
+    serverSimSetActive(sim);
+    if (sim->sim.tanks[playerNum] != NULL) {
+        tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
+        sim->sim.tanks[playerNum] = NULL;
+    }
+    if (sim->sim.lgmen[playerNum] != NULL) {
+        lgmDestroy(&sim->sim.lgmen[playerNum]);
+        sim->sim.lgmen[playerNum] = NULL;
+    }
+    /* A seat with no tank must not go on speeding the bases up for everyone
+       who has one — the same reason serverSimAddUnfieldedSeat takes the
+       timer back. */
+    basesRemoveTimer(&sim->sim, (int)playerNum);
+
+    /* The queue the bot that just went left behind: kept, its last few
+       inputs would be applied to the tank the next fielding builds. */
+    sim->inputQueueHead[playerNum] = 0;
+    sim->inputQueueTail[playerNum] = 0;
+    sim->lastProcessedInput[playerNum] = 0;
+    sim->lastInputButtons[playerNum] = 0;
+    sim->lastActionAppliedTick[playerNum] = 0;
+    sim->pendingHarvestActions[playerNum] = 0;
+    sim->pendingHarvestBuildAction[playerNum] = 0;
+    sim->pendingHarvestBuildX[playerNum] = 0;
+    sim->pendingHarvestBuildY[playerNum] = 0;
+    sim->inputBufferFilled[playerNum] = 0;
+    sim->inputDryTicks[playerNum] = 0;
+
+    sim->lobbyPlayers[playerNum].fielded = false;
+    serverSimPublishLobbySlot(sim, playerNum);
 }
 
 void serverSimSetBotAiType(ServerSim *sim, aiType ai) {
@@ -108,7 +225,15 @@ bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return;
-    botManagerRemoveBot(sim, playerNum);
+    if (botManagerIsBot(sim, playerNum)) {
+        botManagerRemoveBot(sim, playerNum);
+    } else if (sim->playerConnected[playerNum] &&
+               sim->lobbyPlayers[playerNum].isBot) {
+        /* A seat held for a bot with nothing behind it to tear down. The
+           roster entry is the whole of it, so taking it out is the leave
+           path on its own. */
+        serverSimRemovePlayer(sim, playerNum);
+    }
     serverSimPublishLobbySlot(sim, playerNum);
 }
 
@@ -134,7 +259,12 @@ bool serverSimHasAnyBot(ServerSim *sim) {
 }
 
 bool serverSimIsBot(ServerSim *sim, BYTE playerNum) {
-    return botManagerIsBot(sim, playerNum);
+    if (botManagerIsBot(sim, playerNum)) return true;
+    /* A seat held for a bot that has not been fielded yet has no bot manager
+       entry to find, and is a bot seat all the same: it is what the roster
+       draws, what the human count leaves out and what a host may remove. */
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    return sim->playerConnected[playerNum] && sim->lobbyPlayers[playerNum].isBot;
 }
 
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum) {
@@ -177,6 +307,11 @@ bool serverSimBotExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
 char *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
                                 const char *src) {
     return botManagerEvalLuaString(sim, playerNum, src);
+}
+
+bool serverSimBotSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
+                                    const char *name, const char *value) {
+    return botManagerSetLuaGlobalString(sim, playerNum, name, value);
 }
 
 void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {

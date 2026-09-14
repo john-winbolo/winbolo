@@ -123,22 +123,26 @@ static bool commandDecodeReady(const uint8_t *buf, size_t len,
 }
 
 /* CMD_LOBBY_BOT_CONFIG — PACKET_LOBBY_BOT_CONFIG
- * Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
- *       [nameLen 1] [name N] */
+ * Wire: [header 8] [slot 1] [difficulty 1] [personality 1] [mode 1]
+ *       [nameLen 1] [name N]
+ * mode sits after personality so the older fields kept their offsets;
+ * nameLen stays the last fixed byte. Same order as the control-event
+ * body in transport_control_codec.c. */
 static bool commandEncodeLobbyBotConfig(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
     uint8_t nameLen = cmd->u.lobbyBotConfig.nameLen;
     if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
-    const size_t needed = CMD_PACKET_BODY_OFFSET + 4 + nameLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 5 + nameLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_BOT_CONFIG, 0);
     buf[CMD_PACKET_BODY_OFFSET + 0] = cmd->u.lobbyBotConfig.slot;
     buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.lobbyBotConfig.difficulty;
     buf[CMD_PACKET_BODY_OFFSET + 2] = cmd->u.lobbyBotConfig.personality;
-    buf[CMD_PACKET_BODY_OFFSET + 3] = nameLen;
+    buf[CMD_PACKET_BODY_OFFSET + 3] = cmd->u.lobbyBotConfig.mode;
+    buf[CMD_PACKET_BODY_OFFSET + 4] = nameLen;
     if (nameLen > 0) {
-        memcpy(buf + CMD_PACKET_BODY_OFFSET + 4, cmd->u.lobbyBotConfig.name, nameLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 5, cmd->u.lobbyBotConfig.name, nameLen);
     }
     *outLen = needed;
     return true;
@@ -146,20 +150,21 @@ static bool commandEncodeLobbyBotConfig(const ClientCommand *cmd,
 
 static bool commandDecodeLobbyBotConfig(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < CMD_PACKET_BODY_OFFSET + 4) return false;
-    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 3];
+    if (len < CMD_PACKET_BODY_OFFSET + 5) return false;
+    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 4];
     if (nameLen >= PACKET_MAX_PLAYER_NAME ||
-        len < (size_t)CMD_PACKET_BODY_OFFSET + 4 + nameLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 5 + nameLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_BOT_CONFIG;
     cmd->u.lobbyBotConfig.slot        = buf[CMD_PACKET_BODY_OFFSET + 0];
     cmd->u.lobbyBotConfig.difficulty  = buf[CMD_PACKET_BODY_OFFSET + 1];
     cmd->u.lobbyBotConfig.personality = buf[CMD_PACKET_BODY_OFFSET + 2];
+    cmd->u.lobbyBotConfig.mode        = buf[CMD_PACKET_BODY_OFFSET + 3];
     cmd->u.lobbyBotConfig.nameLen     = nameLen;
     if (nameLen > 0) {
         memcpy(cmd->u.lobbyBotConfig.name,
-               buf + CMD_PACKET_BODY_OFFSET + 4, nameLen);
+               buf + CMD_PACKET_BODY_OFFSET + 5, nameLen);
     }
     return true;
 }

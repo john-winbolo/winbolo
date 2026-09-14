@@ -136,10 +136,6 @@ static SOCKET ckOpenSocketOnIp(const char *ip) {
     return s;
 }
 
-static int ckTryRecv(SOCKET s, uint8_t *buf, int cap) {
-    return (int)recvfrom(s, (char *)buf, cap, 0, NULL, NULL);
-}
-
 /* Test-only window seam toggle (pairs with the server's getenv on
  * WB_COOKIE_WINDOW_OFFSET). Portable across the unit-test platforms; the CRT
  * getenv the server uses observes both forms. */
@@ -178,7 +174,7 @@ static void ckDriveOnce(LoopbackHarness *h, SOCKET sock,
         int n;
         bool drained = false;
         loopbackHarnessPump(h);
-        while ((n = ckTryRecv(sock, in, sizeof(in))) > 0) {
+        while ((n = loopbackRecvFromServer(sock, in, sizeof(in), server)) > 0) {
             uint8_t type = getPacketType(in, n);
             if (type == PACKET_JOIN_ACCEPT) {
                 *gotAccept = true;

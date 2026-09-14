@@ -29,13 +29,21 @@
 #include "global.h"
 #include "client_sim.h"
 #include "labels.h"
+#include "players.h"   /* playersLocationShown */
+
+/* Both builders below put a location after a name in long-label mode, and
+ * both ask playersLocationShown first. Without that test they append the
+ * geolocator's "XX" unknown sentinel like a real country code, so a player
+ * the lookup could not place — and every bot, which is given "XX" outright —
+ * carries "@XX" on their tank label and in every message they send. The name
+ * builders in players.c make the same decision with the same call. */
 
 void labelMakeMessage(ClientSim *cs, char *res, char *name, char *loc) {
   labelLen lm = cs ? clientSimGetLabelMessage(cs) : lblShort;
   res[0] = '\0';
   if (lm != lblNone) {
     strcat(res, name);
-    if (lm == lblLong) {
+    if (lm == lblLong && playersLocationShown(loc)) {
       strcat(res, LABEL_AT_SYMBOL);
       strcat(res, loc);
     }
@@ -48,7 +56,7 @@ void labelMakeTankLabel(ClientSim *cs, char *res, char *name, char *loc, bool is
   res[0] = '\0';
   if (lt != lblNone && (isOwn == FALSE || (isOwn == TRUE && ownTank == TRUE))) {
     strcat(res, name);
-    if (lt == lblLong) {
+    if (lt == lblLong && playersLocationShown(loc)) {
       strcat(res, LABEL_AT_SYMBOL);
       strcat(res, loc);
     }

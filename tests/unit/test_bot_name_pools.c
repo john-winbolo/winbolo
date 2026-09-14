@@ -121,7 +121,7 @@ int run_bot_pool_install_and_clamp(void) {
                       LOBBY_BOT_POOL_MAX_NAMES, lobbyBotPoolNameCount(0));
         UT_ASSERT(st.namesDropped == 20);
         free(storage);
-        free(names);
+        free((void *)names);
     }
 
     /* Pools-per-set cap. Offer > MAX_POOLS pools (one name each). */

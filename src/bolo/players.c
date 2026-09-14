@@ -188,12 +188,37 @@ void playersDestroy(players *plrs) {
 }
 
 /*********************************************************
+*NAME:          playersLocationShown
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+* TRUE when a player's location is a country code worth putting after their
+* name. Two values are not: an empty string, and the "XX" sentinel the
+* geolocator returns when it cannot place an address (see geolookup.h) and
+* which every bot is given outright, a bot having no country at all.
+*
+* Without this test the name builders below append the sentinel like any
+* other code, and every player but yourself is listed as "Name (XX)" or
+* "Name@XX" — your own row is spared only because they all skip self. The
+* drawing code already knew better: renderPlayerName in the SDL3 front end
+* tests for "XX" before it draws a flag. The name builders never did.
+*
+*ARGUMENTS:
+*  location - The player's location string, may be NULL
+*********************************************************/
+bool playersLocationShown(const char *location) {
+  return location != NULL && location[0] != '\0' &&
+         !(location[0] == 'X' && location[1] == 'X' && location[2] == '\0');
+}
+
+/*********************************************************
 *NAME:          playersSetSelf
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
 *LAST MODIFIED: 26/11/99
 *PURPOSE:
-* Sets your own player number and player name. Returns 
+* Sets your own player number and player name. Returns
 * whether the operation succeeded.
 *
 *ARGUMENTS:
@@ -271,9 +296,14 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
       (*plrs)->item[playerNum].playerName[PLAYER_NAME_LAST] = '\0';
       utilCtoPString(playerName, (char *) (*plrs)->playerBrainNames[playerNum]);
       strcpy(temp, playerName);
+      /* The location test is nested rather than folded into the condition
+       * above: the else below is the SELF branch, and widening this if would
+       * hand another player's update to clientSimSetMyLastPlayerName. */
       if (playerNum != selfPlayer) {
-        strcat(temp, "@");
-        strcat(temp, (*plrs)->item[playerNum].location);
+        if (playersLocationShown((*plrs)->item[playerNum].location)) {
+          strcat(temp, "@");
+          strcat(temp, (*plrs)->item[playerNum].location);
+        }
       } else if (isServer == FALSE && csParam) {
         clientSimSetMyLastPlayerName(csParam, playerName);
       }
@@ -311,7 +341,8 @@ void playersSetPlayersMenu(ClientSim *csParam, players *plrs, BYTE selfPlayer, b
   while (count < MAX_TANKS) {
     if ((*plrs)->item[count].inUse == TRUE) {
       strcpy(temp, (*plrs)->item[count].playerName);
-      if (count != selfPlayer) {
+      if (count != selfPlayer &&
+          playersLocationShown((*plrs)->item[count].location)) {
         strcat(temp, "@");
         strcat(temp, (*plrs)->item[count].location);
       }
@@ -408,7 +439,8 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   /* Update front end if we are in a running game (ie not in the joining phase) */
   if (csParam == NULL || clientSimGetNetStatus(csParam) != netFailed) {
     strcpy(str, (*plrs)->item[playerNum].playerName);
-    if (playerNum != selfPlayer && (*plrs)->item[playerNum].location[0] != '\0') {
+    if (playerNum != selfPlayer &&
+        playersLocationShown((*plrs)->item[playerNum].location)) {
       strcat(str, " (");
       strcat(str, (*plrs)->item[playerNum].location);
       strcat(str, ")");
@@ -1350,7 +1382,8 @@ void playersSetMenuItems(ClientSim *csParam, players *plrs, BYTE selfPlayer, boo
   for (count=0;count<MAX_TANKS;count++) {
     if ((*plrs)->item[count].inUse == TRUE  ) {
       strcpy(str, (*plrs)->item[count].playerName);
-      if (count != selfPlayer) {
+      if (count != selfPlayer &&
+          playersLocationShown((*plrs)->item[count].location)) {
         strcat(str, "@");
         strcat(str, (*plrs)->item[count].location);
       }
@@ -1952,7 +1985,6 @@ void playersRequestAlliance(ClientSim *cs, players *plrs, BYTE selfPlayer) {
 *********************************************************/
 void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
   BYTE count; /* Looping variable */
-  BYTE total; /* Amount of items to redraw */
   bool found;
   count = 0;
   found = FALSE;
@@ -1968,6 +2000,31 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
 
   basesMigrate(sim, playerNum, count);
   pillsMigratePlanted(sim, playerNum, count);
+
+  playersClearAlliance(sim, plrs, selfPlayer, playerNum, isServer);
+}
+
+/*********************************************************
+*NAME:          playersClearAlliance
+*PURPOSE:
+* Takes a player out of every alliance bitmap — their own,
+* and every other player's reference to them — and redraws.
+* What they own is left where it is: handing pillboxes and
+* bases to an ally belongs to a departure, which is what
+* playersLeaveAlliance above is for. A server stating who
+* is allied with whom is not one, so the caller applying
+* such a statement clears through here.
+*
+*ARGUMENTS:
+* sim        - Pointer to the game sim
+* plrs       - Pointer to the players object
+* selfPlayer - The player this client is
+* playerNum  - Player number to take out of the alliances
+* isServer   - TRUE if we are the server (no screen to draw)
+*********************************************************/
+void playersClearAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+  BYTE count; /* Looping variable */
+  BYTE total; /* Amount of items to redraw */
 
   allienceDestroy(&((*plrs)->item[playerNum].allie));
   (*plrs)->item[playerNum].allie = allienceCreate();

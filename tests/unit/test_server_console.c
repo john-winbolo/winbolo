@@ -39,6 +39,8 @@ typedef struct {
     int  hostCalls;
     char lastHost[64];
     bool hostResult;
+    int  reloadCalls;
+    bool reloadResult;
 } ConsoleRec;
 
 static ConsoleRec g_rec;
@@ -81,9 +83,18 @@ static bool recSetHost(const char *name) {
     return g_rec.hostResult;
 }
 
+static bool recReloadScenario(char *msg, size_t msgLen) {
+    g_rec.reloadCalls++;
+    snprintf(msg, msgLen, "%s",
+             g_rec.reloadResult ? "reloaded" : "nothing to reload");
+    return g_rec.reloadResult;
+}
+
+/* Positional, like the server's own list, so a new entry goes last. */
 static const ServerConsoleOps kRecOps = {
     recSetLock, recInfo, recSaveMap, recSay,
-    recLogSay,  recStatus, recKick,  recSetHost
+    recLogSay,  recStatus, recKick,  recSetHost,
+    recReloadScenario
 };
 
 /* Fresh recorder; both "did it work" ops answer yes unless a test says
@@ -92,6 +103,7 @@ static void recReset(void) {
     memset(&g_rec, 0, sizeof(g_rec));
     g_rec.saveMapResult = true;
     g_rec.hostResult = true;
+    g_rec.reloadResult = true;
 }
 
 /* Run one line through the dispatcher the way the input loops do. */

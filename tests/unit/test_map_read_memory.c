@@ -264,6 +264,76 @@ int run_map_read_memory_handbuilt(void) {
     return rc;
 }
 
+
+static const char *kMinedPillPath = "data/maps/.test_mined_pill.map";
+
+/* The same load-time pill fixup run_map_pill_mine_cleared_on_load pins on the
+ * resync-blob path, on the path a .map file takes. A pillbox standing on a
+ * mined square hides the mine from everything that could set it off, so the
+ * loader strips it back to the ground it was laid on. The .map format has no
+ * field for a pill riding in a tank, so only the cleared case exists here. */
+int run_map_read_clears_mine_under_pill(void) {
+    map mp = NULL; pillboxes pb = NULL; bases bs = NULL; starts ss = NULL;
+    size_t blobLen = 0;
+    uint8_t *blob;
+    pillbox got;
+    bool wrote;
+    int rc = 0;
+
+    mapCreate(&mp); pillsCreate(&pb); basesCreate(&bs); startsCreate(&ss);
+
+    /* A block of land big enough that the run encoder has something to say,
+     * with a single mined square at the pill's position. */
+    for (int y = 30; y < 70; y++) {
+        for (int x = 30; x < 70; x++) {
+            mp->mapItem[x][y] = GRASS;
+        }
+    }
+    mp->mapItem[40][40] = MINE_GRASS;
+
+    pillsSetNumPills(&pb, 1);
+    {
+        pillbox p = {0};
+        p.x = 40; p.y = 40; p.owner = 0xFF; p.armour = 15; p.speed = 50;
+        pillsSetPill(ut_rules_only_sim(), &pb, &p, 1);
+    }
+
+    SDL_CreateDirectory("data/maps");
+    wrote = mapWrite((char *)kMinedPillPath, &mp, &pb, &bs, &ss);
+    mapDestroy(&mp); pillsDestroy(&pb); basesDestroy(&bs); startsDestroy(&ss);
+    UT_ASSERT_MSG(wrote, "failed to write the mined-pill map");
+
+    blob = slurp(kMinedPillPath, &blobLen);
+    UT_ASSERT_MSG(blob != NULL, "failed to slurp the mined-pill map");
+
+    mapCreate(&mp); pillsCreate(&pb); basesCreate(&bs); startsCreate(&ss);
+    if (!mapReadFromMemory(blob, (int)blobLen, &mp, &pb, &bs, &ss)) {
+        fprintf(stderr, "FAIL %s:%d: mined-pill map must decode\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+
+    if (rc == 0) {
+        /* mapReadStream centres the map, which moves the pill with it, so ask
+         * the decoded record where the pill ended up rather than assuming. The
+         * terrain byte is read straight out of mapItem: a mine has to stay
+         * distinguishable from the ground under it. */
+        pillsGetPill(&pb, &got, 1);
+        if (mp->mapItem[got.x][got.y] != GRASS) {
+            fprintf(stderr,
+                    "FAIL %s:%d: mine under a pill survived the file load: "
+                    "(%u,%u) = %u, expected GRASS(%u)\n",
+                    __FILE__, __LINE__, (unsigned)got.x, (unsigned)got.y,
+                    (unsigned)mp->mapItem[got.x][got.y], (unsigned)GRASS);
+            rc = 1;
+        }
+    }
+
+    free(blob);
+    mapDestroy(&mp); pillsDestroy(&pb); basesDestroy(&bs); startsDestroy(&ss);
+    SDL_RemovePath(kMinedPillPath);
+    return rc;
+}
+
 /* The conversion the WBN preview path actually relies on: on-disk
  * .map bytes in RAM -> runtime compressed map -> MapPreview. The
  * round-tripped preview must match the directly-parsed map. */

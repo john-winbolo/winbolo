@@ -85,6 +85,9 @@ typedef struct {
     uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
     uint8_t clientType;    /* ClientType enum */
     uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
+    bool fielded;          /* On the field this round. False for a seat held
+                              in the roster with no tank behind it — the
+                              roster draws those dimmed. */
 } ClientLobbySlot;
 
 /* Client-side mirror of a server spectator roster slot. Spectators
@@ -995,6 +998,11 @@ uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamStartSide(const ClientSim *cs, BYTE teamId);
 const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
+/* Which of the brain's declared modes this bot runs in — an index into
+ * brainListLoadModes(<the slot's brain>)'s list, 0 being the default mode
+ * every ordinary game uses. clientSimGetLobbyBotDifficulty is then an index
+ * into THAT mode's level list. */
+uint8_t     clientSimGetLobbyBotMode(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
 /* Returns the catalogue index of the brain assigned to a lobby bot slot.

@@ -96,6 +96,7 @@
 #include "../common/prefs.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
+#include "../scenario/scenario_host.h"
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -124,6 +125,10 @@ static char optTrackerAddr[256] = "";
 static unsigned short optTrackerPort = 0;
 static char optName[64] = "HeadlessBot";
 static char optBrain[512] = "";
+/* The brain the server runs bots on, which is not optBrain: that one is this
+ * process's own player, started through ClientSim. This one is handed to the
+ * sim, which loads it for every bot a lobby or a scenario seats. */
+static char optBotBrain[512] = "";
 static int optTicks = 0; /* 0 = unlimited */
 static char optPassword[256] = "";
 static char optLogState[512] = "";
@@ -136,6 +141,8 @@ static bool optQuiet = FALSE;
 static bool optFast = FALSE;
 static char optMap[512] = "";
 static bool optStdin = FALSE;
+/* Run the map plainly, whatever script sits beside it. */
+static bool optNoScenarios = false;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -184,6 +191,7 @@ static ClientSim *humanSim = NULL;
 
 /* Fast mode: local server sim */
 static ServerSim *fastServerSim = NULL;
+static ScenarioHost *scenarioHost = NULL;
 
 /* Scripted command stream (NULL unless --cmd-stdin was supplied). */
 static CmdStdin *cmdStream = NULL;
@@ -735,6 +743,10 @@ static bool cmdDispatchFast(const CmdLine *cmd) {
       return true;
     case CMD_OP_SET_READY:
       serverSimSetReady(fastServerSim, cmd->slot, cmd->ready);
+      /* Mirror the real lobby dispatch: readying up can complete the
+       * all-ready condition and start the game — the SP Ready-click
+       * path this fast mode exists to reproduce. */
+      serverSimLobbyCheckAllReady(fastServerSim);
       return true;
     case CMD_OP_NAME_CHANGE:
       cmdFastPublishPlayerName(cmd->slot, cmd->name);
@@ -1930,7 +1942,7 @@ static void printUsage(const char *prog) {
     "\n"
     "Common options:\n"
     "  --name NAME       Player name (default: HeadlessBot)\n"
-    "  --brain PATH      Path to Lua brain script\n"
+    "  --brain PATH      Path to the Lua brain this process's own player runs\n"
     "  --ticks N         Run for N game ticks then exit (0 = unlimited)\n"
     "  --ai TYPE         AI type: yes (default), full, advantage, no\n"
     "  --gametype TYPE   Game type: strict (default), tournament, open\n"
@@ -1958,6 +1970,13 @@ static void printUsage(const char *prog) {
     "                    always written (- for stdout)\n"
     "  --record FILE     Record the run to a .wbv replay, started before the\n"
     "                    first game tick and closed at exit\n"
+    "  --bot-brain PATH  Path to the Lua brain the server runs its bots on, and\n"
+    "                    what turns bot AI on for the fast-mode sim. Not --brain,\n"
+    "                    which is this process's own player. A scenario's lobby\n"
+    "                    seats and its spawns both need this\n"
+    "  --noscenarios     Do not load the scenario script beside the map. Every\n"
+    "                    map, including one committed later, plays plainly. A map\n"
+    "                    that has a script says which one was not loaded\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
@@ -2038,6 +2057,8 @@ static bool parseArgs(int argc, char **argv) {
       strncpy(optName, argv[++i], sizeof(optName) - 1);
     } else if (strcmp(argv[i], "--brain") == 0 && i + 1 < argc) {
       strncpy(optBrain, argv[++i], sizeof(optBrain) - 1);
+    } else if (strcmp(argv[i], "--bot-brain") == 0 && i + 1 < argc) {
+      strncpy(optBotBrain, argv[++i], sizeof(optBotBrain) - 1);
     } else if (strcmp(argv[i], "--ticks") == 0 && i + 1 < argc) {
       optTicks = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--log-state") == 0 && i + 1 < argc) {
@@ -2105,6 +2126,8 @@ static bool parseArgs(int argc, char **argv) {
       optLineOfSight = true;
     } else if (strcmp(argv[i], "--classicmode") == 0) {
       optClassicMode = true;
+    } else if (strcmp(argv[i], "--noscenarios") == 0) {
+      optNoScenarios = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -2331,6 +2354,28 @@ static int runFastMode(void) {
     return 1;
   }
 
+  /* A scenario script beside the map, if one is there. No script is the
+     ordinary case and says nothing; a script that cannot be used says why,
+     as does one --noscenarios turned down, and the run plays the map
+     plainly. The switch is set on the library before the first attach, so
+     the map commits that follow answer to it as well. */
+  if (optNoScenarios) {
+    scenarioHostSetEnabled(false);
+  }
+  {
+    char scenarioErr[512];
+    scenarioHost = scenarioHostAttach(fastServerSim, optMap,
+                                      scenarioErr, sizeof(scenarioErr));
+    if (scenarioHost != NULL) {
+      fprintf(stderr, "Scenario loaded: %s (from %s)\n",
+              scenarioHostName(scenarioHost),
+              scenarioHostScriptPath(scenarioHost));
+    } else if (scenarioErr[0] != '\0') {
+      fprintf(stderr, "%s\n", scenarioErr);
+    }
+  }
+  scenarioHostFollowMap(fastServerSim, &scenarioHost);
+
   /* Cache compressed map for fast resets */
   {
     BYTE tempMap[MAP_COMPRESSED_MAX_SIZE];
@@ -2338,6 +2383,8 @@ static int runFastMode(void) {
                                                        (int)sizeof(tempMap));
     if (cachedCompressedMapLen <= 0) {
       fprintf(stderr, "Error: failed to compress map\n");
+      scenarioHostDetach(scenarioHost);
+      scenarioHost = NULL;
       serverSimDestroy(fastServerSim);
       fastServerSim = NULL;
       return 1;
@@ -2363,6 +2410,16 @@ static int runFastMode(void) {
     } else {
       cfg.skipLobby    = true;
     }
+    /* The bot brain and the AI level go over together: a sim with a path and
+     * no level runs no brains, and a level with no path has none to run. Left
+     * out, both stay as serverSimCreate left them — no bot AI, which is what
+     * every run of this binary has had. The reset path below starts the sim
+     * again with a zeroed config, and both fields survive that: the apply
+     * writes them only when the config carries them. */
+    if (optBotBrain[0] != '\0') {
+      cfg.botBrainPath = optBotBrain;
+      cfg.botAiType    = (BYTE)aiYes;
+    }
     applyViewPolicyOptions(fastServerSim);
     serverInstanceStartup(fastServerSim, &cfg);
   }
@@ -2383,6 +2440,17 @@ static int runFastMode(void) {
    * server would send it a near/far tier and a bearing instead. */
   serverSimSetSoundSquares(fastServerSim, clientSimGetMyPlayerNum(humanSim),
                            true);
+  /* The lobby a scenario asks for. Its template reached the sim at the attach
+   * above; seating it is the separate step made wherever a lobby is built, and
+   * this is where this binary builds one.
+   *
+   * After the local player joins, not before: a seat is taken from the first
+   * free slot, so seating a horde first would put it in slot 0 and leave this
+   * process's own player somewhere above it. A map with no scenario has no
+   * template, and this seats nothing. */
+  if (scenarioHost != NULL) {
+    serverSimScenarioSeatLobby(fastServerSim);
+  }
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   if (!optQuiet) {
@@ -2558,6 +2626,8 @@ cleanup:
   }
   clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
+  scenarioHostDetach(scenarioHost);
+  scenarioHost = NULL;
   serverSimDestroy(fastServerSim);
   fastServerSim = NULL;
   free(cachedCompressedMap);

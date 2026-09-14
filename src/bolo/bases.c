@@ -840,6 +840,7 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate, BYT
       (*value)->item[baseNum].shells = 0;
       (*value)->item[baseNum].mines = 0;
       (*value)->item[baseNum].baseTime = 0;
+      logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
     }
     (*value)->item[baseNum].owner = owner;
     logAddEvent(log_BaseSetOwner, baseNum, owner, migrate, 0, 0, NULL);
@@ -916,6 +917,7 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
           (*value)->item[count].shells = 0;
           (*value)->item[count].mines = 0;
           (*value)->item[count].baseTime = 0;
+          logAddEvent(log_BaseSetStock, count, (*value)->item[count].shells, (*value)->item[count].mines, (*value)->item[count].armour, 0, NULL);
         }
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
@@ -1397,6 +1399,7 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
         (*value)->item[count].armour =
             (BYTE) (before - sim->rules.shell_damage);
       }
+      logAddEvent(log_BaseSetStock, count, (*value)->item[count].shells, (*value)->item[count].mines, (*value)->item[count].armour, 0, NULL);
       if (sim->callbacks.recordDamage) {
         sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_BASE,
                                     count, DMG_SRC_SHELL,

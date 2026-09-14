@@ -169,10 +169,18 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * every existing alliance, then re-accept per the matrix the
          * server sent. Matrix is symmetric — iterate the upper triangle
          * only. Self-bit is informational (slot is connected) and does
-         * not produce an accept. */
+         * not produce an accept.
+         *
+         * Cleared through playersClearAlliance, which takes the bits and
+         * nothing else. playersLeaveAlliance, above, also hands what the
+         * player owns to the first ally it can find — right for a
+         * departure, and sixteen wrong answers here: this event says who
+         * is allied with whom, and the re-accept below puts the bits
+         * back but not the ownership. A departure arrives on its own as
+         * CTRL_PLAYER_LEAVE. */
         BYTE i, j;
         for (i = 0; i < MAX_TANKS; i++) {
-            playersLeaveAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
+            playersClearAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
                                  i, FALSE);
         }
         for (i = 0; i < MAX_TANKS; i++) {
@@ -465,6 +473,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_LOBBY_BOT_CONFIG: {
         uint8_t s = evt->u.lobbyBotConfig.slot;
         if (s >= MAX_TANKS) break;
+        cs->lobbyBotMode[s]        = evt->u.lobbyBotConfig.mode;
         cs->lobbyBotDifficulty[s]  = evt->u.lobbyBotConfig.difficulty;
         cs->lobbyBotPersonality[s] = evt->u.lobbyBotConfig.personality;
         /* Bot display name flows through the lobbySlot path; the

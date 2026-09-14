@@ -92,6 +92,7 @@
 extern "C" {
 #endif
 #include "client_net.h"
+#include "brain_list.h"      /* BrainModes — cached per catalogue entry below */
 #include "types.h"
 #include "imgui_mapchooser.h"
 /* VisibilitySettings, named by the value renderer the server browser and
@@ -123,6 +124,12 @@ struct LobbyBrainMeta {
     char name[BRAIN_LIST_NAME_LEN];
     char tagline[BRAIN_LIST_TAG_LEN];
     char desc[BRAIN_LIST_DESC_LEN];
+    uint32_t color;        /* 0xRRGGBB the bot's name tag is painted with */
+    /* The brain's own modes.txt, parsed once per catalogue entry: what the
+     * gear popup's Mode dropdown lists and where the Difficulty dropdown's
+     * entries come from. Always populated — a brain with no manifest gets
+     * the synthesized single "default" mode (brain_list.h). */
+    BrainModes modes;
 };
 
 /* Bounding box of interesting (non-sea) terrain in the map preview */
@@ -155,6 +162,11 @@ typedef struct LobbyIconCache {
     SDL_Texture  *settings;
     SDL_Texture  *botCpuGreen;
     SDL_Texture  *botCpuRed;
+    /* The same chip with every colour taken to grey — the "off" chip in the
+     * player list's difficulty tag, where a lit chip is botCpuRed. A real
+     * greyscale asset rather than the red one drawn faded, so an off chip
+     * keeps the art's full contrast instead of washing out against the pill. */
+    SDL_Texture  *botCpuGrey;
     SDL_Texture  *locked;
     SDL_Texture  *skull;
     SDL_Texture  *picture;
@@ -368,18 +380,55 @@ typedef struct LobbyReelState {
 void lobbyCommandReset(void);
 void lobbySendReadyToggle(ClientSim *cs, bool ready);
 const LobbyBrainMeta *lobbyBrainMetaFor(const char *name);
-void lobbyDrawTagline(const char *tag, float wrapPosX);
+
+/* The three colours (bg / text / border) a bot's NAME tag is drawn with on
+ * the player list, from the brain's own colour: the one its about.txt
+ * declares, else the one remembered in the prefs for that name, else one
+ * derived from the name and remembered from then on. */
+void lobbyBotBrainTagColors(ClientSim *cs, int slot,
+                            ImU32 *bg, ImU32 *fg, ImU32 *border);
+void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty);
 void lobbyGearTooltip(ClientSim *cs, int slot, float s);
+/* Per-difficulty wording (lang ids) and the bot's brain name without its
+ * version suffix. Difficulty is a BOT_DIFFICULTY_* value; anything out of
+ * range reads as Hard. */
+unsigned int lobbyBotDifficultyLabelId(uint8_t difficulty);
+unsigned int lobbyBotDifficultyTaglineId(uint8_t difficulty);
+unsigned int lobbyBotDifficultyDescId(uint8_t difficulty);
+void lobbyBotBrainBaseName(ClientSim *cs, int slot, char *out, size_t outSz);
 bool lobbyAddBotPending(ClientSim *cs);
 void lobbySendAddBotDebounced(ClientSim *cs,
                               int namingPool, uint8_t teamNumber);
 void lobbySendRemoveBot(ClientSim *cs, uint8_t slot);
 void lobbySendTeamSet(ClientSim *cs,
                       uint8_t targetSlot, uint8_t teamNumber);
+/* mode indexes the brain's own mode list, difficulty that mode's level
+ * list — see brain_list.h and lobbyBotModesFor below. */
 void lobbySendBotConfig(ClientSim *cs,
                         uint8_t slot,
-                        uint8_t difficulty, uint8_t personality,
+                        uint8_t mode, uint8_t difficulty, uint8_t personality,
                         const char *name);
+
+/* The mode manifest of the brain a lobby slot is running, cached per
+ * catalogue entry. Never NULL for a slot whose brain list has arrived; NULL
+ * only when there is no catalogue yet (a client mid-join). */
+const BrainModes *lobbyBotModesFor(ClientSim *cs, int slot);
+
+/* This slot's mode / level indices, clamped against the brain's actual
+ * manifest so a stale byte can never index past the list. Either out
+ * pointer may be NULL. */
+void lobbyBotModeAndLevel(ClientSim *cs, int slot,
+                          int *outMode, int *outLevel);
+
+/* True for the brain's default mode — the one every ordinary game uses,
+ * and the only one whose levels can have hand-written lang strings. */
+bool lobbyBotModeIsDefault(const BrainModes *modes, int mode);
+
+/* True when that mode's levels are still exactly easy / medium / hard, so
+ * the STR_BOT_DIFF_* wording actually describes them. False for every
+ * other mode, and for a default mode a manifest has renamed or extended —
+ * those show the manifest's own labels. */
+bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode);
 void lobbySendSetBotBrain(ClientSim *cs,
                           uint8_t slot, uint8_t brainIdx);
 void lobbySendTeamClear(ClientSim *cs, uint8_t teamId);

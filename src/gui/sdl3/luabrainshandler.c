@@ -107,6 +107,15 @@ static char s_run_script_path[1024] = "";
 
 /* Set by --profile / --profile-log (or always-on in dev mode). Captured
  * as BRAIN_PROFILE / BRAIN_PROFILE_LOG Lua globals at brain init. */
+/* Base seed for every brain's math.random; 0 leaves the VM default. The
+ * per-instance seed is this plus the bot's player number, so bots still differ
+ * from each other while being identical across runs. Host-controlled default
+ * rather than a create parameter, so it reaches the seeding point inside
+ * luaBrainInstanceCreate without threading an argument through every caller --
+ * the same shape the debug-mode default uses. */
+static long s_defaultRandomSeed = 0;
+static void seedRandomOnState(lua_State *L, long seed);
+
 static int s_profile     = 0;
 static int s_profile_log = 0;
 /* Pool-viz capture (BRAIN_POOL_VIZ). Decoupled from profile_log so a
@@ -168,6 +177,31 @@ void luaBrainsSetRunScript(const char *path) {
         SDL_strlcpy(s_run_script_path, path, sizeof(s_run_script_path));
     else
         s_run_script_path[0] = '\0';
+}
+
+/* Staged per-bot init arg from -bot-init's [..] suffix. Consumed (cleared)
+ * by the next luaBrainInstanceCreate, which injects BRAIN_INIT_ARG. */
+static char s_next_init_arg[BRAIN_INIT_ARG_MAX] = "";
+
+void luaBrainsSetNextInitArg(const char *arg) {
+    if (arg && arg[0])
+        SDL_strlcpy(s_next_init_arg, arg, sizeof(s_next_init_arg));
+    else
+        s_next_init_arg[0] = '\0';
+}
+
+const char *luaBrainsPeekNextInitArg(void) { return s_next_init_arg; }
+
+/* Staged engine tick for the NEXT brain instance created. Injected as the
+ * BRAIN_START_ENGINE_TICK Lua global so a brain born mid-game (a Survival
+ * wave respawn) can seed its own tick counter from the game clock instead
+ * of restarting at 0 every life. Consume-once like s_next_init_arg: a host
+ * that never stages one (BrainTest's in-process create) gets 0, which is
+ * exactly the game-start value, so the global is never nil. */
+static unsigned int s_next_start_engine_tick = 0;
+
+void luaBrainsSetNextStartEngineTick(unsigned int tick) {
+    s_next_start_engine_tick = tick;
 }
 
 bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
@@ -241,6 +275,8 @@ bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
             }
             SDL_strlcpy(slots[id].path, vbuf, sizeof(slots[id].path));
             slots[id].init = initTable;
+            /* Same suffix text, unparsed, for the BRAIN_INIT_ARG side. */
+            SDL_strlcpy(slots[id].arg, argbuf, sizeof(slots[id].arg));
             slots[id].covered = 1;
         }
 
@@ -820,6 +856,31 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * passed, so a brain can read BRAIN_INIT.key without a type check. */
   brainCoreSetInitTable(L, init);
 
+  /* BRAIN_INIT_ARG: optional per-bot text from -bot-init's [..] suffix; string
+   * when staged, nil otherwise. The same text BRAIN_INIT above is built from,
+   * kept as the raw ';'-separated string because that is what the GoalHunter
+   * brains parse, and because bot_manager appends its own mode= / difficulty=
+   * tokens to it. Consume-once so it applies only to this brain — the next
+   * create defaults back to nil unless luaBrainsSetNextInitArg re-stages. */
+  if (s_next_init_arg[0]) {
+    lua_pushstring(L, s_next_init_arg);
+  } else {
+    lua_pushnil(L);
+  }
+  lua_setglobal(L, "BRAIN_INIT_ARG");
+  s_next_init_arg[0] = '\0';
+
+  /* BRAIN_START_ENGINE_TICK: the server sim's tick at the moment this brain
+   * was created. Always a number (0 = created at game start), never nil, so
+   * every host — including BrainTest's in-process create, which stages
+   * nothing — sees a usable value. The brain seeds state.tick with half of
+   * it (brains think once per two engine ticks), so a wave bot's print2 and
+   * jsonl tick numbers continue the session clock instead of restarting at 0
+   * and colliding with every earlier life. Consume-once. */
+  lua_pushinteger(L, (lua_Integer)s_next_start_engine_tick);
+  lua_setglobal(L, "BRAIN_START_ENGINE_TICK");
+  s_next_start_engine_tick = 0;
+
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 
   /* Create C pathfinder and register cpf_* globals */
@@ -889,6 +950,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   naThreatRegister(L);
   naShieldStampRegister(L);
   naOptLogRegister(L);
+  /* The crash-log writer lives in bolo_static, which cannot call into the
+   * brain C bindings directly; hand it the flush entry point instead so a
+   * brain crash report is written after the queued print2 output, not before
+   * it. Idempotent — every brain instance installs the same function. */
+  brainCoreSetLogFlushHook(naOptLogFlushSync);
   naAttackRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for
@@ -1090,6 +1156,18 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   if (inst->pathfinder) {
     brainPathfinderSetMap(inst->pathfinder, inst->bInfo.theWorld);
   }
+  /* Seed math.random BEFORE brain.open runs. This ordering is the whole
+   * point: GoalHunter draws replan_offset inside open (init.lua), and that
+   * single draw staggers the bot's entire replan cadence for the rest of the
+   * game. Seeding after create returns would leave exactly that draw coming
+   * from PUC-Lua's per-process auto-seed, which is the divergence the knob
+   * exists to remove. */
+  if (s_defaultRandomSeed != 0) {
+    /* Note: the local L, not inst->L -- inst->L is not assigned until after
+     * brain.open succeeds, further down. */
+    seedRandomOnState(L, s_defaultRandomSeed + (long)player_num);
+  }
+
   if (!brainCoreCallMethod(L, &inst->bInfo, "open")) {
     brainDataExtractInfo(cs, &inst->bInfo);
     lua_close(L);
@@ -1149,11 +1227,19 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
    * here so a successful tick clears stale state from a prior abort. */
   inst->wasKilled = false;
   ok = brainCoreCallThink(inst->L, &inst->bInfo, &inst->wasKilled);
-  /* Dead tick: the brain ran only to reset its own state for respawn; don't
-   * extract its (no-op) key/build outputs back into the (dead) tank. */
-  if (!inst->bInfo.dead) {
-    brainDataExtractInfo(inst->cs, &inst->bInfo);
-  }
+  /* Always extract, including on a dead tick. The extract is not only about
+   * key/build outputs: it frees every per-tick array brainDataMakeInfo just
+   * allocated (allies, player_bots, base, pillview, viewdata, events,
+   * messages), so skipping it leaked all of them on every tick a bot spent
+   * dead. It is also the only path that delivers sendmessage, and a dying bot
+   * needs to broadcast a goal-clear so teammates stop counting the enemy it
+   * was engaging as taken care of -- exactly when that enemy has just become
+   * free. A dead player can still type in the real game.
+   *
+   * The one output that must NOT be applied while dead is the tank controls;
+   * that is gated inside brainDataExtractInfo on value->dead, next to the
+   * build request which already self-gated on dead armour. */
+  brainDataExtractInfo(inst->cs, &inst->bInfo);
 
   return ok;
 }
@@ -1161,7 +1247,8 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
 void luaBrainSetTickInputs(LuaBrainInstance *inst,
                            double lastThinkMs,
                            double targetMs,
-                           bool   wasKilled) {
+                           bool   wasKilled,
+                           int    tierOverride) {
     lua_State *L;
     int top;
 
@@ -1170,6 +1257,22 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
     }
     L = inst->L;
     top = lua_gettop(L);
+
+    /* Capacity-tier pin for measurement runs. Written as the global the brain
+     * already honours (_BT_TIER_OVERRIDE, read every tick), so no brain change
+     * is needed.
+     *
+     * Only ever WRITTEN, never cleared. BrainTest's tier panel evals this same
+     * global into the bot, and this runs on the producer before every think --
+     * so clearing it when the server-side override is off would erase the
+     * user's panel selection every tick, before the brain could read it. The
+     * server parses its args once, so there is no on->off transition here to
+     * serve; a future mid-session control would want edge detection in
+     * botManagerTick, which knows the previous value. */
+    if (tierOverride >= 1 && tierOverride <= 10) {
+        lua_pushinteger(L, tierOverride);
+        lua_setglobal(L, "_BT_TIER_OVERRIDE");
+    }
 
     lua_getglobal(L, "brain");
     if (!lua_istable(L, -1)) {
@@ -1182,6 +1285,44 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
     lua_setfield(L, -2, "targetMs");
     lua_pushboolean(L, wasKilled ? 1 : 0);
     lua_setfield(L, -2, "wasKilled");
+    lua_settop(L, top);
+}
+
+void luaBrainSetDefaultRandomSeed(long base) { s_defaultRandomSeed = base; }
+
+void luaBrainSeedRandom(LuaBrainInstance *inst, long seed) {
+    if (inst == NULL) return;
+    seedRandomOnState(inst->L, seed);
+}
+
+/* File-local, and takes the lua_State directly, because the caller that
+ * matters runs inside luaBrainInstanceCreate BEFORE inst->L is assigned --
+ * going through the instance there hits the NULL guard and silently does
+ * nothing, which is exactly the bug this split fixes. Not in the header:
+ * lua_State is not a visible type to every consumer of it. */
+static void seedRandomOnState(lua_State *L, long seed) {
+    int top;
+
+    if (L == NULL) {
+        return;
+    }
+    top = lua_gettop(L);
+
+    /* math.randomseed(seed). PUC-Lua 5.4 auto-seeds per process, so without
+     * this the brain's draws differ every run -- and they are not cosmetic:
+     * replan_offset staggers a bot's entire replan cadence off one draw. The
+     * caller combines a fixed seed with the player number so bots still differ
+     * from one another while being identical across runs. */
+    lua_getglobal(L, "math");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "randomseed");
+        if (lua_isfunction(L, -1)) {
+            lua_pushinteger(L, (lua_Integer)seed);
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1); /* discard the error; seeding is best-effort */
+            }
+        }
+    }
     lua_settop(L, top);
 }
 

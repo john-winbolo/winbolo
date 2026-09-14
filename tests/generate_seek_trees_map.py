@@ -98,7 +98,7 @@ def write_bmap(path):
         f.write(encode_map_runs(make_map()))
     print(f"Wrote {path} ({Path(path).stat().st_size} bytes)")
     print(f"  {len(pills)} dead pills at spawn, forest at {FOREST_BOX}, bot @ {SPAWN}")
-    print(f"  Run with: -bots 1 -brain brains/GoalHunter_1.6/init.lua")
+    print(f"  Run with: -bots 1 -brain brains/GoalHunter_1.7/init.lua")
 
 
 def main():

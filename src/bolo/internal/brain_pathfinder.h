@@ -91,6 +91,24 @@ struct BrainPathfinder {
   uint16_t danger_grid[65536];        /* pill danger values */
   int16_t  overlay_grid[65536];       /* modder-extensible custom cost layer */
   int16_t  influence_grid[65536];     /* territorial influence: +friendly, -hostile */
+  /* Influence tail (brainPathfinderRebuildInfluenceTail): the stamped cores
+   * grown outward over passable ground, weakening with distance and slowed
+   * inside a live neutral pill's range. expand_grid is the cached net tail
+   * (friendly - hostile); influence_base_grid is the stamps alone, kept by
+   * the merge so a viz can tell stamped ground from tail-claimed ground. */
+  int16_t  influence_base_grid[65536];
+  int16_t  expand_grid[65536];
+  uint8_t  neutral_zone[65536];       /* 1 = inside a live neutral pill's range */
+  uint8_t  tail_dist[65536];          /* scratch: BFS step distance, 255 = unreached */
+  /* Deep-water margin for the tail: 1 = this tile is within `deep_margin`
+   * king-moves of a deep-sea tile or of the map edge (off-map counts as deep
+   * sea). Masked tiles never receive a grown tail value and never pass one on,
+   * so the tail cannot paint a front line out over the sea or along the map
+   * border. Scratch, not a cache: the map the brain hands us is its own
+   * fogged view, one buffer whose contents change in place as tiles are
+   * discovered, so the mask is rebuilt on every tail rebuild (~0.3ms, and the
+   * rebuild only runs on a stamp-set change or every EXPAND_REFRESH_TICKS). */
+  uint8_t  deep_margin_mask[65536];
   int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
   /* Coastal boat band: 1 where a water/boat tile lies within
    * BRAINPF_COASTAL_BAND euclidean tiles of land. Lets the land-only SHORT
@@ -114,6 +132,8 @@ struct BrainPathfinder {
   float turn_cost;
   float wall_shoot_cost;
   float wall_shoot_shells;
+  float wall_escalate_free;    /* walls charged plain wall_shoot_cost (default 1) */
+  float wall_escalate_factor;  /* cost multiplier per wall past that (default 2) */
   float shell_reserve;
   float road_build_cost;
   float tree_reserve;
@@ -130,6 +150,23 @@ struct BrainPathfinder {
   float min_shells;          /* prune paths arriving with fewer shells (default 0) */
   float min_mines;           /* prune paths arriving with fewer mines (default 0) */
   float min_armour;          /* prune paths arriving with less armour (default 0) */
+  /* nextstep_foot_sea_rule: 0 = off (historical behaviour), non-zero = on.
+   * When on, brainPathfinderDijkstraNextStep applies the on-foot deep-sea /
+   * diagonal-corner rule the A* expansion (brain_pathfinder.c:1514) and the
+   * Dijkstra edge builder (:2024) already apply, so a tank that is not in a
+   * boat can never be handed a deep-sea tile, or a deep-sea diagonal corner
+   * cut, as its next step. Set from Lua via
+   * cpf_set_config("nextstep_foot_sea_rule", 1). */
+  float nextstep_foot_sea_rule;
+
+  /* Last tile the rule above vetoed, for the brain's debug print only.
+   * sea_veto_seq increments on every veto, so the Lua wrapper can tell a
+   * fresh veto from a stale record without a tick number. Never read by any
+   * decision. */
+  uint32_t sea_veto_seq;
+  int16_t  sea_veto_from_x, sea_veto_from_y;
+  int16_t  sea_veto_rej_x,  sea_veto_rej_y;
+  int16_t  sea_veto_pick_x, sea_veto_pick_y;
 
   /* A* working state — doubled for boat/land state pairs.
    * Node index = (boat ? 65536 : 0) + y*256 + x
@@ -378,13 +415,29 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
  * When the optimal next tile is an obstacle, the step veers to the cheapest
  * non-obstacle neighbour by effective cost (g_cost + penalty), so moving
  * allies are dodged instantly without baking anything into the slate. Pass
- * obstacles=NULL / n_obstacles=0 for the plain optimal-path behaviour. */
+ * obstacles=NULL / n_obstacles=0 for the plain optimal-path behaviour.
+ *
+ * tank_in_boat: the tank's LIVE boat state (0 on foot, 1 afloat), or -1 when
+ * the caller does not know it. Only the on-foot deep-sea rule
+ * ("nextstep_foot_sea_rule") reads it; -1 falls back to the boat state the
+ * slate was seeded with, which is stale for a few ticks after the tank boards
+ * or leaves a boat. */
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
                                      const int *obstacles, int n_obstacles,
-                                     float penalty,
+                                     float penalty, int tank_in_boat,
                                      int *out_next_x, int *out_next_y);
+
+/* Debug read-out for the on-foot deep-sea rule applied inside the function
+ * above (config key "nextstep_foot_sea_rule"). Returns the running veto
+ * sequence number (0 = never vetoed) and fills in the tile the tank was on,
+ * the tile the rule rejected, and the tile picked instead (-1,-1 when nothing
+ * legal was left). Observation only — no search reads it. */
+uint32_t brainPathfinderGetSeaVeto(const BrainPathfinder *pf,
+                                   int *from_x, int *from_y,
+                                   int *rej_x, int *rej_y,
+                                   int *pick_x, int *pick_y);
 
 /* Find the slate index that the brain should reuse next when starting a
  * search of the given kind. Picks the slate with the LOWEST started_tick
@@ -447,6 +500,42 @@ void brainPathfinderStampInfluence(BrainPathfinder *pf, int cx, int cy,
                                     int radius, int strength);
 int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
 
+/* Influence tail. Rebuild reads the stamped influence_grid (cells with
+ * |v| >= seed_min are the cores), grows each side outward over passable
+ * ground with a step-cost BFS (land 1, shallow water water_step, cells in
+ * neutral_zone neutral_step; buildings / deep sea / pillboxes block), capped
+ * at `radius` steps, valued start*(1 - d/(radius+1)), and caches the net
+ * (friendly - hostile; an exact tie goes to the hostile side, -1, so the
+ * front line never has a signless zero seam) in expand_grid. Merge writes
+ * influence_grid = stamped where |stamped| >= |tail|, else tail, keeping the
+ * stamps in influence_base_grid. Call Merge every tick after stamping;
+ * Rebuild only when the stamped set changes.
+ * deep_margin > 0 additionally forbids the tail from claiming any tile within
+ * that many king-moves of deep sea or of the map edge (off-map counts as deep
+ * sea): such a tile gets no tail value and passes none on, so no front line is
+ * drawn out over the water or along the border. Stamped cores still seed, so a
+ * core standing near the shore keeps growing inland. 0 = old behaviour.
+ * enemy_tail selects WHICH sides grow. 1 = old behaviour, both: the friendly
+ * pass adds and the hostile pass subtracts in the one signed expand_grid, so
+ * the two tails cancel and the front line settles midway between the sides.
+ * 0 = only our cores grow; hostile stamps keep their raw discs but spread no
+ * further, so nothing cancels the friendly tail and the front line forms at
+ * the edge of the enemy's disc. The tail can still only overwrite a stamp it
+ * outweighs (Merge compares magnitudes), so the enemy's footprint is intact
+ * and only its outer, weakest ring can be claimed. */
+void brainPathfinderClearNeutralZones(BrainPathfinder *pf);
+void brainPathfinderStampNeutralZone(BrainPathfinder *pf, int cx, int cy, int radius);
+void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
+                                         int start, int neutral_step, int water_step,
+                                         int deep_margin, int enemy_tail);
+void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf);
+/* The tail value at (x,y) if the tail won the last merge there, else 0. */
+int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y);
+/* Diagnostics after a merge: out[7] = { tail cells +, tail cells -, cells
+ * where the tail WON the merge +, -, front-line cells on the stamps alone,
+ * front-line cells on the merged grid, cells at the -1 tie value }. */
+void brainPathfinderInfluenceTailStats(BrainPathfinder *pf, int *out);
+
 /* Custom overlay (modder extension point) */
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value);
 void brainPathfinderClearOverlay(BrainPathfinder *pf);
@@ -499,6 +588,24 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
                                       BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
                                       BYTE blessX, BYTE blessY,
                                       int maxTicks, int stuckTicks);
+
+/* Longest walk any caller may ask for the positions of. 128 engine ticks is
+ * twice a shell's maximum life (shellLifeTicks caps at 63 for a pillbox), and
+ * the only caller is the builder pool's shell gate, which asks for
+ * LGM_SHELL_PREDICT_TICKS (63) of them. Bounds the on-stack path buffer. */
+#define BRAIN_LGM_WALK_PATH_MAX 128
+
+/* The SAME walk, with the man's per-tick WORLD positions written out.
+ * pathX[i]/pathY[i] is where he stands at the end of tick i+1; returns how
+ * many entries were written (<= pathMax, and 0 if he could not take a step).
+ * The walk is identical to brainPathfinderLgmTravelTicksMap's — same speeds,
+ * same blessed-tile rule, same stuck/abort exits — so the positions belong to
+ * the same trip its tick count prices. */
+int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
+                                   BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
+                                   BYTE blessX, BYTE blessY,
+                                   int maxTicks, int stuckTicks,
+                                   WORLD *pathX, WORLD *pathY, int pathMax);
 
 /* LGM-impassable overlay: clear all, then mark (mx,my) tiles the LGM can't
  * cross (enemy bases). Brain stamps these each tick before LGM reach checks. */

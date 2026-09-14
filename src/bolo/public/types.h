@@ -220,6 +220,20 @@ struct tankObj {
   BYTE firstLeft;          /* Turn ramp-up counter for left turns (0-10) */
   BYTE firstRight;         /* Turn ramp-up counter for right turns (0-10) */
   BYTE lastTankDeath;      /* How did the most recent death to the tank occur? */
+  /* DEATH_CAUSE_* for the death currently being served out (armour has
+   * overflowed, deathWait is counting down). Stamped by whichever damage site
+   * pushed armour past TANK_FULL_ARMOUR, read and cleared by tankDeath on the
+   * server when the death is finally counted. Observation only. */
+  BYTE pendingDeathCause;
+  /* Countdown of game ticks since a shell last came within
+   * TANK_SHELL_NEAR_WU of this tank, or since a shell knocked it off its
+   * boat.  Set to TANK_SHELL_NEAR_MEMORY_FRAMES by those events and
+   * decremented once per shellsUpdate (server only); non-zero therefore
+   * means "a shell was near me within the last second".  Read only by the
+   * drowning site, to split DEATH_CAUSE_DROWNED from
+   * DEATH_CAUSE_DROWNED_UNFORCED.  Observation only — no movement, damage
+   * or network path reads it. */
+  BYTE shellNearFrames;
   vectorBody vectorBodyTank; /* Holds tank's actual moving direction and component vectors (x and y axis speed) */
   vectorBody vectorBodyCollide; /* Holds physics stuff for what hit the tank */
   int16_t bumpX;            /* X bump effect from collisions/shells (>>9 applied per tick) */

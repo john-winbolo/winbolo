@@ -627,8 +627,9 @@ int run_view_pill_pos_bot_advantage(void) {
     UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1, "this case needs one pill");
     UT_ASSERT_MSG(gs->tanks[1] != NULL, "slot-1 tank not valid for positioning");
 
-    /* A real bot needs a brain file; serverSimIsBot reads botMgr.bots[].active
-     * and the exemption reads the .ai beside it. */
+    /* A real bot needs a brain file. serverSimIsBot answers yes to a live bot
+     * pool entry or to a roster seat marked as a bot; the pool flag is the
+     * half set here, and the exemption reads the .ai beside it. */
     sim->botMgr.bots[1].active = true;
     sim->botMgr.bots[1].ai     = aiYes;
     UT_ASSERT_MSG(serverSimIsBot(sim, 1), "slot 1 is not seen as a bot");

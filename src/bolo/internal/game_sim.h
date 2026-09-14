@@ -60,29 +60,23 @@ typedef struct GameSim GameSim;
 #include "util.h"
 #include "position_history.h"
 #include "sim_rules.h"
+#include "scenario_defs.h"
 #include "../../gui/lang.h"
+
+/* DIE_KIND_*, CAPTURE_KIND_* and DMG_SRC_* come in with scenario_defs.h
+ * above: they are the vocabulary the policy questions at the bottom of this
+ * file are asked in, and the host that answers them cannot see this
+ * directory. */
 
 /* recordDamage targetKind */
 #define DMG_TARGET_TANK 0
 #define DMG_TARGET_PILL 1
 #define DMG_TARGET_BASE 2
-/* recordDamage source — what inflicted the hit. Mirrors ATTR_SRC_* on-disk. */
-#define DMG_SRC_UNKNOWN 0
-#define DMG_SRC_SHELL   1
-#define DMG_SRC_MINE    2
 /* recordPlayerAction actionKind */
 #define PLAYER_ACTION_FARM  0
 #define PLAYER_ACTION_BUILD 1
 #define PLAYER_ACTION_MINE  2
 #define PLAYER_ACTION_SHELL 3
-/* canDie kind — what the blow would destroy. index is the tank slot for a
- * tank and for the builder riding in it, and the pill index for a pill. */
-#define DIE_KIND_TANK    0
-#define DIE_KIND_BUILDER 1
-#define DIE_KIND_PILL    2
-/* canCapture kind — what is being taken, with index the pill or base. */
-#define CAPTURE_KIND_PILL 0
-#define CAPTURE_KIND_BASE 1
 
 typedef struct GameSimCallbacks {
     void (*messageAdd)(void *ctx, messageType msgType,
@@ -337,6 +331,14 @@ struct GameSim {
 
     /* Tank explosion update throttle (per-sim so server/client don't share) */
     BYTE        tkExpUpdateTime;
+
+    /* Per-player death-cause tally, indexed [player][DEATH_CAUSE_*]. Written
+     * only on the server (tankDeath's isServer branch, alongside numDeaths++)
+     * and read only by the -finaljson / -snapjson writer. Nothing in the sim
+     * ever branches on it, so it cannot affect determinism. Zero-initialised
+     * by the sim-create memset; a player's row is re-zeroed in tankCreate,
+     * which is also where numDeaths goes back to 0. */
+    uint32_t    deathCauseCount[MAX_TANKS][DEATH_CAUSE_NUM];
 
     /* Lag compensation (server-only, zeroed on client) */
     uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */

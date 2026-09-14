@@ -905,9 +905,7 @@ int run_scenario_pill_base_arm_records(void) {
 
     replayHarnessTick(&h, 2);
 
-    /* Base 1: the owner first, then the stock. A base taken off another
-       player is emptied without a record of the emptying, so the owner change
-       goes first and the stock the file carries is the one written after it. */
+    /* Base 1: the owner first, then the explicit stock override. */
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_BASE_SET_OWNER;
     op.u.baseSetOwner.base = 0;

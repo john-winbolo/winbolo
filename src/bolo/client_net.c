@@ -576,6 +576,7 @@ void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
 }
 
 void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
+                                    uint8_t mode,
                                     uint8_t difficulty,
                                     uint8_t personality,
                                     const char *name) {
@@ -583,6 +584,7 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
   cmd.u.lobbyBotConfig.slot        = slot;
+  cmd.u.lobbyBotConfig.mode        = mode;
   cmd.u.lobbyBotConfig.difficulty  = difficulty;
   cmd.u.lobbyBotConfig.personality = personality;
   if (name != NULL && name[0] != '\0') {

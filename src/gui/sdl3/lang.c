@@ -1341,7 +1341,7 @@ static const LangEntry langTable[] = {
     {1331, "Name (override)"},
     {1332, "Reroll"},
     {1333, "Pick a fresh random name from the team's pool."},
-    {1334, "Bot Code"},
+    {1334, "Codebase"},
     {1335, "(none)"},
     {1336, "Difficulty"},
     {1337, "Easy"},
@@ -1352,6 +1352,23 @@ static const LangEntry langTable[] = {
     {1342, "Defensive"},
     {1343, "Sniper"},
     {1344, "Done"},
+    /* 2172: 2164 went to STR_DLGPLAYERS_SELECT on main — see lang.h. */
+    {2172, "Medium"},
+
+    /* Bot difficulty — tagline then description, per difficulty. The
+       lobby colours everything up to the first full stop by difficulty,
+       so start the tagline with the difficulty word in your language and
+       end that word with a full stop. The words themselves are free. */
+    {2165, "Easy. Captures pillboxes and bases, coordinates with allied bots, and plays in a steady, predictable way."},
+    {2166, "Medium. Captures pillboxes and bases with its allied bots and presses an attack when it is already ahead."},
+    {2167, "Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together."},
+    {2168, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they avoid chasing the same target, though it plays cautiously and steers clear of big risks. Its steady, easy-to-read behaviour makes it a gentler challenge. Best for newer players, or anyone who wants a more relaxed game."},
+    {2169, "This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they can strike a target together. It will join a group attack and press an advantage, but it picks its fights, keeps itself fuelled, and gives ground when the odds turn against it. Best for players who know the game and want a real opponent rather than a relentless one."},
+    {2170, "This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent."},
+
+    /* Bot AiConfig: the Mode dropdown's label. The mode names themselves
+       come from the brain's own modes.txt, so they are data, not strings. */
+    {2171, "Mode"},
     /* Balance from WBN */
     {1345, "Balance from WBN"},
     {1346, "Balance teams from WBN"},
@@ -1417,28 +1434,28 @@ static const LangEntry langTable[] = {
     {2157, "- Buildings hide the ground behind them.\n- Two squares of trees in a row hide what is behind them.\n- Trees within two squares of you never hide anything.\n- Off is the classic rule, and classic mode forces it off."},
     {2158, "Expanded"},
     {2159, "Classic"},
-    {2164, "Classic"},
-    {2165, "Standard bolo HUD view only.\nNo map overview, no full screen view, no extra bases/ally views."},
-    {2166, "Classic with overview"},
-    {2167, "Like classic with a map overview window option, or full-screen (a playable map overview).\nEven in overview/full screen, tanks have to scroll to see around them."},
-    {2168, "Expanded"},
-    {2169, "Like \"Classic with overview\" but able to see all 29x29 tiles centered on your tank.\nScrolling moves the entire map, and expanded with an always visible pill view."},
-    {2170, "Max view"},
-    {2171, "Like expanded, with additional visibility provided by bases and allies."},
-    {2172, "Line of sight"},
-    {2173, "Like max view, but line of sight restriction:\nWalls, pillboxes, and trees 2 tiles thick block visibility."},
-    {2174, "Custom"},
-    {2175, "Your own set. Changing anything here picks this row."},
-    {2176, "Details"},
-    {2178, "- Opens the visibility table.\n- Every preset with what it lets you see.\n- The last row is every setting on its own."},
-    {2179, "- The server has locked one or more visibility settings.\n- The presets are unavailable while that lock is on."},
-    {2180, "Pills"},
-    {2181, "Bases"},
-    {2182, "Allies"},
-    {2183, "Overview"},
-    {2184, "- Always: on the map overview all the time.\n- Key: only while you are watching that one through its view key.\n- Decay: for a while after one of your tanks was last near it.\n- Off: never."},
-    {2185, "None"},
-    {2186, "This server does not report its visibility settings."},
+    {2173, "Classic"},
+    {2174, "Standard bolo HUD view only.\nNo map overview, no full screen view, no extra bases/ally views."},
+    {2175, "Classic with overview"},
+    {2176, "Like classic with a map overview window option, or full-screen (a playable map overview).\nEven in overview/full screen, tanks have to scroll to see around them."},
+    {2177, "Expanded"},
+    {2178, "Like \"Classic with overview\" but able to see all 29x29 tiles centered on your tank.\nScrolling moves the entire map, and expanded with an always visible pill view."},
+    {2179, "Max view"},
+    {2180, "Like expanded, with additional visibility provided by bases and allies."},
+    {2181, "Line of sight"},
+    {2182, "Like max view, but line of sight restriction:\nWalls, pillboxes, and trees 2 tiles thick block visibility."},
+    {2183, "Custom"},
+    {2184, "Your own set. Changing anything here picks this row."},
+    {2185, "Details"},
+    {2186, "- Opens the visibility table.\n- Every preset with what it lets you see.\n- The last row is every setting on its own."},
+    {2187, "- The server has locked one or more visibility settings.\n- The presets are unavailable while that lock is on."},
+    {2188, "Pills"},
+    {2189, "Bases"},
+    {2190, "Allies"},
+    {2191, "Overview"},
+    {2192, "- Always: on the map overview all the time.\n- Key: only while you are watching that one through its view key.\n- Decay: for a while after one of your tanks was last near it.\n- Off: never."},
+    {2193, "None"},
+    {2194, "This server does not report its visibility settings."},
     /* Settings > Display & Sound > Full Screen */
     {2013, "Full Screen"},
     {2014, "Newswire transparency"},
@@ -2073,11 +2090,14 @@ static const LangEntry langTable[] = {
     {2062, "System default"},
 
     /* Players panel — per-player playback volume slider */
-    {2090, "How loud this player is played here"},
+    {2090, "Voice chat volume"},
 
     /* Players panel — per-player smart-ping mute toggle */
     {2162, "Pings shown — click to hide this player's pings"},
     {2163, "Pings hidden — click to show this player's pings"},
+
+    /* Players panel — label in front of the selection buttons */
+    {2164, "Select:"},
 
     /* Lobby — the local player's voice sub-row */
     {2095, "Your microphone and voice settings"},

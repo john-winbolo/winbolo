@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Smart pings hidden: standard.svg's pin and hole, plus the same diagonal
+     bar mic-muted.svg uses, so the two "muted" glyphs in a player row carry
+     one slash between them rather than two that almost match.
+
+     All three subpaths are in one path with fill-rule="evenodd", which is
+     what makes the bar read. Counting the subpaths that enclose a point:
+     pin alone is filled; pin plus hole is two and empty, which is the hole;
+     bar over the pin is two and empty, which is the gap that makes the bar
+     look like a separate object in front; and bar over the hole is three and
+     filled again, so the bar stays solid as it crosses the opening. The
+     alternative, drawing the bar in a second colour over the top, is not
+     available: every drawer forces this file's colour channels white and
+     tints it from the kind table, so it only ever reaches the screen as a
+     one-colour alpha mask. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path fill-rule="evenodd" d="M12 1 C7.58 1 4 4.58 4 9 C4 15 12 23 12 23 C12 23 20 15 20 9 C20 4.58 16.42 1 12 1 Z
+                               M12 6 A3 3 0 1 1 12 12 A3 3 0 1 1 12 6 Z
+                               M3.87 1.33L22.67 20.13L20.13 22.67L1.33 3.87z"/>
+</svg>

@@ -23,6 +23,10 @@
  * run_scenario_tank_drop_pill   — a carried pill put down
  * run_scenario_tank_arm_records — the stock, owner and position records the
  *                                 arms produce survive a real recording
+ * run_scenario_tank_death_ticks_respawn
+ *                               — a tank killed under a long tank_death_ticks
+ *                                 stays down past the classic wait and comes
+ *                                 back at the one the rule was set to
  *
  * Drives serverSimApplyScenarioOp at ut_make_running_sim and reads the
  * ServerSim struct directly; the unittests profile permits internal access.
@@ -779,5 +783,93 @@ int run_scenario_tank_arm_records(void) {
                   replayHarnessDiff(&h));
 
     replayHarnessStop(&h);
+    return 0;
+}
+
+/* ── The respawn wait the rules table sets ───────────────────────── */
+
+/* Well above the classic wait and inside tank_death_ticks' 0..65535 row. */
+#define TA_DEATH_SET      400
+
+/* Frames pumped before the tank is expected to still be down: past the
+   classic wait, and short of the one the rule was set to. */
+#define TA_PAST_CLASSIC   (TANK_DEATH_WAIT + 20)
+
+/* Where the second pump gives up. Generous rather than exact: the case reads
+   the frame the tank came back on and checks that against the rule, so a
+   respawn slower than one wait-tick a frame is reported as the number it
+   took rather than as a test that hangs. */
+#define TA_RESPAWN_GIVE_UP (TA_DEATH_SET * 4)
+
+/* The rules table is checked elsewhere by reading the field back, which says
+   only that the write happened. This one puts a tank through the wait the
+   field names: killed under a tank_death_ticks well above the classic 255,
+   it is still down long past 255 frames and comes back at the value that was
+   set. serverSimTick is all that runs it — the wait is counted down in the
+   server's own tank update, so no client input is involved. */
+int run_scenario_tank_death_ticks_respawn(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    ScenarioOp op;
+    tank *t;
+    int frames;
+    int respawnedAt = 0;
+
+    UT_ASSERT(sim != NULL);
+    t = taTank(sim, TA_SLOT);
+    UT_ASSERT(*t != NULL);
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_SET_RULE;
+    op.u.setRule.rule  = SCN_RULE_tank_death_ticks;
+    op.u.setRule.value = (double)TA_DEATH_SET;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
+                  "the handler refused %d for tank_death_ticks", TA_DEATH_SET);
+    UT_ASSERT_MSG(sim->sim.rules.tank_death_ticks == TA_DEATH_SET,
+                  "the table holds %ld for tank_death_ticks, expected %d",
+                  (long)sim->sim.rules.tank_death_ticks, TA_DEATH_SET);
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_TANK_KILL;
+    op.u.tankKill.slot   = TA_SLOT;
+    op.u.tankKill.killer = SCN_NONE;
+    op.u.tankKill.cause  = LAST_DEATH_BY_SCRIPT;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
+                  "the kill was refused");
+    UT_ASSERT_MSG(tankIsDestroyed(t), "the kill left the tank alive");
+    UT_ASSERT_MSG(tankGetDeathWait(t) == TA_DEATH_SET,
+                  "the tank started a wait of %u, expected the rule's %d",
+                  (unsigned)tankGetDeathWait(t), TA_DEATH_SET);
+
+    /* Past the classic wait and still down. */
+    for (frames = 0; frames < TA_PAST_CLASSIC; frames++) {
+        serverSimTick(sim);
+        if (!tankIsDestroyed(t)) {
+            respawnedAt = frames + 1;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(respawnedAt == 0,
+                  "the tank came back on frame %d — with tank_death_ticks at "
+                  "%d it should still be down well past the classic wait of "
+                  "%d", respawnedAt, TA_DEATH_SET, TANK_DEATH_WAIT);
+
+    /* And back at the wait the rule set. */
+    for (; frames < TA_RESPAWN_GIVE_UP; frames++) {
+        serverSimTick(sim);
+        if (!tankIsDestroyed(t)) {
+            respawnedAt = frames + 1;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(respawnedAt != 0,
+                  "the tank was still down after %d frames with "
+                  "tank_death_ticks at %d", TA_RESPAWN_GIVE_UP, TA_DEATH_SET);
+    UT_ASSERT_MSG(respawnedAt >= TA_DEATH_SET,
+                  "the tank came back on frame %d, short of the %d "
+                  "tank_death_ticks was set to", respawnedAt, TA_DEATH_SET);
+    UT_ASSERT_MSG(tankGetArmour(t) > 0,
+                  "the tank came back with no armour, so it did not respawn");
+
+    serverSimDestroy(sim);
     return 0;
 }

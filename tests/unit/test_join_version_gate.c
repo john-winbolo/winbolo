@@ -101,12 +101,6 @@ static SOCKET vgOpenSocket(void) {
     return s;
 }
 
-/* Non-blocking poll: returns the byte count of a datagram now waiting on s,
- * or <= 0 if none is currently available. */
-static int vgTryRecv(SOCKET s, uint8_t *buf, int cap) {
-    return (int)recvfrom(s, (char *)buf, cap, 0, NULL, NULL);
-}
-
 /* Drive the crafted JOIN at sock and pump the harness, collecting the first
  * JOIN_ACCEPT / JOIN_REJECT / JOIN_CHALLENGE seen. On a reject,
  * *outRejectLangid receives the langid; on a challenge, *outCookie (if
@@ -134,7 +128,8 @@ static void vgDriveJoin(LoopbackHarness *h, SOCKET sock,
                    (const struct sockaddr *)serverAddr, sizeof(*serverAddr));
         }
         loopbackHarnessPump(h);
-        while ((n = vgTryRecv(sock, in, sizeof(in))) > 0) {
+        while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
+                                           serverAddr)) > 0) {
             uint8_t type = getPacketType(in, n);
             if (type == PACKET_JOIN_ACCEPT) {
                 *outGotAccept = true;

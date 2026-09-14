@@ -684,11 +684,47 @@ bool gameFrontPreferencesExist(void);
 bool gameFrontOnboardingComplete(void);
 void gameFrontSetOnboardingComplete(void);
 
-/* Player's explicitly-chosen bot brain (lobby wrench dropdown). Persisted as
- * the difficulty preference; overrides the single-player skill guess. Empty
- * string until the player first chooses one. */
-void gameFrontSetChosenBotBrain(const char *name);
-void gameFrontGetChosenBotBrain(char *out, size_t outLen);
+/* Player's explicitly-chosen bot difficulty (lobby wrench dropdown), a
+ * BOT_DIFFICULTY_* value persisted by name under BOT / "Chosen Difficulty".
+ * It overrides the single-player skill guess from then on. The getter
+ * returns false (leaving *out alone) until the player first chooses one; it
+ * also migrates the older BOT / "Chosen Brain" pref, where the one gentle
+ * brain meant Easy and any other meant Hard. */
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty);
+bool gameFrontGetChosenBotDifficulty(uint8_t *out);
+
+/* Player's explicitly-chosen bot MODE + level, as the brain's own manifest
+ * keys (brains/<brain>/modes.txt). Stored under BOT / "Chosen Mode" and
+ * BOT / "Chosen Difficulty"; for the default mode the level keys are the
+ * same easy/medium/hard words the difficulty-only preference always held,
+ * so an existing prefs file is honoured unchanged. Both getters return
+ * false (and write "") when nothing has been chosen yet. */
+void gameFrontSetChosenBotModeAndLevel(const char *modeKey,
+                                       const char *levelKey);
+bool gameFrontGetChosenBotModeKey(char *out, size_t outSz);
+bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz);
+
+/* The colour the lobby paints a bot's name tag with, remembered per bot name
+ * ("GoalHunter") in the prefs as "#RRGGBB" so a bot that declares no colour
+ * of its own still looks the same every launch. Get returns false when none
+ * is remembered yet. */
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb);
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb);
+
+/* The difficulty a single-player bot should be created with: the player's
+ * own chosen difficulty when they have picked one, else the skill guess —
+ * Hard when signed in to WinBolo.net with more than 5 games on record, Easy
+ * for everybody else. One place so the auto-seeded bots and the lobby's
+ * Add Bot agree. Returns a BOT_DIFFICULTY_* value. */
+uint8_t gameFrontSpBotDifficulty(void);
+
+/* The same answer widened to modes: which of the brain's declared modes an
+ * SP bot runs in (the player's chosen mode when that brain still has it,
+ * else 0 — the default mode), and the level index inside it (the skill
+ * guess for mode 0, the player's chosen level key otherwise, falling back
+ * to the mode's own default). brainPath is the bot's init.lua path. */
+uint8_t gameFrontSpBotMode(const char *brainPath);
+uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode);
 
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
