@@ -214,6 +214,12 @@ local VERBS = {
 local WHOWORDS = { all = true, nearby = true }
 local PILLWORDS = { pill = true, pills = true, pillbox = true, pillboxes = true }
 local BASEWORDS = { base = true, bases = true }
+-- Team-wide SETTINGS, not orders: no target, no auction and no 60 s timer,
+-- and `cancel all` does not touch them.  `take` is the focus alias.
+local SETTINGWORDS = {
+  focus = true, take = true, reposition = true, repositioning = true,
+  help = true,
+}
 
 -- roster = ally BOTS (for `who` and for `cancel <bot name>`)
 -- all_roster = every named player (for `attack <tank name>`); defaults to roster.
@@ -244,11 +250,31 @@ function M.parse(text, roster, all_roster)
   -- "didn't understand", because it happens to contain a verb word.
   if not forced then
     local p1, e1 = M.match_name(toks[1], roster)
-    if not VERBS[toks[1]] and not WHOWORDS[toks[1]]
+    if not VERBS[toks[1]] and not WHOWORDS[toks[1]] and not SETTINGWORDS[toks[1]]
        and toks[1] ~= "nevermind" and toks[1] ~= "never"
        and p1 == nil and e1 ~= "ambiguous" then
       return nil
     end
+  end
+
+  -- ── Team-wide settings and help ───────────────────────────────────────
+  -- Checked BEFORE the verb scan so "focus pills" is never read as a pill
+  -- target and "reposition on" never reaches the order machinery.
+  if toks[1] == "help" then
+    if #toks == 1 then return { help = true } end
+    return { reply = "didn't understand" }
+  end
+  if toks[1] == "focus" or toks[1] == "take" then
+    local w = toks[2]
+    if BASEWORDS[w] then return { setting = "focus", value = "bases" } end
+    if PILLWORDS[w] then return { setting = "focus", value = "pills" } end
+    if w == "off" or w == "none" then return { setting = "focus", value = "off" } end
+    return { reply = "didn't understand" }
+  end
+  if toks[1] == "reposition" or toks[1] == "repositioning" then
+    if toks[2] == "on"  then return { setting = "reposition", value = true  } end
+    if toks[2] == "off" then return { setting = "reposition", value = false } end
+    return { reply = "didn't understand" }
   end
 
   local vi, verb
@@ -372,6 +398,17 @@ function M.goal_kind(cmd, world, info)
   local t = cmd.target
   local v = cmd.verb
   if v == "retreat" then return "take_cover", false, nil end
+  -- "GO THERE AND HOLD" (a bot ping on open ground).  REUSED MECHANISM:
+  -- take_cover, with the pinged tile substituted for find_cover_tile's pick.
+  -- take_cover already means "drive to this tile and stop there", it already
+  -- has a margin waiver for an ordered retreat, and it is the only existing
+  -- goal that holds a position without owning a pill or a base.  The tile is
+  -- packed into the target id as mx * 256 + my so one number identifies it on
+  -- the wire and in the order id.
+  if v == "goto" then
+    if t and t.kind == "here" then return "take_cover", false, t.id end
+    return nil, false, nil, "didn't understand"
+  end
   if v == "cancel" then return nil, false, nil end
   if not t then return nil, false, nil, "didn't understand" end
 
@@ -477,7 +514,11 @@ local function S(state)
   local o = state.orders
   if not o then
     o = { auctions = {}, known = {}, claims = {}, gclaims = {}, announce = {},
-          out = {}, say = {}, rx = {}, held = nil, sel = nil }
+          out = {}, say = {}, rx = {}, held = nil, sel = nil,
+          -- stage 2: team-wide latches + the ping anchors
+          focus = nil,        -- nil | "bases" | "pills"  (nil = off)
+          repo_on = nil,      -- nil = no override | true | false
+          banner = nil, latch_tx = 0, anchors = {} }
     state.orders = o
   end
   return o
@@ -551,6 +592,25 @@ function M.rx(sender, text, tick, state)
     print2(string.format("ORDER_RX obc from p%s oid=%s cost=%s t=%d", tostring(sender), oid, cost, tick))
     return true
   end
+  -- Team-wide LATCHES.  One bot decides (it heard the chat line), every bot
+  -- latches the same value; the speaking bot also re-broadcasts them every
+  -- ORDER_LATCH_REBROADCAST_TICKS so a bot that joined or respawned late
+  -- catches up.  Their own verbs, like the order bids: the /info state slate
+  -- is already close to the 124-byte batch budget (C.MSG_BATCH_MAX).
+  local f = text:match("^/info obf (%d)$")
+  if f then
+    local o = S(state)
+    o.rx[#o.rx + 1] = { kind = "focus", value = tonumber(f), from = sender, tick = tick }
+    print2(string.format("ORDER_RX obf from p%s v=%s t=%d", tostring(sender), f, tick))
+    return true
+  end
+  local r = text:match("^/info obp (%d)$")
+  if r then
+    local o = S(state)
+    o.rx[#o.rx + 1] = { kind = "repo", value = tonumber(r), from = sender, tick = tick }
+    print2(string.format("ORDER_RX obp from p%s v=%s t=%d", tostring(sender), r, tick))
+    return true
+  end
   oid = text:match("^/info obr (%d+)$")
   if oid then
     local o = S(state)
@@ -573,7 +633,7 @@ local function release_held(state, info, why, quiet)
   state._order = nil
   tx(state, string.format("/info obr %d", h.oid))
   if not quiet then
-    say(state, string.format("%s: %s", my_name(state, info), why or "released"))
+    say(state, why or "Released")
   end
   print2(string.format("ORDER_REL t=%d oid=%d why=%s", state.tick or 0, h.oid, tostring(why)))
 end
@@ -589,14 +649,21 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   if o.held and o.held.oid ~= spec.oid then
     -- Latest order wins.  Say what we are leaving so the human can follow it.
     local old = o.held
-    say(state, string.format("%s: leaving %s #%s for %s #%s",
-        my_name(state, info), old.kind, tostring(old.tid), spec.kind, tostring(spec.tid)))
+    say(state, string.format("Leaving %s #%s for %s #%s",
+        old.kind, tostring(old.tid), spec.kind, tostring(spec.tid)))
     release_held(state, info, nil, true)
   end
   o.held = {
     oid = spec.oid, kind = spec.kind, tkind = spec.tkind, tid = spec.tid,
+    -- tkind "here" ("go there and hold") carries its own tile: there is no
+    -- pill or base to look the position up from.
+    mx = spec.mx, my = spec.my,
     sender = spec.sender, sender_name = spec.sender_name,
     needs_shells = spec.needs_shells, verb = spec.verb,
+    -- group = two or more bots on ONE order. squad.lua reads it so an ordered
+    -- pair on the same live pill runs the blitz instead of arriving one at a
+    -- time.
+    group = group and true or false,
     since = now, expiry = now + (C.ORDER_FOCUS_TICKS or 3000),
     cost = cost or 0,
   }
@@ -614,6 +681,279 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   print2(string.format("ORDER_TAKE t=%d oid=%d kind=%s tid=%s cost=%.0f group=%s stolen=%s",
          now, spec.oid, spec.kind, tostring(spec.tid), cost or 0,
          tostring(group or false), tostring(stolen or false)))
+end
+
+-- =========================================================================
+-- STAGE 2 — THE SPEAKING BOT, TEAM LATCHES, HELP
+-- =========================================================================
+
+-- THE SPEAKING BOT: the LOWEST player number among the team's active bots,
+-- self included.  Every bot computes it from the same two engine masks
+-- (info.player_bots & info.allies), so they all name the same one and only
+-- that one talks.  A four-bot team therefore says a line once, not four
+-- times.  Returns nil when this bot cannot see a roster yet.
+function M.speaker(state, info)
+  local roster = M.bot_roster(state, info)   -- already ascending by pn
+  return roster[1] and roster[1].pn or nil
+end
+
+-- Chat max on the wire is PACKET_MAX_CHAT_MESSAGE = 128 bytes
+-- (src/bolo/public/wire_limits.h) and both help lines are longer than that,
+-- so each is split at a comma.  Four chunks, one per tick.
+M.HELP = {
+  "Orders: [all|nearby|bot name, default nearest] attack|capture|sweep|defend|decoy <pill#|base#|tank name>, retreat,",
+  "cancel [all|bot name], focus bases|pills|off, reposition on|off",
+  "Ping a tile: nearest bot goes, ping again adds one. Ping bots to select them,",
+  "then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
+}
+M.BANNER = "Commands available, say help for details."
+M.BANNER_REPO =
+  'Bot pillbox repositioning disabled with human allies. Say "reposition on" to enable.'
+
+local FOCUS_CODE = { off = 0, bases = 1, pills = 2 }
+local CODE_FOCUS = { [1] = "bases", [2] = "pills" }
+
+-- Apply a team setting locally.  Called both from the chat line (every bot
+-- heard it) and from the latch verb (a late joiner catching up).
+local function set_focus(state, v)
+  local o = S(state)
+  o.focus = (v ~= "off") and v or nil
+  state._focus = o.focus
+end
+local function set_repo(state, on)
+  local o = S(state)
+  o.repo_on = on
+  state._repo_override = on
+end
+
+-- FOCUS pricing.  The OTHER class pays the multiplier; the focused class
+-- keeps its real price.  goals.lua asks this question at one choke point in
+-- the assembled-pool pass, and again in each panel renderer so the displayed
+-- `weighted` matches the cost that actually competed.
+M.FOCUS_PILL_KINDS = {
+  attack_pill = true, capture_pill = true, defend_pill = true,
+  repair_pill = true, reposition = true, place_pill_strategic = true,
+}
+M.FOCUS_BASE_KINDS = { capture_base = true, attack_base = true }
+function M.focus_mult(state, kind)
+  local focus = state and state._focus
+  if not focus or not kind then return 1.0 end
+  local m = C.FOCUS_OTHER_COST_MULT or 1.0
+  if m == 1.0 then return 1.0 end
+  if focus == "bases" and M.FOCUS_PILL_KINDS[kind] then return m end
+  if focus == "pills" and M.FOCUS_BASE_KINDS[kind] then return m end
+  return 1.0
+end
+-- The ONE breakdown string, so every panel spells it the same way.
+function M.focus_label(state)
+  return string.format("focus: x%.1f (%s)", C.FOCUS_OTHER_COST_MULT or 1.0,
+                       tostring(state and state._focus or "off"))
+end
+
+-- REPOSITIONING with human allies.  `reposition on` / `off` overrides
+-- C.REPOSITION_DISABLE_WITH_HUMAN_ALLIES for this game.  The three gates
+-- (goals.eval_reposition_pill, reposition_vote's OPEN gate and its ballot)
+-- all ask this one question.  nil = no override, use the constant.
+function M.reposition_human_blocked(state)
+  local ov = state and state._repo_override
+  if ov ~= nil then return not ov end
+  return C.REPOSITION_DISABLE_WITH_HUMAN_ALLIES and true or false
+end
+
+-- =========================================================================
+-- STAGE 2 — PINGS
+--
+-- The engine delivers a teammate's smart ping as an EVENT_PING carrying
+-- [sender, kind, xHi, xLo, yHi, yLo] in WORLD units (braincore.c pushes the
+-- kind constants as Lua globals; brain_data.c lets EVENT_PING through the
+-- event filter unconditionally).  The server has already decided this brain
+-- is entitled to see the ping -- it is a team signal -- and we check the
+-- sender against info.allies again anyway, so an enemy ping does nothing.
+--
+-- ORDER ID for a ping order: the SAME djb2 scheme chat orders use, over
+-- sender | verb | who | target kind | target id, with who.mode = "ping".
+-- There is NO tick and NO ping sequence counter in it, deliberately: the
+-- target is the RESOLVED entity (the pill, base or tank id) or, for a "go
+-- there and hold", the ANCHOR TILE of the first ping in the group packed as
+-- mx * 256 + my.  A repeat ping inside the 3x3 of the same target therefore
+-- derives the SAME id on every bot without anyone exchanging a counter --
+-- which is exactly what makes "ping again adds one bot" work.  A sequence
+-- counter would fork the id on any bot that missed a ping; a tick bucket
+-- would fork it between two bots that think on different offsets.
+-- =========================================================================
+
+local function tile_of(w) return bit.rshift(w or 0, 8) end
+
+-- Everything standing on ONE tile, in the order a ping prefers it.  A TANK
+-- beats the pill or base it happens to be sitting on: pinging a tank is the
+-- finer-grained gesture and the tank is the thing that moves.
+function M.entity_at(state, world, info, mx, my)
+  local me     = state.player_number
+  local bots   = info.player_bots or 0
+  local allies = info.allies or 0
+  if mx == tile_of(info.tankx) and my == tile_of(info.tanky) then
+    return { class = "allybot", pn = me, mx = mx, my = my }
+  end
+  local OT = _G.OBJECT_TANK
+  local OH = _G.OBJECT_HOSTILE or 0
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OT and tile_of(ob.x) == mx and tile_of(ob.y) == my then
+      local pn = ob.idnum or -1
+      if bit.band(ob.info or 0, OH) ~= 0 then
+        return { class = "enemytank", pn = pn, mx = mx, my = my }
+      elseif pn >= 0 and pn ~= me
+             and bit.band(bots, bit.lshift(1, pn)) ~= 0
+             and bit.band(allies, bit.lshift(1, pn)) ~= 0 then
+        return { class = "allybot", pn = pn, mx = mx, my = my }
+      end
+    end
+  end
+  for id, pl in pairs(world.pills or {}) do
+    if pl.mx == mx and pl.my == my then
+      return { class = "pill", id = id, owner = pl.owner,
+               health = pl.health or 0, mx = mx, my = my }
+    end
+  end
+  for id, b in pairs(world.bases or {}) do
+    if b.mx == mx and b.my == my then
+      return { class = "base", id = id, owner = b.owner, mx = mx, my = my }
+    end
+  end
+  return nil
+end
+
+-- TILE MATCHING (Andrew, 2026-09-14): the EXACT tile wins first and the ring
+-- is NOT searched, so a second bot standing beside the pinged one is never
+-- triggered.  Only when the exact tile is empty does the 3x3 ring apply; two
+-- candidates in the ring -> the nearer one to the ping tile (an orthogonal
+-- neighbour beats a diagonal), ties on player number (or, for a pill or a
+-- base, on its id).
+function M.resolve_ping(state, world, info, mx, my)
+  local e = M.entity_at(state, world, info, mx, my)
+  if e then e.exact = true return e end
+  local ring = C.ORDER_PING_RING or 1
+  local best, bestd, bestk
+  for dy = -ring, ring do
+    for dx = -ring, ring do
+      if dx ~= 0 or dy ~= 0 then
+        local c = M.entity_at(state, world, info, mx + dx, my + dy)
+        if c then
+          local d = dx * dx + dy * dy
+          local k = c.pn or c.id or 0
+          if not best or d < bestd or (d == bestd and k < bestk) then
+            best, bestd, bestk = c, d, k
+          end
+        end
+      end
+    end
+  end
+  if best then best.exact = false end
+  return best
+end
+
+-- The verb the pinged tile means (the design doc's verb table).
+--   enemy live pill -> attack      dead pill      -> capture (sweep)
+--   enemy/neutral base -> capture  our pill/base  -> defend
+--   an ally BOT     -> select it   an enemy tank  -> attack_tank, pinned
+--   open ground     -> go there and hold
+function M.ping_command(hit, mx, my)
+  if not hit then
+    return { verb = "goto",
+             target = { kind = "here", id = mx * 256 + my, mx = mx, my = my } }
+  end
+  if hit.class == "allybot"   then return { select_pn = hit.pn } end
+  if hit.class == "enemytank" then
+    return { verb = "attack", target = { kind = "tank", pn = hit.pn } }
+  end
+  if hit.class == "pill" then
+    if hit.owner == "friendly" then
+      return { verb = "defend", target = { kind = "pill", id = hit.id } }
+    end
+    if (hit.health or 0) == 0 then
+      return { verb = "capture", target = { kind = "pill", id = hit.id } }
+    end
+    return { verb = "attack", target = { kind = "pill", id = hit.id } }
+  end
+  if hit.class == "base" then
+    if hit.owner == "friendly" then
+      return { verb = "defend", target = { kind = "base", id = hit.id } }
+    end
+    return { verb = "capture", target = { kind = "base", id = hit.id } }
+  end
+  return nil
+end
+
+-- The live PING ORDER this ping belongs to: same sender, and an anchor tile
+-- whose ring holds this ping.  That is what turns a second ping into "add one
+-- more bot" instead of "open a second order".  Lowest oid wins so every bot
+-- picks the same one when two anchors overlap.
+local function ping_anchor_match(o, sender, mx, my, now)
+  local ring = C.ORDER_PING_RING or 1
+  local keep = C.ORDER_PING_MATCH_TICKS or 3000
+  local best
+  for oid, a in pairs(o.anchors) do
+    if a.sender == sender and (now - a.tick) < keep
+       and math.abs(a.mx - mx) <= ring and math.abs(a.my - my) <= ring then
+      if not best or oid < best then best = oid end
+    end
+  end
+  return best
+end
+
+-- =========================================================================
+-- START AN ORDER — the one path a chat line AND a ping both run through.
+-- `who.mode` is "names" (no auction, the named bots take it), "all",
+-- "nearby", or "auto"/"ping" (an auction: every bot posts its travel price
+-- and the `want` cheapest take it).  `want` is how many bots the order is
+-- for; it grows by one on each repeat ping, and the bots that already hold
+-- the order keep it -- the auction only fills the slots still open.
+-- =========================================================================
+local function start_order(state, world, info, spec, who, now, want)
+  local o  = S(state)
+  local me = state.player_number
+  local busy, reason = M.busy(state, info)
+
+  if who.mode == "names" then
+    local mine = false
+    for _, pn in ipairs(who.pns) do if pn == me then mine = true end end
+    if mine and not busy then
+      take_order(state, world, info, spec, M.travel_cost(state, world, info, spec) or 0,
+                 now, #who.pns > 1)
+    elseif mine and busy then
+      say(state, string.format("Busy (%s)", reason))
+    end
+    return true
+  end
+
+  if who.mode == "all" or who.mode == "nearby" then
+    local take = not busy
+    if take and who.mode == "nearby" then
+      local mx, my = M.target_tile(world, state, spec)
+      local tmx = bit.rshift(info.tankx or 0, 8)
+      local tmy = bit.rshift(info.tanky or 0, 8)
+      take = mx ~= nil and U.mdist(tmx, tmy, mx, my) <= (C.ORDER_NEARBY_TILES or 10)
+    end
+    if take then
+      take_order(state, world, info, spec, M.travel_cost(state, world, info, spec) or 0,
+                 now, true)
+    end
+    return true
+  end
+
+  -- ── auction: everyone bids, the `want` cheapest take it ────────────────
+  local cost = (not busy) and M.travel_cost(state, world, info, spec) or nil
+  if cost and cost >= 1e29 then cost = nil end
+  o.auctions[spec.oid] = {
+    spec = spec, open = now, bids = {}, answered = {}, want = want or 1,
+  }
+  o.auctions[spec.oid].bids[me] = cost
+  o.auctions[spec.oid].answered[me] = true
+  tx(state, string.format("/info obd %d %d", spec.oid,
+     cost and math.floor(math.min(cost, 999999)) or -1))
+  print2(string.format("ORDER_BID t=%d oid=%d kind=%s cost=%s want=%d busy=%s",
+         now, spec.oid, tostring(spec.kind),
+         cost and string.format("%.0f", cost) or "no", want or 1, tostring(reason)))
+  return true
 end
 
 -- =========================================================================
@@ -639,12 +979,42 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   local o = S(state)
   local me = state.player_number
 
+  -- ── help ──────────────────────────────────────────────────────────────
+  if cmd.help then
+    if M.speaker(state, info) == me then
+      for i = 1, #M.HELP do say(state, M.HELP[i]) end
+    end
+    return true
+  end
+
+  -- ── team-wide settings.  EVERY bot latches the value (they all heard the
+  -- line); only the speaking bot confirms it and puts it on the wire for a
+  -- bot that joins or respawns later.  `cancel all` never touches these.
+  if cmd.setting == "focus" then
+    set_focus(state, cmd.value)
+    if M.speaker(state, info) == me then
+      say(state, string.format("Focus: %s.", cmd.value))
+      tx(state, string.format("/info obf %d", FOCUS_CODE[cmd.value] or 0))
+    end
+    print2(string.format("ORDER_FOCUS t=%d -> %s (from p%s)", now,
+           tostring(cmd.value), tostring(sender)))
+    return true
+  end
+  if cmd.setting == "reposition" then
+    set_repo(state, cmd.value)
+    if M.speaker(state, info) == me then
+      say(state, cmd.value and "Repositioning on." or "Repositioning off.")
+      tx(state, string.format("/info obp %d", cmd.value and 1 or 0))
+    end
+    print2(string.format("ORDER_REPO t=%d -> %s (from p%s)", now,
+           tostring(cmd.value), tostring(sender)))
+    return true
+  end
+
   if cmd.reply then
     -- One bot answers, not all of them: the lowest player number among the
     -- team's bots does the talking.
-    if roster[1] and roster[1].pn == me then
-      say(state, string.format("%s: %s", my_name(state, info), cmd.reply))
-    end
+    if M.speaker(state, info) == me then say(state, cmd.reply) end
     return true
   end
 
@@ -653,7 +1023,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
       local mine = false
       for _, pn in ipairs(o.sel.pns) do if pn == me then mine = true end end
       o.sel = nil
-      if mine then say(state, string.format("%s: standing by", my_name(state, info))) end
+      if mine then say(state, "Standing by") end
     end
     return true
   end
@@ -663,11 +1033,8 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     for _, pn in ipairs(cmd.select) do
       if pn == me then
         local busy, reason = M.busy(state, info)
-        if busy then
-          say(state, string.format("%s: busy (%s)", my_name(state, info), reason))
-        else
-          say(state, string.format("%s: awaiting command", my_name(state, info)))
-        end
+        if busy then say(state, string.format("Busy (%s)", reason))
+        else            say(state, "Awaiting command") end
       end
     end
     return true
@@ -700,9 +1067,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   -- ── build the order spec ──────────────────────────────────────────────
   local kind, needs_shells, tid, err = M.goal_kind(cmd, world, info)
   if err then
-    if roster[1] and roster[1].pn == me then
-      say(state, string.format("%s: %s", my_name(state, info), err))
-    end
+    if M.speaker(state, info) == me then say(state, err) end
     return true
   end
   if not kind then return true end
@@ -729,48 +1094,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     return true
   end
 
-  local busy, reason = M.busy(state, info)
-
-  if who.mode == "names" then
-    local mine = false
-    for _, pn in ipairs(who.pns) do if pn == me then mine = true end end
-    if mine and not busy then
-      take_order(state, world, info, spec, M.travel_cost(state, world, info, spec) or 0,
-                 now, #who.pns > 1)
-    elseif mine and busy then
-      say(state, string.format("%s: busy (%s)", my_name(state, info), reason))
-    end
-    return true
-  end
-
-  if who.mode == "all" or who.mode == "nearby" then
-    local take = not busy
-    if take and who.mode == "nearby" then
-      local mx, my = M.target_tile(world, state, spec)
-      local tmx = bit.rshift(info.tankx or 0, 8)
-      local tmy = bit.rshift(info.tanky or 0, 8)
-      take = mx ~= nil and U.mdist(tmx, tmy, mx, my) <= (C.ORDER_NEARBY_TILES or 10)
-    end
-    if take then
-      take_order(state, world, info, spec, M.travel_cost(state, world, info, spec) or 0,
-                 now, true)
-    end
-    return true
-  end
-
-  -- ── who = auto: open an auction, everyone bids, cheapest takes it ─────
-  local cost = (not busy) and M.travel_cost(state, world, info, spec) or nil
-  if cost and cost >= 1e29 then cost = nil end
-  o.auctions[spec.oid] = {
-    spec = spec, open = now, bids = {}, answered = {},
-  }
-  o.auctions[spec.oid].bids[me] = cost
-  o.auctions[spec.oid].answered[me] = true
-  tx(state, string.format("/info obd %d %d", spec.oid,
-     cost and math.floor(math.min(cost, 999999)) or -1))
-  print2(string.format("ORDER_BID t=%d oid=%d kind=%s cost=%s busy=%s",
-         now, spec.oid, kind, cost and string.format("%.0f", cost) or "no", tostring(reason)))
-  return true
+  return start_order(state, world, info, spec, who, now)
 end
 
 -- =========================================================================
@@ -786,10 +1110,196 @@ function M.busy(state, info)
     return true, "repositioning"
   end
   if state.km and state.km.executing then return true, "kill_me" end
-  if g.kind == "escape_water" or (state._stuck_escape_count or 0) > 0 then
+  -- "A stuck escape in progress".  state._stuck_escape_count counts
+  -- CONSECUTIVE stuck recoveries at ONE tile and is zeroed only when it
+  -- reaches its own hard-escape threshold or on respawn, so one stuck moment
+  -- left a bot permanently busy and it could never take an order again.
+  -- state.stuck_for is the live counter (zeroed the moment the tank moves or
+  -- fires) and ORDER_STUCK_BUSY_TICKS is steering.lua's own tile-stuck limit.
+  if g.kind == "escape_water"
+     or (state.stuck_for or 0) >= (C.ORDER_STUCK_BUSY_TICKS or 150) then
     return true, "escaping"
   end
   return false, nil
+end
+
+
+-- =========================================================================
+-- PING ENTRY POINT — one call from init.lua's per-tick event handling.
+-- =========================================================================
+
+-- A BOT COMMAND ping (PING_KIND_BOT_COMMAND, 5).
+local function ping_bot_command(state, world, info, sender, mx, my, now)
+  local o   = S(state)
+  local me  = state.player_number
+  local hit = M.resolve_ping(state, world, info, mx, my)
+  local pc  = M.ping_command(hit, mx, my)
+  if not pc then return end
+
+  -- ── SELECT: a ping on an ally BOT's tank, or its 3x3 ──────────────────
+  -- More pings on other bots ADD to the selection; each new one answers.
+  -- The sender's next order goes to the whole set with no auction.
+  if pc.select_pn then
+    local sel = o.sel
+    if not (sel and sel.by == sender and now < (sel.until_tick or 0)) then
+      sel = { by = sender, pns = {} }
+    end
+    local dup = false
+    for _, pn in ipairs(sel.pns) do if pn == pc.select_pn then dup = true end end
+    if not dup then sel.pns[#sel.pns + 1] = pc.select_pn end
+    sel.until_tick = now + (C.ORDER_SELECT_TICKS or 500)
+    o.sel = sel
+    if pc.select_pn == me and not dup then
+      local busy, reason = M.busy(state, info)
+      -- A busy bot answers "Busy" and is NOT selected.
+      if busy then
+        say(state, string.format("Busy (%s)", reason))
+        table.remove(sel.pns)
+      else
+        say(state, "Awaiting command")
+      end
+    end
+    print2(string.format("PING_SELECT t=%d by=p%s pn=%s n=%d", now,
+           tostring(sender), tostring(pc.select_pn), #sel.pns))
+    return
+  end
+
+  local cmd = { verb = pc.verb, who = { mode = "ping" }, target = pc.target }
+  local kind, needs_shells, tid, err = M.goal_kind(cmd, world, info)
+  if err or not kind then
+    if err and M.speaker(state, info) == me then say(state, err) end
+    return
+  end
+
+  -- The ANCHOR is the resolved TARGET's tile (the ping tile when the ping hit
+  -- open ground), so a second ping anywhere in the target's 3x3 matches.
+  local axm = (hit and hit.mx) or mx
+  local aym = (hit and hit.my) or my
+
+  -- ── repeat ping on the same target: ADD the next cheapest bot ─────────
+  local prev = ping_anchor_match(o, sender, mx, my, now)
+  if prev and o.known[prev] then
+    local k = o.known[prev]
+    local a = o.anchors[prev]
+    k.tick, a.tick = now, now
+    a.want = (a.want or 1) + 1
+    if o.held and o.held.oid == prev then
+      o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)   -- focus reset
+    end
+    print2(string.format("PING_ADD t=%d oid=%d want=%d", now, prev, a.want))
+    -- Re-open the auction for the extra slot. Bots that already hold the
+    -- order are excluded at settle time (o.gclaims), so this only fills what
+    -- is still open, and it refreshes the focus for the whole group.
+    start_order(state, world, info, k.spec, { mode = "ping" }, now, a.want)
+    return
+  end
+
+  -- A live selection from this sender replaces the auction.
+  local who = cmd.who
+  if o.sel and o.sel.by == sender and now < (o.sel.until_tick or 0)
+     and #o.sel.pns > 0 then
+    who = { mode = "names", pns = o.sel.pns }
+    o.sel = nil
+  end
+
+  local spec = {
+    oid = M.order_id(sender, cmd), verb = cmd.verb, kind = kind,
+    tkind = cmd.target and cmd.target.kind or nil, tid = tid,
+    mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
+    sender = sender, sender_name = player_name(info, sender),
+    needs_shells = needs_shells, who = who, ping = true,
+  }
+  o.known[spec.oid]   = { spec = spec, tick = now }
+  o.anchors[spec.oid] = { sender = sender, mx = axm, my = aym, tick = now, want = 1 }
+  print2(string.format("PING_ORDER t=%d oid=%d kind=%s tid=%s tile=(%d,%d) hit=%s",
+         now, spec.oid, kind, tostring(tid), mx, my,
+         hit and hit.class or "open"))
+  start_order(state, world, info, spec, who, now, 1)
+end
+
+-- A CAUTION ping (PING_KIND_CAUTION, 1).
+local function ping_caution(state, world, info, sender, mx, my, now)
+  local o   = S(state)
+  local me  = state.player_number
+  local hit = M.resolve_ping(state, world, info, mx, my)
+
+  -- ── on an ally BOT's tank, or its 3x3: the RETREAT gesture ────────────
+  -- Holding an order: the FIRST caution cancels it. With no order (which is
+  -- what the cancel leaves behind, so this covers the NEXT caution too) the
+  -- caution retreats the bot, alone.
+  if hit and hit.class == "allybot" then
+    if hit.pn ~= me then return end
+    if o.held then
+      release_held(state, info, "Released")
+      print2(string.format("PING_CAUTION t=%d cancel (held)", now))
+      return
+    end
+    local cmd  = { verb = "retreat", who = { mode = "names", pns = { me } } }
+    local spec = { oid = M.order_id(sender, cmd), verb = "retreat",
+                   kind = "take_cover", sender = sender,
+                   sender_name = player_name(info, sender),
+                   needs_shells = false, who = cmd.who, ping = true }
+    o.known[spec.oid] = { spec = spec, tick = now }
+    local busy, reason = M.busy(state, info)
+    if busy then
+      say(state, string.format("Busy (%s)", reason))
+    else
+      take_order(state, world, info, spec, 0, now)
+    end
+    print2(string.format("PING_CAUTION t=%d retreat busy=%s", now, tostring(reason)))
+    return
+  end
+
+  -- ── otherwise: in the 3x3 of an order's TARGET -> release the group ────
+  local ring = C.ORDER_PING_RING or 1
+  local tmx  = (hit and hit.mx) or mx
+  local tmy  = (hit and hit.my) or my
+  for oid, k in pairs(o.known) do
+    local ox, oy = M.target_tile(world, state, k.spec)
+    if ox and math.abs(ox - tmx) <= ring and math.abs(oy - tmy) <= ring then
+      if o.held and o.held.oid == oid then release_held(state, info, "Released") end
+      o.known[oid]    = nil
+      o.claims[oid]   = nil
+      o.auctions[oid] = nil
+      o.gclaims[oid]  = nil
+      o.announce[oid] = nil
+      o.anchors[oid]  = nil
+      print2(string.format("PING_CAUTION t=%d cancel oid=%d", now, oid))
+    end
+  end
+end
+
+-- Called once per think from init.lua, beside the other info.events readers.
+-- ev.data is [sender, kind, xHi, xLo, yHi, yLo]; world units >> 8 = tile.
+function M.on_events(state, world, info, now)
+  if not C.BOT_COMMANDS_ENABLED then return end
+  local evs = info.events
+  if not evs or #evs == 0 then return end
+  local EV     = _G.EVENT_PING
+  local K_BOT  = _G.PING_KIND_BOT_COMMAND
+  local K_CAUT = _G.PING_KIND_CAUTION
+  if not EV then return end
+  local me     = state.player_number
+  local allies = info.allies or 0
+  for i = 1, #evs do
+    local ev = evs[i]
+    if ev.type == EV and ev.data then
+      local d      = ev.data
+      local sender = d[1] or 0
+      local kind   = d[2]
+      local mx = bit.rshift((d[3] or 0) * 256 + (d[4] or 0), 8)
+      local my = bit.rshift((d[5] or 0) * 256 + (d[6] or 0), 8)
+      -- TEAM CHECK: self or an ally. The server already filters a ping to the
+      -- sender's team, but an order is a hard command so the brain checks too.
+      if sender == me or bit.band(allies, bit.lshift(1, sender)) ~= 0 then
+        if kind == K_BOT then
+          ping_bot_command(state, world, info, sender, mx, my, now)
+        elseif kind == K_CAUT then
+          ping_caution(state, world, info, sender, mx, my, now)
+        end
+      end
+    end
+  end
 end
 
 -- =========================================================================
@@ -824,6 +1334,11 @@ function M.update(state, world, info, now)
         state._order = nil
         print2(string.format("ORDER_LOST t=%d oid=%d to=p%s", now, r.oid, tostring(r.from)))
       end
+    elseif r.kind == "focus" then
+      -- A late joiner (or a respawned bot) latching the team's setting.
+      set_focus(state, CODE_FOCUS[r.value] or "off")
+    elseif r.kind == "repo" then
+      set_repo(state, r.value == 1)
     elseif r.kind == "release" then
       if o.claims[r.oid] and o.claims[r.oid].pn == r.from then o.claims[r.oid] = nil end
       -- Re-bid it: the holder dropped it and the job is still standing.
@@ -853,22 +1368,36 @@ function M.update(state, world, info, now)
       end
     end
     if n_ans >= n_allies or (now - a.open) >= (C.ORDER_AUCTION_TICKS or 10) then
-      local best_pn, best_cost = nil, nil
+      -- The `want` cheapest bids take the order (1 for a chat order, N after
+      -- N ping bursts). Bots that ALREADY hold it keep it, so a repeat ping
+      -- only fills the slot it just added. Ties break on player number, and
+      -- every bot sorts the same table, so they all name the same winners.
+      local want  = a.want or 1
+      local heldby = o.gclaims[oid] or {}
+      local n_held = 0
+      for _ in pairs(heldby) do n_held = n_held + 1 end
+      local rank = {}
       for pn = 0, 15 do
-        local c = a.bids[pn]
-        if c and (not best_cost or c < best_cost
-                  or (c == best_cost and pn < best_pn)) then
-          best_pn, best_cost = pn, c
+        if a.bids[pn] and not heldby[pn] then
+          rank[#rank + 1] = { pn = pn, c = a.bids[pn] }
         end
       end
-      if best_pn == me then
-        take_order(state, world, info, a.spec, best_cost, now)
-      elseif best_pn then
-        o.claims[oid] = { pn = best_pn, cost = best_cost, tick = now }
+      table.sort(rank, function(x, y)
+        if x.c ~= y.c then return x.c < y.c end
+        return x.pn < y.pn
+      end)
+      local need, won = math.max(0, want - n_held), {}
+      for i = 1, math.min(need, #rank) do
+        won[#won + 1] = rank[i].pn
+        if rank[i].pn == me then
+          take_order(state, world, info, a.spec, rank[i].c, now, want > 1)
+        else
+          o.claims[oid] = { pn = rank[i].pn, cost = rank[i].c, tick = now }
+        end
       end
       o.auctions[oid] = nil
-      print2(string.format("ORDER_SETTLE t=%d oid=%d winner=%s cost=%s",
-             now, oid, tostring(best_pn), best_cost and string.format("%.0f", best_cost) or "-"))
+      print2(string.format("ORDER_SETTLE t=%d oid=%d want=%d held=%d winners=%s",
+             now, oid, want, n_held, table.concat(won, ",")))
     end
   end
 
@@ -939,7 +1468,7 @@ function M.update(state, world, info, now)
       end
     end
     if done then
-      say(state, string.format("%s: %s", my_name(state, info), why))
+      say(state, why)
       release_held(state, info, nil, true)
       h = nil
     end
@@ -950,7 +1479,7 @@ function M.update(state, world, info, now)
     local low = (info.shells or 0) < (C.SHELLS_LOW or 20)
     if low and not h.refuel_said then
       h.refuel_said = true
-      say(state, string.format("%s: refuelling, coming back", my_name(state, info)))
+      say(state, "Refuelling, coming back")
     elseif not low then
       h.refuel_said = nil
     end
@@ -964,11 +1493,45 @@ function M.update(state, world, info, now)
       o.auctions[oid] = nil
       o.gclaims[oid] = nil
       o.announce[oid] = nil
+      o.anchors[oid] = nil
     end
   end
-  if o.sel and now >= (o.sel.until_tick or 0) then o.sel = nil end
+  if o.sel and now >= (o.sel.until_tick or 0) then
+    -- A lapsed selection: the selected bots say so once, like `nevermind`.
+    for _, pn in ipairs(o.sel.pns or {}) do
+      if pn == me then say(state, "Standing by") end
+    end
+    o.sel = nil
+  end
 
-  state._order = o.held
+  -- 6. THE SPEAKING BOT: the banner at game start and the latch heartbeat.
+  --    Only the lowest-numbered bot on the team talks, so a four-bot team
+  --    says each line once.
+  if M.speaker(state, info) == me then
+    if not o.banner and U.human_ally_count(info) > 0 then
+      o.banner = true
+      say(state, M.BANNER)
+      -- Only when repositioning really is blocked and nobody has overridden
+      -- it; otherwise the line would be wrong.
+      if C.REPOSITION_DISABLE_WITH_HUMAN_ALLIES and o.repo_on == nil then
+        say(state, M.BANNER_REPO)
+      end
+    end
+    -- Re-broadcast the team settings so a bot that joined or respawned late
+    -- latches the same values. They ride their own verbs rather than the
+    -- /info state slate, which is already close to the 124-byte batch budget.
+    if (o.focus or o.repo_on ~= nil) and now >= (o.latch_tx or 0) then
+      o.latch_tx = now + (C.ORDER_LATCH_REBROADCAST_TICKS or 1500)
+      tx(state, string.format("/info obf %d", FOCUS_CODE[o.focus or "off"] or 0))
+      if o.repo_on ~= nil then
+        tx(state, string.format("/info obp %d", o.repo_on and 1 or 0))
+      end
+    end
+  end
+
+  state._order          = o.held
+  state._focus          = o.focus
+  state._repo_override  = o.repo_on
 end
 
 -- One line for the goal panel / debug_info.

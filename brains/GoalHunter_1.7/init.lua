@@ -4306,6 +4306,13 @@ function Brain.think(info)
     end
   end
 
+  -- Bot-command PINGS. The engine hands a teammate's smart ping to the brain
+  -- as an EVENT_PING in info.events (the same array world.process_events and
+  -- hearing.lua read); this is the one call that turns the BOT COMMAND kind
+  -- into an order and the CAUTION kind into a cancel or a retreat. It runs
+  -- before ORD.update so a ping's bid goes out on the same tick.
+  ORD.on_events(state, world, info, now)
+
   -- Chat orders: drain the inbound bids/claims/releases, settle any auction
   -- that is due, expire a finished order, and publish the live slot on
   -- state._order. Runs BEFORE goal selection so the pool sees it this tick.

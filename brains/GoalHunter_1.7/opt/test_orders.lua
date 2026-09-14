@@ -45,6 +45,8 @@ local function P(text) return ORD.parse(text, ROSTER, ALL) end
 local function shape(c)
   if not c then return "nil" end
   if c.reply then return "reply:" .. c.reply end
+  if c.help then return "help" end
+  if c.setting then return "set:" .. c.setting .. "=" .. tostring(c.value) end
   if c.select then return "select:" .. table.concat(c.select, ",") end
   if c.clear_select then return "clear_select" end
   local w = c.who.mode
@@ -143,6 +145,298 @@ check("ack is from the pool", (function()
   for _, v in ipairs(ORD.ACKS.philosophers) do if v == a then return true end end
   return false
 end)(), "?")
+
+
+-- =========================================================================
+-- STAGE 2 — team settings, help, and the ping rules
+-- =========================================================================
+
+print("orders.lua — focus / take")
+check("focus bases",      shape(P("focus bases"))      == "set:focus=bases", shape(P("focus bases")))
+check("take bases",       shape(P("take bases"))       == "set:focus=bases", shape(P("take bases")))
+check("focus base",       shape(P("focus base"))       == "set:focus=bases", shape(P("focus base")))
+check("focus pills",      shape(P("focus pills"))      == "set:focus=pills", shape(P("focus pills")))
+check("take pills",       shape(P("take pills"))       == "set:focus=pills", shape(P("take pills")))
+check("focus pill",       shape(P("focus pill"))       == "set:focus=pills", shape(P("focus pill")))
+check("focus pillbox",    shape(P("focus pillbox"))    == "set:focus=pills", shape(P("focus pillbox")))
+check("focus pillboxes",  shape(P("focus pillboxes"))  == "set:focus=pills", shape(P("focus pillboxes")))
+check("FOCUS BASES (case)", shape(P("FOCUS BASES"))    == "set:focus=bases", shape(P("FOCUS BASES")))
+check("focus off",        shape(P("focus off"))        == "set:focus=off",   shape(P("focus off")))
+check("focus nonsense",   shape(P("focus wibble"))     == "reply:didn't understand", shape(P("focus wibble")))
+
+print("orders.lua — reposition switch")
+check("reposition on",    shape(P("reposition on"))    == "set:reposition=true",  shape(P("reposition on")))
+check("reposition off",   shape(P("reposition off"))   == "set:reposition=false", shape(P("reposition off")))
+check("repositioning on", shape(P("repositioning on")) == "set:reposition=true",  shape(P("repositioning on")))
+check("reposition alone", shape(P("reposition"))       == "reply:didn't understand", shape(P("reposition")))
+
+print("orders.lua — help")
+check("help",             shape(P("help")) == "help", shape(P("help")))
+check("help with junk",   shape(P("help me")) == "reply:didn't understand", shape(P("help me")))
+check("help: 4 lines",    #ORD.HELP == 4, tostring(#ORD.HELP))
+check("help lines fit the 128-byte chat max", (function()
+  for _, l in ipairs(ORD.HELP) do if #l > 128 then return false end end
+  return #ORD.BANNER <= 128 and #ORD.BANNER_REPO <= 128
+end)(), "?")
+
+-- =========================================================================
+-- PING RULES.  A fake world: two pills, one base, three tanks.
+-- cpathfinder's Dijkstra slate is a C call that does not exist outside the
+-- game, so the travel price is stubbed — the auction is not what these test.
+-- =========================================================================
+_G.OBJECT_TANK    = 1
+_G.OBJECT_HOSTILE = 0x80
+local cpf = require("cpathfinder")
+cpf.smart_cost_dij_only = function() return nil end
+
+local function W()
+  return {
+    pills = {
+      [5] = { mx = 20, my = 20, owner = "hostile",  health = 10 },
+      [7] = { mx = 40, my = 40, owner = "hostile",  health = 0  },
+      [9] = { mx = 60, my = 60, owner = "friendly", health = 12 },
+    },
+    bases = {
+      [3] = { mx = 30, my = 30, owner = "neutral"  },
+      [4] = { mx = 50, my = 50, owner = "friendly" },
+    },
+  }
+end
+-- me = p1 at (10,10).  p2 is an ally bot at (12,12).  p7 is an enemy tank at
+-- (14,14).  Objects never include our own tank (the engine leaves it out).
+local function I(extra)
+  local i = {
+    tankx = 10 * 256 + 128, tanky = 10 * 256 + 128,
+    player_number = 1, allies = 0x16, player_bots = 0x16,
+    player_names = { [1] = "Andrew", [2] = "Socrates", [3] = "Seneca",
+                     [5] = "Plato", [8] = "Hannibal" },
+    man_status = 0, shells = 40, armour = 40, objects = {
+      { type = 1, idnum = 2, x = 12 * 256, y = 12 * 256, info = 0 },
+      { type = 1, idnum = 7, x = 14 * 256, y = 14 * 256, info = 0x80 },
+    },
+    events = {},
+  }
+  for k, v in pairs(extra or {}) do i[k] = v end
+  return i
+end
+local function ST()
+  return { player_number = 1, tick = 100, goal = {}, stuck_for = 0 }
+end
+
+print("orders.lua — ping tile matching")
+local st, w, inf = ST(), W(), I()
+check("exact tile: the pill",
+      (ORD.resolve_ping(st, w, inf, 20, 20) or {}).class == "pill",
+      tostring((ORD.resolve_ping(st, w, inf, 20, 20) or {}).class))
+check("exact tile: our own tank is an ally bot",
+      (ORD.resolve_ping(st, w, inf, 10, 10) or {}).pn == 1,
+      tostring((ORD.resolve_ping(st, w, inf, 10, 10) or {}).pn))
+check("exact tile: an ally bot",
+      (ORD.resolve_ping(st, w, inf, 12, 12) or {}).class == "allybot",
+      tostring((ORD.resolve_ping(st, w, inf, 12, 12) or {}).class))
+check("exact tile: an enemy tank",
+      (ORD.resolve_ping(st, w, inf, 14, 14) or {}).class == "enemytank",
+      tostring((ORD.resolve_ping(st, w, inf, 14, 14) or {}).class))
+check("open ground resolves to nothing",
+      ORD.resolve_ping(st, w, inf, 100, 100) == nil, "?")
+check("ring: a neighbour of the pill",
+      (function()
+         local h = ORD.resolve_ping(st, w, inf, 21, 20)
+         return h and h.class == "pill" and h.id == 5 and h.exact == false
+       end)(), "?")
+-- EXACT BEATS RING: p2's tank is at (12,12) and p1's at (10,10); a ping on
+-- (11,11) sits in BOTH rings, but a ping on (12,12) must pick p2 alone.
+check("exact beats ring: two tanks a tile apart",
+      (function()
+         local h = ORD.resolve_ping(st, w, inf, 12, 12)
+         return h and h.pn == 2 and h.exact == true
+       end)(), "?")
+-- RING PICKS THE NEARER: from (13,13) the enemy tank at (14,14) is diagonal
+-- (d=2) and the ally at (12,12) is diagonal too (d=2) -- so the tie breaks on
+-- player number and the ALLY (p2) wins.  From (13,14) the enemy is
+-- orthogonal (d=1) and the ally is (d=5), so the enemy wins.
+check("ring tie breaks on player number",
+      (function()
+         local h = ORD.resolve_ping(st, w, inf, 13, 13)
+         return h and h.pn == 2
+       end)(), "?")
+check("ring picks the nearer of two",
+      (function()
+         local h = ORD.resolve_ping(st, w, inf, 13, 14)
+         return h and h.pn == 7 and h.class == "enemytank"
+       end)(), "?")
+
+print("orders.lua — ping verb table")
+local function pv(mx, my)
+  local c = ORD.ping_command(ORD.resolve_ping(st, w, inf, mx, my), mx, my)
+  if not c then return "nil" end
+  if c.select_pn then return "select:" .. c.select_pn end
+  local t = c.target or {}
+  return c.verb .. ":" .. (t.kind or "-") .. ":" .. tostring(t.id or t.pn or "-")
+end
+check("enemy live pill -> attack",   pv(20, 20) == "attack:pill:5",   pv(20, 20))
+check("dead pill -> capture",        pv(40, 40) == "capture:pill:7",  pv(40, 40))
+check("our pill -> defend",          pv(60, 60) == "defend:pill:9",   pv(60, 60))
+check("neutral base -> capture",     pv(30, 30) == "capture:base:3",  pv(30, 30))
+check("our base -> defend",          pv(50, 50) == "defend:base:4",   pv(50, 50))
+check("enemy tank -> attack",        pv(14, 14) == "attack:tank:7",   pv(14, 14))
+check("ally bot -> select",          pv(12, 12) == "select:2",        pv(12, 12))
+check("open ground -> go there",     pv(100, 99) == "goto:here:" .. (100 * 256 + 99), pv(100, 99))
+
+print("orders.lua — ping events")
+-- The engine hands the brain [sender, kind, xHi, xLo, yHi, yLo] in WORLD
+-- units.  These build that shape by hand.
+_G.EVENT_PING = 13
+_G.PING_KIND_CAUTION = 1
+_G.PING_KIND_BOT_COMMAND = 5
+local function ping(kind, sender, mx, my)
+  local wx, wy = mx * 256 + 128, my * 256 + 128
+  return { type = 13, data = { sender, kind,
+           math.floor(wx / 256), wx % 256, math.floor(wy / 256), wy % 256 } }
+end
+
+-- SELECT by ping: p1 is pinged, so p1 answers "Awaiting command".
+st, w, inf = ST(), W(), I()
+inf.events = { ping(5, 0, 10, 10) }
+inf.allies = 0x17   -- p0 (the human) is an ally too
+ORD.on_events(st, w, inf, 100)
+check("select ping: selected",
+      st.orders and st.orders.sel and st.orders.sel.pns[1] == 1,
+      st.orders and st.orders.sel and tostring(st.orders.sel.pns[1]) or "nil")
+check("select ping: answers",
+      st.orders.say[1] == "Awaiting command", tostring(st.orders.say[1]))
+
+-- An ENEMY's ping does nothing at all.
+st, w, inf = ST(), W(), I()
+inf.events = { ping(5, 9, 10, 10) }
+ORD.on_events(st, w, inf, 100)
+check("enemy ping ignored", st.orders == nil or st.orders.sel == nil, "?")
+
+-- A bot ping on an enemy pill opens an auction, and a SECOND ping in its 3x3
+-- grows the order to two bots instead of opening a second order.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+inf.events = { ping(5, 0, 20, 20) }
+ORD.on_events(st, w, inf, 100)
+local oid = next(st.orders.auctions)
+check("bot ping opens ONE auction",
+      oid ~= nil and st.orders.auctions[oid].want == 1,
+      oid and tostring(st.orders.auctions[oid].want) or "nil")
+inf.events = { ping(5, 0, 21, 20) }
+ORD.on_events(st, w, inf, 110)
+check("repeat ping in the 3x3 grows the SAME order",
+      st.orders.auctions[oid] ~= nil and st.orders.auctions[oid].want == 2,
+      st.orders.auctions[oid] and tostring(st.orders.auctions[oid].want) or "nil")
+check("repeat ping opens no second order",
+      (function()
+         local n = 0
+         for _ in pairs(st.orders.known) do n = n + 1 end
+         return n == 1
+       end)(), "?")
+
+-- CAUTION on our own tank with NO order = retreat.  With an order = cancel.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+inf.events = { ping(1, 0, 10, 10) }
+ORD.on_events(st, w, inf, 100)
+check("caution on a bot with no order -> retreat",
+      st.orders.held ~= nil and st.orders.held.kind == "take_cover",
+      st.orders.held and st.orders.held.kind or "nil")
+inf.events = { ping(1, 0, 10, 10) }
+ORD.on_events(st, w, inf, 120)
+check("caution on a bot holding an order -> cancel",
+      st.orders.held == nil, "?")
+
+-- CAUTION in the 3x3 of an order's TARGET releases the group.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+st.orders = nil
+-- player_names is indexed pn+1, so THIS bot (p1) is "Socrates": the order is
+-- addressed straight at us, no auction.
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 100, true, false)
+check("a chat order addressed by name is held",
+      st.orders.held ~= nil and st.orders.held.kind == "attack_pill"
+      and st.orders.held.tid == 5,
+      st.orders.held and st.orders.held.kind or "nil")
+inf.events = { ping(1, 0, 21, 21) }
+ORD.on_events(st, w, inf, 130)
+check("caution near the target releases the order",
+      st.orders.held == nil and st.orders.known[1] == nil, "?")
+
+print("orders.lua — the speaking bot")
+check("speaker = the lowest bot player number",
+      ORD.speaker({ player_number = 1 }, I()) == 1,
+      tostring(ORD.speaker({ player_number = 1 }, I())))
+check("speaker is the same answer from every bot",
+      ORD.speaker({ player_number = 5 }, I()) == 1,
+      tostring(ORD.speaker({ player_number = 5 }, I())))
+
+print("orders.lua — settings over chat (the runtime path)")
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "focus bases", 200, true, false)
+check("focus bases latches", st._focus == "bases", tostring(st._focus))
+check("the speaking bot confirms it",
+      st.orders.say[1] == "Focus: bases.", tostring(st.orders.say[1]))
+check("and puts it on the wire",
+      st.orders.out[1] == "/info obf 1", tostring(st.orders.out[1]))
+ORD.on_chat(st, w, inf, 0, "focus off", 210, true, false)
+check("focus off clears it", st._focus == nil, tostring(st._focus))
+ORD.on_chat(st, w, inf, 0, "reposition on", 220, true, false)
+check("reposition on latches", st._repo_override == true, tostring(st._repo_override))
+check("reposition on is not blocked",
+      ORD.reposition_human_blocked(st) == false, "?")
+ORD.on_chat(st, w, inf, 0, "reposition off", 230, true, false)
+check("reposition off latches", st._repo_override == false, tostring(st._repo_override))
+check("reposition off is blocked",
+      ORD.reposition_human_blocked(st) == true, "?")
+-- a late joiner latching the same values off the wire
+local st2 = ST()
+ORD.rx(1, "/info obf 2", 300, st2)
+ORD.rx(1, "/info obp 1", 300, st2)
+ORD.update(st2, W(), I({ allies = 0x17 }), 300)
+check("a late bot latches focus from the verb", st2._focus == "pills", tostring(st2._focus))
+check("a late bot latches reposition from the verb", st2._repo_override == true, tostring(st2._repo_override))
+
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "help", 240, true, false)
+check("help answers 4 lines", #st.orders.say == 4, tostring(#st.orders.say))
+
+-- the game-start banner: only with a human ally, only once, only from the
+-- speaking bot.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17   -- p0 is a human ally (player_bots has no bit 0)
+ORD.update(st, w, inf, 50)
+check("banner: two lines at game start", #st.orders.say == 2, tostring(#st.orders.say))
+check("banner line 1", st.orders.say[1] == ORD.BANNER, tostring(st.orders.say[1]))
+check("banner line 2", st.orders.say[2] == ORD.BANNER_REPO, tostring(st.orders.say[2]))
+st.orders.say = {}
+ORD.update(st, w, inf, 60)
+check("banner is said once", #st.orders.say == 0, tostring(#st.orders.say))
+local st3 = ST()
+ORD.update(st3, W(), I({ allies = 0x16, player_bots = 0x16 }), 50)
+check("no banner with no human ally",
+      #st3.orders.say == 0, tostring(#st3.orders.say))
+
+print("orders.lua — focus pricing")
+local C = require("constants")
+check("no focus -> x1", ORD.focus_mult({}, "attack_pill") == 1.0, "?")
+check("focus bases -> pill goals pay",
+      ORD.focus_mult({ _focus = "bases" }, "attack_pill") == C.FOCUS_OTHER_COST_MULT, "?")
+check("focus bases -> base goals keep their price",
+      ORD.focus_mult({ _focus = "bases" }, "capture_base") == 1.0, "?")
+check("focus pills -> base goals pay",
+      ORD.focus_mult({ _focus = "pills" }, "capture_base") == C.FOCUS_OTHER_COST_MULT, "?")
+check("focus pills -> pill goals keep their price",
+      ORD.focus_mult({ _focus = "pills" }, "defend_pill") == 1.0, "?")
+check("focus never touches survival",
+      ORD.focus_mult({ _focus = "bases" }, "take_cover") == 1.0
+      and ORD.focus_mult({ _focus = "pills" }, "refuel_at_base") == 1.0, "?")
+check("focus label",
+      ORD.focus_label({ _focus = "bases" }) ==
+        string.format("focus: x%.1f (bases)", C.FOCUS_OTHER_COST_MULT),
+      ORD.focus_label({ _focus = "bases" }))
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

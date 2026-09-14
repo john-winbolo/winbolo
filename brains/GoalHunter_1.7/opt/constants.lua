@@ -4179,6 +4179,52 @@ M.ORDER_REACTIVE_KINDS = {
   escape_water = true, rescue_lgm = true, kill_me_wait = true,
   mine_crater = true, none = true,
 }
+-- "A stuck escape in progress" for busy().  The old test read
+-- state._stuck_escape_count, which counts CONSECUTIVE stuck recoveries at one
+-- tile and is only ever zeroed when it reaches its own hard-escape threshold
+-- or on respawn -- so one stuck moment early in a game left the bot "busy"
+-- for the rest of it and it could never take an order.  state.stuck_for is
+-- the live counter (zeroed the moment the tank moves or fires), and 150 is
+-- the same tile-stuck limit steering.lua uses to fire its escape.
+M.ORDER_STUCK_BUSY_TICKS = 150   -- keel 150 (moot; master off)
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- BOT COMMANDS — stage 2 (pings, focus, reposition switch, the speaking bot)
+-- ══════════════════════════════════════════════════════════════════════════
+-- PINGS.  The engine already delivers a teammate's smart ping to the brain as
+-- an EVENT_PING; orders.lua turns the BOT COMMAND kind into an order and the
+-- CAUTION kind into a cancel/retreat.  The tile the ping lands on picks the
+-- verb (enemy live pill -> attack, dead pill -> sweep, enemy/neutral base ->
+-- capture, our own pill/base -> defend, an ally bot -> select it, an enemy
+-- tank -> attack_tank, open ground -> go there and hold).
+-- A ping resolves to whatever sits on the EXACT tile; only when that tile is
+-- empty is the 3x3 ring searched, and then the nearer candidate wins (ties on
+-- player number).  This is the ring radius, in tiles.
+M.ORDER_PING_RING = 1            -- keel 1 (moot; master off)
+-- How long a ping order's anchor tile stays matchable, so a repeat ping in
+-- the same 3x3 ADDS a bot to the same order instead of opening a new one.
+-- Same clock as the focus timer.
+M.ORDER_PING_MATCH_TICKS = 3000  -- keel 3000 (moot; master off)
+
+-- FOCUS.  "focus bases" / "take bases" / "focus pills" / "take pills" /
+-- "focus off" in chat.  Team-wide, for the whole game or until changed, and
+-- `cancel all` does not touch it.  It works by PRICING, not by rejecting: the
+-- OTHER class pays this multiplier and the focused class keeps its real price,
+-- so a pill never becomes artificially cheap next to attack_tank, refuel,
+-- escape or take_cover and survival still wins when it should.
+--   focus bases -> every PILL goal pays it
+--                  (attack_pill, capture_pill, defend_pill, repair_pill,
+--                   reposition, place_pill_strategic)
+--   focus pills -> every BASE goal pays it (capture_base, attack_base)
+-- Applied at ONE choke point, the assembled-pool pass in goal_selection right
+-- beside the pill-suicider surcharge, and shown in every affected row's term
+-- breakdown as "|focus: x3.0 (bases)" so the panel stays hand-computable.
+M.FOCUS_OTHER_COST_MULT = 3.0    -- keel 1.0 (no focus factor at all)
+-- The speaking bot re-broadcasts the team's focus and reposition settings on
+-- this period so a bot that joined or respawned late latches the same values.
+-- The settings ride their own /info verbs (obf / obp) rather than the state
+-- slate, which is already close to the 124-byte batch budget.
+M.ORDER_LATCH_REBROADCAST_TICKS = 1500   -- keel 1500 (moot; master off) 30 s
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- PRESETS — named bundles of constant overrides, applied per bot
@@ -4427,6 +4473,15 @@ M.PRESETS = {
     ORDER_SELECT_TICKS            = 500,
     ORDER_INJECT_COST             = 20,
     ORDER_REFUEL_SKIP_NO_SHELLS   = false,
+    ORDER_STUCK_BUSY_TICKS        = 150,
+    ORDER_PING_RING               = 1,
+    ORDER_PING_MATCH_TICKS        = 3000,
+    ORDER_LATCH_REBROADCAST_TICKS = 1500,
+    --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
+    --   the master switch: the focus multiplier sits inside the cost
+    --   competition, so its keel value has to be the identity, 1.0, for the
+    --   baseline pool numbers to come out unchanged.
+    FOCUS_OTHER_COST_MULT         = 1.0,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and

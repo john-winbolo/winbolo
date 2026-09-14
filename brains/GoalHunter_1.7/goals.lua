@@ -5906,7 +5906,11 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   -- vote is ever opened; reposition_vote's OPEN gate and every ally's ballot
   -- re-check it independently. Detection is engine-authoritative
   -- (info.allies & ~info.player_bots) — see util.human_ally_count.
-  if C.REPOSITION_DISABLE_WITH_HUMAN_ALLIES and U.human_ally_count(info) > 0 then
+  -- The chat command `reposition on` / `reposition off` (bot commands, stage
+  -- 2) overrides the constant for this game; orders.reposition_human_blocked
+  -- is the ONE place that resolves the two, and reposition_vote's OPEN gate
+  -- and its ballot ask the same question.
+  if squad.reposition_human_blocked(state) and U.human_ally_count(info) > 0 then
     state._repo_candidate = nil
     return nil
   end
@@ -6353,6 +6357,12 @@ local function refuel_mult_for_pool(pname)
   local kind = POOL_NAME_TO_KIND[pname] or pname
   return (GOAL_GROUPS[kind] == "refuel") and REFUEL_MULT or 1.0
 end
+-- The FOCUS setting (`focus bases` / `focus pills`) asks the same shape of
+-- question as the two multipliers above, and squad.focus_mult /
+-- squad.focus_label are its re-exports (the rule lives in orders.lua). They
+-- are called inline rather than wrapped in two more local helpers because
+-- this file's main chunk is at Lua's 200-local cap. The breakdown chip is
+-- always spelled " |focus: x3.0 (bases)".
 
 -- (LOCK_SUBS defined above eval_attack_tank.)
 
@@ -14641,9 +14651,19 @@ end
 -- interruptible. Clears any reject (armour_too_low / ally_claimed) on the pill
 -- so the squad converges on the commander's target. Run AFTER area-lock.
 local function apply_blitz_target(state, info)
-  if not info or state.squad_role ~= "s" then return end
+  -- BLITZ TOGETHER (bot commands, stage 2): when one order puts two or more
+  -- bots on the SAME live pill they run the existing blitz rather than
+  -- arriving one at a time. An ordered member is let through the role gate
+  -- (its goal IS the commander's pill, which is the whole point of the gate)
+  -- but NOT through availability(), which still applies busy().
+  local _ordered = C.BOT_COMMANDS_ENABLED and state._order
+                   and state._order.kind == "attack_pill"
+                   and state._order.group
+                   and state._order.tid == state.squad_blitz_target
+  if not info or (state.squad_role ~= "s" and not _ordered) then return end
   local tgt = state.squad_blitz_target
-  if not state.squad_cmdr or not tgt then return end
+  if not tgt then return end
+  if not state.squad_cmdr and not _ordered then return end
   if not squad.availability(state, info, tgt) then return end  -- current goal not interruptible
   local cache = state.cost_cache
   if not cache then return end
@@ -16180,6 +16200,17 @@ function M.order_goal(state, world, info, ord)
     end
     return nil   -- cannot see him; the order waits (the timer keeps running)
   elseif k == "take_cover" then
+    -- "GO THERE AND HOLD" (a bot ping on open ground). REUSED MECHANISM:
+    -- take_cover with the PINGED tile substituted for find_cover_tile's pick.
+    -- take_cover already means "drive to this tile and stop there" and it
+    -- already has the ordered-retreat margin waiver, so nothing new is
+    -- needed. tkind "here" carries the tile on the order itself because
+    -- there is no pill or base to look it up from.
+    if ord.tkind == "here" and ord.mx then
+      return { kind = "take_cover", mx = ord.mx, my = ord.my,
+               wx = U.m2w(ord.mx), wy = U.m2w(ord.my), target_id = ord.tid or -1,
+               _tc_trigger = "order_here", _tc_margin = 0, _ordered = true }
+    end
     local tmx = bit.rshift(info.tankx, 8)
     local tmy = bit.rshift(info.tanky, 8)
     local _, best = M.find_cover_tile(state, world, info, tmx, tmy)
@@ -17339,6 +17370,31 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── FOCUS cost shaping (bot commands: `focus bases` / `focus pills`) ──
+    -- THE choke point for the team's focus setting, modelled on the
+    -- pill-suicider pass above: one sweep over the assembled pool, the same
+    -- layer as the phase weight (a whole-cost multiplier applied after the
+    -- phase weight, before hysteresis).
+    -- The OTHER class pays FOCUS_OTHER_COST_MULT and the focused class keeps
+    -- its REAL price: making the other class dearer, rather than the focused
+    -- class cheaper, means a pill never becomes artificially cheap next to
+    -- attack_tank, refuel, escape or take_cover, so survival and fights still
+    -- win when they should.
+    --   focus bases -> every PILL goal pays it
+    --   focus pills -> every BASE goal pays it
+    -- No-op for every bot with no focus set and at the keel value 1.0
+    -- (orders.focus_mult -> 1.0). _focus_mult is stashed for the WINNERS-row
+    -- reconciliation exactly like _suicider_mult.
+    if state._focus then
+      for _, c in ipairs(pool) do
+        local fm = squad.focus_mult(state, c.goal and c.goal.kind)
+        if fm ~= 1.0 and c.cost and c.cost > 0 and not c._reject_sentinel then
+          c.cost = c.cost * fm
+          c._focus_mult = fm
+        end
+      end
+    end
+
     -- ── Refuel-group cost multiplier ──
     -- THE choke point for "this bot values resupply more/less than usual":
     -- one pass over the assembled pool, the same layer as the phase weight and
@@ -17803,6 +17859,7 @@ local function goal_selection(state, world, info, quiet)
         inf_mult     = c._inf_mult or 1.0,
         suicider_mult = c._suicider_mult or 1.0,
         refuel_mult   = c._refuel_mult or 1.0,
+        focus_mult    = c._focus_mult or 1.0,
         ahead_mult    = c._ahead_mult or 1.0,
         -- LOADED, BUILDER-LESS surcharge (ATTACK_NO_BUILDER_MULT) and the
         -- escape-row hysteresis waiver, both needed for the WINNERS row to
@@ -18848,7 +18905,9 @@ function M.get_queue_status(state)
     local pw = phase_weights and pname and phase_weights[pname] or 1.0
     local sui = suicider_mult_for_pool(state, pname)
     local rfm = refuel_mult_for_pool(pname)
-    local weighted = cost_val >= 0 and (cost_val * pw * sui * rfm) or -1
+    local fcm = squad.focus_mult(state, POOL_NAME_TO_KIND[pname] or pname)
+    local weighted = cost_val >= 0 and (cost_val * pw * sui * rfm * fcm) or -1
+    if fcm ~= 1.0 and formula ~= "" then formula = formula .. (" |" .. squad.focus_label(state)) end
     if rfm ~= 1.0 and formula ~= "" then
       formula = formula .. " * " .. M.refuel_mult_label()
     end
@@ -18899,8 +18958,10 @@ function M.get_queue_status(state)
     local pw = phase_weights and phase_weights[pname] or 1.0
     local sui = suicider_mult_for_pool(state, pname)
     local rfm = refuel_mult_for_pool(pname)
-    local weighted = cost >= 0 and (cost * pw * sui * rfm) or -1
+    local fcm = squad.focus_mult(state, POOL_NAME_TO_KIND[pname] or pname)
+    local weighted = cost >= 0 and (cost * pw * sui * rfm * fcm) or -1
     local fdesc = entry.desc or ""
+    if fcm ~= 1.0 then fdesc = fdesc .. (" |" .. squad.focus_label(state)) end
     if rfm ~= 1.0 then fdesc = fdesc .. " * " .. M.refuel_mult_label() end
     if sui ~= 1.0 then fdesc = fdesc .. string.format(" * suicider{%.1f}", sui) end
     entries[#entries+1] = {
@@ -19381,6 +19442,7 @@ function M.get_pool_breakdown_json(state)
     -- `weighted` (and therefore in the row ordering). 1.0 for non-suiciders.
     local sui = suicider_mult_for_pool(state, pname)
     local pwx = pw * sui * refuel_mult_for_pool(pname)
+                   * squad.focus_mult(state, POOL_NAME_TO_KIND[pname] or pname)
     local rows_raw = by_pool[idx] or {}
     table.sort(rows_raw, function(a, b)
       local ac = (a.cost >= 0) and a.cost * pwx or math.huge
@@ -19630,6 +19692,15 @@ function M.get_pool_breakdown_json(state)
       -- Refuel-group multiplier, same layer as the suicider surcharge, so the
       -- row's numbers still reconcile (base x pw x inf x suicider x refuelmult
       -- + penalties = total).
+      local focus_mult_d = (gc and gc.focus_mult) or 1.0
+      if focus_mult_d ~= 1.0 then
+        detail_formula = detail_formula .. (" |" .. squad.focus_label(state))
+        detail_map[#detail_map + 1] = string.format(
+          "focus:the team is focused on %s, so every %s goal costs x%.1f -- FOCUS_OTHER_COST_MULT, set by the chat command \"focus %s\" and cleared by \"focus off\"",
+          tostring(state._focus), (state._focus == "bases") and "PILL" or "BASE",
+          focus_mult_d, tostring(state._focus))
+      end
+
       local refuel_mult_d = (gc and gc.refuel_mult) or 1.0
       if refuel_mult_d ~= 1.0 then
         detail_formula = string.format("%s * %s", detail_formula, M.refuel_mult_label())
@@ -19821,6 +19892,8 @@ function M.get_pool_breakdown_json(state)
       if _strip_sui ~= 1.0 then
         row_summary = row_summary .. string.format(" x suicider{%.1f}", _strip_sui)
       end
+      local _strip_fcm = squad.focus_mult(state, POOL_NAME_TO_KIND[pname] or pname)
+      if _strip_fcm ~= 1.0 then row_summary = row_summary .. (" |" .. squad.focus_label(state)) end
       -- Prefer the cost_cache formula (full base + breakdown + detail
       -- map) over sw.desc (one-line tagline).  Both kill_lgm and
       -- wait_for_lgm stamp cost_cache under "<idx>:<target_id>" so we
