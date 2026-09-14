@@ -4363,6 +4363,12 @@ set(_unit_test_names
     fog_settings_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
+    visibility_preset_round_trip
+    visibility_preset_custom
+    visibility_preset_ignores_decay
+    visibility_preset_pref_words
+    info_packet_preset_round_trip
+    info_packet_absent_views_read_classic
     upload_cap_enforced
     map_field_clamps_evil
     map_field_clamps_passthrough
