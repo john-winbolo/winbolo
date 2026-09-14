@@ -152,12 +152,24 @@ bool scnReadFile(const char *path, char **out, size_t *outLen,
 /*********************************************************
  *NAME:          scnNewVm
  *PURPOSE:
- *  A Lua state with the standard libraries open and
- *  math.random seeded from the process PRNG's state. No game
- *  table: whoever boots the state installs the surface it is
- *  to have. NULL when there is no memory for one.
+ *  A Lua state opened on the sandbox's own library rather
+ *  than on the standard one — no io, no package, no debug —
+ *  counted against SCN_VM_MEMORY_MAX, and with math.random
+ *  seeded from the process PRNG's state. No game table:
+ *  whoever boots the state installs the surface it is to
+ *  have. NULL when there is no memory for one.
  *********************************************************/
 struct lua_State *scnNewVm(void);
+
+/*********************************************************
+ *NAME:          scnCloseVm
+ *PURPOSE:
+ *  Closes a state scnNewVm made. Every close goes through
+ *  here, because a state carries its memory count beside it
+ *  and lua_close would leave that behind. NULL is nothing to
+ *  close.
+ *********************************************************/
+void scnCloseVm(struct lua_State *L);
 
 /*********************************************************
  *NAME:          scnRunChunk

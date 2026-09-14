@@ -77,13 +77,23 @@ chunk is refused at the door, so ship the source. `print` goes to the server
 console rather than to the host's stdout, which is how a script says
 something to the operator.
 
-**A scenario is still trusted the way a brain is**, with no time limit and no
-memory cap. A file beside a map is run by whoever hosts that map, at the
-server's own privilege, so run only scripts you would run as a program — the
-library above narrows what a script can reach, not who is answerable for it.
-Every host that opens a map from a file looks beside it: the dedicated
-server, the desktop client hosting a single-player or LAN game, and the
-headless runner.
+**Your state holds at most 32 MB.** Every allocation it makes is counted, and
+the one that would take it past the cap is refused: Lua raises an
+out-of-memory error at the point that asked for it, exactly as it would raise
+any other. The hook or policy call it happened in fails, the server counts one
+error against the script, and the round carries on — a script that keeps
+failing is switched off for the rest of the round, as it is for any other
+repeated error. The state itself survives, so whatever the failed call had
+abandoned is collected and the next call starts with room again. 32 MB is far
+more than a scenario needs; if you are near it you are keeping something you
+meant to let go of.
+
+**A scenario is still trusted the way a brain is**, with no time limit. A file
+beside a map is run by whoever hosts that map, at the server's own privilege,
+so run only scripts you would run as a program — the library and the cap above
+narrow what a script can reach, not who is answerable for it. Every host that
+opens a map from a file looks beside it: the dedicated server, the desktop
+client hosting a single-player or LAN game, and the headless runner.
 
 **Reloading after an edit.** On a dedicated server the console command
 `reload` reads the file again, checks that it loads, and swaps it in for the

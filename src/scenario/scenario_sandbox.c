@@ -8,10 +8,15 @@
  *Filename:      scenario_sandbox.c
  *Author:        John Morrison
  *Purpose:
- *  What a scenario script is given: base, coroutine,
- *  string, table, math, os and — where the VM has one —
- *  utf8, each opened by hand rather than the standard
- *  library being opened as a whole.
+ *  The state a scenario script runs in, and what it is
+ *  given: base, coroutine, string, table, math, os and —
+ *  where the VM has one — utf8, each opened by hand rather
+ *  than the standard library being opened as a whole.
+ *
+ *  The state allocates through a counter of its own, so a
+ *  script that eats memory is refused at SCN_VM_MEMORY_MAX
+ *  and raises there instead of taking the server's process
+ *  with it.
  *
  *  Opening them one at a time is what takes io, package,
  *  debug and, under LuaJIT, ffi, jit and bit away: none of
@@ -32,6 +37,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <lua.h>
@@ -40,12 +46,126 @@
 
 #include "server_sim.h"            /* serverSimConsoleMessage */
 
+#include "scenario_host.h"         /* SCN_VM_MEMORY_MAX */
 #include "scenario_sandbox.h"
 
 /* One console line a script's print can produce. A line past this is cut
    rather than dropped, so an operator still sees what a long one was
    about. */
 #define SCN_PRINT_LEN 1024
+
+/* ── The memory one state may hold ────────────────────────────────── */
+
+/* What a state's allocations are counted in. It outlives the call that made
+   the state, so it is on the heap rather than beside the caller. */
+typedef struct {
+    size_t used;
+    size_t cap;
+} ScnSandboxMem;
+
+/* Where the count is kept so the close can find it again. lua_getallocf is
+   not the way: on the uncounted build below it answers Lua's own ud, which
+   is not ours to free. A script cannot reach the registry — debug is not
+   among the libraries opened. */
+#define SCN_SANDBOX_MEM_KEY "winbolo.scenario.mem"
+
+/* True once a state has been made the ordinary way because this build's Lua
+   would not take an allocator. Written once, on the first boot, from the
+   thread that boots it. */
+static bool scnSandboxUncounted = false;
+
+/* The standard lua_Alloc, over realloc and free as Lua's own default
+ * allocator is, with the running total in front of it.
+ *
+ * osize is a size only when there is a block to have had one: with ptr NULL
+ * Lua passes the kind of object it is about to allocate there instead, and
+ * counting that number as bytes would make the total nonsense. So the old
+ * size is zero whenever ptr is NULL, and the comparison is made from that.
+ *
+ * Only growth is refused, and only growth past the cap. A shrink and a free
+ * always go through — a state at the cap has to be able to collect its way
+ * back under it, and a collection is made of frees. Refusing is returning
+ * NULL, which Lua turns into the out-of-memory error the caller's lua_pcall
+ * catches. */
+static void *scnSandboxAlloc(void *ud, void *ptr, size_t osize, size_t nsize) {
+    ScnSandboxMem *m   = (ScnSandboxMem *)ud;
+    size_t         old = (ptr == NULL) ? 0 : osize;
+    void          *out;
+
+    if (nsize == 0) {
+        free(ptr);
+        m->used -= old;
+        return NULL;
+    }
+    /* Written as room remaining rather than as used + growth, so nothing
+       here can overflow: used never passes cap, because this is the only
+       thing that raises it. */
+    if (nsize > old && (nsize - old) > (m->cap - m->used)) {
+        return NULL;
+    }
+    out = realloc(ptr, nsize);
+    if (out == NULL) {
+        return NULL;
+    }
+    m->used = m->used - old + nsize;
+    return out;
+}
+
+lua_State *scnSandboxNewState(void) {
+    ScnSandboxMem *m = (ScnSandboxMem *)malloc(sizeof(*m));
+    lua_State     *L;
+
+    if (m == NULL) {
+        return NULL;
+    }
+    m->used = 0;
+    m->cap  = (size_t)SCN_VM_MEMORY_MAX;
+
+    L = lua_newstate(scnSandboxAlloc, m);
+    if (L == NULL) {
+        /* The build's own answer, and the only one there is: LuaJIT refuses
+           a custom allocator on a 64-bit target that is not GC64, and says
+           so on stderr as it does. There is no flag a consumer can read to
+           ask first, so the state is made the ordinary way instead and the
+           operator is told once that this one is not bounded. */
+        free(m);
+        L = luaL_newstate();
+        if (L != NULL && !scnSandboxUncounted) {
+            scnSandboxUncounted = true;
+            serverSimConsoleMessage(
+                "scenario: this build's Lua takes no allocator, so a "
+                "scenario script's memory is not capped");
+        }
+        return L;
+    }
+
+    /* Put beside the state at once, so every path that closes one can find
+       what to free however early it gives up. */
+    lua_pushlightuserdata(L, m);
+    lua_setfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_MEM_KEY);
+    return L;
+}
+
+void scnSandboxCloseState(lua_State *L) {
+    ScnSandboxMem *m;
+
+    if (L == NULL) {
+        return;
+    }
+    /* Read before the close, because the registry goes with the state, and
+       freed after it, because closing hands every block the state holds back
+       through the allocator and the allocator reads this. NULL on the
+       uncounted path, where free has nothing to do. */
+    lua_getfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_MEM_KEY);
+    m = (ScnSandboxMem *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    lua_close(L);
+    free(m);
+}
+
+bool scnSandboxMemoryCapped(void) {
+    return !scnSandboxUncounted;
+}
 
 /* ── Opening a library ────────────────────────────────────────────── */
 

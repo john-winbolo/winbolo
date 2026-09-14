@@ -592,7 +592,7 @@ static int scnPanic(lua_State *L) {
 }
 
 lua_State *scnNewVm(void) {
-    lua_State *L = luaL_newstate();
+    lua_State *L = scnSandboxNewState();
     if (L == NULL) {
         return NULL;
     }
@@ -601,6 +601,14 @@ lua_State *scnNewVm(void) {
     scnSeedRandom(L);
     scnSandboxSealRandom(L);
     return L;
+}
+
+/* The other end of it. A state carries its memory count beside it, so every
+ * close goes through here rather than through lua_close: the count is on the
+ * heap and a plain close would leave it behind. NULL is nothing to close,
+ * which is what lets the failure paths below close without asking. */
+void scnCloseVm(lua_State *L) {
+    scnSandboxCloseState(L);
 }
 
 /* A state with the script's own surface on it, ready for a chunk.
@@ -2382,7 +2390,7 @@ static void scnRoundStartLocked(ScenarioHost *h) {
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
         !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep)) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
-        lua_close(L);
+        scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
     }
@@ -2390,13 +2398,13 @@ static void scnRoundStartLocked(ScenarioHost *h) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: %s asks for api %d and this server is api %d",
                h->script, fresh.api, SCENARIO_API_VERSION);
-        lua_close(L);
+        scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
     }
 
     if (h->L != NULL) {
-        lua_close(h->L);
+        scnCloseVm(h->L);
     }
     h->L        = L;
     /* The whole table, read from the script's bytes again — which is how a
@@ -2580,7 +2588,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
         !scnReadManifest(L, &m, script, err, errLen, &rep)) {
-        lua_close(L);
+        scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
         free(src);
@@ -2591,7 +2599,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
                script, m.api, SCENARIO_API_VERSION);
-        lua_close(L);
+        scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
         free(src);
@@ -2734,7 +2742,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, h->chunkName, err, errLen) ||
         !scnReadManifest(L, &m, h->script, err, errLen, &rep)) {
-        lua_close(L);
+        scnCloseVm(L);
         free(src);
         return false;
     }
@@ -2743,11 +2751,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
                h->script, m.api, SCENARIO_API_VERSION);
-        lua_close(L);
+        scnCloseVm(L);
         free(src);
         return false;
     }
-    lua_close(L);
+    scnCloseVm(L);
 
     /* The bytes are replaced and nothing else is. The VM and the table the
        round is running on stay as they are; the next round start builds
@@ -2838,7 +2846,7 @@ void scenarioHostDetach(ScenarioHost *h) {
        thread that owns the sim. */
     scenarioLuaTimersDrop(h->L, &h->timers);
     if (h->L != NULL) {
-        lua_close(h->L);
+        scnCloseVm(h->L);
     }
     scnLockDestroy(&h->lock);
     free(h->src);

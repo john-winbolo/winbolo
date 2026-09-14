@@ -20,6 +20,11 @@
  *      — collectgarbage("stop") raises and the other options still work
  * run_scenario_sandbox_print_reaches_the_console
  *      — a script's print arrives on the server console
+ * run_scenario_sandbox_memory_cap_refuses
+ *      — a hook that holds more than the cap is refused, and the round
+ *        goes on ticking
+ * run_scenario_sandbox_state_survives_a_refusal
+ *      — and the same round's VM still answers afterwards
  */
 
 #include <stdint.h>
@@ -35,7 +40,11 @@
                                     * the print case reads */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled */
 #include "everard_map.h"
+#include "server/sim/server_sim_shared.h" /* serverSimSetActive, which is
+                                           * what the console routes
+                                           * through */
 #include "scenario_host.h"
+#include "scenario_sandbox.h"      /* scnSandboxMemoryCapped */
 #include "test_harness.h"
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
@@ -89,6 +98,12 @@ static ServerSim *sbSim(void) {
         return NULL;
     }
     serverSimSetLobbyEnabled(sim, false);
+    /* serverSimConsoleMessage writes through the active sim's callback and
+       falls back to stdout when there is none, and creating a sim does not
+       make it the active one — the round start and the tick do. A line a
+       script prints from its own top level arrives during the attach, before
+       either of those has run, so the case says which sim it means here. */
+    serverSimSetActive(sim);
     return sim;
 }
 
@@ -316,6 +331,180 @@ int run_scenario_sandbox_print_reaches_the_console(void) {
     UT_ASSERT_MSG(strstr(sbLines, kLine) != NULL,
                   "the console caught '%s', which does not hold the line the "
                   "script printed", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 5. The memory a state may hold ───────────────────────────────── */
+
+/* The hook asks for 8192 strings of 16 KiB and keeps every one of them in a
+ * table, so nothing it has asked for can be collected: 128 MiB against a cap
+ * of 32, with the refusal landing around the two thousandth. The loop is
+ * bounded rather than endless so that a build counting nothing ends it
+ * instead of running the machine out of memory — which is what the second
+ * half of the assertion below is for.
+ *
+ * Each stored string has to differ from the last, which is what the index on
+ * the end is for. LuaJIT interns every string it is handed, at any length:
+ * lj_str_new hashes the content, walks the chain and returns the existing
+ * object on a match, so a table filled with the same bytes over and over
+ * holds one allocation and costs nothing but its own slots. A fixture that
+ * wants a state to really hold what it asked for has to make each value its
+ * own.
+ *
+ * 16 KiB rather than something larger because a later string.rep cap is
+ * coming at 65,536 bytes, and a fixture sitting on that boundary would one
+ * day fail for a reason that has nothing to do with the memory it is about.
+ *
+ * The hook prints on the way in and on the way out. Reaching the cap shows
+ * as the first line without the second, beside the host's own line naming
+ * both the hook and the memory: the refusal is an ordinary Lua error caught
+ * by the lua_pcall every hook is called through, and the round goes on
+ * ticking afterwards, which is the whole point of counting rather than
+ * letting the process take it. */
+int run_scenario_sandbox_memory_cap_refuses(void) {
+    static const char *const kMap = "scnsand_memcap.map";
+    static const char *const kLua =
+        "scenario = { name = \"Glutton\", api = 1 }\n"
+        "function on_start()\n"
+        "  print(\"glutton begun\")\n"
+        "  local t = {}\n"
+        "  for i = 1, 8192 do\n"
+        "    t[i] = string.rep(\"x\", 16384) .. i\n"
+        "  end\n"
+        "  print(\"glutton finished\")\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);              /* the first running tick: on_start */
+    for (i = 0; i < 5; i++) {
+        serverSimTick(sim);          /* and the round after it */
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(strstr(sbLines, "glutton begun") != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    if (scnSandboxMemoryCapped()) {
+        UT_ASSERT_MSG(strstr(sbLines, "glutton finished") == NULL,
+                      "the hook held four times SCN_VM_MEMORY_MAX and ran to "
+                      "its end. The console holds:\n%s", sbLines);
+        UT_ASSERT_MSG(strstr(sbLines, "on_start raised") != NULL,
+                      "the hook stopped without the host counting an error "
+                      "against it, so the refusal was not a Lua error. The "
+                      "console holds:\n%s", sbLines);
+        /* Which error it was, not merely that there was one. Both VMs word
+           an allocation failure this way, so a hook that stopped for some
+           other reason does not pass for the cap doing its work. */
+        UT_ASSERT_MSG(strstr(sbLines, "not enough memory") != NULL,
+                      "the hook raised for some reason other than the memory "
+                      "it was asking for. The console holds:\n%s", sbLines);
+    } else {
+        UT_ASSERT_MSG(strstr(sbLines, "glutton finished") != NULL,
+                      "this build's Lua takes no allocator, so nothing is "
+                      "counted and the hook should have run to its end. The "
+                      "console holds:\n%s", sbLines);
+    }
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running "
+                  "after the refusal", (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 6. And the state lives through it ────────────────────────────── */
+
+/* The refusal is a Lua error and not a wrecked state, so the same round's VM
+ * goes on answering. The same allocating on_start, and an on_tick that says
+ * so from the tick after the one the refusal happened on — the tick after,
+ * because on_start runs ahead of on_tick within a tick and a line from the
+ * same one would not have come after anything.
+ *
+ * The collection is what makes the recovery the case's own rather than the
+ * collector's timing: the table on_start abandoned is unreachable the moment
+ * it raised, and collecting hands its memory back before the line is
+ * printed.
+ *
+ * The 8192 strings of 16 KiB and the index on the end of each are the case
+ * above's, and for its reasons: 128 MiB against a cap of 32 so the refusal
+ * is certain, and content that differs per iteration because strings that
+ * are all the same bytes are interned into one allocation however long they
+ * are. */
+int run_scenario_sandbox_state_survives_a_refusal(void) {
+    static const char *const kMap = "scnsand_survive.map";
+    static const char *const kLua =
+        "scenario = { name = \"Survivor\", api = 1 }\n"
+        "local ticks = 0\n"
+        "function on_start()\n"
+        "  local t = {}\n"
+        "  for i = 1, 8192 do\n"
+        "    t[i] = string.rep(\"x\", 16384) .. i\n"
+        "  end\n"
+        "  print(\"survivor filled\")\n"
+        "end\n"
+        "function on_tick()\n"
+        "  ticks = ticks + 1\n"
+        "  if ticks == 2 then\n"
+        "    collectgarbage(\"collect\")\n"
+        "    print(\"survivor still here\")\n"
+        "  end\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 6; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    if (scnSandboxMemoryCapped()) {
+        UT_ASSERT_MSG(strstr(sbLines, "survivor filled") == NULL,
+                      "the hook ran to its end, so there was no refusal for "
+                      "the state to live through. The console holds:\n%s",
+                      sbLines);
+    } else {
+        UT_ASSERT_MSG(strstr(sbLines, "survivor filled") != NULL,
+                      "this build's Lua takes no allocator, so nothing is "
+                      "counted and the hook should have run to its end. The "
+                      "console holds:\n%s", sbLines);
+    }
+    UT_ASSERT_MSG(strstr(sbLines, "survivor still here") != NULL,
+                  "no later hook answered, so the state did not survive the "
+                  "refusal. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running",
+                  (int)serverSimGetState(sim));
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

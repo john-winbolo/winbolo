@@ -525,7 +525,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
             out->issues[out->count - 1].line =
                 scnLineFromLuaError(err, script);
         }
-        lua_close(L);
+        scnCloseVm(L);
         free(src);
         return false;
     }
@@ -535,7 +535,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     rep.sink    = out;
     if (!scnReadManifest(L, &out->manifest, script, err, sizeof(err), &rep)) {
         scnIssueAdd(out, "", "%s", err);
-        lua_close(L);
+        scnCloseVm(L);
         free(src);
         return false;
     }
@@ -555,7 +555,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
 
     scnAttributeLines(out, src, srcLen);
 
-    lua_close(L);
+    scnCloseVm(L);
     free(src);
     return out->count == 0;
 }

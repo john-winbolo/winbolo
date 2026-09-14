@@ -3416,9 +3416,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
-    # The library a scenario state is opened with: the names the whitelist
-    # takes and the ones it keeps, the precompiled chunk the loader refuses,
-    # and where a script's print ends up.
+    # The state a scenario runs in: the names the whitelist takes and the
+    # ones it keeps, the precompiled chunk the loader refuses, where a
+    # script's print ends up, and the memory cap it is refused at.
     tests/unit/test_scenario_sandbox.c
     # The bus events the host queues and drains: the subscriber, the
     # fixed queue and the bounded drain at the end of each tick.
@@ -5329,6 +5329,8 @@ set(_unit_test_names
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
     scenario_sandbox_print_reaches_the_console
+    scenario_sandbox_memory_cap_refuses
+    scenario_sandbox_state_survives_a_refusal
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

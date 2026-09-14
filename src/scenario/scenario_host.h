@@ -97,6 +97,20 @@
  * boots a fresh VM and begins again at zero. */
 #define SCN_ERROR_LIMIT 20
 
+/* The most memory one scenario state may hold. Every allocation a state
+ * makes is counted against this, and the one that would take it past is
+ * refused — which Lua raises as an out-of-memory error rather than dying on,
+ * so the call that asked for it lands in the host's own lua_pcall, counts one
+ * toward SCN_ERROR_LIMIT and leaves the state to carry on: what the script
+ * had abandoned by then is collected and the round keeps playing.
+ *
+ * 32 MB is far more than a scenario has any use for — the reference script
+ * holds a few tables of numbers — and far less than a server can afford to
+ * lose to one map's script. A build whose Lua will not take an allocator at
+ * all counts nothing; scnSandboxMemoryCapped says which kind of build this
+ * is. */
+#define SCN_VM_MEMORY_MAX (32u * 1024u * 1024u)
+
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
  * copies an event in and returns; the one drain at the end of the tick
