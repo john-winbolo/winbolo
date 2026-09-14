@@ -2182,8 +2182,16 @@ static void renderMapOverviewContent(ClientSim *cs) {
        pointer, and an active item would swallow the click. */
     ImGui::SetCursorScreenPos(imgMin);
     ImGui::SetNextItemAllowOverlap();
+    /* NoNav, or the pop-out hands the item keyboard focus: it is the only
+       nav-able thing in that window, so ImGui hands it NavId the moment the
+       window is focused, and Space — the nav activate key, and the usual
+       Shoot binding — makes it the active item. The pan above keys off the
+       item being active, so holding fire while the pointer crosses the
+       overview dragged the map about. */
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
     ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH),
                            ImGuiButtonFlags_MouseButtonRight);
+    ImGui::PopItemFlag();
     /* The live bindings, so a key the player has bound to an in-game action
        drives the tank and does nothing to the overview. Fetched each frame —
        Key Setup can change them while the pop-out is open. */
@@ -2295,8 +2303,12 @@ static void renderOverviewInWindow(ClientSim *cs) {
            right-drag pans, and leaves the left one unclaimed so a click still
            reaches the overview's build path. */
         ImGui::SetNextItemAllowOverlap();
+        /* NoNav for the reason the pop-out's item carries it: a keyboard
+           activation of the pan item turns Shoot into a map drag. */
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         ImGui::InvisibleButton("##OverviewInWindowPan", ImVec2(rw, rh),
                                ImGuiButtonFlags_MouseButtonRight);
+        ImGui::PopItemFlag();
         bool hovered = ImGui::IsItemHovered();
 
         /* The HUD is blitted over the map by sdl3draw.c rather than submitted
