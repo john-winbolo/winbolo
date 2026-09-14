@@ -1,4 +1,24 @@
-GOALHUNTER BOT COMMANDS
+Allies can order GoalHunter bots:
+
+1) by "Bot Command" pings on a target or tile, or "Caution" on a target or bot to cancel and again to retreat.
+
+2) by chat:
+
+Specific goal:
+
+  <subject name|all|nearby|last> attack|capture|sweep|defend|retreat|cancel <pill#/tank name, defaults to pill>
+
+Ex. "Bot 1 attack 3", "Bot 1 attack Joe", "Bot 1 sweep 4"
+
+General strategic focus:
+
+  <subject> focus <bases|pills|off>
+
+Note: Pillbox repositioning is turned off when human allies are present. Say "repositioning on" to turn it back on.
+
+~~~~~~~~~~~~~~~
+
+More Details:
 
 You can tell GoalHunter bots what to do. There are three ways: a chat line, a
 ping on the map, and three shells on one tile.
@@ -30,6 +50,11 @@ WHO WORDS
   (nothing)   one bot: the one with the cheapest route to the target.
   all         every bot on the team.
   nearby      every bot within 10 tiles of the target.
+  last        the bot or bots that took YOUR last order, with no auction, as
+              if you had typed their names: "last attack 7". If you have a
+              selection running, that is the set instead. With no order
+              behind you the bot says "no previous order". "last" cannot
+              share the line with a name: that is "last or a name, not both".
   a bot name  that bot, directly. Several names work: socrates plato attack 5.
 
 VERBS
@@ -74,8 +99,10 @@ TEAM SETTINGS
   focus pills    every BASE goal costs more, so pillboxes win.
   focus off      clear it. "take bases" and "take pills" say the same thing.
   reposition on  let the bots move their own pillboxes. It is OFF while a
-                 human is on the team.
-  reposition off stop them moving pillboxes again.
+                 human is on the team. "repositioning on" says the same.
+  reposition off stop them moving pillboxes again. "repositioning off" too.
+  Both settings take a subject and ignore it: they are team-wide, so
+  "socrates focus bases" and "last repositioning on" do what the bare lines do.
   help           the bots say a short version of this page in chat.
   A setting holds for the whole game, or until you change it.
 

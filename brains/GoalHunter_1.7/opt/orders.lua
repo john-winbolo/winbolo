@@ -212,7 +212,11 @@ local VERBS = {
   defend = "defend", decoy = "decoy", retreat = "retreat",
   cancel = "cancel",
 }
-local WHOWORDS = { all = true, nearby = true }
+-- `last` is the third who-word: the bot or bots that took the SENDER's own
+-- previous order.  The parser only marks the line ("who.mode = last"); the
+-- set of bots is worked out in on_chat, where the sender and the order book
+-- are both in hand (see M.last_pns).
+local WHOWORDS = { all = true, nearby = true, last = true }
 local PILLWORDS = { pill = true, pills = true, pillbox = true, pillboxes = true }
 local BASEWORDS = { base = true, bases = true }
 -- Team-wide SETTINGS, not orders: no target, no auction and no 60 s timer,
@@ -296,16 +300,43 @@ function M.parse(text, roster, all_roster)
     if #toks == 1 then return { help = true } end
     return { reply = "didn't understand" }
   end
-  if toks[1] == "focus" or toks[1] == "take" then
-    local w = toks[2]
+
+  -- A SUBJECT IN FRONT OF A SETTING IS ALLOWED, AND IGNORED.  Both focus and
+  -- repositioning are TEAM-WIDE, so "socrates focus bases" and "last
+  -- repositioning on" say exactly what the bare lines say.  Turning them
+  -- down would read as the bots refusing a sensible line, so the subject is
+  -- dropped and the setting takes effect with the same confirmation.
+  -- `si` is where the setting word really starts; everything before it must
+  -- be a who-word or a bot name, or the line is not a setting at all and
+  -- falls through to the verb scan below.
+  local si = 1
+  for i = 2, #toks do
+    if toks[i] == "focus" or toks[i] == "reposition"
+       or toks[i] == "repositioning" then
+      local subject_ok = true
+      for j = 1, i - 1 do
+        if not WHOWORDS[toks[j]] and M.match_name(toks[j], roster) == nil then
+          subject_ok = false
+          break
+        end
+      end
+      if subject_ok then si = i end
+      break
+    end
+  end
+
+  if toks[si] == "focus" or toks[si] == "take" then
+    local w = toks[si + 1]
     if BASEWORDS[w] then return { setting = "focus", value = "bases" } end
     if PILLWORDS[w] then return { setting = "focus", value = "pills" } end
     if w == "off" or w == "none" then return { setting = "focus", value = "off" } end
     return { reply = "didn't understand" }
   end
-  if toks[1] == "reposition" or toks[1] == "repositioning" then
-    if toks[2] == "on"  then return { setting = "reposition", value = true  } end
-    if toks[2] == "off" then return { setting = "reposition", value = false } end
+  -- "repositioning on|off" is the wording the lobby docs use; "reposition
+  -- on|off" is the older one.  They are the same command.
+  if toks[si] == "reposition" or toks[si] == "repositioning" then
+    if toks[si + 1] == "on"  then return { setting = "reposition", value = true  } end
+    if toks[si + 1] == "off" then return { setting = "reposition", value = false } end
     return { reply = "didn't understand" }
   end
 
@@ -348,6 +379,14 @@ function M.parse(text, roster, all_roster)
   -- ── who ───────────────────────────────────────────────────────────────
   local who = { mode = "auto" }
   if vi > 1 then
+    -- `last` NAMES A SET ON ITS OWN, so it cannot share the who slot with a
+    -- bot name: "socrates last attack 5" could mean either set and the bots
+    -- never guess.  The line is turned down and nothing is ordered.
+    for i = 1, vi - 1 do
+      if toks[i] == "last" and vi > 2 then
+        return { reply = "last or a name, not both" }
+      end
+    end
     if vi == 2 and WHOWORDS[toks[1]] then
       who = { mode = toks[1] }
     else
@@ -549,6 +588,9 @@ local function S(state)
   if not o then
     o = { auctions = {}, known = {}, claims = {}, gclaims = {}, announce = {},
           out = {}, say = {}, rx = {}, held = nil, sel = nil,
+          -- last_by[sender] = the order id that sender gave most recently.
+          -- It is what the `last` who-word reads; see M.last_pns.
+          last_by = {},
           -- stage 2: team-wide latches + the ping anchors
           focus = nil,        -- nil | "bases" | "pills"  (nil = off)
           repo_on = nil,      -- nil = no override | true | false
@@ -600,6 +642,50 @@ function M.all_roster(info)
     if nm and nm ~= "" then out[#out + 1] = { pn = pn, name = nm } end
   end
   return out
+end
+
+-- =========================================================================
+-- `last` — THE BOTS THAT TOOK THIS SENDER'S PREVIOUS ORDER
+-- =========================================================================
+-- Every bot can answer this from what it already has, with nothing new on
+-- the wire: o.last_by[sender] is the id of the last order that sender gave
+-- (each bot writes it when it reads the line or the ping), and
+-- o.gclaims[oid] is the set of bots that claimed that id, which every bot
+-- fills from the obc claims the takers broadcast.  So "last attack 7" picks
+-- the same set on every bot.
+--
+-- A LIVE SELECTION FROM THIS SENDER WINS.  A selection is the newer and
+-- plainer statement of "these bots", and it is what the player just made.
+--
+-- Returns nil when there is nothing to point at: the sender has given no
+-- order, or the one they gave has been cancelled or has run out (both empty
+-- its gclaims row).  The caller then says "no previous order".
+-- Registering the order id is note_last below; the two must stay together.
+function M.last_pns(o, sender, now)
+  local sel = o.sel
+  if sel and sel.by == sender and now < (sel.until_tick or 0)
+     and #sel.pns > 0 then
+    local out = {}
+    for i = 1, #sel.pns do out[i] = sel.pns[i] end
+    return out
+  end
+  local oid = o.last_by and o.last_by[sender]
+  if not oid then return nil end
+  local out = {}
+  for pn in pairs(o.gclaims[oid] or {}) do out[#out + 1] = pn end
+  if #out == 0 then return nil end
+  -- pairs() has no order, and every bot must build the SAME list.
+  table.sort(out)
+  return out
+end
+
+-- Remember an order id as this sender's most recent one.  Called from every
+-- place that registers an order in o.known, so a chat line, a bot-command
+-- ping and a caution retreat all count as "the last order you gave".
+local function note_last(o, sender, oid)
+  if sender == nil or oid == nil then return end
+  o.last_by = o.last_by or {}
+  o.last_by[sender] = oid
 end
 
 local function my_name(state, info)
@@ -763,8 +849,8 @@ end
 -- (src/bolo/public/wire_limits.h) and both help lines are longer than that,
 -- so each is split at a comma.  Four chunks, one per tick.
 M.HELP = {
-  "Orders: [all|nearby|bot name, default nearest] attack|capture|sweep|decoy <pill#|base#|tank name>, defend <pill#>, retreat,",
-  "cancel [all|bot name], focus bases|pills|off, reposition on|off",
+  "Orders: [all|nearby|last|bot name, default nearest] attack|capture|sweep|decoy <pill#|base#|tank name>, defend <pill#>,",
+  "retreat, cancel [all|bot name], focus bases|pills|off, reposition on|off",
   "Ping a tile: nearest bot goes, ping again adds one. Ping bots to select them,",
   "then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
 }
@@ -1109,6 +1195,21 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     return true
   end
 
+  -- ── `last`: the bots that took this sender's previous order ───────────
+  -- The team settings are already handled above, so by here `last` can only
+  -- stand in front of a real order.  It becomes a plain names who-word: the
+  -- bots take the order straight, with no auction, exactly as if the sender
+  -- had typed their names.  With nothing to point at the speaking bot says
+  -- so and the line ends there.
+  local last_pns = nil
+  if cmd.who and cmd.who.mode == "last" then
+    last_pns = M.last_pns(o, sender, now)
+    if not last_pns then
+      if M.speaker(state, info) == me then say(state, "no previous order") end
+      return true
+    end
+  end
+
   -- ── cancel ────────────────────────────────────────────────────────────
   if cmd.verb == "cancel" then
     local t = cmd.target
@@ -1119,8 +1220,15 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
       o.claims = {}
       o.gclaims = {}
       o.announce = {}
+      o.last_by = {}
     elseif t and t.kind == "tank" then
       if o.held and t.pn == me then release_held(state, info, "released") end
+    elseif last_pns then
+      -- "last cancel" releases exactly the bots that took the last order,
+      -- and nobody else: a bot holding a DIFFERENT order keeps it.
+      local mine = false
+      for _, pn in ipairs(last_pns) do if pn == me then mine = true end end
+      if o.held and mine then release_held(state, info, "Released") end
     else
       if o.held and o.held.sender == sender then release_held(state, info, "released") end
     end
@@ -1144,13 +1252,24 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   -- A live selection from this sender replaces the who-word: the selected
   -- bots take it directly, no auction.
   local who = cmd.who
-  if o.sel and o.sel.by == sender and now < (o.sel.until_tick or 0) then
+  if last_pns then
+    who = { mode = "names", pns = last_pns }
+  elseif o.sel and o.sel.by == sender and now < (o.sel.until_tick or 0) then
     who = { mode = "names", pns = o.sel.pns }
   end
   o.sel = nil
 
+  -- `last` is "like naming them", down to the order id: the id is taken
+  -- from the RESOLVED names, so "last attack 5" and "socrates attack 5" are
+  -- one order, and the second line is a repeat of the first rather than a
+  -- rival order the holder would announce it was leaving for.
+  local oid_cmd = cmd
+  if last_pns then
+    oid_cmd = { verb = cmd.verb, who = who, target = cmd.target }
+  end
+
   local spec = {
-    oid = M.order_id(sender, cmd), verb = cmd.verb, kind = kind,
+    oid = M.order_id(sender, oid_cmd), verb = cmd.verb, kind = kind,
     tkind = cmd.target and cmd.target.kind or nil,
     tid = tid, sender = sender, sender_name = player_name(info, sender),
     -- tkind "here" ("go there and hold", which is what a three-shot order
@@ -1160,6 +1279,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     needs_shells = needs_shells, who = who,
   }
   o.known[spec.oid] = { spec = spec, tick = now }
+  note_last(o, sender, spec.oid)
 
   -- Repeat of a live order we already hold = refresh the 60 s focus.
   if o.held and o.held.oid == spec.oid then
@@ -1286,6 +1406,7 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
     needs_shells = needs_shells, who = who, ping = true,
   }
   o.known[spec.oid]   = { spec = spec, tick = now }
+  note_last(o, sender, spec.oid)
   o.anchors[spec.oid] = { sender = sender, mx = axm, my = aym, tick = now, want = 1 }
   start_order(state, world, info, spec, who, now, 1)
 end
@@ -1312,6 +1433,7 @@ local function ping_caution(state, world, info, sender, mx, my, now)
                    sender_name = player_name(info, sender),
                    needs_shells = false, who = cmd.who, ping = true }
     o.known[spec.oid] = { spec = spec, tick = now }
+    note_last(o, sender, spec.oid)
     local busy, reason = M.busy(state, info)
     if busy then
       say(state, string.format("Busy (%s)", reason))

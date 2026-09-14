@@ -66,6 +66,19 @@ check("defend pill 5",         shape(P("defend pill 5")) == "defend who=auto tgt
 -- DEFEND TAKES A PILL: a base target is turned down, whoever it is aimed at.
 check("defend base 3 rejected", shape(P("defend base 3")) == "reply:defend takes a pill", shape(P("defend base 3")))
 check("all attack 7",          shape(P("all attack 7")) == "attack who=all tgt=pill:7", shape(P("all attack 7")))
+-- `last` — the third who-word.  The parser only marks the line; the set of
+-- bots is worked out in on_chat, which is what the runtime block below tests.
+check("last attack 7",         shape(P("last attack 7")) == "attack who=last tgt=pill:7", shape(P("last attack 7")))
+check("last cancel",           shape(P("last cancel")) == "cancel who=last tgt=-", shape(P("last cancel")))
+check("last defend 9",         shape(P("last defend 9")) == "defend who=last tgt=pill:9", shape(P("last defend 9")))
+check("LAST ATTACK 7 (case)",  shape(P("LAST ATTACK 7")) == "attack who=last tgt=pill:7", shape(P("LAST ATTACK 7")))
+-- `last` names a set on its own, so it cannot share the who slot with a name.
+check("socrates last attack 5 rejected",
+                               shape(P("socrates last attack 5")) == "reply:last or a name, not both", shape(P("socrates last attack 5")))
+check("last socrates attack 5 rejected",
+                               shape(P("last socrates attack 5")) == "reply:last or a name, not both", shape(P("last socrates attack 5")))
+check("last alone -> didn't understand",
+                               shape(P("last")) == "reply:didn't understand", shape(P("last")))
 check("nearby defend base 3 rejected", shape(P("nearby defend base 3")) == "reply:defend takes a pill", shape(P("nearby defend base 3")))
 check("socrates attack 5",     shape(P("socrates attack 5")) == "attack who=names(1) tgt=pill:5", shape(P("socrates attack 5")))
 check("soc attack 5 (prefix)", shape(P("soc attack 5")) == "attack who=names(1) tgt=pill:5", shape(P("soc attack 5")))
@@ -172,11 +185,29 @@ check("reposition on",    shape(P("reposition on"))    == "set:reposition=true",
 check("reposition off",   shape(P("reposition off"))   == "set:reposition=false", shape(P("reposition off")))
 check("repositioning on", shape(P("repositioning on")) == "set:reposition=true",  shape(P("repositioning on")))
 check("reposition alone", shape(P("reposition"))       == "reply:didn't understand", shape(P("reposition")))
+check("repositioning off",shape(P("repositioning off")) == "set:reposition=false", shape(P("repositioning off")))
+check("repositioning alone", shape(P("repositioning"))  == "reply:didn't understand", shape(P("repositioning")))
+-- A SUBJECT IN FRONT OF A SETTING is allowed and ignored: both settings are
+-- team-wide, so the subject cannot mean anything and turning the line down
+-- would read as a refusal.
+check("socrates focus bases",  shape(P("socrates focus bases"))    == "set:focus=bases", shape(P("socrates focus bases")))
+check("socrates plato focus pills",
+                               shape(P("socrates plato focus pills")) == "set:focus=pills", shape(P("socrates plato focus pills")))
+check("all focus off",         shape(P("all focus off"))           == "set:focus=off", shape(P("all focus off")))
+check("nearby repositioning on",
+                               shape(P("nearby repositioning on"))  == "set:reposition=true", shape(P("nearby repositioning on")))
+check("last reposition off",   shape(P("last reposition off"))      == "set:reposition=false", shape(P("last reposition off")))
+check("socrates repositioning on",
+                               shape(P("socrates repositioning on")) == "set:reposition=true", shape(P("socrates repositioning on")))
+check("a subject with junk after it is still nonsense",
+                               shape(P("socrates focus wibble"))    == "reply:didn't understand", shape(P("socrates focus wibble")))
 
 print("orders.lua — help")
 check("help",             shape(P("help")) == "help", shape(P("help")))
 check("help with junk",   shape(P("help me")) == "reply:didn't understand", shape(P("help me")))
 check("help: 4 lines",    #ORD.HELP == 4, tostring(#ORD.HELP))
+check("help line 1 lists the last who-word",
+      ORD.HELP[1]:find("all|nearby|last|bot name", 1, true) ~= nil, ORD.HELP[1])
 check("help lines fit the 128-byte chat max", (function()
   for _, l in ipairs(ORD.HELP) do if #l > 128 then return false end end
   return true
@@ -621,6 +652,116 @@ st.orders.say = {}
 ORD.on_chat(st, w, inf, 0, "attack 5", 400, true, false)
 check("only the lowest player number answers", #st.orders.say == 0,
       tostring(st.orders.say[1]))
+
+-- =========================================================================
+-- `last` AT RUNTIME.  p1 is this bot and its name is Socrates (player_names
+-- is indexed pn+1), so a line addressed at "socrates" lands on us with no
+-- auction and we become the sender's last holder.
+-- =========================================================================
+print("orders.lua -- the last who-word")
+
+local function n_auctions(state)
+  local n = 0
+  for _ in pairs(state.orders.auctions) do n = n + 1 end
+  return n
+end
+
+-- 1. AFTER A SINGLE-BOT ORDER: `last` sends that one bot, with no auction.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 100, true, false)
+check("setup: we hold the named order",
+      st.orders.held ~= nil and st.orders.held.tid == 5,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "last attack 7", 200, true, false)
+check("last after one bot: the same bot takes the new order",
+      st.orders.held ~= nil and st.orders.held.tid == 7,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+check("last after one bot: no auction is opened", n_auctions(st) == 0,
+      tostring(n_auctions(st)))
+
+-- 2. AFTER A GROUP ORDER: `last` sends the whole group, and the new order is
+-- a group order too (two holders, so nobody acks alone).
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "all attack 5", 100, true, false)
+local loid = st.orders.held.oid
+st.orders.gclaims[loid][2] = 10          -- Seneca claimed it as well
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "last defend 9", 200, true, false)
+check("last after a group: the group takes the new order",
+      st.orders.held ~= nil and st.orders.held.tid == 9,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+check("last after a group: it stays a group order",
+      st.orders.held ~= nil and st.orders.held.group == true,
+      st.orders.held and tostring(st.orders.held.group) or "nil")
+check("last after a group: still no auction", n_auctions(st) == 0,
+      tostring(n_auctions(st)))
+
+-- 3. NO HISTORY: the speaking bot says so and nothing is ordered.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "last attack 5", 100, true, false)
+check("last with no history answers 'no previous order'",
+      st.orders.say[1] == "no previous order", tostring(st.orders.say[1]))
+check("last with no history orders nothing",
+      st.orders.held == nil and n_auctions(st) == 0, "?")
+
+-- 4. `last cancel` releases the bot that took the last order.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 100, true, false)
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "last cancel", 200, true, false)
+check("last cancel releases the holder", st.orders.held == nil,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+check("last cancel says Released", st.orders.say[1] == "Released",
+      tostring(st.orders.say[1]))
+
+-- 5. A BOT THAT IS NOT IN THE LAST SET KEEPS WHAT IT HOLDS.  Seneca (p2)
+-- took the sender's last order, so "last cancel" is not aimed at us and our
+-- own order survives it.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 100, true, false)
+st.orders.last_by[0] = 999               -- the sender's last order went elsewhere
+st.orders.gclaims[999] = { [2] = 10 }    -- and Seneca is the one holding it
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "last cancel", 200, true, false)
+check("last cancel leaves a bot outside the set alone",
+      st.orders.held ~= nil and st.orders.held.tid == 5,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+check("and that bot says nothing", #st.orders.say == 0,
+      tostring(st.orders.say[1]))
+
+-- 6. A LIVE SELECTION WINS over the last order: it is the newer, plainer
+-- statement of "these bots".  Seneca is selected, so "last attack 7" is
+-- aimed at Seneca and we keep the pill-5 order we already hold.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 100, true, false)
+ORD.on_chat(st, w, inf, 0, "seneca", 150, true, false)
+check("setup: the selection is live",
+      st.orders.sel ~= nil and st.orders.sel.pns[1] == 2,
+      st.orders.sel and tostring(st.orders.sel.pns[1]) or "nil")
+ORD.on_chat(st, w, inf, 0, "last attack 7", 160, true, false)
+check("a live selection beats the last order",
+      st.orders.held ~= nil and st.orders.held.tid == 5,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+
+-- 7. `last` mixed with a bot name is turned down, and the speaking bot says
+-- why rather than ordering either set.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 100, true, false)
+st.orders.say = {}
+ORD.on_chat(st, w, inf, 0, "socrates last attack 7", 200, true, false)
+check("last with a name is turned down",
+      st.orders.say[1] == "last or a name, not both", tostring(st.orders.say[1]))
+check("and nothing moves", st.orders.held.tid == 5,
+      tostring(st.orders.held.tid))
+
+-- 8. A SUBJECT IN FRONT OF A SETTING still sets it, with the usual line.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "all repositioning on", 200, true, false)
+check("`all repositioning on` latches", st._repo_override == true,
+      tostring(st._repo_override))
+check("and confirms it the same way",
+      st.orders.say[1] == "Repositioning on.", tostring(st.orders.say[1]))
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
