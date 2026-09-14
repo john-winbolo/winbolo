@@ -592,7 +592,7 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     }
   }
 
-  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD and clear mines */
   if (returnValue == TRUE) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
@@ -602,6 +602,8 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      } else if (t >= MINE_START && t <= MINE_END) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = t - MINE_SUBTRACT;
       }
     }
   }
@@ -1686,7 +1688,7 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     }
   }
 
-  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD and clear mines */
   if (returnValue == TRUE) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
@@ -1696,6 +1698,8 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      } else if (t >= MINE_START && t <= MINE_END) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = t - MINE_SUBTRACT;
       }
     }
   }
