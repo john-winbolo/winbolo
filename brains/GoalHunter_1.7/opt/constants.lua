@@ -1962,6 +1962,27 @@ M.LGM_KILL_FIRE_WU     = 256  -- wu: take the shot inside one full tile
 -- off is what keeps keel unchanged.
 M.LGM_KILL_AIM_WU      = 64   -- wu: keep refining until the impact is this close
 
+-- ── How CLOSE the man must be before the aim refinement runs at all ───────
+-- The straight-line distance from the tank to the man's PREDICTED point, in
+-- tiles.  Beyond it the hunt steers exactly as it did before the aim work --
+-- the sight follows the man, the turn is only the nudge -- and STEP 4b does
+-- nothing.  Inside it the refinement drives the aim down to LGM_KILL_AIM_WU.
+--
+-- Why the limit exists.  The refinement asks for a much sharper turn than the
+-- nudge does, and at 7-10 tiles out that turn is spent on a lead point that is
+-- still seconds away: the approach line to the corpse bends, the tank arrives
+-- late or off the pill, and the hunt itself gets shorter.  Measured in H1 --
+-- with no limit the run held HALF the hunting ticks it held with the
+-- refinement off (499 against 1163), for the same captures.  Close in, the
+-- same sharp turn is exactly what puts the shell on him.
+--
+-- 0 = no limit (refine at any range), which is what the package did when it
+-- was first committed.
+--
+-- Read only while LGM_KILL_IMPROVED is true.  No KEEL entry: the master being
+-- off is what keeps keel unchanged.
+M.LGM_KILL_AIM_TILES   = 5    -- tiles: refine only this close to the man
+
 -- The refinement search's THROTTLE axis.  Off by design: a speed step moves the
 -- tank about 2 wu in a tick against an along-the-ray residual of up to 64 wu,
 -- while the capture-hunt's whole promise is that it never brakes for the

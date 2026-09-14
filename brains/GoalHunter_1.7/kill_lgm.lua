@@ -552,6 +552,11 @@ function M.tuning()
     -- Aim target.  nil with the package off, which switches the whole
     -- refinement search out and leaves the old aim exactly as it was.
     aim_wu          = on and (C.LGM_KILL_AIM_WU or 64) or nil,
+    -- How close the man must be before the refinement runs at all: the
+    -- straight-line distance from the tank to his predicted point, in TILES.
+    -- 0 means no limit.  nil with the package off, where aim_wu is nil too and
+    -- the search never runs.
+    aim_tiles       = on and (C.LGM_KILL_AIM_TILES or 5) or nil,
     aim_throttle    = on and (C.LGM_KILL_AIM_THROTTLE and true or false) or false,
   }
   return _tuning

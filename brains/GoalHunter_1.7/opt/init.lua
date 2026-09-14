@@ -6799,7 +6799,17 @@ function Brain.think(info)
           local ey0 = info.tanky - math.cos(r0) * 128 * sl0 - tgt_wy
           clh.aim_err_wu = math.sqrt(ex0 * ex0 + ey0 * ey0)
           clh.aim_wu     = KT.aim_wu
-          if clh.aim_err_wu > KT.aim_wu then
+          -- CLOSE ONLY (C.LGM_KILL_AIM_TILES).  Beyond this straight-line
+          -- distance to the man's predicted point the refinement stands down
+          -- and the hunt steers exactly as it did before the aim work: the
+          -- sight is already on him from STEP 4, the turn is only the nudge.
+          -- Far out the sharper turn is spent on a lead point seconds away, it
+          -- bends the approach line to the corpse, and H1 held half the
+          -- hunting ticks for it.  0 = no limit.
+          local aim_range_wu = (KT.aim_tiles or 0) * 256
+          clh.aim_tiles = KT.aim_tiles
+          local in_aim_range = (aim_range_wu <= 0) or (dist <= aim_range_wu)
+          if in_aim_range and clh.aim_err_wu > KT.aim_wu then
             local dband = 1
             if dist > 0 then
               local s = KT.aim_wu / dist
@@ -6885,6 +6895,11 @@ function Brain.think(info)
             if KT.aim_throttle and best_spd ~= 0 then
               keys = bit.bor(keys, best_spd)
             end
+          else
+            -- Nothing refined this tick (aim already inside the target, or the
+            -- man is beyond LGM_KILL_AIM_TILES).  Drop the search telemetry so
+            -- the decision line cannot report a deadband from an older tick.
+            clh.aim_dband, clh.aim_pred_wu = nil, nil
           end
         end
 
