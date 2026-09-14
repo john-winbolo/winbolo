@@ -44,7 +44,7 @@ bug worth reporting.
 A scenario is found by the map's file name. `Wave Defense.map` is played with
 `Wave Defense.scenario.lua` beside it; a map with no such file beside it is an
 ordinary map. Nothing else points the server at a scenario, so copying a map
-to a new name and writing a sidecar for the copy is how you attach a scenario
+to a new name and writing a script for the copy is how you attach a scenario
 without changing how the original map plays.
 
 The server reads the file once when the map is loaded and runs it again at the
@@ -57,7 +57,7 @@ start of every round, each time in a Lua state of its own. That means:
   nothing the last round left behind is reachable from this one. Counters you
   want to keep across a round belong in the file's own locals, which are set
   again each time the chunk runs.
-- **A sidecar that will not load is skipped.** The round is played as a plain
+- **A script that will not load is skipped.** The round is played as a plain
   map and the operator is told why.
 
 The file must be under 1 MiB.
@@ -730,7 +730,7 @@ The `code` a refused write answers, as a string.
 
 | | |
 |---|---|
-| Sidecar file | 1 MiB |
+| Script file | 1 MiB |
 | Rules in the `scenario` table | 128 |
 | Tags per entity | 4, each 31 bytes |
 | Regions | 64, declared and defined together; names 31 bytes |
@@ -749,7 +749,7 @@ Going past one of these is reported and refused, never silently cut.
 WinBoloDS -validate "maps/Wave Defense.map"
 ```
 
-reads the sidecar beside the map in a Lua state with a `game` table that
+reads the script beside the map in a Lua state with a `game` table that
 answers nothing, runs the chunk's top level, and checks what the `scenario`
 table says against the map, the lobby and the rule catalogue. Each problem is
 printed as
@@ -779,5 +779,5 @@ Named so you do not spend an afternoon looking for them:
   refused; a spawning bot is handed what the round's own policy hands it.
 - **Presentation.** A panel, a score line, a newswire line and a map marker
   have no calls yet.
-- **Triggers.** A `scenario.triggers` table is not read, and a sidecar that
+- **Triggers.** A `scenario.triggers` table is not read, and a script that
   carries one is neither parsed nor refused for it.
