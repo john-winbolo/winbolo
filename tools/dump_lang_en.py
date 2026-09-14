@@ -55,7 +55,15 @@ def parse_lang_h(path):
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    define_re = re.compile(r"^\s*#define\s+([A-Z][A-Z0-9_]*)\s+(\d+)\s*$")
+    # A trailing comment on the same line is allowed. Without that tail this
+    # anchored at the number and silently DROPPED every id written as
+    #     #define STR_SOMETHING  1234   /* what it is for */
+    # A dropped id is not an error here: the entry simply never reaches
+    # en.txt or lang_names.inc, and K_LANG_NAME_TABLE_SIZE comes out one
+    # short, so the table looks internally consistent and the string is gone.
+    # That is how STR_DLGGAMESETUP_RADIO4 was lost once already.
+    define_re = re.compile(
+        r"^\s*#define\s+([A-Z][A-Z0-9_]*)\s+(\d+)\s*(?:/\*.*?\*/|//.*)?\s*$")
     comment_re = re.compile(r"^\s*/\*\s*(.+?)\s*\*/\s*$")
 
     id_to_name = {}

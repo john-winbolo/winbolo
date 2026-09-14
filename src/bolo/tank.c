@@ -397,10 +397,13 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 *********************************************************/
 static void tankSpawnLoadout(GameSim *sim, BYTE playerNum, BYTE *shells,
                              BYTE *mines, BYTE *armour, BYTE *trees) {
+  gameType loadoutType;
   if (gameSimSpawnLoadout(sim, playerNum, shells, mines, armour, trees) != FALSE) {
     return;
   }
-  gameTypeGetItems(sim, &sim->game, shells, mines, armour, trees);
+  /* Nobody answered, so the game type decides. */
+  loadoutType = sim->game;
+  gameTypeGetItems(sim, &loadoutType, shells, mines, armour, trees);
 }
 
 /*********************************************************
@@ -416,15 +419,19 @@ static void tankSpawnLoadout(GameSim *sim, BYTE playerNum, BYTE *shells,
 *  value  - Pointer to the tank structure
 *  sts    - Pointer to player starts structure
 *********************************************************/
+
 void tankCreate(GameSim *sim, tank *value) {
   starts *sts = &sim->ss;
   BYTE minesAmount; /* Stuff the new tank is to start with */
   BYTE shellsAmount;
   BYTE armourAmount;
   BYTE treesAmount;
-  BYTE x;    /* Things to pass to get the player start position */
-  BYTE y;
-  TURNTYPE dir;
+  /* Initialised because they are read whatever startsGetStart does with
+     them; it writes all three unless there is no list to pick from, which is
+     where a joining client asks before its map has arrived. */
+  BYTE x = 0;    /* Things to pass to get the player start position */
+  BYTE y = 0;
+  TURNTYPE dir = (TURNTYPE)0;
 
   sim->tankShuttingDown = FALSE;
 
@@ -462,6 +469,17 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->firstLeft = 0;
   (*value)->firstRight = 0;
   (*value)->lastTankDeath = 0;
+  (*value)->pendingDeathCause = DEATH_CAUSE_OTHER;
+  (*value)->shellNearFrames = 0;
+  /* Match numDeaths = 0 above: a fresh tank starts the round with an empty
+   * cause tally so the two always add up. */
+  {
+    BYTE causeSlot = gameSimGetTankPlayer(sim, value);
+    if (causeSlot < MAX_TANKS) {
+      memset(sim->deathCauseCount[causeSlot], 0,
+             sizeof(sim->deathCauseCount[causeSlot]));
+    }
+  }
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
   (*value)->residualSpeed = 0;
@@ -641,6 +659,16 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
       if (gameSimCanDie(sim, DIE_KIND_TANK, drownedPlayer, drownedPlayer,
                         LAST_DEATH_BY_DEEPSEA) != FALSE) {
         tankSetLastTankDeath(value,LAST_DEATH_BY_DEEPSEA);
+        /* Forced vs unforced drowning (observation only).  shellNearFrames is
+         * non-zero when a shell passed within TANK_SHELL_NEAR_WU of this tank,
+         * or shot it off its boat, in the last TANK_SHELL_NEAR_MEMORY_FRAMES
+         * game ticks (1 s) -- the tank was under fire when it went in.  Zero
+         * means it drove into deep water on its own, which is the bot bug we
+         * are counting.  The two slots are exclusive, so their sum is still
+         * "drownings". */
+        (*value)->pendingDeathCause = ((*value)->shellNearFrames > 0)
+                                          ? DEATH_CAUSE_DROWNED
+                                          : DEATH_CAUSE_DROWNED_UNFORCED;
         sim->callbacks.soundDist(sim->callbacks.ctx, tankSinkNear, bmx, bmy);
         if (!isServer) {
           sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, MESSAGE_TANKSUNK, NULL);
@@ -1426,6 +1454,12 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			(*value)->onBoat = FALSE;
 			(*value)->boatState = BoatState_NotOnBoat;
 			(*value)->speed = 0;
+			/* Shot while afloat.  If the tank is over deep sea it drowns on
+			 * the next tankUpdate, and that drowning is forced by definition
+			 * -- stamp the near-shell memory here so the drowning site cannot
+			 * classify it as unforced even if the shell's own proximity scan
+			 * missed the frame.  Observation only. */
+			(*value)->shellNearFrames = TANK_SHELL_NEAR_MEMORY_FRAMES;
 			if (!isServer) {
 				clientSimRecalc((struct ClientSim *)sim);
 			}
@@ -1439,6 +1473,9 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			}
 
 			tankSetLastTankDeath(value,LAST_DEATH_BY_SHELL);
+			/* Observation only: a pill fires with owner == NEUTRAL, a tank with
+			 * its own player number, so the two shell causes split cleanly here. */
+			(*value)->pendingDeathCause = (owner == NEUTRAL) ? DEATH_CAUSE_SHELL_PILL : DEATH_CAUSE_SHELL_TANK;
 			(*value)->deathWait = (uint16_t) sim->rules.tank_death_ticks;
 
 			/*      netSendNow = TRUE; */
@@ -1568,9 +1605,11 @@ void tankDeath(GameSim *sim, tank *value) {
   BYTE minesAmount;
   BYTE armourAmount;
   BYTE treesAmount;
-  BYTE x;       /* New location of the tank */
-  BYTE y;
-  TURNTYPE dir;
+  /* Initialised because they are read whatever startsGetStart does with
+     them; it writes all three unless there is no list to pick from. */
+  BYTE x = 0;   /* New location of the tank */
+  BYTE y = 0;
+  TURNTYPE dir = (TURNTYPE)0;
 
   /* Client path (legacy single-player or networked client) */
   if (!isServer) {
@@ -1600,7 +1639,11 @@ void tankDeath(GameSim *sim, tank *value) {
       frontEndKillsDeaths(clientSimFromSim(sim), (*value)->numKills, (*value)->numDeaths);
     }
   } else if (isServer) {
-    /* Server-authoritative respawn: pick a new start and reset resources */
+    /* Server-authoritative respawn: pick a new start and reset resources.
+     * tankSpawnLoadout, not sim->game: this is the path that would hand a
+     * slot carrying an open-mode loadout override a TOURNAMENT (empty)
+     * loadout on every death — first life armed, every respawn with
+     * zero shells. */
     lgmTankDied(&sim->lgmen[gameSimGetTankPlayer(sim, value)]);
     tankSpawnLoadout(sim, gameSimGetTankPlayer(sim, value), &shellAmount,
                      &minesAmount, &armourAmount, &treesAmount);
@@ -1624,6 +1667,24 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->boatState = BoatState_InBoat;
     (*value)->newTank = TRUE;
     (*value)->numDeaths++;
+    /* Tally the cause alongside the death itself, so the per-cause counts
+     * always sum to numDeaths. Read-and-clear: an untagged death (no damage
+     * site claimed it) lands in DEATH_CAUSE_OTHER rather than repeating the
+     * previous life's cause. Observation only — no sim state reads this. */
+    {
+      BYTE causeSlot = gameSimGetTankPlayer(sim, value);
+      BYTE causeTag = (*value)->pendingDeathCause;
+      if (causeTag >= DEATH_CAUSE_NUM) {
+        causeTag = DEATH_CAUSE_OTHER;
+      }
+      if (causeSlot < MAX_TANKS) {
+        sim->deathCauseCount[causeSlot][causeTag]++;
+      }
+      (*value)->pendingDeathCause = DEATH_CAUSE_OTHER;
+    }
+    /* Fresh life, fresh near-shell memory: "a shell was near me in the last
+     * second" must mean this life, not the one that just ended. */
+    (*value)->shellNearFrames = 0;
     (*value)->reload = 0;
     (*value)->speed = 0;
     (*value)->bumpX = 0;
@@ -2944,6 +3005,7 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
     }
     if (wasDestroyed) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
+      (*value)->pendingDeathCause = DEATH_CAUSE_MINE;
       if (((*value)->shells + (*value)->mines) > sim->rules.big_explosion_threshold) {
         tkExplosionAddItem(sim, (*value)->x, (*value)->y, (TURNTYPE) ((*value)->angle), (BYTE) ((*value)->speed), (BYTE) TH_KILL_BIG, dyingPlayer);
       } else {
@@ -3927,6 +3989,12 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 			(*value)->onBoat = FALSE;
 			(*value)->boatState = BoatState_NotOnBoat;
 			(*value)->speed = 0;
+			/* Shot while afloat.  If the tank is over deep sea it drowns on
+			 * the next tankUpdate, and that drowning is forced by definition
+			 * -- stamp the near-shell memory here so the drowning site cannot
+			 * classify it as unforced even if the shell's own proximity scan
+			 * missed the frame.  Observation only. */
+			(*value)->shellNearFrames = TANK_SHELL_NEAR_MEMORY_FRAMES;
 			if (!isServer) {
 				clientSimRecalc((struct ClientSim *)sim);
 			}
@@ -3940,6 +4008,9 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 			}
 
 			tankSetLastTankDeath(value,LAST_DEATH_BY_SHELL);
+			/* Observation only: a pill fires with owner == NEUTRAL, a tank with
+			 * its own player number, so the two shell causes split cleanly here. */
+			(*value)->pendingDeathCause = (owner == NEUTRAL) ? DEATH_CAUSE_SHELL_PILL : DEATH_CAUSE_SHELL_TANK;
 			(*value)->deathWait = (uint16_t) sim->rules.tank_death_ticks;
 
 			tankDropPills(sim, value);

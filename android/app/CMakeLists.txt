@@ -168,6 +168,7 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 include(${PROJ_ROOT}/cmake/bolo_version.cmake)
 add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${PROJ_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
+add_subdirectory(${PROJ_ROOT}/src/scenario ${CMAKE_BINARY_DIR}/scenario_static)
 add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(ANDROID_SOURCES
@@ -189,6 +190,7 @@ set(ANDROID_SOURCES
 
     # SDL3 GUI (rendering, sound, input, etc.)
     ${PROJ_ROOT}/src/gui/ui_mode.c
+    ${PROJ_ROOT}/src/gui/visibility_presets.c
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui.cpp
     ${PROJ_ROOT}/src/gui/sdl3/imgui_steam_nav.cpp
@@ -289,7 +291,7 @@ bolo_apply_include_rules(main gui)
 bolo_grant_internal_source_access(main
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c)
 
-target_link_libraries(main PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(main PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

@@ -165,7 +165,11 @@ void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
                                       uint8_t brainIdx,
                                       const char *botName);
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum);
+/* mode indexes the brain's own mode list (brain_list.h) and difficulty
+ * indexes THAT mode's level list — mode 0 with 0/1/2 is the pre-manifest
+ * easy / medium / hard. */
 void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
+                                    uint8_t mode,
                                     uint8_t difficulty,
                                     uint8_t personality,
                                     const char *name);

@@ -756,7 +756,8 @@ static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
 
 static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
                                       struct sockaddr_in *fromAddr) {
-    /* [header 8] [totalLen 4] [nameLen 1] [name N] — only host
+    /* [header 8] [totalLen 4] [nameLen 1] [name N] [bulkStartSeq 4, optional]
+     * Only host
      * / admin / openHost may push files. Per-client wire-only
      * ACK (handshake/reliability). */
     int clientIdx = serverFindClient(fromAddr);
@@ -864,11 +865,19 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
 
     udpServer.clientUploadActive[clientIdx] = true;
     udpServer.clientUploadTotal[clientIdx]  = totalLen;
+    udpServer.upload_last_progress_ms[clientIdx] = SDL_GetTicks();
     SDL_strlcpy(udpServer.clientUploadName[clientIdx], nameBuf,
                 sizeof(udpServer.clientUploadName[clientIdx]));
     /* Fresh receiver for this transfer; the bulk stream that follows
      * carries the bytes (no offset reassembly). */
     bulkReceiverInit(&udpServer.bulkRecvUp[clientIdx]);
+    /* New senders append their bulk sequence boundary. An aborted upload
+     * may have left gaps in this direction; skip its tail before accepting
+     * the next stream. Older BEGIN packets retain the original layout. */
+    if (len >= PACKET_HEADER_SIZE + 5 + nameLen + 4) {
+        channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
+            unpackU32(buf + PACKET_HEADER_SIZE + 5 + nameLen));
+    }
 
     uint8_t ack[PACKET_HEADER_SIZE + 1];
     packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);

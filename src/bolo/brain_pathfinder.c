@@ -391,6 +391,8 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->turn_cost = 2.0f;
   pf->wall_shoot_cost = 30.0f;
   pf->wall_shoot_shells = 5.0f;
+  pf->wall_escalate_free = 1.0f;   /* only the first wall is charged plain cost */
+  pf->wall_escalate_factor = 2.0f; /* wall #2 = 2x, #3 = 4x, #4 = 8x ... */
   pf->shell_reserve = 10.0f;
   pf->road_build_cost = 12.0f;
   pf->tree_reserve = 4.0f;
@@ -654,6 +656,8 @@ void brainPathfinderSetConfig(BrainPathfinder *pf, const char *key, float value)
   if (strcmp(key, "turn_cost") == 0)              pf->turn_cost = value;
   else if (strcmp(key, "wall_shoot_cost") == 0)   pf->wall_shoot_cost = value;
   else if (strcmp(key, "wall_shoot_shells") == 0) pf->wall_shoot_shells = value;
+  else if (strcmp(key, "wall_escalate_free") == 0)   pf->wall_escalate_free = value;
+  else if (strcmp(key, "wall_escalate_factor") == 0) pf->wall_escalate_factor = value;
   else if (strcmp(key, "shell_reserve") == 0)     pf->shell_reserve = value;
   else if (strcmp(key, "road_build_cost") == 0)   pf->road_build_cost = value;
   else if (strcmp(key, "tree_reserve") == 0)      pf->tree_reserve = value;
@@ -668,6 +672,33 @@ void brainPathfinderSetConfig(BrainPathfinder *pf, const char *key, float value)
   else if (strcmp(key, "min_mines") == 0)         pf->min_mines = value;
   else if (strcmp(key, "min_armour") == 0)        pf->min_armour = value;
   else if (strcmp(key, "road_build_danger_max") == 0) pf->road_build_danger_max = value;
+  else if (strcmp(key, "nextstep_foot_sea_rule") == 0) pf->nextstep_foot_sea_rule = value;
+}
+
+/*********************************************************
+ *NAME:          brainPathfinderTakeSeaVeto
+ *PURPOSE:
+ *  Debug read-out for the on-foot deep-sea next-step rule.
+ *  Returns the sequence number of the most recent veto (0 =
+ *  none since the pathfinder was created) and fills in the
+ *  tiles involved. The caller compares the sequence number
+ *  with the one it last saw to tell a new veto from a stale
+ *  record.
+ *
+ *  Pure observation: nothing in the search reads these.
+ *********************************************************/
+uint32_t brainPathfinderGetSeaVeto(const BrainPathfinder *pf,
+                                   int *from_x, int *from_y,
+                                   int *rej_x, int *rej_y,
+                                   int *pick_x, int *pick_y) {
+  if (!pf) return 0;
+  if (from_x) *from_x = pf->sea_veto_from_x;
+  if (from_y) *from_y = pf->sea_veto_from_y;
+  if (rej_x)  *rej_x  = pf->sea_veto_rej_x;
+  if (rej_y)  *rej_y  = pf->sea_veto_rej_y;
+  if (pick_x) *pick_x = pf->sea_veto_pick_x;
+  if (pick_y) *pick_y = pf->sea_veto_pick_y;
+  return pf->sea_veto_seq;
 }
 
 /* ------------------------------------------------------------------ */
@@ -859,6 +890,250 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y) {
   return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Influence tail                                                      */
+/* ------------------------------------------------------------------ */
+
+void brainPathfinderClearNeutralZones(BrainPathfinder *pf) {
+  if (pf) memset(pf->neutral_zone, 0, sizeof(pf->neutral_zone));
+}
+
+void brainPathfinderStampNeutralZone(BrainPathfinder *pf, int cx, int cy, int radius) {
+  int dx, dy;
+  int r2 = radius * radius;
+  if (!pf) return;
+  for (dy = -radius; dy <= radius; dy++) {
+    int ny = cy + dy;
+    if (ny < 0 || ny > 255) continue;
+    for (dx = -radius; dx <= radius; dx++) {
+      int nx = cx + dx;
+      if (nx < 0 || nx > 255) continue;
+      if (dx * dx + dy * dy > r2) continue;
+      pf->neutral_zone[ny * MAP_SIZE + nx] = 1;
+    }
+  }
+}
+
+#define TAIL_MAXD 64
+#define TAIL_POOL (4 * 65536)
+
+/* A tile the tail cannot claim through: solid, open sea, or a pillbox. */
+static int tail_blocked(int type) {
+  return type == TT_BUILDING || type == TT_HALFBUILD || type == TT_DEEPSEA
+      || type == 12 /* pillbox */;
+}
+
+/* Fill deep_margin_mask with 1 where the tile lies within `margin` king-moves
+ * (Chebyshev distance) of a deep-sea tile or of the map edge — off-map counts
+ * as deep sea, so the outermost `margin` rows and columns are always masked.
+ *
+ * Exact 8-connected distance transform in two raster sweeps (O(tiles), no
+ * queue): the forward sweep reads the NW/N/NE/W neighbours, the backward sweep
+ * the SE/S/SW/E ones, and an out-of-bounds neighbour reads as distance 0. The
+ * array holds distances only between the sweeps; it is thresholded to 0/1 at
+ * the end. Every tile is within 128 of an edge, so 255 always means "not
+ * computed yet", never a real distance. */
+static void tail_build_deep_margin(BrainPathfinder *pf, int margin) {
+  uint8_t *d = pf->deep_margin_mask;
+  int x, y, idx;
+
+  for (idx = 0; idx < 65536; idx++)
+    d[idx] = ((pf->map[idx] & 0x0F) == TT_DEEPSEA) ? 0 : 255;
+
+  for (y = 0; y < MAP_SIZE; y++) {
+    for (x = 0; x < MAP_SIZE; x++) {
+      int best;
+      idx = y * MAP_SIZE + x;
+      if (d[idx] == 0) continue;
+      if (y == 0 || x == 0 || x == MAP_SIZE - 1) {
+        best = 0;                                /* an off-map neighbour */
+      } else {
+        best = d[idx - MAP_SIZE - 1];
+        if (d[idx - MAP_SIZE]     < best) best = d[idx - MAP_SIZE];
+        if (d[idx - MAP_SIZE + 1] < best) best = d[idx - MAP_SIZE + 1];
+        if (d[idx - 1]            < best) best = d[idx - 1];
+      }
+      if (best + 1 < d[idx]) d[idx] = (uint8_t)(best + 1);
+    }
+  }
+  for (y = MAP_SIZE - 1; y >= 0; y--) {
+    for (x = MAP_SIZE - 1; x >= 0; x--) {
+      int best;
+      idx = y * MAP_SIZE + x;
+      if (d[idx] == 0) continue;
+      if (y == MAP_SIZE - 1 || x == 0 || x == MAP_SIZE - 1) {
+        best = 0;                                /* an off-map neighbour */
+      } else {
+        best = d[idx + MAP_SIZE + 1];
+        if (d[idx + MAP_SIZE]     < best) best = d[idx + MAP_SIZE];
+        if (d[idx + MAP_SIZE - 1] < best) best = d[idx + MAP_SIZE - 1];
+        if (d[idx + 1]            < best) best = d[idx + 1];
+      }
+      if (best + 1 < d[idx]) d[idx] = (uint8_t)(best + 1);
+    }
+  }
+  for (idx = 0; idx < 65536; idx++) d[idx] = (d[idx] <= margin) ? 1 : 0;
+}
+
+/* One side's step-distance BFS from its cores. Bucket queue (Dial's) over a
+ * pooled entry list: a node re-enters a lower bucket when a cheaper route
+ * reaches it, and stale entries are skipped by comparing to tail_dist. Seeds
+ * and buckets are visited in tile-index order, so the result is
+ * deterministic. `sign` +1 grows the friendly tail into expand_grid, -1
+ * subtracts the hostile tail (exact tie -> -1).
+ * `deep_mask` (may be NULL) marks tiles too close to deep sea or the map edge:
+ * they are skipped like blocked terrain, so they neither take a value nor pass
+ * one on. Cores still seed, so a core near the shore keeps growing inland. */
+static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
+                      int start, int neutral_step, int water_step,
+                      const uint8_t *deep_mask,
+                      int32_t *pool_idx, int32_t *pool_next) {
+  int head[TAIL_MAXD + 1];
+  int d, idx, used = 0;
+  int maxd = radius > TAIL_MAXD ? TAIL_MAXD : radius;
+  float span = (float)(radius + 1);
+  memset(pf->tail_dist, 0xFF, sizeof(pf->tail_dist));
+  for (d = 0; d <= maxd; d++) head[d] = -1;
+  for (idx = 0; idx < 65536; idx++) {
+    int v = pf->influence_grid[idx];
+    if (sign > 0 ? (v >= seed_min) : (v <= -seed_min)) {
+      pf->tail_dist[idx] = 0;
+      pool_idx[used] = idx; pool_next[used] = head[0]; head[0] = used; used++;
+    }
+  }
+  for (d = 0; d <= maxd; d++) {
+    int e;
+    for (e = head[d]; e != -1; e = pool_next[e]) {
+      int ci = pool_idx[e];
+      int cx, cy, k;
+      if (pf->tail_dist[ci] != d) continue;   /* stale entry */
+      cx = ci % MAP_SIZE; cy = ci / MAP_SIZE;
+      for (k = 0; k < 8; k++) {
+        int nx = cx + DX8[k], ny = cy + DY8[k];
+        int ni, type, step, nd;
+        if (nx < 0 || nx > 255 || ny < 0 || ny > 255) continue;
+        ni = ny * MAP_SIZE + nx;
+        type = pf->map[ni] & 0x0F;
+        if (tail_blocked(type)) continue;
+        if (deep_mask && deep_mask[ni]) continue;   /* too near deep sea / edge */
+        step = (type == TT_RIVER || type == TT_BOAT) ? water_step : 1;
+        if (pf->neutral_zone[ni] && neutral_step > step) step = neutral_step;
+        nd = d + step;
+        if (nd > maxd || nd >= pf->tail_dist[ni]) continue;
+        if (used >= TAIL_POOL) return;         /* pool full: degrade, never overrun */
+        pf->tail_dist[ni] = (uint8_t)nd;
+        pool_idx[used] = ni; pool_next[used] = head[nd]; head[nd] = used; used++;
+      }
+    }
+  }
+  for (idx = 0; idx < 65536; idx++) {
+    int dist = pf->tail_dist[idx];
+    int e;
+    if (dist == 255) continue;
+    if (deep_mask && deep_mask[idx]) continue;  /* a masked core seeds, never claims */
+    e = (int)((float)start * (1.0f - (float)dist / span));
+    if (e <= 0) continue;
+    if (sign > 0) {
+      pf->expand_grid[idx] = (int16_t)e;
+    } else {
+      int f = pf->expand_grid[idx];
+      pf->expand_grid[idx] = (int16_t)(f == e ? -1 : f - e);
+    }
+  }
+}
+
+void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
+                                         int start, int neutral_step, int water_step,
+                                         int deep_margin, int enemy_tail) {
+  int32_t *pool_idx, *pool_next;
+  const uint8_t *deep_mask = NULL;
+  if (!pf || !pf->map) return;
+  memset(pf->expand_grid, 0, sizeof(pf->expand_grid));
+  if (radius <= 0 || start <= 0) return;
+  if (deep_margin > 0) {
+    if (deep_margin > 254) deep_margin = 254;
+    /* Rebuilt every time rather than cached: pf->map is the brain's own fogged
+     * view of the world, a single buffer whose contents change in place as the
+     * bot discovers tiles, so a mask keyed on the map POINTER would freeze the
+     * coastline as it was known at the first rebuild. Two raster sweeps over
+     * 64K tiles is ~0.3ms, and this runs only on a stamp-set change or every
+     * EXPAND_REFRESH_TICKS. */
+    tail_build_deep_margin(pf, deep_margin);
+    deep_mask = pf->deep_margin_mask;
+  }
+  pool_idx  = (int32_t *)malloc(sizeof(int32_t) * TAIL_POOL);
+  pool_next = (int32_t *)malloc(sizeof(int32_t) * TAIL_POOL);
+  if (!pool_idx || !pool_next) { free(pool_idx); free(pool_next); return; }
+  tail_pass(pf, +1, seed_min, radius, start, neutral_step, water_step,
+            deep_mask, pool_idx, pool_next);
+  /* enemy_tail = 0: only OUR cores grow. The hostile stamps keep their raw
+   * discs (StampInfluence is untouched), but they spread no further, so the
+   * two tails no longer cancel inside the single signed expand_grid and the
+   * unclaimed ground between the lines reads as ours. The front line then
+   * forms at the edge of the enemy's disc instead of midway between the
+   * sides, which is what pushes the bots outward to claim more land. */
+  if (enemy_tail)
+    tail_pass(pf, -1, seed_min, radius, start, neutral_step, water_step,
+              deep_mask, pool_idx, pool_next);
+  free(pool_idx);
+  free(pool_next);
+}
+
+void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf) {
+  int idx;
+  if (!pf) return;
+  memcpy(pf->influence_base_grid, pf->influence_grid, sizeof(pf->influence_grid));
+  for (idx = 0; idx < 65536; idx++) {
+    int b = pf->influence_grid[idx], t = pf->expand_grid[idx];
+    int ab = b < 0 ? -b : b, at = t < 0 ? -t : t;
+    if (at > ab) pf->influence_grid[idx] = (int16_t)t;
+  }
+}
+
+/* Sign-change cells (the front-line rule) over an arbitrary grid. */
+static int count_front_cells(const int16_t *g) {
+  int x, y, n = 0;
+  for (y = 1; y < MAP_SIZE - 1; y++) {
+    for (x = 1; x < MAP_SIZE - 1; x++) {
+      int v = g[y * MAP_SIZE + x];
+      int a, b, c, d;
+      if (v == 0) continue;
+      a = g[(y - 1) * MAP_SIZE + x]; b = g[(y + 1) * MAP_SIZE + x];
+      c = g[y * MAP_SIZE + x - 1];   d = g[y * MAP_SIZE + x + 1];
+      if ((v > 0 && (a < 0 || b < 0 || c < 0 || d < 0)) ||
+          (v < 0 && (a > 0 || b > 0 || c > 0 || d > 0))) n++;
+    }
+  }
+  return n;
+}
+
+void brainPathfinderInfluenceTailStats(BrainPathfinder *pf, int *out) {
+  int idx;
+  int tail_pos = 0, tail_neg = 0, won_pos = 0, won_neg = 0, tie = 0;
+  if (!pf || !out) return;
+  for (idx = 0; idx < 65536; idx++) {
+    int t = pf->expand_grid[idx], b = pf->influence_base_grid[idx];
+    int ab = b < 0 ? -b : b, at = t < 0 ? -t : t;
+    if (t > 0) tail_pos++; else if (t < 0) tail_neg++;
+    if (t == -1) tie++;
+    if (at > ab) { if (t > 0) won_pos++; else won_neg++; }
+  }
+  out[0] = tail_pos; out[1] = tail_neg; out[2] = won_pos; out[3] = won_neg;
+  out[4] = count_front_cells(pf->influence_base_grid);
+  out[5] = count_front_cells(pf->influence_grid);
+  out[6] = tie;
+}
+
+int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y) {
+  if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
+    int idx = y * MAP_SIZE + x;
+    int b = pf->influence_base_grid[idx], t = pf->expand_grid[idx];
+    int ab = b < 0 ? -b : b, at = t < 0 ? -t : t;
+    return (int16_t)(at > ab ? t : 0);
+  }
+  return 0;
+}
+
 void brainPathfinderSetDanger(BrainPathfinder *pf, int x, int y, float value) {
   if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
     int v = (int)(value + 0.5f);
@@ -912,6 +1187,38 @@ float brainPathfinderGetDanger(const BrainPathfinder *pf, int x, int y) {
 /* ------------------------------------------------------------------ */
 /* Cost computation (inner loop)                                       */
 /* ------------------------------------------------------------------ */
+
+/* Escalating wall-break penalty.
+ *
+ * Shooting a single wall down to cut a corner is a fair move. Digging
+ * through a THICK wall almost never is -- it burns 5 shells per tile,
+ * leaves the tank parked in the open while it fires, and there is
+ * normally a way round. So only the first wall_escalate_free walls are
+ * charged the plain wall_shoot_cost; every wall after that multiplies
+ * the whole tile cost by wall_escalate_factor again.
+ *
+ * walls_so_far is the number of walls already broken on this route
+ * BEFORE the one being priced. With the defaults (free = 1, factor = 2):
+ *   wall #1 = 1x, #2 = 2x, #3 = 4x, #4 = 8x ...
+ *
+ * Both the A* compute_cost path and the Dijkstra slate expansion call
+ * this, so a route prices the same whichever search answered it --
+ * smart_cost() in cpathfinder.lua takes a slate cost when one exists and
+ * falls back to A*, and the two disagreeing would make goal ranking
+ * jitter from tick to tick. */
+static float wall_escalation_mult(const BrainPathfinder *pf, int walls_so_far) {
+  int free_walls = (int)pf->wall_escalate_free;
+  float factor = pf->wall_escalate_factor;
+  float mult;
+  if (free_walls < 0) free_walls = 0;
+  if (factor < 1.0f) factor = 1.0f; /* never discount a wall */
+  if (walls_so_far < free_walls) return 1.0f;
+  mult = powf(factor, (float)(walls_so_far - free_walls + 1));
+  /* Keep a mis-set factor from producing a cost that rivals COST_INF and
+   * upsets the search's blocked/passable comparisons. */
+  if (mult > 1e6f) mult = 1e6f;
+  return mult;
+}
 
 /* Compute the cost to enter tile (nx, ny) given the current boat state.
  * Returns the movement cost, fills resource usage outputs and new_boat.
@@ -1287,18 +1594,15 @@ do_search:
                          &onBoat);
       if (tc >= COST_INF) continue;
 
-      /* Escalating wall-break penalty:
-       *   walls 1-2: normal cost
-       *   wall 3+: cost doubles for each additional wall
-       * Makes thick walls exponentially more expensive. */
+      /* Escalating wall-break penalty -- see wall_escalation_mult().
+       * Only the first wall_escalate_free walls are charged plain cost;
+       * every wall past that multiplies again, so thick walls get
+       * expensive fast and the search prefers going round. */
       if (shells_used > 0) {
         int initial_shells = pf->shells_at[node_idx(pf->src_x, pf->src_y, pf->in_boat)];
         int walls_so_far = (initial_shells > 0 && pf->wall_shoot_shells > 0)
                          ? (initial_shells - cur_shells) / (int)pf->wall_shoot_shells : 0;
-        if (walls_so_far >= 2) {
-          int extra = walls_so_far - 2;
-          tc *= (float)(1 << (extra + 1)); /* 2x, 4x, 8x, 16x... */
-        }
+        tc *= wall_escalation_mult(pf, walls_so_far);
       }
 
       ni = node_idx(nx, ny, onBoat);
@@ -2068,15 +2372,11 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
         if (exact) {
           new_shells = cur_shells - wall_shoot_shells;
           if (new_shells < min_shells) continue; /* not enough shells */
-          /* Escalating wall-break penalty:
-           *   walls 1-2: normal cost
-           *   wall 3+: cost doubles for each additional wall
-           * Makes thick walls exponentially more expensive. */
+          /* Escalating wall-break penalty -- see wall_escalation_mult().
+           * Same helper the A* path uses, so a route prices identically
+           * whichever search smart_cost() ended up asking. */
           int walls_broken = (s->src_shells - cur_shells) / (wall_shoot_shells > 0 ? wall_shoot_shells : 1);
-          if (walls_broken >= 2) {
-            int extra = walls_broken - 2; /* 0 for wall #3, 1 for #4, etc */
-            tc *= (float)(1 << (extra + 1)); /* 2x, 4x, 8x, 16x... */
-          }
+          tc *= wall_escalation_mult(pf, walls_broken);
         }
       } else {
         /* Normal tile: add danger * scale * (16/speed) + overlay +
@@ -2360,6 +2660,10 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
     float p = pcontrib_lookup(user, tile_key);
     int d = dval & 0x07;
     int parent_boat = (dval & 0x08) ? 1 : 0;
+    int px = cx - DX8[d];
+    int py = cy - DY8[d];
+    int p_in_bounds = (px >= 0 && px <= 255 && py >= 0 && py <= 255);
+    int pnode = p_in_bounds ? node_idx(px, py, parent_boat) : -1;
     if (p > 0.0f) {
       int tt = pf->map[tile_key] & 0x0F;
       /* Mirror the three slate-expansion branches exactly so the
@@ -2375,6 +2679,17 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
          * Per-pill contribution to that danger term is the same
          * formula with pcontrib in place of total danger. */
         p_term = p * dscale * (16.0f / 3.0f);
+        /* The escalating wall-break penalty multiplies the WHOLE tile
+         * cost, danger term included, so the pill's share is multiplied
+         * too. Rebuild walls_broken the way the slate did -- from the
+         * shells left at the PARENT node, which is what cur_shells held
+         * when that edge was priced. Only exact slates escalate. */
+        if (chosen->exact && chosen->shells_at && pnode >= 0) {
+          int wss = (int)pf->wall_shoot_shells;
+          int walls_broken = (chosen->src_shells - chosen->shells_at[pnode])
+                           / (wss > 0 ? wss : 1);
+          p_term *= wall_escalation_mult(pf, walls_broken);
+        }
       } else {
         /* Normal tile: tc = ec + danger*dscale*inv_spd + overlay + mine_pen.
          * Per-pill contribution: p*dscale*inv_spd. */
@@ -2424,10 +2739,8 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
       }
       subtract += p_term * DMUL8[d];
     }
-    int px = cx - DX8[d];
-    int py = cy - DY8[d];
-    if (px < 0 || px > 255 || py < 0 || py > 255) break;
-    cur = node_idx(px, py, parent_boat);
+    if (!p_in_bounds) break;
+    cur = pnode;
     cur_boat = parent_boat;
   }
 
@@ -2449,11 +2762,57 @@ static int obs_contains(const int *obs, int n, int x, int y) {
   return 0;
 }
 
+/* May a tank that is NOT in a boat, standing at (sx,sy), step to the
+ * adjacent tile (nx,ny)?
+ *
+ * This is the same rule the A* expansion (brain_pathfinder.c:1514) and the
+ * Dijkstra edge builder (:2024) already enforce, restated for a single step:
+ * the destination tile must not be deep sea, and a diagonal step must not
+ * clip a deep-sea corner (a full-tile tank cannot squeeze past it, and the
+ * engine drowns it the moment it is over deep sea without a boat).
+ *
+ * The next-step fallbacks did NOT have it, which is how a boatless tank ended
+ * up being handed a deep-sea tile as "next" and drove into it.
+ *
+ * Non-adjacent (nx,ny) is passed through unvetoed: the only such caller is
+ * the traced-chain step, which is adjacent by construction, and refusing to
+ * judge something this rule was not written for is safer than guessing. */
+static int foot_step_ok(const BrainPathfinder *pf, int sx, int sy,
+                        int nx, int ny) {
+  int stepx, stepy;
+  if (!pf || !pf->map) return 1;
+  if (nx < 0 || nx > 255 || ny < 0 || ny > 255) return 0;
+  if ((pf->map[(ny * MAP_SIZE) + nx] & 0x0F) == TT_DEEPSEA) return 0;
+  stepx = nx - sx;
+  stepy = ny - sy;
+  if (stepx != 0 && stepy != 0 &&
+      stepx >= -1 && stepx <= 1 && stepy >= -1 && stepy <= 1 &&
+      sx >= 0 && sx <= 255 && sy >= 0 && sy <= 255) {
+    int adj_x_type = pf->map[(sy * MAP_SIZE) + nx] & 0x0F;
+    int adj_y_type = pf->map[(ny * MAP_SIZE) + sx] & 0x0F;
+    if (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA) return 0;
+  }
+  return 1;
+}
+
+/* Record a veto for the brain's debug print. Observation only. */
+static void note_sea_veto(BrainPathfinder *pf, int fx, int fy,
+                          int rx, int ry, int px, int py) {
+  if (!pf) return;
+  pf->sea_veto_seq++;
+  pf->sea_veto_from_x = (int16_t)fx;
+  pf->sea_veto_from_y = (int16_t)fy;
+  pf->sea_veto_rej_x  = (int16_t)rx;
+  pf->sea_veto_rej_y  = (int16_t)ry;
+  pf->sea_veto_pick_x = (int16_t)px;
+  pf->sea_veto_pick_y = (int16_t)py;
+}
+
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
                                      const int *obstacles, int n_obstacles,
-                                     float penalty,
+                                     float penalty, int tank_in_boat,
                                      int *out_next_x, int *out_next_y) {
   if (!pf) return 0;
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
@@ -2466,6 +2825,24 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
   for (int si = 0; si < n; si++) {
     DijkstraSlate *s = &pf->dij_slates[order[si]];
     if (!s->g_cost || !s->dir_at) continue;
+
+    /* On-foot deep-sea rule for the fallbacks below (knob
+     * C.PF_NEXTSTEP_FOOT_SEA_RULE; off reproduces the old behaviour exactly).
+     *
+     * The gate is the tank's LIVE boat state, passed in by the caller
+     * (tank_in_boat: 0 on foot, 1 afloat, -1 "caller does not know"). It must
+     * not be s->in_boat, which is only the state the slate was SEEDED with:
+     * slates restart every DIJKSTRA_SHORT_INTERVAL ticks or two tiles of
+     * movement, so for a few ticks after a tank boards a boat every live slate
+     * still says "on foot" -- and the rule would then refuse to let the boat
+     * step onto the water. That is what broke the sea-pill harvest
+     * (tests/sea_pills_test.py variant B, 2026-09-06): the boat lost its first
+     * moves after boarding and the raft split came out differently.
+     *
+     * s->in_boat stays as the fallback for the callers that do not know (viz
+     * probes, cost sweeps), where it is the best guess available. */
+    int foot_rule = (pf->nextstep_foot_sea_rule != 0.0f)
+                    && !((tank_in_boat >= 0) ? tank_in_boat : s->in_boat);
 
     /* Pick the cheaper boat layer at the destination */
     int ni_land = node_idx(dx, dy, 0);
@@ -2506,18 +2883,43 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
         if (i <= 0) return 0; /* Already at destination */
         int nnx = node_x(chain[i - 1]);
         int nny = node_y(chain[i - 1]);
+        int veer_rej_x = -1, veer_rej_y = -1;
         /* Live-obstacle veer: the optimal next tile is occupied (e.g. an ally
          * tank). Pick the cheapest non-obstacle neighbour of (sx,sy) by
          * effective cost (g_cost + penalty), still descending the field, so we
          * dodge around it this tick and rejoin the gradient. */
-        if (obs_contains(obstacles, n_obstacles, nnx, nny)) {
+        int need_veer = obs_contains(obstacles, n_obstacles, nnx, nny);
+        /* Same veer, second trigger: on foot the traced chain itself can name
+         * deep sea. The trace enters at whichever boat layer is cheaper AT THE
+         * DESTINATION, so a boatless tank can be handed a step off a boat
+         * route -- exactly the "nav next = <deep sea>" seen in the drowning
+         * recordings. Treat it like a blocked tile and veer round it. */
+        if (!need_veer && foot_rule && !foot_step_ok(pf, sx, sy, nnx, nny)) {
+          need_veer = 1;
+          veer_rej_x = nnx;
+          veer_rej_y = nny;
+        }
+        if (need_veer) {
           float best_eff = COST_INF;
           float best_d2  = 1e30f;
           for (int d = 0; d < 8; d++) {
             int ax = sx + DX8[d], ay = sy + DY8[d];
             if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
+            /* On foot: never veer INTO deep sea, and never cut a deep-sea
+             * diagonal corner. */
+            if (foot_rule && !foot_step_ok(pf, sx, sy, ax, ay)) continue;
             float gl = s->g_cost[node_idx(ax, ay, 0)];
             float gb = s->g_cost[node_idx(ax, ay, 1)];
+            /* Both layers, exactly as before. Restricting a boatless tank to
+             * the LAND layer here was tried and is WRONG: arriving on a
+             * TT_BOAT tile always transitions to boat state
+             * (next_boat_state), so a boat tile's land-layer node is never
+             * reached and its g is always COST_INF -- a boatless tank could
+             * then never be told to step onto a boat at all, which broke the
+             * sea-pill harvest's walk to the water
+             * (tests/sea_pills_test.py variant B, 2026-09-06). What kills a
+             * boatless tank is entering DEEP SEA, and foot_step_ok above is
+             * what refuses that. */
             float g  = (gb < gl) ? gb : gl;
             if (g >= COST_INF) continue;
             float eff = g + (obs_contains(obstacles, n_obstacles, ax, ay) ? penalty : 0.0f);
@@ -2531,6 +2933,17 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                 (eff < best_eff + 1e-3f && d2 < best_d2)) {
               best_eff = eff; best_d2 = d2; nnx = ax; nny = ay;
             }
+          }
+          if (veer_rej_x >= 0) {
+            if (nnx == veer_rej_x && nny == veer_rej_y) {
+              /* Nothing legal to veer onto. Do NOT hand the deep-sea tile
+               * back: break out of the chain scan and let the drifted-off-path
+               * fallback below have a go (it applies the same rule), and
+               * failing that the next slate. */
+              note_sea_veto(pf, sx, sy, veer_rej_x, veer_rej_y, -1, -1);
+              break;
+            }
+            note_sea_veto(pf, sx, sy, veer_rej_x, veer_rej_y, nnx, nny);
           }
         }
         if (out_next_x) *out_next_x = nnx;
@@ -2550,6 +2963,10 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
     float best_g = my_g;
     float best_d2 = 1e30f;
     int best_nx = -1, best_ny = -1;
+    /* Cheapest neighbour the on-foot sea rule threw away, for the debug print
+     * only -- it is what the old code would have been free to pick. */
+    float veto_best = COST_INF;
+    int veto_x = -1, veto_y = -1;
     for (int d = 0; d < 8; d++) {
       int nx = sx + DX8[d];
       int ny = sy + DY8[d];
@@ -2558,6 +2975,14 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       float ng_land = s->g_cost[node_idx(nx, ny, 0)];
       float ng_boat = s->g_cost[node_idx(nx, ny, 1)];
       float ng = (ng_boat < ng_land) ? ng_boat : ng_land;
+      /* On foot the tile has to be one a boatless tank may actually enter:
+       * not deep sea, and not a deep-sea diagonal corner cut. */
+      if (foot_rule && !foot_step_ok(pf, sx, sy, nx, ny)) {
+        float old_eff = ng + (obs_contains(obstacles, n_obstacles, nx, ny)
+                              ? penalty : 0.0f);
+        if (old_eff < veto_best) { veto_best = old_eff; veto_x = nx; veto_y = ny; }
+        continue;
+      }
       /* Live-obstacle veer (same as the on-path case): treat occupied tiles as
        * far more expensive so the drifted tank routes around them too. */
       float ng_eff = ng + (obs_contains(obstacles, n_obstacles, nx, ny) ? penalty : 0.0f);
@@ -2572,6 +2997,11 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
         best_nx = nx;
         best_ny = ny;
       }
+    }
+    /* Only a veto that actually changed the answer is worth reporting: if the
+     * winner would have won anyway, the rule did nothing here. */
+    if (veto_x >= 0 && veto_best < best_g - 1e-3f) {
+      note_sea_veto(pf, sx, sy, veto_x, veto_y, best_nx, best_ny);
     }
     if (best_nx >= 0) {
       if (out_next_x) *out_next_x = best_nx;
@@ -3275,16 +3705,29 @@ void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my) {
   pf->lgm_block[my * MAP_SIZE + mx] = 1;
 }
 
-int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
-                                   WORLD sx, WORLD sy, WORLD dx, WORLD dy,
-                                   BYTE blessX, BYTE blessY,
-                                   int maxTicks, int stuckTicks) {
+/* The one LGM walk simulation. Everything below it is a wrapper.
+ *
+ * `pathX`/`pathY`, when non-NULL, receive the man's WORLD position at the END
+ * of each simulated tick — pathX[0] is where he stands after tick 1 — up to
+ * pathMax entries, and *pathN is how many were written. The walk itself is
+ * untouched by this: the same loop, the same aborts, the same return value, so
+ * a caller that asks for the path gets the positions behind the SAME number
+ * lgm_trip charges its cost on. A walk that ends early (unreachable, stuck,
+ * budget) still leaves *pathN steps of real path behind, which is what the
+ * shell gate wants — it only ever looks at the first ~63 of them. */
+static int lgmTravelTicksCore(BrainPathfinder *pf,
+                              WORLD sx, WORLD sy, WORLD dx, WORLD dy,
+                              BYTE blessX, BYTE blessY,
+                              int maxTicks, int stuckTicks,
+                              WORLD *pathX, WORLD *pathY,
+                              int pathMax, int *pathN) {
   WORLD x, y;
   BYTE localBlessX, localBlessY;
   BYTE bmx, bmy;
   int tick, sameCount;
   BYTE lastBmx, lastBmy;
 
+  if (pathN) *pathN = 0;
   if (!pf || !pf->map) return -1;
 
   x = sx;
@@ -3351,6 +3794,16 @@ int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
       }
     }
 
+    /* Record the man's position at the END of this tick, for callers that
+     * need WHERE he is and not just how long he takes. Written before the
+     * stuck/arrival exits below so a walk that ends here still hands back the
+     * steps it really made. */
+    if (pathX && pathY && pathN && *pathN < pathMax) {
+      pathX[*pathN] = x;
+      pathY[*pathN] = y;
+      (*pathN)++;
+    }
+
     /* Stuck detection */
     bmx = (BYTE)(x >> TANK_SHIFT_MAPSIZE);
     bmy = (BYTE)(y >> TANK_SHIFT_MAPSIZE);
@@ -3377,6 +3830,14 @@ int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
   return -1;
 }
 
+int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
+                                   WORLD sx, WORLD sy, WORLD dx, WORLD dy,
+                                   BYTE blessX, BYTE blessY,
+                                   int maxTicks, int stuckTicks) {
+  return lgmTravelTicksCore(pf, sx, sy, dx, dy, blessX, blessY,
+                            maxTicks, stuckTicks, NULL, NULL, 0, NULL);
+}
+
 int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
                                       BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
                                       BYTE blessX, BYTE blessY,
@@ -3387,6 +3848,21 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
   WORLD dy = ((WORLD)dmy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
   return brainPathfinderLgmTravelTicks(pf, sx, sy, dx, dy,
                                         blessX, blessY, maxTicks, stuckTicks);
+}
+
+int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
+                                   BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
+                                   BYTE blessX, BYTE blessY,
+                                   int maxTicks, int stuckTicks,
+                                   WORLD *pathX, WORLD *pathY, int pathMax) {
+  WORLD sx = ((WORLD)smx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  WORLD sy = ((WORLD)smy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  WORLD dx = ((WORLD)dmx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  WORLD dy = ((WORLD)dmy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  int n = 0;
+  lgmTravelTicksCore(pf, sx, sy, dx, dy, blessX, blessY,
+                     maxTicks, stuckTicks, pathX, pathY, pathMax, &n);
+  return n;
 }
 
 /* ------------------------------------------------------------------ */

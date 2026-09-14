@@ -49,6 +49,7 @@
 #include "../../common/wb_log.h"
 #include "../../common/prefs.h"
 #include "bolo_rand.h"
+#include "brain_list.h"   /* BrainModes, brainListLoadModesForPath — bot modes */
 #include "client_frontend_connect.h"
 #include "client_sim.h"
 #include "control_event.h"
@@ -60,6 +61,7 @@
 #include "../brainsHandler.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
+#include "../../scenario/scenario_host.h"
 #include "../../server/threads.h"
 #include "../input.h"
 #include "../lang.h"
@@ -179,9 +181,9 @@ extern void sdl3MessageHandler(const char *message, const char *title);
 /* Find the brain script — try several paths */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/GoalHunter_1.6/init.lua",
-        "brains/GoalHunter_1.6/init.lua",
-        "data/Brains/GoalHunter_1.6/init.lua",
+        "Brains/GoalHunter_1.7/init.lua",
+        "brains/GoalHunter_1.7/init.lua",
+        "data/Brains/GoalHunter_1.7/init.lua",
     };
     for (int i = 0; i < 3; i++) {
         FILE *f = fopen(candidates[i], "r");
@@ -194,16 +196,17 @@ static bool findBrainPath(char *out, size_t outLen) {
     return false;
 }
 
-/* Single-player default-bot skill guess. Returns the brain dir name for an
- * auto-seeded SP bot: the harder "GoalHunter_1.6" only when the player is
- * signed in to WinBolo.net with more than 5 games on record; otherwise the
- * gentler "GoalHunter_1.0" (the default for everyone not signed in). */
-static const char *gameFrontGuessSpBotBrain(void) {
-    /* Gospel: if the player has ever explicitly picked a brain from the lobby
-     * wrench dropdown, honour that from then on, ignoring the skill guess. */
-    static char chosen[64];
-    gameFrontGetChosenBotBrain(chosen, sizeof(chosen));
-    if (chosen[0] != '\0') return chosen;
+/* Single-player default-bot skill guess. Returns the DIFFICULTY an
+ * auto-seeded SP bot gets: Hard only when the player is signed in to
+ * WinBolo.net with more than 5 games on record, otherwise Easy (what
+ * everyone not signed in gets). One brain plays every difficulty, so this
+ * used to pick between brain directories (1.7 vs 1.0) and now picks the
+ * per-bot difficulty instead — the same rule, a different knob. */
+uint8_t gameFrontSpBotDifficulty(void) {
+    /* Gospel: if the player has ever explicitly picked a difficulty from the
+     * lobby wrench dropdown, honour that from then on, skill guess ignored. */
+    uint8_t chosen;
+    if (gameFrontGetChosenBotDifficulty(&chosen)) return chosen;
 
     WbnStats st;
     gameFrontGetWinbolonetStats(&st);
@@ -213,9 +216,9 @@ static const char *gameFrontGuessSpBotBrain(void) {
         for (int i = 0; i < 3; i++) {
             if (modes[i]->numGames > 0) games += modes[i]->numGames;
         }
-        if (games > 5) return "GoalHunter_1.6";
+        if (games > 5) return BOT_DIFFICULTY_HARD;
     }
-    return "GoalHunter_1.0";
+    return BOT_DIFFICULTY_EASY;
 }
 
 /* -------------------------------------------------------
@@ -420,6 +423,10 @@ static bool s_joinAttemptFailed = FALSE;
 
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
+/* The scenario attached to spServerSim, if the map it was built from has
+ * a script beside it. NULL whenever there is no host to speak of, which
+ * scenarioHostDetach treats as nothing to do. */
+static ScenarioHost *spScenarioHost = NULL;
 static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
 
 static bool spServerSimActive = FALSE;
@@ -1648,7 +1655,7 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. */
-        if (!isTutorial && gameFrontBotSetupData.count == 0) {
+                if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
@@ -1675,6 +1682,26 @@ bool gameFrontSetDlgState(openingStates newState) {
           /* Embedded server: silence its console messages (Thread Manager
            * Startup, Game started!, …) — the client has no server console. */
           serverSimSetQuiet(spServerSim, true);
+          /* A scenario script beside the map this game was built from. A
+             random or built-in map has no file on disk, so it carries none.
+             No script says nothing; one loaded, one that cannot be used and
+             one refused because scripts are off each say so. The switch is
+             the library's, so this path has no test of its own. */
+          if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
+            char scenarioErr[512];
+            spScenarioHost = scenarioHostAttach(spServerSim, fileName,
+                                                scenarioErr,
+                                                sizeof(scenarioErr));
+            if (spScenarioHost != NULL) {
+              WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
+                          scenarioHostName(spScenarioHost),
+                          scenarioHostScriptPath(spScenarioHost));
+            } else if (scenarioErr[0] != '\0') {
+              WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
+            }
+          }
+          /* And from here on the scenario follows the committed map. */
+          scenarioHostFollowMap(spServerSim, &spScenarioHost);
           /* Tutorial: mark the freshly-created sim authoritative-tutorial and
              reset the respawn start to 0 (sea) BEFORE the host player is added
              in gameFrontStartServerSim below.  startsGetStart only takes the
@@ -1742,6 +1769,8 @@ bool gameFrontSetDlgState(openingStates newState) {
             frontEndSetActiveClientSim(NULL);
             clientSimDestroy(humanSim);
             humanSim = NULL;
+            scenarioHostDetach(spScenarioHost);
+            spScenarioHost = NULL;
             serverSimDestroy(spServerSim);
             spServerSim = NULL;
             spServerSimActive = FALSE;
@@ -1856,29 +1885,34 @@ bool gameFrontSetDlgState(openingStates newState) {
              * sim via cfg above; here we only need brainPath as a
              * per-bot default for the serverSimCreateBot loop. */
             bool haveBrain = (spBrainPath[0] != '\0');
-            if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+                        if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
               for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
                 snprintf(botName, sizeof(botName), "Bot %d", slot);
-                /* Use per-bot brain path if set; otherwise pick the default by
-                 * a single-player skill guess (WinBolo.net signed-in with more
-                 * than 5 games → the harder 1.5, else the gentler 1.0). */
+                /* One brain now, so the brain is just spBrainPath (the per-bot
+                 * override is still honoured if some caller ever sets one).
+                 * What the single-player skill guess picks is the bot's
+                 * DIFFICULTY, written into the slot's lobby config before the
+                 * bot is created so the brain is handed the difficulty= token
+                 * on its very first load. */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
-                if (botBrain[0] == '\0') {
-                  botBrain = spBrainPath;  /* fallback if the guess isn't in the catalogue */
-                  const char *guess = gameFrontGuessSpBotBrain();
-                  const BrainList *gbl = serverSimGetBrainList(spServerSim);
-                  if (gbl) {
-                    for (int k = 0; k < gbl->count; k++) {
-                      if (SDL_strcasecmp(gbl->entries[k].name, guess) == 0) {
-                        const char *gp = serverSimGetBrainPathForIdx(spServerSim, (uint8_t)k);
-                        if (gp) botBrain = gp;
-                        break;
-                      }
-                    }
-                  }
-                }
+                if (botBrain[0] == '\0') botBrain = spBrainPath;
+                uint8_t spMode  = gameFrontSpBotMode(botBrain);
+                uint8_t spLevel = gameFrontSpBotLevel(botBrain, spMode);
+                /* Resolved through the one rule a new bot follows, so the
+                 * single-player path and the lobby cannot disagree. These bots
+                 * are appearing for the first time, so the player's remembered
+                 * manual pick is NOT applied — that pick is for the Add Bot
+                 * button afterwards. */
+                serverSimResolveNewBotConfig(spServerSim,
+                                             (int)gameFrontBotSetupData.bots[bi].teamNumber,
+                                             botBrain, false, &spMode, &spLevel);
+                serverSimSetBotConfig(spServerSim, slot, spMode, spLevel,
+                                      0 /* personality: normal */, NULL);
+                /* No team and no init table here: single-player bots are
+                 * placed by the alliance pass below, and their config comes
+                 * from the slot config set just above. */
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy,
                                    spGameType, hiddenMines, 0, NULL);
                 /* serverSimCreateBot loads the brain from the path but leaves
@@ -1886,7 +1920,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                  * lobby Bot Code dropdown renders "(none)". Resolve the index
                  * from the path (case-insensitive exact match, else the
                  * version-suffixed dir name as a substring) so the dropdown
-                 * shows the actual brain — GoalHunter_1.6 by default. */
+                 * shows the actual brain — GoalHunter_1.7 by default. */
                 const BrainList *spbl = serverSimGetBrainList(spServerSim);
                 if (spbl) {
                   for (int k = 0; k < spbl->count; k++) {
@@ -2168,7 +2202,9 @@ static int viewPolicyFromPrefWord(const char *word, int fallback) {
 /* The overview window in the same word form, one of the two
  * OverviewWindow names rather than its byte. */
 static const char *overviewWindowPrefWord(int window) {
-  return (window == overviewWindowClassic) ? "Classic" : "Expanded";
+  return (window == overviewWindowNone)    ? "None"
+       : (window == overviewWindowClassic) ? "Classic"
+                                           : "Expanded";
 }
 
 /* Reads back what overviewWindowPrefWord wrote. Any other word returns
@@ -2176,6 +2212,7 @@ static const char *overviewWindowPrefWord(int window) {
 static int overviewWindowFromPrefWord(const char *word, int fallback) {
   if (strcmp(word, "Expanded") == 0) return overviewWindowExpanded;
   if (strcmp(word, "Classic")  == 0) return overviewWindowClassic;
+  if (strcmp(word, "None")     == 0) return overviewWindowNone;
   return fallback;
 }
 
@@ -2241,6 +2278,122 @@ void gameFrontSetLineOfSight(int mode) {
   bool on = (mode != lineOfSightOff);
   gameFrontLineOfSight = mode;
   prefsSetString("GAME OPTIONS", "Line Of Sight", TRUEFALSE_TO_STR(on));
+}
+
+/* ── Visibility preset and the remembered custom set ──────────────
+ * The keys above record the values a hosted game starts with, one per
+ * setting. These two record what the host chose rather than what it came
+ * out as: which named preset is in force, and — when none of them is —
+ * the whole hand-made set, kept under its own keys so picking a preset
+ * and picking Custom back again lands where the host left it.
+ *
+ * The custom set is only written while the host is actually on Custom, so
+ * it survives a trip through the presets and through a restart. */
+int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
+VisibilitySettings gameFrontVisibilityCustom;
+bool               gameFrontVisibilityCustomSaved = FALSE;
+
+/* The seven [GAME OPTIONS] visibility globals as one set, and back. Every
+ * caller below works in the set rather than in the globals, so a setting
+ * added to the struct is added in one place here. */
+void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
+  if (out == NULL) return;
+  memset(out, 0, sizeof(*out));
+  out->policy[viewCategoryPill]    = (uint8_t)gameFrontViewPillPolicy;
+  out->policy[viewCategoryBase]    = (uint8_t)gameFrontViewBasePolicy;
+  out->policy[viewCategoryAlly]    = (uint8_t)gameFrontViewAllyPolicy;
+  out->decaySecs[viewCategoryPill] = (uint16_t)gameFrontViewPillDecaySecs;
+  out->decaySecs[viewCategoryBase] = (uint16_t)gameFrontViewBaseDecaySecs;
+  out->decaySecs[viewCategoryAlly] = (uint16_t)gameFrontViewAllyDecaySecs;
+  out->classicMode                 = gameFrontClassicMode;
+  out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
+  out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
+  out->alliesInTrees               = gameFrontAlliesInTrees;
+}
+
+/* Writes a whole set through the per-setting setters above, so the keys
+ * that record the current values are kept up to date by the same code
+ * that has always written them. */
+static void gameFrontPutVisibilitySettings(const VisibilitySettings *v) {
+  if (v == NULL) return;
+  gameFrontSetViewPillPolicy((int)v->policy[viewCategoryPill]);
+  gameFrontSetViewBasePolicy((int)v->policy[viewCategoryBase]);
+  gameFrontSetViewAllyPolicy((int)v->policy[viewCategoryAlly]);
+  gameFrontSetViewPillDecaySecs((int)v->decaySecs[viewCategoryPill]);
+  gameFrontSetViewBaseDecaySecs((int)v->decaySecs[viewCategoryBase]);
+  gameFrontSetViewAllyDecaySecs((int)v->decaySecs[viewCategoryAlly]);
+  gameFrontSetAlliesInTrees(v->alliesInTrees);
+  gameFrontSetOverviewWindow((int)v->overviewWindow);
+  gameFrontSetLineOfSight((int)v->lineOfSight);
+  gameFrontSetClassicMode(v->classicMode);
+}
+
+void gameFrontSetVisibilityPreset(int preset) {
+  gameFrontVisibilityPreset = preset;
+  prefsSetString("GAME OPTIONS", "Visibility Preset",
+                 visibilityPresetPrefWord((VisibilityPreset)preset));
+}
+
+void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
+  char buf[16];
+
+  if (v == NULL) return;
+  gameFrontVisibilityCustom      = *v;
+  gameFrontVisibilityCustomSaved = TRUE;
+  prefsSetString("GAME OPTIONS", "Custom Pill View",
+                 viewPolicyPrefWord((int)v->policy[viewCategoryPill]));
+  prefsSetString("GAME OPTIONS", "Custom Base View",
+                 viewPolicyPrefWord((int)v->policy[viewCategoryBase]));
+  prefsSetString("GAME OPTIONS", "Custom Ally View",
+                 viewPolicyPrefWord((int)v->policy[viewCategoryAlly]));
+  intToStr(viewDecayClamp((int)v->decaySecs[viewCategoryPill]), buf,
+           sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Custom Pill View Decay", buf);
+  intToStr(viewDecayClamp((int)v->decaySecs[viewCategoryBase]), buf,
+           sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Custom Base View Decay", buf);
+  intToStr(viewDecayClamp((int)v->decaySecs[viewCategoryAlly]), buf,
+           sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Custom Ally View Decay", buf);
+  prefsSetString("GAME OPTIONS", "Custom Classic Mode",
+                 TRUEFALSE_TO_STR(v->classicMode));
+  prefsSetString("GAME OPTIONS", "Custom Allies In Trees",
+                 TRUEFALSE_TO_STR(v->alliesInTrees));
+  prefsSetString("GAME OPTIONS", "Custom Overview Window",
+                 overviewWindowPrefWord((int)v->overviewWindow));
+  prefsSetString("GAME OPTIONS", "Custom Line Of Sight",
+                 TRUEFALSE_TO_STR(v->lineOfSight != (uint8_t)lineOfSightOff));
+}
+
+/* Remembers a visibility set as the host's choice. Three things move
+ * together, which is why they are one call rather than three: the seven
+ * per-setting keys, so a game hosted again in this same session starts
+ * there without a restart; which named set it is, so a preset that is
+ * later given a different value follows the choice rather than the
+ * values; and, when it is none of them, the set itself.
+ *
+ * Called from every place a host changes visibility — the hosting
+ * settings dialog, which edits these globals, and the lobby, which reads
+ * the live settings off its own client. Each write only touches the INI
+ * when the value moves, so calling it per frame costs a compare. */
+void gameFrontRememberVisibility(const VisibilitySettings *v) {
+  VisibilitySettings cur;
+  VisibilityPreset   p;
+
+  if (v == NULL) return;
+  gameFrontGetVisibilitySettings(&cur);
+  if (!visibilitySettingsEqual(&cur, v)) {
+    gameFrontPutVisibilitySettings(v);
+  }
+  p = visibilityPresetMatch(v);
+  if ((int)p != gameFrontVisibilityPreset) {
+    gameFrontSetVisibilityPreset((int)p);
+  }
+  if (p == visibilityPresetCustom &&
+      (!gameFrontVisibilityCustomSaved ||
+       !visibilitySettingsEqual(v, &gameFrontVisibilityCustom))) {
+    gameFrontSetVisibilityCustom(v);
+  }
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -2672,6 +2825,8 @@ void gameFrontShutdownServer(void) {
    * waiting on the mutex will see spServerSim == NULL when it runs and
    * bail without dereferencing a freed pointer. */
   threadsWaitForMutex();
+  scenarioHostDetach(spScenarioHost);
+  spScenarioHost = NULL;
   toFree = spServerSim;
   spServerSim = NULL;
   spServerSimActive = FALSE;
@@ -2732,17 +2887,134 @@ void gameFrontSetOnboardingComplete(void) {
   prefsSetString("SETTINGS", "Onboarding Complete", "Yes");
 }
 
-/* The bot brain the player last explicitly chose from the lobby wrench
- * dropdown. This is the player's own difficulty preference and overrides the
- * automatic single-player skill guess from then on. Empty until first chosen
- * (the default on a fresh install). */
-void gameFrontSetChosenBotBrain(const char *name) {
-  prefsSetString("BOT", "Chosen Brain", name ? name : "");
+/* The bot difficulty the player last explicitly chose from the lobby wrench
+ * dropdown. This is the player's own preference and overrides the automatic
+ * single-player skill guess from then on. Unset until first chosen (the
+ * default on a fresh install), which is what the false return means.
+ *
+ * Stored as the word, not the number, so the prefs file stays readable and a
+ * future difficulty doesn't have to reuse an index. */
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty) {
+  gameFrontSetChosenBotModeAndLevel("default", botDifficultyName(difficulty));
 }
 
-void gameFrontGetChosenBotBrain(char *out, size_t outLen) {
-  if (!out || outLen == 0) return;
-  prefsGetString("BOT", "Chosen Brain", "", out, (int)outLen);
+/* The mode + level KEYS the player last picked in the lobby gear popup.
+ * Both are the brain's own manifest keys (brains/<brain>/modes.txt), so
+ * "Chosen Difficulty" keeps holding easy/medium/hard for the default mode
+ * — the same words it held before modes existed, which is what makes the
+ * old preference migrate by simply still being read. */
+void gameFrontSetChosenBotModeAndLevel(const char *modeKey,
+                                       const char *levelKey) {
+  prefsSetString("BOT", "Chosen Mode", (modeKey && modeKey[0]) ? modeKey : "default");
+  if (levelKey && levelKey[0]) {
+    prefsSetString("BOT", "Chosen Difficulty", levelKey);
+  }
+}
+
+bool gameFrontGetChosenBotModeKey(char *out, size_t outSz) {
+  char buff[BRAIN_MODE_KEY_LEN];
+  if (!out || outSz == 0) return false;
+  out[0] = '\0';
+  prefsGetString("BOT", "Chosen Mode", "", buff, (int)sizeof(buff));
+  if (buff[0] == '\0') return false;
+  SDL_strlcpy(out, buff, outSz);
+  return true;
+}
+
+bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz) {
+  char buff[BRAIN_MODE_KEY_LEN];
+  if (!out || outSz == 0) return false;
+  out[0] = '\0';
+  prefsGetString("BOT", "Chosen Difficulty", "", buff, (int)sizeof(buff));
+  if (buff[0] == '\0') return false;
+  SDL_strlcpy(out, buff, outSz);
+  return true;
+}
+
+/* Which of a brain's modes a single-player bot is created in: the player's
+ * chosen mode when the brain still declares it, else mode 0 (the default
+ * mode every ordinary game uses). */
+uint8_t gameFrontSpBotMode(const char *brainPath) {
+  char key[BRAIN_MODE_KEY_LEN];
+  BrainModes modes;
+  if (!gameFrontGetChosenBotModeKey(key, sizeof(key))) return 0;
+  brainListLoadModesForPath(brainPath, &modes);
+  int idx = brainModesFindMode(&modes, key);
+  return (idx > 0) ? (uint8_t)idx : 0;
+}
+
+/* The difficulty index that goes with gameFrontSpBotMode: the player's
+ * chosen level key inside that mode, else the mode's own default level.
+ * For mode 0 of a manifest-less brain this is exactly the old
+ * gameFrontSpBotDifficulty answer. */
+uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
+  char key[BRAIN_MODE_KEY_LEN];
+  BrainModes modes;
+  brainListLoadModesForPath(brainPath, &modes);
+  if (mode >= (uint8_t)modes.modeCount) mode = 0;
+  const BrainMode *m = &modes.modes[mode];
+  if (mode == 0) {
+    /* Default mode keeps the skill guess, which is the whole point of it. */
+    uint8_t d = gameFrontSpBotDifficulty();
+    return (d < (uint8_t)m->levelCount) ? d : (uint8_t)m->defaultLevel;
+  }
+  if (gameFrontGetChosenBotLevelKey(key, sizeof(key))) {
+    int lvl = brainModeFindLevel(m, key);
+    if (lvl >= 0) return (uint8_t)lvl;
+  }
+  return (uint8_t)m->defaultLevel;
+}
+
+/* Per-bot-name tag colour, kept under "BOT" / "Tag Color <name>" as
+ * "#RRGGBB". Written once when the lobby first derives a colour for a bot
+ * that declares none in its about.txt, read every time after, so the same
+ * bot wears the same colour on every launch. */
+static void gameFrontBotTagColorKey(const char *botName, char *key, size_t keySz) {
+  SDL_snprintf(key, keySz, "Tag Color %s", botName ? botName : "");
+}
+
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb) {
+  char key[96], buff[16];
+  if (!botName || !botName[0] || !rgb) return false;
+  gameFrontBotTagColorKey(botName, key, sizeof(key));
+  prefsGetString("BOT", key, "", buff, (int)sizeof(buff));
+  const char *v = buff;
+  if (*v == '#') v++;
+  if (strlen(v) != 6) return false;
+  char *end = NULL;
+  unsigned long val = strtoul(v, &end, 16);
+  if (!end || *end != '\0') return false;
+  *rgb = (uint32_t)val & 0xFFFFFFu;
+  return true;
+}
+
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
+  char key[96], val[16];
+  if (!botName || !botName[0]) return;
+  gameFrontBotTagColorKey(botName, key, sizeof(key));
+  SDL_snprintf(val, sizeof(val), "#%06X", (unsigned)(rgb & 0xFFFFFFu));
+  prefsSetString("BOT", key, val);
+}
+
+bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
+  char buff[32];
+  if (!out) return false;
+  /* Only the DEFAULT mode's level keys are easy/medium/hard, so a player
+   * whose last pick was in another mode has no default-mode preference to
+   * honour here — the skill guess takes over instead. */
+  prefsGetString("BOT", "Chosen Mode", "default", buff, (int)sizeof(buff));
+  if (buff[0] != '\0' && SDL_strcasecmp(buff, "default") != 0) return false;
+  prefsGetString("BOT", "Chosen Difficulty", "", buff, (int)sizeof(buff));
+  if (buff[0] != '\0' && botDifficultyFromName(buff, out)) return true;
+  /* Migration from the pre-difficulty pref, which named a brain directory:
+   * the one gentle brain was GoalHunter_1.0, everything else was a hard
+   * one. Read-only — the new key is written the next time the player picks
+   * a difficulty, and until then the old choice keeps being honoured. */
+  prefsGetString("BOT", "Chosen Brain", "", buff, (int)sizeof(buff));
+  if (buff[0] == '\0') return false;
+  *out = (SDL_strcasecmp(buff, "GoalHunter_1.0") == 0) ? BOT_DIFFICULTY_EASY
+                                                       : BOT_DIFFICULTY_HARD;
+  return true;
 }
 
 
@@ -2805,6 +3077,22 @@ bool gameFrontSetupServer(void) {
   }
   /* Embedded listen server: silence its console messages — no server console. */
   serverSimSetQuiet(spServerSim, true);
+
+  /* A scenario script beside the map, as on the single-player path. */
+  if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
+    char scenarioErr[512];
+    spScenarioHost = scenarioHostAttach(spServerSim, fileName,
+                                        scenarioErr, sizeof(scenarioErr));
+    if (spScenarioHost != NULL) {
+      WB_LOG_INFO(WB_LOG_CAT_GUI, "Scenario loaded: %s (from %s)",
+                  scenarioHostName(spScenarioHost),
+                  scenarioHostScriptPath(spScenarioHost));
+    } else if (scenarioErr[0] != '\0') {
+      WB_LOG_WARN(WB_LOG_CAT_GUI, "%s", scenarioErr);
+    }
+  }
+  /* And from here on the scenario follows the committed map. */
+  scenarioHostFollowMap(spServerSim, &spScenarioHost);
 
   /* Visibility rules from the [GAME OPTIONS] prefs, pushed onto the sim
    * after create rather than through ServerInstanceConfig. */
@@ -2869,6 +3157,8 @@ bool gameFrontSetupServer(void) {
       WB_LOG_WARN(WB_LOG_CAT_NET,
                   "cannot create upload directory '%s' — refusing to host",
                   gameFrontHostingUploadDir);
+      scenarioHostDetach(spScenarioHost);
+      spScenarioHost = NULL;
       serverSimDestroy(spServerSim);
       spServerSim = NULL;
       return FALSE;
@@ -2886,6 +3176,8 @@ bool gameFrontSetupServer(void) {
       WB_LOG_WARN(WB_LOG_CAT_NET,
                   "cannot create log directory '%s' — refusing to host",
                   gameFrontHostingLogDir);
+      scenarioHostDetach(spScenarioHost);
+      spScenarioHost = NULL;
       serverSimDestroy(spServerSim);
       spServerSim = NULL;
       return FALSE;
@@ -2944,6 +3236,8 @@ bool gameFrontSetupServer(void) {
   }
 
   if (!gameFrontStartServerSim(spServerSim, &cfg)) {
+    scenarioHostDetach(spScenarioHost);
+    spScenarioHost = NULL;
     serverSimDestroy(spServerSim);
     spServerSim = NULL;
     return FALSE;
@@ -3504,6 +3798,102 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontLineOfSight = YESNO_TO_TRUEFALSE(buff[0])
                                ? lineOfSightBuildingsAndTrees
                                : lineOfSightOff;
+
+    /* The remembered custom set, read whether or not it is the one in
+     * force: the lobby needs it to put "Custom: ..." in the dropdown and
+     * to go back to it when the host picks that row. An absent "Custom
+     * Pill View" is how an INI that predates the presets — or one whose
+     * owner has never left the presets — says there is no custom set;
+     * every other Custom key then defaults to the value next to it, so a
+     * half-written section still reads as something sane. */
+    gameFrontGetVisibilitySettings(&gameFrontVisibilityCustom);
+    prefsGetString("GAME OPTIONS", "Custom Pill View", "", buff, FILENAME_MAX);
+    gameFrontVisibilityCustomSaved = (buff[0] != '\0');
+    if (gameFrontVisibilityCustomSaved) {
+      static const struct {
+        const char  *policyKey;
+        const char  *decayKey;
+        ViewCategory cat;
+      } customPrefs[] = {
+        { "Custom Pill View", "Custom Pill View Decay", viewCategoryPill },
+        { "Custom Base View", "Custom Base View Decay", viewCategoryBase },
+        { "Custom Ally View", "Custom Ally View Decay", viewCategoryAlly },
+      };
+      for (int ci = 0; ci < (int)(sizeof(customPrefs) / sizeof(customPrefs[0]));
+           ci++) {
+        ViewCategory cat = customPrefs[ci].cat;
+        prefsGetString("GAME OPTIONS", customPrefs[ci].policyKey,
+                       viewPolicyPrefWord(
+                           (int)gameFrontVisibilityCustom.policy[cat]),
+                       buff, FILENAME_MAX);
+        gameFrontVisibilityCustom.policy[cat] = (uint8_t)viewPolicyFromPrefWord(
+            buff, (int)gameFrontVisibilityCustom.policy[cat]);
+        intToStr((int)gameFrontVisibilityCustom.decaySecs[cat], def,
+                 sizeof(def));
+        prefsGetString("GAME OPTIONS", customPrefs[ci].decayKey, def, buff,
+                       FILENAME_MAX);
+        gameFrontVisibilityCustom.decaySecs[cat] =
+            (uint16_t)viewDecayClamp(atoi(buff));
+      }
+      prefsGetString("GAME OPTIONS", "Custom Classic Mode",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.classicMode),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.classicMode = YESNO_TO_TRUEFALSE(buff[0]);
+      prefsGetString("GAME OPTIONS", "Custom Allies In Trees",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.alliesInTrees),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.alliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
+      prefsGetString("GAME OPTIONS", "Custom Overview Window",
+                     overviewWindowPrefWord(
+                         (int)gameFrontVisibilityCustom.overviewWindow),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.overviewWindow =
+          (uint8_t)overviewWindowFromPrefWord(
+              buff, (int)gameFrontVisibilityCustom.overviewWindow);
+      prefsGetString("GAME OPTIONS", "Custom Line Of Sight",
+                     TRUEFALSE_TO_STR(gameFrontVisibilityCustom.lineOfSight !=
+                                      (uint8_t)lineOfSightOff),
+                     buff, FILENAME_MAX);
+      gameFrontVisibilityCustom.lineOfSight =
+          YESNO_TO_TRUEFALSE(buff[0]) ? (uint8_t)lineOfSightBuildingsAndTrees
+                                      : (uint8_t)lineOfSightOff;
+    }
+
+    /* What the host last chose, which is what a game hosted from here
+     * starts on. The seven keys above have already put the last values on
+     * the globals; this writes the chosen set over them, so a preset that
+     * is later given a different value follows the host's choice rather
+     * than the values it happened to have when they made it. An INI with
+     * no "Visibility Preset" key — every INI that predates this — reads as
+     * whichever preset the seven values already add up to, so nothing
+     * moves on the first run. */
+    {
+      VisibilitySettings cur;
+      VisibilityPreset   fallback;
+      VisibilityPreset   chosen;
+
+      gameFrontGetVisibilitySettings(&cur);
+      fallback = visibilityPresetMatch(&cur);
+      prefsGetString("GAME OPTIONS", "Visibility Preset",
+                     visibilityPresetPrefWord(fallback), buff, FILENAME_MAX);
+      chosen = visibilityPresetFromPrefWord(buff, fallback);
+      gameFrontVisibilityPreset = (int)chosen;
+      if (chosen == visibilityPresetCustom) {
+        if (gameFrontVisibilityCustomSaved) {
+          gameFrontPutVisibilitySettings(&gameFrontVisibilityCustom);
+        }
+      } else {
+        VisibilitySettings want;
+        if (visibilityPresetSettings(chosen, &want)) {
+          /* A preset says nothing about the decay seconds, so the host's
+           * own stay where the keys above left them. */
+          want.decaySecs[viewCategoryPill] = cur.decaySecs[viewCategoryPill];
+          want.decaySecs[viewCategoryBase] = cur.decaySecs[viewCategoryBase];
+          want.decaySecs[viewCategoryAlly] = cur.decaySecs[viewCategoryAlly];
+          gameFrontPutVisibilitySettings(&want);
+        }
+      }
+    }
   }
 
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);

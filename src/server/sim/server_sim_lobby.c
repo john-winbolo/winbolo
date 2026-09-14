@@ -34,6 +34,7 @@
 #include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
 #include "wire_limits.h"            /* the LST_* selectors carried in PACKET_LOBBY_SET_SETTING */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolCount — the per-team naming-pool uniqueness pass */
+#include "brain_list.h"             /* BrainModes — the remembered mode/level keys */
 #include "start_sides.h"            /* START_SIDE_ANY / START_SIDE_COUNT — the team start-side range */
 
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
@@ -128,17 +129,171 @@ const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) 
     return sim->brainPaths[brainIdx];
 }
 
+/* The brain a lobby slot is running, or NULL when it has none (a human, or
+ * a bot wired up without one). Same path botManagerOnGameStart reloads from,
+ * so a manifest read through it describes the brain that will actually run. */
+static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
+    const char *path;
+    if (sim == NULL || slot >= MAX_TANKS) return NULL;
+    path = sim->botMgr.bots[slot].brainPath;
+    return (path[0] != '\0') ? path : NULL;
+}
+
+/* ── A newly added bot's brain mode and difficulty ─────────────────────
+ *
+ * Andrew's rule, for Survival: "Hard mode always when the bots first appear
+ * on survival, then if they're removed and one added with Medium or Easy
+ * THEN a Add Bot defaults to what the user has manually added."
+ *
+ * Generalised, every bot a lobby gains resolves its mode and difficulty
+ * (serverSimResolveNewBotConfig) in this order:
+ *
+ *   1. the caller's base — the lobby default, or single player's own
+ *      chosen level;
+ *   2. what the map requires for the bot's side — the scenario's
+ *      bot_mode(game, team) hook; on Survival the horde is survival mode at
+ *      Hard;
+ *   3. what the host last picked BY HAND, when the caller honours it — only
+ *      the difficulty when step 2 fixed the mode (a horde bot stays in
+ *      survival mode, at the Medium the host chose), mode and difficulty
+ *      both otherwise.
+ *
+ * Bots that FIRST APPEAR — the scenario seed, single player's setup bots —
+ * do not honour step 3, so they always come up at the map's default. The
+ * Add Bot button does honour it.
+ *
+ * The manual pick is recorded only where a person made one
+ * (serverSimRememberManualBotPick). It used to be recorded on EVERY config
+ * write, so an automatic one — single player's add path writing its skill
+ * guess — was remembered as though the host had chosen it. */
+
+void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot) {
+    BrainModes modes;
+    const BrainMode *m;
+    const LobbyBotConfig *bc;
+    const char *path = slotBrainPath(sim, slot);
+
+    if (path == NULL) return;
+    if (!brainListLoadModesForPath(path, &modes)) return;
+    bc = &sim->botConfigs[slot];
+    if (bc->mode >= (uint8_t)modes.modeCount) return;
+    m = &modes.modes[bc->mode];
+    if (bc->difficulty >= (uint8_t)m->levelCount) return;
+
+    SDL_strlcpy(sim->lastBotModeKey, m->key, sizeof(sim->lastBotModeKey));
+    SDL_strlcpy(sim->lastBotLevelKey, m->levels[bc->difficulty].key,
+                sizeof(sim->lastBotLevelKey));
+}
+
+bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick,
+                                  uint8_t *ioMode, uint8_t *ioLevel) {
+    BrainModes modes;
+    int mode;
+    int level;
+    bool mapFixedMode = false;
+
+    if (sim == NULL || ioMode == NULL || ioLevel == NULL) return false;
+    if (brainPath == NULL || brainPath[0] == '\0') return false;
+    /* A brain with no manifest reads no mode=/difficulty= token at all
+     * (botManagerStageInitArg), so there is nothing to resolve. */
+    if (!brainListLoadModesForPath(brainPath, &modes)) return false;
+
+    /* 1. The base, clamped into this brain's own lists the same way
+     *    botInitArgAppendModeTokens clamps it. */
+    mode = (int)*ioMode;
+    if (mode >= modes.modeCount) mode = 0;
+    level = (int)*ioLevel;
+    if (level >= modes.modes[mode].levelCount) {
+        level = modes.modes[mode].defaultLevel;
+    }
+
+    /* Step 2 of this rule, "what the map requires for this side", has no
+     * meaning here: that step asks a map script which mode a team runs in, and
+     * this build has no script layer. mapFixedMode therefore stays false, and
+     * the host's pick below is free to set the mode as well as the level. */
+
+    /* 3. What the host last picked by hand. */
+    if (honourManualPick && sim->lastBotLevelKey[0] != '\0') {
+        if (mapFixedMode) {
+            int li = brainModeFindLevel(&modes.modes[mode],
+                                        sim->lastBotLevelKey);
+            if (li >= 0) level = li;
+        } else if (sim->lastBotModeKey[0] != '\0') {
+            int mi = brainModesFindMode(&modes, sim->lastBotModeKey);
+            if (mi >= 0) {
+                int li = brainModeFindLevel(&modes.modes[mi],
+                                            sim->lastBotLevelKey);
+                mode  = mi;
+                level = (li >= 0) ? li : modes.modes[mi].defaultLevel;
+            }
+        }
+    }
+
+    *ioMode  = (uint8_t)mode;
+    *ioLevel = (uint8_t)level;
+    return true;
+}
+
+void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick) {
+    uint8_t mode  = 0;
+    uint8_t level = BOT_DIFFICULTY_HARD;
+
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    /* The lobby default is the base, and it is written even when the brain
+     * ships no manifest: botConfigs[slot] still holds whatever the slot's
+     * PREVIOUS occupant had, and a new defender must not inherit a removed
+     * horde bot's survival mode. */
+    serverSimResolveNewBotConfig(sim, team, brainPath, honourManualPick,
+                                 &mode, &level);
+    sim->botConfigs[slot].mode       = mode;
+    sim->botConfigs[slot].difficulty = level;
+    serverSimQueueBotConfigPublish(sim, slot);
+}
+
+/* How many queued bot-config events one lobby tick sends. Ten seeded bots
+ * show their mode within five ticks, a tenth of a second. */
+#define BOT_CONFIG_PUBLISHES_PER_TICK 2
+
+void serverSimQueueBotConfigPublish(ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    sim->botConfigPublishPending |= (uint16_t)(1u << slot);
+}
+
+void serverSimFlushBotConfigPublishes(ServerSim *sim) {
+    int sent = 0;
+    BYTE s;
+    if (sim == NULL || sim->botConfigPublishPending == 0) return;
+    for (s = 0; s < MAX_TANKS && sent < BOT_CONFIG_PUBLISHES_PER_TICK; s++) {
+        uint16_t bit = (uint16_t)(1u << s);
+        if ((sim->botConfigPublishPending & bit) == 0) continue;
+        sim->botConfigPublishPending &= (uint16_t)~bit;
+        if (!sim->playerConnected[s] || !serverSimIsBot(sim, s)) continue;
+        serverSimPublishLobbyBotConfig(sim, s);
+        sent++;
+    }
+}
+
 void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
-                            uint8_t difficulty, uint8_t personality,
+                            uint8_t mode, uint8_t difficulty,
+                            uint8_t personality,
                             const char *validatedName) {
     if (!sim || slot >= MAX_TANKS) return;
     {
         LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
         if (bc) {
+            bc->mode        = mode;
             bc->difficulty  = difficulty;
             bc->personality = personality;
         }
     }
+    /* The publish just below carries these values, so any queued one for
+     * this slot is now redundant. Deliberately NOT a manual pick: this is
+     * called by automatic paths too — see serverSimRememberManualBotPick. */
+    sim->botConfigPublishPending &= (uint16_t)~(1u << slot);
     if (validatedName != NULL && validatedName[0] != '\0') {
         serverSimRenameBotSlot(sim, slot, validatedName);
     }
@@ -326,7 +481,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             serverSimSetBotAiType(sim, (aiType)value[0]);
             if ((aiType)value[0] == aiNone) {
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                    if (botManagerIsBot(sim, bi)) {
+                    if (serverSimIsBot(sim, bi)) {
                         serverSimRemoveBot(sim, bi);
                     }
                 }
@@ -372,7 +527,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
                 serverSimSetAiPolicy(sim, (uint8_t)aiNone);
                 serverSimSetBotAiType(sim, aiNone);
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                    if (botManagerIsBot(sim, bi)) {
+                    if (serverSimIsBot(sim, bi)) {
                         serverSimRemoveBot(sim, bi);
                     }
                 }

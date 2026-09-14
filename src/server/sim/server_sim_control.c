@@ -37,6 +37,7 @@
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetIsRunning — the lobby-settings WBN availability flag */
 #include "../../winbolonet/winbolonet_server.h"   /* winbolonetServerRequestBalance — the WBN team-balance request */
 #include "../../common/mp_diag_log.h"
+#include "../../common/wb_log.h"   /* WB_LOG_INFO — the newswire-mute flip trace */
 
 /* A ping is a team signal. The sender always sees its own (its client draws
  * nothing until the server echoes it back, so this is the only copy it gets);
@@ -304,6 +305,7 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         slot.ready      = sim->lobbyPlayers[i].ready;
         slot.isBot      = sim->lobbyPlayers[i].isBot;
         slot.startIdx   = sim->lobbyPlayers[i].startIdx;
+        slot.fielded    = sim->lobbyPlayers[i].fielded;
         /* sim->playerPing[i] is only refreshed by queueInput; in lobby
          * no inputs flow, so it sits at 0 the whole time. The PING/PONG
          * handler keeps udpServer.clients[i].pingMs live across every
@@ -387,10 +389,12 @@ void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, ControlEvent *e
     evt->u.lobbyBotConfig.slot = slot;
     memset(evt->u.lobbyBotConfig.name, 0, PACKET_MAX_PLAYER_NAME);
     if (slot >= MAX_TANKS) {
+        evt->u.lobbyBotConfig.mode        = 0;
         evt->u.lobbyBotConfig.difficulty  = 0;
         evt->u.lobbyBotConfig.personality = 0;
         return;
     }
+    evt->u.lobbyBotConfig.mode        = sim->botConfigs[slot].mode;
     evt->u.lobbyBotConfig.difficulty  = sim->botConfigs[slot].difficulty;
     evt->u.lobbyBotConfig.personality = sim->botConfigs[slot].personality;
     if (sim->playerConnected[slot]) {

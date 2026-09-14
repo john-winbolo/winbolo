@@ -1,0 +1,1038 @@
+# The WinBolo scenario API
+
+**API version 1.**
+
+A scenario is a Lua file that sits beside a map and changes what a round on
+that map is. It can seat the lobby before anyone joins, set the numbers the
+simulation runs on, move tanks and pillboxes about, put bots on the field in
+waves, talk to the players, and decide when the round is over and who won.
+
+This document describes every call, every hook and every field the server
+offers a scenario. It is written against the server's own binding table, so
+where this document and the server disagree, the server is right and this is a
+bug worth reporting.
+
+---
+
+## Contents
+
+- [Where a scenario lives](#where-a-scenario-lives)
+- [A worked example: Wave Defense](#a-worked-example-wave-defense)
+- [The `scenario` table](#the-scenario-table)
+- [Hooks](#hooks)
+- [How the `game` table behaves](#how-the-game-table-behaves)
+- [Reading the world](#reading-the-world)
+  - [Three clocks](#three-clocks)
+- [Timers](#timers)
+- [Tags and regions](#tags-and-regions)
+- [Changing the world](#changing-the-world)
+- [Bots and seats](#bots-and-seats)
+- [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
+- [Rules](#rules)
+- [Constants](#constants)
+- [Terrain codes](#terrain-codes)
+- [Sounds](#sounds)
+- [Refusal codes](#refusal-codes)
+- [Limits](#limits)
+- [Checking a scenario before you run it](#checking-a-scenario-before-you-run-it)
+- [What is not here yet](#what-is-not-here-yet)
+
+---
+
+## Where a scenario lives
+
+A scenario is found by the map's file name. `Wave Defense.map` is played with
+`Wave Defense.scenario.lua` beside it; a map with no such file beside it is an
+ordinary map. Nothing else points the server at a scenario, so copying a map
+to a new name and writing a script for the copy is how you attach a scenario
+without changing how the original map plays.
+
+The server reads the file once when the map is loaded and runs it again at the
+start of every round, each time in a Lua state of its own. That means:
+
+- **Your chunk's top level runs before any round.** Declare your functions and
+  your `scenario` table there. Do not call into `game` at the top level and
+  expect an answer about the world: there is no round yet.
+- **Globals do not survive a round.** Every round gets a fresh state, so
+  nothing the last round left behind is reachable from this one. Counters you
+  want to keep across a round belong in the file's own locals, which are set
+  again each time the chunk runs.
+- **A script that will not load is skipped.** The round is played as a plain
+  map and the operator is told why.
+
+The file may be up to 1 MiB.
+
+**A scenario is trusted the way a brain is.** The script runs with Lua's
+full standard library, with no time limit and no memory cap. A file beside a
+map is run by whoever hosts that map, so run only scripts you would run as a
+program. Every host that opens a map from a file looks beside it: the
+dedicated server, the desktop client hosting a single-player or LAN game, and
+the headless runner.
+
+**Reloading after an edit.** On a dedicated server the console command
+`reload` reads the file again, checks that it loads, and swaps it in for the
+next round; the round in progress keeps what it started with, and a file that
+will not load leaves the old one in place and says why. The desktop host has
+no reload yet, so a client-hosted game picks up an edit when the map is
+loaded again.
+
+---
+
+## A worked example: Wave Defense
+
+`tests/baseline/maps/Wave Defense.scenario.lua` is the reference scenario.
+Read it alongside this document. Its shape is the shape most scenarios take:
+
+```lua
+local DEFENDERS = 1
+local RAIDERS   = 2
+local WAVES     = { 2, 4, 6 }
+
+local wave, standing, seats, wave_timer, over = 0, 0, {}, nil, false
+```
+
+**The lobby is declared, not built.** The `scenario` table asks for six seats
+on team 2 with `fielded = false`. The server puts them in the roster before
+anyone joins, where a host can see and trim them, and loads no brain for any
+of them until something fields one:
+
+```lua
+lobby = {
+  max_players = 4,
+  teams = {
+    { id = DEFENDERS, bots = 0, max_bots = 0 },
+    { id = RAIDERS,   bots = 6, max_bots = 8, fielded = false },
+  },
+},
+```
+
+**The round is driven by hooks and timers, never by polling.** `on_start` runs
+on the first tick of the round; from there each wave sets a timer for the next
+step, and the hooks the server calls report what happened:
+
+```lua
+function on_start()
+  seats = horde_seats()
+  hand_over_the_keep(enlist_the_defenders())
+  game.message("Wave Defense: hold the keep through 3 waves.")
+  game.timer(2, next_wave)
+end
+```
+
+**A held seat is fielded by naming it.** `spawn_bot` with a `slot` puts a bot
+into a seat the lobby was holding; the seat carries the name and the team it
+was seated with, so the spawn need not restate either:
+
+```lua
+game.spawn_bot{ slot = seats[i], start = i }
+```
+
+**A seat goes back when the wave ends.** `remove_bot` on a seat a scenario
+fielded returns it to being held rather than emptying it, so the next wave
+uses the same seats again.
+
+**The scenario decides the ending.** `end_round` stops the round then and
+there, with the line the lobby will show:
+
+```lua
+game.end_round("The keep held.", DEFENDERS)
+```
+
+If you write one scenario, write this one first and change it.
+
+---
+
+## The `scenario` table
+
+A global table named `scenario`, declared at the chunk's top level. Every field
+is optional except in the sense that a scenario with no `name` is a scenario
+nobody can identify.
+
+```lua
+scenario = {
+  name        = "Wave Defense",
+  description = "Hold the four pillboxes at the centre of the map.",
+  api         = 1,
+  game        = "open",
+  bound       = true,
+  lobby       = { ... },
+  rules       = { ... },
+  tags        = { ... },
+  regions     = { ... },
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | What the scenario is called. |
+| `description` | string | One or two sentences for a host reading a list. |
+| `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
+| `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. **Not applied yet.** The round runs under the server's own game type; the only thing that reads this field today is `game.game_type()`, which echoes it back. It is written into the table now so a scenario need not change when the server starts honouring it. |
+| `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. |
+
+### `scenario.lobby`
+
+The lobby the map opens with.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `max_players` | number | The cap on human players, 1 to 16. 0 (the default) leaves the server's own cap. |
+| `extra_teams` | boolean | Read and not yet used. Whether a host may put a seat on a team nobody is on is decided by the `allow_extra_teams()` policy below, and a scenario that declares neither allows it. |
+| `teams` | array | One entry per team, in order. |
+
+Each team:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | number | The team number, 1 to 15. Two teams may not share one. |
+| `bots` | number | How many seats to seat for this team when the lobby is built. A host who trims them gets the trimmed number back next round: the point of seating them where a host can see them is that the host may change them. |
+| `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
+| `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no brain loads until a `spawn_bot` names it. |
+| `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
+
+### `scenario.rules`
+
+A table of rule name to value. Names are the ones in [Rules](#rules) —
+the same ones `game.rule` and `game.set_rule` take. A name that spells no rule,
+or a value outside a rule's range, is reported and the rest of the table still
+applies. A value that is not a number is dropped without a report, so `"40"`
+in quotes sets nothing.
+
+```lua
+rules = {
+  tank_death_ticks  = 150,
+  tank_reload_ticks = 10,
+},
+```
+
+### `scenario.tags`
+
+Names you put on the map's own entities, so the script never has to carry
+their numbers. Keyed by kind, then by the entity's 1-based index, with either
+one string or a list of them.
+
+```lua
+tags = {
+  pills  = { [7] = "keep", [8] = "keep", [9] = { "keep", "north" } },
+  bases  = { [1] = "depot" },
+  starts = { [3] = "beach" },
+},
+```
+
+An entity carries at most four tags; a fifth is reported and dropped. An index
+past what the map holds is reported. A tag is at most 31 bytes, and one longer
+than that is cut to 31 without a report, so `game.tagged` with the full name
+would then find nothing.
+
+### `scenario.regions`
+
+Named rectangles of map squares, by name, with an inclusive top-left corner
+and a size.
+
+```lua
+regions = {
+  keep = { x = 124, y = 124, w = 10, h = 10 },
+},
+```
+
+A region covers `x` to `x + w - 1` and `y` to `y + h - 1`, both ends
+included, so a rectangle with no width or no height holds nothing. At most 64
+regions exist at once, counting both these and any `define_region` makes
+during the round. A name is at most 31 bytes; a longer one in this table is
+cut to 31 without a report, where `define_region` refuses it. A coordinate or
+size is a byte: a value past 255 is not reported here and lands wrapped, so
+keep to the map.
+
+---
+
+## Hooks
+
+A hook is a global function the server calls, or a function of the same name
+kept as a field of the `scenario` table; where both exist the global wins.
+Declare the ones you want and leave out the rest; a hook you do not declare
+costs nothing.
+
+### The round's own moments
+
+| Hook | When |
+|---|---|
+| `on_setup()` | Once, after the scenario's rules are applied and before the round's first tick. Every write is available except the six roster ops — `spawn_bot`, `remove_bot`, `set_team` and the three `lobby_*` calls — which answer `SCN_OP_WRONG_STATE` here. This is where the map gets ready. |
+| `on_start()` | The round's first running tick. The tanks exist and the roster has settled, so this is the first moment a scenario can ask who is playing. |
+| `on_tick(tick)` | Once per frame, fifty times a second. The `tick` it is handed goes up by **2** each time, not by 1 — see [Three clocks](#three-clocks). **Prefer not to declare this.** Timers and the hooks below cover nearly everything, and a handler that runs fifty times a second is a handler that has to be cheap. |
+| `on_end()` | The round has just ended, for any reason. |
+
+### The roster and the lobby
+
+| Hook | Arguments |
+|---|---|
+| `on_lobby(p, scripted)` | A lobby seat changed. `p` is the seat. |
+| `on_player_join(p, scripted)` | |
+| `on_player_leave(p, scripted)` | |
+| `on_team_changed(p, team, scripted)` | `team` is the seat's new team. |
+| `on_chat(p, text, scripted)` | A player said something. |
+
+### What happens in the round
+
+| Hook | Arguments |
+|---|---|
+| `on_tank_spawned(p, mx, my, respawn, scripted)` | `respawn` is false the first time a seat takes the field. |
+| `on_tank_killed(victim, killer, cause, scripted)` | The victim comes first: it is the subject, and the killer is what happened to it. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"`. |
+| `on_lgm_died(p, killer, mx, my, scripted)` | The square is where the man died, captured before the respawn moves him. |
+| `on_lgm_landed(p, mx, my, scripted)` | |
+| `on_base_captured(n, old, new, scripted)` | |
+| `on_base_neutralized(n, old, scripted)` | A base that changed to nobody's. |
+| `on_pill_captured(n, old, new, scripted)` | Every change of a pillbox's owner, with `game.NEUTRAL` as `new` where nobody took it. |
+| `on_pill_placed(n, p, scripted)` | The pillbox first, then who placed it. |
+| `on_pill_picked_up(n, p, scripted)` | The same order. |
+| `on_pill_killed(n, by, scripted)` | |
+| `on_built(p, action, x, y, scripted)` | `action` is `"trees"`, `"road"`, `"building"`, `"repair"`, `"mine"` or `"boat"`. A build of kind pill on this hook is always a repair — a new pillbox going down is `on_pill_placed`. |
+| `on_mine_laid(p, mx, my, scripted)` | |
+| `on_mine_explosion(mx, my, layer, scripted)` | |
+
+`scripted` is true when the scenario's own op caused the event, so a handler
+that should ignore its own edits opens with `if scripted then return end`.
+
+### Regions
+
+| Hook | Arguments |
+|---|---|
+| `on_enter_region(p, name)` | |
+| `on_leave_region(p, name)` | |
+
+These two take **no** `scripted` flag. Between one sample and the next a tank
+can be both moved by the script and driven under its own power, and there is no
+honest answer to give a handler that asks which this was.
+
+A tank that stops having a place on the map leaves everything it was in, so
+every enter is followed by exactly one leave. That is what makes counting who
+is inside a region safe.
+
+### Policies
+
+A policy is a question the engine asks in the middle of doing something, and
+the answer decides what it does. Unlike a hook, which is told about a fact
+after it has happened, a policy is asked before, and it answers and nothing
+else: an op issued from inside one is refused with `SCN_OP_IN_POLICY`.
+
+Every policy is a plain global function, looked up by name at each call.
+Leave one out and the game plays by its ordinary rule. Four things all mean
+"no opinion" and give that same rule: no function of the name, a scenario
+switched off for the round, a `nil` return, and a call that raises. Only the
+raise counts toward the error limit. An answer the engine cannot use — a
+start that is not on the map, a loadout table missing an amount, a percent
+out of range — also gives the ordinary rule and also counts, and is named on
+the console, so a script answering unusably every time is switched off
+rather than left to misbehave quietly.
+
+| Function | Asked | Answer |
+|---|---|---|
+| `allow_extra_teams()` | When a host would put a seat on a team no other seat is on. | `true` to allow. Ordinary rule: yes. |
+| `allow_base_win()` | Before the round checks whether one side owns every base. | `false` takes that ending out of the round and leaves every other ending alone. Ordinary rule: yes. |
+| `can_respawn(p)` | On the last tick of a dead tank's wait. | `false` holds the tank where it is, and the question is asked again next tick. Ordinary rule: yes. |
+| `can_build(p, action, x, y, n)` | Before a builder order goes ahead. `action` is the order as given — `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` — before the engine decides whether the square makes it a repair. `n` is the pillbox for a pill order and `nil` otherwise. | `false` refuses the order. Ordinary rule: yes. |
+| `can_capture(kind, n, p)` | When seat `p` would take `"pill"` or `"base"` number `n`. | `false` leaves it where it is and does not stop the tank. Ordinary rule: yes. |
+| `announce(kind, subject, actor)` | Before a newswire line is shown. `kind` is `"joined"`, `"left"`, `"base_captured"`, `"pill_captured"`, `"builder_lost"`, `"name_changed"`, `"alliance"` or `"vote"`. `subject` is the base or pillbox number for a capture and a seat otherwise; `actor` is the seat that did it. | `false` keeps the line off every client's newswire. The fact still happens. Ordinary rule: shown. |
+| `can_die(kind, n, killer, cause)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank, `"shell"` or `"mine"` for the other two, and `nil` when the engine could not name it. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
+| `on_choose_start(p)` | When the engine is about to pick a start for seat `p`, at a spawn, a respawn or a teleport with no start named. A start the script named in the op itself is not asked about. | A start number, counted from 1 as `game.start` counts. A number that names no live start is reported and the engine picks. `nil` lets the engine pick. |
+| `spawn_loadout(p)` | When seat `p`'s tank is created. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
+| `damage_scale(attacker, victim, cause)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
+
+`scenario.lobby.max_players` is the one decision that is a number rather than
+a function; it is applied by the lobby without asking.
+
+**Which round answers.** The tanks for everyone seated when a round starts
+are built before the round's own Lua state is, so `on_choose_start` and
+`spawn_loadout` for those seats are answered by the state the server holds at
+that moment: the one the file was loaded into, for the first round, and the
+previous round's for later ones, with that round's globals. A seat that joins
+or respawns after the start is answered by the round's own state. Keep those
+two policies free of state that changes across a round.
+
+---
+
+## How the `game` table behaves
+
+One global table, `game`, is installed on every state before your chunk runs.
+The same rules apply to every row on it.
+
+**Players are 0-based. Pills, bases and starts are 1-based.** A seat is `p`,
+from 0 to `game.max_tanks() - 1`. An entity is `n`, from 1 to
+`game.num_pills()` and its siblings — which is also Lua's own numbering, so
+`for n = 1, game.num_pills() do` visits every slot.
+
+**Teams are 1 to 15.** 0 means no team.
+
+**Owners are a seat or `game.NEUTRAL`.** Where an owner may be left out
+entirely, leaving it out means neutral.
+
+**Reads answer a table, or `nil` for something that is not there.** An index
+past the end, an empty seat and a slot no live entity holds all read as `nil`,
+and no read raises for it. `game.num_pills()` is the count of slots, not of
+live pillboxes, so a loop over it has to skip the `nil`s.
+
+**Writes answer one of three things:**
+
+- `true` when the change applied.
+- `true, "queued"` when the change was accepted and lands on a later tick.
+  Spawns, removals and large terrain fills answer this way.
+- `nil, code, detail` when it was refused. `code` is the refusal's name as a
+  string — `"SCN_OP_NO_SUCH_PLAYER"` — and `detail` is one short sentence with
+  the number that mattered.
+
+Rows that choose something answer it instead of `true`: `add_pill`, `add_base`
+and `add_start` answer the index they took, and `lobby_add_bot` answers the
+seat. `spawn_bot` answers the seat only when the call named one with `slot`; a
+spawn that left the seat to the server is decided when it lands, so the call
+answers `true, "queued"` and the seat is learned from `on_tank_spawned`.
+
+**Where a square is optional, 255 for both coordinates means the same as
+leaving them out**, and where a count is optional, 255 means keep it. That is
+how `drop_pill`, `builder_parachute`, `set_builder_carried` and `sound` read
+an absent argument.
+
+```lua
+local ok, code, why = game.teleport(p, 300, 4)
+if not ok then
+  game.log(code .. ": " .. why)     -- SCN_OP_BAD_SQUARE: square (300, 4) is off the map
+end
+```
+
+**A refusal is an answer; a mistake raises.** A missing argument, an argument
+of the wrong type and a word that names nothing are errors in the script and
+raise. A value the world will not take is refused and returned. Test the
+return; do not wrap calls in `pcall`.
+
+**Text is bytes.** A string past its limit is refused with the limit in the
+detail, never cut short. A string with a NUL byte inside it ends at the NUL as
+far as the server is concerned.
+
+---
+
+## Reading the world
+
+### Counts and the clock
+
+| Call | Answers |
+|---|---|
+| `game.tick()` | The tick the round is on. It counts at 100 a second and goes up by 2 between one `on_tick` and the next. |
+| `game.max_tanks()` | How many seats a game has. |
+| `game.num_players()` | How many seats are playing the round, bots included. |
+| `game.num_humans()` | How many of those are people. |
+| `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. |
+| `game.game_type()` | `"open"`, `"tournament"` or `"strict"`. This answers `scenario.game` when the table sets one, and the server's own game type otherwise — and since `scenario.game` is not applied yet, the two can differ. |
+
+### Three clocks
+
+The word "tick" means three different things, and a scenario meets all three.
+They are worth twenty seconds of your time now.
+
+**The simulation runs 50 frames a second.** Every frame is 20 milliseconds of
+play. Everything below is counted against that.
+
+**1. `game.tick()` counts twice a frame — 100 a second.** A frame is two
+half-steps and the counter goes up on each, so between one `on_tick` and the
+next it has moved by 2. It is always even or always odd for the whole of a
+round, never both.
+
+That matters the moment you test it for a multiple. Half the values never
+arrive, so a test for one of them lands on half the multiples it reads as, or
+on none:
+
+```lua
+function on_tick(tick)
+  -- 100 is even, and this round's ticks may all be odd, in which case this
+  -- is never true. Where they are even it is true once a second.
+  if tick % 100 == 0 then ... end
+
+  -- Every other multiple of 99 is odd, so whichever parity the round has,
+  -- this fires half as often as it looks like it will.
+  if tick % 99 == 0 then ... end
+end
+```
+
+Compare against a count of your own, or use `game.timer`, which takes seconds
+and sidesteps the question:
+
+```lua
+game.timer(1, every_second)         -- and set it again from inside itself
+```
+
+**2. Your hooks run once a frame — 50 a second.** `on_tick` is called after
+both half-steps, so a handler sees every second value of `game.tick()`.
+Timers, the event hooks and the region hooks are all on this clock too: a
+timer set for 3 seconds comes due 150 frames later, and it is checked once a
+frame, so a delay shorter than 20 milliseconds still waits a whole frame.
+
+**3. A rule whose name ends `_ticks` is on neither of those.** Those counters
+belong to the thing they are counting for. A pillbox's step once a frame. A
+tank's step once per input the server applies to it, and of the two a client
+sends each frame only one moves the tank. Either way it comes out at about 50
+a second, and **not** at the rate `game.tick()` moves. Read a `_ticks` rule as
+roughly **fifty to the second**:
+
+| Value | About |
+|---|---|
+| 50 | 1 second |
+| 255 | 5 seconds — the classic `tank_death_ticks` |
+| 1500 | 30 seconds |
+
+So `tank_death_ticks = 1500` keeps a dead tank waiting half a minute, and
+`tank_death_ticks = 150` — the value Wave Defense sets — is about three
+seconds.
+
+**The game clock is the exception.** `set_game_time` and `add_game_time` are
+counted in `game.tick()`'s own units, 100 a second, because the round's time
+limit comes down on every half-step. A minute is 6000, not 3000.
+
+**Before the round runs, the clock is slower.** In the lobby the counter
+moves once a frame rather than twice, and timers are measured against it, so
+a timer set from `on_lobby`, `on_player_join` or `on_chat` before the round
+starts comes due after about twice the seconds it asked for.
+
+### The map
+
+| Call | Answers |
+|---|---|
+| `game.map_name()` | What the map is called. |
+| `game.map_tile(x, y)` | The terrain code at a square, or `nil` for a square off the map. |
+| `game.is_mine(x, y)` | Whether a square holds a mine. |
+| `game.terrain()` | Every square as one 65,536-byte string, the square at `(x, y)` at byte `y * 256 + x + 1`. One call instead of 65,536 — and a fresh 64 KiB string each time, so read it where you need the whole map, not from `on_tick`. |
+
+### Entities
+
+| Call | Answers |
+|---|---|
+| `game.num_pills()` | How many pill slots the map has, live or not. |
+| `game.pill(n)` | `{ x, y, owner, armour, speed, in_tank }`, or `nil` for a slot no live pill holds. |
+| `game.num_bases()` | How many base slots the map has. |
+| `game.base(n)` | `{ x, y, owner, armour, shells, mines }`, or `nil`. |
+| `game.num_starts()` | How many start slots the map has. |
+| `game.start(n)` | `{ x, y, dir }`, or `nil`. |
+
+### Seats
+
+| Call | Answers |
+|---|---|
+| `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
+| `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
+| `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** |
+
+A seat the lobby is holding for a bot reads as connected, a bot, on its team,
+and `fielded = false`. That is how Wave Defense finds its horde:
+
+```lua
+for p = 0, game.max_tanks() - 1 do
+  local slot = game.lobby_slot(p)
+  if slot and slot.bot and slot.team == RAIDERS then
+    out[#out + 1] = p
+  end
+end
+```
+
+---
+
+## Timers
+
+| Call | Answers |
+|---|---|
+| `game.timer(seconds, fn)` | Runs `fn` once, on the first tick at or after `seconds` from now. Answers an id. |
+| `game.cancel_timer(id)` | Stops a timer that has not run yet. `false` when the id names none, which is what an id that has already run names. |
+
+At most 64 timers wait at a time, and none outlives its round.
+
+A timer that sets another timer moves one call per frame however short the
+delay: a run that feeds itself cannot spin inside a single frame.
+
+Ids are never reused, so a stale id is safe to cancel — it matches nothing
+rather than matching whatever has since taken its place.
+
+```lua
+wave_timer = game.timer(3, wave_over)
+...
+game.cancel_timer(wave_timer)      -- the wave was cleared early
+wave_timer = nil
+```
+
+---
+
+## Tags and regions
+
+| Call | Answers |
+|---|---|
+| `game.tags(kind, n)` | The tags the scenario put on a `"pill"`, `"base"` or `"start"`, as an array of strings. |
+| `game.tagged(tag[, kind])` | Everything carrying a tag, as an array of `{ kind, n }`, or of `n` when a kind is named. Pills first, then bases, then starts. |
+| `game.region(name)` | A declared rectangle as `{ x, y, w, h }`, or `nil` when nothing is declared by that name. |
+| `game.regions()` | The name of every declared region, in name order. |
+| `game.in_region(name, mx, my)` | Whether a square is inside a named region. |
+| `game.define_region(name, x, y, w, h)` | Names a rectangle for the rest of the round, replacing one of that name. It shares the 64 the `scenario` table's own regions come out of. |
+
+`game.in_region` and the `on_enter_region` hook answer from the same test, so a
+script cannot be told it is inside a region the hook disagrees about.
+
+---
+
+## Changing the world
+
+**A write's square is 21 to 235 on both axes.** The reads cover the whole
+map, 0 to 255, but the outer twenty squares are the sea the map is framed
+with and nothing may be written there: a write naming one of those squares is
+refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
+`fill_rect` over the whole map is `fill_rect(21, 21, 235, 235, t)`.
+
+### Tanks
+
+| Call | What it does |
+|---|---|
+| `game.set_stocks(p, t)` | Sets any of `t.shells`, `t.mines`, `t.armour` and `t.trees`; a stock the table leaves out is left alone. A value past the rule's cap (`tank_full_shells` and its siblings) is refused with `SCN_OP_RANGE`, not held at the cap. |
+| `game.add_stocks(p, t)` | The same four as amounts to add, negative to take away. Each is held at the cap and at zero rather than refused. |
+| `game.kill_tank(p[, killer])` | Kills a tank. `killer` is a seat, and has to be one that is connected. The cause is always `"script"`. Without a killer the death is the scenario's own, and `on_tank_killed` then sees the victim as its own killer, the way a drowning reads — so a handler counting suicides has to look at `cause` as well. |
+| `game.teleport(p, x, y[, dir])` | Puts a tank on a square, facing `dir` from 0 to 255. Without `dir` it keeps the way it faces. |
+| `game.teleport_to_start(p[, n])` | Puts a tank on start `n`, or on the one the engine would have chosen. |
+| `game.set_boat(p, on)` | Puts a tank on a boat or takes it off one. The square under it has to be water. |
+| `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
+| `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
+| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. |
+
+### The builder
+
+| Call | What it does |
+|---|---|
+| `game.builder_order(p, action, x, y)` | Sends a builder out to do one of `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` on a square. The engine repairs rather than builds where the square already holds one. |
+| `game.builder_recall(p)` | Calls a builder back to the tank. |
+| `game.kill_lgm(p[, killer])` | Kills a builder. `killer` is a seat. |
+| `game.builder_parachute(p[, x, y])` | Drops a dead builder back in, on a square or at the tank. |
+| `game.set_builder_carried(p[, trees[, mines]])` | What a builder is carrying. A count left out is left alone. |
+
+### Pillboxes and bases
+
+| Call | What it does |
+|---|---|
+| `game.set_pill_owner(n, p)` | Hands a pillbox to a seat, or to nobody with `game.NEUTRAL`. A pillbox in a tank answers to whoever is carrying it, so this is refused with `SCN_OP_CARRIED` until it is dropped. |
+| `game.set_pill_armour(n, a)` | How much a pillbox has left. 0 is a dead pillbox on the ground. |
+| `game.set_pill_speed(n, s)` | The ticks between a pillbox's shots, counted the way a `_ticks` rule is — about fifty to the second, so 50 is a shot a second. Kept between the rules `pill_attack_min_ticks` and `pill_attack_ticks`; outside them it is refused with `SCN_OP_RANGE`. |
+| `game.move_pill(n, x, y)` | Puts a pillbox on another square. |
+| `game.set_base_owner(n, p[, keep_stock])` | Hands a base to a seat, or to nobody with `game.NEUTRAL`. `keep_stock` leaves what it holds; without it a base changing hands is emptied, as it is in play. |
+| `game.set_base_stock(n, armour, shells, mines)` | What a base holds. A stock left out is left alone, and one past the cap is held there. |
+
+A pillbox answers to a **seat**, not to a team. Handing the keep to the
+defenders means handing it to one of them:
+
+```lua
+for _, n in ipairs(game.tagged("keep", "pill")) do
+  game.set_pill_owner(n, defender)
+end
+```
+
+### Adding and removing entities
+
+| Call | What it does |
+|---|---|
+| `game.add_pill(x, y[, owner[, armour[, speed]]])` | Puts a new pillbox on the map and answers which one it is. Nobody's, dead, and firing at the round's own `pill_attack_ticks` unless told otherwise. `armour` is kept to `pill_max_armour` and `speed` between `pill_attack_min_ticks` and `pill_attack_ticks`, refused with `SCN_OP_RANGE` outside. |
+| `game.remove_pill(n)` | Takes a pillbox off the map. The slot stays, so the pillboxes above it keep their numbers. |
+| `game.add_base(x, y[, owner[, armour, shells, mines]])` | Puts a new base on the map and answers which one it is. Nobody's and empty unless told otherwise. |
+| `game.remove_base(n)` | Takes a base off the map. The slot stays. |
+| `game.add_start(x, y, dir)` | Puts a new start on a deep-sea square, facing `dir` from 0 to 15. Answers which one it is. |
+| `game.remove_start(n)` | Takes a start off the map. The last one is refused — a map with no start has nowhere to put anybody. |
+
+A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
+
+### Terrain and mines
+
+| Call | What it does |
+|---|---|
+| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. |
+| `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a frame's budget answers `true, "queued"` and finishes over the frames after it. Only one fill may be in progress: a second asked for while one is still landing is refused with `SCN_OP_RATE`, not queued behind it, so test the answer when you write several. |
+| `game.place_mine(x, y[, owner[, visible]])` | Lays a mine on a square. `visible` shows it to everyone rather than to its owner's side. |
+| `game.remove_mine(x, y)` | Takes a mine off a square without setting it off. |
+
+---
+
+## Bots and seats
+
+| Call | What it does |
+|---|---|
+| `game.spawn_bot(t)` | Puts a bot into the running round. Answers the seat and `"queued"` when the call named a seat, and `true, "queued"` when the server is choosing one. |
+| `game.remove_bot(p)` | Takes a bot out of the running round. A human seat is refused with `SCN_OP_IS_HUMAN`. |
+| `game.set_team(p, t)` | Moves a seat to another team mid-round. |
+| `game.lobby_add_bot(t)` | Seats a bot in the lobby and answers which seat it took. |
+| `game.lobby_remove_bot(p)` | Takes a bot out of the lobby. A human seat is refused. |
+| `game.lobby_set_team(p, t)` | Moves a lobby seat to another team. |
+
+`spawn_bot` takes one table, all of whose fields are optional:
+
+| Field | Meaning |
+|---|---|
+| `slot` | The seat to take. Left out, the first free seat is taken, and which one that is is decided as the spawn lands rather than as it is queued. A seat held for a bot that is not on the field is the one occupied seat a spawn may name — fielding it is what the seat is for. A seat that already has somebody on the field is refused with `SCN_OP_ALREADY`. |
+| `name` | The bot's name. A seat that is already held keeps the name it was seated with, whatever this says. |
+| `brain` | The brain to run, as a path on the server's disk. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. `package:NAME` is refused with `SCN_OP_NOT_FOUND` today. |
+| `team` | The team to join. A held seat keeps the team it was seated with. |
+| `start` | The start to come in on, 1-based. Left out, the engine chooses. |
+| `init` | A flat table of names to strings or numbers, handed to the brain at its first breath. |
+
+`lobby_add_bot` takes `name`, `brain`, `team`, `slot` and `fielded`, where
+`fielded = false` asks for the seat without the bot.
+
+**The seat cycle.** A seat the `scenario` table seated and a wave fielded goes
+back to being held when `remove_bot` names it, rather than being emptied — so
+the next wave has it again. A seat that was not the template's is emptied, as a
+removal has always done.
+
+The roster ops are the six above, `set_team` and `lobby_set_team` included.
+All of them are refused inside `on_setup`: the round is still being built
+there, and a roster edit would re-enter the machinery that is building it.
+Field your first wave, and move seats between teams, from `on_start`.
+
+---
+
+## Talking to players, and ending the round
+
+| Call | What it does |
+|---|---|
+| `game.message(text[, target])` | A line to everyone, to one seat with a number, or to a team with `{ team = t }`. `nil` and `"all"` both mean everyone. |
+| `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
+| `game.log(text)` | Writes a line to the server's console. No player sees it. |
+| `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
+| `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
+| `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
+
+`end_round` is how a scenario wins or loses a round. It stops play there and
+then, and the line it carries is shown in the lobby exactly as written — the
+server adds no verdict of its own.
+
+---
+
+## Rules
+
+Every gameplay number the simulation runs on is a named rule. `game.rule(name)`
+reads one and `game.set_rule(name, value)` writes one; the `scenario` table's
+`rules` block writes a set of them before the round starts.
+
+| Call | What it does |
+|---|---|
+| `game.rule(name)` | What a rule is set to. A name that spells no rule **raises** — every other `nil` on this surface is an entity that is not there, and a rule that is not in the table is a misspelling in the script. |
+| `game.set_rule(name, value)` | Writes one rule. A name that spells no rule raises; a value the table will not take is refused. |
+
+Two things a rule value can be refused for:
+
+- `SCN_OP_RANGE` — the value is outside the rule's own bounds. The detail names
+  the rule and both bounds: `tank_reload_ticks is 999, outside 0..255`.
+- `SCN_OP_PAIR` — the value is inside its own bounds but breaks an invariant it
+  shares with another rule. The detail names both:
+  `base_min_shells is 20, above base_full_shells 10`.
+
+A pair can be broken across two rules that are each fine alone, so a `rules`
+block is checked as a whole and not one line at a time.
+
+**A rule whose name ends `_ticks` counts at about fifty to the second**, which
+is not the rate `game.tick()` moves at. 50 is a second, 255 is five, 1500 is
+half a minute. [Three clocks](#three-clocks) says why.
+
+### The catalogue
+
+Every rule, with the value the unmodified game plays under and the range a
+value is accepted in. A rule listed as "and up" has a floor and no ceiling of
+its own; several of those are bounded instead by another rule, and the pairs
+below the tables say which.
+
+**Tank.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `tank_reload_ticks` | 13 | 0 to 255 |
+| `tank_full_shells` | 40 | 0 to 255 |
+| `tank_full_mines` | 40 | 0 to 255 |
+| `tank_full_trees` | 40 | 0 to 255 |
+| `tank_full_armour` | 40 | 0 to 255 |
+| `tank_death_ticks` | 255 | 0 to 65535 |
+| `tank_water_ticks` | 15 | 1 to 255 |
+| `shell_damage` | 5 | 1 to 255 |
+| `mine_damage` | 10 | 1 to 255 |
+| `just_fired_ticks` | 101 | 0 to 255 |
+| `gunsight_min` | 2 | 1 to 255 |
+| `gunsight_max` | 14 | 1 to 255 |
+| `tank_accel_rate` | 0.25 | 0.01 to 16.0 |
+| `tank_decel_rate` | 0.25 | 0.01 to 16.0 |
+| `tank_brake_rate` | 0.25 | 0.01 to 16.0 |
+| `tank_autoslow_rate` | 0.25 | 0.01 to 16.0 |
+| `tank_min_move` | 6 | 0 to 255 |
+
+**Terrain: the cap a tank's speed clamps to.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `speed_road` | 16 | 0 to 63 |
+| `speed_grass` | 12 | 0 to 63 |
+| `speed_forest` | 6 | 0 to 63 |
+| `speed_river` | 3 | 0 to 63 |
+| `speed_swamp` | 3 | 0 to 63 |
+| `speed_crater` | 3 | 0 to 63 |
+| `speed_rubble` | 3 | 0 to 63 |
+| `speed_boat` | 16 | 0 to 63 |
+| `speed_deep_sea` | 3 | 0 to 63 |
+| `speed_refuel_base` | 16 | 0 to 63 |
+
+**Terrain: bradians turned per tick.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `turn_road` | 1 | 0.0 to 16.0 |
+| `turn_grass` | 1 | 0.0 to 16.0 |
+| `turn_forest` | 0.5 | 0.0 to 16.0 |
+| `turn_river` | 0.25 | 0.0 to 16.0 |
+| `turn_swamp` | 0.25 | 0.0 to 16.0 |
+| `turn_crater` | 0.25 | 0.0 to 16.0 |
+| `turn_rubble` | 0.25 | 0.0 to 16.0 |
+| `turn_boat` | 1 | 0.0 to 16.0 |
+| `turn_deep_sea` | 0.5 | 0.0 to 16.0 |
+| `turn_refuel_base` | 1 | 0.0 to 16.0 |
+
+**Shells.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `shell_life` | 8 | 1 to 255 |
+| `shell_speed` | 32 | 1 to 255 |
+| `shell_start_add` | 5 | 0 and up |
+
+**Builder.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `lgm_build_ticks` | 20 | 0 to 255 |
+| `lgm_cost_road` | 2 | 0 and up |
+| `lgm_cost_building` | 2 | 0 and up |
+| `lgm_cost_repair_building` | 1 | 0 and up |
+| `lgm_cost_pill_repair` | 1 | 0 and up |
+| `lgm_cost_boat` | 20 | 0 and up |
+| `lgm_cost_pill_new` | 4 | 0 and up |
+| `lgm_cost_mine` | 1 | 0 and up |
+| `lgm_pill_repair_load` | 4 | 1 to 255 |
+| `lgm_gather_trees` | 4 | 1 to 255 |
+| `lgm_helicopter_speed` | 3 | 1 to 255 |
+
+**Pillbox.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `pill_max_armour` | 15 | 1 to 255 |
+| `pill_attack_ticks` | 100 | 1 to 255 |
+| `pill_attack_min_ticks` | 6 | 1 and up |
+| `pill_cooldown_ticks` | 32 | 0 to 255 |
+| `pill_repair_amount` | 4 | 1 and up |
+| `pill_range` | 2048 | 0 to 65535 |
+
+**Base.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `base_full_armour` | 90 | 0 to 255 |
+| `base_full_shells` | 90 | 0 to 255 |
+| `base_full_mines` | 90 | 0 to 255 |
+| `base_capture_armour` | 9 | 0 and up |
+| `base_hit_armour` | 4 | 0 and up |
+| `base_min_armour` | 10 | 0 and up |
+| `base_min_shells` | 0 | 0 and up |
+| `base_min_mines` | 0 | 0 and up |
+| `base_armour_give` | 5 | 0 and up |
+| `base_shells_give` | 1 | 0 and up |
+| `base_mines_give` | 1 | 0 and up |
+| `base_refuel_armour_ticks` | 46 | 1 to 255 |
+| `base_refuel_shells_ticks` | 7.5 | 0.5 to 255.0 |
+| `base_refuel_mines_ticks` | 7.5 | 0.5 to 255.0 |
+| `base_regen_ticks` | 1000 | 1 and up |
+
+**Terrain destruction and explosions.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `building_life` | 4 | 1 to 255 |
+| `rubble_life` | 4 | 1 to 255 |
+| `grass_life` | 4 | 1 to 255 |
+| `swamp_life` | 3 | 1 to 255 |
+| `mine_fuse_ticks` | 10 | 1 to 255 |
+| `big_explosion_threshold` | 20 | 0 to 510 |
+
+**Tree growth.**
+
+| Rule | Classic | Range |
+|---|---|---|
+| `tree_grow_ticks` | 3000 | 1 and up |
+| `tree_grow_initial_ticks` | 30000 | 1 and up |
+| `tree_weight_forest` | 100 | -32768 to 32767 |
+| `tree_weight_grass` | 25 | -32768 to 32767 |
+| `tree_weight_river` | 2 | -32768 to 32767 |
+| `tree_weight_boat` | 1 | -32768 to 32767 |
+| `tree_weight_deep_sea` | 0 | -32768 to 32767 |
+| `tree_weight_swamp` | 2 | -32768 to 32767 |
+| `tree_weight_rubble` | -2 | -32768 to 32767 |
+| `tree_weight_building` | -20 | -32768 to 32767 |
+| `tree_weight_half_building` | -15 | -32768 to 32767 |
+| `tree_weight_crater` | -2 | -32768 to 32767 |
+| `tree_weight_road` | -100 | -32768 to 32767 |
+| `tree_weight_mine` | -7 | -32768 to 32767 |
+
+**Pairs.** A value inside its own range can still be refused with
+`SCN_OP_PAIR` when it breaks one of these:
+
+- `pill_attack_min_ticks` at most `pill_attack_ticks`.
+- `base_capture_armour` at most `base_full_armour`; `base_hit_armour` at most
+  `base_capture_armour`.
+- `base_min_armour`, `base_min_shells` and `base_min_mines` at most the
+  matching `base_full_*`.
+- `base_armour_give`, `base_shells_give` and `base_mines_give` at most the
+  matching `base_full_*` less the matching `base_min_*`.
+- `lgm_cost_road`, `lgm_cost_building`, `lgm_cost_repair_building`,
+  `lgm_cost_boat` and `lgm_cost_pill_new` at most `tank_full_trees`;
+  `lgm_cost_pill_repair` times `lgm_pill_repair_load` at most
+  `tank_full_trees`; `lgm_cost_mine` at most `tank_full_mines`.
+- `lgm_pill_repair_load` times `pill_repair_amount` at least `pill_max_armour`,
+  and `pill_repair_amount` at most `pill_max_armour`.
+- `gunsight_min` at most `gunsight_max`; `shell_start_add` at most half of
+  `shell_life` times `gunsight_min`, so the shortest shot still travels; and
+  half of `shell_life` times `gunsight_max`, less `shell_start_add`, plus 1,
+  at most 255, so the longest shot's life still fits its byte.
+
+The detail a refusal carries names both sides with their numbers.
+
+---
+
+## Constants
+
+| Name | Value | Meaning |
+|---|---|---|
+| `game.api_version` | 1 | The surface this server implements. A script states the one it was written against as `scenario.api`. |
+| `game.NEUTRAL` | 255 | The owner a pillbox or base carries when no player holds it. |
+
+---
+
+## Terrain codes
+
+`game.TERRAIN` names the codes `game.map_tile` answers and `game.set_tile` and
+`game.fill_rect` take, so a script compares against a word rather than against
+a number of its own.
+
+`deep_sea`, `building`, `river`, `swamp`, `crater`, `road`, `forest`, `rubble`,
+`grass`, `half_building`, `boat`, `mine_swamp`, `mine_crater`, `mine_road`,
+`mine_forest`, `mine_rubble`, `mine_grass`.
+
+```lua
+if game.map_tile(x, y) == game.TERRAIN.deep_sea then ... end
+```
+
+---
+
+## Sounds
+
+The names `game.sound` takes. The list stops where the server stops taking one
+from a scenario: the lobby's own sounds are the last it carries, and anything
+past them belongs to the client.
+
+`shoot_self`, `shoot_near`, `shoot_far`, `shot_tree_near`, `shot_tree_far`,
+`shot_building_near`, `shot_building_far`, `hit_tank_near`, `hit_tank_far`,
+`hit_tank_self`, `bubbles`, `tank_sink_near`, `tank_sink_far`,
+`big_explosion_near`, `big_explosion_far`, `farming_tree_near`,
+`farming_tree_far`, `man_building_near`, `man_building_far`, `man_dying_near`,
+`man_dying_far`, `man_laying_mine_near`, `mine_explosion_near`,
+`mine_explosion_far`, `lobby_chat_received`, `lobby_ready`, `lobby_unready`,
+`lobby_countdown`, `lobby_game_start`, `lobby_player_join`,
+`lobby_player_leave`.
+
+---
+
+## Refusal codes
+
+The `code` a refused write answers, as a string.
+
+| Code | Means |
+|---|---|
+| `SCN_OP_QUEUED` | Accepted; it applies on a later tick. Answered beside `true`, not as a refusal. |
+| `SCN_OP_UNSUPPORTED` | The server has no arm for this yet. |
+| `SCN_OP_IN_POLICY` | Issued from inside a policy, which may only answer. |
+| `SCN_OP_WRONG_STATE` | A lobby write while the round runs, a round write while in the lobby, or a roster write during the setup that opens a round. |
+| `SCN_OP_NO_SUCH_PLAYER` | The seat is empty, or has no tank when the write needs one. |
+| `SCN_OP_TANK_DEAD` | The write needs a live tank. |
+| `SCN_OP_IS_HUMAN` | A removal aimed at a person. |
+| `SCN_OP_NO_SUCH_ITEM` | A pill, base, start or region index that is out of range or holds nothing live. |
+| `SCN_OP_BAD_SQUARE` | `x` or `y` off the map, or in the twenty-square sea frame a write may not touch (see [Changing the world](#changing-the-world)). |
+| `SCN_OP_BAD_TERRAIN` | The square cannot hold this: a base on deep sea, a mine on a building. |
+| `SCN_OP_RANGE` | A number outside what the field or the rule allows. |
+| `SCN_OP_PAIR` | A rule value that breaks an invariant it shares with another rule. |
+| `SCN_OP_CARRIED` | The pillbox is in a tank; drop it first. |
+| `SCN_OP_FULL` | 16 live entities, 16 seats, or a queue with no room. |
+| `SCN_OP_ALREADY` | An add of something already there, a give of a carried pillbox, a spawn into a seat already on the field. |
+| `SCN_OP_TOO_BIG` | A list or a line past its buffer. |
+| `SCN_OP_RATE` | A budget for the tick is spent, or a second `fill_rect` was asked for while one is still landing. |
+| `SCN_OP_NOT_FOUND` | A brain path or a package name that does not resolve. |
+| `SCN_OP_NO_STOCK` | A builder order the tank cannot pay for. |
+| `SCN_OP_BAD_CALL` | The call itself is malformed. |
+
+---
+
+## Limits
+
+| | |
+|---|---|
+| Script file | 1 MiB |
+| Rules in the `scenario` table | 128 |
+| Tags per entity | 4, each 31 bytes |
+| Regions | 64, declared and defined together; names 31 bytes |
+| Timers waiting at once | 64 |
+| A line of text | 128 bytes |
+| A bot's `init` table | 16 pairs |
+| Events queued for one frame | 256 |
+
+Going past one of the counts is reported and refused. The two name lengths
+are the exception when the name comes from the `scenario` table: a tag or a
+region name longer than 31 bytes is cut to 31 there, where `define_region`
+refuses one.
+
+---
+
+## Checking a scenario before you run it
+
+```
+WinBoloDS -validate "maps/Wave Defense.map"
+```
+
+reads the script beside the map in a Lua state with a `game` table that
+answers nothing, runs the chunk's top level, and checks what the `scenario`
+table says against the map, the lobby and the rule catalogue. Each problem is
+printed as
+
+```
+maps/Wave Defense.scenario.lua:14: rules.tank_reload_ticks: tank_reload_ticks is 999, outside 0..255
+```
+
+on standard error, and the command exits 0 for a map that is playable and 1
+for one that is not. Problems the parse itself finds — a rule name that
+spells nothing, a tag past what the map holds — are also written to standard
+output as the server would log them, so a run that captures one stream sees
+half the report. The map has to load before the script is looked at.
+
+No round is run and no bot loads, but the file's top level does run, the same
+way it would at a round start — so a file you would not run is a file you
+should not check. The stub `game` table answers `nil` to every call, so a
+script that reads the world at its top level, which it should not, raises
+here and not on the server.
+
+The line number is found by looking for the key's own name in the source, so
+two things can lead it astray: a name written earlier in a comment or a string
+takes the line, and a key two tables both carry — a second team's `bots` —
+takes the first one's line.
+
+---
+
+## What is not here yet
+
+Named so you do not spend an afternoon looking for them:
+
+- **`scenario.game` and `scenario.lobby.extra_teams`.** Both are read and
+  neither changes the round yet.
+- **`spawn_bot`'s `loadout`.** The field is read and any value for it is
+  refused; a spawning bot is handed what the round's own policy hands it.
+- **Packaged brains.** `package:NAME` is refused wherever a brain is named.
+- **Bot hints.** There is no call that speaks to a bot's brain.
+- **Presentation.** A panel, a score line, a newswire line and a map marker
+  have no calls yet.
+- **Triggers.** A `scenario.triggers` table is not read, and a script that
+  carries one is neither parsed nor refused for it.

@@ -92,7 +92,7 @@ static void fireAllSpectatorCommands(ClientSim *cs) {
     clientSimNetSendAddBot(cs);
     clientSimNetSendAddBotConfigured(cs, 1, 0xFF, "Bot");
     clientSimNetSendRemoveBot(cs, 0);
-    clientSimNetSendLobbyBotConfig(cs, 0, 0, 0, "Bot");
+    clientSimNetSendLobbyBotConfig(cs, 0, 0, 0, 0, "Bot");
     clientSimNetSendLobbySetBotBrain(cs, 0, 0);
     clientSimNetSendLobbySetMap(cs, "maps/foo.map");
     clientSimNetSendLobbyPreviewCancel(cs);

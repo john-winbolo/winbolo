@@ -910,6 +910,26 @@ void playersRequestAlliance(struct ClientSim *cs, players *plrs, BYTE selfPlayer
 void playersLeaveAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
 
 /*********************************************************
+*NAME:          playersClearAlliance
+*PURPOSE:
+* Takes a player out of every alliance bitmap — their own,
+* and every other player's reference to them — and redraws.
+* What they own is left where it is: handing pillboxes and
+* bases to an ally belongs to a departure, which is what
+* playersLeaveAlliance is for. A server stating who is
+* allied with whom is not one, so the caller applying such
+* a statement clears through here.
+*
+*ARGUMENTS:
+* sim        - Pointer to the game sim
+* plrs       - Pointer to the players object
+* selfPlayer - The player this client is
+* playerNum  - Player number to take out of the alliances
+* isServer   - TRUE if we are the server (no screen to draw)
+*********************************************************/
+void playersClearAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
+
+/*********************************************************
 *NAME:          playersAcceptAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/11/99
@@ -1081,6 +1101,27 @@ void     playersSetClientFlags(players *plrs, BYTE playerNum, uint8_t flags);
 uint8_t  playersGetClientFlags(players *plrs, BYTE playerNum);
 void     playersSetClientType(players *plrs, BYTE playerNum, uint8_t clientType);
 uint8_t  playersGetClientType(players *plrs, BYTE playerNum);
+
+/*********************************************************
+*NAME:          playersLocationShown
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+* TRUE when a player's location is a country code worth showing after their
+* name. Two values are not: an empty string, and the "XX" sentinel the
+* geolocator returns when it cannot place an address (geolookup.h) and which
+* every bot is given outright, a bot having no country.
+*
+* Shared rather than repeated: every place that puts a location after a name
+* has to make the same decision, and they are in two files — the four name
+* builders in players.c and the two label builders in labels.c. A copy in
+* each is a copy that can be fixed in one and not the other.
+*
+*ARGUMENTS:
+* location - The player's location string, may be NULL
+*********************************************************/
+bool playersLocationShown(const char *location);
 
 #endif /* PLAYERS_H */
 

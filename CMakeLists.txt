@@ -252,9 +252,53 @@ if(WINBOLO_LUAJIT AND (EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
     set(WINBOLO_LUAJIT OFF)
 endif()
 
+# Measurement builds only: LUAJIT_SECURITY_PRNG=0 fixes LuaJIT's string-hash
+# seed instead of drawing it from OS entropy at VM creation. With stock
+# seeding, pairs() order over hash tables differs every run, which reorders
+# the brains' /info broadcasts and eval scans and makes identical -seed games
+# diverge (found 20260831: two same-seed runs split within 6 game-seconds,
+# first observable diff being /info key order). Turn this ON for an A/B run
+# and leave it off otherwise.
+#
+# OFF by default, and it should stay that way, for two reasons.
+#
+# It is not a free knob. The fixed seed is what a hash-flooding attack needs
+# to be reproducible, and brains do hash attacker-controlled strings: human
+# chat reaches a bot's inbox and GoalHunter parses it into table keys
+# (ally_state.lua's slot.info[key] = value). The per-tick budget hook caps
+# the damage at a killed think rather than a stalled server, so the exposure
+# is small -- but it is not zero, and it is on a shipped client and a public
+# dedicated server. LuaJIT's own lj_arch.h is explicit: "Important note to
+# distro maintainers: DO NOT change the defaults for a regular distro build
+# -- neither upwards, nor downwards!"
+#
+# And it is the wrong tool for the job. lj_prng.c says so at the branch this
+# define selects: "BTW: This is NOT the way to get predictable table
+# iteration, predictable trace generation, predictable bytecode generation,
+# etc." A fixed seed makes pairs() order repeatable BETWEEN RUNS OF THE SAME
+# BINARY and nothing more -- it is not stable across a LuaJIT upgrade, a
+# rebuild with different flags, or a 32/64-bit change, so a reference
+# baseline recorded under it is only comparable to runs from that same
+# build. The durable fix is for the brain not to depend on pairs() order
+# where that order is OBSERVABLE: iterate an array, or sort the keys, in
+# those paths. Doing that would let this option be deleted.
+#
+# Costs nothing at runtime either way: lj_prng_seed_secure runs once per
+# lua_newstate (lj_state.c) -- one entropy read per brain, not per think --
+# and the hashing on the hot path is identical under both settings.
+option(WINBOLO_LUAJIT_DETERMINISTIC
+       "Fixed LuaJIT string-hash/PRNG seed for A/B measurement runs (insecure; see comment)" OFF)
+
 if(WINBOLO_LUAJIT)
     include(ExternalProject)
     message(STATUS "WINBOLO_LUAJIT: building LuaJIT ${WINBOLO_LUAJIT_LUAJIT_TAG} from source (native build system)")
+    if(WINBOLO_LUAJIT_DETERMINISTIC)
+        # A warning, not a status line: this is now opt-in and it weakens the
+        # VM. A release build should never print it.
+        message(WARNING "WINBOLO_LUAJIT_DETERMINISTIC=ON: LUAJIT_SECURITY_PRNG=0 "
+                        "(fixed string-hash seed). For A/B measurement runs only "
+                        "-- do not ship a build with this set.")
+    endif()
 
     # 1. LuaJIT source (no CMakeLists of its own — MakeAvailable only populates).
     FetchContent_Declare(luajit_src
@@ -286,15 +330,37 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
+        set(_lj_msvc_env "")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+        endif()
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
             CONFIGURE_COMMAND ""
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}/src" cmd /c msvcbuild.bat static
+            # cmd only searches the current directory for a bare command name
+            # when NoDefaultCurrentDirectoryInExePath is unset. Some CI images
+            # and hardened dev environments set it, and then `msvcbuild.bat`
+            # fails with "is not recognized" even though chdir put us in the
+            # directory containing it. Prefixing ".\" only fixes the batch file
+            # itself -- msvcbuild.bat then invokes the host tools it just built
+            # (minilua, buildvm) as bare names too, and those fail the same way
+            # -- so unset the variable for the whole build step instead.
+            # cl.exe appends the CL environment variable to every compile, so
+            # the determinism define reaches all of msvcbuild.bat's compiles
+            # (the bat never sets CL itself) without patching LuaJIT source.
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+                              --unset=NoDefaultCurrentDirectoryInExePath
+                              ${_lj_msvc_env}
+                              ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
+                              cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
     else()
         set(_lj_xcflags "-fPIC")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
+        endif()
         if(APPLE)
             # Hardened runtime kills any process executing JIT-compiled code
             # from plain anonymous pages (SIGKILL "Code Signature Invalid").
@@ -797,6 +863,7 @@ set(IOS_BOLO_SOURCES
 # minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
 # Server sources needed for single-player mode
@@ -846,6 +913,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
     src/gui/ui_mode.c
+    src/gui/visibility_presets.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/gui/sdl3/dialogs/imgui_welcome.cpp
     src/gui/sdl3/dialogs/imgui_mapchooser.cpp
@@ -900,7 +968,7 @@ set(IOS_MOBILE_SOURCES
 )
 
 # Lua brain scripts to bundle
-file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6/*.lua")
+file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7/*.lua")
 
 
 add_executable(WinBoloIOS MACOSX_BUNDLE
@@ -952,7 +1020,7 @@ set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.6"
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.7"
 )
 set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/sounds"
@@ -1024,7 +1092,7 @@ bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/transport_udp_client.c
     src/gui/sdl3/bg_game.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -1332,6 +1400,10 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
         set(SENTRY_BACKEND "crashpad" CACHE STRING "" FORCE)
     endif()
     FetchContent_MakeAvailable(sentry)
+    if(MSVC AND TARGET sentry)
+        # The WinHTTP transport assigns in conditions; LTCG diagnoses C4706.
+        target_compile_options(sentry PRIVATE /wd4706)
+    endif()
 
     set(HAVE_SENTRY TRUE)
 endif()
@@ -1364,10 +1436,13 @@ if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     # PIC so the static lib can also link into shared targets (winbolo_gym).
     if(TARGET plum)
         set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        # MSVC: libplum's pcp.h has a zero-sized array (C4200) which our
-        # /WX-as-error policy rejects. Disable just that warning for plum.
+        # libplum uses a zero-sized array (C4200) and assignments in conditions
+        # (C4706, also diagnosed during LTCG). Allow these in the dependency.
+        # Older Windows SDK headers also trigger C5105. Keep this suppression
+        # private to plum for all MSVC generators, including Ninja where the
+        # Visual Studio generator's selected-SDK variable is unavailable.
         if(MSVC)
-            target_compile_options(plum PRIVATE /wd4200)
+            target_compile_options(plum PRIVATE /wd4200 /wd4706 /wd5105)
         endif()
     endif()
     set(HAVE_LIBPLUM TRUE)
@@ -1388,6 +1463,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
 # server_static and server_sim_static have a circular dependency that
@@ -1460,6 +1536,7 @@ set(CLIENT_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
+    src/gui/visibility_presets.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
@@ -1722,6 +1799,9 @@ endif()
 # onnxruntime, so consumers inherit the link without repeating it.
 target_link_libraries(WinBolo PRIVATE
     bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides.
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -1860,17 +1940,12 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.6"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.6
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.7
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts (GoalHunter_1.6 + _1.0) to output Brains/ directory (excludes *.md)"
+    COMMENT "Copying brain scripts (GoalHunter_1.7) to output Brains/ directory (excludes *.md)"
 )
 
 # Steam Input action manifest + per-controller binding files — Steam reads
@@ -2061,6 +2136,9 @@ endif()
 
 target_link_libraries(WinBoloDS PRIVATE
     bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides.
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -2167,11 +2245,8 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.6"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.0"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.7"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
 
@@ -2459,6 +2534,7 @@ endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
     bolo_static
+    scenario_static
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
@@ -2485,11 +2561,8 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.6"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.0"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.7"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -2617,6 +2690,25 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# brainrec_split — cuts one -braindebug session into smaller sessions that
+# BrainTest can load one at a time. A long full-pool recording is gigabytes
+# on disk, and btLoadSession materialises every frame, so loading a whole
+# game can cost more RAM than the machine has; halving the frames halves it.
+# Links brain_record_walk.c (the shared brainrec.btr frame walker) rather
+# than bolo_static, so the tool doesn't drag in the sim, Lua or SDL's
+# runtime — SDL3 is here for its filesystem calls and for the headers the
+# format structs live behind.
+# ---------------------------------------------------------------------------
+add_executable(brainrec_split
+    src/tools/brainrec_split.c
+    src/bolo/brain_record_walk.c)
+bolo_apply_include_rules(brainrec_split runtime_only)
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic)
+if(WIN32)
+    target_link_libraries(brainrec_split PRIVATE psapi)
+endif()
+
+# ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
 # ---------------------------------------------------------------------------
 
@@ -2632,6 +2724,8 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
     src/braintest/braintest_loadbrowser.cpp
+    src/braintest/braintest_loadbrowser_segment.c
+    src/braintest/braintest_loadbrowser_rename.c
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp
@@ -2714,11 +2808,8 @@ add_custom_command(TARGET BrainTest POST_BUILD
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.6"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.0"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
@@ -3072,15 +3163,10 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.6"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.6
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.0"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.0
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.7
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
@@ -3153,17 +3239,32 @@ enable_testing()
 # Not guarded on APPLE: the cost elsewhere is three sub-second process starts,
 # it warms the page cache on every platform, and a binary too broken to print
 # its own usage is worth catching before 600-odd tests try to use it.
-add_test(NAME warmup.headless  COMMAND $<TARGET_FILE:WinBoloHeadless> --help)
-add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -help)
+#
+# -nocrashreporting on the two that have it: both call sentryInit before they
+# parse anything, so even `--help` would otherwise open the one per-user crash
+# database every other process in the suite is also opening. Same reason
+# tests/baseline/run.sh passes it to every DS and client it starts.
+add_test(NAME warmup.headless  COMMAND $<TARGET_FILE:WinBoloHeadless> -nocrashreporting --help)
+add_test(NAME warmup.ds        COMMAND $<TARGET_FILE:WinBoloDS> -nocrashreporting -help)
 add_test(NAME warmup.unittests COMMAND $<TARGET_FILE:WinBoloUnitTests> --list)
 set_tests_properties(warmup.headless warmup.ds warmup.unittests
                      PROPERTIES FIXTURES_SETUP warm_binaries TIMEOUT 60)
 
 # Per-scenario CTest entries. Scenario names must stay in sync with the
 # dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
-# no shared state and parallelize freely. UDP scenarios share a hardcoded
-# port per helper, so each helper's scenarios get a matching RESOURCE_LOCK
-# — different helpers (different ports) still run concurrently.
+# no shared state and parallelize freely. UDP scenarios take whatever
+# port the OS hands their DS — run.sh launches it with -port 0 and reads the
+# port back off its stderr — so they hold no RESOURCE_LOCK and all of them
+# run concurrently.
+#
+# They used to pin a port per helper and lock the scenarios sharing it. That
+# lock only held those scenarios apart from each other: it said nothing about
+# the unit tests, whose loopback harness binds 127.0.0.1:0 dozens of times
+# over a -j run and could be handed the very port a scenario was about to
+# bind, nor about a second copy of the suite, which contended for all nine.
+# An OS-assigned port has none of those problems and needs no lock, which
+# also lets the two ~21 s lobby scenarios run side by side rather than in
+# sequence.
 set(_baseline_fast
     everard_island_1bot_idle
     everard_island_1bot_sit
@@ -3206,26 +3307,24 @@ set(_baseline_fast
     pill_yard_capture
     pill_yard_anger
     grass_flat_growth
+    wave_defense_fast
 )
-set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
-set(_baseline_udp_50002 centralize_events_udp)
-set(_baseline_udp_50003
+set(_baseline_udp
+    ds_4bot_melee
+    ds_2v2_team
+    centralize_events_udp
     centralize_events_name_change_udp
     centralize_events_map_skip_udp
     centralize_events_alliance_leave_udp
-)
-set(_baseline_udp_50004 centralize_events_shutdown_udp)
-set(_baseline_udp_50005 centralize_events_alliance_2client_udp)
-set(_baseline_udp_50006 centralize_events_game_over_udp)
-set(_baseline_udp_50007
+    centralize_events_shutdown_udp
+    centralize_events_alliance_2client_udp
+    centralize_events_game_over_udp
     centralize_events_lobby_smoke_udp
     centralize_events_lobby_name_change_udp
-)
-set(_baseline_udp_50008
     centralize_events_chat_unicast_3client_udp
     centralize_events_chat_alliance_3client_udp
+    watch_road_capture_2client_udp
 )
-set(_baseline_udp_50009 watch_road_capture_2client_udp)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}
@@ -3238,18 +3337,15 @@ foreach(_name IN LISTS _baseline_fast)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
-foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008 50009)
-    foreach(_name IN LISTS _baseline_udp_${_port})
-        add_test(NAME baseline.${_name}
-                 COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
-                              --scenario ${_name}
-                              $<TARGET_FILE:WinBoloHeadless>
-                              $<TARGET_FILE:WinBoloDS>)
-        set_tests_properties(baseline.${_name} PROPERTIES
-                             TIMEOUT 60
-                             RESOURCE_LOCK "udp_${_port}"
-                             FIXTURES_REQUIRED warm_binaries)
-    endforeach()
+foreach(_name IN LISTS _baseline_udp)
+    add_test(NAME baseline.${_name}
+             COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+                          --scenario ${_name}
+                          $<TARGET_FILE:WinBoloHeadless>
+                          $<TARGET_FILE:WinBoloDS>)
+    set_tests_properties(baseline.${_name} PROPERTIES
+                         TIMEOUT 60
+                         FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
 # ---------------------------------------------------------------------------
@@ -3265,6 +3361,7 @@ endforeach()
 set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_main.c
     tests/unit/test_stubs.c
+    tests/unit/scratch_dir.c
     tests/unit/test_transport_local_passive_threads.c
     tests/unit/test_sp_subscriber_delivery.c
     tests/unit/test_active_sim_lifetime.c
@@ -3285,6 +3382,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
+    tests/unit/test_lobby_bot_config_memory.c
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
@@ -3314,6 +3412,24 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick registrations beside it, and the flag that keeps the all-ready
     # detector out of a start already under way.
     tests/unit/test_scenario_funnel.c
+    tests/unit/test_scenario_host.c
+    # The validator: a script read in a stub VM and checked against the map,
+    # the lobby template and the rule catalogue, without a round being run.
+    tests/unit/test_scenario_validate.c
+    # The binding table: the game table a script reads the sim through, the
+    # three index rules and what an absent entity reads as.
+    tests/unit/test_scenario_lua.c
+    # The bus events the host queues and drains: the subscriber, the
+    # fixed queue and the bounded drain at the end of each tick.
+    tests/unit/test_scenario_events.c
+    # What a drained event becomes: the hook written for it, the payload it
+    # is handed, the mark saying whether the scenario caused the fact, and
+    # the per-tick and round-end calls the drain makes beside them.
+    tests/unit/test_scenario_hooks.c
+    # What the host derives rather than hears: the timers a script sets, the
+    # regions it names, and the enter and leave hooks the per-tick scan of
+    # tank positions produces.
+    tests/unit/test_scenario_derived.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -3335,9 +3451,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     # that drop a remainder rather than painting the map that replaced it.
     tests/unit/test_scenario_map_arms.c
     # The roster ops: the six arms, the refusals each one answers with, the
-    # queue that paces a spawn and a removal one to a tick, and the init
-    # table a spawned bot's brain is created with.
+    # queue that paces a spawn and a removal one to a tick, the init table a
+    # spawned bot's brain is created with, and the one quiet accept a spawn
+    # onto a team publishes.
     tests/unit/test_scenario_roster_arms.c
+    # The unfielded seat: what a seat held without a bot in it counts for, the
+    # start sequence walking past it, the spawn that fields it and the removal
+    # that gives it back, what that removal costs — one event, no resync — and
+    # the byte that carries the seat to clients.
+    # The lobby template: the engine seating a scenario's teams at a map
+    # commit, reconciling them when a round comes back, re-seating them when
+    # an emptied lobby resets, and leaving a preview and a plain map alone.
+    tests/unit/test_lobby_template.c
+    tests/unit/test_unfielded_seat.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
     # listener wherever they stand, and the records the three lines leave in a
@@ -3369,6 +3495,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # classic, with the two kill ops shown to reach the death bodies without
     # asking, and once more with nothing registered.
     tests/unit/test_scenario_policy_combat.c
+    # The same rows answered from a script instead: the host's lookup, the
+    # words and indices a script is handed at each site, nil as the classic
+    # answer, the op a policy may not issue while it is answering, and the
+    # raise that counts toward the error limit.
+    tests/unit/test_scenario_policy_lua.c
     # The in-process game-event channel: the second subscriber callback, and
     # the captures and builder death that reach it from GameSim callbacks
     # rather than from an event built in shared code, byte for byte as before.
@@ -3403,6 +3534,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
     tests/unit/test_fog_settings.c
+    # The named visibility sets the lobby offers, and the match that reads
+    # a live set of settings back as one of them.
+    tests/unit/test_visibility_presets.c
+    src/gui/visibility_presets.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
@@ -3424,8 +3559,22 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
+    tests/unit/test_brain_modes.c
+    tests/unit/test_brain_view_data.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
+    tests/unit/test_pf_influence_tail.c
+    # BrainTest Load Session next/prev-segment lookup. The finder is plain C
+    # and ImGui-free precisely so it can be linked here; the rest of the
+    # browser (braintest_loadbrowser.cpp) is not part of this target.
+    tests/unit/test_loadbrowser_segment.c
+    src/braintest/braintest_loadbrowser_segment.c
+    # ... and the session-name grammar + rename planner that walk is built on
+    # (braintest_loadbrowser_rename.c). Its apply step is the only part that
+    # touches disk, so test_loadbrowser_rename.c exercises that against a
+    # throwaway dir tree under the working directory.
+    tests/unit/test_loadbrowser_rename.c
+    src/braintest/braintest_loadbrowser_rename.c
     # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
     # is emscripten-only but the parse compiles everywhere).
     tests/unit/test_proxy_meta_parse.c
@@ -3544,6 +3693,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_entity_change.c
+    # A scenario's changeover from a connected client: the pillbox a human
+    # holds keeps its owner while a held seat is fielded and taken off again,
+    # with no full sync in the middle to cover a migration.
+    tests/unit/test_loopback_scenario_seat.c
     # The rules table over the wire: a mid-round change reaching a connected
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
@@ -3704,6 +3857,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
+    # assembly (whole-token-or-nothing when the buffer is tight) and the
+    # difficulty <-> word round trip -difficulty and the preference share.
+    tests/unit/test_bot_init_arg.c
     # River tile lookup: ROAD must read as "the river continues" in all four
     # RIVER_END arms (a bridge on a river cross drew corner pieces), plus the
     # game vs log-viewer copies of screenCalcRiver never disagreeing.
@@ -3954,12 +4111,20 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # differential test at the committed fixture directory.
     WB_WIRE_CORPUS_CAPTURE=1
     WB_WIRE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wire"
+    # Root for every scratch file a test writes, under the BUILD dir rather
+    # than the source tree or /tmp: two worktrees then cannot pick the same
+    # path. scratch_dir.c adds a pid and the test name beneath it and sweeps
+    # its own subtree at exit.
+    WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
     # Committed skin fixture directory: the parity test opens
     # <dir>/basic and zips it into the working directory at run time.
     WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
+    # The maps the baseline runs play, and the scenario scripts that sit
+    # beside them: the validator case reads one from here.
+    WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -3976,13 +4141,16 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # blocks.h, snapshot.h, lv_*.h) used by test_wbv_reader.c and the
     # linked src/logviewer/*.c decode TUs.
     src/logviewer
+    # braintest_loadbrowser.h for the Load Session segment-walk test (the
+    # finder TU compiled above); no other braintest source is linked here.
+    src/braintest
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
-    bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+    bolo_static scenario_static ${SERVER_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image
@@ -3996,6 +4164,24 @@ target_link_libraries(WinBoloUnitTests PRIVATE
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+    # 8 MB stack, matching the Linux default.
+    #
+    # test_net_impair.c declares NetImpair as a stack LOCAL in five test
+    # functions, and NetImpair is ~1.06 MB (queue[512] of 2048-byte packets,
+    # net_impair.h). That overflows Windows' 1 MB default, so the runner died
+    # at STATUS_STACK_OVERFLOW partway through `net_impair` -- and because the
+    # test list in test_main.c is a static table walked in order, EVERY test
+    # after that entry (100+ of them, including all the spectator and loopback
+    # suites) silently never ran on Windows. It passed on Linux only because
+    # the default stack there is already 8 MB.
+    #
+    # Raising the stack rather than making those locals `static` keeps each
+    # test case's fixture genuinely fresh, which is the point of a stack local.
+    if(MSVC)
+        target_link_options(WinBoloUnitTests PRIVATE /STACK:8388608)
+    else()
+        target_link_options(WinBoloUnitTests PRIVATE -Wl,--stack,8388608)
+    endif()
 else()
     target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
@@ -4064,6 +4250,17 @@ set(_unit_test_names
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact
+    # A new bot's mode/difficulty rule (test_lobby_bot_config_memory.c): the
+    # base, then the host's last MANUAL pick, remembered by key so it survives
+    # a brain declaring a different list. Reads the shipped GoalHunter_1.7
+    # modes.txt beside the binary and writes nothing, so these are safe under
+    # `ctest -j`.
+    lobby_bot_config_memory_applies
+    lobby_bot_config_memory_empty_is_noop
+    lobby_bot_config_memory_unknown_key
+    lobby_bot_config_memory_not_honoured
+    lobby_bot_config_memory_manual_only
+    lobby_bot_config_memory_new_lobby
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -4181,6 +4378,12 @@ set(_unit_test_names
     fog_settings_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
+    visibility_preset_round_trip
+    visibility_preset_custom
+    visibility_preset_ignores_decay
+    visibility_preset_pref_words
+    info_packet_preset_round_trip
+    info_packet_absent_views_read_classic
     upload_cap_enforced
     map_field_clamps_evil
     map_field_clamps_passthrough
@@ -4191,7 +4394,12 @@ set(_unit_test_names
     map_read_memory_handbuilt
     map_convert_file_to_compressed
     map_read_memory_rejects_garbage
+    map_read_clears_mine_under_pill
     upload_busy_predicate
+    upload_lost_ack_retry
+    upload_timeout_releases_other_player
+    upload_lost_done_retry
+    upload_partial_timeout_retry
     upload_filename_safe
     lobby_bot_name_rejects_reserved_prefix
     lobby_bot_name_rejects_disallowed_char
@@ -4223,10 +4431,34 @@ set(_unit_test_names
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
+    brain_modes_manifest_parses
+    brain_modes_missing_falls_back
+    brain_modes_malformed_lines_skipped
+    brain_modes_counts_clamped
+    brain_view_data_edge_rect
+    bot_init_arg_difficulty_token
+    bot_init_arg_mode_tokens
+    bot_difficulty_names
     bolo_rand_golden_sequence
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    pf_tail_reaches_radius_and_stops
+    pf_tail_blocked_by_wall_and_sea
+    pf_tail_neutral_zone_slows
+    pf_tail_meeting_cancels_tie_to_hostile
+    pf_tail_never_overwrites_a_stamp
+    pf_tail_deep_margin_keeps_off_the_shore
+    pf_tail_contact_makes_a_front_line
+    loadbrowser_segment_walks_parts
+    loadbrowser_segment_crosses_blocks
+    loadbrowser_segment_no_neighbour
+    loadbrowser_segment_path_forms
+    loadbrowser_segment_labels
+    loadbrowser_rename_splits_names
+    loadbrowser_rename_family_plan
+    loadbrowser_rename_rejections
+    loadbrowser_rename_applies
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback
@@ -4273,6 +4505,9 @@ set(_unit_test_names
     transfer_host_rejects_self
     transfer_host_rejects_unconnected
     transfer_host_rejects_bot_target
+    firstjoinhost_promotes_over_bot
+    firstjoinhost_off_leaves_host_alone
+    firstjoinhost_second_joiner_does_not_displace
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
@@ -4282,6 +4517,8 @@ set(_unit_test_names
     log_roundtrip_tank_stock_record
     replay_roundtrip_world
     replay_roundtrip_base_migrate
+    replay_roundtrip_base_damage
+    replay_roundtrip_base_capture_stock
     replay_roundtrip_pill_health
     replay_v2_pill_health_nibble
     replay_v1_pill_health_nibble
@@ -4328,6 +4565,8 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     alliance_reset_bots_synced_after_inplace_start
     alliance_reset_bots_synced_after_countdown_start
+    alliance_reset_apply_keeps_owners
+    alliance_reset_changed_matrix_keeps_owners
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     pill_repair_tops_up_from_arrival_armour
@@ -4590,6 +4829,8 @@ set(_unit_test_names
     map_compress_rejects_null_handles
     map_checksum_ignores_mines
     map_resync_base_crater_converges
+    map_pill_mine_cleared_on_load
+    map_carried_pill_keeps_terrain
     map_shadow_tracks_real
     map_shadow_crc_matches
     map_shadow_blob_identical
@@ -4832,6 +5073,12 @@ set(_unit_test_names
     scenario_start_flag_set_during_start
     scenario_start_guard_blocks_reentry
     scenario_start_flag_cleared_after_start
+    scenario_round_start_called_both_starts
+    scenario_setup_window_admits_ops
+    scenario_setup_window_roster_refused
+    scenario_setup_window_shut_refuses_all
+    scenario_setup_window_no_callback
+    scenario_setup_window_holds_publish
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -4847,6 +5094,7 @@ set(_unit_test_names
     scenario_tank_give_pill
     scenario_tank_drop_pill
     scenario_tank_arm_records
+    scenario_tank_death_ticks_respawn
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -4871,6 +5119,7 @@ set(_unit_test_names
     scenario_entity_publish
     scenario_entity_add_out_null
     loopback_entity_change
+    loopback_scenario_seat_keeps_pills
     pill_armour_scale_classic_cap
     pill_armour_scale_raised_cap
     pill_armour_scale_client_caps
@@ -4897,6 +5146,9 @@ set(_unit_test_names
     scenario_roster_spawn_lands
     scenario_roster_spawn_paced
     scenario_roster_team_during_add
+    scenario_roster_spawn_allies_team
+    scenario_roster_spawn_ally_is_quiet
+    scenario_roster_spawn_no_team_allies_nothing
     scenario_roster_remove_bot
     scenario_roster_set_team
     scenario_lobby_add_bot
@@ -4904,6 +5156,32 @@ set(_unit_test_names
     scenario_lobby_set_team
     scenario_roster_bots_seat_past_the_human_cap
     scenario_roster_spawn_named_start
+    lobby_template_map_commit_seats
+    lobby_template_return_reconciles
+    lobby_template_return_unfields
+    lobby_template_reset_reseats
+    lobby_template_preview_is_inert
+    lobby_template_plain_map_clears
+    lobby_template_caps_humans_only
+    lobby_template_cap_seats_human_above_bots
+    lobby_template_cap_refuses_extra_human
+    lobby_template_cap_never_binds_bots
+    lobby_template_cancel_keeps_trim
+    lobby_template_cancel_keeps_empty_team
+    lobby_template_cancel_chain_rolls_back
+    lobby_template_commit_keeps_new_lobby
+    lobby_template_cancel_restores_path_inmem
+    lobby_template_cancel_restores_path_random
+    unfielded_seat_counts
+    unfielded_seat_is_empty
+    unfielded_seat_all_ready
+    unfielded_seat_start_skips_it
+    unfielded_seat_spawn_fields_it
+    unfielded_seat_survives_remove
+    unfielded_seat_unfield_is_quiet
+    unfielded_seat_unfield_keeps_sync
+    unfielded_seat_spawn_keeps_alliances
+    unfielded_seat_on_the_wire
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player
@@ -4944,6 +5222,21 @@ set(_unit_test_names
     scenario_policy_can_capture
     scenario_policy_kill_ops_ignore_can_die
     scenario_policy_combat_null_is_classic
+    scenario_policy_lua_allow_base_win
+    scenario_policy_lua_can_respawn
+    scenario_policy_lua_can_build
+    scenario_policy_lua_can_capture
+    scenario_policy_lua_announce
+    scenario_policy_lua_can_die
+    scenario_policy_lua_nil_is_classic
+    scenario_policy_lua_op_in_policy
+    scenario_policy_lua_error_counts
+    scenario_policy_lua_choose_start
+    scenario_policy_lua_spawn_loadout
+    scenario_policy_lua_damage_scale
+    scenario_policy_lua_value_classic
+    scenario_policy_lua_value_error_counts
+    scenario_policy_lua_value_in_policy
     game_event_channel_base_captured
     game_event_channel_pill_captured
     game_event_channel_lgm_lost
@@ -4972,6 +5265,91 @@ set(_unit_test_names
     scenario_announce_pill_line_written_once
     scenario_announce_vote_line_held
     scenario_announce_loopback_quiet_draws_no_line
+    scenario_host_metadata
+    scenario_host_rules_change_round
+    scenario_host_syntax_error_line
+    scenario_host_unknown_rule_key
+    scenario_host_api_too_new
+    scenario_host_no_script
+    scenario_host_manifest_roundtrip
+    scenario_host_seed_reproducible
+    scenario_host_edit_after_attach
+    scenario_host_reload_picks_up_edit
+    scenario_host_reload_bad_syntax
+    scenario_host_reload_bad_api
+    scenario_host_reload_applies_nothing
+    scenario_host_fresh_globals_per_round
+    scenario_host_setup_in_window
+    scenario_host_start_on_first_running_tick
+    scenario_host_error_limit_boundary
+    scenario_host_disabled_stops_hooks
+    scenario_host_vm_lock_same_thread
+    scenario_host_vm_lock_second_thread
+    scenario_host_audit_human_lost
+    scenario_host_failed_start_drops_manifest
+    scenario_host_metatable_raises
+    scenario_host_metatable_not_read
+    scenario_host_hook_via_global_metatable
+    scenario_host_disabled_refuses_script
+    scenario_host_disabled_plain_map
+    scenario_host_enabled_again
+    scenario_validate_clean
+    scenario_validate_api_too_new
+    scenario_validate_lobby_shape
+    scenario_validate_unknown_rule
+    scenario_validate_rule_out_of_range
+    scenario_validate_rule_pair
+    scenario_validate_tag_past_map
+    scenario_validate_fifth_tag
+    scenario_validate_region_off_map
+    scenario_validate_bound_false_with_tags
+    scenario_validate_syntax_error_line
+    scenario_validate_lines_point_at_the_key
+    scenario_validate_wave_defense
+    scenario_lua_every_row_answers
+    scenario_lua_read_index_passes_through
+    scenario_lua_op_index_subtracts_one
+    scenario_lua_script_index_adds_one
+    scenario_lua_absent_reads_are_nil
+    scenario_lua_terrain_is_the_whole_map
+    scenario_lua_shape_error_counts
+    scenario_lua_rule_reads_the_table
+    scenario_lua_tags_and_regions
+    scenario_lua_refusals_in_round
+    scenario_lua_refusals_in_lobby
+    scenario_lua_op_index_reaches_the_payload
+    scenario_lua_add_answers_its_index
+    scenario_lua_queued_answers_queued
+    scenario_lua_shape_raises_refusal_does_not
+    scenario_lua_detail_carries_the_number
+    scenario_lua_teleport_start_refuses_bad_index
+    scenario_lua_spawn_bot_refuses_bad_start
+    scenario_events_queued_then_drained
+    scenario_events_drain_reads_the_length_once
+    scenario_events_queued_during_a_drain_waits
+    scenario_events_overflow_boundary
+    scenario_events_overflow_counts_errors
+    scenario_events_no_scenario_delivers_nothing
+    scenario_events_lobby_tick_drains
+    scenario_events_control_reaches_the_queue
+    scenario_events_both_channels_in_publish_order
+    scenario_events_channel_says_which
+    scenario_events_overflow_covers_both
+    scenario_hooks_every_hook_from_its_event
+    scenario_hooks_fire_one_tick_later
+    scenario_hooks_scripted_both_ways
+    scenario_hooks_spawn_drain_is_scripted
+    scenario_hooks_team_changed_on_difference
+    scenario_hooks_tick_and_end
+    scenario_hooks_error_counts_and_disables
+    scenario_derived_timer_fires_on_its_tick
+    scenario_derived_timer_cancelled_and_stale
+    scenario_derived_timer_limit_boundary
+    scenario_derived_timers_die_with_the_round
+    scenario_derived_region_enter_and_leave
+    scenario_derived_define_region_adds_replaces_and_expires
+    scenario_derived_region_loop_terminates
+    scenario_derived_fixture_wins_without_on_tick
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

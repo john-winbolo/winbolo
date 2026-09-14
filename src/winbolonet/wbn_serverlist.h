@@ -39,6 +39,12 @@ typedef struct {
   int  lineOfSight;                          /* "lineofsight"; absent = off */
   bool smartPingsOff;                        /* "smartpingsoff"; absent = false,
                                                 meaning smart pings ALLOWED */
+  /* Whether the row said anything about its visibility rules at all.
+   * The fields above always hold something, because an absent key is
+   * read as the back-compatibility value; this says whether that is a
+   * real answer or a stand-in, so a caller naming the rules can say
+   * "not reported" rather than name a set the server never chose. */
+  bool hasViewInfo;
   int  pillViewDecay;                        /* "pillviewdecay" secs; absent = 30 */
   int  baseViewDecay;                        /* "baseviewdecay" secs; absent = 30 */
   int  allyViewDecay;                        /* "allyviewdecay" secs; absent = 30 */

@@ -65,6 +65,15 @@ static const WbTheme s_themeDark = {
     /* botTagBg      */ IM_COL32( 73,  76,  72, 255),  /* match HOST bg */
     /* botTagBorder  */ IM_COL32( 95, 110, 125, 255),  /* cool slate    */
     /* botTagText    */ IM_COL32(220, 230, 245, 255),  /* near-white    */
+    /* diffEasyTagBg      */ IM_COL32( 73,  76,  72, 255),
+    /* diffEasyTagBorder  */ IM_COL32( 70, 140,  80, 255),  /* Easy. green  */
+    /* diffEasyTagText    */ IM_COL32(140, 220, 150, 255),
+    /* diffMediumTagBg    */ IM_COL32( 73,  76,  72, 255),
+    /* diffMediumTagBorder*/ IM_COL32(165, 130,  55, 255),  /* Medium. amber */
+    /* diffMediumTagText  */ IM_COL32(238, 192,  90, 255),
+    /* diffHardTagBg      */ IM_COL32( 73,  76,  72, 255),
+    /* diffHardTagBorder  */ IM_COL32(170,  85,  60, 255),  /* Hard. red    */
+    /* diffHardTagText    */ IM_COL32(242, 135, 100, 255),
 };
 
 /* The single live theme pointer. Defaults to Dark; swap-then-apply

@@ -500,14 +500,17 @@ typedef struct ControlEvent {
             char    name[LOBBY_TEAM_NAME_LEN];
         } lobbyTeamMeta;
 
-        /* CTRL_LOBBY_BOT_CONFIG — per-bot difficulty/personality +
+        /* CTRL_LOBBY_BOT_CONFIG — per-bot mode/difficulty/personality +
          * the display name pulled from the players table at fill
          * time. (Name is informational here — players.c remains the
-         * source of truth via CTRL_PLAYER_NAME / lobbySlot.) */
+         * source of truth via CTRL_PLAYER_NAME / lobbySlot.)
+         * mode indexes the brain's own mode list and difficulty indexes
+         * that mode's level list — see brain_list.h. */
         struct {
             uint8_t slot;
             uint8_t difficulty;
             uint8_t personality;
+            uint8_t mode;
             char    name[PACKET_MAX_PLAYER_NAME];
         } lobbyBotConfig;
 

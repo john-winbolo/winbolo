@@ -36,11 +36,43 @@
  *  callback, or while a game start is running, are refused
  *  before the op is looked at.
  *
+ *  The actor mark serverSimIsScenarioActing answers is held
+ *  across the whole call, so everything the op publishes
+ *  reaches a host's subscriber marked as the script's.
+ *
  *  out may be NULL. When it is not, an entity add writes the
  *  index it took and a spawn writes the seat it took.
  *********************************************************/
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out);
+
+/*********************************************************
+ *NAME:          serverSimCheckScenarioRules
+ *PURPOSE:
+ *  Answers what setting these rules would do, without
+ *  setting any of them. Each (rule, value) pair is written
+ *  into a copy of the sim's table through the same write
+ *  cases the set-rule op uses, and the copy is checked once
+ *  when they are all in: SCN_OP_OK for a table that stands,
+ *  SCN_OP_RANGE for a value outside its row's bounds,
+ *  SCN_OP_PAIR for one that breaks a pair, SCN_OP_NO_SUCH_ITEM
+ *  for an index that names no rule, and SCN_OP_BAD_CALL for a
+ *  NULL sim or a count with no arrays behind it.
+ *
+ *  Several at once is the point: two values that each pass on
+ *  their own can break the pair they share, and the whole set
+ *  is written before the check reads it.
+ *
+ *  The sim is not touched. Nothing is published, nothing is
+ *  recorded and no operator line is written. why takes the
+ *  reason the check gave on a fault and "" otherwise; it may
+ *  be NULL only when whyLen is 0.
+ *********************************************************/
+ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
+                                        const uint16_t *rules,
+                                        const double *values,
+                                        uint16_t count,
+                                        char *why, size_t whyLen);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioPolicy
@@ -62,6 +94,94 @@ void serverSimSetScenarioPolicy(ServerSim *sim, const ScenarioPolicy *p);
  *********************************************************/
 void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
                               void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioRoundStart
+ *PURPOSE:
+ *  Registers the callback both authoritative round starts
+ *  invoke, after the world and the roster are built and
+ *  before the round's CTRL_SIM_RULES publish. The setup
+ *  window is open across the call, so the funnel takes the
+ *  ops it issues although the start is still in progress.
+ *  NULL clears it.
+ *********************************************************/
+void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx),
+                                    void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioLobbyTemplate
+ *PURPOSE:
+ *  Hands the sim the lobby a scenario asks for. The sim
+ *  copies it, so the caller's struct need not outlive the
+ *  call, and then owns seating and reconciling it at every
+ *  point a lobby is built or rebuilt — with no call back
+ *  into whoever read it. NULL clears it, which returns the
+ *  lobby to an ordinary one.
+ *
+ *  Setting it does not seat anything by itself. The map
+ *  commit seats it; a caller that wants the seats without a
+ *  map change asks for them.
+ *********************************************************/
+void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
+                                       const ScnLobbyTemplate *t);
+
+/*********************************************************
+ *NAME:          serverSimAddUnfieldedSeat
+ *PURPOSE:
+ *  Seat a bot in the lobby without putting it on the
+ *  field: the roster gains a connected bot seat with the
+ *  name and team given, and nothing else is built — no
+ *  brain, no ClientSim, no tank. The seat shows in the
+ *  roster, counts as ready, is skipped by the start
+ *  sequence, and is fielded later by a spawn naming it.
+ *  Returns false for an out-of-range or occupied seat.
+ *********************************************************/
+bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
+                               const char *name, BYTE teamNumber);
+
+/*********************************************************
+ *NAME:          serverSimUnfieldBot
+ *PURPOSE:
+ *  Take a seat off the field without taking it out of the
+ *  game: the bot, the tank, the man and the base timer go;
+ *  the roster entry, the identity, the team and the
+ *  alliance stay. One CTRL_LOBBY_SLOT says the seat is no
+ *  longer fielded — no leave event goes out, nothing the
+ *  seat owns changes hands and no client is resynced. A
+ *  spawn naming the seat fields it again.
+ *  No-op for an empty seat or one already off the field.
+ *
+ *  Taking the seat itself out is serverSimRemoveBot, which
+ *  is what a host's remove, a kick and a disconnect use.
+ *********************************************************/
+void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioMapChanged
+ *PURPOSE:
+ *  Registers the callback a committed map change invokes,
+ *  with the new map's file path, before the sim seats the
+ *  lobby. Whoever registers it is expected to drop the
+ *  scenario the previous map had, look for one beside the
+ *  new map, and set or clear the lobby template accordingly;
+ *  the sim reads the template again the moment the call
+ *  returns. NULL clears it.
+ *
+ *  mapPath is "" when the new map came from bytes rather
+ *  than a file — an upload, a generated random map, or a
+ *  preview rolled back — which is the case where there is
+ *  nothing to look beside.
+ *
+ *  The sim goes down the call beside the path so the
+ *  context can be something that outlives any one scenario:
+ *  the callback is where a scenario is torn down and
+ *  replaced, so it cannot be the scenario itself.
+ *********************************************************/
+void serverSimSetScenarioMapChanged(ServerSim *sim,
+                                    void (*mapChanged)(void *ctx,
+                                                       ServerSim *sim,
+                                                       const char *mapPath),
+                                    void *ctx);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioState

@@ -330,10 +330,12 @@ static void serverDedicatedLogBuildSettings(ServerSim *sim, char *out) {
     /* Whether a password is set, never the password text. */
     if (sim->hasPassword)           flags |= 0x10u;
     if (sim->allowNewPlayers)       flags |= 0x20u;
-    /* One bit each, because each of these has two values today. A third
-     * value in either would need the blob to grow rather than another
-     * bit here. */
-    if (sim->overviewWindow == (BYTE)overviewWindowClassic) flags |= 0x40u;
+    /* One bit each. The overview window has three values now and this bit
+     * says only that it is not the expanded one; the viewer tells Classic
+     * from None by the classic-mode bit in out[1], which is right for every
+     * case but a host who picked None without classic mode. Widening the
+     * blob for that would version a format on disk, so it stays as it is. */
+    if (sim->overviewWindow != (BYTE)overviewWindowExpanded) flags |= 0x40u;
     if (sim->lineOfSight != (BYTE)lineOfSightOff)           flags |= 0x80u;
 
     out[0]  = (char)LOG_SETTINGS_PAYLOAD_LEN;

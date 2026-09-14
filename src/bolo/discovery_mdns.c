@@ -257,6 +257,9 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
                                    &out->alliesInTrees);
         infoPacketReadViewPolicies2(&viewBytes, sizeof(viewBytes),
                                     &out->overviewWindow, &out->lineOfSight);
+        /* A record carrying the key at all is a record that says what its
+         * rules are; one without it said nothing and kept the stand-in. */
+        out->hasViewInfo = true;
       }
     }
   }

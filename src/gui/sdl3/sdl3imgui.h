@@ -284,16 +284,43 @@ const char *sdl3ImguiGetPlayerName(unsigned char playerNum);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
-*NAME:          sdl3ImguiGetBrainIconSurface
+*NAME:          sdl3ImguiGetBotIconSurface
 *PURPOSE:
-*  Returns the AI-brain icon (the badge shown for bot
-*  players) as an SDL_Surface — renderer-free, so the
+*  Returns the chip icon — the badge shown for a computer
+*  player — as an SDL_Surface, renderer-free, so the
 *  tank-label caches can texture it on whichever renderer
-*  hosts them. Owned by this module; do not destroy. Loads
-*  the SVG lazily on first call. Returns NULL if the SVG
-*  could not be loaded.
+*  hosts them.
+*
+*  isAlly picks the artwork: the green chip for a player
+*  allied with this client, the red one otherwise. The two
+*  are separate files drawn as authored, not one shape
+*  recoloured, and they keep their own colours — a tank
+*  label alpha-mods its icon but never colour-mods it, the
+*  same reason a country flag stays coloured out on the map.
+*
+*  Owned by this module; do not destroy. Both are loaded
+*  lazily on first call and freed once in sdl3ImguiCleanup.
+*  Returns NULL if the SVG could not be loaded.
 *********************************************************/
-SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
+SDL_Surface *sdl3ImguiGetBotIconSurface(bool isAlly);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerIsAlly
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 12/9/26
+*PURPOSE:
+* Is that player allied with this client? Answered from a mirror refreshed
+* once a frame in sdl3ImguiPumpAndRender, so callers with no ClientSim can
+* ask — the tank labels on the map are why it exists: they pick a bot's chip
+* by it and are handed a player number and a font, nothing more.
+*
+* False for your own slot, and false with no game running.
+*
+*ARGUMENTS:
+* playerNum - the slot to ask about
+*********************************************************/
+bool sdl3ImguiPlayerIsAlly(unsigned char playerNum);
 
 #if defined(WINBOLO_VOICE)
 /* Which voice glyph to rasterize. The shape says which end the state belongs
@@ -404,6 +431,60 @@ SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
 *********************************************************/
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);
+
+/*********************************************************
+*NAME:          RenderPlayerNameOpts
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 14/9/26
+*PURPOSE:
+* The optional, per-call choices renderPlayerNameEx offers, in one struct so
+* that a caller says everything it wants in the call itself.
+*
+* A struct and not two more parameters because this header has C linkage, so
+* a default argument will not compile and every new choice would otherwise
+* have to be spelled out at all seven call sites. Callers pass NULL for the
+* plain behaviour, and the next flag added here changes neither the
+* signature nor any call site that does not want it.
+*
+*ARGUMENTS:
+* botIsAlly  - true draws the green bot chip instead of the red one. Which
+*              chip a bot gets is the caller's to know: renderPlayerNameEx is
+*              given a player's flags, not their slot, so it cannot work out
+*              who is allied with whom, while the players panel and the
+*              in-game player menu already compute that for the mark they
+*              draw in front of the name. The green and red chips are
+*              separate artwork, drawn as authored rather than one shape
+*              recoloured: each is gold pins around a dark body with a
+*              coloured die, and a tinted silhouette loses all of it.
+* keepIconY  - true holds every badge in the run at the y the call started
+*              at, instead of snapping back to the line's top on each
+*              SameLine. For a caller that centres the run inside a row
+*              taller than the icons: on the line's top the first icon lands
+*              on the row's midline and the rest sit above it. A caller that
+*              starts its run at the line's top sees no difference.
+*********************************************************/
+typedef struct RenderPlayerNameOpts {
+    bool botIsAlly;   /* green chip rather than red for a bot */
+    bool keepIconY;   /* hold every badge at the starting y */
+} RenderPlayerNameOpts;
+
+/*********************************************************
+*NAME:          renderPlayerNameEx
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/9/26
+*LAST MODIFIED: 14/9/26
+*PURPOSE:
+* renderPlayerName with the per-call choices in RenderPlayerNameOpts. This
+* is where the drawing actually happens; renderPlayerName is the same call
+* with no options.
+*
+*ARGUMENTS: as renderPlayerName, plus
+*  opts - the choices for this call, or NULL for both false
+*********************************************************/
+void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
+                        const char *countryCode, bool showCountry,
+                        const RenderPlayerNameOpts *opts);
 
 #if defined(WINBOLO_VOICE)
 /*********************************************************

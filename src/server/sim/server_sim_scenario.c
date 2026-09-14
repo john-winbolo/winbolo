@@ -1553,8 +1553,9 @@ static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
     return SCN_OP_OK;
 }
 
-/* The brain a new bot runs: the one the op names, or the server's own
- * configured brain when it names none.
+/* The brain a new bot runs: the one the op names; failing that the one the
+ * seat was written with, which is how a seat held for a team gets that
+ * team's brain when something fields it; and failing both the server's own.
  *
  * A "package:NAME" brain is one carried by a scenario's package. Nothing on
  * the sim opens a package, so the name is refused here rather than handed to
@@ -1562,14 +1563,21 @@ static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
  * meant. The host that unpacks a scenario is what resolves these, and it
  * will resolve the name to a path before the op reaches this funnel. */
 static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
-                                     const char **out) {
+                                     BYTE slot, const char **out) {
     const char *path;
     SDL_PathInfo info;
 
     if (!scenarioTextTerminated(asked, SCN_PATH_MAX)) {
         return SCN_OP_TOO_BIG;
     }
-    path = (asked[0] != '\0') ? asked : serverSimGetBotBrainPath(sim);
+    path = NULL;
+    if (asked[0] != '\0') {
+        path = asked;
+    } else if (slot < MAX_TANKS && sim->seatBrain[slot][0] != '\0') {
+        path = sim->seatBrain[slot];
+    } else {
+        path = serverSimGetBotBrainPath(sim);
+    }
     if (path == NULL || path[0] == '\0') {
         return SCN_OP_NOT_FOUND;
     }
@@ -1596,7 +1604,10 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
         if (asked >= MAX_TANKS) {
             return SCN_OP_RANGE;
         }
-        if (sim->playerConnected[asked] || botManagerIsBot(sim, asked)) {
+        /* A seat held for a bot that is not on the field is the one occupied
+           seat a spawn may name: fielding it is what the seat is for. */
+        if ((sim->playerConnected[asked] && sim->lobbyPlayers[asked].fielded) ||
+            botManagerIsBot(sim, asked)) {
             return SCN_OP_ALREADY;
         }
         *out = asked;
@@ -1618,22 +1629,67 @@ static ScnOpResult scenarioSpawnSeat(ServerSim *sim, BYTE asked, BYTE *out) {
  * near the reservations its team already holds; a team written after that
  * call has missed the pick, and the bot is placed as though it had no team.
  *
- * The alliance rebake still belongs here, after the add. serverSimAddBot
- * does not bake alliances, and a rebake before the add cannot reach a slot
- * that is not in the game yet — so this is the first point where the bot
- * can be allied with the team it just joined. */
+ * The alliance is the one thing the add does not carry, so a seat new to the
+ * roster is allied with its team below. A seat that was already held is not:
+ * it was allied when the round started and keeps that through every
+ * unfielding, so accepting again would publish events for a state every
+ * client already holds.
+ *
+ * One accept, and never a rebake of the whole matrix. The batched reset
+ * exists so that rebaking every slot costs one event instead of N×(N-1)/2;
+ * a reset here would make every receiver drop and rebuild all sixteen slots
+ * to learn one pair. */
 static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const char *name, BYTE team,
                                  const ScnTable *init) {
+    /* A seat already held keeps the name and the team it was seated with: the
+       add reads both off the roster rather than taking the op's, so a wave
+       spawning by seat number does not have to restate them. */
+    const bool wasHeld = sim->playerConnected[slot] &&
+                         !sim->lobbyPlayers[slot].fielded;
+    char seatName[PLAYER_NAME_LEN];
+
+    seatName[0] = '\0';
+    if (wasHeld) {
+        playersGetPlayerName(&sim->sim.plyrs, slot, seatName, sizeof(seatName),
+                             TRUE);
+        name = seatName;
+        team = sim->lobbyPlayers[slot].teamNumber;
+    }
     if (!botManagerAddBot(sim, slot, brain, name,
                           serverSimGetBotAiType(sim),
                           gameTypeGet(&sim->sim.game),
                           sim->sim.hiddenMines, team, init)) {
+        /* An add that gets part-way and then fails empties the seat on its
+           way out. A seat that was being fielded goes back to being held, so
+           a brain that will not load costs the wave its bot and not its
+           seat. */
+        if (wasHeld && !sim->playerConnected[slot]) {
+            serverSimAddUnfieldedSeat(sim, slot, seatName, team);
+        }
         return false;
     }
     transportUdpServerSetBotName(slot, name);
-    if (team > 0) {
-        serverSimReapplyTeamAlliances(sim);
+    if (!wasHeld && team > 0 && team < MAX_TANKS) {
+        /* One accept, with the first member found. An accept merges the two
+           sides' groups, so the new seat joins everyone that member is allied
+           with, and a team seated this way is one group by construction: each
+           bot was merged into it as it spawned. A team someone has since
+           split — a leave, a set_team — gives the seat one of its pieces,
+           which is still better than the nothing it used to get.
+
+           Quiet: putting a bot on its team is seating, not something a
+           player did. The lobby does the same job with a rebake, which
+           announces nothing, and a script with something to say has its own
+           message call. */
+        BYTE i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (i == slot) continue;
+            if (!sim->playerConnected[i]) continue;
+            if (sim->lobbyPlayers[i].teamNumber != team) continue;
+            serverSimAcceptAllianceQuiet(sim, i, slot);
+            break;
+        }
     }
     serverSimPublishLobbySlot(sim, slot);
     return true;
@@ -1645,10 +1701,222 @@ static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
     if (slot >= MAX_TANKS || !sim->playerConnected[slot]) {
         return SCN_OP_NO_SUCH_PLAYER;
     }
-    if (!botManagerIsBot(sim, slot)) {
+    if (!serverSimIsBot(sim, slot)) {
         return SCN_OP_IS_HUMAN;
     }
     return SCN_OP_OK;
+}
+
+/* Take the bot out of a seat a script named. A seat that was seeded to be
+ * held — the kind a wave fields and refields — goes back to being held
+ * rather than being emptied, so the next wave still has it; every other seat
+ * is emptied, which is what a remove has always done. */
+static void scenarioTakeBotOut(ServerSim *sim, BYTE slot) {
+    if (sim->lobbyPlayers[slot].keepSeat && sim->lobbyPlayers[slot].fielded) {
+        /* Off the field where it sits. The seat keeps its name, its team and
+           the brain it was written to run, so the next thing to field it
+           starts the same bot the last one did. */
+        serverSimUnfieldBot(sim, slot);
+        return;
+    }
+    serverSimRemoveBot(sim, slot);
+}
+
+/* ── The lobby template ───────────────────────────────────────────────── */
+
+/* The seats a scenario asked for, which are the ones keepSeat marks: the
+ * template seeded them, or a script asked for one by hand, and either way
+ * they belong to the scenario and not to the host. A seat the script has
+ * since fielded still carries the mark, so this finds it too. */
+static bool scenarioSeatIsTemplates(const ServerSim *sim, BYTE slot) {
+    return sim->playerConnected[slot] && sim->lobbyPlayers[slot].keepSeat;
+}
+
+static BYTE scenarioSeatsOnTeam(const ServerSim *sim, BYTE team) {
+    BYTE i;
+    BYTE n = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (scenarioSeatIsTemplates(sim, i) &&
+            sim->lobbyPlayers[i].teamNumber == team) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Take a team's scenario seats down to want, highest seat first so the seats
+ * the host has had longest are the ones that survive. A team already at or
+ * below want is left alone — this only ever removes. */
+static void scenarioTrimTeamTo(ServerSim *sim, BYTE team, BYTE want) {
+    BYTE have = scenarioSeatsOnTeam(sim, team);
+    BYTE i;
+    for (i = MAX_TANKS; i > 0 && have > want; i--) {
+        BYTE slot = (BYTE)(i - 1);
+        if (!scenarioSeatIsTemplates(sim, slot)) continue;
+        if (sim->lobbyPlayers[slot].teamNumber != team) continue;
+        serverSimRemoveBot(sim, slot);
+        have--;
+    }
+}
+
+/* Empty every seat the scenario put there. The host's own seats and every
+ * human are left alone. */
+void serverSimScenarioClearSeats(ServerSim *sim) {
+    BYTE i;
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (scenarioSeatIsTemplates(sim, i)) {
+            serverSimRemoveBot(sim, i);
+        }
+    }
+}
+
+/* Seat one of a team's bots. An unfielded team gets the seat and no bot; a
+ * fielded one gets both. Answers false when there was nowhere to put it,
+ * which stops the team's loop rather than spinning on a full roster. */
+static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
+    char name[PLAYER_NAME_LEN];
+    int  slot;
+
+    /* The seat rule the lobby's Add Bot and both spawn handlers already
+       share, so a bot seats above the human cap here exactly as it does
+       there and there is no second rule to drift from it. */
+    slot = serverSimFindFreeSlot(sim, true);
+    if (slot < 0) return false;
+    if (scenarioBotName("", (BYTE)slot, name, sizeof(name)) != SCN_OP_OK) {
+        return false;
+    }
+
+    if (!team->fielded) {
+        if (!serverSimAddUnfieldedSeat(sim, (BYTE)slot, name, team->id)) {
+            return false;
+        }
+    } else {
+        const char *brain = (team->brain[0] != '\0')
+                          ? team->brain : serverSimGetBotBrainPath(sim);
+        if (brain == NULL || brain[0] == '\0') return false;
+        if (!serverSimCreateBot(sim, (BYTE)slot, brain, name,
+                                serverSimGetBotAiType(sim),
+                                gameTypeGet(&sim->sim.game),
+                                sim->sim.hiddenMines, team->id, NULL)) {
+            return false;
+        }
+        sim->lobbyPlayers[slot].keepSeat = true;
+    }
+    /* Recorded whether the seat holds a bot yet or not: an unfielded seat is
+       fielded later by a spawn that names no brain of its own, and this is
+       where that spawn finds the one its team was written with. */
+    SDL_strlcpy(sim->seatBrain[slot], team->brain,
+                sizeof(sim->seatBrain[slot]));
+    if (team->id > 0 && team->id < MAX_TANKS && !sim->teams[team->id].in_use) {
+        sim->teams[team->id].in_use = 1;
+        if (sim->teams[team->id].name[0] == '\0') {
+            SDL_snprintf(sim->teams[team->id].name, LOBBY_TEAM_NAME_LEN,
+                         "Team %d", (int)team->id);
+        }
+    }
+    return true;
+}
+
+/* Build the lobby the attached scenario asks for, from whatever is there
+ * now. Every seat the previous scenario left goes first, so committing a
+ * plain map over a scenario one leaves no horde behind, and a scenario with
+ * no template of its own leaves an ordinary lobby. */
+void serverSimScenarioSeatLobby(ServerSim *sim) {
+    BYTE t;
+    if (sim == NULL) return;
+    serverSimScenarioClearSeats(sim);
+    if (!sim->scenarioLobbyValid) return;
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
+        BYTE n;
+        if (team->id == 0 || team->id >= MAX_TANKS) continue;
+        for (n = 0; n < team->bots; n++) {
+            if (!scenarioSeatOne(sim, team)) break;
+        }
+    }
+}
+
+/* Bring a lobby that has just come back from a round into line with the
+ * template, keeping what the host did to it in between.
+ *
+ * bots is how many the engine seeds and not a number it keeps re-imposing:
+ * a host who trimmed a horde of ten to six gets six back, because the point
+ * of seating them where the host can see them is that the host may trim
+ * them. maxBots is the one that still binds, so a host who added past it is
+ * cut back to it. A team the host emptied altogether stays empty — that is
+ * the same edit as the trim to six, only further, and a floor that appeared
+ * only at zero would let a host reduce a horde to one but not to none.
+ *
+ * Then the other half: a seat the script fielded during the round goes back
+ * to being held, so the next round starts from the lobby the template
+ * describes rather than from wherever the last round's waves left it. */
+void serverSimScenarioReconcileLobby(ServerSim *sim) {
+    BYTE t, i;
+    if (sim == NULL || !sim->scenarioLobbyValid) return;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!scenarioSeatIsTemplates(sim, i)) continue;
+        if (!sim->lobbyPlayers[i].fielded) continue;
+        scenarioTakeBotOut(sim, i);
+    }
+
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
+        if (team->id == 0 || team->id >= MAX_TANKS) continue;
+        if (team->maxBots == 0) continue;
+        scenarioTrimTeamTo(sim, team->id, team->maxBots);
+    }
+}
+
+/* How many template seats each team holds right now, indexed by team id, for
+ * a caller that means to put these counts back later. Answers false and
+ * writes nothing when no template is attached, so the caller can tell that
+ * apart from a team recorded at zero: a host who emptied a team on purpose
+ * has to come back to an empty one. */
+bool serverSimScenarioSeatCounts(const ServerSim *sim, BYTE *out) {
+    BYTE t;
+    if (sim == NULL || out == NULL) return false;
+    if (!sim->scenarioLobbyValid) return false;
+    memset(out, 0, MAX_TANKS * sizeof(BYTE));
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        BYTE id = sim->scenarioLobby.teams[t].id;
+        if (id == 0 || id >= MAX_TANKS) continue;
+        out[id] = scenarioSeatsOnTeam(sim, id);
+    }
+    return true;
+}
+
+/* Put each of the template's teams back down to the count it was given.
+ *
+ * Trimming only. A team now holding fewer seats than its count is left where
+ * it is rather than seated back up, and that half is deliberate: it is the
+ * reconcile's rule that the ceiling binds and the floor does not, so a host
+ * who added seats and then backed out of a map keeps the lobby they are
+ * looking at instead of having the additions taken off them as well. */
+void serverSimScenarioTrimSeatsTo(ServerSim *sim, const BYTE *counts) {
+    BYTE t;
+    if (sim == NULL || counts == NULL || !sim->scenarioLobbyValid) return;
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        BYTE id = sim->scenarioLobby.teams[t].id;
+        if (id == 0 || id >= MAX_TANKS) continue;
+        scenarioTrimTeamTo(sim, id, counts[id]);
+    }
+}
+
+/* A different map has been committed. Whoever owns the scenario is told
+ * first, so it can drop the one the previous map had and look for one beside
+ * the new file; the template it leaves behind is what the seating below
+ * reads. A map with no scenario clears the template, and the seating then
+ * empties the seats the previous one left rather than carrying them into a
+ * map that knows nothing about them. */
+void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
+    if (sim == NULL) return;
+    if (sim->scenarioMapChanged != NULL) {
+        sim->scenarioMapChanged(sim->scenarioMapChangedCtx, sim,
+                                mapPath != NULL ? mapPath : "");
+    }
+    serverSimScenarioSeatLobby(sim);
 }
 
 /* Put one change on the queue. The one past the last is refused rather than
@@ -1725,7 +1993,7 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
     r = scenarioBotName(p->name, slot, name, sizeof(name));
     if (r != SCN_OP_OK) return r;
-    r = scenarioBrainPath(sim, p->brain, &brain);
+    r = scenarioBrainPath(sim, p->brain, slot, &brain);
     if (r != SCN_OP_OK) return r;
 
     memset(&entry, 0, sizeof(entry));
@@ -1783,10 +2051,11 @@ static ScnOpResult scenarioOpRosterSetTeam(ServerSim *sim,
 /* Add a bot to the lobby. CMD_LOBBY_ADD_BOT's own checks in order — the
  * operator's bot cap, the name, a free seat — and then the same add.
  *
- * An unfielded seat is a lobby entry the sim does not have: every add here
- * goes through botManagerAddBot, which fields the bot. Until a seat can be
- * held without one, an op asking for that is refused rather than quietly
- * given a fielded bot instead. */
+ * fielded false asks for the seat without the bot: the roster gains the
+ * entry, the host can see and trim it, and no brain loads until a spawn
+ * names the seat. Nothing else about the add changes — the cap counts it,
+ * the name is checked the same way — except the brain, which such a seat has
+ * no use for yet. */
 static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
                                          const ScnOpLobbyAddBot *p,
                                          ScnOpOut *out) {
@@ -1801,9 +2070,6 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     if (serverSimGetBotAiType(sim) == aiNone) {
         return SCN_OP_WRONG_STATE;
     }
-    if (!p->fielded) {
-        return SCN_OP_RANGE;
-    }
     if (p->team >= MAX_TANKS) {
         return SCN_OP_RANGE;
     }
@@ -1816,8 +2082,14 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
        would. The seat is not known yet and only the refusals matter here. */
     r = scenarioBotName(p->name, 0, name, sizeof(name));
     if (r != SCN_OP_OK) return r;
-    r = scenarioBrainPath(sim, p->brain, &brain);
-    if (r != SCN_OP_OK) return r;
+    /* A seat held without a bot in it loads no brain, so there is no path to
+       resolve here: the spawn that fields the seat brings one. */
+    if (p->fielded) {
+        /* No seat yet, so no seat brain to prefer — the op's or the
+           server's. */
+        r = scenarioBrainPath(sim, p->brain, SCN_NONE, &brain);
+        if (r != SCN_OP_OK) return r;
+    }
     /* The seat the op names, or the first free one, by the rule the spawn
        arm and the lobby's Add Bot share. */
     r = scenarioSpawnSeat(sim, p->slot, &slot);
@@ -1825,6 +2097,19 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     /* Again with the seat, because an op that named no name is given the
        lobby's default for the one it got. */
     (void)scenarioBotName(p->name, slot, name, sizeof(name));
+
+    if (!p->fielded) {
+        if (!serverSimAddUnfieldedSeat(sim, slot, name, p->team)) {
+            /* The seat picked is one already being held. A spawn is allowed
+               to land on one of those and this is not a spawn. */
+            return SCN_OP_ALREADY;
+        }
+        lobbyAutoUnreadyOnChange(sim);
+        if (out != NULL) {
+            out->slot = slot;
+        }
+        return SCN_OP_OK;
+    }
 
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, NULL)) {
         /* The path named a file and the file would not load as a brain. */
@@ -1846,7 +2131,7 @@ static ScnOpResult scenarioOpLobbyRemoveBot(ServerSim *sim,
     r = scenarioRemovableBot(sim, p->slot);
     if (r != SCN_OP_OK) return r;
 
-    serverSimRemoveBot(sim, p->slot);
+    scenarioTakeBotOut(sim, p->slot);
     return SCN_OP_OK;
 }
 
@@ -1888,7 +2173,7 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
     BYTE slot = 0;
 
     if (scenarioSpawnSeat(sim, p->slot, &slot) != SCN_OP_OK ||
-        scenarioBrainPath(sim, p->brain, &brain) != SCN_OP_OK ||
+        scenarioBrainPath(sim, p->brain, slot, &brain) != SCN_OP_OK ||
         scenarioBotName(p->name, slot, name, sizeof(name)) != SCN_OP_OK) {
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                     "scenario: queued bot spawn dropped, its seat or brain is gone");
@@ -1920,11 +2205,12 @@ static void scenarioRosterRemoveNow(ServerSim *sim, BYTE slot) {
     if (scenarioRemovableBot(sim, slot) != SCN_OP_OK) {
         return;
     }
-    serverSimRemoveBot(sim, slot);
+    scenarioTakeBotOut(sim, slot);
 }
 
 void serverSimScenarioDrainRoster(ServerSim *sim) {
     ScnRosterQueueEntry entry;
+    bool                was;
 
     if (sim == NULL || sim->scenarioRosterCount == 0) {
         return;
@@ -1943,11 +2229,18 @@ void serverSimScenarioDrainRoster(ServerSim *sim) {
         (uint8_t)((sim->scenarioRosterHead + 1) % SCN_ROSTER_QUEUE_MAX);
     sim->scenarioRosterCount--;
 
+    /* Marked as the scenario's, because it is: this queue holds nothing but
+       what a script asked for. A bot lands here rather than in the handler
+       that asked for it, a tick later, and the join, the lobby slot and the
+       tank spawn it publishes on the way in are all the script's doing. */
+    was                 = sim->scenarioActing;
+    sim->scenarioActing = true;
     if (entry.isSpawn) {
         scenarioRosterSpawnNow(sim, &entry.spawn);
     } else {
         scenarioRosterRemoveNow(sim, entry.removeSlot);
     }
+    sim->scenarioActing = was;
 }
 
 void serverSimScenarioResetRoster(ServerSim *sim) {
@@ -2185,15 +2478,63 @@ BOLO_STATIC_ASSERT(sizeof(SimRules) == SCN_RULE_COUNT * sizeof(int32_t),
 
 /* One switch arm per rule, generated from the list the index enum is
  * generated from, so the two cannot name different fields. The assignment
- * converts the op's double to whatever the field is declared as — an integer
- * rule takes the whole part of it, a float rule takes the value — and reading
- * it straight back out says what the field ended up holding, which is what is
- * checked below and what the record carries. */
+ * converts the caller's double to whatever the field is declared as — an
+ * integer rule takes the whole part of it, a float rule takes the value — and
+ * reading it straight back out says what the field ended up holding, which is
+ * what is checked below and what the record carries. */
 #define SCN_RULE_WRITE_CASE(name)                                            \
     case SCN_RULE_##name:                                                    \
-        copy.name = p->value;                                                \
-        written   = (double)copy.name;                                       \
+        copy->name = value;                                                  \
+        *written   = (double)copy->name;                                     \
         break;
+
+/* One rule into a table the caller owns, with the refusals a write can answer
+ * on its own. The op that sets a rule and the call that asks what a set would
+ * do both come through here, so a value becomes a field the same way whichever
+ * of them is asking.
+ *
+ * A NaN, and anything past the int32 window, cannot be converted to a field's
+ * type at all — that conversion is undefined rather than wrong — so both are
+ * refused before the write instead of checked after it. Written as a negated
+ * in-range test so a NaN fails it. No row's range comes near either end; every
+ * bound a row actually has is stated by simRulesCheck and by nothing here. */
+static ScnOpResult scenarioRuleWrite(SimRules *copy, uint16_t rule,
+                                     double value, double *written) {
+    /* An index past the end of the list names no rule, which is what every
+       other arm answers SCN_OP_NO_SUCH_ITEM for. */
+    if (rule >= SCN_RULE_COUNT) {
+        return SCN_OP_NO_SUCH_ITEM;
+    }
+    if (!(value >= -2147483648.0 && value <= 2147483647.0)) {
+        return SCN_OP_RANGE;
+    }
+
+    switch (rule) {
+        SCN_RULE_LIST(SCN_RULE_WRITE_CASE)
+        default:
+            /* Unreachable: the bounds check above has already passed, and
+               the cases come from the list the enum comes from. */
+            return SCN_OP_NO_SUCH_ITEM;
+    }
+    return SCN_OP_OK;
+}
+
+/* What a fault the check answered is refused as. No table is not reachable
+ * from either caller — the one checked is on the caller's own stack — and
+ * there is no result code for it, so it answers as the range refusal it would
+ * have to be reported as anyway. */
+static ScnOpResult scenarioRuleFaultResult(SimRulesFault fault) {
+    switch (fault) {
+        case SIM_RULES_OK:
+            return SCN_OP_OK;
+        case SIM_RULES_FAULT_PAIR:
+            return SCN_OP_PAIR;
+        case SIM_RULES_FAULT_RANGE:
+        case SIM_RULES_FAULT_NO_TABLE:
+            return SCN_OP_RANGE;
+    }
+    return SCN_OP_RANGE;
+}
 
 /* The record: which rule, and the value the field ended up holding. */
 BOLO_STATIC_ASSERT(sizeof(double) == 8, scn_rule_value_is_eight_bytes);
@@ -2327,29 +2668,12 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
     SimRules      copy    = sim->sim.rules;
     double        written = 0.0;
     SimRulesFault fault;
+    ScnOpResult   r;
     char          why[SIM_RULES_WHY_LEN];
 
-    /* An index past the end of the list names no rule, which is what every
-       other arm answers SCN_OP_NO_SUCH_ITEM for. */
-    if (p->rule >= SCN_RULE_COUNT) {
-        return SCN_OP_NO_SUCH_ITEM;
-    }
-    /* A NaN, and anything past the int32 window, cannot be converted to a
-       field's type at all — that conversion is undefined rather than wrong —
-       so both are refused before the write instead of checked after it.
-       Written as a negated in-range test so a NaN fails it. No row's range
-       comes near either end; every bound a row actually has is stated by the
-       check below and by nothing here. */
-    if (!(p->value >= -2147483648.0 && p->value <= 2147483647.0)) {
-        return SCN_OP_RANGE;
-    }
-
-    switch (p->rule) {
-        SCN_RULE_LIST(SCN_RULE_WRITE_CASE)
-        default:
-            /* Unreachable: the bounds check above has already passed, and
-               the cases come from the list the enum comes from. */
-            return SCN_OP_NO_SUCH_ITEM;
+    r = scenarioRuleWrite(&copy, p->rule, p->value, &written);
+    if (r != SCN_OP_OK) {
+        return r;
     }
 
     fault = simRulesCheck(&copy, why, sizeof(why));
@@ -2360,47 +2684,112 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
         char line[SIM_RULES_WHY_LEN + 32];
         SDL_snprintf(line, sizeof(line), "rule refused: %s", why);
         serverSimConsoleMessage(line);
-    }
-    switch (fault) {
-        case SIM_RULES_OK:
-            break;
-        case SIM_RULES_FAULT_PAIR:
-            return SCN_OP_PAIR;
-        case SIM_RULES_FAULT_RANGE:
-        /* No table is not reachable from here — the one checked is on this
-           stack — and there is no result code for it, so it answers as the
-           range refusal it would have to be reported as anyway. */
-        case SIM_RULES_FAULT_NO_TABLE:
-            return SCN_OP_RANGE;
+        return scenarioRuleFaultResult(fault);
     }
 
     sim->sim.rules = copy;
     scenarioRecordRuleSet(p->rule, written);
     scenarioClampWorldToRules(sim);
-    if (scenarioRuleIsCarried(p->rule)) {
+    /* Held while the setup window is open. The round start publishes the
+       table itself a few lines after the callback returns, and that publish
+       carries every field, so a scenario setting a dozen rules there would
+       otherwise send a dozen control events where one says the same thing.
+       Outside the window no publish follows, so the change states itself. */
+    if (scenarioRuleIsCarried(p->rule) && !sim->scenarioSetupWindow) {
         serverSimPublishSimRules(sim);
     }
     return SCN_OP_OK;
 }
 
-#undef SCN_RULE_WRITE_CASE
+/* The same question the arm asks, without the answer landing anywhere. The
+ * whole set is written into the copy before the check reads it, so a pair two
+ * of the values break together is found although each of them passes alone —
+ * which is what a script's rules table needs asking of it before a round is
+ * ever started on it. */
+ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
+                                        const uint16_t *rules,
+                                        const double *values,
+                                        uint16_t count,
+                                        char *why, size_t whyLen) {
+    SimRules      copy;
+    SimRulesFault fault;
+    uint16_t      i;
+    char          reason[SIM_RULES_WHY_LEN];
 
-ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
-                                     ScnOpOut *out) {
-    /* Loud in a development build, because either of these is a caller bug
-     * and the host that made it should hear about it at once. */
-    assert(sim != NULL);
-    assert(op != NULL);
-    /* And survivable in a shipped one, where the asserts above are gone:
-     * RelWithDebInfo carries -DNDEBUG. This is the call an out-of-process
-     * scenario host makes most, and a host that hands over a pointer it
-     * failed to resolve would otherwise take the whole server down and every
-     * player in the round with it. The other entry points below answer a
-     * NULL sim the same way. */
-    if (sim == NULL || op == NULL) {
+    if (why != NULL && whyLen > 0) {
+        why[0] = '\0';
+    }
+    if (sim == NULL) {
+        return SCN_OP_BAD_CALL;
+    }
+    if (count > 0 && (rules == NULL || values == NULL)) {
         return SCN_OP_BAD_CALL;
     }
 
+    copy = sim->sim.rules;
+    for (i = 0; i < count; i++) {
+        double      written = 0.0;
+        ScnOpResult r = scenarioRuleWrite(&copy, rules[i], values[i], &written);
+        if (r != SCN_OP_OK) {
+            return r;
+        }
+    }
+
+    fault = simRulesCheck(&copy, reason, sizeof(reason));
+    if (fault != SIM_RULES_OK && why != NULL && whyLen > 0) {
+        SDL_snprintf(why, whyLen, "%s", reason);
+    }
+    return scenarioRuleFaultResult(fault);
+}
+
+#undef SCN_RULE_WRITE_CASE
+
+/* Reading one back. Written from the list the write cases come from, so the
+ * index a script sets a rule by and the index it reads the same rule by
+ * cannot name different fields. Each field is converted to the double the op
+ * carries, which holds every value any of them can. */
+#define SCN_RULE_READ_CASE(name)                                             \
+    case SCN_RULE_##name:                                                    \
+        *out = (double)sim->sim.rules.name;                                  \
+        return true;
+
+bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
+                              double *out) {
+    if (sim == NULL || out == NULL || rule >= SCN_RULE_COUNT) {
+        return false;
+    }
+    switch (rule) {
+        SCN_RULE_LIST(SCN_RULE_READ_CASE)
+        default:
+            /* Unreachable: the bounds test above has already passed, and the
+               cases come from the list the enum comes from. */
+            return false;
+    }
+}
+
+#undef SCN_RULE_READ_CASE
+
+/* The six ops that change who is in the round. The start-in-progress guard
+ * below exists for exactly these: a roster edit made from inside a start
+ * re-enters the all-ready detector with every player still ready, which
+ * would begin a second round on top of the one being set up. They are
+ * therefore the ops the setup window does not admit, and this is the one
+ * place the set is written down. */
+static bool scenarioOpIsRoster(ScenarioOpType t) {
+    return t == SCN_OP_ROSTER_SPAWN_BOT ||
+           t == SCN_OP_ROSTER_REMOVE_BOT ||
+           t == SCN_OP_ROSTER_SET_TEAM ||
+           t == SCN_OP_LOBBY_ADD_BOT ||
+           t == SCN_OP_LOBBY_REMOVE_BOT ||
+           t == SCN_OP_LOBBY_SET_TEAM;
+}
+
+/* The prelude and the handler for one op, with the caller holding the actor
+ * mark across the whole of it. Split from the entry point below so the mark
+ * goes on once and comes off once however the op ends: every case returns
+ * where it stands. */
+static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
+                                   ScnOpOut *out) {
     /* A policy callback is a question the engine asks mid-operation. It
      * answers and nothing else: an op from inside one would mutate state
      * the caller is halfway through reading. A depth, not a flag, so a
@@ -2412,8 +2801,18 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
 
     /* A start is not a settled point. The roster, the tanks and the
      * state are all being rebuilt, so nothing may be written until it
-     * finishes. */
-    if (sim->startInProgress) {
+     * finishes.
+     *
+     * The setup window is the exception. It is open only across the
+     * round-start callback, which the start makes once the world, the
+     * tanks and the roster are built and the state already reads
+     * running, so an op issued from there has settled state to work on.
+     * The six roster ops are the exception to that: what the guard
+     * exists for is a roster edit re-entering the all-ready detector,
+     * which is as true inside the window as outside it, so they keep
+     * their refusal either way. */
+    if (sim->startInProgress &&
+        (!sim->scenarioSetupWindow || scenarioOpIsRoster(op->type))) {
         return SCN_OP_WRONG_STATE;
     }
 
@@ -2514,6 +2913,43 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
     return SCN_OP_UNSUPPORTED;
 }
 
+ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
+                                     ScnOpOut *out) {
+    ScnOpResult r;
+    bool        was;
+
+    /* Loud in a development build, because either of these is a caller bug
+     * and the host that made it should hear about it at once. */
+    assert(sim != NULL);
+    assert(op != NULL);
+    /* And survivable in a shipped one, where the asserts above are gone:
+     * RelWithDebInfo carries -DNDEBUG. This is the call an out-of-process
+     * scenario host makes most, and a host that hands over a pointer it
+     * failed to resolve would otherwise take the whole server down and every
+     * player in the round with it. The other entry points below answer a
+     * NULL sim the same way. */
+    if (sim == NULL || op == NULL) {
+        return SCN_OP_BAD_CALL;
+    }
+
+    /* Everything a handler publishes is the scenario's doing, and this is
+     * what says so. Saved and put back rather than cleared, because the
+     * funnel can be reached from inside itself — a handler's placement asks
+     * a policy and a policy runs the script's own Lua — and the outer op is
+     * still the script's whatever the inner call did. The mark is held
+     * across the prelude's refusals as well, which costs nothing: a refused
+     * op publishes nothing for it to reach. */
+    was                 = sim->scenarioActing;
+    sim->scenarioActing = true;
+    r                   = scenarioApplyOp(sim, op, out);
+    sim->scenarioActing = was;
+    return r;
+}
+
+bool serverSimIsScenarioActing(const ServerSim *sim) {
+    return sim != NULL && sim->scenarioActing;
+}
+
 void serverSimSetScenarioPolicy(ServerSim *sim, const ScenarioPolicy *p) {
     if (sim == NULL) return;
     sim->scenarioPolicy = p;
@@ -2524,6 +2960,38 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
     if (sim == NULL) return;
     sim->scenarioTick = tick;
     sim->scenarioTickCtx = ctx;
+}
+
+void serverSimSetScenarioRoundStart(ServerSim *sim, void (*roundStart)(void *ctx),
+                                    void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioRoundStart = roundStart;
+    sim->scenarioRoundStartCtx = ctx;
+}
+
+void serverSimSetScenarioMapChanged(ServerSim *sim,
+                                    void (*mapChanged)(void *ctx,
+                                                       ServerSim *sim,
+                                                       const char *mapPath),
+                                    void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioMapChanged = mapChanged;
+    sim->scenarioMapChangedCtx = ctx;
+}
+
+void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
+                                       const ScnLobbyTemplate *t) {
+    if (sim == NULL) return;
+    if (t == NULL) {
+        memset(&sim->scenarioLobby, 0, sizeof(sim->scenarioLobby));
+        sim->scenarioLobbyValid = false;
+        return;
+    }
+    sim->scenarioLobby = *t;
+    if (sim->scenarioLobby.numTeams > MAX_TANKS) {
+        sim->scenarioLobby.numTeams = MAX_TANKS;
+    }
+    sim->scenarioLobbyValid = true;
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

@@ -91,6 +91,10 @@ struct MacMenuState {
     bool gameInfoOpen;
     /* Players menu popouts */
     bool sendMsgOpen;
+    /* True when the players panel is on screen in either of its forms — the
+     * desktop pop-out window or the in-window panel. The native item is a
+     * checked toggle like its in-window twin, so it needs the same flag. */
+    bool playersPanelShown;
     bool mapOverviewOpen;
     bool mapOverviewEnabled;   /* the overview needs a running game to draw */
     bool overviewInWindow;
@@ -99,11 +103,16 @@ struct MacMenuState {
      * the full screen map in a game sets it too, so it is checked whichever
      * of them the player is in. */
     bool fullScreenOn;
-    /* Alliance gating — mirrors the in-window Players menu's pre-compute
-     * so the native Request/Leave Alliance items grey out identically. */
-    bool canRequest;       /* any unallied, checked peer eligible to request */
-    bool hasAllies;        /* self has at least one current ally */
-    bool inCooldown;       /* request cooldown window currently active */
+    /* Alliance items — the two answers allianceActionState() gives the
+     * in-window bars, copied verbatim so the native items grey out on the
+     * same rule rather than a second one written here. The refresh must not
+     * combine or re-derive them; it once did, and the native bar ended up
+     * greying Request whenever you had an ally while the in-window bar left
+     * it live. Ranked games are already folded into canRequest — the native
+     * bar has no tooltip to explain the difference, so it needs no flag of
+     * its own for it. */
+    bool canRequest;       /* an unallied peer is ticked, no request in flight, not ranked */
+    bool canLeave;         /* self has at least one current ally */
     /* In-game vote gating — mirrors the same pre-compute (running flag,
      * two-team check, unassigned-team check) used by the in-window
      * Players menu so the native Vote: items enable/disable in lockstep. */

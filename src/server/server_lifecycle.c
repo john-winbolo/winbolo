@@ -197,6 +197,7 @@ SpectatorRing *serverInstanceGetSpectatorRing(void) {
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
   const char *password = (cfg->password != NULL) ? cfg->password : "";
+  unsigned short boundPort = cfg->udpPort;
 
   instanceAcceptRemoteClients = cfg->acceptRemoteClients;
 
@@ -215,6 +216,10 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                  password) == FALSE) {
       return FALSE;
     }
+    /* From here on the port that matters is the one the socket actually got,
+       not the one that was asked for: a requested 0 means the OS chose, and
+       everything below advertises where clients should connect. */
+    boundPort = transportUdpServerGetBoundPort();
     transportUdpServerSetUploadConfig(cfg->uploadPolicy,
                                       cfg->uploadMaxFiles,
                                       cfg->uploadMaxStorageBytes,
@@ -227,7 +232,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
      * not implemented, so it forwards like on. */
     transportUdpServerSetVoiceEnabled(cfg->voiceMode != serverVoiceOff);
     if (cfg->mdnsAdvertise) {
-      transportUdpServerStartMdnsAdvertiser(cfg->udpPort);
+      transportUdpServerStartMdnsAdvertiser(boundPort);
     }
   }
 
@@ -245,7 +250,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     /* Populate the WBN lobby snapshot so register carries the
      * extended settings + human/bot counts on the first POST. */
     serverSimRefreshWbnLobbyInfo(sim);
-    winbolonetCreateServer(sim->mapName, cfg->udpPort,
+    winbolonetCreateServer(sim->mapName, boundPort,
                            (BYTE)gameTypeGet(&sim->sim.game),
                            cfg->compTanks,
                            (BYTE)sim->sim.hiddenMines,
@@ -276,7 +281,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     instanceTrackerPort = 0;
     instanceUseNatKeepalive = FALSE;
   }
-  instanceUdpPort = cfg->udpPort;
+  instanceUdpPort = boundPort;
 
   trackerTime = 5500;
   wbnTime = 0;
@@ -296,7 +301,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
   if (instanceUseNatPortmap) {
-    natPortMapRequest(cfg->udpPort, &instancePortMap);
+    natPortMapRequest(boundPort, &instancePortMap);
   }
   return TRUE;
 }
@@ -674,6 +679,13 @@ void serverInstanceTick(ServerSim *sim) {
         if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }
+        /* Re-assert team alliances now that (a) the reliable queues were
+         * reset above — discarding the CTRL_ALLIANCE_RESET the start
+         * sequence published, which left remote clients rendering their
+         * own teammates as enemies — and (b) botManagerOnGameStart just
+         * rebuilt the bot ClientSims, whose alliance matrices start
+         * empty. One republish + direct bot sync fixes both sides. */
+        serverSimReapplyTeamAlliances(sim);
         /* Notify WBN that we are now in-game */
         winbolonetSendLobbyStatus(FALSE);
         /* Send EVENT_PLAYER_JOIN for each connected WBN player */
@@ -817,6 +829,18 @@ void serverInstanceTick(ServerSim *sim) {
           serverSimPublishLobbySlot(sim, pi);
         }
       }
+    }
+
+    /* Bot-config events queued by serverSimApplyNewBotDefaults — a freshly
+     * added or seeded bot's mode and difficulty — sent a couple per tick
+     * instead of inside the add. A scenario seeds ten bots in one call stack
+     * while no client ack can be read; ten more events there would grow the
+     * burst that once overran a client's 64-event reliable window and
+     * dropped the host. Runs for single player too: its timer drives this
+     * same function. */
+    if (sim->state == serverStateLobby ||
+        sim->state == serverStateCountdown) {
+      serverSimFlushBotConfigPublishes(sim);
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */

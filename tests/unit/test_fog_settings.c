@@ -93,9 +93,22 @@ int run_fog_settings_defaults(void) {
                   "line of sight after set = %u, want buildings and trees",
                   (unsigned)serverSimGetLineOfSight(sim));
 
+    /* None is the third window and a real value, so the setter takes it.
+     * Pinned by its number as well as its name: it is on the wire, and a
+     * reordering that moved it would be a protocol change. */
+    UT_ASSERT(2 == (uint8_t)overviewWindowNone);
+    serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowNone);
+    UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
+                      (uint8_t)overviewWindowNone,
+                  "the setter refused none, leaving %u",
+                  (unsigned)serverSimGetOverviewWindow(sim));
+    serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowExpanded);
+
     /* A value at or above the enum's count is ignored and the stored
      * value is left alone, so a wire byte from a newer sender cannot
-     * push either setting somewhere the server has no name for. */
+     * push either setting somewhere the server has no name for. Three is
+     * that first value now. */
+    UT_ASSERT(3 == (uint8_t)OVERVIEW_WINDOW_COUNT);
     serverSimSetOverviewWindow(sim, (uint8_t)OVERVIEW_WINDOW_COUNT);
     serverSimSetOverviewWindow(sim, 200);
     UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
@@ -127,8 +140,8 @@ int run_fog_settings_classic_mode_preset(void) {
 
     serverSimSetClassicMode(sim, true);
     UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
-                      (uint8_t)overviewWindowClassic,
-                  "classic mode left the overview window at %u, want classic",
+                      (uint8_t)overviewWindowNone,
+                  "classic mode left the overview window at %u, want none",
                   (unsigned)serverSimGetOverviewWindow(sim));
     UT_ASSERT_MSG(serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff,
                   "classic mode left line of sight at %u, want off",
@@ -149,7 +162,7 @@ int run_fog_settings_classic_mode_preset(void) {
                       "a line-of-sight edit should be refused under "
                       "classic mode");
         UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
-                          (uint8_t)overviewWindowClassic &&
+                          (uint8_t)overviewWindowNone &&
                       serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff,
                       "a refused edit still moved a value "
                       "(window %u, sight %u)",
@@ -163,7 +176,7 @@ int run_fog_settings_classic_mode_preset(void) {
     serverSimSetClassicMode(sim, false);
     UT_ASSERT(!serverSimGetClassicMode(sim));
     UT_ASSERT_MSG(serverSimGetOverviewWindow(sim) ==
-                      (uint8_t)overviewWindowClassic,
+                      (uint8_t)overviewWindowNone,
                   "leaving classic mode moved the overview window to %u",
                   (unsigned)serverSimGetOverviewWindow(sim));
     UT_ASSERT_MSG(serverSimGetLineOfSight(sim) == (uint8_t)lineOfSightOff,

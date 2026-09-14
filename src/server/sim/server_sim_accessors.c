@@ -132,6 +132,21 @@ void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks) {
     sim->gameTicksRun = 0;
 }
 
+void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
+                              int32_t intervalTicks) {
+    if (sim == NULL) {
+        return;
+    }
+    if (cb == NULL || intervalTicks <= 0) {
+        sim->snapshotCb = NULL;
+        sim->snapshotInterval = 0;
+    } else {
+        sim->snapshotCb = cb;
+        sim->snapshotInterval = intervalTicks;
+    }
+    sim->snapshotTicks = 0;
+}
+
 void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
     if (name == NULL || name[0] == '\0') {
         sim->userLogFileName[0] = '\0';
@@ -285,8 +300,7 @@ bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
                          TRUE);
     out->name[sizeof(out->name) - 1] = '\0';
     out->ready = sim->lobbyPlayers[i].ready;
-    /* Holding a seat is playing the round. */
-    out->fielded = true;
+    out->fielded = sim->lobbyPlayers[i].fielded;
     t = &sim->sim.tanks[i];
     out->alive = (*t != NULL && tankGetDeathWait(t) == 0);
     return true;
@@ -296,14 +310,20 @@ BYTE serverSimGetNumFielded(ServerSim *sim) {
     BYTE count;
     BYTE num = 0;
     if (sim == NULL) return 0;
-    /* Seats playing the round. Holding a seat is playing it, so this walks
-       the same flag serverSimGetNumPlayers does. */
+    /* Seats playing the round, which is fewer than the roster whenever a
+       seat is held for a bot that has not been fielded yet. */
     for (count = 0; count < MAX_TANKS; count++) {
-        if (sim->playerConnected[count]) {
+        if (sim->playerConnected[count] && sim->lobbyPlayers[count].fielded) {
             num++;
         }
     }
     return num;
+}
+
+bool serverSimIsSeatFielded(const ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    return sim->playerConnected[playerNum] &&
+           sim->lobbyPlayers[playerNum].fielded;
 }
 
 char *const *serverSimGetMapDirFiles(const ServerSim *sim) {
@@ -586,6 +606,24 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     return true;
 }
 
+bool serverSimGetDeathCauses(const ServerSim *sim, BYTE slot,
+                             uint32_t out[DEATH_CAUSE_NUM]) {
+    int c;
+    if (out == NULL) {
+        return false;
+    }
+    for (c = 0; c < DEATH_CAUSE_NUM; c++) {
+        out[c] = 0;
+    }
+    if (sim == NULL || slot >= MAX_TANKS) {
+        return false;
+    }
+    for (c = 0; c < DEATH_CAUSE_NUM; c++) {
+        out[c] = sim->sim.deathCauseCount[slot][c];
+    }
+    return true;
+}
+
 tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
                                          BYTE selfPlayer,
                                          BYTE tankNum) {
@@ -841,9 +879,10 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryAlly]);
         /* Classic mode hides allies in trees, so it owns this value too. */
         serverSimSetAlliesInTrees(sim, false);
-        /* Classic mode is the classic overview too: the narrow window,
-         * with nothing blocking sight inside it. */
-        serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowClassic);
+        /* Classic mode offers no overview at all - no pop-out map and no
+         * full screen map - with nothing blocking sight in the framed view
+         * it leaves the player. */
+        serverSimSetOverviewWindow(sim, (uint8_t)overviewWindowNone);
         serverSimSetLineOfSight(sim, (uint8_t)lineOfSightOff);
     }
 }
