@@ -108,7 +108,13 @@ static SOCKET agOpenSocket(void) {
  * across all replies on `sock`; on a challenge, *outCookie (if non-NULL)
  * receives the cookie bytes. `resendEvery` controls retransmits: 0 sends `pkt`
  * exactly once (used for JOINs, so each spends only a single per-source
- * rate-limit token). */
+ * rate-limit token).
+ *
+ * Only replies from `serverAddr` count, which is what makes the result
+ * evidence about this server. This is an amplification test: a stray
+ * JOIN_ACCEPT off the shared loopback would turn "the cookie-echoed JOIN drew
+ * an accept" green without the server ever having sent one, and a stray in the
+ * negative case would fail an address proof that actually held. */
 static void agCollect(LoopbackHarness *h, SOCKET sock,
                       const uint8_t *pkt, int pktLen,
                       const struct sockaddr_in *serverAddr, int resendEvery,
@@ -127,8 +133,8 @@ static void agCollect(LoopbackHarness *h, SOCKET sock,
                    (const struct sockaddr *)serverAddr, sizeof(*serverAddr));
         }
         loopbackHarnessPump(h);
-        while ((n = (int)recvfrom(sock, (char *)in, sizeof(in), 0,
-                                  NULL, NULL)) > 0) {
+        while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
+                                           serverAddr)) > 0) {
             uint8_t type = getPacketType(in, n);
             if (type == PACKET_JOIN_ACCEPT)            *outAccept = true;
             else if (type == PACKET_CHANNEL)           *outChannel = true;

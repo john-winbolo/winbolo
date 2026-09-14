@@ -103,6 +103,10 @@ void srvSendTo(const uint8_t *buf, int len,
     udpSendTo(udpServer.sock, buf, len, addr);
 }
 
+unsigned short transportUdpServerGetBoundPort(void) {
+    return udpServer.boundPort;
+}
+
 bool transportUdpServerCreate(unsigned short port,
                               const char *addrToUse,
                               ServerSim *sim,
@@ -137,6 +141,30 @@ bool transportUdpServerCreate(unsigned short port,
         udpServer.sock = INVALID_SOCKET;
         return false;
     }
+
+    /* Read the port back rather than trusting the request: a requested port
+     * of 0 means the OS chose one, and this is the only place that choice is
+     * visible. Callers take it from transportUdpServerGetBoundPort(). */
+    {
+        struct sockaddr_in actual;
+        socklen_t actualLen = (socklen_t)sizeof(actual);
+        memset(&actual, 0, sizeof(actual));
+        if (getsockname(udpServer.sock, (struct sockaddr *)&actual,
+                        &actualLen) == 0) {
+            udpServer.boundPort = ntohs(actual.sin_port);
+        } else {
+            /* Should not happen on a socket that just bound; fall back to
+               the request so the field is never left at 0 for a real port. */
+            udpServer.boundPort = port;
+        }
+    }
+    WB_LOG_INFO(WB_LOG_CAT_NET, "listening on UDP port %u",
+                (unsigned)udpServer.boundPort);
+    /* Beside the bind() failure message above, on the same stream: a server
+       asked for port 0 has no other way to tell anyone where it ended up. */
+    fprintf(stderr, "[UDP SERVER] listening on UDP port %u\n",
+            (unsigned)udpServer.boundPort);
+    fflush(stderr);
 
     serverSimSetPassword(sim, password,
                          password != NULL ? strlen(password) : 0);
@@ -223,6 +251,10 @@ void transportUdpServerDestroy(void) {
         closesocket(udpServer.sock);
         udpServer.sock = INVALID_SOCKET;
     }
+    /* The bound port is only meaningful while the socket is open, so clear it
+     * with the socket rather than leaving a stale number for
+     * transportUdpServerGetBoundPort to hand out after teardown. */
+    udpServer.boundPort = 0;
     {
         ServerSim *activeSim = serverSimGetActive();
         for (i = 0; i < MAX_TANKS; i++) {

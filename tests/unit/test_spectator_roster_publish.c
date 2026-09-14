@@ -115,7 +115,7 @@ static void srpDriveOnce(LoopbackHarness *h, SOCKET sock,
         int n;
         bool drained = false;
         loopbackHarnessPump(h);
-        while ((n = (int)recvfrom(sock, (char *)in, sizeof(in), 0, NULL, NULL)) > 0) {
+        while ((n = loopbackRecvFromServer(sock, in, sizeof(in), server)) > 0) {
             uint8_t type = getPacketType(in, n);
             if (type == PACKET_JOIN_ACCEPT && n > PACKET_HEADER_SIZE) {
                 *gotAccept = true;

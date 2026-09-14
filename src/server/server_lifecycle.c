@@ -197,6 +197,7 @@ SpectatorRing *serverInstanceGetSpectatorRing(void) {
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
   const char *password = (cfg->password != NULL) ? cfg->password : "";
+  unsigned short boundPort = cfg->udpPort;
 
   instanceAcceptRemoteClients = cfg->acceptRemoteClients;
 
@@ -215,6 +216,10 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                  password) == FALSE) {
       return FALSE;
     }
+    /* From here on the port that matters is the one the socket actually got,
+       not the one that was asked for: a requested 0 means the OS chose, and
+       everything below advertises where clients should connect. */
+    boundPort = transportUdpServerGetBoundPort();
     transportUdpServerSetUploadConfig(cfg->uploadPolicy,
                                       cfg->uploadMaxFiles,
                                       cfg->uploadMaxStorageBytes,
@@ -227,7 +232,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
      * not implemented, so it forwards like on. */
     transportUdpServerSetVoiceEnabled(cfg->voiceMode != serverVoiceOff);
     if (cfg->mdnsAdvertise) {
-      transportUdpServerStartMdnsAdvertiser(cfg->udpPort);
+      transportUdpServerStartMdnsAdvertiser(boundPort);
     }
   }
 
@@ -245,7 +250,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     /* Populate the WBN lobby snapshot so register carries the
      * extended settings + human/bot counts on the first POST. */
     serverSimRefreshWbnLobbyInfo(sim);
-    winbolonetCreateServer(sim->mapName, cfg->udpPort,
+    winbolonetCreateServer(sim->mapName, boundPort,
                            (BYTE)gameTypeGet(&sim->sim.game),
                            cfg->compTanks,
                            (BYTE)sim->sim.hiddenMines,
@@ -276,7 +281,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     instanceTrackerPort = 0;
     instanceUseNatKeepalive = FALSE;
   }
-  instanceUdpPort = cfg->udpPort;
+  instanceUdpPort = boundPort;
 
   trackerTime = 5500;
   wbnTime = 0;
@@ -296,7 +301,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
   if (instanceUseNatPortmap) {
-    natPortMapRequest(cfg->udpPort, &instancePortMap);
+    natPortMapRequest(boundPort, &instancePortMap);
   }
   return TRUE;
 }

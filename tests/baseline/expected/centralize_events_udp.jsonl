@@ -5,7 +5,7 @@
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":1,"in_use":1,"color":0,"namingPool":0,"name":"Team 1"}
 {"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":2,"in_use":1,"color":1,"namingPool":0,"name":"Team 2"}
-{"tick":0,"type":"CTRL_LOBBY_BOT_CONFIG","slot":0,"difficulty":0,"personality":0,"name":"Mozart"}
+{"tick":0,"type":"CTRL_LOBBY_BOT_CONFIG","slot":0,"difficulty":2,"personality":0,"name":"Mozart"}
 {"tick":0,"type":"CTRL_LOBBY_BOT_BRAIN","slot":0,"brainIdx":255}
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":1,"active":0,"triggerSrc":0,"teamId":0,"threshold":1,"yesCount":0,"noCount":0,"eligibleCount":1,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":2,"active":0,"triggerSrc":0,"teamId":0,"threshold":0,"yesCount":0,"noCount":0,"eligibleCount":0,"secondsRemaining":0,"votes":0}
