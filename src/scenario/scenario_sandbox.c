@@ -16,7 +16,10 @@
  *  The state allocates through a counter of its own, so a
  *  script that eats memory is refused at SCN_VM_MEMORY_MAX
  *  and raises there instead of taking the server's process
- *  with it.
+ *  with it, and it carries a count hook, so a script that
+ *  loops without end is stopped at SCN_BUDGET_CALL_INSTR
+ *  instructions and raises there too. Both land in the
+ *  lua_pcall the host makes every call through.
  *
  *  Opening them one at a time is what takes io, package,
  *  debug and, under LuaJIT, ffi, jit and bit away: none of
@@ -37,6 +40,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,20 +58,34 @@
    about. */
 #define SCN_PRINT_LEN 1024
 
-/* ── The memory one state may hold ────────────────────────────────── */
+/* ── What a state is counted with ─────────────────────────────────── */
 
-/* What a state's allocations are counted in. It outlives the call that made
-   the state, so it is on the heap rather than beside the caller. */
+/* The two counts one state carries: the memory it holds, and the
+   instructions the call now running has spent. It outlives the call that
+   made the state, so it is on the heap rather than beside the caller.
+   used and cap sit idle on a build whose Lua would not take the allocator;
+   armed and instr are kept whatever the allocator turned out to be. */
 typedef struct {
-    size_t used;
-    size_t cap;
-} ScnSandboxMem;
+    size_t   used;
+    size_t   cap;
+    bool     armed;
+    uint32_t instr;
+} ScnSandboxState;
 
-/* Where the count is kept so the close can find it again. lua_getallocf is
-   not the way: on the uncounted build below it answers Lua's own ud, which
-   is not ours to free. A script cannot reach the registry — debug is not
-   among the libraries opened. */
-#define SCN_SANDBOX_MEM_KEY "winbolo.scenario.mem"
+/* Where they are kept, so the hook and the close can find them again.
+   lua_getallocf is not the way: on the uncounted build below it answers
+   Lua's own ud, which is neither ours to free nor ours to count in. A script
+   cannot reach the registry — debug is not among the libraries opened. */
+#define SCN_SANDBOX_STATE_KEY "winbolo.scenario.state"
+
+static ScnSandboxState *scnSandboxStateOf(lua_State *L) {
+    ScnSandboxState *s;
+
+    lua_getfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
+    s = (ScnSandboxState *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return s;
+}
 
 /* True once a state has been made the ordinary way because this build's Lua
    would not take an allocator. Written once, on the first boot, from the
@@ -88,9 +106,9 @@ static bool scnSandboxUncounted = false;
  * NULL, which Lua turns into the out-of-memory error the caller's lua_pcall
  * catches. */
 static void *scnSandboxAlloc(void *ud, void *ptr, size_t osize, size_t nsize) {
-    ScnSandboxMem *m   = (ScnSandboxMem *)ud;
-    size_t         old = (ptr == NULL) ? 0 : osize;
-    void          *out;
+    ScnSandboxState *m   = (ScnSandboxState *)ud;
+    size_t           old = (ptr == NULL) ? 0 : osize;
+    void            *out;
 
     if (nsize == 0) {
         free(ptr);
@@ -111,56 +129,149 @@ static void *scnSandboxAlloc(void *ud, void *ptr, size_t osize, size_t nsize) {
     return out;
 }
 
-lua_State *scnSandboxNewState(void) {
-    ScnSandboxMem *m = (ScnSandboxMem *)malloc(sizeof(*m));
-    lua_State     *L;
+/* ── The instructions one call may spend ──────────────────────────── */
 
-    if (m == NULL) {
+/* Called every SCN_BUDGET_STEP_INSTR instructions the state executes, and
+ * counting only while a call into script code is running.
+ *
+ * The flag is what makes that true. Every piece of script code this host
+ * runs is inside one of the calls that arm below, but the host also reads
+ * the script's own table from C between them; a count left running could
+ * then raise with no lua_pcall between it and the state, which is the one
+ * error the host answers by ending the process. Armed-only puts that out of
+ * reach.
+ *
+ * The hook cannot see inside C, so a call that spends its time in one C
+ * function is not what this bounds — it bounds a script looping in Lua,
+ * which is what a runaway scenario looks like. */
+static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    (void)ar;
+    if (s == NULL || !s->armed) {
+        return;
+    }
+    s->instr += (uint32_t)SCN_BUDGET_STEP_INSTR;
+    if (s->instr <= (uint32_t)SCN_BUDGET_CALL_INSTR) {
+        return;
+    }
+    /* Cleared before the raise and not after it: the error unwinds through
+       whatever the script had standing, and a metamethod running Lua on the
+       way out would otherwise be stopped by this again. The call's own
+       disarm clears it a second time, which costs nothing. */
+    s->armed = false;
+    luaL_error(L, "this call ran past the instruction budget of %d and was "
+                  "stopped; work that long belongs across several on_tick "
+                  "calls rather than inside one of them",
+               (int)SCN_BUDGET_CALL_INSTR);
+}
+
+/* Saved and put back rather than set and cleared, because these nest: a
+ * script's hook issues an op, the op asks a policy, and the policy is script
+ * code arriving on the same thread — the VM lock lets it through for exactly
+ * that reason. A disarm that only cleared the flag would leave the hook that
+ * is still running uncounted for the rest of its life, which is a script one
+ * nested call away from looping inside a tick for as long as it likes.
+ *
+ * Putting the outer call's own count back, rather than carrying the inner
+ * one's forward, is what the budget says it is: a million for each call.
+ * The outer one goes on climbing from where it had reached, so a script
+ * cannot start its budget again by nesting. */
+void scnSandboxArmCall(lua_State *L, ScnSandboxCall *saved) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    if (saved != NULL) {
+        saved->armed = (s != NULL) ? s->armed : false;
+        saved->instr = (s != NULL) ? s->instr : 0;
+    }
+    if (s != NULL) {
+        s->instr = 0;
+        s->armed = true;
+    }
+}
+
+void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    if (s == NULL) {
+        return;
+    }
+    if (saved != NULL) {
+        s->armed = saved->armed;
+        s->instr = saved->instr;
+    } else {
+        s->armed = false;
+    }
+}
+
+/* ── Making and closing one ───────────────────────────────────────── */
+
+lua_State *scnSandboxNewState(void) {
+    ScnSandboxState *s = (ScnSandboxState *)malloc(sizeof(*s));
+    lua_State       *L;
+
+    if (s == NULL) {
         return NULL;
     }
-    m->used = 0;
-    m->cap  = (size_t)SCN_VM_MEMORY_MAX;
+    s->used  = 0;
+    s->cap   = (size_t)SCN_VM_MEMORY_MAX;
+    s->armed = false;
+    s->instr = 0;
 
-    L = lua_newstate(scnSandboxAlloc, m);
+    L = lua_newstate(scnSandboxAlloc, s);
     if (L == NULL) {
         /* The build's own answer, and the only one there is: LuaJIT refuses
            a custom allocator on a 64-bit target that is not GC64, and says
            so on stderr as it does. There is no flag a consumer can read to
            ask first, so the state is made the ordinary way instead and the
-           operator is told once that this one is not bounded. */
-        free(m);
+           operator is told once that this one is not bounded.
+
+           The struct stays either way. Only the memory half of it depends on
+           the allocator; the instruction count is the hook's and is kept on
+           every build. */
         L = luaL_newstate();
-        if (L != NULL && !scnSandboxUncounted) {
+        if (L == NULL) {
+            free(s);
+            return NULL;
+        }
+        if (!scnSandboxUncounted) {
             scnSandboxUncounted = true;
             serverSimConsoleMessage(
                 "scenario: this build's Lua takes no allocator, so a "
                 "scenario script's memory is not capped");
         }
-        return L;
     }
 
     /* Put beside the state at once, so every path that closes one can find
-       what to free however early it gives up. */
-    lua_pushlightuserdata(L, m);
-    lua_setfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_MEM_KEY);
+       what to free however early it gives up, and so the hook below has
+       somewhere to count before anything runs. */
+    lua_pushlightuserdata(L, s);
+    lua_setfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
+
+    /* Set once, here, and never cleared. Under LuaJIT lua_sethook reaches
+       into the compiler, and a state carrying a hook runs interpreted for as
+       long as it has one — so taking it off between calls would buy nothing
+       and cost a flush each time. Whether the count applies is the flag the
+       calls arm, not the presence of the hook. */
+    lua_sethook(L, scnSandboxCountHook, LUA_MASKCOUNT,
+                (int)SCN_BUDGET_STEP_INSTR);
     return L;
 }
 
 void scnSandboxCloseState(lua_State *L) {
-    ScnSandboxMem *m;
+    ScnSandboxState *s;
 
     if (L == NULL) {
         return;
     }
     /* Read before the close, because the registry goes with the state, and
        freed after it, because closing hands every block the state holds back
-       through the allocator and the allocator reads this. NULL on the
-       uncounted path, where free has nothing to do. */
-    lua_getfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_MEM_KEY);
-    m = (ScnSandboxMem *)lua_touserdata(L, -1);
+       through the allocator and the allocator reads this. */
+    lua_getfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
+    s = (ScnSandboxState *)lua_touserdata(L, -1);
     lua_pop(L, 1);
     lua_close(L);
-    free(m);
+    free(s);
 }
 
 bool scnSandboxMemoryCapped(void) {

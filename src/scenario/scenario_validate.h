@@ -154,8 +154,10 @@ bool scnReadFile(const char *path, char **out, size_t *outLen,
  *PURPOSE:
  *  A Lua state opened on the sandbox's own library rather
  *  than on the standard one — no io, no package, no debug —
- *  counted against SCN_VM_MEMORY_MAX, and with math.random
- *  seeded from the process PRNG's state. No game table:
+ *  counted against SCN_VM_MEMORY_MAX for the memory it holds
+ *  and SCN_BUDGET_CALL_INSTR for the instructions any one
+ *  call into it may spend, and with math.random seeded from
+ *  the process PRNG's state. No game table:
  *  whoever boots the state installs the surface it is to
  *  have. NULL when there is no memory for one.
  *********************************************************/

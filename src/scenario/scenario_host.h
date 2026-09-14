@@ -111,6 +111,27 @@
  * is. */
 #define SCN_VM_MEMORY_MAX (32u * 1024u * 1024u)
 
+/* The most VM instructions one call into a script may run for. A hook, a
+ * timer or a policy answer that passes this is stopped where it stands with
+ * a Lua error, so the call lands in the host's own lua_pcall, counts one
+ * toward SCN_ERROR_LIMIT and leaves the round ticking: a script that loops
+ * without end costs the tick it was called on rather than the server.
+ *
+ * It bounds one call and not a round or a tick. Each call starts again at
+ * zero, so a script with real work to do spreads it across its on_tick calls
+ * rather than looping inside one of them.
+ *
+ * A million is far more than a hook answering a question needs and small
+ * enough that a runaway is stopped inside the tick that started it. What the
+ * boundary test shows is a bounded loop well past it cut off, the line
+ * naming the hook it was in, and the sim ticking afterwards. */
+#define SCN_BUDGET_CALL_INSTR 1000000u
+
+/* How often that count is taken, which is the count hook's own parameter.
+ * Small enough that a runaway is stopped within a thousandth of the budget,
+ * large enough that a script is not spending its time in the hook. */
+#define SCN_BUDGET_STEP_INSTR 1000u
+
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
  * copies an event in and returns; the one drain at the end of the tick

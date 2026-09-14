@@ -25,6 +25,15 @@
  *        goes on ticking
  * run_scenario_sandbox_state_survives_a_refusal
  *      — and the same round's VM still answers afterwards
+ * run_scenario_sandbox_instruction_budget_cuts_a_loop
+ *      — a hook that spins past the budget is stopped, and the round goes
+ *        on ticking
+ * run_scenario_sandbox_budget_is_per_call
+ *      — sixteen long but legal calls each get the whole budget
+ * run_scenario_sandbox_state_survives_the_budget
+ *      — and a later hook still runs after one was cut off
+ * run_scenario_sandbox_budget_survives_a_nested_call
+ *      — a hook that triggers a policy is still counted afterwards
  */
 
 #include <stdint.h>
@@ -502,6 +511,282 @@ int run_scenario_sandbox_state_survives_a_refusal(void) {
     UT_ASSERT_MSG(strstr(sbLines, "survivor still here") != NULL,
                   "no later hook answered, so the state did not survive the "
                   "refusal. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running",
+                  (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 7. The instructions one call may spend ───────────────────────── */
+
+/* A loop of twenty million turns, which is somewhere between forty and sixty
+ * million VM instructions — a numeric for with a one-line body costs a
+ * handful of them either way, and the two VMs do not emit the same handful.
+ * Against a budget of a million that is forty times over, so the cut-off
+ * lands around the three hundred thousandth turn whichever VM this is.
+ *
+ * Bounded rather than endless on purpose: a budget that has stopped working
+ * has to end this case with a failure, not hold it until CTest kills it a
+ * minute later. Twenty million turns interpreted is under a second, so the
+ * broken case is slow rather than fatal.
+ *
+ * The hook prints on the way in and on the way out. Being cut off shows as
+ * the first line without the second, beside the host's own line naming both
+ * the hook it was in and what stopped it. */
+int run_scenario_sandbox_instruction_budget_cuts_a_loop(void) {
+    static const char *const kMap = "scnsand_budget.map";
+    static const char *const kLua =
+        "scenario = { name = \"Spinner\", api = 1 }\n"
+        "function on_start()\n"
+        "  print(\"spinner begun\")\n"
+        "  local x = 0\n"
+        "  for i = 1, 20000000 do x = x + 1 end\n"
+        "  print(\"spinner finished\")\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);              /* the first running tick: on_start */
+    for (i = 0; i < 5; i++) {
+        serverSimTick(sim);          /* and the round after it */
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(strstr(sbLines, "spinner begun") != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "spinner finished") == NULL,
+                  "the hook spun forty times the budget and ran to its end. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "on_start raised") != NULL,
+                  "the hook stopped without the host counting an error "
+                  "against it, so what stopped it was not a Lua error. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "instruction budget") != NULL,
+                  "the hook raised for some reason other than the budget. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running "
+                  "after the call was cut off", (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 8. And each call gets the whole of it ────────────────────────── */
+
+/* Fifty thousand turns is between a hundred and two hundred thousand
+ * instructions, a tenth to a fifth of the budget — a long call by any
+ * scenario's standard and a legal one by a wide margin, on either VM.
+ *
+ * Sixteen of them, because what this case is about is the count going back
+ * to zero at every call rather than climbing across a round. Sixteen legal
+ * calls add up to between one and a half and three million, so a count that
+ * accumulated would be cut off somewhere around the sixth and the sixteenth
+ * line would never be printed. The script numbers its own lines and only
+ * numbers one after the loop it belongs to has finished, so the last number
+ * arriving is every call before it having finished too. */
+int run_scenario_sandbox_budget_is_per_call(void) {
+    static const char *const kMap = "scnsand_percall.map";
+    static const char *const kLua =
+        "scenario = { name = \"Steady\", api = 1 }\n"
+        "local done = 0\n"
+        "function on_tick()\n"
+        "  local x = 0\n"
+        "  for i = 1, 50000 do x = x + 1 end\n"
+        "  done = done + 1\n"
+        "  print(\"steady call \" .. done .. \" finished\")\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 18; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(strstr(sbLines, "steady call 2 finished") != NULL,
+                  "two successive calls did not both finish, so a call well "
+                  "inside the budget is being cut off. The console holds:"
+                  "\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "steady call 16 finished") != NULL,
+                  "sixteen legal calls did not all finish, so the count is "
+                  "climbing across the round rather than starting again at "
+                  "each call. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "raised") == NULL,
+                  "a call inside the budget was counted as an error. The "
+                  "console holds:\n%s", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 9. And the state lives through being cut off ─────────────────── */
+
+/* The same spinning on_start, and an on_tick that answers from the tick
+ * after the one it was cut off on — the tick after, because on_start runs
+ * ahead of on_tick within a tick and a line from the same one would not have
+ * come after anything.
+ *
+ * Nothing is collected here, unlike the memory cap's survival case: a call
+ * that ran out of instructions was holding nothing, so what this shows is
+ * only that an error raised from the hook leaves a state that still runs. */
+int run_scenario_sandbox_state_survives_the_budget(void) {
+    static const char *const kMap = "scnsand_budget_live.map";
+    static const char *const kLua =
+        "scenario = { name = \"Spinner\", api = 1 }\n"
+        "local ticks = 0\n"
+        "function on_start()\n"
+        "  local x = 0\n"
+        "  for i = 1, 20000000 do x = x + 1 end\n"
+        "  print(\"spinner finished\")\n"
+        "end\n"
+        "function on_tick()\n"
+        "  ticks = ticks + 1\n"
+        "  if ticks == 2 then print(\"spinner still here\") end\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 6; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(strstr(sbLines, "spinner finished") == NULL,
+                  "the hook ran to its end, so there was nothing for the "
+                  "state to live through. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "spinner still here") != NULL,
+                  "no later hook answered, so the state did not survive being "
+                  "cut off. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running",
+                  (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 10. A call made from inside another ──────────────────────────── */
+
+/* Calls into script code nest, and the count has to survive it. Handing a
+ * base over from a hook is the shortest way there: the op sets the owner
+ * with migrate false, which raises the base-owner-changed callback, which
+ * asks the announce policy, which is script code arriving on the same thread
+ * while the hook that issued the op is still on the stack. The VM lock lets
+ * it through for exactly that reason.
+ *
+ * So the hook hands a base to nobody, and then spins. What it is watching
+ * for is the inner call putting the outer one's count back rather than
+ * leaving the state unarmed: an arm and disarm that only set and cleared
+ * would leave the rest of this hook uncounted and the loop would run to its
+ * end.
+ *
+ * The announce line is asserted as well as the two the hook writes. Without
+ * it the case would still pass if the op were refused and no policy ran at
+ * all — it would be the plain runaway case over again, proving nothing about
+ * nesting. */
+int run_scenario_sandbox_budget_survives_a_nested_call(void) {
+    static const char *const kMap = "scnsand_nested.map";
+    static const char *const kLua =
+        "scenario = { name = \"Nested\", api = 1 }\n"
+        "local spun = false\n"
+        "function announce(kind, subject, actor)\n"
+        "  print(\"nested announce \" .. kind)\n"
+        "  return true\n"
+        "end\n"
+        "function on_tick()\n"
+        "  if spun then return end\n"
+        "  spun = true\n"
+        "  print(\"nested begun\")\n"
+        "  game.set_base_owner(1, game.NEUTRAL)\n"
+        "  local x = 0\n"
+        "  for i = 1, 20000000 do x = x + 1 end\n"
+        "  print(\"nested finished\")\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 6; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(strstr(sbLines, "nested begun") != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "nested announce") != NULL,
+                  "the op raised no policy, so no call was made from inside "
+                  "another and this case tested nothing it claims to. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "nested finished") == NULL,
+                  "the hook ran to its end after the policy it triggered "
+                  "returned, so the inner call left the outer one uncounted. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "on_tick raised") != NULL,
+                  "the hook stopped without the host counting an error "
+                  "against it. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "instruction budget") != NULL,
+                  "the hook raised for some reason other than the budget. "
+                  "The console holds:\n%s", sbLines);
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
                   "the round is in state %d, expected it to still be running",
                   (int)serverSimGetState(sim));

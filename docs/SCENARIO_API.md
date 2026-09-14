@@ -88,12 +88,35 @@ abandoned is collected and the next call starts with room again. 32 MB is far
 more than a scenario needs; if you are near it you are keeping something you
 meant to let go of.
 
-**A scenario is still trusted the way a brain is**, with no time limit. A file
-beside a map is run by whoever hosts that map, at the server's own privilege,
-so run only scripts you would run as a program — the library and the cap above
-narrow what a script can reach, not who is answerable for it. Every host that
-opens a map from a file looks beside it: the dedicated server, the desktop
-client hosting a single-player or LAN game, and the headless runner.
+**One call may run for a million instructions.** Every hook, timer and policy
+answer is counted as it runs, and a call that passes the budget is stopped
+where it stands: Lua raises an error at that line, the call fails, the server
+counts one error against the script, and the round carries on — again, a
+script that keeps failing is switched off for the rest of the round.
+
+The budget is per call, not per round and not per tick. Each call starts again
+at zero, so nine hundred thousand instructions in this `on_tick` leaves the
+next one its own full million. What it rules out is looping inside a single
+call: `while true do` in a hook takes your scenario off the round and nothing
+else, but it does take it off. Work that cannot finish in one call belongs
+spread across `on_tick` calls, keeping its place in a local between them.
+
+A million is a great deal — an `on_tick` that reads a few dozen tanks and
+decides something spends a few thousand. If you are near it, you are looping
+over the map rather than over what changed.
+
+The count is taken by a Lua debug hook, and a state that carries one does not
+use LuaJIT's compiler, so **your script runs interpreted** on a LuaJIT host.
+That is worth knowing before you time anything: what you measure here is not
+what the same code would do in a brain.
+
+**A scenario is still trusted the way a brain is.** A file beside a map is run
+by whoever hosts that map, at the server's own privilege, so run only scripts
+you would run as a program — the library, the memory cap and the budget above
+narrow what a script can reach and how long it can hold the tick, not who is
+answerable for it. Every host that opens a map from a file looks beside it:
+the dedicated server, the desktop client hosting a single-player or LAN game,
+and the headless runner.
 
 **Reloading after an edit.** On a dedicated server the console command
 `reload` reads the file again, checks that it loads, and swaps it in for the

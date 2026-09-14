@@ -2564,14 +2564,19 @@ int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
  * whitelist takes and the ones it keeps, the precompiled chunk the loader
- * refuses, collectgarbage without "stop", print on the server console, and
- * the memory cap a script is refused at. */
+ * refuses, collectgarbage without "stop", print on the server console, the
+ * memory cap a script is refused at, and the instruction budget one call
+ * is cut off at. */
 int run_scenario_sandbox_removed_names_are_nil(void);
 int run_scenario_sandbox_bytecode_chunk_refused(void);
 int run_scenario_sandbox_collectgarbage_stop_refused(void);
 int run_scenario_sandbox_print_reaches_the_console(void);
 int run_scenario_sandbox_memory_cap_refuses(void);
 int run_scenario_sandbox_state_survives_a_refusal(void);
+int run_scenario_sandbox_instruction_budget_cuts_a_loop(void);
+int run_scenario_sandbox_budget_is_per_call(void);
+int run_scenario_sandbox_state_survives_the_budget(void);
+int run_scenario_sandbox_budget_survives_a_nested_call(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

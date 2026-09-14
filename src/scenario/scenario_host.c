@@ -655,17 +655,26 @@ static const char *scnLuaError(lua_State *L) {
  * here, the validator's included, so WinBoloDS -validate refuses one too. */
 bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
                  const char *chunkName, char *err, size_t errLen) {
+    ScnSandboxCall saved;
+    bool           ok = false;
+
+    /* The chunk's top level is script code like any other, and the one place
+       a loop in it would show is here: an attach that never returns. Armed
+       across the load as well, which costs nothing — the parser is C and
+       executes no instructions to count — and leaves one disarm to reach
+       whichever way this goes. */
+    scnSandboxArmCall(L, &saved);
     if (luaL_loadbufferx(L, src, srcLen, chunkName, "t") != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
-        return false;
-    }
-    if (lua_pcall(L, 0, 0, 0) != 0) {
+    } else if (lua_pcall(L, 0, 0, 0) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
-        return false;
+    } else {
+        ok = true;
     }
-    return true;
+    scnSandboxDisarmCall(L, &saved);
+    return ok;
 }
 
 /* ── Reading the table ────────────────────────────────────────────── */
@@ -1147,7 +1156,13 @@ static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
  * raises carries the error count toward the limit and one that returns puts
  * it back to zero. */
 static void scnHookCall(ScenarioHost *h, ScnHookId id, int nargs) {
-    if (lua_pcall(h->L, nargs, 0, 0) != 0) {
+    ScnSandboxCall saved;
+    int            rc;
+
+    scnSandboxArmCall(h->L, &saved);
+    rc = lua_pcall(h->L, nargs, 0, 0);
+    scnSandboxDisarmCall(h->L, &saved);
+    if (rc != 0) {
         scnErrorRaised(h, kScnHookNames[id], scnLuaError(h->L));
         lua_pop(h->L, 1);
         return;
@@ -1694,9 +1709,11 @@ static void scnScanRegions(ScenarioHost *h) {
  * returned or raised, so a function that fails is still let go of: a timer
  * runs once. */
 static void scnRunTimers(ScenarioHost *h) {
+    ScnSandboxCall saved;
     int refs[SCN_TIMERS_MAX];
     int n;
     int i;
+    int rc;
 
     if (h->L == NULL) {
         return;
@@ -1708,7 +1725,10 @@ static void scnRunTimers(ScenarioHost *h) {
            handed back what the rest of the timers were holding. */
         if (!h->disabled) {
             lua_rawgeti(h->L, LUA_REGISTRYINDEX, refs[i]);
-            if (lua_pcall(h->L, 0, 0, 0) != 0) {
+            scnSandboxArmCall(h->L, &saved);
+            rc = lua_pcall(h->L, 0, 0, 0);
+            scnSandboxDisarmCall(h->L, &saved);
+            if (rc != 0) {
                 scnErrorRaised(h, "a timer", scnLuaError(h->L));
                 lua_pop(h->L, 1);
             } else {
@@ -1873,9 +1893,14 @@ static bool scnPolicyBegin(ScenarioHost *h, const char *name) {
  * where the script answered nil. */
 static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
                           bool classic) {
-    bool answer = classic;
+    ScnSandboxCall saved;
+    bool           answer = classic;
+    int            rc;
 
-    if (lua_pcall(h->L, nargs, 1, 0) != 0) {
+    scnSandboxArmCall(h->L, &saved);
+    rc = lua_pcall(h->L, nargs, 1, 0);
+    scnSandboxDisarmCall(h->L, &saved);
+    if (rc != 0) {
         scnErrorRaised(h, name, scnLuaError(h->L));
         lua_pop(h->L, 1);
         return classic;
@@ -1903,7 +1928,13 @@ static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
  * answer, so a script answering with something unusable every time climbs
  * toward the limit rather than resetting itself on each call. */
 static bool scnPolicyAnswer(ScenarioHost *h, const char *name, int nargs) {
-    if (lua_pcall(h->L, nargs, 1, 0) != 0) {
+    ScnSandboxCall saved;
+    int            rc;
+
+    scnSandboxArmCall(h->L, &saved);
+    rc = lua_pcall(h->L, nargs, 1, 0);
+    scnSandboxDisarmCall(h->L, &saved);
+    if (rc != 0) {
         scnErrorRaised(h, name, scnLuaError(h->L));
         lua_pop(h->L, 1);
         return false;
