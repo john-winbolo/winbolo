@@ -78,22 +78,9 @@
  *   struct.
  *
  * ── Rounds this fixture does not prove ──────────────────────────────────
- * The fields above are compared, but three sim paths change them without
- * writing the event that would carry the change, so a round that drives one
- * will differ for a reason that is not the reader's fault. None of them can
- * fire in a round of idle ticks, which is why the bundled case avoids them
- * — a round that wants any of these needs the recording side looked at
- * first:
- *
- *   basesSetOwner / basesSetBaseOwner zero a base's armour, shells and
- *   mines when it is STOLEN from another player, and write only
- *   log_BaseSetOwner. The viewer sets the owner and keeps the old stock, so
- *   the two disagree until the next log_BaseSetStock. A hand-over that keeps
- *   the stock — basesSetBaseOwner's keepStock, which the bundled case passes
- *   — does not zero it and so does not hit this.
- *
- *   basesDamagePos changes a base's armour with no event at all. It needs a
- *   player-owned shell to hit a base.
+ * Some pill ownership paths still change compared fields without writing
+ * the event that would carry the change, so a round that drives one will
+ * differ for a reason that is not the reader's fault:
  *
  *   pillsDropSetNeutralOwner and pillsMigrate write log_PillSetOwner only
  *   for a pill that is in a tank, and pillsMigratePlanted writes nothing, so
