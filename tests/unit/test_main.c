@@ -470,6 +470,8 @@ static const UnitTestEntry s_tests[] = {
     { "log_roundtrip_tank_stock_record",         run_log_roundtrip_tank_stock_record         },
     { "replay_roundtrip_world",                  run_replay_roundtrip_world                  },
     { "replay_roundtrip_base_migrate",           run_replay_roundtrip_base_migrate           },
+    { "replay_roundtrip_base_damage",            run_replay_roundtrip_base_damage            },
+    { "replay_roundtrip_base_capture_stock",     run_replay_roundtrip_base_capture_stock     },
     { "replay_roundtrip_pill_health",            run_replay_roundtrip_pill_health            },
     { "replay_v2_pill_health_nibble",            run_replay_v2_pill_health_nibble            },
     { "replay_v1_pill_health_nibble",            run_replay_v1_pill_health_nibble            },

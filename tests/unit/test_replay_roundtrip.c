@@ -309,3 +309,102 @@ int run_replay_roundtrip_base_migrate(void) {
     replayHarnessStop(&h);
     return 0;
 }
+
+/* Seed distinct stocks before the opening snapshot. Use base 2 so an event
+ * that accidentally names base 0 cannot pass the comparison. */
+static int prepareBaseStockReplay(ReplayHarness *h, const char *tag, BYTE owner) {
+    GameSim *gs;
+    base item;
+
+    UT_ASSERT_MSG(replayHarnessPrepare(h, tag, "Tester"),
+                  "could not prepare recording");
+    gs = serverSimGetGameSim(h->sim);
+    UT_ASSERT_MSG(basesGetNumBases(&gs->bs) >= 2, "fixture needs two bases");
+    memset(&item, 0, sizeof(item));
+    basesGetBase(&gs->bs, &item, 2);
+    item.owner = owner;
+    item.armour = 18;
+    item.shells = 37;
+    item.mines = 29;
+    basesSetBase(&gs->bs, &item, 2);
+    UT_ASSERT_MSG(replayHarnessBeginRecording(h), "could not start recording");
+    return 0;
+}
+
+static int finishBaseStockReplay(ReplayHarness *h) {
+    /* Flush immediately, before regeneration or a snapshot can conceal a
+     * missing stock event. */
+    replayHarnessTick(h, 2);
+    UT_ASSERT_MSG(replayHarnessStopRecording(h), "could not stop recording");
+    UT_ASSERT_MSG(replayHarnessDecode(h), "could not decode recording");
+    UT_ASSERT_MSG(replayHarnessCompare(h), "replayed world differs: %s",
+                  replayHarnessDiff(h));
+    replayHarnessStop(h);
+    return 0;
+}
+
+int run_replay_roundtrip_base_damage(void) {
+    int damageCase;
+
+    /* Default damage, custom damage, and damage clamped to the armour left. */
+    for (damageCase = 0; damageCase < 3; damageCase++) {
+        ReplayHarness h;
+        GameSim *gs;
+        base item;
+        BYTE expectedArmour;
+
+        UT_ASSERT(prepareBaseStockReplay(&h, "basedamage", 1) == 0);
+        gs = serverSimGetGameSim(h.sim);
+        if (damageCase == 0) {
+            UT_ASSERT(gs->rules.shell_damage == 5);
+            expectedArmour = 13;
+        } else if (damageCase == 1) {
+            gs->rules.shell_damage = 7;
+            expectedArmour = 11;
+        } else {
+            gs->rules.shell_damage = 25;
+            expectedArmour = 0;
+        }
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&gs->bs, &item, 2);
+        UT_ASSERT(basesCanHit(gs, item.x, item.y, 0));
+        basesDamagePos(gs, item.x, item.y, 0);
+        basesGetBase(&gs->bs, &item, 2);
+        UT_ASSERT(item.armour == expectedArmour);
+        UT_ASSERT(item.shells == 37 && item.mines == 29);
+        UT_ASSERT(finishBaseStockReplay(&h) == 0);
+    }
+    return 0;
+}
+
+int run_replay_roundtrip_base_capture_stock(void) {
+    int captureCase;
+
+    /* Both capture entry points: stealing empties the base, taking a
+     * neutral base preserves stock. Also cover an explicit keepStock transfer. */
+    for (captureCase = 0; captureCase < 5; captureCase++) {
+        ReplayHarness h;
+        GameSim *gs;
+        base item;
+        BYTE previousOwner = captureCase == 2 || captureCase == 3 ? NEUTRAL : 1;
+        bool emptied = captureCase < 2;
+
+        UT_ASSERT(prepareBaseStockReplay(&h, "basecapture", previousOwner) == 0);
+        gs = serverSimGetGameSim(h.sim);
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&gs->bs, &item, 2);
+        if (captureCase == 0 || captureCase == 2) {
+            UT_ASSERT(basesSetOwner(gs, item.x, item.y, 0, FALSE) == previousOwner);
+        } else {
+            UT_ASSERT(basesSetBaseOwner(gs, 2, 0, FALSE,
+                                       captureCase == 4) == previousOwner);
+        }
+        basesGetBase(&gs->bs, &item, 2);
+        UT_ASSERT(item.owner == 0);
+        UT_ASSERT(item.armour == (emptied ? 0 : 18));
+        UT_ASSERT(item.shells == (emptied ? 0 : 37));
+        UT_ASSERT(item.mines == (emptied ? 0 : 29));
+        UT_ASSERT(finishBaseStockReplay(&h) == 0);
+    }
+    return 0;
+}

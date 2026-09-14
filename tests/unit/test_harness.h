@@ -922,6 +922,8 @@ int run_replay_roundtrip_world(void);
 /* Same fixture: a base moved by basesMigrate (its owner left the game) is on
  * the same base, with the same new owner, after replay. */
 int run_replay_roundtrip_base_migrate(void);
+int run_replay_roundtrip_base_damage(void);
+int run_replay_roundtrip_base_capture_stock(void);
 /* Same fixture: a pillbox's armour and square change together, so the health
  * record has two more records behind it in the same stream. A viewer that
  * takes the wrong number of bytes for the health record reads the ones after
