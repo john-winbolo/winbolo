@@ -372,6 +372,16 @@ struct ClientSim {
                                      * first one lands */
     uint8_t          overviewWindow;  /* OverviewWindow the server asked for */
     uint8_t          lineOfSight;     /* LineOfSightMode the server asked for */
+    bool             lobbySmartPingsOff; /* the server refuses smart pings; raw
+                                     * mirror of the lobby-settings event. Held
+                                     * in the NEGATIVE sense deliberately: the
+                                     * memset leaves false, the decoder leaves
+                                     * false for a server that never sends the
+                                     * byte, and false has to mean pings are
+                                     * ALLOWED — an old server must read as
+                                     * "pings allowed", never "pings banned".
+                                     * Read it through the positive accessor
+                                     * clientSimIsLobbyAllowSmartPings. */
     ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
                                        * its clients send it; raw mirror of
                                        * the lobby-settings event. Zero is

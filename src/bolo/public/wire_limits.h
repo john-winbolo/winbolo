@@ -81,6 +81,7 @@
 #define LOBBY_LOCK_ALLIES_IN_TREES   (1u << 13)
 #define LOBBY_LOCK_OVERVIEW_WINDOW   (1u << 14)
 #define LOBBY_LOCK_LINE_OF_SIGHT     (1u << 15)
+#define LOBBY_LOCK_SMART_PINGS       (1u << 16)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -128,10 +129,17 @@ typedef enum {
                                  * round the player's own tank. Classic
                                  * mode forces the narrow window and
                                  * refuses an edit while it stays on. */
-    LST_LINE_OF_SIGHT     = 14  /* 1 byte LineOfSightMode. What stops the
+    LST_LINE_OF_SIGHT     = 14, /* 1 byte LineOfSightMode. What stops the
                                  * player seeing inside that block.
                                  * Classic mode forces it off and refuses
                                  * an edit while it stays on. */
+    LST_SMART_PINGS_OFF   = 15  /* 1 byte bool, carried in the NEGATIVE
+                                 * sense: non-zero means the server refuses
+                                 * smart pings. Allowing them is the legacy
+                                 * behaviour, and every optional field on
+                                 * this wire reads as zero when the sender
+                                 * never learned it, so refusing them is the
+                                 * value that has to cost a byte to say. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

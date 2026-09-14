@@ -1263,6 +1263,21 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) lobbyRenderLockBadge();
 
+        /* Smart pings. The checkbox is the positive question ("allow"),
+         * which is why it reads through clientSimIsLobbyAllowSmartPings;
+         * the wire field it sends is the negative one, so the byte is the
+         * inverse of the box. Same host/lock gating as Hidden Mines above. */
+        bool pingLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_SMART_PINGS) != 0;
+        bool pingV = clientSimIsLobbyAllowSmartPings(cs);
+        bool pingDisabled = !effectiveHost || pingLocked;
+        if (pingDisabled) ImGui::BeginDisabled();
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_SMART_PINGS_CB), &pingV)) {
+            uint8_t v = pingV ? 0 : 1;
+            lobbySendSetting(cs, LST_SMART_PINGS_OFF, &v, 1);
+        }
+        if (pingDisabled) ImGui::EndDisabled();
+        if (pingLocked) lobbyRenderLockBadge();
+
         /* "Allow all players to change settings" — toggles openHost
          * (the same flag that gates per-team manage-bots authority).
          * Visible to host / admin only. Regular players who got their
@@ -1813,4 +1828,55 @@ void lobbyRenderVisibilitySummary(ClientSim *cs, float s) {
     if (!ImGui::IsItemHovered()) return;
 
     lobbyRenderVisibilityTooltip(&live, preset, s);
+}
+
+/* ── Smart-ping summary ───────────────────────────────────────────
+ * Whether the host lets players drop ping markers, on the same header line
+ * and in the same shape as the visibility entries above: the marker the
+ * player would be dropping, then yes or no. Read only, and drawn for
+ * everyone, because the settings panel that owns the checkbox is host-only
+ * and a joiner has no other way to find out.
+ *
+ * The mechanics below are lobbyRenderVisibilitySummary's, deliberately —
+ * the idempotent icon-cache load, the two drops that centre a sprite
+ * against its word, the faint No, and the label that stands in when the
+ * sprite is missing. See the long comments there for why each is needed. */
+void lobbyRenderSmartPingSummary(ClientSim *cs, float s) {
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (renderer) lobbyLoadStatusIconsOnce(renderer, s);
+
+    ImGuiWindow *win = ImGui::GetCurrentWindow();
+    const float iconSize = 16.0f * s;
+    const float textH    = ImGui::GetTextLineHeight();
+    const float imgDrop  = (textH > iconSize) ? (textH - iconSize) * 0.5f : 0.0f;
+    const float textDrop = (iconSize > textH) ? (iconSize - textH) * 0.5f : 0.0f;
+
+    bool allow = clientSimIsLobbyAllowSmartPings(cs);
+    const char *word = langGetText(allow ? STR_YES : STR_NO);
+
+    if (!allow) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            ImGui::GetStyle().Alpha * 0.45f);
+    }
+    ImGui::BeginGroup();
+    const float baseY = ImGui::GetCursorPosY();
+    SDL_Texture *ping = renderer ? lobbyGetPingStandardTexture(renderer) : nullptr;
+    if (ping) {
+        ImGui::SetCursorPosY(baseY + win->DC.CurrLineTextBaseOffset + imgDrop);
+        ImGui::Image((ImTextureID)ping, ImVec2(iconSize, iconSize));
+    } else {
+        /* Sprite missing — the label stands in for it, as above. */
+        ImGui::SetCursorPosY(baseY + textDrop);
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SMART_PINGS_CB));
+    }
+    ImGui::SameLine(0, 4.0f * s);
+    ImGui::SetCursorPosY(baseY + textDrop);
+    ImGui::TextUnformatted(word);
+    ImGui::EndGroup();
+    if (!allow) ImGui::PopStyleVar();
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s: %s",
+                          langGetText(STR_DLGLOBBY_SMART_PINGS_CB), word);
+    }
 }

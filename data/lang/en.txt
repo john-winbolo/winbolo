@@ -1546,6 +1546,9 @@ STR_DLGLOBBY_WINDOW_NONE=None
 STR_DLGBROWSER_VIEWS_UNKNOWN=This server does not report its visibility settings.
 STR_DLGLOBBY_WINDOW_EXPANDED_LONG=Expanded (full 29x29 view around tank)
 
+# Lobby "Other" column — the host switch for smart pings
+STR_DLGLOBBY_SMART_PINGS_CB=Allow smart pings
+
 # Settings > Display & Sound > Full Screen
 STR_DLGSETTINGS_FULLSCREEN=Full Screen
 STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire transparency

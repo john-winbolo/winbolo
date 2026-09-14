@@ -1642,6 +1642,8 @@
  * rather than the Expanded word plus a suffix, so a translator can put
  * the parts in whatever order the language wants. */
 #define STR_DLGLOBBY_WINDOW_EXPANDED_LONG        2195
+/* Lobby "Other" column — the host switch for smart pings */
+#define STR_DLGLOBBY_SMART_PINGS_CB              2203
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014

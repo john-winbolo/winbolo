@@ -90,6 +90,10 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
    * server did before the fields existed. */
   cJSON_AddNumberToObject(body, "overviewwindow", s_lobbyInfo.overviewWindow);
   cJSON_AddNumberToObject(body, "lineofsight", s_lobbyInfo.lineOfSight);
+  /* A flag, and a negative one: true bans smart pings. A reader that finds
+   * no key gets false and so reads "allowed", which is what every server
+   * did before the field existed — the same rule the two above follow. */
+  cJSON_AddBoolToObject(body, "smartpingsoff", s_lobbyInfo.smartPingsOff);
   /* Sent as a number like the view policies, not a word: 0 on, 1 off,
    * 2 proximity. A reader that finds no "voice" key reads on, which is
    * what servers did before the field existed. */

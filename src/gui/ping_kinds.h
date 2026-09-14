@@ -255,14 +255,175 @@ static inline const char *pingDisplayName(const char *name,
     return out;
 }
 
+/* The blink. A ping sits on top of the map, and the map is what the player
+ * needs to keep reading — the tile it names, and whatever is moving over it.
+ * So the marker is off for most of each cycle rather than covering that tile
+ * for its whole five seconds.
+ *
+ * One part on to three parts off. Written as a period and an on-time rather
+ * than as a ratio so the two can be tuned apart.
+ *
+ * Not in game ticks, though the ratio came from thinking in them: a tick is
+ * 20 ms (GAME_NUMGAMETICKS_SEC), so one on and three off would be an 80 ms
+ * cycle — a flicker rather than a blink, and at that rate a player reads it
+ * as a dim marker instead of a blinking one. A quarter second on, three
+ * quarters off, is the same ratio at a rate the eye resolves. */
+#define PING_BLINK_PERIOD_MS 1000
+#define PING_BLINK_ON_MS      250
+
+/* The FIRST flash is held longer than the rest. It is the one that has to be
+ * noticed — a quarter second is enough to repeat a mark the player has
+ * already seen, and not enough to catch an eye that was looking somewhere
+ * else when the ping landed. The arrival ring runs inside this, finishing at
+ * 250 ms with the flash still solid for another 250. */
+#define PING_BLINK_FIRST_ON_MS 500
+
+/* How much of each flash is spent arriving and leaving. The flash ramps up
+ * over this, holds, then ramps down over it again, so the marker breathes
+ * rather than being cut in and out.
+ *
+ * Taken out of the on-time, not added to it: two of these plus the hold is
+ * PING_BLINK_ON_MS, so a flash is still a quarter second whatever this is
+ * set to. It has to stay under half the on-time or there is no hold left;
+ * the code clamps rather than trusting that. */
+#define PING_BLINK_FADE_MS     80
+
+/* How many times the world marker flashes before it gives the tile back for
+ * good. Three says "look here" and then stops asking.
+ *
+ * This ends the WORLD marker early, at three periods, where the ping itself
+ * lives PING_DISPLAY_MS. The steady markers — the off-screen edge one and
+ * the overview's dot — run the full life as before. Neither of those covers
+ * anything, so there is no reason to take them away sooner, and the edge
+ * marker is the one still pointing at a ping that is off the screen. */
+#define PING_BLINK_COUNT        3
+
+/* The arrival ring: a ring in the ping's own colour that closes onto the
+ * marker square once, as the ping lands, and is gone before the first flash
+ * is. It says "something happened HERE, now" in a way a marker that is simply
+ * on cannot — the eye is drawn by the movement, not by the mark.
+ *
+ * ONCE, not once a flash. The stage times below are read against the ping's
+ * AGE, the way pingWorldMarkerAlpha reads it, so the ring runs on the ping's
+ * own clock from the moment it arrived and needs no wall clock: a recording
+ * replays the ring it showed live. The second and third flashes are then a
+ * plain marker, which is the point — three rings would be three arrivals.
+ *
+ * The two stages are ring_band.h's: a close from START to END over
+ * PING_RING_MS, then a pulse out to PULSE and back over PING_RING_PULSE_MS
+ * with a fade across it. Same shape as the map overview's respawn ring, and
+ * deliberately its own numbers — the two are tuned apart, and this one is
+ * about a fifth as long.
+ *
+ * PING_RING_MS + PING_RING_PULSE_MS is PING_BLINK_ON_MS exactly: the ring
+ * lives entirely inside the first flash and ends as that flash ends, so the
+ * whole marker leaves the tile at once and there is nothing left of the ring
+ * to fight the two flashes that follow. Raising the sum past PING_BLINK_ON_MS
+ * would leave the ring drawing into the gap where the marker has deliberately
+ * given the tile back, so keep it at or under.
+ *
+ * Radii in MAP SQUARES, like the overview's, and the weight too: the drawer
+ * multiplies by the view's own tile size, so the ring is the same size in map
+ * terms at 1x as at 4x rather than a thick ring round a tiny square. The
+ * minimum weight is the floor under that — below about two pixels a band
+ * stops reading as a ring. START is five squares across, wide enough to catch
+ * the eye off to the side of where the player is looking; END sits just
+ * outside the corners of the marker square (half a square is 0.707 out at the
+ * corner), so the ring lands ON the square rather than inside it. */
+#define PING_RING_START_SQ       2.5f   /* radius: five squares across */
+#define PING_RING_END_SQ         0.8f   /* just outside the square's corners */
+#define PING_RING_PULSE_SQ       1.1f   /* how far the pulse reopens */
+#define PING_RING_MS             180    /* the close */
+#define PING_RING_PULSE_MS        70    /* the pulse, and the fade with it */
+#define PING_RING_WEIGHT_SQ      0.16f  /* map squares of stroke, across the band */
+#define PING_RING_WEIGHT_MIN_PX  2.0f   /* however far the zoom is out */
+
+/* How solid the ring is at its brightest. Above the marker's own
+ * PING_MARKER_ALPHA, which is held down because the square and the icon sit
+ * over ground the player has to keep reading; the ring is over that ground for
+ * a quarter of a second and then never again, so it can afford to be the
+ * brightest thing in the effect. Short of 1 so it still reads as drawn onto
+ * the map rather than punched through it. */
+#define PING_RING_ALPHA          0.85f
+
+/* The sender's name stays up for the ping's WHOLE life, steady, while the
+ * marker under it blinks three times and stops. The name answers "who" and
+ * that answer does not change; blinking it made the player wait for a flash
+ * to read it, and it vanished at three seconds while the ping was still
+ * live. Held back to this so a permanent label does not compete with the
+ * marker it belongs to. Its end-of-life fade is pingDisplayAlpha's. */
+#define PING_NAME_ALPHA          0.67f
+
 /* 0..1 opacity for a ping `ageMs` old: solid until the fade window, then a
  * straight ramp to nothing. Returns 0 once the ping has expired, so a caller
- * that draws whatever this returns needs no separate expiry test. */
+ * that draws whatever this returns needs no separate expiry test.
+ *
+ * Steady. Every marker but the one on the ground uses this: the off-screen
+ * edge marker and the overview's dot sit on the border and on a map the
+ * player is reading deliberately, where nothing is hidden by them and a
+ * blink would only be noise. */
 static inline float pingDisplayAlpha(int ageMs) {
     if (ageMs < 0) return 0.0f;
     if (ageMs >= PING_DISPLAY_MS) return 0.0f;
     if (ageMs <= PING_DISPLAY_MS - PING_FADE_MS) return 1.0f;
     return (float)(PING_DISPLAY_MS - ageMs) / (float)PING_FADE_MS;
+}
+
+/* The same, blinking. For the WORLD MARKER alone — the one drawn on the
+ * ground in the game view, over the tile it names and over whatever is moving
+ * across it. That marker is the only one that hides anything the player needs
+ * to keep reading, so it is the only one that gets out of the way.
+ *
+ * Returns a hard 0 in the gaps rather than a low alpha: a marker drawn at any
+ * opacity still obscures, and every caller already skips on `alpha <= 0`, so
+ * zero means the tile is drawn untouched for three quarters of each cycle.
+ *
+ * The phase comes from the ping's own age, so each ping blinks on its own
+ * clock from the moment it arrived. Two pings a moment apart therefore blink
+ * out of step, which keeps them apart rather than pulsing as one. It also
+ * needs no wall clock, so a recording replays the blink it showed live.
+ *
+ * The first phase is an ON one, so a ping is visible the instant it lands.
+ * The end-of-life fade still applies, so the last second blinks and dims. */
+static inline float pingWorldMarkerAlpha(int ageMs) {
+    if (ageMs < 0) return 0.0f;
+    /* Done flashing: the tile is the player's again for the rest of the
+     * ping's life. Tested before the phase so the marker cannot come back
+     * for a fourth time. */
+    if (ageMs >= PING_BLINK_COUNT * PING_BLINK_PERIOD_MS) return 0.0f;
+    {
+        const int phase      = ageMs % PING_BLINK_PERIOD_MS;
+        const int firstFlash = (ageMs < PING_BLINK_PERIOD_MS);
+        const int onMs       = firstFlash ? PING_BLINK_FIRST_ON_MS
+                                          : PING_BLINK_ON_MS;
+        int       fade  = PING_BLINK_FADE_MS;
+        float     env;
+        if (phase >= onMs) return 0.0f;
+        /* No hold left means the two ramps would overlap and the flash would
+         * never reach full. Cap them at half the on-time each, which turns
+         * the trapezoid into a triangle rather than something wrong. */
+        if (fade > onMs / 2) fade = onMs / 2;
+        /* The FIRST flash starts solid. It plays under the arrival ring, and
+         * the ring's whole job is to say "look here, now" — a marker easing
+         * in over the first 80 ms arrives after the thing pointing at it,
+         * and the sender's name under it arrives later still. So the ping
+         * and its name are up the instant it lands, and only the fade OUT
+         * applies to this one. Every later flash ramps both ways; by then
+         * the player has been told, and the marker is repeating itself.
+         *
+         * PING_RING_MS + PING_RING_PULSE_MS is PING_BLINK_ON_MS, so the ring
+         * finishes exactly as this first flash starts to leave. */
+        if (fade <= 0) {
+            env = 1.0f;
+        } else if (phase < fade && !firstFlash) {
+            env = (float)phase / (float)fade;                      /* in  */
+        } else if (phase >= onMs - fade) {
+            env = (float)(onMs - phase) / (float)fade;             /* out */
+        } else {
+            env = 1.0f;                                            /* hold */
+        }
+        return env * pingDisplayAlpha(ageMs);
+    }
 }
 
 #ifdef __cplusplus

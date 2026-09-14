@@ -231,6 +231,14 @@ struct ServerSim {
     uint8_t  lineOfSight;          /* LineOfSightMode — what blocks sight
                                     * inside that block. Off (0) is today's
                                     * behaviour. */
+    bool     smartPingsOff;        /* host banned smart pings; CMD_PING is
+                                    * refused while it is set. Stored in the
+                                    * negative sense on purpose, matching
+                                    * LST_SMART_PINGS_OFF: false — the value
+                                    * a zeroed struct and an absent wire byte
+                                    * both give — has to mean pings ALLOWED,
+                                    * because that is what every build before
+                                    * this one did. */
     ServerVoiceMode voiceMode;     /* how client voice is handled; fixed at
                                     * startup, read by the advertisement
                                     * paths. */
@@ -279,6 +287,7 @@ struct ServerSim {
         bool       alliesInTrees;
         uint8_t    overviewWindow;
         uint8_t    lineOfSight;
+        bool       smartPingsOff;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running

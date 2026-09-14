@@ -113,6 +113,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   sim->originalLobbySettings.alliesInTrees       = sim->alliesInTrees;
   sim->originalLobbySettings.overviewWindow      = sim->overviewWindow;
   sim->originalLobbySettings.lineOfSight         = sim->lineOfSight;
+  sim->originalLobbySettings.smartPingsOff       = sim->smartPingsOff;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -618,6 +619,14 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (sim->classicMode) return false;
             if (value[0] >= (uint8_t)LINE_OF_SIGHT_COUNT) return false;
             serverSimSetLineOfSight(sim, value[0]);
+            return true;
+        }
+        case LST_SMART_PINGS_OFF: {
+            if (len != 1) return false;
+            /* A plain bool like LST_ALLIES_IN_TREES, so any non-zero byte
+             * counts. Classic mode does not own it: what a player may
+             * point at is not one of the visibility rules. */
+            serverSimSetSmartPingsOff(sim, value[0] != 0);
             return true;
         }
         case LST_PILL_VIEW:

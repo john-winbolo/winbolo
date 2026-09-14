@@ -453,6 +453,12 @@ typedef struct ControlEvent {
                                          * send voice, so it captures none. */
             uint8_t  lobbyOverviewWindow;  /* OverviewWindow */
             uint8_t  lobbyLineOfSight;     /* LineOfSightMode */
+            bool     lobbySmartPingsOff;   /* server refuses CMD_PING. Held in
+                                            * the negative sense so the zero a
+                                            * decoder leaves for an absent byte
+                                            * reads as "pings allowed" — what
+                                            * every server did before the field
+                                            * existed. */
             /* The scenario this lobby is running, if any. scenarioSource
              * none means there is none and the five fields below are empty:
              * a lobby with no scenario writes none of these bytes, so a

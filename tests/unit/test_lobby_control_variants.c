@@ -107,6 +107,7 @@ int run_lobby_settings_codec_and_apply(void) {
         (uint8_t)overviewWindowClassic;
     in.u.lobbySettings.lobbyLineOfSight                =
         (uint8_t)lineOfSightBuildingsAndTrees;
+    in.u.lobbySettings.lobbySmartPingsOff              = true;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -164,14 +165,16 @@ int run_lobby_settings_codec_and_apply(void) {
                       (uint8_t)lineOfSightBuildingsAndTrees,
                   "line of sight did not survive codec round-trip (got %u)",
                   (unsigned)out.u.lobbySettings.lobbyLineOfSight);
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbySmartPingsOff == true,
+                  "smart-pings-off did not survive codec round-trip");
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is fourteen bytes shorter (3 policies + 3 u16 decay values +
+     * that is fifteen bytes shorter (3 policies + 3 u16 decay values +
      * classic mode + allies in trees + voice mode + overview window +
-     * line of sight). */
+     * line of sight + smart pings off). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -182,7 +185,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 14;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 15;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -208,6 +211,14 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyLineOfSight ==
                           (uint8_t)lineOfSightOff,
                       "short payload must leave line of sight off");
+        /* The polarity pin. The event that was encoded had smart pings
+         * BANNED; a sender that stops before the byte must still read as
+         * ALLOWED, because that is what every server did before the setting
+         * existed. If the field is ever flipped to a positive sense this
+         * assertion is the one that fails. */
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbySmartPingsOff == false,
+                      "a payload with no smart-ping byte must read as "
+                      "pings ALLOWED");
     }
 
     /* The voice mode over the body tables, which is what the reliable
@@ -235,9 +246,9 @@ int run_lobby_settings_codec_and_apply(void) {
                           "body round-trip lost voice mode %d (got %d)",
                           (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
 
-            /* The mode is the third byte from the end: the overview
-             * window and line of sight follow it. */
-            body[bodyLen - 3] = 0x7F;
+            /* The mode is the fourth byte from the end: the overview
+             * window, line of sight and smart-pings-off follow it. */
+            body[bodyLen - 4] = 0x7F;
             memset(&bout, 0, sizeof(bout));
             UT_ASSERT(bdec(body, bodyLen, &bout));
             UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,
@@ -288,6 +299,11 @@ int run_lobby_settings_codec_and_apply(void) {
                       (uint8_t)lineOfSightBuildingsAndTrees,
                   "line of sight did not reach the client mirror (got %u)",
                   (unsigned)clientSimGetLineOfSight(cs));
+    /* The event banned smart pings, and the positive accessor the UI reads
+     * has to say so. A fresh ClientSim that has applied nothing answers
+     * true, which the block below pins. */
+    UT_ASSERT_MSG(clientSimIsLobbyAllowSmartPings(cs) == false,
+                  "smart-pings-off did not reach the client mirror");
     /* And the client honours them where it counts: the test the overview and
      * the scroll keys actually ask answers from the mirror the server wrote,
      * so Classic really does put the block on the classic view. */
@@ -313,6 +329,19 @@ int run_lobby_settings_codec_and_apply(void) {
                       "an unknown line-of-sight byte must read as off, got %u",
                       (unsigned)clientSimGetLineOfSight(oddCs));
         clientSimDestroy(oddCs);
+    }
+
+    /* A client that has applied no lobby settings at all — the state it is
+     * in while talking to a server too old to send them — must read as
+     * smart pings ALLOWED. Together with the short-payload assertion above
+     * this pins both ways a zero can arrive. */
+    {
+        ClientSim *freshCs = fresh_client_sim();
+        UT_ASSERT(freshCs != NULL);
+        UT_ASSERT_MSG(clientSimIsLobbyAllowSmartPings(freshCs) == true,
+                      "a client with no lobby settings yet must read as "
+                      "pings ALLOWED");
+        clientSimDestroy(freshCs);
     }
 
     /* Nothing to put back: both settings live on the ClientSim, so the next

@@ -672,7 +672,7 @@ void printArgs() {
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
   fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees,\n");
-  fprintf(stderr, "                overviewwindow, lineofsight.\n");
+  fprintf(stderr, "                overviewwindow, lineofsight, smartpings.\n");
   fprintf(stderr, "                Locking pillview, baseview, allyview, alliesintrees,\n");
   fprintf(stderr, "                overviewwindow or lineofsight also locks classicmode,\n");
   fprintf(stderr, "                which writes those values.\n");
@@ -700,6 +700,8 @@ void printArgs() {
   fprintf(stderr, "-overviewwindow <M> - Map overview live block: expanded, classic (default), none\n");
   fprintf(stderr, "-lineofsight  - Buildings and stands of trees block sight inside the live\n");
   fprintf(stderr, "                block. Off by default, and off under -classicmode.\n");
+  fprintf(stderr, "-smartpingsoff- Refuse smart pings for the whole server. Off by default,\n");
+  fprintf(stderr, "                i.e. pings are allowed. Not part of -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
   fprintf(stderr, "                allyview off, overriding those three switches, turns\n");
   fprintf(stderr, "                allies in trees off, sets the overview window to classic\n");
@@ -1903,13 +1905,14 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "alliesintrees") == 0) serverLocks |= LOBBY_LOCK_ALLIES_IN_TREES;
         else if (strcmp(lo, "overviewwindow") == 0) serverLocks |= LOBBY_LOCK_OVERVIEW_WINDOW;
         else if (strcmp(lo, "lineofsight") == 0) serverLocks |= LOBBY_LOCK_LINE_OF_SIGHT;
+        else if (strcmp(lo, "smartpings") == 0) serverLocks |= LOBBY_LOCK_SMART_PINGS;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
                   "openhost, map, pillview, baseview, allyview, "
                   "classicmode, alliesintrees, overviewwindow, "
-                  "lineofsight)\n", lo);
+                  "lineofsight, smartpings)\n", lo);
         }
       }
       /* Locking any visibility setting locks classicmode too, because
@@ -2027,6 +2030,16 @@ int main(int argc, char **argv) {
    * present — the sim default is off. */
   if (argExist(argc, argv, "lineofsight") == TRUE) {
     serverSimSetLineOfSight(serverSim, (uint8_t)lineOfSightBuildingsAndTrees);
+  }
+
+  /* -smartpingsoff: the whole server refuses CMD_PING. Set here, before
+   * serverInstanceStartup, so the lobby snapshot captures it — a value set
+   * after that is not in originalLobbySettings and the next reset to
+   * defaults would turn pings back on. Only set when the flag is present;
+   * the sim default is allowed. Classic mode does not touch this: smart
+   * pings are not one of the six settings it writes. */
+  if (argExist(argc, argv, "smartpingsoff") == TRUE) {
+    serverSimSetSmartPingsOff(serverSim, true);
   }
 
   /* -classicmode: the classic Bolo view. Applied after the three view

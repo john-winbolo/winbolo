@@ -79,9 +79,10 @@
  * + openHost 1 + autoLock 1 + serverLocks 4                     = 55
  * + ranked 1 + allowNew 1 + wbn 1 + uploadPolicy 1 + startDelay 4
  * + hostSlot 1 + viewPolicy 3 + viewDecay 6 + classic 1
- * + alliesInTrees 1 + voice 1 + overview 1 + lineOfSight 1      = 23
+ * + alliesInTrees 1 + voice 1 + overview 1 + lineOfSight 1
+ * + smartPingsOff 1                                            = 24
  */
-#define LS_PLAIN_BODY_LEN 78
+#define LS_PLAIN_BODY_LEN 79
 
 /* The three strings the scripted cases carry, and what each costs on the
  * wire: a one-byte length and that many bytes, no terminator. */
@@ -136,6 +137,7 @@ static void lsFillPlain(ControlEvent *evt) {
     evt->u.lobbySettings.voiceMode                = serverVoiceOff;
     evt->u.lobbySettings.lobbyOverviewWindow      = 2;
     evt->u.lobbySettings.lobbyLineOfSight         = 1;
+    evt->u.lobbySettings.lobbySmartPingsOff       = true;
 }
 
 /* The same bytes the fill above should produce, written out by index. Every
@@ -186,6 +188,7 @@ static void lsWantPlain(uint8_t *want) {
     want[75] = (uint8_t)serverVoiceOff;
     want[76] = 2;                   /* overviewWindow */
     want[77] = 1;                   /* lineOfSight */
+    want[78] = 1;                   /* smartPingsOff */
 }
 
 /* Where the first byte that differs is, or -1 when they match. */
@@ -271,11 +274,11 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
     want[pos++] = LS_SCN_DESC_LEN;
     memcpy(want + pos, LS_SCN_DESC, LS_SCN_DESC_LEN);
     pos += LS_SCN_DESC_LEN;
-    /* 78 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 103: the
+    /* 79 + source 1 + extraTeams 1 + (1 + 4) + (1 + 8) + (1 + 8) = 104: the
        base game type is last of the tail, so nothing ahead of it moved when
        it was added. */
-    UT_ASSERT_MSG(pos == 103,
-                  "the base game type should be at offset 103, not %u",
+    UT_ASSERT_MSG(pos == 104,
+                  "the base game type should be at offset 104, not %u",
                   (unsigned)pos);
     want[pos++] = (uint8_t)gameStrictTournament;
     UT_ASSERT_MSG(pos == LS_SCRIPTED_BODY_LEN,
@@ -337,6 +340,7 @@ int run_lobby_scenario_settings_roundtrip(void) {
                   (unsigned)gameStrictTournament);
     /* And the fields ahead of the tail are still themselves. */
     UT_ASSERT(out.u.lobbySettings.lobbyLineOfSight == 1);
+    UT_ASSERT(out.u.lobbySettings.lobbySmartPingsOff == true);
     UT_ASSERT(out.u.lobbySettings.voiceMode == serverVoiceOff);
     UT_ASSERT(out.u.lobbySettings.lobbyServerLocks == 0xAABBCCDDu);
 

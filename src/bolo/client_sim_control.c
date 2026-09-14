@@ -455,6 +455,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                            (uint8_t)LINE_OF_SIGHT_COUNT)
                               ? evt->u.lobbySettings.lobbyLineOfSight
                               : (uint8_t)lineOfSightOff;
+        cs->lobbySmartPingsOff = evt->u.lobbySettings.lobbySmartPingsOff;
         cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining

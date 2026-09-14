@@ -37,6 +37,8 @@ typedef struct {
   bool alliesInTrees;                        /* "alliesintrees"; absent = off */
   int  overviewWindow;                       /* "overviewwindow"; absent = expanded */
   int  lineOfSight;                          /* "lineofsight"; absent = off */
+  bool smartPingsOff;                        /* "smartpingsoff"; absent = false,
+                                                meaning smart pings ALLOWED */
   /* Whether the row said anything about its visibility rules at all.
    * The fields above always hold something, because an absent key is
    * read as the back-compatibility value; this says whether that is a

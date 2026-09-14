@@ -1457,6 +1457,8 @@ static const LangEntry langTable[] = {
     {2193, "None"},
     {2194, "This server does not report its visibility settings."},
     {2195, "Expanded (full 29x29 view around tank)"},
+    /* Lobby "Other" column — the host switch for smart pings */
+    {2203, "Allow smart pings"},
     /* Settings > Display & Sound > Full Screen */
     {2013, "Full Screen"},
     {2014, "Newswire transparency"},

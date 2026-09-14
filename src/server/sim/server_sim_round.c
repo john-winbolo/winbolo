@@ -88,6 +88,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
         sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
         sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
+        sim->smartPingsOff       = sim->originalLobbySettings.smartPingsOff;
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who
@@ -517,6 +518,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
     info.overviewWindow  = serverSimGetOverviewWindow(sim);
     info.lineOfSight     = serverSimGetLineOfSight(sim);
+    info.smartPingsOff   = serverSimGetSmartPingsOff(sim);
     info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
     info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
     info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);

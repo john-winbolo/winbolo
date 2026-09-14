@@ -321,6 +321,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * later change to it must not quietly stop applying here. */
     sim->overviewWindow = (uint8_t)OVERVIEW_WINDOW_STOCK;
     sim->lineOfSight    = (uint8_t)LINE_OF_SIGHT_STOCK;
+    /* Smart pings are allowed until a host says otherwise. Written out
+     * rather than left to the memset for the same reason the two above
+     * are: the field is stored in the negative sense, so the line has to
+     * say which way round "false" reads. */
+    sim->smartPingsOff  = FALSE;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;

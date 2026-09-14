@@ -586,6 +586,12 @@ bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
 bool         clientSimIsLobbyAvailable(const ClientSim *cs);
 bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
 bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
+/* Whether the server accepts smart pings. Positive on purpose: the value
+ * is stored and sent in the negative sense (see lobbySmartPingsOff) so a
+ * server that predates the setting reads as allowed, and this accessor is
+ * where that flips back so no UI code has to think in negatives. Answers
+ * true for a NULL sim and until the first lobby-settings event lands. */
+bool         clientSimIsLobbyAllowSmartPings(const ClientSim *cs);
 bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
 /* SDL_GetTicks() at the most recent non-empty CTRL_BALANCE_PROPOSAL
  * arrival — used by the lobby's "Teams balanced" status label so the

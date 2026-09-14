@@ -1062,6 +1062,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         if (serverSimGetState(sim) != serverStateRunning) {
             return CMD_REJECT_BAD_STATE;
         }
+        /* The host can switch smart pings off for the whole server from the
+         * lobby. Enforced here rather than only hidden in the sending
+         * client's UI, so a modified client gains nothing by ignoring the
+         * setting. Ahead of the rate limiting below on purpose: a ping the
+         * server was never going to accept must not consume the sender's
+         * budget, or turning pings back on would leave them throttled by
+         * attempts that never drew anything. CMD_REJECT_BAD_STATE is the
+         * same answer the two tests around it give — "this server is not
+         * taking pings right now". */
+        if (serverSimGetSmartPingsOff(sim)) {
+            return CMD_REJECT_BAD_STATE;
+        }
         if (!playersIsInUse(&sim->sim.plyrs, slot)) {
             return CMD_REJECT_BAD_STATE;
         }

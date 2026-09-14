@@ -189,17 +189,20 @@ The `_winbolo._udp.local` TXT record set carries almost the same information as
 string key/value pairs (see `src/server/mdns_records.h` for the source struct and
 `src/server/mdns_advertise.c` for the emission; `discoveryMdnsFillServer()` in
 `src/bolo/discovery_mdns.c` is the parser). One TXT record is emitted per key,
-`MDNS_WINBOLO_TXT_COUNT` = 22 of them, in this order:
+`MDNS_WINBOLO_TXT_COUNT` = 23 of them, in this order:
 
 ```
 map=<name>   ver=<maj.min.rev>   players=<n>   bases=<n>   pills=<n>
 pass=<0|1 password set>   mines=<0|1 mines hidden>   game=<gameType int>
 ai=<aiType int>   lobby=<0|1 in pre-game lobby>   locked=<0|1 locked>
 md5=<32 hex chars, empty if random/unknown>   newp=<0|1 allow new players>
-spec=<0|1 allow spectators>   nspec=<spectator count>   ranked=<0|1>
+spingoff=<0|1 smart pings banned>   spec=<0|1 allow spectators>   nspec=<spectator count>   ranked=<0|1>
 rnd=<0|1 random map>   tlim=<game length in 50ths-tick, 0 if none>
 humans=<n>   bots=<n>   max=<max players>   view=<4 hex chars>
 ```
+
+A record with no `spingoff` key reads as smart pings allowed, which is what
+every server that predates the key does.
 
 The `md5 newp spec nspec ranked rnd tlim humans bots max` keys mirror the
 INFO_PACKET fields added alongside `flags`; `map ver players bases pills pass
