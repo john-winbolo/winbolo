@@ -2404,6 +2404,7 @@ int run_scenario_host_disabled_stops_hooks(void);
 int run_scenario_host_vm_lock_same_thread(void);
 int run_scenario_host_vm_lock_second_thread(void);
 int run_scenario_host_audit_human_lost(void);
+int run_scenario_host_failed_start_drops_manifest(void);
 
 /* A metatable on the script's own tables (test_scenario_host.c): what the
    host's reads of the declared data do and do not run. */

@@ -65,6 +65,10 @@
  * run_scenario_host_audit_human_lost  — a round start that loses a human
  *                                       switches the scenario off and tells
  *                                       the players
+ * run_scenario_host_failed_start_drops_manifest
+ *                                     — a start whose chunk raises leaves the
+ *                                       host answering for no scenario at
+ *                                       all, not for the round before it
  *
  * and the switch that decides whether a script is loaded at all:
  *
@@ -1946,5 +1950,87 @@ int run_scenario_host_enabled_again(void) {
     UT_ASSERT_MSG(attachedWhenOn,
                   "the sidecar was refused with scripts on: %s", err);
     UT_ASSERT_MSG(strcmp(name, "Back") == 0, "name read as '%s'", name);
+    return 0;
+}
+
+/* ── 27. A round start that fails drops the round before it ───────── */
+
+/* A script that loaded at the attach and raises from its own top level at a
+ * later round start. That round plays classic, which the host has always
+ * done; what it must not do is go on answering for a scenario that is not
+ * running — the name and the description the lobby shows, and the regions
+ * every tick would walk for a round with no script to tell about them.
+ *
+ * The marker file is what makes the same bytes load once and raise the next
+ * time. The host reads the file at the attach and runs those bytes at every
+ * start, so the difference between the two rounds has to be something the
+ * chunk itself can see. */
+int run_scenario_host_failed_start_drops_manifest(void) {
+    static const char *const kMap    = "scnhost_failed_start.map";
+    static const char *const kMarker = "scnhost_failed_start.marker";
+    char                    lua[1024];
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    FILE                   *f;
+    char                    err[512];
+
+    remove(kMarker);
+    snprintf(lua, sizeof(lua),
+             "local stop = io.open(\"%s\", \"r\")\n"
+             "if stop then stop:close() error(\"not this round\") end\n"
+             "scenario = { name = \"Standing\", api = 1,\n"
+             "             description = \"Hold the keep\",\n"
+             "             regions = { keep = { x = 100, y = 100,\n"
+             "                                  w = 12, h = 12 } } }\n"
+             "function allow_extra_teams() return false end\n", kMarker);
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    /* The round the script does run, so the next one has something to
+       forget. */
+    serverSimStartGame(sim);
+    serverSimTick(sim);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Standing") == 0,
+                  "the first round's name read as '%s'", scenarioHostName(h));
+    UT_ASSERT_MSG(m->numRegions == 1,
+                  "the first round holds %u regions, expected the one the "
+                  "file declares", (unsigned)m->numRegions);
+    UT_ASSERT_MSG(!shAskExtraTeams(sim),
+                  "the first round answered the classic yes, so its script "
+                  "never ran at all");
+
+    /* Written between the rounds, so the next start is the one that
+       raises. */
+    f = fopen(kMarker, "wb");
+    UT_ASSERT_MSG(f != NULL, "the marker file could not be written");
+    fclose(f);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);
+
+    UT_ASSERT_MSG(scenarioHostName(h)[0] == '\0',
+                  "the failed start left the name as '%s': the lobby would "
+                  "still be showing the round before it", scenarioHostName(h));
+    UT_ASSERT_MSG(scenarioHostDescription(h)[0] == '\0',
+                  "the failed start left the description as '%s'",
+                  scenarioHostDescription(h));
+    UT_ASSERT_MSG(m->numRegions == 0,
+                  "the failed start left %u regions for every tick of a round "
+                  "with no script to walk", (unsigned)m->numRegions);
+    UT_ASSERT_MSG(shAskExtraTeams(sim),
+                  "the round without a scenario still ran the script's "
+                  "policy");
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    remove(kMarker);
     return 0;
 }

@@ -1631,7 +1631,11 @@ static void scnScanRegions(ScenarioHost *h) {
     const ScenarioManifest *m = &h->manifest;
     BYTE                    slot;
 
-    if (m->numRegions == 0) {
+    /* A switched-off round has nothing to tell: no hook of its would be
+       called with what the scan found. Read before the region count, so the
+       sixteen tank reads and the rectangle tests behind them are work the
+       round does not do at all. */
+    if (h->disabled || m->numRegions == 0) {
         return;
     }
     for (slot = 0; slot < MAX_TANKS; slot++) {
@@ -2286,7 +2290,14 @@ static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
 
 /* A round the scenario takes no part in: no hooks, no policy answers, and
  * nothing owed to the first running tick. The operator has already been
- * told why. */
+ * told why.
+ *
+ * The table goes with them. What the host was holding described the round
+ * before this one, and keeping it would have the lobby still showing that
+ * scenario's name and description, the tick still walking its rectangles,
+ * and the bits saying who was standing in them still set against a list
+ * nothing is reading. A round without a scenario answers as a map with no
+ * script beside it does. */
 static void scnRoundWithoutScenario(ScenarioHost *h) {
     h->disabled     = true;
     h->startPending = false;
@@ -2296,6 +2307,8 @@ static void scnRoundWithoutScenario(ScenarioHost *h) {
        its chunk could have set a timer in. There is nothing left to release
        them against, and the set must not carry them into the round. */
     scenarioLuaTimersReset(&h->timers);
+    memset(&h->manifest, 0, sizeof(h->manifest));
+    memset(h->inRegion, 0, sizeof(h->inRegion));
 }
 
 /* The teams the roster is on right now. Called wherever the host starts
