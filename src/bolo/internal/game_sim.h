@@ -360,15 +360,6 @@ struct GameSim {
      * consumption so siblings already created in the batch loop are
      * visible during the per-square nudge. */
     BYTE        pendingStartIdx[MAX_TANKS];
-    /* Per-slot spawn-loadout override: 0 = follow sim->game, else a
-     * gameType value tankCreate/tankSetWorld/tankDeath use for THIS
-     * slot's starting items — initial spawn and every respawn alike.
-     * Nothing in this tree currently sets it (it is a generic seam for a
-     * host that wants, say, full open-mode bots inside a tournament
-     * round without re-statting after every death), so every slot reads
-     * 0 and follows sim->game. Zero-initialised by the sim-create
-     * memset; cleared when the slot's player is removed. */
-    BYTE        spawnLoadout[MAX_TANKS];
     /* A start a scenario op named for a slot, MAX_STARTS for none. Honoured
        by startsGetStart ahead of the placement policy and consumed there; the
        batch slot above is the engine choosing and stays below the policy. */

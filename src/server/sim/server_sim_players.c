@@ -335,10 +335,6 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
     logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
 
-    /* A spawn-loadout override armed for this slot must not leak to the
-     * slot's next occupant. */
-    sim->sim.spawnLoadout[playerNum] = 0;
-
     /* Publish before clearing the slot — the filler reads the player's
      * name and country out of sim->sim.plyrs->item[playerNum], which is
      * still valid here and gets zeroed later in this function. */

@@ -401,14 +401,8 @@ static void tankSpawnLoadout(GameSim *sim, BYTE playerNum, BYTE *shells,
   if (gameSimSpawnLoadout(sim, playerNum, shells, mines, armour, trees) != FALSE) {
     return;
   }
-  /* Nobody answered, so the game type decides — but a host can arm a
-   * per-slot override first (GameSim::spawnLoadout, e.g. open-mode bots
-   * inside a tournament round). It applies on EVERY path that hands out a
-   * fresh loadout because every one of them comes through here; 0 = no
-   * override, which is every slot unless something sets it. */
-  loadoutType = (playerNum < MAX_TANKS && sim->spawnLoadout[playerNum] != 0)
-                    ? (gameType)sim->spawnLoadout[playerNum]
-                    : sim->game;
+  /* Nobody answered, so the game type decides. */
+  loadoutType = sim->game;
   gameTypeGetItems(sim, &loadoutType, shells, mines, armour, trees);
 }
 
