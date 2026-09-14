@@ -4124,7 +4124,7 @@ M.ALLY_CLAIMED_STEAL_FRAC_KILLME = 0.10
 -- ══════════════════════════════════════════════════════════════════════════
 -- BOT COMMANDS (chat orders) — stage 1
 -- ══════════════════════════════════════════════════════════════════════════
--- A human ally types "attack 5", "all defend base 3", "socrates retreat" in
+-- A human ally types "attack 5", "all defend 3", "socrates retreat" in
 -- team (or all) chat.  Every bot on the team hears the same line, prices the
 -- trip and the cheapest one takes the job; while it holds the order every
 -- OTHER strategic goal is stamped REJECTED in the pool (chip "order") so the

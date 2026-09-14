@@ -4236,7 +4236,7 @@ function Brain.think(info)
           comms.process_message(m.sender, m.text, now, state)
         end
 
-        -- Chat ORDERS first ("attack 5", "all defend base 3", "socrates
+        -- Chat ORDERS first ("attack 5", "all defend 3", "socrates
         -- retreat"). The old operator commands below are all "verb:N" forms,
         -- which never start with a bare verb word, so the two parsers cannot
         -- both claim a line. The TEAM CHECK is _from_ally: an enemy typing

@@ -1,7 +1,7 @@
 -- =========================================================================
 -- GoalHunter/orders.lua — CHAT ORDERS (bot commands, stage 1)
 --
--- A human ally types "attack 5" / "all defend base 3" / "socrates retreat"
+-- A human ally types "attack 5" / "all defend 3" / "socrates retreat"
 -- in team (or all) chat.  Every bot on the team reads the SAME line, scores
 -- itself, and the cheapest one takes the job.  No server ranking and no
 -- coordinator: the auction runs entirely in the brains, on its own /info
@@ -394,6 +394,12 @@ function M.parse(text, roster, all_roster)
   end
 
   if verb == "decoy" then return { reply = "decoy: not yet" } end
+  -- DEFEND IS A PILL VERB.  There is no defend_base goal and a base is not
+  -- held the way a pill is, so "defend base 3" is turned down here rather
+  -- than quietly redirected onto some pill that happens to sit near it.
+  if verb == "defend" and tgt and tgt.kind == "base" then
+    return { reply = "defend takes a pill" }
+  end
   if (verb == "attack" or verb == "capture" or verb == "defend") and not tgt then
     return { reply = "didn't understand" }
   end
@@ -472,22 +478,9 @@ function M.goal_kind(cmd, world, info)
     elseif v == "capture" then
       if b.owner == "neutral" then return "capture_base", false, t.id end
       return "capture_base", true, t.id       -- a LIVE base needs shells
-    elseif v == "defend" then
-      -- There is no defend_base goal.  Defending a base means holding the
-      -- friendly pill that covers it; with no such pill there is nothing
-      -- for the brain to do, so say so rather than invent a goal.
-      local best, bid = nil, nil
-      for id, p in pairs(world.pills or {}) do
-        if p.owner == "friendly" and (p.health or 0) > 0 then
-          local d = U.mdist(p.mx, p.my, b.mx, b.my)
-          if d <= (C.ORDER_NEARBY_TILES or 10) and (not best or d < best) then
-            best, bid = d, id
-          end
-        end
-      end
-      if bid then return "defend_pill", true, bid end
-      return nil, false, nil, string.format("nothing to defend at base #%d", t.id)
     end
+    -- No "defend" here: defend takes a pill, and the parser turns a base
+    -- target down before an order is ever built.
   end
   return nil, false, nil, "didn't understand"
 end
@@ -729,7 +722,7 @@ end
 -- (src/bolo/public/wire_limits.h) and both help lines are longer than that,
 -- so each is split at a comma.  Four chunks, one per tick.
 M.HELP = {
-  "Orders: [all|nearby|bot name, default nearest] attack|capture|sweep|defend|decoy <pill#|base#|tank name>, retreat,",
+  "Orders: [all|nearby|bot name, default nearest] attack|capture|sweep|decoy <pill#|base#|tank name>, defend <pill#>, retreat,",
   "cancel [all|bot name], focus bases|pills|off, reposition on|off",
   "Ping a tile: nearest bot goes, ping again adds one. Ping bots to select them,",
   "then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
@@ -881,7 +874,8 @@ end
 
 -- The verb the pinged tile means (the design doc's verb table).
 --   enemy live pill -> attack      dead pill      -> capture (sweep)
---   enemy/neutral base -> capture  our pill/base  -> defend
+--   enemy/neutral base -> capture  our pill       -> defend
+--   our own base    -> nothing (defend takes a pill)
 --   an ally BOT     -> select it   an enemy tank  -> attack_tank, pinned
 --   open ground     -> go there and hold
 function M.ping_command(hit, mx, my)
@@ -903,9 +897,9 @@ function M.ping_command(hit, mx, my)
     return { verb = "attack", target = { kind = "pill", id = hit.id } }
   end
   if hit.class == "base" then
-    if hit.owner == "friendly" then
-      return { verb = "defend", target = { kind = "base", id = hit.id } }
-    end
+    -- A ping on OUR OWN base means nothing at all: no order and no line.
+    -- Defend takes a pill, and a base we already hold has no other verb.
+    if hit.owner == "friendly" then return nil end
     return { verb = "capture", target = { kind = "base", id = hit.id } }
   end
   return nil
