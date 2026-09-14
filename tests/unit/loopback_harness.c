@@ -20,7 +20,7 @@
 #include "client_net.h"
 #include "client_connect_state.h"
 #include "threads.h"
-#include "transport_udp.h"  /* transportUdpServerRecvQueuePending */
+#include "transport_udp.h"  /* transportUdpServerRecvQueuePending, GetBoundPort */
 
 #include "loopback_harness.h"
 
@@ -48,39 +48,6 @@ static void loopbackSetImpairEnv(const char *spec) {
 #endif
 }
 
-/* Bind a throwaway UDP socket to 127.0.0.1:0 and read back the kernel-
- * assigned port. The server rebinds it (with SO_REUSEADDR) immediately
- * after; the close→rebind window is small enough to ignore for a test. */
-static unsigned short loopbackPickEphemeralPort(void) {
-    SOCKET probe;
-    struct sockaddr_in bindAddr;
-    struct sockaddr_in gotAddr;
-    socklen_t gotLen;
-    unsigned short port;
-
-    probe = socket(AF_INET, SOCK_DGRAM, 0);
-    if (probe == INVALID_SOCKET) {
-        return 0;
-    }
-    memset(&bindAddr, 0, sizeof(bindAddr));
-    bindAddr.sin_family      = AF_INET;
-    bindAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    bindAddr.sin_port        = 0;
-    if (bind(probe, (struct sockaddr *)&bindAddr, sizeof(bindAddr)) != 0) {
-        closesocket(probe);
-        return 0;
-    }
-    memset(&gotAddr, 0, sizeof(gotAddr));
-    gotLen = (socklen_t)sizeof(gotAddr);
-    if (getsockname(probe, (struct sockaddr *)&gotAddr, &gotLen) != 0) {
-        closesocket(probe);
-        return 0;
-    }
-    port = ntohs(gotAddr.sin_port);
-    closesocket(probe);
-    return port;
-}
-
 /* Shared server bring-up: threads, an ephemeral localhost port, an
  * Everard-Island ServerSim (running unless lobbyMode), and the UDP server
  * instance accepting remote clients. Sets h->threadsUp / h->port / h->sim /
@@ -89,8 +56,7 @@ static unsigned short loopbackPickEphemeralPort(void) {
  *
  * Every step that fails, and the port on the way out, goes to stderr. CTest
  * keeps a case's output and shows it only when the case fails, so a green run
- * reads the same as before and a failed one says which port it was on — which
- * is what tells a port the server could not rebind apart from a stall. */
+ * reads the same as before and a failed one says which port it was on. */
 static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     BYTE emap[6000] = E_MAP;
     ServerInstanceConfig cfg;
@@ -103,12 +69,6 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     }
     h->threadsUp = true;
 
-    h->port = loopbackPickEphemeralPort();
-    if (h->port == 0) {
-        fprintf(stderr, "  loopback bring-up failed: no ephemeral port\n");
-        return false;
-    }
-
     h->sim = serverSimCreateCompressed(emap, LOOPBACK_EMAP_LEN,
                                        "Everard Island", gameOpen,
                                        false, 0, -1);
@@ -120,7 +80,6 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     serverSimSetAllowNewPlayers(h->sim, true);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.udpPort             = h->port;
     cfg.bindAddr            = "127.0.0.1";
     cfg.password            = "";
     cfg.maxPlayers          = MAX_TANKS;
@@ -137,14 +96,26 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     } else {
         cfg.skipLobby = true;   /* enter running immediately */
     }
+    /* Ask the OS for a port rather than naming one. The harness used to bind
+     * a throwaway socket to 127.0.0.1:0, read the kernel's choice back and
+     * hand that number to the server, which left a close→rebind window in
+     * which a parallel ctest run could be given the same port — so the bind
+     * failed and the bring-up retried on a fresh pick. Requesting 0 hands the
+     * port straight from the kernel to the socket the server keeps, with no
+     * window for anyone to take it in, and transportUdpServerGetBoundPort
+     * reads back (via getsockname) what it got. The race the retry loop
+     * existed for cannot happen, so neither exists any more.
+     *
+     * The read-back is only meaningful because cfg.acceptRemoteClients is
+     * true above: that is what makes serverInstanceStartup create the UDP
+     * server socket in the first place. */
+    cfg.udpPort = 0;
     if (!serverInstanceStartup(h->sim, &cfg)) {
-        /* The port is on this line because a bind that another process still
-           holds is what this failure usually is. */
-        fprintf(stderr, "  loopback bring-up failed: serverInstanceStartup "
-                        "port=%u\n", (unsigned)h->port);
+        fprintf(stderr, "  loopback bring-up failed: serverInstanceStartup\n");
         return false;
     }
     h->serverUp = true;
+    h->port     = transportUdpServerGetBoundPort();
     fprintf(stderr, "  loopback server: port=%u mode=%s\n",
             (unsigned)h->port, lobbyMode ? "lobby" : "running");
     return true;
@@ -353,6 +324,29 @@ bool loopbackHarnessTriggerGameStart(LoopbackHarness *h) {
     serverSimLobbyCheckAllReady(h->sim);
     threadsReleaseMutex();
     return true;
+}
+
+int loopbackRecvFromServer(SOCKET s, uint8_t *buf, int cap,
+                           const struct sockaddr_in *server) {
+    for (;;) {
+        struct sockaddr_in from;
+        socklen_t fromLen = (socklen_t)sizeof(from);
+        int n;
+
+        memset(&from, 0, sizeof(from));
+        n = (int)recvfrom(s, (char *)buf, cap, 0,
+                          (struct sockaddr *)&from, &fromLen);
+        if (n <= 0) {
+            return n;   /* nothing waiting, or the socket gave up */
+        }
+        if (from.sin_addr.s_addr == server->sin_addr.s_addr &&
+            from.sin_port == server->sin_port) {
+            return n;
+        }
+        /* Somebody else's datagram. It has been read out of the socket
+         * buffer, and going round again is what makes that a drop rather
+         * than a short return that would strand the rest of the queue. */
+    }
 }
 
 void loopbackHarnessStop(LoopbackHarness *h) {

@@ -834,14 +834,14 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     /* A start publishes while the state is still lobby and every player
      * is still marked ready, so anything that edits the roster from one
      * of those publishes lands back here and would start a second game
-     * on top of the one being set up. */
+     * on top of the one being set up. The flag is held for the whole of
+     * both start functions, which is wider than the state check below:
+     * the state reads running well before a start finishes, and a roster
+     * edit issued from the round-start callback must not re-enter here
+     * on a half-built round. */
     if (sim->startInProgress) return;
 
     if (sim->state != serverStateLobby) return;
-    /* A start is already running (state flips to Running only at its
-     * end): roster edits inside it must not recursively start a second
-     * game on top of a half-built one. */
-    if (sim->startInProgress) return;
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
@@ -1294,7 +1294,6 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
-    sim->startInProgress = FALSE;
 
     serverSimApplyAutoLockOnGameStart(sim);
 
@@ -1340,8 +1339,6 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 }
 
 void serverSimStartGame(ServerSim *sim) {
-    sim->startInProgress = TRUE;
-
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
        playerConnected[], but we need it to create tanks below. Player
@@ -1451,7 +1448,6 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
-    sim->startInProgress = FALSE;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 
