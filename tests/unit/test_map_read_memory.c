@@ -37,7 +37,14 @@
 #include "starts.h"
 #include "test_harness.h"
 
-static const char *kTempPath = "data/maps/.test_read_memory.map";
+/* Each test builds its map path with utScratchPath, so the two tests below
+ * that write one cannot delete it under each other. They used to share
+ * "data/maps/.test_read_memory.map": both wrote it, both slurped it and both
+ * removed it on the way out, so under `ctest -j` whichever lost the race
+ * failed on a file the other had already taken away. Writing under the
+ * scratch directory rather than data/maps also keeps a test that dies before
+ * its cleanup from leaving a dotfile in the map tree. */
+#define MAP_LEAF "read_memory.map"
 
 /* Read an entire file into a malloc'd buffer. Returns NULL on error;
  * sets *outLen to the byte count on success. */
@@ -57,9 +64,9 @@ static uint8_t *slurp(const char *path, size_t *outLen) {
     return buf;
 }
 
-/* Build a deterministic, non-trivial map and write it to kTempPath.
+/* Build a deterministic, non-trivial map and write it to `path`.
  * Returns false on any setup failure. */
-static bool build_and_write_map(void) {
+static bool build_and_write_map(const char *path) {
     map mp = NULL;
     pillboxes pb = NULL;
     bases bs = NULL;
@@ -106,8 +113,8 @@ static bool build_and_write_map(void) {
     startsSetStart(&ss, &s0, 1);
     startsSetStart(&ss, &s1, 2);
 
-    SDL_CreateDirectory("data/maps");
-    bool ok = mapWrite((char *)kTempPath, &mp, &pb, &bs, &ss);
+    /* No mkdir: utScratchPath created the directory this path sits in. */
+    bool ok = mapWrite((char *)path, &mp, &pb, &bs, &ss);
 
     mapDestroy(&mp);
     pillsDestroy(&pb);
@@ -117,16 +124,19 @@ static bool build_and_write_map(void) {
 }
 
 int run_map_read_memory_matches_file(void) {
-    UT_ASSERT_MSG(build_and_write_map(), "failed to build/write test map");
+    char mapPath[1024];
+
+    UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath), MAP_LEAF));
+    UT_ASSERT_MSG(build_and_write_map(mapPath), "failed to build/write test map");
 
     size_t blobLen = 0;
-    uint8_t *blob = slurp(kTempPath, &blobLen);
+    uint8_t *blob = slurp(mapPath, &blobLen);
     UT_ASSERT_MSG(blob != NULL, "failed to slurp written map");
 
     /* Path A: read from disk. */
     map fMp = NULL; pillboxes fPb = NULL; bases fBs = NULL; starts fSs = NULL;
     mapCreate(&fMp); pillsCreate(&fPb); basesCreate(&fBs); startsCreate(&fSs);
-    bool okFile = mapRead((char *)kTempPath, &fMp, &fPb, &fBs, &fSs);
+    bool okFile = mapRead((char *)mapPath, &fMp, &fPb, &fBs, &fSs);
 
     /* Path B: read the same bytes from memory. */
     map mMp = NULL; pillboxes mPb = NULL; bases mBs = NULL; starts mSs = NULL;
@@ -213,7 +223,7 @@ int run_map_read_memory_matches_file(void) {
     free(blob);
     mapDestroy(&fMp); pillsDestroy(&fPb); basesDestroy(&fBs); startsDestroy(&fSs);
     mapDestroy(&mMp); pillsDestroy(&mPb); basesDestroy(&mBs); startsDestroy(&mSs);
-    SDL_RemovePath(kTempPath);
+    SDL_RemovePath(mapPath);
     return rc;
 }
 
@@ -265,7 +275,7 @@ int run_map_read_memory_handbuilt(void) {
 }
 
 
-static const char *kMinedPillPath = "data/maps/.test_mined_pill.map";
+#define MINED_PILL_LEAF "mined_pill.map"
 
 /* The same load-time pill fixup run_map_pill_mine_cleared_on_load pins on the
  * resync-blob path, on the path a .map file takes. A pillbox standing on a
@@ -274,6 +284,7 @@ static const char *kMinedPillPath = "data/maps/.test_mined_pill.map";
  * field for a pill riding in a tank, so only the cleared case exists here. */
 int run_map_read_clears_mine_under_pill(void) {
     map mp = NULL; pillboxes pb = NULL; bases bs = NULL; starts ss = NULL;
+    char mapPath[1024];
     size_t blobLen = 0;
     uint8_t *blob;
     pillbox got;
@@ -298,12 +309,12 @@ int run_map_read_clears_mine_under_pill(void) {
         pillsSetPill(ut_rules_only_sim(), &pb, &p, 1);
     }
 
-    SDL_CreateDirectory("data/maps");
-    wrote = mapWrite((char *)kMinedPillPath, &mp, &pb, &bs, &ss);
+    UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath), MINED_PILL_LEAF));
+    wrote = mapWrite((char *)mapPath, &mp, &pb, &bs, &ss);
     mapDestroy(&mp); pillsDestroy(&pb); basesDestroy(&bs); startsDestroy(&ss);
     UT_ASSERT_MSG(wrote, "failed to write the mined-pill map");
 
-    blob = slurp(kMinedPillPath, &blobLen);
+    blob = slurp(mapPath, &blobLen);
     UT_ASSERT_MSG(blob != NULL, "failed to slurp the mined-pill map");
 
     mapCreate(&mp); pillsCreate(&pb); basesCreate(&bs); startsCreate(&ss);
@@ -330,7 +341,7 @@ int run_map_read_clears_mine_under_pill(void) {
 
     free(blob);
     mapDestroy(&mp); pillsDestroy(&pb); basesDestroy(&bs); startsDestroy(&ss);
-    SDL_RemovePath(kMinedPillPath);
+    SDL_RemovePath(mapPath);
     return rc;
 }
 
@@ -338,10 +349,13 @@ int run_map_read_clears_mine_under_pill(void) {
  * .map bytes in RAM -> runtime compressed map -> MapPreview. The
  * round-tripped preview must match the directly-parsed map. */
 int run_map_convert_file_to_compressed(void) {
-    UT_ASSERT_MSG(build_and_write_map(), "failed to build/write test map");
+    char mapPath[1024];
+
+    UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath), MAP_LEAF));
+    UT_ASSERT_MSG(build_and_write_map(mapPath), "failed to build/write test map");
 
     size_t blobLen = 0;
-    uint8_t *blob = slurp(kTempPath, &blobLen);
+    uint8_t *blob = slurp(mapPath, &blobLen);
     UT_ASSERT_MSG(blob != NULL, "failed to slurp written map");
 
     /* Direct parse for the reference world. */
@@ -400,7 +414,7 @@ int run_map_convert_file_to_compressed(void) {
     free(comp);
     free(blob);
     mapDestroy(&rMp); pillsDestroy(&rPb); basesDestroy(&rBs); startsDestroy(&rSs);
-    SDL_RemovePath(kTempPath);
+    SDL_RemovePath(mapPath);
     return rc;
 }
 

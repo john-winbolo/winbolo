@@ -34,6 +34,56 @@ case "$(basename "$BIN")" in
   *)               BIN_DS_DEFAULT="$(dirname "$BIN")/WinBoloDS" ;;
 esac
 BIN_DS="${2:-$BIN_DS_DEFAULT}"
+
+# ── Launching the binaries ─────────────────────────────────────────
+# Start every DS and headless through these two, never through "$BIN_DS"
+# or "$BIN" directly, so the -nocrashreporting below cannot be forgotten
+# at a new call site.
+#
+# Without it, sentryInit (src/common/sentry_integration.c) opens a crash
+# database at SDL_GetPrefPath("WinBolo","WinBolo")/.sentry-native whenever
+# the build carries a SENTRY_DSN. That is ONE directory per user, shared by
+# the DS and every client of every scenario at once, and shared again with
+# every other worktree and every concurrent run on the machine — the one
+# piece of machine-global state the harness still touched after the ports
+# went ephemeral. It also costs a crash-handler install per process and, on
+# a crash, network I/O inside the scenario's 60 s budget.
+#
+# sentryInit scans argv for the flag itself, before either binary parses its
+# arguments. WinBoloDS ignores an argument it does not recognise; WinBoloHeadless
+# rejects one, so its parser accepts -nocrashreporting and does nothing with it
+# (headless_main.c). Inert on a build with no DSN, harmless everywhere else.
+#
+# Both wrappers exec once they are already running in a child of the script,
+# which is where `ds_bin ... &` puts them. Without that, the pid a launch
+# records is the wrapper's own subshell and not the game process. The subshell
+# lives exactly as long as its child, so waiting on it still returns the right
+# status and nothing looks wrong — but every kill in this file then lands on
+# the wrapper and leaves the server or client it meant to stop running. A
+# scenario whose DS does not stop itself leaks one per run, which a suite
+# multiplies into a machine full of servers holding ports: the opposite of
+# what the rest of this work is for.
+#
+# $BASH_SUBSHELL is 0 at the top level of the script and greater than 0 in
+# any subshell, which includes a backgrounded `ds_bin ... &`. So this execs for
+# every backgrounded launch and runs the binary as an ordinary child for the
+# foreground ones, where exec would replace the harness itself.
+#
+# Not $BASHPID: that variable arrived in bash 4.0, and macOS ships 3.2 as
+# /bin/bash, which is what `bash run.sh` under ctest resolves to there. On 3.2
+# it expands to nothing, the test is always true, and every foreground launch
+# execs the harness away — the scenario then "passes" with whatever status
+# the binary exits with, no diff ever runs, and the DS a single-client UDP
+# scenario started is orphaned. $BASH_SUBSHELL has been in bash since 3.0.
+ds_bin() {
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN_DS" "$@" -nocrashreporting; fi
+  "$BIN_DS" "$@" -nocrashreporting
+}
+headless_bin() {
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN" "$@" -nocrashreporting; fi
+  "$BIN" "$@" -nocrashreporting
+}
+
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BRAINS="$(cd "$DIR/../brains" && pwd)"
 MAPS="$DIR/maps"
@@ -186,12 +236,43 @@ await_ds_port() {
   return 1
 }
 
+# How long a scenario waits on one of its clients before calling it hung. Only
+# has to be shorter than the CTest timeout (60s); a healthy client finishes in
+# a few seconds. Override for a quicker check.
+CLIENT_WAIT_LIMIT="${CLIENT_WAIT_LIMIT:-40}"
+
+# Wait for a scenario client to exit, but not forever.
+#
+# A client that stops making progress otherwise parks the scenario in `wait`
+# until CTest's timeout kills the whole tree, and that failure arrives with no
+# output whatsoever: the scenario name has been echoed without a newline, so
+# the partial line dies in the buffer, and the log says neither which process
+# stopped nor where. Kill it at the deadline and name it instead. Returns 124,
+# the usual timed-out status, so the caller's CRASH line carries it.
+await_client() {
+  local pid="$1"
+  local label="$2"
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$CLIENT_WAIT_LIMIT" ]; then
+      echo
+      echo "  HUNG: $label did not exit within ${CLIENT_WAIT_LIMIT}s; killing it"
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
 run() {
   local name="$1"
   local map="$2"
   local brain="$3"
   echo -n "  $name ... "
-  "$BIN" --fast --map "$map" --brain "$brain" \
+  headless_bin --fast --map "$map" --brain "$brain" \
       --ticks 500 --seed 42 \
       --log-state "$ACTUAL/$name.json" --quiet \
       > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
@@ -229,7 +310,7 @@ run_changes() {
   if [ -n "$terrain" ]; then
     args+=( --log-terrain )
   fi
-  "$BIN" "${args[@]}" \
+  headless_bin "${args[@]}" \
       > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
   if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
     echo "OK"
@@ -254,7 +335,7 @@ run_ds() {
   if [ -n "$ally" ]; then
     args+=( -allybots "$ally" )
   fi
-  "$BIN_DS" "${args[@]}" \
+  ds_bin "${args[@]}" \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || {
         echo "CRASH"; return 1; }
   if diff -q "$EXPECTED/$name.out" "$ACTUAL/$name.out" >/dev/null 2>&1; then
@@ -272,7 +353,7 @@ run_events_fast() {
   local map="$2"
   local brain="$3"
   echo -n "  $name ... "
-  "$BIN" --fast --map "$map" --brain "$brain" \
+  headless_bin --fast --map "$map" --brain "$brain" \
       --ticks 500 --seed 42 \
       --log-events "$ACTUAL/$name.jsonl" --quiet \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
@@ -296,7 +377,7 @@ run_events_udp() {
   local port
   echo -n "  $name ... "
 
-  "$BIN_DS" -map "$map" -port 0 -nolobby \
+  ds_bin -map "$map" -port 0 -nolobby \
             -gametype open \
             -bots 1 -brain "$brain" \
             -seed 42 \
@@ -313,7 +394,7 @@ run_events_udp() {
   sleep 0.5  # settle; see await_ds_port
 
   local rc=0
-  "$BIN" --server 127.0.0.1 --port "$port" --brain "$brain" \
+  headless_bin --server 127.0.0.1 --port "$port" --brain "$brain" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/$name.jsonl" --quiet \
          > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || rc=$?
@@ -354,7 +435,7 @@ run_events_cmd_fast() {
   local map="$2"
   local cmd_file="$3"
   echo -n "  $name ... "
-  "$BIN" --fast --map "$map" --cmd-stdin "$cmd_file" \
+  headless_bin --fast --map "$map" --cmd-stdin "$cmd_file" \
       --ticks 500 --seed 42 \
       --log-events "$ACTUAL/$name.jsonl" --quiet \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
@@ -384,7 +465,7 @@ run_scenario_fast() {
   local ticks="$5"
   local want="$6"
   echo -n "  $name ... "
-  "$BIN" --fast --map "$map" --cmd-stdin "$cmd_file" \
+  headless_bin --fast --map "$map" --cmd-stdin "$cmd_file" \
       --bot-brain "$brain" \
       --ticks "$ticks" --seed 42 \
       --log-events "$ACTUAL/$name.jsonl" --quiet \
@@ -423,7 +504,7 @@ run_events_cmd_udp() {
     ds_args+=( -nolobby )
   fi
 
-  "$BIN_DS" "${ds_args[@]}" \
+  ds_bin "${ds_args[@]}" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
@@ -432,7 +513,7 @@ run_events_cmd_udp() {
   sleep 0.5  # settle; see await_ds_port
 
   local rc=0
-  "$BIN" --server 127.0.0.1 --port "$port" \
+  headless_bin --server 127.0.0.1 --port "$port" \
          --cmd-stdin "$client_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/$name.jsonl" --quiet \
@@ -467,7 +548,7 @@ run_events_cmd_udp_server_only() {
   local port
   echo -n "  $name ... "
 
-  "$BIN_DS" -map "$map" -port 0 -gametype open \
+  ds_bin -map "$map" -port 0 -gametype open \
             -nolobby \
             -cmd-stdin "$server_cmd" \
             -nowinbolonet -quiet -threads 1 \
@@ -480,7 +561,7 @@ run_events_cmd_udp_server_only() {
   sleep 0.5  # settle; see await_ds_port
 
   local rc=0
-  "$BIN" --server 127.0.0.1 --port "$port" \
+  headless_bin --server 127.0.0.1 --port "$port" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/$name.jsonl" --quiet \
          > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || rc=$?
@@ -518,7 +599,7 @@ run_events_cmd_udp_two_clients() {
   local port
   echo -n "  $name ... "
 
-  "$BIN_DS" -map "$map" -port 0 -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
@@ -531,14 +612,14 @@ run_events_cmd_udp_two_clients() {
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
   # --name args so the server doesn't reject c2 as a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --cmd-stdin "$c1_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --cmd-stdin "$c2_cmd" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
@@ -549,8 +630,8 @@ run_events_cmd_udp_two_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -596,7 +677,7 @@ run_events_cmd_udp_two_clients_lobby() {
   local port
   echo -n "  $name ... "
 
-  "$BIN_DS" -map "$map" -port 0 -gametype open \
+  ds_bin -map "$map" -port 0 -gametype open \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
@@ -609,14 +690,14 @@ run_events_cmd_udp_two_clients_lobby() {
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
   # --name args so the server doesn't reject c2 as a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --cmd-stdin "$c1_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --cmd-stdin "$c2_cmd" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
@@ -627,8 +708,8 @@ run_events_cmd_udp_two_clients_lobby() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -674,7 +755,7 @@ run_events_cmd_udp_three_clients() {
   local port
   echo -n "  $name ... "
 
-  "$BIN_DS" -map "$map" -port 0 -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
@@ -687,21 +768,21 @@ run_events_cmd_udp_three_clients() {
   # Stagger joins by 0.3s each so slot assignment is deterministic
   # (c1→0, c2→1, c3→2). Distinct --name args so the server doesn't
   # reject a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --cmd-stdin "$c1_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --cmd-stdin "$c2_cmd" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
          > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
   local c2_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot3 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot3 \
          --cmd-stdin "$c3_cmd" \
          --ticks 500 --seed 44 \
          --log-events "$ACTUAL/${name}_c3.jsonl" --quiet \
@@ -712,9 +793,9 @@ run_events_cmd_udp_three_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" "$c3_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0 c3_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
-  wait "$c3_pid" || c3_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
+  await_client "$c3_pid" "client 3" || c3_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -758,7 +839,7 @@ run_events_udp_two_clients_ticklimit() {
   local port
   echo -n "  $name ... "
 
-  "$BIN_DS" -map "$map" -port 0 -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -ticklimit "$ticklimit" \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
@@ -769,14 +850,14 @@ run_events_udp_two_clients_ticklimit() {
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
   sleep 0.5  # settle; see await_ds_port
 
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --brain "$brain" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --brain "$brain" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
@@ -787,8 +868,8 @@ run_events_udp_two_clients_ticklimit() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -843,7 +924,7 @@ run_captures_udp_two_clients() {
   local port
   echo -n "  $name ... "
 
-  "$BIN_DS" -map "$map" -port 0 -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -seed 42 \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
@@ -857,13 +938,13 @@ run_captures_udp_two_clients() {
   # Client 1 first, then a brief delay so it lands in slot 0 deterministically
   # before client 2 joins into slot 1. Distinct --name args so the server
   # doesn't reject c2 as a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --brain "$brain" \
          --ticks "$ticks" --seed 42 --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --brain "$brain" \
          --ticks "$ticks" --seed 43 --quiet \
          > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
@@ -873,8 +954,8 @@ run_captures_udp_two_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
