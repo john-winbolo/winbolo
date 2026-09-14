@@ -1,0 +1,4 @@
+# The Lua brains are edited on Windows and their opt/ copies are written by
+# lua_strip, which emits CRLF; keep every .lua LF in the repo and on checkout
+# so a regenerated opt file diffs only where its content changed.
+*.lua text eol=lf

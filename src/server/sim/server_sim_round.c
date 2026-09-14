@@ -104,7 +104,20 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->teams[2].namingPool = 0;
     SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
     memset(sim->botConfigs, 0, sizeof(sim->botConfigs));
+    /* Difficulty's default is Hard, not the memset's 0 (= Easy) — same
+     * reasoning as serverSimInit: every difficulty plays like Hard for now,
+     * so Hard is the honest label on a fresh bot's lobby row. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->botConfigs[i].difficulty = BOT_DIFFICULTY_HARD;
+    }
     memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
+    /* Forget the host's manual bot mode/difficulty pick with the configs it
+     * came from, and any bot-config event still queued: this is "the lobby
+     * is empty, restore the operator's startup state", and the next
+     * occupants inherit nothing from the last ones. */
+    sim->lastBotModeKey[0]  = '\0';
+    sim->lastBotLevelKey[0] = '\0';
+    sim->botConfigPublishPending = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
      * allow-new-players gate and the transport-level admin lock. */
@@ -714,6 +727,26 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
 
+    /* Forget the host's manual bot mode/difficulty pick on EVERY return to
+     * the lobby, whether or not anyone stayed. The pick belongs to one lobby
+     * session — from entering the lobby until the game starts — and a round
+     * ending starts a new one, so the host who set a bot to Survival last
+     * game does not find the next lobby's Add Bot already in Survival. The
+     * empty-lobby branch below calls serverSimResetLobbyToDefaults, which
+     * clears these again; clearing twice costs nothing and keeps the two
+     * paths honest on their own.
+     *
+     * A map change WITHIN one lobby session is deliberately not a new lobby:
+     * the pick survives it. That is an assumption about what the host means
+     * by picking a difficulty, not a constraint — clear it in
+     * serverSimApplyMapChange too if it turns out hosts expect otherwise.
+     *
+     * The map's own rule — a scenario that fixes a team's mode — is applied
+     * by serverSimResolveNewBotConfig regardless of what is remembered here,
+     * so it is unaffected either way. */
+    sim->lastBotModeKey[0]  = '\0';
+    sim->lastBotLevelKey[0] = '\0';
+
     /* Auto-lock only closes the server while a round is running, so coming
      * back to the lobby must lift it. When a round that had human players ends
      * with none of them left, wipe the slate the way the last-human-leaves-in-
@@ -790,6 +823,10 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     if (sim->startInProgress) return;
 
     if (sim->state != serverStateLobby) return;
+    /* A start is already running (state flips to Running only at its
+     * end): roster edits inside it must not recursively start a second
+     * game on top of a half-built one. */
+    if (sim->startInProgress) return;
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
@@ -1104,6 +1141,58 @@ static void serverSimApplyAutoLockOnGameStart(ServerSim *sim) {
     }
 }
 
+/* Pre-compute start indices for the whole roster in one pass so the players
+ * are spread across the map's start regions and rivals don't grab adjacent
+ * squares (the tankCreate loops that follow run synchronously, so without a
+ * batch pass each player's per-position checks would be blind to siblings
+ * being created in the same loop). startsGetStart consumes the slot lazily,
+ * doing scatter and direction conversion at consumption time so the
+ * per-square nudge sees siblings already placed earlier in that loop. */
+static void serverSimRunStartBatch(ServerSim *sim) {
+    BYTE batchTeam[MAX_TANKS];
+    BYTE reserved0[MAX_TANKS];
+    BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
+    BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
+    BYTE i;
+    memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
+    for (i = 1; i < MAX_TANKS; i++) {
+        teamSide[i] = sim->teams[i].startSide;
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
+        batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+        reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
+                     ? MAX_STARTS                  /* none / stale-after-map-change */
+                     : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
+    }
+    startsAssignBatch(&sim->sim, &sim->sim.ss,
+                      sim->playerConnected, batchTeam,
+                      sim->sim.pendingStartIdx, reserved0, teamSide);
+}
+
+void serverSimReassignStarts(ServerSim *sim) {
+    BYTE i;
+
+    if (sim == NULL || sim->state != serverStateRunning) {
+        return;
+    }
+    serverSimRunStartBatch(sim);
+
+    /* Re-place every connected tank from the fresh batch. Destroy-and-create
+     * is what the game-start paths do; this is the same loop, and it is safe
+     * here because the caller runs before the first tick. */
+    serverSimSetActive(sim);
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->sim.tanks[i] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
+            sim->sim.tanks[i] = NULL;
+        }
+        tankCreate(&sim->sim, &sim->sim.tanks[i]);
+        basesUpdateTimer(&sim->sim, i);
+    }
+}
+
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
@@ -1114,6 +1203,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     /* Fresh round — the last-human-left return-to-lobby check arms only
      * once a human is seen this round. */
     sim->roundHadHuman = false;
+
 
     /* Flush any game-events queued during the lobby before the first
      * running snapshot goes out. The sim doesn't tick in the lobby, so the
@@ -1153,27 +1243,9 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     serverSimReapplyTeamAlliances(sim);
 
     /* Pre-compute start indices for the whole batch so teammates land
-     * near each other (see serverSimStartGame for the rationale). */
-    {
-        BYTE batchTeam[MAX_TANKS];
-        BYTE reserved0[MAX_TANKS];
-        BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
-        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
-        memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
-        for (i = 1; i < MAX_TANKS; i++) {
-            teamSide[i] = sim->teams[i].startSide;
-        }
-        for (i = 0; i < MAX_TANKS; i++) {
-            BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
-            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
-            reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
-                         ? MAX_STARTS                  /* none / stale-after-map-change */
-                         : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
-        }
-        startsAssignBatch(&sim->sim, &sim->sim.ss,
-                          sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0, teamSide);
-    }
+     * near each other and a team with a side keeps its side (see
+     * serverSimRunStartBatch, which wraps main's startsAssignBatch call). */
+    serverSimRunStartBatch(sim);
 
     /* Destroy every connected slot's tank and man before creating any, so
      * a new tank's spawn search never sees the previous round's tanks
@@ -1199,6 +1271,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    sim->startInProgress = FALSE;
 
     serverSimApplyAutoLockOnGameStart(sim);
 
@@ -1233,6 +1306,8 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 }
 
 void serverSimStartGame(ServerSim *sim) {
+    sim->startInProgress = TRUE;
+
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
        playerConnected[], but we need it to create tanks below. Player
@@ -1266,6 +1341,7 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
+
 
     /* Restore connected-player state so tank creation works */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1312,32 +1388,9 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimReapplyTeamAlliances(sim);
 
     /* Pre-compute start indices for the whole batch so teammates land
-     * near each other and rivals don't grab adjacent squares (the tankCreate
-     * loop below runs synchronously, so without a batch pass each player's
-     * per-position checks would be blind to siblings being created in the
-     * same loop). startsGetStart consumes the slot lazily, doing scatter
-     * and direction conversion at consumption time so the per-square nudge
-     * sees siblings already placed earlier in this loop. */
-    {
-        BYTE batchTeam[MAX_TANKS];
-        BYTE reserved0[MAX_TANKS];
-        BYTE teamSide[MAX_TANKS + 1];   /* indexed by team number; entry 0 unused */
-        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
-        memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
-        for (i = 1; i < MAX_TANKS; i++) {
-            teamSide[i] = sim->teams[i].startSide;
-        }
-        for (i = 0; i < MAX_TANKS; i++) {
-            BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
-            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
-            reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
-                         ? MAX_STARTS                  /* none / stale-after-map-change */
-                         : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
-        }
-        startsAssignBatch(&sim->sim, &sim->sim.ss,
-                          sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0, teamSide);
-    }
+     * near each other and a team with a side keeps its side (see
+     * serverSimRunStartBatch, which wraps main's startsAssignBatch call). */
+    serverSimRunStartBatch(sim);
 
     /* Create tanks for all connected players */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -1357,6 +1410,7 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    sim->startInProgress = FALSE;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 

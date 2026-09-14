@@ -730,7 +730,8 @@ static float    bt_gz_f32(gzFile g){ float v=0;    gzread(g,&v,4); return v; }
 /* Peek a session header (+ first frame) to learn the map name and how many
  * bot slots it used — needed BEFORE the sim/bots are created at startup.
  * Returns true on a valid, version-matching brainrec.btr. */
-static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut) {
+static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut,
+                          bool deepScan) {
     gzFile g = gzopen(path, "rb");
     if (!g) return false;
     BrainRecHeader hdr;
@@ -749,9 +750,15 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
     if (mapNameOut) { memcpy(mapNameOut, hdr.mapName, 64); mapNameOut[63] = '\0'; }
     uint32_t llen = bt_gz_u32(g);
     if (llen) gzseek(g, llen, SEEK_CUR);
+    /* Bot roster: shallow scan reads the FIRST frame only (cheap — good
+     * enough for the session browser's count column). deepScan walks
+     * EVERY frame and unions the slots: bots that only exist mid-game
+     * (a scenario's spawn_bot waves) are invisible in frame 0, and
+     * sizing playback off the first frame locked the followed-bot cycle
+     * out of the enemy team entirely. */
     int maxSlot = -1;
     uint32_t fm = bt_gz_u32(g);
-    if (fm == BRAINREC_FRAME_MAGIC) {
+    while (fm == BRAINREC_FRAME_MAGIC) {
         bt_gz_u32(g); /* tick */
         uint8_t tc = bt_gz_u8(g); gzseek(g, (z_off_t)tc * (int)sizeof(TankSnapshot),  SEEK_CUR);
         uint8_t sc = bt_gz_u8(g); gzseek(g, (z_off_t)sc * (int)sizeof(ShellSnapshot), SEEK_CUR);
@@ -775,6 +782,9 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
             }
             uint32_t pl = bt_gz_u32(g); if (pl) gzseek(g, pl, SEEK_CUR);
         }
+        gzseek(g, MAX_TANKS * 4, SEEK_CUR);   /* v5 per-player alliance words */
+        if (!deepScan) break;
+        fm = bt_gz_u32(g);
     }
     gzclose(g);
     if (numBotsOut) *numBotsOut = (maxSlot >= 0) ? maxSlot + 1 : 1;
@@ -926,6 +936,25 @@ static void btLoadProfileTicks(BrainTestApp *app, const char *btrPath) {
             assigned, lines, lines ? minT : 0, lines ? maxT : 0);
 }
 
+/* Parse a flat {"<idx>":"<name>",...} object into remap[idx] = BrainTest
+ * registry index for that name (OVERLAY_VIZ_IDX_NONE when unknown). Minimal
+ * scanner: pairs of quoted strings; the first of each pair is the index. */
+static void btParseLegendPairs(const char *lj, uint8_t remap[256]) {
+    const char *p = lj;
+    while ((p = strchr(p, '"')) != NULL) {
+        int idx = atoi(p + 1);
+        const char *q = strchr(p + 1, '"'); if (!q) break;     /* end of idx */
+        const char *n1 = strchr(q + 1, '"'); if (!n1) break;   /* open name */
+        const char *n2 = strchr(n1 + 1, '"'); if (!n2) break;  /* close name */
+        char name[VIZ_REG_ID_MAX]; int nl = (int)(n2 - n1 - 1);
+        if (nl < 0) nl = 0; if (nl >= (int)sizeof name) nl = (int)sizeof name - 1;
+        memcpy(name, n1 + 1, nl); name[nl] = '\0';
+        int reg = vizRegistryFind(name);
+        if (idx >= 0 && idx < 256) remap[idx] = (reg >= 0 && reg < 255) ? (uint8_t)reg : OVERLAY_VIZ_IDX_NONE;
+        p = n2 + 1;
+    }
+}
+
 static int btLoadSession(BrainTestApp *app, const char *path) {
     gzFile g = gzopen(path, "rb");
     if (!g) return -1;
@@ -942,27 +971,61 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         return -1;
     }
 
-    /* Legend: recorded viz_idx -> category name. Remap to BrainTest's own
-     * registry index by name (the bots registered the same categories). */
-    uint8_t vizRemap[256];
+    /* Legend: recorded viz_idx -> category name, remapped to BrainTest's own
+     * registry index by name. PER SLOT: every brain self-assigns its indices
+     * from its own sorted id list, so a 1.6 bot and a 1.7 bot in the same
+     * game number the same category differently. The blob is
+     *   {"<idx>":"<name>",...[,"slots":{"<slot>":{"<idx>":"<name>",...},...}]}
+     * -- the leading global map (older recordings have only that) seeds every
+     * slot's table, then each slot's own map overrides it. */
+    static uint8_t vizRemap[MAX_TANKS][256];
     memset(vizRemap, OVERLAY_VIZ_IDX_NONE, sizeof vizRemap);
     uint32_t llen = bt_gz_u32(g);
     if (llen) {
         char *lj = (char *)malloc(llen + 1);
         gzread(g, lj, llen); lj[llen] = '\0';
-        /* Parse {"<idx>":"<name>",...} with a minimal scanner. */
-        const char *p = lj;
-        while ((p = strchr(p, '"')) != NULL) {
-            int idx = atoi(p + 1);
-            const char *q = strchr(p + 1, '"'); if (!q) break;     /* end of idx */
-            const char *n1 = strchr(q + 1, '"'); if (!n1) break;   /* open name */
-            const char *n2 = strchr(n1 + 1, '"'); if (!n2) break;  /* close name */
-            char name[VIZ_REG_ID_MAX]; int nl = (int)(n2 - n1 - 1);
-            if (nl < 0) nl = 0; if (nl >= (int)sizeof name) nl = (int)sizeof name - 1;
-            memcpy(name, n1 + 1, nl); name[nl] = '\0';
-            int reg = vizRegistryFind(name);
-            if (idx >= 0 && idx < 256) vizRemap[idx] = (reg >= 0 && reg < 255) ? (uint8_t)reg : OVERLAY_VIZ_IDX_NONE;
-            p = n2 + 1;
+        char *slots = strstr(lj, "\"slots\"");
+        /* Global part: everything before "slots" (or the whole blob). */
+        {
+            char saved = 0;
+            if (slots) { saved = *slots; *slots = '\0'; }
+            btParseLegendPairs(lj, vizRemap[0]);
+            if (slots) *slots = saved;
+        }
+        for (int s = 1; s < MAX_TANKS; s++) memcpy(vizRemap[s], vizRemap[0], 256);
+        if (slots) {
+            /* "slots":{"2":{...},"3":{...}} -- walk each slot's object. Each
+             * entry is  "<slot>":{flat pairs}  ; after one object the cursor
+             * sits past its closing brace, and the next key (if any) is the
+             * next quote BEFORE the next brace. (The first version searched
+             * for the key from the next object's brace and read its first
+             * index as the slot number -- only slot 0 ever parsed.) */
+            const char *p = strchr(slots + 7, '{');   /* the slots object's own brace */
+            if (p) p++;
+            int nslots = 0;
+            while (p) {
+                const char *k1 = strchr(p, '"');
+                const char *ob = strchr(p, '{');
+                if (!k1 || !ob || k1 > ob) break;         /* no more "<slot>":{ pairs */
+                int slot = atoi(k1 + 1);
+                const char *oe = strchr(ob, '}'); if (!oe) break;
+                if (slot >= 0 && slot < MAX_TANKS) {
+                    size_t ol = (size_t)(oe - ob + 1);
+                    char *one = (char *)malloc(ol + 1);
+                    memcpy(one, ob, ol); one[ol] = '\0';
+                    memset(vizRemap[slot], OVERLAY_VIZ_IDX_NONE, 256);
+                    btParseLegendPairs(one, vizRemap[slot]);
+                    free(one);
+                    int mapped = 0;
+                    for (int i = 0; i < 256; i++) if (vizRemap[slot][i] != OVERLAY_VIZ_IDX_NONE) mapped++;
+                    fprintf(stderr, "Load session: viz legend for slot %d: %d categories\n", slot, mapped);
+                    nslots++;
+                }
+                p = oe + 1;
+            }
+            if (!nslots) fprintf(stderr, "Load session: no per-slot viz legends parsed (using the global one)\n");
+        } else {
+            fprintf(stderr, "Load session: single viz legend (older recording) -- bots on a different brain than slot 0 may be mislabelled\n");
         }
         free(lj);
     }
@@ -1091,7 +1154,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
                     pk = (uint8_t *)realloc(pk, pcap);
                 }
                 gzread(g, pk + plen, 28);                    /* 27 fixed + textLen */
-                pk[plen + 26] = vizRemap[pk[plen + 26]];     /* remap viz_idx */
+                pk[plen + 26] = vizRemap[keepBot ? slot : 0][pk[plen + 26]];  /* remap viz_idx, this slot's table */
                 uint8_t tl = pk[plen + 27];
                 if (tl) gzread(g, pk + plen + 28, tl);
                 plen += 28u + tl;
@@ -1199,6 +1262,45 @@ static int btParseDirTime(const char *name) {
 
 /* Scan debug_sessions/ for recordings. Loadable = has a version-matching
  * brainrec.btr. Length is wall-clock: btr mtime minus the dir-name timestamp. */
+/* Peek cache: the O dialog rescans on every press, and each entry's peek
+ * gz-decompresses a first frame. With a couple of hundred sessions that was
+ * seconds of main-thread stall per press. Keyed on dir name + brainrec
+ * size + mtime, so a session that changed on disk is peeked again. */
+typedef struct {
+    char     name[128];
+    uint64_t size;
+    int64_t  mtime;
+    char     map[64];
+    int      bots;
+    bool     loadable;
+} PeekCacheEntry;
+static PeekCacheEntry g_peekCache[LOADBROWSER_MAX_SESSIONS];
+static int g_peekCacheCount = 0;
+
+static PeekCacheEntry *peekCacheFind(const char *name, uint64_t size, int64_t mtime) {
+    for (int i = 0; i < g_peekCacheCount; i++) {
+        PeekCacheEntry *c = &g_peekCache[i];
+        if (c->size == size && c->mtime == mtime && strcmp(c->name, name) == 0) return c;
+    }
+    return NULL;
+}
+
+static void peekCacheStore(const char *name, uint64_t size, int64_t mtime,
+                           const char *map, int bots, bool loadable) {
+    PeekCacheEntry *c = NULL;
+    for (int i = 0; i < g_peekCacheCount; i++) {
+        if (strcmp(g_peekCache[i].name, name) == 0) { c = &g_peekCache[i]; break; }
+    }
+    if (!c) {
+        if (g_peekCacheCount >= LOADBROWSER_MAX_SESSIONS) return;
+        c = &g_peekCache[g_peekCacheCount++];
+    }
+    SDL_strlcpy(c->name, name, sizeof c->name);
+    c->size = size; c->mtime = mtime;
+    memcpy(c->map, map, 64);
+    c->bots = bots; c->loadable = loadable;
+}
+
 static void scanSessions(void) {
     g_sessionCount = 0;
     int n = 0;
@@ -1224,7 +1326,16 @@ static void scanSessions(void) {
             SDL_strlcpy(e->note, "no brainrec.btr", sizeof e->note);
         } else {
             e->sizeMB = (double)bi.size / 1.0e6;
-            if (btPeekSession(btr, e->map, &e->bots)) {
+            PeekCacheEntry *pc = peekCacheFind(entries[i], (uint64_t)bi.size, (int64_t)bi.modify_time);
+            bool ok;
+            if (pc) {
+                memcpy(e->map, pc->map, 64); e->bots = pc->bots; ok = pc->loadable;
+            } else {
+                ok = btPeekSession(btr, e->map, &e->bots, false);
+                peekCacheStore(entries[i], (uint64_t)bi.size, (int64_t)bi.modify_time,
+                               e->map, e->bots, ok);
+            }
+            if (ok) {
                 e->loadable = true;
                 int start = btParseDirTime(entries[i]);
                 if (start >= 0) {
@@ -2224,7 +2335,7 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/GoalHunter_1.6";
+static char optBrain[512] = "brains/GoalHunter_1.7";
 static char optBotInit[1024] = ""; /* -bot-init spec; per-bot brain paths + [arg] */
 static char optMap[512]   = "";
 static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
@@ -5583,7 +5694,12 @@ static void appRender(BrainTestApp *app) {
     mainImGuiRenderShortcuts(&app->showShortcuts);
     vizDetailWindowRender((int)app->followBot);
     {
-        int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount);
+        bool rescan = false;
+        int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount,
+                                    optLoadSession, &rescan);
+        /* A rename moved dirs on disk, so every g_sessionList name (and every
+         * index the browser hands back) is stale until we look again. */
+        if (rescan) { scanSessions(); sel = -1; }
         if (sel >= 0 && sel < g_sessionCount) relaunchWithSession(g_sessionList[sel].dir);
     }
     mainImGuiEndFrame(app->renderer);
@@ -5907,7 +6023,7 @@ int main(int argc, char *argv[]) {
         SDL_snprintf(loadSessionBtr, sizeof(loadSessionBtr), "%s/%s",
                      optLoadSession, BRAINREC_FILENAME);
         char mapName[64] = ""; int recBots = 1;
-        if (btPeekSession(loadSessionBtr, mapName, &recBots)) {
+        if (btPeekSession(loadSessionBtr, mapName, &recBots, true)) {
             if (!optMap[0] && mapName[0])
                 SDL_snprintf(optMap, sizeof(optMap), "data/maps/%s.map", mapName);
             if (recBots > 0) optNumPlayers = recBots;
@@ -6025,8 +6141,26 @@ int main(int argc, char *argv[]) {
 #endif
         char ts[32];
         strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+        /* Optional "_<label>" suffix from WINBOLO_BRAINDBG_LABEL, same as
+         * the dedicated server's recordings (server_lifecycle.c), so a
+         * launcher bat's sessions are self-identifying in the O browser.
+         * Sanitized to [A-Za-z0-9_-]. */
+        char label[48] = "";
+        const char *lbl = SDL_getenv("WINBOLO_BRAINDBG_LABEL");
+        if (lbl && *lbl) {
+            size_t j = 1;
+            label[0] = '_';
+            for (size_t i = 0; lbl[i] && j + 1 < sizeof label; i++) {
+                char c = lbl[i];
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') || c == '_' || c == '-')
+                    label[j++] = c;
+            }
+            label[j] = '\0';
+            if (j == 1) label[0] = '\0';
+        }
         SDL_snprintf(g_sessionDir, sizeof(g_sessionDir),
-                     "debug_sessions/%s", ts);
+                     "debug_sessions/%s%s", ts, label);
         if (!SDL_CreateDirectory(g_sessionDir)) {
             SDL_Log("WARN: couldn't create %s (%s) — falling back to cwd",
                     g_sessionDir, SDL_GetError());
@@ -6082,13 +6216,13 @@ int main(int argc, char *argv[]) {
             if (bl > 0 && (brainName[bl-1] == '/' || brainName[bl-1] == '\\'))
                 brainName[bl-1] = '\0';
         }
-        /* Strip a trailing version suffix ("GoalHunter_1.6" -> "GoalHunter")
+        /* Strip a trailing version suffix ("GoalHunter_1.7" -> "GoalHunter")
          * so panel-type namespacing ("<brain>:<type>") matches the renderers'
          * fixed "GoalHunter:" prefix across the versioned brain dirs from the
          * 1.0/1.5 split. Only strips when the chars after the last '_' are
          * version-like (start with a digit), so a brain whose real name
          * contains an underscore is left alone. Also keeps the namespaced type
-         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.6:
+         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.7:
          * pool_grid" to "...pool_gri". */
         {
             char *us = NULL;
@@ -6161,18 +6295,22 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
                     optNumPlayers, optNumTeams);
         }
+        /* Redo the start placement now the roster and its teams are final.
+         * The batch pass at round start ran before any bot was added, so
+         * every one of them fell back to the team-blind per-player pick and
+         * rivals could land on adjacent squares. No-op unless running. */
+        serverSimReassignStarts(app.sim);
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
          * the path works for Lua's io.open under both Windows and bash
          * harnesses. */
         if (g_sessionDir[0]) {
-            char setSession[FILENAME_MAX + 64];
-            SDL_snprintf(setSession, sizeof(setSession),
-                         "_G.DEBUG_SESSION_DIR=\"%s\"", g_sessionDir);
             for (int i = 0; i < optNumPlayers; i++) {
                 if (serverSimIsBot(app.sim, (BYTE)i)) {
-                    serverSimBotExecLua(app.sim, (BYTE)i, setSession);
+                    serverSimBotSetLuaGlobalString(app.sim, (BYTE)i,
+                                                   "DEBUG_SESSION_DIR",
+                                                   g_sessionDir);
                     /* Tell the brain the SAME index BrainTest uses for the HUD
                      * "Bot: N" / Copy reference (= followBot, the tank slot), so
                      * its print2_bot<N>.log filename matches what you copy.
@@ -6224,6 +6362,25 @@ int main(int argc, char *argv[]) {
         if (n > 0) {
             if (optFollow < 0) app.followBot = 0;
             fprintf(stderr, "Load session: %d frames loaded — playback ready.\n", n);
+            /* Title bar names the loaded session (its dir name, e.g.
+             * 20260831_000722_1_16v17) — the progress bar left it saying
+             * "Loading recording... 100%", and with several BrainTest windows
+             * open there was no way to tell which replay was which. */
+            {
+                char dir[1024];
+                strncpy(dir, optLoadSession, sizeof dir - 1);
+                dir[sizeof dir - 1] = '\0';
+                size_t len = strlen(dir);
+                while (len > 0 && (dir[len - 1] == '/' || dir[len - 1] == '\\'))
+                    dir[--len] = '\0';
+                const char *base = dir;
+                for (const char *p = dir; *p; p++)
+                    if (*p == '/' || *p == '\\') base = p + 1;
+                char title[1200];
+                SDL_snprintf(title, sizeof title, "BrainTest - %s  (%d frames)",
+                             *base ? base : dir, n);
+                SDL_SetWindowTitle(app.window, title);
+            }
             if (g_playbackAutoplay) {
                 app.playbackFrame = 0;   /* start at the beginning … */
                 app.paused        = false;/* … and play straight through (headless verify) */
@@ -6231,6 +6388,7 @@ int main(int argc, char *argv[]) {
             }
         } else {
             fprintf(stderr, "Load session: failed to load frames from %s\n", loadSessionBtr);
+            SDL_SetWindowTitle(app.window, "BrainTest");  /* clear "Loading..." */
         }
     }
 
@@ -6334,9 +6492,11 @@ int main(int argc, char *argv[]) {
                     break;
                 }
                 /* Skip BrainTest hotkeys while a text field is being
-                 * edited inside the V dialog (its own ImGui context
-                 * — has the V-dialog filter input). */
-                if (vizWindowWantsTextInput()) {
+                 * edited: the V dialog's filter (its own ImGui
+                 * context) or any text input in the main ImGui
+                 * context, e.g. the O (Load Session) filter box --
+                 * typing an 's' there used to open the S window. */
+                if (vizWindowWantsTextInput() || mainImGuiWantsTextInput()) {
                     break;
                 }
                 switch (ev.key.key) {
@@ -6547,6 +6707,23 @@ int main(int argc, char *argv[]) {
                     g_showLoadBrowser = !g_showLoadBrowser;
                     if (g_showLoadBrowser) scanSessions();
                     break;
+                case SDLK_LEFTBRACKET:
+                case SDLK_RIGHTBRACKET: {
+                    /* Walk a long recording one segment at a time: ] loads the
+                     * next _part<X>of<N> (or, off the end, the next 15-minute
+                     * block's first part), [ the previous one. Only meaningful
+                     * while replaying, and the list is rescanned first so a
+                     * split that finished after launch is picked up. */
+                    if (!optLoadSession[0]) break;
+                    scanSessions();
+                    int segDir = (ev.key.key == SDLK_RIGHTBRACKET) ? +1 : -1;
+                    int seg = loadBrowserFindSegment(g_sessionList, g_sessionCount,
+                                                     optLoadSession, segDir);
+                    if (seg >= 0) relaunchWithSession(g_sessionList[seg].dir);
+                    else fprintf(stderr, "No %s segment for %s\n",
+                                 segDir > 0 ? "next" : "previous", optLoadSession);
+                    break;
+                }
                 case SDLK_L:
                     /* L: HUD layout edit toggle (locking saves) — edit mode also
                      *    labels every HUD overlay with its viz id.

@@ -338,6 +338,14 @@ struct GameSim {
     /* Tank explosion update throttle (per-sim so server/client don't share) */
     BYTE        tkExpUpdateTime;
 
+    /* Per-player death-cause tally, indexed [player][DEATH_CAUSE_*]. Written
+     * only on the server (tankDeath's isServer branch, alongside numDeaths++)
+     * and read only by the -finaljson / -snapjson writer. Nothing in the sim
+     * ever branches on it, so it cannot affect determinism. Zero-initialised
+     * by the sim-create memset; a player's row is re-zeroed in tankCreate,
+     * which is also where numDeaths goes back to 0. */
+    uint32_t    deathCauseCount[MAX_TANKS][DEATH_CAUSE_NUM];
+
     /* Lag compensation (server-only, zeroed on client) */
     uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */
     uint8_t perPlayerCompTicks[MAX_TANKS];   /* Per-player comp ticks for pill shells */

@@ -318,7 +318,13 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —
      * gating on a human leaver keeps that from re-entering. */
-    wasBot = botManagerIsBot(sim, playerNum);
+    /* ...and the removingBotSlot fallback: botManagerRemoveBot now
+     * deactivates the context BEFORE calling in here (so re-entrant
+     * walkers can't see a half-torn-down bot), which means
+     * botManagerIsBot alone would misread the departing bot as a human
+     * and trip the last-human-left lobby reset on every bot removal. */
+    wasBot = botManagerIsBot(sim, playerNum) ||
+             sim->botMgr.removingBotSlot == (BYTE)(playerNum + 1);
     {
         char nm[PLAYER_NAME_LEN];
         playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, sizeof(nm), TRUE);
@@ -356,6 +362,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 
     sim->playerConnected[playerNum] = FALSE;
+    /* Drop any bot-config event still queued for this slot: the bot is gone,
+     * and whoever takes the slot next resolves and queues its own. */
+    sim->botConfigPublishPending &= (uint16_t)~(1u << playerNum);
     /* Stop this slot's base restock cycle. serverSimAddPlayer arms it with
      * basesUpdateTimer on a mid-game join and basesUpdate treats every timer
      * that is not the off sentinel as a live cycle, each one restocking every

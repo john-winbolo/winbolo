@@ -116,6 +116,12 @@ static const UnitTestEntry s_tests[] = {
     { "shell_death_codec_roundtrip",              run_shell_death_codec_roundtrip              },
     { "shell_death_culls_matching_predicted_shell",run_shell_death_culls_matching_predicted_shell},
     { "shell_death_rejected_culls_without_impact",run_shell_death_rejected_culls_without_impact},
+    { "lobby_bot_config_memory_applies",          run_lobby_bot_config_memory_applies          },
+    { "lobby_bot_config_memory_empty_is_noop",    run_lobby_bot_config_memory_empty_is_noop    },
+    { "lobby_bot_config_memory_unknown_key",      run_lobby_bot_config_memory_unknown_key_ignored },
+    { "lobby_bot_config_memory_not_honoured",     run_lobby_bot_config_memory_not_honoured     },
+    { "lobby_bot_config_memory_manual_only",      run_lobby_bot_config_memory_manual_only      },
+    { "lobby_bot_config_memory_new_lobby",        run_lobby_bot_config_memory_cleared_on_return_to_lobby },
     { "lobby_add_bot_rejects_empty_brain_path",   run_lobby_add_bot_rejects_empty_brain_path   },
     { "lobby_add_bot_rejects_ai_none",            run_lobby_add_bot_rejects_ai_none            },
     { "lobby_add_bot_rejects_not_in_lobby",       run_lobby_add_bot_rejects_not_in_lobby       },
@@ -324,10 +330,30 @@ static const UnitTestEntry s_tests[] = {
     { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
     { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
     { "brain_list_scan_path_resolves",           run_brain_list_scan_path_resolves           },
+    { "brain_modes_manifest_parses",             run_brain_modes_manifest_parses             },
+    { "brain_modes_missing_falls_back",          run_brain_modes_missing_falls_back          },
+    { "brain_modes_malformed_lines_skipped",     run_brain_modes_malformed_lines_skipped     },
+    { "brain_modes_counts_clamped",              run_brain_modes_counts_clamped              },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
     { "pf_dijkstra_no_solid_corner_cut",         run_pf_dijkstra_no_solid_corner_cut         },
     { "pf_astar_no_solid_corner_cut",            run_pf_astar_no_solid_corner_cut            },
     { "pf_costto_no_solid_corner_cut",           run_pf_costto_no_solid_corner_cut           },
+    { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
+    { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },
+    { "pf_tail_neutral_zone_slows",              run_pf_tail_neutral_zone_slows              },
+    { "pf_tail_meeting_cancels_tie_to_hostile",  run_pf_tail_meeting_cancels_tie_to_hostile  },
+    { "pf_tail_never_overwrites_a_stamp",        run_pf_tail_never_overwrites_a_stamp        },
+    { "pf_tail_deep_margin_keeps_off_the_shore", run_pf_tail_deep_margin_keeps_off_the_shore },
+    { "pf_tail_contact_makes_a_front_line",      run_pf_tail_contact_makes_a_front_line      },
+    { "loadbrowser_segment_walks_parts",         run_loadbrowser_segment_walks_parts         },
+    { "loadbrowser_segment_crosses_blocks",      run_loadbrowser_segment_crosses_blocks      },
+    { "loadbrowser_segment_no_neighbour",        run_loadbrowser_segment_no_neighbour        },
+    { "loadbrowser_segment_path_forms",          run_loadbrowser_segment_path_forms          },
+    { "loadbrowser_segment_labels",              run_loadbrowser_segment_labels              },
+    { "loadbrowser_rename_splits_names",         run_loadbrowser_rename_splits_names         },
+    { "loadbrowser_rename_family_plan",          run_loadbrowser_rename_family_plan          },
+    { "loadbrowser_rename_rejections",           run_loadbrowser_rename_rejections           },
+    { "loadbrowser_rename_applies",              run_loadbrowser_rename_applies              },
     { "net_impair",                              run_net_impair                              },
     { "channel_mux",                             run_channel_mux                             },
     { "spectator_ring",                          run_spectator_ring                          },
@@ -826,6 +852,9 @@ static const UnitTestEntry s_tests[] = {
                                                  run_ping_sender_name_empty_for_unused_slot },
     { "ping_network",                            run_ping_network                            },
     { "lang_name_table",                         run_lang_name_table                         },
+    { "bot_init_arg_difficulty_token",           run_bot_init_arg_difficulty_token           },
+    { "bot_init_arg_mode_tokens",                run_bot_init_arg_mode_tokens                },
+    { "bot_difficulty_names",                    run_bot_difficulty_names                    },
     { "screencalc_river_road_counts_as_water",   run_screencalc_river_road_counts_as_water   },
     { "screencalc_river_arms_of_road_centred_cross",
                                                  run_screencalc_river_arms_of_road_centred_cross },
@@ -1120,12 +1149,20 @@ ServerSim *ut_make_running_sim(const char *player_name) {
     return sim;
 }
 
+/* Name of the test run_one is currently in, for fixtures that need a path
+ * of their own — see utCurrentTestName in test_harness.h. */
+static const char *s_currentTest = "none";
+
+const char *utCurrentTestName(void) { return s_currentTest; }
+
 static int run_one(const char *name) {
     int i;
     for (i = 0; i < NUM_TESTS; i++) {
         if (strcmp(s_tests[i].name, name) == 0) {
             fprintf(stderr, "RUN  %s\n", s_tests[i].name);
+            s_currentTest = s_tests[i].name;
             int rc = s_tests[i].fn();
+            s_currentTest = "none";
             fprintf(stderr, "%s %s\n", rc == 0 ? "PASS" : "FAIL",
                     s_tests[i].name);
             return rc;

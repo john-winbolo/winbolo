@@ -252,9 +252,53 @@ if(WINBOLO_LUAJIT AND (EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
     set(WINBOLO_LUAJIT OFF)
 endif()
 
+# Measurement builds only: LUAJIT_SECURITY_PRNG=0 fixes LuaJIT's string-hash
+# seed instead of drawing it from OS entropy at VM creation. With stock
+# seeding, pairs() order over hash tables differs every run, which reorders
+# the brains' /info broadcasts and eval scans and makes identical -seed games
+# diverge (found 20260831: two same-seed runs split within 6 game-seconds,
+# first observable diff being /info key order). Turn this ON for an A/B run
+# and leave it off otherwise.
+#
+# OFF by default, and it should stay that way, for two reasons.
+#
+# It is not a free knob. The fixed seed is what a hash-flooding attack needs
+# to be reproducible, and brains do hash attacker-controlled strings: human
+# chat reaches a bot's inbox and GoalHunter parses it into table keys
+# (ally_state.lua's slot.info[key] = value). The per-tick budget hook caps
+# the damage at a killed think rather than a stalled server, so the exposure
+# is small -- but it is not zero, and it is on a shipped client and a public
+# dedicated server. LuaJIT's own lj_arch.h is explicit: "Important note to
+# distro maintainers: DO NOT change the defaults for a regular distro build
+# -- neither upwards, nor downwards!"
+#
+# And it is the wrong tool for the job. lj_prng.c says so at the branch this
+# define selects: "BTW: This is NOT the way to get predictable table
+# iteration, predictable trace generation, predictable bytecode generation,
+# etc." A fixed seed makes pairs() order repeatable BETWEEN RUNS OF THE SAME
+# BINARY and nothing more -- it is not stable across a LuaJIT upgrade, a
+# rebuild with different flags, or a 32/64-bit change, so a reference
+# baseline recorded under it is only comparable to runs from that same
+# build. The durable fix is for the brain not to depend on pairs() order
+# where that order is OBSERVABLE: iterate an array, or sort the keys, in
+# those paths. Doing that would let this option be deleted.
+#
+# Costs nothing at runtime either way: lj_prng_seed_secure runs once per
+# lua_newstate (lj_state.c) -- one entropy read per brain, not per think --
+# and the hashing on the hot path is identical under both settings.
+option(WINBOLO_LUAJIT_DETERMINISTIC
+       "Fixed LuaJIT string-hash/PRNG seed for A/B measurement runs (insecure; see comment)" OFF)
+
 if(WINBOLO_LUAJIT)
     include(ExternalProject)
     message(STATUS "WINBOLO_LUAJIT: building LuaJIT ${WINBOLO_LUAJIT_LUAJIT_TAG} from source (native build system)")
+    if(WINBOLO_LUAJIT_DETERMINISTIC)
+        # A warning, not a status line: this is now opt-in and it weakens the
+        # VM. A release build should never print it.
+        message(WARNING "WINBOLO_LUAJIT_DETERMINISTIC=ON: LUAJIT_SECURITY_PRNG=0 "
+                        "(fixed string-hash seed). For A/B measurement runs only "
+                        "-- do not ship a build with this set.")
+    endif()
 
     # 1. LuaJIT source (no CMakeLists of its own — MakeAvailable only populates).
     FetchContent_Declare(luajit_src
@@ -286,15 +330,37 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
+        set(_lj_msvc_env "")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+        endif()
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
             CONFIGURE_COMMAND ""
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}/src" cmd /c msvcbuild.bat static
+            # cmd only searches the current directory for a bare command name
+            # when NoDefaultCurrentDirectoryInExePath is unset. Some CI images
+            # and hardened dev environments set it, and then `msvcbuild.bat`
+            # fails with "is not recognized" even though chdir put us in the
+            # directory containing it. Prefixing ".\" only fixes the batch file
+            # itself -- msvcbuild.bat then invokes the host tools it just built
+            # (minilua, buildvm) as bare names too, and those fail the same way
+            # -- so unset the variable for the whole build step instead.
+            # cl.exe appends the CL environment variable to every compile, so
+            # the determinism define reaches all of msvcbuild.bat's compiles
+            # (the bat never sets CL itself) without patching LuaJIT source.
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+                              --unset=NoDefaultCurrentDirectoryInExePath
+                              ${_lj_msvc_env}
+                              ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
+                              cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
     else()
         set(_lj_xcflags "-fPIC")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
+        endif()
         if(APPLE)
             # Hardened runtime kills any process executing JIT-compiled code
             # from plain anonymous pages (SIGKILL "Code Signature Invalid").
@@ -899,7 +965,7 @@ set(IOS_MOBILE_SOURCES
 )
 
 # Lua brain scripts to bundle
-file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6/*.lua")
+file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7/*.lua")
 
 
 add_executable(WinBoloIOS MACOSX_BUNDLE
@@ -951,7 +1017,7 @@ set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.6"
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.7"
 )
 set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/sounds"
@@ -1865,17 +1931,12 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.6"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.6
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.7
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts (GoalHunter_1.6 + _1.0) to output Brains/ directory (excludes *.md)"
+    COMMENT "Copying brain scripts (GoalHunter_1.7) to output Brains/ directory (excludes *.md)"
 )
 
 # Steam Input action manifest + per-controller binding files — Steam reads
@@ -2172,11 +2233,8 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.6"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.0"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.7"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
 
@@ -2489,11 +2547,8 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.6"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.0"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.7"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -2621,6 +2676,25 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# brainrec_split — cuts one -braindebug session into smaller sessions that
+# BrainTest can load one at a time. A long full-pool recording is gigabytes
+# on disk, and btLoadSession materialises every frame, so loading a whole
+# game can cost more RAM than the machine has; halving the frames halves it.
+# Links brain_record_walk.c (the shared brainrec.btr frame walker) rather
+# than bolo_static, so the tool doesn't drag in the sim, Lua or SDL's
+# runtime — SDL3 is here for its filesystem calls and for the headers the
+# format structs live behind.
+# ---------------------------------------------------------------------------
+add_executable(brainrec_split
+    src/tools/brainrec_split.c
+    src/bolo/brain_record_walk.c)
+bolo_apply_include_rules(brainrec_split runtime_only)
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic)
+if(WIN32)
+    target_link_libraries(brainrec_split PRIVATE psapi)
+endif()
+
+# ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
 # ---------------------------------------------------------------------------
 
@@ -2636,6 +2710,8 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
     src/braintest/braintest_loadbrowser.cpp
+    src/braintest/braintest_loadbrowser_segment.c
+    src/braintest/braintest_loadbrowser_rename.c
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp
@@ -2718,11 +2794,8 @@ add_custom_command(TARGET BrainTest POST_BUILD
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.6"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.0"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
@@ -3076,15 +3149,10 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.6"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.6
-        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.0"
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.0
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.7
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
@@ -3289,6 +3357,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
+    tests/unit/test_lobby_bot_config_memory.c
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
@@ -3428,8 +3497,21 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
+    tests/unit/test_brain_modes.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
+    tests/unit/test_pf_influence_tail.c
+    # BrainTest Load Session next/prev-segment lookup. The finder is plain C
+    # and ImGui-free precisely so it can be linked here; the rest of the
+    # browser (braintest_loadbrowser.cpp) is not part of this target.
+    tests/unit/test_loadbrowser_segment.c
+    src/braintest/braintest_loadbrowser_segment.c
+    # ... and the session-name grammar + rename planner that walk is built on
+    # (braintest_loadbrowser_rename.c). Its apply step is the only part that
+    # touches disk, so test_loadbrowser_rename.c exercises that against a
+    # throwaway dir tree under the working directory.
+    tests/unit/test_loadbrowser_rename.c
+    src/braintest/braintest_loadbrowser_rename.c
     # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
     # is emscripten-only but the parse compiles everywhere).
     tests/unit/test_proxy_meta_parse.c
@@ -3708,6 +3790,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
+    # assembly (whole-token-or-nothing when the buffer is tight) and the
+    # difficulty <-> word round trip -difficulty and the preference share.
+    tests/unit/test_bot_init_arg.c
     # River tile lookup: ROAD must read as "the river continues" in all four
     # RIVER_END arms (a bridge on a river cross drew corner pieces), plus the
     # game vs log-viewer copies of screenCalcRiver never disagreeing.
@@ -3980,6 +4066,9 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # blocks.h, snapshot.h, lv_*.h) used by test_wbv_reader.c and the
     # linked src/logviewer/*.c decode TUs.
     src/logviewer
+    # braintest_loadbrowser.h for the Load Session segment-walk test (the
+    # finder TU compiled above); no other braintest source is linked here.
+    src/braintest
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -4000,6 +4089,24 @@ target_link_libraries(WinBoloUnitTests PRIVATE
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+    # 8 MB stack, matching the Linux default.
+    #
+    # test_net_impair.c declares NetImpair as a stack LOCAL in five test
+    # functions, and NetImpair is ~1.06 MB (queue[512] of 2048-byte packets,
+    # net_impair.h). That overflows Windows' 1 MB default, so the runner died
+    # at STATUS_STACK_OVERFLOW partway through `net_impair` -- and because the
+    # test list in test_main.c is a static table walked in order, EVERY test
+    # after that entry (100+ of them, including all the spectator and loopback
+    # suites) silently never ran on Windows. It passed on Linux only because
+    # the default stack there is already 8 MB.
+    #
+    # Raising the stack rather than making those locals `static` keeps each
+    # test case's fixture genuinely fresh, which is the point of a stack local.
+    if(MSVC)
+        target_link_options(WinBoloUnitTests PRIVATE /STACK:8388608)
+    else()
+        target_link_options(WinBoloUnitTests PRIVATE -Wl,--stack,8388608)
+    endif()
 else()
     target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
@@ -4068,6 +4175,17 @@ set(_unit_test_names
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact
+    # A new bot's mode/difficulty rule (test_lobby_bot_config_memory.c): the
+    # base, then the host's last MANUAL pick, remembered by key so it survives
+    # a brain declaring a different list. Reads the shipped GoalHunter_1.7
+    # modes.txt beside the binary and writes nothing, so these are safe under
+    # `ctest -j`.
+    lobby_bot_config_memory_applies
+    lobby_bot_config_memory_empty_is_noop
+    lobby_bot_config_memory_unknown_key
+    lobby_bot_config_memory_not_honoured
+    lobby_bot_config_memory_manual_only
+    lobby_bot_config_memory_new_lobby
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -4231,10 +4349,33 @@ set(_unit_test_names
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
+    brain_modes_manifest_parses
+    brain_modes_missing_falls_back
+    brain_modes_malformed_lines_skipped
+    brain_modes_counts_clamped
+    bot_init_arg_difficulty_token
+    bot_init_arg_mode_tokens
+    bot_difficulty_names
     bolo_rand_golden_sequence
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    pf_tail_reaches_radius_and_stops
+    pf_tail_blocked_by_wall_and_sea
+    pf_tail_neutral_zone_slows
+    pf_tail_meeting_cancels_tie_to_hostile
+    pf_tail_never_overwrites_a_stamp
+    pf_tail_deep_margin_keeps_off_the_shore
+    pf_tail_contact_makes_a_front_line
+    loadbrowser_segment_walks_parts
+    loadbrowser_segment_crosses_blocks
+    loadbrowser_segment_no_neighbour
+    loadbrowser_segment_path_forms
+    loadbrowser_segment_labels
+    loadbrowser_rename_splits_names
+    loadbrowser_rename_family_plan
+    loadbrowser_rename_rejections
+    loadbrowser_rename_applies
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback

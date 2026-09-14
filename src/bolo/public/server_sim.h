@@ -150,12 +150,29 @@ typedef struct {
   char    name[LOBBY_TEAM_NAME_LEN];
 } TeamMetadata;
 
-/* Per-bot config — extends bot identity with difficulty + personality
- * the Layout A AiConfig sub-panel writes. Brain consumption is deferred
- * (GoalHunter accepts the values via brain.set_config but ignores
- * them in v1). Indexed by slot (matches bot's playerNum). */
+/* Bot difficulty in the DEFAULT mode, as it has always been carried on the
+ * wire (CTRL_/PACKET_LOBBY_BOT_CONFIG) and shown in the lobby. The values
+ * are frozen: 1 was labelled "normal" before it was labelled "Medium".
+ * botDifficultyName (bot_manager.h) turns one of these into a word.
+ *
+ * Since modes arrived the byte is really an INDEX into the selected mode's
+ * level list (brain_list.h). The default mode's levels are easy / medium /
+ * hard in that order, so these three constants still name the right slots
+ * and every pre-mode caller keeps working unchanged. */
+#define BOT_DIFFICULTY_EASY    0
+#define BOT_DIFFICULTY_MEDIUM  1
+#define BOT_DIFFICULTY_HARD    2
+#define BOT_DIFFICULTY_MAX     2
+
+/* Per-bot config — extends bot identity with mode + difficulty +
+ * personality the Layout A AiConfig sub-panel writes. mode and difficulty
+ * reach the brain as BRAIN_INIT_ARG tokens at bot-brain creation
+ * (bot_manager.c); the brain stores them and behaves the same at every
+ * setting for now. personality is still unconsumed. Indexed by slot
+ * (matches bot's playerNum). */
 typedef struct {
-  uint8_t difficulty;   /* 0=easy, 1=normal, 2=hard */
+  uint8_t mode;         /* index into the brain's mode list; 0 = default */
+  uint8_t difficulty;   /* index into that mode's level list (0=easy...) */
   uint8_t personality;  /* 0=normal, 1=aggressive, 2=defensive, 3=sniper */
 } LobbyBotConfig;
 
@@ -553,6 +570,9 @@ bool              serverSimBotExecLua(ServerSim *sim, BYTE playerNum,
                                       const char *src);
 char             *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
                                             const char *src);
+bool              serverSimBotSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
+                                                 const char *name,
+                                                 const char *value);
 
 /* serverSimSetTeam: moved to internal/server_sim_lifecycle.h —
  * applied by UDP PACKET_LOBBY_TEAM_SET / PACKET_LOBBY_ADD_BOT
@@ -731,6 +751,65 @@ void serverSimSetTickLimit(ServerSim *sim, int32_t ticks);
  *  Resets after firing.
  *********************************************************/
 void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks);
+
+/*********************************************************
+ *NAME:          serverSimSetSnapshotHook
+ *PURPOSE:
+ *  Registers a periodic observer that is invoked every
+ *  intervalTicks running ticks (the same ticks
+ *  serverSimSetTickLimit counts), from inside the sim step
+ *  before that step does any work — so the callback always
+ *  sees fully settled state and never a half-applied tick.
+ *  It runs on whatever thread drives the sim (the dedicated
+ *  server's game timer), under that driver's tick lock.
+ *
+ *  The callback must only read the sim. intervalTicks of 0,
+ *  or a NULL cb, disables the hook. Follows the same
+ *  register-a-callback pattern as mapSetChangeCallback.
+ *
+ *  Used by WinBoloDS -snapjson/-snapinterval to build a
+ *  JSONL time series of global game state.
+ *********************************************************/
+void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
+                              int32_t intervalTicks);
+
+/*********************************************************
+ *NAME:          serverSimGetPlayerKills
+ *PURPOSE:
+ *  The server's authoritative kill count for a slot in the
+ *  current round (roundStats[slot].kills, credited in the
+ *  shell-death path).
+ *
+ *  Not the same number as TankInfo.kills: that reads
+ *  tank->numKills, which only tankAddKill writes, and
+ *  tankAddKill is called solely from the client snapshot
+ *  path for the local player. On a dedicated server nothing
+ *  ever calls it, so TankInfo.kills is permanently 0 —
+ *  server-side readers want this instead. Returns 0 for an
+ *  out-of-range slot.
+ *********************************************************/
+uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot);
+
+/*********************************************************
+ *NAME:          serverSimGetDeathCauses
+ *PURPOSE:
+ *  Copies the slot's per-cause death tally into out,
+ *  indexed by DEATH_CAUSE_* (out must hold DEATH_CAUSE_NUM
+ *  entries). Zeroes out and returns false for an
+ *  out-of-range slot.
+ *
+ *  DEATH_CAUSE_DROWNED_UNFORCED is a sub-classification of
+ *  a drowning, not a sixth independent cause, so the sum
+ *  that equals the slot's death count is
+ *  OTHER + DROWNED + DROWNED_UNFORCED + SHELL_TANK +
+ *  SHELL_PILL + MINE -- i.e. every entry, with the two
+ *  drowning slots being mutually exclusive.
+ *
+ *  Observation only: the counters are written next to
+ *  numDeaths++ in tankDeath and read nowhere inside the sim.
+ *********************************************************/
+bool serverSimGetDeathCauses(const ServerSim *sim, BYTE slot,
+                             uint32_t out[DEATH_CAUSE_NUM]);
 
 /*********************************************************
  *NAME:          serverSimSetUserLogFileName
@@ -1010,6 +1089,26 @@ void serverSimClearBalanceProposal(ServerSim *sim);
  *  will let the external call site go away.
  *********************************************************/
 void serverSimReapplyTeamAlliances(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimReassignStarts
+ *PURPOSE:
+ *  Re-runs the batch start placement over the currently
+ *  connected players and re-creates their tanks at the new
+ *  positions. No-op unless the sim is running.
+ *
+ *  TECH DEBT: the twin of serverSimReapplyTeamAlliances
+ *  above, and there for the same reason. -nolobby (and the
+ *  SP-host flow) call serverSimStartGame before the bots
+ *  have been added and their team numbers set, so the batch
+ *  pass inside it sees an empty roster; every bot added
+ *  afterwards then falls back to the team-blind per-player
+ *  pick, which put two rivals two squares apart in the same
+ *  corner. Call this once the roster and teams are final.
+ *  It goes away with the alliance pass when players are
+ *  added before serverSimStartGame is called.
+ *********************************************************/
+void serverSimReassignStarts(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimResetGameWorld
@@ -1608,6 +1707,39 @@ GameSim *serverSimGetGameSim(ServerSim *sim);
 void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
                                        uint8_t brainIdx);
 
+/* Apply a bot-config change atomically — write mode / difficulty /
+ * personality to the slot, optionally rename the bot (when validatedName is
+ * non-NULL and non-empty), publish CTRL_LOBBY_BOT_CONFIG +
+ * CTRL_LOBBY_SLOT, and clear humans' ready state. Callers (UDP
+ * PACKET_LOBBY_BOT_CONFIG handler, SP-host clientSimNetSendLobbyBotConfig)
+ * must validate the name beforehand — see lobbyBotNameAcceptable.
+ * Pass NULL or an empty string to leave the name unchanged.
+ *
+ * mode indexes the brain's mode list and difficulty indexes THAT mode's
+ * level list (brain_list.h); mode 0 with 0/1/2 is the pre-manifest
+ * easy/medium/hard.
+ *
+ * Safe to call on a slot with no bot in it yet, and the SP-host and the
+ * dedicated server both do: both bytes have to be in the slot's config
+ * BEFORE the bot's brain is created, because that is where bot_manager
+ * reads them to build the brain's "mode=" / "difficulty=" init tokens. */
+void        serverSimSetBotConfig(ServerSim *sim, BYTE slot,
+                                  uint8_t mode, uint8_t difficulty,
+                                  uint8_t personality,
+                                  const char *validatedName);
+
+/* Default-mode difficulty <-> word. "easy" / "medium" / "hard" is what
+ * -difficulty accepts on the dedicated server's command line and what the
+ * "Chosen Difficulty" preference stores for the default mode. (What the
+ * brain is handed is the level KEY from the brain's own modes.txt, which
+ * for the default mode is these same three words.) botDifficultyName never
+ * returns NULL: an out-of-range value reads as "hard". botDifficultyFromName
+ * is case-insensitive, takes "normal" as an alias for "medium" (its former
+ * label), and returns false without touching *out on anything else.
+ * Implemented in bot_manager.c. */
+const char *botDifficultyName(uint8_t difficulty);
+bool        botDifficultyFromName(const char *name, uint8_t *out);
+
 /* Resolve a catalogue index back to its disk path. Returns the
  * CLI-configured default path for brainIdx == 0xFF, NULL when the
  * index is out of range. The returned pointer is owned by the sim
@@ -1836,6 +1968,56 @@ void serverSimSetGameType(ServerSim *sim, gameType gt);
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
 void serverSimSetState(ServerSim *sim, ServerState s);
 void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
+
+/* ── A newly added bot's brain mode and difficulty ─────────────────────
+ *
+ * Every bot a lobby gains — the host's Add Bot, a scenario's own seed,
+ * single player's add and setup paths — resolves its mode and difficulty
+ * through serverSimResolveNewBotConfig, in this order:
+ *
+ *   1. the caller's base (the lobby default, or single player's own
+ *      chosen level);
+ *   2. what the map requires for the bot's side (the scenario's bot_mode
+ *      hook) — on Survival, the horde is survival mode at Hard;
+ *   3. what the host last picked BY HAND, when the caller honours it —
+ *      the difficulty only when step 2 fixed the mode, both otherwise.
+ *
+ * Bots that first appear on a map (the seed, single player's setup bots)
+ * do not honour step 3; the Add Bot button does. See server_sim_lobby.c. */
+
+/* Resolve a new bot's mode and difficulty for `team` on the brain at
+ * `brainPath`. *ioMode / *ioLevel carry the caller's base in and the answer
+ * out. Returns false, leaving both untouched, when the brain ships no
+ * modes.txt. Writes no config and publishes nothing. */
+bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick,
+                                  uint8_t *ioMode, uint8_t *ioLevel);
+
+/* Give a lobby bot joining `team` its mode and difficulty — the lobby
+ * default as the base, then serverSimResolveNewBotConfig — and queue the
+ * bot-config event that shows it in the lobby. Safe before or after the
+ * add: pass the brain the bot runs, since before the add the slot has
+ * none. A lobby brain reloads from this config at round start. */
+void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick);
+
+/* Record the slot's current mode and difficulty as the host's manual pick.
+ * Call it only where a person chose them: CMD_LOBBY_BOT_CONFIG, and only
+ * when that command actually changed the mode or difficulty — the gear
+ * popup sends the same command for renames and personality edits. An
+ * automatic config write must never call it, or the game's own defaults
+ * pass for the host's choice. */
+void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot);
+
+/* Bot-config events waiting to be published, a couple per lobby tick. A
+ * scenario seeds its ten bots in one call stack while no client ack can be
+ * read, and the reliable control channel holds 64 unacked events; queuing
+ * those ten events for the lobby tick keeps the seed's burst exactly as
+ * large as it was. Flush skips slots that are no longer bots. */
+void serverSimQueueBotConfigPublish(ServerSim *sim, BYTE slot);
+void serverSimFlushBotConfigPublishes(ServerSim *sim);
 
 /* Switch a lobby bot to a new brain script. Updates both the
  * per-slot brain-index mirror (serverSimSetBotBrainIdxFor) and the

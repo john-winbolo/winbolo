@@ -230,6 +230,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ticksRun = 0;
     sim->gameTickLimit = 0;
     sim->gameTicksRun = 0;
+    sim->snapshotCb = NULL;
+    sim->snapshotInterval = 0;
+    sim->snapshotTicks = 0;
     sim->tick = 0;
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
     sim->state = serverStateLobby;
@@ -265,9 +268,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     /* ── Layout A lobby state — initial defaults ─────────────────
      * teams[] zeroed by the memset above (in_use=0 → renders with
-     * defaults). Same for botConfigs[] (difficulty=easy=0,
-     * personality=normal=0). serverLocks defaults to 0 — bolod
-     * --lock-* CLI flags set bits at server startup. */
+     * defaults). botConfigs[] is zeroed too (personality=normal=0) but
+     * difficulty is set explicitly below: zero is Easy, and a bot that
+     * says Easy on its lobby row while playing exactly like Hard —
+     * which every difficulty does today — is a lie. serverLocks
+     * defaults to 0 — bolod --lock-* CLI flags set bits at server
+     * startup. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        sim->botConfigs[count].difficulty = BOT_DIFFICULTY_HARD;
+    }
 
     /* Layout A — guarantee at least two teams always exist so the
      * lobby UI never shows fewer than 2. teams[1] gets the host
@@ -311,6 +320,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->specDelayTicks      = 0;
     sim->specRosterEnum      = NULL;
     sim->specRosterEnumCtx   = NULL;
+    sim->startInProgress     = FALSE;
     sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -691,6 +701,11 @@ void serverSimDestroy(ServerSim *sim) {
     }
 
     free(sim);
+}
+
+uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return 0;
+    return (uint16_t)sim->roundStats[slot].kills;
 }
 
 const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) {

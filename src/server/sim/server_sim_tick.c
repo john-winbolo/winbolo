@@ -518,6 +518,18 @@ static void simRunHalfStep(ServerSim *sim) {
         return;
     }
 
+    /* Periodic state snapshot (-snapjson). Counted over exactly the same
+     * running half-steps as ticksRun below — placed ahead of the limit
+     * checks on purpose, so the last interval boundary still fires on the
+     * tick that then trips the tick limit and returns. Runs before this
+     * half-step touches anything, i.e. on fully settled state. */
+    if (sim->snapshotInterval > 0 && sim->snapshotCb != NULL) {
+        sim->snapshotTicks++;
+        if ((sim->snapshotTicks % sim->snapshotInterval) == 0) {
+            sim->snapshotCb(sim);
+        }
+    }
+
     if (sim->gameLength > 0) {
         sim->gameLength--;
         if (sim->gameLength == 0) {
@@ -928,7 +940,18 @@ static void simRunHalfStep(ServerSim *sim) {
             if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) {
                 continue;
             }
-            if (memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
+            /* An index at or above prevPillCount is one the previous tick did
+             * not have at all: a scenario created a pill (game.add_pill).
+             * prevPills[] is zeroed only at sim create, so in round 2 those
+             * slots still hold LAST round's final records — and an attacker
+             * landing on the same shoreline tile and being handed its pill by
+             * the same Lua call produces an identical 4-byte record. memcmp
+             * then reports "unchanged" and the creation is never sent, leaving
+             * every client a pill short until the next full sync. Count a new
+             * index as changed rather than trust a compare against data from
+             * another round. */
+            if (p >= (int)sim->prevPillCount ||
+                memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
                 GameEvent ev;
                 ev.type = EVENT_PILL_UPDATE;
                 memset(ev.data, 0, sizeof(ev.data));

@@ -1420,7 +1420,7 @@ STR_DLGLOBBY_KICK_FMT=Kick "{player}"?
 STR_DLGLOBBY_BOTCFG_NAME=Name (override)
 STR_DLGLOBBY_BOTCFG_REROLL=Reroll
 STR_DLGLOBBY_BOTCFG_REROLL_TIP=Pick a fresh random name from the team's pool.
-STR_DLGLOBBY_BOTCFG_CODE=Bot Code
+STR_DLGLOBBY_BOTCFG_CODE=Codebase
 STR_DLGLOBBY_BOTCFG_NONE=(none)
 STR_DLGLOBBY_BOTCFG_DIFFICULTY=Difficulty
 STR_DLGLOBBY_BOTCFG_EASY=Easy
@@ -1432,8 +1432,18 @@ STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defensive
 STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
 STR_DLGLOBBY_BOTCFG_DONE=Done
 
-# Gear-hover tooltip: "Currently: <brain code name>" ({string1} = name).
+# Gear-hover tooltip: "Currently: <bot name> . <difficulty>" ({string1}).
 STR_DLGLOBBY_BOTCFG_CURRENTLY=Currently: {string1}
+STR_DLGLOBBY_BOTCFG_MEDIUM=Medium
+
+# Bot difficulty blurbs: tagline (leading token coloured) + description.
+STR_BOT_DIFF_TAG_EASY=Easy. Captures pillboxes and bases, coordinates with allied bots, and plays in a steady, predictable way.
+STR_BOT_DIFF_TAG_MEDIUM=Medium. Captures pillboxes and bases with its allied bots and presses an attack when it is already ahead.
+STR_BOT_DIFF_TAG_HARD=Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together.
+STR_BOT_DIFF_DESC_EASY=This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they avoid chasing the same target, though it plays cautiously and steers clear of big risks. Its steady, easy-to-read behaviour makes it a gentler challenge. Best for newer players, or anyone who wants a more relaxed game.
+STR_BOT_DIFF_DESC_MEDIUM=This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they can strike a target together. It will join a group attack and press an advantage, but it picks its fights, keeps itself fuelled, and gives ground when the odds turn against it. Best for players who know the game and want a real opponent rather than a relentless one.
+STR_BOT_DIFF_DESC_HARD=This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent.
+STR_DLGLOBBY_BOTCFG_MODE=Mode
 
 # Balance from WBN
 STR_DLGLOBBY_BAL_BTN=Balance from WBN

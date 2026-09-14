@@ -1510,8 +1510,28 @@
 #define STR_DLGLOBBY_BOTCFG_DEFENSIVE       1342
 #define STR_DLGLOBBY_BOTCFG_SNIPER          1343
 #define STR_DLGLOBBY_BOTCFG_DONE            1344
-/* Gear-hover tooltip: "Currently: <brain code name>" ({string1} = name). */
+/* Gear-hover tooltip: "Currently: <bot name> . <difficulty>" ({string1}). */
 #define STR_DLGLOBBY_BOTCFG_CURRENTLY       1847
+
+/* Middle bot difficulty (wire value 1; Easy / Hard reuse 1337 / 1339).
+ * 2172, not 2164: main's #323 claimed 2164 for STR_DLGPLAYERS_SELECT while
+ * this branch was out, and the two defines live far enough apart in this
+ * file that the merge kept both without a conflict. langGetText linear-scans
+ * and returns the first hit, so the collision would have drawn the Players
+ * panel's "Select:" as "Medium". The already-merged id keeps 2164. */
+#define STR_DLGLOBBY_BOTCFG_MEDIUM          2172
+
+/* Bot difficulty blurbs: tagline (leading token coloured) + description. */
+#define STR_BOT_DIFF_TAG_EASY               2165
+#define STR_BOT_DIFF_TAG_MEDIUM             2166
+#define STR_BOT_DIFF_TAG_HARD               2167
+#define STR_BOT_DIFF_DESC_EASY              2168
+#define STR_BOT_DIFF_DESC_MEDIUM            2169
+#define STR_BOT_DIFF_DESC_HARD              2170
+
+/* Bot AiConfig: the Mode dropdown's label. The mode NAMES themselves are
+ * data (brains/<brain>/modes.txt), not strings, so this is the only one. */
+#define STR_DLGLOBBY_BOTCFG_MODE            2171
 
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */

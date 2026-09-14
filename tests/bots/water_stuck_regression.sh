@@ -6,9 +6,10 @@
 # 5-8 minutes: find_dry_land() picked the geometrically nearest dry tile with
 # no reachability check, escape_water steering beelines at it with no A*, and
 # the 3-second stuck handler's block was never consulted by find_dry_land, so
-# the same unreachable tile was re-picked every tick. Fixed in GoalHunter_1.6
-# (pathfinder.lua beeline_clear + blocked-list rotation, init.lua water-aware
-# stuck threshold). This test guards that fix.
+# the same unreachable tile was re-picked every tick. Fixed in an earlier
+# GoalHunter revision (pathfinder.lua beeline_clear + blocked-list rotation,
+# init.lua water-aware stuck threshold) and carried into the shipping brain.
+# This test guards that fix.
 #
 # Detection: a bot repeatedly logging "STUCK_BLOCK ... pos=(same) ...
 # goal=escape_water" is pinned. With the water stuck threshold at 450 ticks
@@ -99,7 +100,7 @@ echo "Running $BIN_NAME on Wild Bleeding Chickens for ${DURATION}s (6 bots, labe
   cd "$BIN_DIR" || exit 2
   WINBOLO_BRAINDBG_LABEL="$LABEL" "./$BIN_NAME" \
     -map "$MAP" -port 27599 -gametype Open \
-    -bots 6 -brain "Brains/GoalHunter_1.6/init.lua" -ai yes \
+    -bots 6 -brain "Brains/GoalHunter_1.7/init.lua" -ai yes \
     -nolobby -notracker -brain-debug -bd-nopool -bd-noviz \
     > /dev/null 2>&1
 ) &

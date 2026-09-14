@@ -735,6 +735,10 @@ static bool cmdDispatchFast(const CmdLine *cmd) {
       return true;
     case CMD_OP_SET_READY:
       serverSimSetReady(fastServerSim, cmd->slot, cmd->ready);
+      /* Mirror the real lobby dispatch: readying up can complete the
+       * all-ready condition and start the game — the SP Ready-click
+       * path this fast mode exists to reproduce. */
+      serverSimLobbyCheckAllReady(fastServerSim);
       return true;
     case CMD_OP_NAME_CHANGE:
       cmdFastPublishPlayerName(cmd->slot, cmd->name);

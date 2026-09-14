@@ -64,4 +64,113 @@ bool brainListLoadMeta(const char *name,
                        char *tagline, size_t taglineSz,
                        char *desc, size_t descSz);
 
+/* A brain's own tag colour, from a "color: #RRGGBB" line anywhere in its
+ * about.txt (the line is kept out of the tagline/description). The lobby
+ * paints the bot's name tag with it; a brain that declares none gets a
+ * colour derived from its name instead. Returns true iff a valid colour was
+ * found; *rgb is 0xRRGGBB. */
+bool brainListLoadColor(const char *name, uint32_t *rgb);
+
+
+/* ── Bot modes and their difficulty levels ────────────────────────────
+ *
+ * A brain says for itself which MODES it can be run in, and which
+ * difficulty LEVELS each of those modes offers. The lobby needs this on
+ * every client, in C, before a game starts, so it comes from a plain text
+ * manifest that ships with the brain and is read locally the same way
+ * about.txt is:
+ *
+ *   brains/<brain>/modes.txt
+ *   ------------------------
+ *   # comments run to end of line
+ *   [default]
+ *   label   = Default
+ *   levels  = easy:Easy:1, medium:Medium:2, hard:Hard:3
+ *   default = hard
+ *
+ *   [survival]
+ *   label   = Survival
+ *   levels  = easy:Easy:1, medium:Medium:2, hard:Hard:3
+ *   default = hard
+ *
+ * The section header is the mode KEY, one `levels` entry is
+ * `key:Label:chips`, and `default` names the level key a freshly added bot
+ * starts at. The FIRST section is mode 0 — the mode every ordinary game
+ * uses.
+ *
+ * `chips` is 1, 2 or 3: how many of the lobby's three difficulty chips the
+ * level lights. It is OPTIONAL. A level that omits it takes its POSITION on
+ * the scale instead — first kept level 1, second 2, third and later 3 — so a
+ * manifest written before chips existed still means what it always meant, and
+ * a third-party brain does not have to be edited to keep working. A level that
+ * DOES declare it and gives anything other than 1, 2 or 3 is dropped.
+ *
+ * `levels` itself is OPTIONAL too. A mode may declare none, which says the
+ * brain has one way of playing and no difficulty to pick. The lobby then shows
+ * no difficulty tag on the row and no difficulty dropdown in the gear form for
+ * that mode. Note the consequence: a `levels` line whose entries are all
+ * malformed is indistinguishable from an absent one, so it reads as "no
+ * difficulty" rather than falling back.
+ *
+ * Keys are what reach the brain (the "mode=" / "difficulty=" init tokens);
+ * labels are what the lobby shows. A brain with no modes.txt is given the
+ * synthesized single mode below, which is exactly the behaviour that
+ * existed before manifests: Default with easy / medium / hard, hard by
+ * default. */
+#define BRAIN_MODES_MAX       8    /* modes one brain may declare  */
+#define BRAIN_LEVELS_MAX      8    /* levels one mode may declare  */
+#define BRAIN_MODE_KEY_LEN    16   /* key, incl. NUL (15 chars)    */
+#define BRAIN_MODE_LABEL_LEN  32   /* label, incl. NUL (31 chars)  */
+
+typedef struct {
+    char key[BRAIN_MODE_KEY_LEN];      /* "hard" — reaches the brain  */
+    char label[BRAIN_MODE_LABEL_LEN];  /* "Hard" — shown in the lobby */
+    /* How many of the lobby's three difficulty chips this level lights, 1..3.
+     * DECLARED by the brain, never inferred from the level's position in the
+     * list: a brain that offers four levels, or names them something other
+     * than easy/medium/hard, still has to say where each one sits on the
+     * three-chip scale. A level that declares anything else is DROPPED at
+     * parse time rather than defaulted, because the lobby has nothing
+     * meaningful to draw for it. */
+    int  chips;
+} BrainLevel;
+
+typedef struct {
+    char       key[BRAIN_MODE_KEY_LEN];
+    char       label[BRAIN_MODE_LABEL_LEN];
+    int        levelCount;                     /* 1..BRAIN_LEVELS_MAX */
+    BrainLevel levels[BRAIN_LEVELS_MAX];
+    int        defaultLevel;                   /* index into levels[] */
+} BrainMode;
+
+typedef struct {
+    int       modeCount;                       /* 1..BRAIN_MODES_MAX  */
+    BrainMode modes[BRAIN_MODES_MAX];
+} BrainModes;
+
+/* Load a brain's mode manifest by its catalogue name ("GoalHunter_1.7"),
+ * searching the same parents brainListLoadMeta does. *out is ALWAYS filled
+ * with something usable: a brain with no (or an unreadable, or an empty)
+ * modes.txt gets the synthesized "default" mode described above. Returns
+ * true only when a manifest was read and yielded at least one mode, so a
+ * caller that cares can tell "the brain said so" from "we made it up". */
+bool brainListLoadModes(const char *name, BrainModes *out);
+
+/* Same, keyed off a brain's init.lua path ("Brains/GoalHunter_1.7/init.lua")
+ * rather than its catalogue name — the shape the dedicated server, the
+ * single-player seed and the bot manager all hold. */
+bool brainListLoadModesForPath(const char *brainPath, BrainModes *out);
+
+/* Key -> index lookups, case-insensitive. Return -1 when the key is
+ * absent (or any argument is NULL), so a caller can warn about an unknown
+ * key instead of silently running a different mode. */
+int brainModesFindMode(const BrainModes *modes, const char *key);
+int brainModeFindLevel(const BrainMode *mode, const char *key);
+
+/* Split "Name_<ver>" into base ("Name") + numeric version (1.7). No trailing
+ * _<digit> suffix → version 0 and the whole name as base. Used to sort the
+ * catalogue newest-first, and by the lobby to label a bot row "GoalHunter"
+ * rather than "GoalHunter_1.7". `base` is always NUL-terminated. */
+double brainListSplitVersion(const char *name, char *base, size_t baseSz);
+
 #endif /* BRAIN_LIST_H */

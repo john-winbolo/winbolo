@@ -900,8 +900,36 @@ bool gameFrontHasLocalServer(void)            { return FALSE; }
  * returns (NULL for a netUdp lobby — the player is not the host). */
 ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
 void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
-void gameFrontGetChosenBotBrain(char *out, size_t outLen) { if (out && outLen) out[0] = '\0'; }
-void gameFrontSetChosenBotBrain(const char *name)    { (void)name; }
+/* No prefs file in the browser, so the player never has a stored bot
+ * difficulty: the getter always reports "not chosen" and the lobby /
+ * skill-guess callers fall back to their own default. */
+bool gameFrontGetChosenBotDifficulty(uint8_t *out) { (void)out; return false; }
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty) { (void)difficulty; }
+/* Same for the mode preference: nothing is stored, so a bot always runs in
+ * the brain's first (default) mode at that mode's own default level. */
+void gameFrontSetChosenBotModeAndLevel(const char *modeKey, const char *levelKey) {
+  (void)modeKey; (void)levelKey;
+}
+bool gameFrontGetChosenBotModeKey(char *out, size_t outSz) {
+  if (out && outSz) out[0] = '\0';
+  return false;
+}
+bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz) {
+  if (out && outSz) out[0] = '\0';
+  return false;
+}
+uint8_t gameFrontSpBotMode(const char *brainPath) { (void)brainPath; return 0; }
+/* No prefs in the browser: a bot's tag colour is never remembered, so the
+ * lobby re-derives it from the name each session (same result every time). */
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb) { (void)botName; (void)rgb; return false; }
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) { (void)botName; (void)rgb; }
+/* No WinBolo.net stats plumbing here either, so the skill guess has nothing
+ * to go on: the browser build gets the same Hard every difficulty currently
+ * plays like. */
+uint8_t gameFrontSpBotDifficulty(void) { return BOT_DIFFICULTY_HARD; }
+uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
+  (void)brainPath; (void)mode; return BOT_DIFFICULTY_HARD;
+}
 
 /* Client-hosting write-through setters. The desktop build persists each key
  * into [HOSTING] as it changes; there is no prefs file in the browser, so

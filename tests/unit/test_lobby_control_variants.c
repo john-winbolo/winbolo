@@ -417,6 +417,7 @@ int run_lobby_bot_config_codec_and_apply(void) {
     in.u.lobbyBotConfig.slot        = 5;
     in.u.lobbyBotConfig.difficulty  = 3;
     in.u.lobbyBotConfig.personality = 7;
+    in.u.lobbyBotConfig.mode        = 2;
     strncpy(in.u.lobbyBotConfig.name, "BotOnFive",
             sizeof(in.u.lobbyBotConfig.name) - 1);
 
@@ -426,6 +427,7 @@ int run_lobby_bot_config_codec_and_apply(void) {
     UT_ASSERT(out.u.lobbyBotConfig.slot        == 5);
     UT_ASSERT(out.u.lobbyBotConfig.difficulty  == 3);
     UT_ASSERT(out.u.lobbyBotConfig.personality == 7);
+    UT_ASSERT(out.u.lobbyBotConfig.mode        == 2);
     UT_ASSERT(strcmp(out.u.lobbyBotConfig.name, "BotOnFive") == 0);
 
     /* Apply: difficulty + personality land on the cs arrays. The name
@@ -440,6 +442,7 @@ int run_lobby_bot_config_codec_and_apply(void) {
     clientSimApplyControl(cs, &in);
     UT_ASSERT(cs->lobbyBotDifficulty[5]  == 3);
     UT_ASSERT(cs->lobbyBotPersonality[5] == 7);
+    UT_ASSERT(cs->lobbyBotMode[5]        == 2);
     UT_ASSERT_MSG(
         strcmp(cs->lobbySlots[5].playerName, "ExistingSlotName") == 0,
         "lobbyBotConfig.name should not stomp lobbySlots[].playerName, got '%s'",
