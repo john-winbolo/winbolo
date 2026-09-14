@@ -37,10 +37,12 @@
  *
  * ── Lifecycle ───────────────────────────────────────────────────────────
  *   loopbackHarnessStart(&h, name, lobbyMode, impairSpec, seed)
- *       Picks an ephemeral localhost port, creates a ServerSim (running when
- *       lobbyMode is false, lobby when true) with no pre-added players, runs
- *       serverInstanceStartup with acceptRemoteClients=true, then connects a
- *       fresh ClientSim over UDP. Returns false on any setup failure.
+ *       Creates a ServerSim (running when lobbyMode is false, lobby when
+ *       true) with no pre-added players, runs serverInstanceStartup with
+ *       acceptRemoteClients=true and udpPort=0 — the OS picks an ephemeral
+ *       localhost port and the harness reads back the one it bound — then
+ *       connects a fresh ClientSim over UDP to it. Returns false on any
+ *       setup failure.
  *   loopbackHarnessPump(&h)              one client tick + one server tick.
  *   loopbackHarnessPumpUntil(...)        pump until a predicate holds.
  *   loopbackHarnessTriggerGameStart(&h)  mark the joined client ready and
