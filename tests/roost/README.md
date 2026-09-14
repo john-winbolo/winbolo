@@ -95,7 +95,7 @@ said, and the runner reports a round that gave no verdict. Say the numbers in
 as few words as they need.
 
 **An ORDER's reply does come back; an operator command's does not.** The old
-operator commands (`cp:5`, `attack:5`, `stop`) answer to the bot's own seat
+operator commands (`!cp:5`, `!attack:5`, `!stop`; the leading `!` is required) answer to the bot's own seat
 (`msg_dest = 1 << player_number`), a local echo that is never published, so
 `on_chat` never sees one. The bot-command lines in `orders.lua` are the other
 way round: acks, "released", "Busy (...)" and the group line go to the ALLIES
