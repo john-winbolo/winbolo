@@ -62,12 +62,31 @@ extern "C" {
  * also clears the wreckage a previously crashed run left behind. A pid
  * would make every crash leak a directory nothing ever cleans up.
  *
- * The one case this does not cover is two concurrent runs of the same test,
- * which CTest never does.
+ * The one case this does not cover is two concurrent runs of the same test.
+ * CTest never does that within one invocation, but two invocations do it all
+ * the time — a developer alongside an agent, or two worktrees on one
+ * machine — and a name that is the same every run is exactly what makes
+ * them collide. utScratchPath below is the answer to that; prefer it for
+ * anything that lands on disk, and reach for this only to label something.
  *
  * Do not use it to vary what a test ASSERTS — only where it keeps its
  * scratch files. */
 const char *utCurrentTestName(void);
+
+/* Build a path to `leaf` inside a directory private to this process and
+ * this test, creating the directory on first use. Pass NULL or "" for the
+ * directory itself. False means the directory could not be created and
+ * nothing was written to `out`.
+ *
+ * The layout is <build dir>/test-scratch/<pid>/<test name>/<leaf>, which
+ * keeps two worktrees, two runs and two tests apart at once; scratch_dir.c
+ * carries the reasoning and the measurement behind it. The process removes
+ * its own subtree at exit.
+ *
+ * Use it for every file a test writes. An absolute path under /tmp is the
+ * worst case — it puts every checkout on the machine on one file — but a
+ * name baked in at compile time is only better by degree. */
+bool utScratchPath(char *out, size_t outSz, const char *leaf);
 
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
