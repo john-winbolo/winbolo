@@ -50,6 +50,7 @@
 #include "bot_manager.h"           /* botManagerIsBot — the pool's own answer */
 #include "players.h"               /* playersIsAllie — the seat keeps its team */
 #include "client_sim.h"
+#include "client_sim_control.h"    /* clientSimApplyControl — the mirror's arm */
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "transport_udp_internal.h" /* PACKET_HEADER_SIZE */
