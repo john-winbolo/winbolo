@@ -2448,16 +2448,14 @@ static void renderPlayersContent(ClientSim *cs) {
 
     ImGui::Separator();
 
-    /* Pre-compute alliance state */
+    /* Who we are allied with, for the per-row indicator. Whether the two
+     * alliance buttons are live is allianceActionState's answer, not this
+     * loop's — see the block further down that asks it. */
     BYTE self = clientSimGetMyPlayerNum(cs);
-    bool hasAllies  = false;
-    bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i] && i != self) {
             isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
-            if (isAlly[i]) hasAllies = true;
-            else if (s_playerChecked[i]) canRequest = true;
         }
     }
 
@@ -4953,7 +4951,10 @@ static void renderMenuBar(ClientSim *cs) {
            Both states are tested: the desktop pop-out and the in-window
            panel. A desktop build in controller mode uses the in-window one
            (see sdl3ImguiShowPlayersPanel), so reading only s_popPlayers would
-           leave the item unticked with the panel plainly on screen. */
+           leave the item unticked with the panel plainly on screen.
+
+           The macOS native item is the same checked toggle, driven by
+           MacMenuState.playersPanelShown, so the two bars agree. */
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
             const bool panelShown = playersPanelShown();
@@ -4973,19 +4974,14 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, false);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAlliedPlayers(cs);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckNearbyPlayers(cs);
-        /* Pre-compute alliance state for each player */
+        /* Who we are allied with, for the coloured indicator and the bot chip
+         * on each roster row below. The Request / Leave items further down ask
+         * allianceActionState instead, so this loop decides nothing. */
         BYTE self = clientSimGetMyPlayerNum(cs);
-        bool hasAllies  = false;
-        bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (s_playerEnabled[i] && i != self) {
                 isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
-                if (isAlly[i]) {
-                    hasAllies = true;
-                } else if (s_playerChecked[i]) {
-                    canRequest = true;
-                }
             }
         }
 
@@ -6452,6 +6448,11 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->netInfoOpen     = sdl3ImguiIsNetInfoOpen();
     s->gameInfoOpen    = sdl3ImguiIsGameInfoOpen();
     s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
+    /* Both of the panel's forms count, for the reason the in-window item's
+     * comment gives: a desktop build in controller mode shows the in-window
+     * panel, so reading the pop-out alone would leave the native item
+     * unticked with the panel plainly on screen. */
+    s->playersPanelShown = playersPanelShown();
     s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
     s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
                              !gameFrontFullScreen && !classicModeActive());
@@ -6474,23 +6475,15 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
     s->fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
 
-    /* Alliance gating — mirrors the in-window Players menu pre-compute
-     * at line ~2157. NULL cs leaves both predicates false, so the native
-     * Request/Leave Alliance items render disabled during bring-up. */
-    bool hasAllies = false, canRequest = false;
-    if (cs) {
-        BYTE self = clientSimGetMyPlayerNum(cs);
-        for (int i = 0; i < MAX_PLAYERS; i++) {
-            if (s_playerEnabled[i] && i != self) {
-                bool ally = clientSimIsPlayerAlly(cs, self, (BYTE)i);
-                if (ally) hasAllies = true;
-                else if (s_playerChecked[i]) canRequest = true;
-            }
-        }
-    }
-    s->hasAllies  = hasAllies;
-    s->canRequest = canRequest;
-    s->inCooldown = sdl3ImguiAllianceReqInCooldown();
+    /* Alliance items — the same answer the in-window bars act on, so the two
+     * surfaces cannot disagree about whether a click will do anything. The
+     * native refresh copies these straight onto the items. allianceActionState
+     * dereferences cs, so a NULL one skips the call and leaves both false,
+     * which renders Request and Leave disabled during bring-up. */
+    AllianceActionState mac = {};
+    if (cs) mac = allianceActionState(cs);
+    s->canRequest = mac.canRequest;
+    s->canLeave   = mac.canLeave;
 
     /* Vote gating — same pre-compute as the in-window Players menu vote
      * block (count active human teams, check our own team assignment).
