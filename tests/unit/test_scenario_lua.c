@@ -121,9 +121,11 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     }
     luaL_openlibs(L);
     scenarioLuaTimersReset(&slTimers);
-    ctx->sim      = sim;
-    ctx->manifest = m;
-    ctx->timers   = &slTimers;
+    ctx->sim       = sim;
+    ctx->manifest  = m;
+    ctx->timers    = &slTimers;
+    /* Running the file, not checking it: the write rows apply. */
+    ctx->checkOnly = false;
     scenarioLuaInstall(L, ctx);
     return L;
 }

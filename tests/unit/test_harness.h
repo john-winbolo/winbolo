@@ -2391,6 +2391,7 @@ int run_scenario_host_edit_after_attach(void);
 int run_scenario_host_reload_picks_up_edit(void);
 int run_scenario_host_reload_bad_syntax(void);
 int run_scenario_host_reload_bad_api(void);
+int run_scenario_host_reload_applies_nothing(void);
 
 /* The round's lifecycle (test_scenario_host.c): the two lifecycle
  * calls, a fresh set of globals per round, the error limit at its

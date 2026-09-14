@@ -32,6 +32,10 @@
  *                                       refused and changes nothing
  * run_scenario_host_reload_bad_api    — a reload written for a newer server
  *                                       is refused and changes nothing
+ * run_scenario_host_reload_applies_nothing
+ *                                     — the write rows refuse while the
+ *                                       edited file is checked, so its top
+ *                                       level cannot reach the round
  *
  * and the round's lifecycle:
  *
@@ -2032,5 +2036,87 @@ int run_scenario_host_failed_start_drops_manifest(void) {
     serverSimDestroy(sim);
     shDrop(kMap);
     remove(kMarker);
+    return 0;
+}
+
+/* ── 28. A reload checks the file and applies nothing ─────────────── */
+
+/* The edited file is loaded in a state of its own to find out whether it can
+ * be used, and loading it runs its top level. That state reads the live sim,
+ * because a file that reads the sim as it loads has to be able to — but
+ * every row that writes refuses while it does, or a file whose top level
+ * ends a round or seats a bot would do it to the round that is playing, from
+ * a console command that says it changed nothing until the next round.
+ *
+ * What the two rows answered is recorded from inside the chunk, since the
+ * state they ran in is closed before the reload returns. The lobby row would
+ * have been refused by the round's state in any case, so the sentence it
+ * carries is what says which refusal it was. */
+int run_scenario_host_reload_applies_nothing(void) {
+    static const char *const kMap    = "scnhost_reload_writes.map";
+    static const char *const kRecord = "scnhost_reload_writes.record";
+    static const char *const kFirst =
+        "scenario = { name = \"Quiet\", api = 1 }\n";
+    static const char *const kBody =
+        "local a, msg = game.message(\"x\")\n"
+        "note(\"msg=\" .. tostring(msg) .. \";\")\n"
+        "local b, bot, detail = game.lobby_add_bot({ team = 2,"
+        " name = \"Ghost\" })\n"
+        "note(\"bot=\" .. tostring(bot) .. \";\")\n"
+        "note(\"detail=\" .. tostring(detail) .. \";\")\n"
+        "scenario = { name = \"Loud\", api = 1 }\n";
+    char          lua[1024];
+    char          got[256];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    ShText        text;
+    char          err[512];
+    BYTE          before;
+
+    remove(kRecord);
+    UT_ASSERT(shPut(kMap, kFirst));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);
+    shWatchText(sim, &text);
+    before = serverSimGetNumPlayers(sim);
+
+    shScript(lua, sizeof(lua), kRecord, kBody);
+    UT_ASSERT(shPut(kMap, lua));
+    err[0] = '\0';
+    UT_ASSERT_MSG(scenarioHostReload(h, err, sizeof(err)),
+                  "the reload was refused: %s", err);
+
+    shRead(kRecord, got, sizeof(got));
+    UT_ASSERT_MSG(strstr(got, "msg=SCN_OP_WRONG_STATE") != NULL,
+                  "the top level's line to the players answered '%s', and a "
+                  "reload sends none", got);
+    UT_ASSERT_MSG(strstr(got, "bot=SCN_OP_WRONG_STATE") != NULL,
+                  "the top level's lobby seat answered '%s'", got);
+    UT_ASSERT_MSG(strstr(got, "applies nothing") != NULL,
+                  "the refusal does not say it was the reload's: '%s'", got);
+
+    UT_ASSERT_MSG(text.count == 0,
+                  "%d lines reached the game from a file that was only being "
+                  "checked", text.count);
+    UT_ASSERT_MSG(serverSimGetNumPlayers(sim) == before,
+                  "the roster went from %u to %u over a reload",
+                  (unsigned)before, (unsigned)serverSimGetNumPlayers(sim));
+
+    /* And the file is the one the host now holds, so the check really did
+       run the edited bytes rather than stopping short of them. */
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), "Loud") == 0,
+                  "the round after the reload reads '%s'", scenarioHostName(h));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    remove(kRecord);
     return 0;
 }

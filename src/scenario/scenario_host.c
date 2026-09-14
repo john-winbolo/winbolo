@@ -2534,10 +2534,13 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         free(src);
         return NULL;
     }
-    h->sim          = sim;
-    h->lua.sim      = sim;
-    h->lua.manifest = &h->manifest;
-    h->lua.timers   = &h->timers;
+    h->sim           = sim;
+    h->lua.sim       = sim;
+    h->lua.manifest  = &h->manifest;
+    h->lua.timers    = &h->timers;
+    /* Every state this host boots runs the scenario rather than checking it;
+       the reload is the one that checks. */
+    h->lua.checkOnly = false;
     /* calloc left every reference at 0, which is a reference to something.
        An empty set is LUA_NOREF throughout. */
     scenarioLuaTimersReset(&h->timers);
@@ -2688,19 +2691,26 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        round start rather than being turned down for a table this one
        state lacked.
 
-       It carries a context of its own, though. The rows that read the sim
-       are the same; the two that write what the host is holding are not
-       given it. A chunk that defined a region from the top level would move
-       a rectangle under the round that is playing, and one that set a timer
-       would leave the round holding a function in a state this call is
-       about to close. Both would break the one thing a reload promises,
-       which is that nothing changes until the next round start. The
-       manifest it writes into is the local below, which is read over a few
-       lines later. */
+       It carries a context of its own, though, and that context says it is
+       checking. Every row that writes refuses while it does, so a file whose
+       top level ends a round, seats a bot or sends the players a line is
+       read for whether it loads and applies none of it. The two rows that
+       write what the host is holding are turned away the same way: the
+       manifest a region would be defined in is the local below, which is
+       read over a few lines later, and a state with no timer set refuses a
+       timer rather than leaving the round holding a function in a state this
+       call is about to close. All of it is the one thing a reload promises —
+       that nothing changes until the next round start.
+
+       The rows that read are left working: what the check is for is finding
+       out whether the file loads, and a file that reads the sim as it loads
+       has to be able to. The console command holds the server mutex across
+       the whole reload, so those reads see one picture of the round. */
     memset(&m, 0, sizeof(m));   /* the chunk can read it before it is read */
-    check.sim      = h->sim;
-    check.manifest = &m;
-    check.timers   = NULL;
+    check.sim       = h->sim;
+    check.manifest  = &m;
+    check.timers    = NULL;
+    check.checkOnly = true;
     L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");

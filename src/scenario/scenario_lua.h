@@ -71,11 +71,20 @@ typedef struct {
  * over it — so what a script defines lasts the round and no longer.
  *
  * timers may be NULL, which leaves a state with no timers: the row refuses
- * rather than reaching through nothing. */
+ * rather than reaching through nothing.
+ *
+ * checkOnly says this state is reading a file to see whether it can be used,
+ * not running it. The reload sets it: the edited file's top level runs in a
+ * state of its own, and a top level that writes would otherwise apply to the
+ * round that is playing, against the one thing a reload promises — that
+ * nothing changes until the next round start. Every row that reaches the op
+ * funnel refuses while it is set, and the rows that read answer as they
+ * always do, which is what the check is for. */
 typedef struct {
     ServerSim        *sim;
     ScenarioManifest *manifest;
     ScnTimerSet      *timers;
+    bool              checkOnly;
 } ScnLuaCtx;
 
 /* One script-visible function: what it is called, what runs it, and the one

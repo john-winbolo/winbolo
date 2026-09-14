@@ -1201,6 +1201,30 @@ static int scnRefusedV(lua_State *L, ScnOpResult r, const char *fmt,
     return 3;
 }
 
+/* Whether this state is checking a file rather than running one. A reload
+ * loads the edited script in a state of its own to find out whether it can
+ * be used, and that state runs the file's top level like any other — so a
+ * top level that writes would write into the round that is playing.
+ *
+ * Asked by every row that reaches the op funnel, and by no row that reads:
+ * what the check is for is finding out whether the file loads, and a file
+ * that reads the sim while it loads has to be able to. */
+static bool scnCheckingOnly(lua_State *L) {
+    const ScnLuaCtx *c = scnCtx(L);
+
+    return c != NULL && c->checkOnly;
+}
+
+/* What such a row answers, spelled once so every one of them says the same
+ * thing. A wrong state rather than a refusal of its arguments: the row is
+ * fine and the moment is not. */
+static int scnCheckOnlyRefusal(lua_State *L) {
+    lua_pushnil(L);
+    lua_pushstring(L, scenarioLuaResultName((int)SCN_OP_WRONG_STATE));
+    lua_pushliteral(L, "a reload checks the file and applies nothing");
+    return 3;
+}
+
 /* A refusal the row itself makes, for a number the payload could not carry
  * at all. The code is the one the funnel would have answered had it been
  * able to see the value. */
@@ -1221,10 +1245,14 @@ static int scnRefused(lua_State *L, ScnOpResult r, const char *fmt, ...) {
  * The rows that answer with an index or a seat of their own pass an out
  * struct and read it themselves. */
 static int scnDone(lua_State *L, ScenarioOp *op, const char *fmt, ...) {
-    ScnOpResult r = serverSimApplyScenarioOp(scnCtx(L)->sim, op, NULL);
+    ScnOpResult r;
     va_list     ap;
     int         n;
 
+    if (scnCheckingOnly(L)) {
+        return scnCheckOnlyRefusal(L);
+    }
+    r = serverSimApplyScenarioOp(scnCtx(L)->sim, op, NULL);
     if (r == SCN_OP_OK) {
         lua_pushboolean(L, 1);
         return 1;
@@ -1744,6 +1772,9 @@ static int scnAdded(lua_State *L, ScenarioOp *op, const char *fmt, ...) {
     va_list     ap;
     int         n;
 
+    if (scnCheckingOnly(L)) {
+        return scnCheckOnlyRefusal(L);
+    }
     memset(&out, 0, sizeof(out));
     r = serverSimApplyScenarioOp(scnCtx(L)->sim, op, &out);
     if (r == SCN_OP_OK) {
@@ -2171,6 +2202,9 @@ static int scnLuaSpawnBot(lua_State *L) {
     lua_Integer team, slot;
     int         loadout;
 
+    if (scnCheckingOnly(L)) {
+        return scnCheckOnlyRefusal(L);
+    }
     scnArgTable(L, 1, "t");
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_ROSTER_SPAWN_BOT;
@@ -2276,6 +2310,9 @@ static int scnLuaLobbyAddBot(lua_State *L) {
     size_t      len = 0;
     lua_Integer team, slot;
 
+    if (scnCheckingOnly(L)) {
+        return scnCheckOnlyRefusal(L);
+    }
     scnArgTable(L, 1, "t");
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_LOBBY_ADD_BOT;

@@ -1161,6 +1161,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_host_reload_picks_up_edit",      run_scenario_host_reload_picks_up_edit      },
     { "scenario_host_reload_bad_syntax",         run_scenario_host_reload_bad_syntax         },
     { "scenario_host_reload_bad_api",            run_scenario_host_reload_bad_api            },
+    { "scenario_host_reload_applies_nothing",       run_scenario_host_reload_applies_nothing       },
     { "scenario_host_fresh_globals_per_round",      run_scenario_host_fresh_globals_per_round      },
     { "scenario_host_setup_in_window",              run_scenario_host_setup_in_window              },
     { "scenario_host_start_on_first_running_tick",  run_scenario_host_start_on_first_running_tick  },
