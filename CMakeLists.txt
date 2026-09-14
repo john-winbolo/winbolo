@@ -3460,6 +3460,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    # The scripted game type: the fourth value resolving through the base game
+    # a scenario declared, at the loadout and at the start, and that value
+    # going when the template does.
+    tests/unit/test_scripted_game_type.c
+    # What the lobby says about its scenario: the settings body with and
+    # without one, the scripted game type a commit sets and gives back, and
+    # the ranked and AI-policy settings a scenario does not go with.
+    tests/unit/test_lobby_scenario_settings.c
     tests/unit/test_unfielded_seat.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
@@ -3545,6 +3553,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_time_minutes_valid.c
     tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
+    # The lobby's reload request: who may ask, when, and what a lobby with
+    # no scenario answers.
+    tests/unit/test_lobby_reload_scenario.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4214,6 +4225,7 @@ set(_unit_test_names
     prefs_api_mark_synced
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
+    lobby_settings_scenario_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
@@ -4406,6 +4418,13 @@ set(_unit_test_names
     lobby_bot_name_skip_excludes_self_from_uniqueness
     lobby_bot_name_accepts_clean_unique
     lobby_map_list_chunked
+    lobby_map_list_scripted_golden
+    lobby_map_list_scripted_mixed
+    lobby_reload_scenario_needs_host
+    lobby_reload_scenario_needs_lobby
+    lobby_reload_scenario_no_scenario
+    lobby_reload_scenario_calls_back
+    lobby_reload_scenario_cooldown
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -5076,6 +5095,12 @@ set(_unit_test_names
     scenario_setup_window_shut_refuses_all
     scenario_setup_window_no_callback
     scenario_setup_window_holds_publish
+    scenario_round_boot_before_tanks
+    scenario_round_boot_publishes_rules_once
+    scenario_setup_events_off_the_wire
+    scenario_setup_terrain_raises_map_events
+    scenario_setup_terrain_reaches_shadow
+    scenario_round_start_clears_seat_holders
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -5153,6 +5178,9 @@ set(_unit_test_names
     scenario_lobby_set_team
     scenario_roster_bots_seat_past_the_human_cap
     scenario_roster_spawn_named_start
+    scenario_roster_spawn_loadout_named
+    scenario_roster_spawn_loadout_without_policy
+    scenario_roster_spawn_loadout_not_next_life
     lobby_template_map_commit_seats
     lobby_template_return_reconciles
     lobby_template_return_unfields
@@ -5169,6 +5197,23 @@ set(_unit_test_names
     lobby_template_commit_keeps_new_lobby
     lobby_template_cancel_restores_path_inmem
     lobby_template_cancel_restores_path_random
+    scripted_game_type_loadout_follows_base
+    scripted_game_type_no_base_is_open
+    scripted_game_type_strict_ignores_base
+    scripted_game_type_start_follows_base
+    scripted_game_type_plain_map_clears_base
+    scripted_game_type_client_follows_settings
+    lobby_scenario_settings_plain_bytes
+    lobby_scenario_settings_scripted_bytes
+    lobby_scenario_settings_roundtrip
+    lobby_scenario_commit_sets_type
+    lobby_scenario_reset_keeps_rules
+    lobby_scenario_refuses_ranked
+    lobby_scenario_refuses_ai_none
+    lobby_scenario_refuses_game_type
+    lobby_scenario_boot_sets_type
+    lobby_scenario_identity_strips_controls
+    lobby_scenario_nolobby_boot_seats_template
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready
@@ -5284,6 +5329,12 @@ set(_unit_test_names
     scenario_host_vm_lock_second_thread
     scenario_host_audit_human_lost
     scenario_host_failed_start_drops_manifest
+    scenario_host_round_answers_its_own_start
+    scenario_host_opening_tank_under_rules
+    scenario_host_boot_failure_still_starts
+    scenario_host_round_after_scenario_is_classic
+    scenario_host_tag_follows_switch
+    scenario_host_chunk_events_reach_hooks
     scenario_host_metatable_raises
     scenario_host_metatable_not_read
     scenario_host_hook_via_global_metatable
@@ -5303,6 +5354,7 @@ set(_unit_test_names
     scenario_validate_syntax_error_line
     scenario_validate_lines_point_at_the_key
     scenario_validate_wave_defense
+    scenario_validate_unknown_game
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -5321,6 +5373,7 @@ set(_unit_test_names
     scenario_lua_detail_carries_the_number
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
+    scenario_lua_game_type_resolves_scripted
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

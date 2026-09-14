@@ -41,6 +41,8 @@
  *                                          line its key is written on
  * run_scenario_validate_wave_defense     — the script that ships beside Wave
  *                                          Defense.map, against that map
+ * run_scenario_validate_unknown_game     — a game type the engine has no word
+ *                                          for, and one it does
  */
 
 #include <stdint.h>
@@ -604,5 +606,51 @@ int run_scenario_validate_wave_defense(void) {
                   "the script calls itself '%s'", r.manifest.name);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 14. A game type the engine has no word for ───────────────────── */
+
+/* The attach reads scenario.game through the word set a spawn op's loadout
+   takes and drops anything that set does not hold, so a typo plays open with
+   nothing said. The check has to name the word and the three that work, and
+   has to stay quiet for a word that does work. */
+int run_scenario_validate_unknown_game(void) {
+    static const char *const kBad  = "scnval_game_bad.map";
+    static const char *const kGood = "scnval_game_good.map";
+    ServerSim               *sim;
+    ScnValidateResult        r;
+    const ScnValidateIssue  *iss;
+    char                     seen[1024];
+
+    UT_ASSERT(svPut(kBad,
+        "scenario = { name = \"Typo\", api = 1, game = \"tournement\" }\n"));
+    sim = svSim();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT_MSG(!scenarioValidateMap(sim, kBad, &r),
+                  "a game type the engine has no word for was accepted");
+    svList(&r, seen, sizeof(seen));
+    iss = svFind(&r, "game");
+    UT_ASSERT_MSG(iss != NULL, "no issue under the game key: %s", seen);
+    UT_ASSERT_MSG(strstr(iss->message, "tournement") != NULL,
+                  "the issue does not name the word: %s", iss->message);
+    UT_ASSERT_MSG(strstr(iss->message, "open") != NULL &&
+                  strstr(iss->message, "tournament") != NULL &&
+                  strstr(iss->message, "strict") != NULL,
+                  "the issue does not name the three that work: %s",
+                  iss->message);
+
+    /* And the same field spelled the way the engine reads it. */
+    UT_ASSERT(svPut(kGood,
+        "scenario = { name = \"Fine\", api = 1, game = \"tournament\" }\n"));
+    if (!scenarioValidateMap(sim, kGood, &r)) {
+        svList(&r, seen, sizeof(seen));
+        UT_FAIL("a game type the engine does read was refused: %s", seen);
+    }
+
+    serverSimDestroy(sim);
+    svDrop(kBad);
+    svDrop(kGood);
     return 0;
 }

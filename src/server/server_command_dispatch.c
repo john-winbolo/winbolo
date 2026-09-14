@@ -20,6 +20,7 @@
 #include "brain_list.h"               /* BRAIN_MODES_MAX, BRAIN_LEVELS_MAX */
 #include "client_command.h"
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
+#include "server_sim_scenario.h"      /* serverSimScenarioReload */
 #include "log.h"
 #include "mapgen.h"                   /* MapGenConfig, mapGenSeedToConfig */
 #include "netpacks.h"                 /* lobbyBotNameAcceptable */
@@ -362,11 +363,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             (serverSimGetServerLocks(sim) & lockBit) != 0u) {
             return CMD_REJECT_LOCKED;
         }
-        if (!serverSimApplyLobbySetting(sim, p->settingType, p->value,
-                                        p->valueLen)) {
-            return CMD_REJECT_INVALID;
-        }
-        return CMD_OK;
+        /* The Result form, so a setting the map's scenario fixes comes back
+           as that rather than as a bare invalid: those three were the host's
+           to set a map ago and the toast has to say what took them away. */
+        return serverSimApplyLobbySettingResult(sim, p->settingType, p->value,
+                                                p->valueLen);
     }
     case CMD_CHAT: {
         const CmdChat *p = &cmd->u.chat;
@@ -813,6 +814,63 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
                      serverSimGetMapDirRoot(sim), relPath);
         if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
+        return CMD_OK;
+    }
+    case CMD_LOBBY_RELOAD_SCENARIO: {
+        /* The edit-reload-play loop the dedicated server's console already
+           has, for a host with no console. Lobby-only and host-only, like
+           the map change beside it: re-reading the script changes what the
+           next round plays by, which is not a joiner's to decide. */
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        /* One reload a second, per sim, before the file is opened: the read
+           and the check behind it are disk and Lua work on this thread, and
+           a datagram may carry several commands. The sender is told by the
+           toast, which is why this returns rather than sending a line. */
+        if (sim->scenarioReloadTick != 0 &&
+            sim->tick + 1 - sim->scenarioReloadTick <
+                SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioReloadTick = sim->tick + 1;
+        {
+            char err[512];
+            char line[672];
+            ControlEvent evt;
+            bool ok = serverSimScenarioReload(sim, err, sizeof(err));
+
+            /* Addressed to whoever asked. A reload says what happened even
+               when it worked, because what it changed is not visible until
+               the next round starts.
+               What a reload changes and what it does not: the script's bytes
+               are swapped and nothing else is, so a round starting later
+               boots the new rules and hooks, while the lobby the template
+               seats, the scenario's name and description and the game type
+               it declares are the map commit's and only change when the map
+               is committed again. Kept inside the 128 bytes the text event
+               carries, so the whole of it reaches the sender. */
+            if (ok) {
+                SDL_snprintf(line, sizeof(line),
+                             "Scenario re-read: the next round boots its new "
+                             "rules and hooks. Seats, name and game type "
+                             "change on a map commit.");
+            } else {
+                SDL_snprintf(line, sizeof(line), "%s", err);
+            }
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_SERVER_TEXT;
+            SDL_strlcpy(evt.u.serverText.text, line,
+                        sizeof(evt.u.serverText.text));
+            evt.u.serverText.destPlayer = (BYTE)senderSlot;
+            serverSimPublishControl(sim, &evt);
+        }
+        /* Including a reload that failed: the line above went to whoever
+           asked and carries the reason, and a reject code on top of it would
+           add a second, contentless toast saying only that something was
+           wrong. */
         return CMD_OK;
     }
     case CMD_LOBBY_PREVIEW_CANCEL: {

@@ -2311,6 +2311,26 @@
 #define STR_PING_MOUSE_X2                   2151
 #define STR_DLGKEYSETUP_PING_ALT2           2152
 
+/* The fourth game type, beside STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT:
+ * what a round whose rules come from a scenario is called. */
+#define STR_DLGGAMEINFO_SCRIPTED            2196
+
+/* The host's scripts preference, and the two lines the lobby draws about
+ * the map's scenario: the one that names it, and the one that stands in
+ * its place when the host has the preference switched off. */
+#define STR_DLGSETTINGS_HOSTING_SCRIPTS     2197
+#define STR_DLGLOBBY_SCENARIO_LBL           2198
+#define STR_DLGLOBBY_SCRIPTS_OFF            2199
+
+/* The lobby's reload button, for a host editing its map's script. */
+#define STR_DLGLOBBY_RELOAD_SCENARIO        2200
+
+/* Two more lines for the reject toast, beside the STR_DLGLOBBY_REJECT_*
+ * group above: a setting the map's scenario decides, and a command sent
+ * again before the server will take another. */
+#define STR_DLGLOBBY_REJECT_SCENARIO        2201
+#define STR_DLGLOBBY_REJECT_COOLDOWN        2202
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

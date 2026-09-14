@@ -30,6 +30,7 @@
 #include "lobby_internal.h"
 extern "C" {
 #include "../../../lang.h"
+#include "../../../gamefront.h"  /* gameFrontHostingScripts / gameFrontGetServerSim */
 }
 
 const char *lobbyGameTypeStr(gameType gt) {
@@ -37,7 +38,55 @@ const char *lobbyGameTypeStr(gameType gt) {
         case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
         case gameTournament:       return langGetText(STR_DLGGAMEINFO_TOURN);
         case gameStrictTournament: return langGetText(STR_DLGGAMEINFO_STRICT);
+        case gameScripted:         return langGetText(STR_DLGGAMEINFO_SCRIPTED);
         default:                   return langGetText(STR_UNKNOWN);
+    }
+}
+
+/* The scenario the lobby's map is running, under the map's own lines in
+ * both lobby layouts. It belongs to the map — the script file sits beside
+ * it — and the description is prose, so it goes on lines of its own rather
+ * than onto the single settings row, which is built from SameLine and ends
+ * with a right-aligned badge.
+ *
+ * The source is 0 when the round has no scenario, which covers a map with
+ * no script file and a map whose script this host declined alike: the
+ * server answers the same either way. So when this client is the one
+ * hosting and has the preference switched off, the line says that instead
+ * of nothing, rather than leaving a player wondering where the scenario
+ * went. Nothing is drawn for a joiner on a plain map. */
+void lobbyRenderScenarioLine(ClientSim *cs) {
+    if (cs == NULL) return;
+
+    if (clientSimGetLobbyScenarioSource(cs) != 0) {
+        const char *name = clientSimGetLobbyScenarioName(cs);
+        const char *desc = clientSimGetLobbyScenarioDescription(cs);
+        /* A scenario that named itself nothing still came from a file. */
+        if (name[0] == '\0') name = clientSimGetLobbyScenarioFileName(cs);
+        ImGui::TextWrapped("%s %s",
+                           langGetText(STR_DLGLOBBY_SCENARIO_LBL), name);
+        if (desc[0] != '\0') {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::TextWrapped("%s", desc);
+            ImGui::PopStyleColor();
+        }
+        /* The edit-reload-play loop, for the host who has the script file on
+           the machine the server is running on. The server answers with a
+           line addressed to whoever asked, including what a reload that
+           failed says, so nothing is reported from here. */
+        if (clientSimGetLobbyHostSlot(cs) == clientSimGetMyPlayerNum(cs) &&
+            !clientSimIsSpectator(cs)) {
+            if (ImGui::SmallButton(
+                    langGetText(STR_DLGLOBBY_RELOAD_SCENARIO))) {
+                clientSimNetSendLobbyReloadScenario(cs);
+            }
+        }
+        return;
+    }
+    if (!gameFrontHostingScripts && gameFrontGetServerSim() != NULL) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCRIPTS_OFF));
+        ImGui::PopStyleColor();
     }
 }
 

@@ -292,6 +292,7 @@ static const char *gameTypeStr(gameType g) {
     switch (g) {
     case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
     case gameTournament:     return langGetText(STR_DLGGAMEINFO_TOURN);
+    case gameScripted:       return langGetText(STR_DLGGAMEINFO_SCRIPTED);
     case gameStrictTournament:
     default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
     }
@@ -302,6 +303,7 @@ static const char *gameTypeAbbr(gameType g) {
     switch (g) {
     case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
     case gameTournament:     return langGetText(STR_DLGBROWSER_TYPE_TOURN_ABBR);
+    case gameScripted:       return langGetText(STR_DLGGAMEINFO_SCRIPTED);
     case gameStrictTournament:
     default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
     }

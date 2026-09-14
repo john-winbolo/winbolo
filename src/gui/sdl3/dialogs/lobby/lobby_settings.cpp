@@ -1157,17 +1157,44 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             langGetText(STR_DLGGAMESETUP_RADIO1),
             langGetText(STR_DLGGAMESETUP_RADIO2),
             langGetText(STR_DLGGAMESETUP_RADIO3),
+            langGetText(STR_DLGGAMEINFO_SCRIPTED),
         };
+        /* One source for how many rows there are: the loop below used to
+         * carry a literal that had to match this array by hand. */
+        const int itemCount = (int)(sizeof(items) / sizeof(items[0]));
         bool rankedNow = clientSimGetLobbyRanked(cs);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < itemCount; i++) {
             /* gameType enum is 1-based (gameOpen=1, gameTournament=2,
              * gameStrictTournament=3), so the array index → enum
              * mapping is i+1. The previous (gameType)i comparison
              * read the wrong row as "checked" — Open showed as
              * Unknown, Tournament showed as Open, etc. */
             int enumVal = i + 1;
+            /* The scripted type has a row only while the lobby is on it, so
+               a scripted lobby has a checked row instead of an empty group
+               and every other lobby looks exactly as it did. It is never
+               offered: a host cannot pick it and the server refuses the
+               value, so committing a map with a script beside it is the only
+               thing that sets it. */
+            if ((gameType)enumVal == gameScripted &&
+                clientSimGetLobbyGameType(cs) != gameScripted) {
+                continue;
+            }
             /* Ranked games forbid the "Open" type — grey it out. */
             bool optDisabled = rankedNow && (gameType)enumVal == gameOpen;
+            if ((gameType)enumVal == gameScripted) optDisabled = true;
+            /* A scripted lobby is on the type its map commit set, and the
+               server refuses every other value while the scenario is there.
+               Greying the whole group says so, rather than letting a row be
+               picked and snap back when the refusal arrives.
+               Keyed on the scenario, which is what the server's own refusal
+               reads: the type and the scenario can disagree for a moment —
+               a lobby that has a scenario but has not been committed onto it
+               yet — and the client would then offer a row the server turns
+               down. */
+            if (clientSimGetLobbyScenarioSource(cs) != 0) {
+                optDisabled = true;
+            }
             if (optDisabled) ImGui::BeginDisabled();
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##gt%d", items[i], i);
@@ -1204,10 +1231,18 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##ai%d", items[i], i);
             bool checked = (clientSimGetLobbyAiType(cs) == (uint8_t)i);
+            /* A scenario fields its own bots, so the server refuses the row
+               that takes every bot off the roster and admits the other
+               three. Only that row is greyed: the host still picks how hard
+               the bots play. */
+            bool rowDisabled = (i == (int)aiNone &&
+                                clientSimGetLobbyScenarioSource(cs) != 0);
+            if (rowDisabled) ImGui::BeginDisabled();
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
                 lobbySendSetting(cs, LST_AI_POLICY, &v, 1);
             }
+            if (rowDisabled) ImGui::EndDisabled();
         }
         if (disable) ImGui::EndDisabled();
     }

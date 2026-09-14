@@ -785,7 +785,8 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
 /* Apply one PACKET_LOBBY_MAP_LIST_RSP chunk to the client's accumulator.
  * Wire format:
  *   [header 8] [pathLen 1] [path N] [final 1] [count 1]
- *   per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE].
+ *   per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE]
+ *              [scripted 1].
  * Server may emit multiple chunks per request — append entries and only
  * flip Ready/InFlight on the final chunk. Stale chunks (path mismatched
  * against the in-flight request) are silently dropped.
@@ -821,9 +822,9 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
         if (pos + 1 > len) break;
         uint8_t nameLen = buf[pos++];
         if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
-            pos + nameLen + 1 + 8 > len) break;
+            pos + nameLen + 1 + 8 + 1 > len) break;
         if (cs->lobbyMapListCount >= LOBBY_MAP_LIST_MAX) {
-            pos += nameLen + 1 + 8;
+            pos += nameLen + 1 + 8 + 1;
             continue;
         }
         int idx = cs->lobbyMapListCount++;
@@ -838,10 +839,12 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
             mt = (mt << 8) | buf[pos++];
         }
         cs->lobbyMapListModTime[idx] = (int64_t)mt;
+        cs->lobbyMapListScripted[idx] = buf[pos++] ? true : false;
     }
     if (finalFlag) {
         cs->lobbyMapListReady = true;
         cs->lobbyMapListInFlight = false;
+        cs->lobbyMapListSeq++;
     }
 }
 
@@ -1004,6 +1007,7 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     if (finalFlag) {
         cs->lobbyMapSearchReady = true;
         cs->lobbyMapSearchInFlight = false;
+        cs->lobbyMapListSeq++;
     }
 }
 
@@ -3126,6 +3130,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                        buf + PACKET_HEADER_SIZE + 2, plen);
             }
             c->clientSim->lobbyMapUploadStatus = 3;
+            /* The server's map directory just gained a file, so whatever
+             * listing the chooser has cached is now short by one. Drop the
+             * ready flag so the next enumerate re-asks, and tick the
+             * counter the chooser watches so an enumerate happens. */
+            c->clientSim->lobbyMapListReady = false;
+            c->clientSim->lobbyMapListSeq++;
         } else {
             c->clientSim->lobbyMapUploadStatus = 4;
             c->clientSim->lobbyMapUploadRejectCode = status;

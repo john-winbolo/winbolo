@@ -287,6 +287,17 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.type == CMD_LOBBY_PREVIEW_CANCEL);
     UT_ASSERT(out.cmdSeq == 20);
 
+    /* CMD_LOBBY_RELOAD_SCENARIO — empty body. Which script is the
+       server's own business, so there is nothing to carry. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_LOBBY_RELOAD_SCENARIO;
+    in.cmdSeq = 77;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0,
+                  "CMD_LOBBY_RELOAD_SCENARIO");
+    UT_ASSERT(out.type == CMD_LOBBY_RELOAD_SCENARIO);
+    UT_ASSERT(out.cmdSeq == 77);
+
     /* CMD_LOBBY_PREVIEW_COMMIT — empty body */
     memset(&in, 0, sizeof(in));
     in.type = CMD_LOBBY_PREVIEW_COMMIT;

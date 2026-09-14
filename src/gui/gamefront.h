@@ -1019,6 +1019,12 @@ extern bool gameFrontUseNatTraversal;
  * gameFrontHostingUploadPolicy holds an UploadPolicy value. */
 extern unsigned short gameFrontHostingPort;            /* default 27500 */
 extern bool           gameFrontHostingAllowSpec;       /* default Yes   */
+extern bool           gameFrontHostingScripts;          /* default Yes   */
+                              /* Run the script beside a hosted map. Off
+                               * hosts the map plainly, so a player with a
+                               * map pack can decline its script without
+                               * deleting the file. Set on the scenario
+                               * library before either attach site runs. */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
@@ -1041,6 +1047,7 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
+void gameFrontSetHostingScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);

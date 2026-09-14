@@ -11,8 +11,10 @@
  * request):
  *   MAP_LIST_RSP   [header 8] [pathLen 1] [path]            [final 1] [count 1]
  *                  per entry: [nameLen 1] [name] [isFolder 1] [modTime 8 BE]
+ *                             [scripted 1]
  *   MAP_SEARCH_RSP [header 8] [pathLen 1] [path] [queryLen 1] [query]
- *                  [final 1] [count 1] + entry layout as above.
+ *                  [final 1] [count 1] + entry layout as above but with no
+ *                  scripted byte — the search results do not carry the flag.
  */
 
 #include <stdint.h>
@@ -72,7 +74,8 @@ static void reset_search_request(ClientSim *cs,
     cs->lobbyMapSearchInFlight = true;
 }
 
-/* Write the per-entry tail: [nameLen 1][name][isFolder 1][modTime 8 BE]. */
+/* Write the per-entry tail the search uses:
+ * [nameLen 1][name][isFolder 1][modTime 8 BE]. */
 static int write_entry(uint8_t *buf, int pos,
                        const char *name, uint8_t isFolder, int64_t modTime) {
     size_t nl = strlen(name);
@@ -85,6 +88,15 @@ static int write_entry(uint8_t *buf, int pos,
     for (b = 7; b >= 0; b--) {
         buf[pos++] = (uint8_t)((mt >> (b * 8)) & 0xFFu);
     }
+    return pos;
+}
+
+/* The list's entry: the same tail with the scripted byte after it. */
+static int write_list_entry(uint8_t *buf, int pos,
+                            const char *name, uint8_t isFolder,
+                            int64_t modTime, uint8_t scripted) {
+    pos = write_entry(buf, pos, name, isFolder, modTime);
+    buf[pos++] = scripted;
     return pos;
 }
 
@@ -107,8 +119,11 @@ static int build_list_chunk(uint8_t *buf, const char *path,
     for (i = 0; i < count; i++) {
         char name[32];
         snprintf(name, sizeof(name), "%s%02d.map", namePrefix, firstIdx + i);
-        pos = write_entry(buf, pos, name, /*isFolder*/ 0,
-                          /*modTime*/ 1000000 + firstIdx + i);
+        /* Every third map carries a script, so a case can tell the flag
+           apart from a constant. */
+        pos = write_list_entry(buf, pos, name, /*isFolder*/ 0,
+                               /*modTime*/ 1000000 + firstIdx + i,
+                               (uint8_t)(((firstIdx + i) % 3 == 0) ? 1 : 0));
     }
     return pos;
 }
@@ -303,5 +318,158 @@ int run_lobby_map_search_chunked(void) {
         clientSimDestroy(cs);
     }
 
+    return 0;
+}
+
+/* ================================================================
+ * The scripted byte on a MAP_LIST_RSP entry.
+ *
+ * The encoder lives inside the UDP dispatcher's request handler and
+ * needs a socket, so there is nothing to encode-and-decode against.
+ * The golden case below writes the chunk out byte by byte at literal
+ * offsets instead, which is what pins the layout: a field that moves
+ * moves here or the case fails.
+ * ================================================================ */
+
+/* Where each byte of a one-entry chunk sits, counted from the start of
+ * the buffer. The path is empty, so the header is followed straight by
+ * the zero pathLen. */
+#define GL_POS_PATHLEN   (PACKET_HEADER_SIZE + 0)
+#define GL_POS_FINAL     (PACKET_HEADER_SIZE + 1)
+#define GL_POS_COUNT     (PACKET_HEADER_SIZE + 2)
+#define GL_POS_NAMELEN   (PACKET_HEADER_SIZE + 3)
+#define GL_POS_NAME      (PACKET_HEADER_SIZE + 4)
+#define GL_NAME_LEN      8                      /* "Wave.map" */
+#define GL_POS_ISFOLDER  (GL_POS_NAME + GL_NAME_LEN)
+#define GL_POS_MODTIME   (GL_POS_ISFOLDER + 1)
+#define GL_POS_SCRIPTED  (GL_POS_MODTIME + 8)
+#define GL_CHUNK_LEN     (GL_POS_SCRIPTED + 1)
+
+int run_lobby_map_list_scripted_golden(void) {
+    uint8_t    buf[CHUNK_BUF_CAP];
+    ClientSim *cs;
+
+    memset(buf, 0, sizeof(buf));
+    packHeader(buf, PACKET_LOBBY_MAP_LIST_RSP, 0);
+    buf[GL_POS_PATHLEN]  = 0;      /* the root, so no path bytes follow */
+    buf[GL_POS_FINAL]    = 1;      /* the only chunk */
+    buf[GL_POS_COUNT]    = 1;      /* one entry */
+    buf[GL_POS_NAMELEN]  = GL_NAME_LEN;
+    memcpy(buf + GL_POS_NAME, "Wave.map", GL_NAME_LEN);
+    buf[GL_POS_ISFOLDER] = 0;
+    /* modTime, big-endian, with every byte different so a swapped pair
+       would show. */
+    buf[GL_POS_MODTIME + 0] = 0x01;
+    buf[GL_POS_MODTIME + 1] = 0x02;
+    buf[GL_POS_MODTIME + 2] = 0x03;
+    buf[GL_POS_MODTIME + 3] = 0x04;
+    buf[GL_POS_MODTIME + 4] = 0x05;
+    buf[GL_POS_MODTIME + 5] = 0x06;
+    buf[GL_POS_MODTIME + 6] = 0x07;
+    buf[GL_POS_MODTIME + 7] = 0x08;
+    buf[GL_POS_SCRIPTED] = 1;
+
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    reset_list_request(cs, "");
+    udpClientHandleLobbyMapListRsp(cs, buf, GL_CHUNK_LEN);
+
+    UT_ASSERT_MSG(cs->lobbyMapListCount == 1,
+                  "the one-entry chunk read as %d entries",
+                  cs->lobbyMapListCount);
+    UT_ASSERT_MSG(strcmp(cs->lobbyMapListNames[0], "Wave.map") == 0,
+                  "entry 0's name read as \"%s\"", cs->lobbyMapListNames[0]);
+    UT_ASSERT(cs->lobbyMapListIsFolder[0] == 0);
+    UT_ASSERT_MSG(cs->lobbyMapListModTime[0] == (int64_t)0x0102030405060708ll,
+                  "entry 0's modTime read as %lld",
+                  (long long)cs->lobbyMapListModTime[0]);
+    UT_ASSERT_MSG(cs->lobbyMapListScripted[0],
+                  "the scripted byte at offset %d did not reach the entry",
+                  GL_POS_SCRIPTED);
+    clientSimDestroy(cs);
+
+    /* The same bytes with a zero there read as plain, so the assertion
+       above is the byte and not a constant. */
+    buf[GL_POS_SCRIPTED] = 0;
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    reset_list_request(cs, "");
+    udpClientHandleLobbyMapListRsp(cs, buf, GL_CHUNK_LEN);
+    UT_ASSERT(cs->lobbyMapListCount == 1);
+    UT_ASSERT_MSG(!cs->lobbyMapListScripted[0],
+                  "a zero scripted byte read as scripted");
+    clientSimDestroy(cs);
+
+    /* A chunk one byte short of the entry's tail keeps the entry out
+       rather than reading past it. */
+    buf[GL_POS_SCRIPTED] = 1;
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    reset_list_request(cs, "");
+    udpClientHandleLobbyMapListRsp(cs, buf, GL_CHUNK_LEN - 1);
+    UT_ASSERT_MSG(cs->lobbyMapListCount == 0,
+                  "a truncated entry was accepted (%d entries)",
+                  cs->lobbyMapListCount);
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* A list carrying a mix, and one carrying none. build_list_chunk marks
+ * every third index scripted, so the pattern is what is checked rather
+ * than one entry. */
+int run_lobby_map_list_scripted_mixed(void) {
+    uint8_t    buf[CHUNK_BUF_CAP];
+    ClientSim *cs;
+    int        len;
+    int        i;
+    int        scriptedSeen = 0;
+
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    reset_list_request(cs, "");
+    len = build_list_chunk(buf, "", 1, 9, "Mix", 0);
+    udpClientHandleLobbyMapListRsp(cs, buf, len);
+
+    UT_ASSERT_MSG(cs->lobbyMapListCount == 9,
+                  "the nine-entry chunk read as %d", cs->lobbyMapListCount);
+    for (i = 0; i < 9; i++) {
+        bool want = (i % 3 == 0);
+        UT_ASSERT_MSG(cs->lobbyMapListScripted[i] == want,
+                      "entry %d (0-based) read scripted=%d, wanted %d",
+                      i, (int)cs->lobbyMapListScripted[i], (int)want);
+        if (cs->lobbyMapListScripted[i]) scriptedSeen++;
+    }
+    UT_ASSERT_MSG(scriptedSeen == 3,
+                  "counted %d scripted entries of nine, wanted 3",
+                  scriptedSeen);
+    clientSimDestroy(cs);
+
+    /* A list with none of them: every entry plain, which is what a server
+       running no scenario library sends. */
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    reset_list_request(cs, "");
+    {
+        int pos;
+        packHeader(buf, PACKET_LOBBY_MAP_LIST_RSP, 0);
+        pos = PACKET_HEADER_SIZE;
+        buf[pos++] = 0;    /* pathLen */
+        buf[pos++] = 1;    /* final */
+        buf[pos++] = 4;    /* count */
+        for (i = 0; i < 4; i++) {
+            char name[32];
+            snprintf(name, sizeof(name), "Plain%02d.map", i);
+            pos = write_list_entry(buf, pos, name, 0, 500 + i, 0);
+        }
+        len = pos;
+    }
+    udpClientHandleLobbyMapListRsp(cs, buf, len);
+    UT_ASSERT(cs->lobbyMapListCount == 4);
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(!cs->lobbyMapListScripted[i],
+                      "entry %d (0-based) of a plain list read as scripted",
+                      i);
+    }
+    clientSimDestroy(cs);
     return 0;
 }
