@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Post-match aggregates for the GoalHunter 1.7 build design
-(VULNERABILITY_AND_BUILDS_PLAN.md, "Aggregates to pull after a match").
+"""Post-match aggregates for the GoalHunter 1.7 build design.
 
     python scripts/build_stats.py build/debug_sessions/<session> [bot ...]
 
