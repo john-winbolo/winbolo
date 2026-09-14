@@ -52,8 +52,28 @@ BIN_DS="${2:-$BIN_DS_DEFAULT}"
 # Neither binary parses the flag: sentryInit scans argv for it itself, and
 # both tolerate an argument they do not recognise. So it is inert on a build
 # with no DSN and harmless everywhere else.
-ds_bin()       { "$BIN_DS" "$@" -nocrashreporting; }
-headless_bin() { "$BIN"        "$@" -nocrashreporting; }
+#
+# Both wrappers exec once they are already running in a child of the script,
+# which is where `ds_bin ... &` puts them. Without that, the pid a launch
+# records is the wrapper's own subshell and not the game process. The subshell
+# lives exactly as long as its child, so waiting on it still returns the right
+# status and nothing looks wrong — but every kill in this file then lands on
+# the wrapper and leaves the server or client it meant to stop running. A
+# scenario whose DS does not stop itself leaks one per run, which a suite
+# multiplies into a machine full of servers holding ports: the opposite of
+# what the rest of this work is for.
+#
+# $BASHPID differs from $$ only inside a subshell, so this execs for every
+# backgrounded launch and runs the binary as an ordinary child for the
+# foreground ones, where exec would replace the harness itself.
+ds_bin() {
+  if [ "$BASHPID" != "$$" ]; then exec "$BIN_DS" "$@" -nocrashreporting; fi
+  "$BIN_DS" "$@" -nocrashreporting
+}
+headless_bin() {
+  if [ "$BASHPID" != "$$" ]; then exec "$BIN" "$@" -nocrashreporting; fi
+  "$BIN" "$@" -nocrashreporting
+}
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BRAINS="$(cd "$DIR/../brains" && pwd)"
