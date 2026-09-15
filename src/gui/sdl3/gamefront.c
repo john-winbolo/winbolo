@@ -428,12 +428,6 @@ static ServerSim *spServerSim = NULL;
  * a script beside it. NULL whenever there is no host to speak of, which
  * scenarioHostDetach treats as nothing to do. */
 static ScenarioHost *spScenarioHost = NULL;
-/* True when the single-player launch carried no bot setup and the one enemy
- * bot below was seeded in its place. A map whose script declares its own
- * lobby does not get that bot: the script says who sits in the lobby, and
- * a stray enemy seeded before the script's seats would take a slot from
- * them and fight on nobody's side of the scenario. */
-static bool spDefaultBotSeeded = false;
 static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
 
 static bool spServerSimActive = FALSE;
@@ -1678,10 +1672,8 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. */
-        spDefaultBotSeeded = false;
         if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
-          spDefaultBotSeeded = true;
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
           gameFrontBotSetupData.bots[0].teamNumber = 2;
@@ -1930,17 +1922,18 @@ bool gameFrontSetDlgState(openingStates newState) {
              * sim via cfg above; here we only need brainPath as a
              * per-bot default for the serverSimCreateBot loop. */
             bool haveBrain = (spBrainPath[0] != '\0');
-            /* The seeded enemy stays out of a lobby the map's script lays
-             * out itself (Survival seats its whole horde): the script's
-             * seats come after this and a stray bot here would take one of
-             * their slots. A setup the player configured is theirs and is
-             * created whatever the script says. Only the bot loop is
-             * skipped: the human's own team and the alliance pass below
+            /* No setup bot at all in a lobby the map's script lays out
+             * itself (Survival seats its whole horde): the script says who
+             * sits in that lobby, and a bot made here, the seeded enemy or
+             * one from the player's own settings, takes a slot ahead of the
+             * script's seats and lands on a side the script never meant.
+             * The player adds their own team's bots in the lobby by hand,
+             * which is a different path and untouched. Only the bot loop
+             * is skipped: the human's own team and the alliance pass below
              * still run, so the player lands on the defenders' side. */
             bool scriptSeats = (spScenarioHost != NULL) &&
                                serverSimScenarioHasLobbyTemplate(spServerSim);
-            int botsToMake = (spDefaultBotSeeded && scriptSeats)
-                           ? 0 : gameFrontBotSetupData.count;
+            int botsToMake = scriptSeats ? 0 : gameFrontBotSetupData.count;
             if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
               for (int bi = 0; bi < botsToMake && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
