@@ -1535,12 +1535,12 @@
 
 /* Title of the dialog a bot's announce line in lobby team chat opens: the
  * brain's own commands.txt. {string1} = the brain's name ("GoalHunter"). */
-#define STR_DLGLOBBY_BOT_DOCS_TITLE         2173
+#define STR_DLGLOBBY_BOT_DOCS_TITLE         2214
 
 /* A general "Copy" button label, for any dialog that puts its body on the
  * clipboard. STR_LV_COPY is the same word but belongs to the log viewer's
  * events panel; this one is not tied to a screen. */
-#define STR_COPY                            2174
+#define STR_COPY                            2215
 
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
