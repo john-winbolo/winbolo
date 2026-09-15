@@ -114,6 +114,14 @@ end
 -- scenario, and then be able to be told something new while they run.
 --
 -- Answers the token string, or "" when the table names nothing.
+-- The bare flag words the tick-1 block matches by exact name. Keep in step
+-- with the `tok == "..."` tests further down; a word missing here arrives as
+-- "word=1" and is ignored there.
+local _INIT_FLAG_WORDS = {
+  ammoless = true, noammo = true, noblitz = true, noclaimdead = true, normal = true,
+  nosuicider = true, suicider = true,
+}
+
 local function _flatten_init_table(t)
   if type(t) ~= "table" then return "" end
   local keys = {}
@@ -130,10 +138,21 @@ local function _flatten_init_table(t)
     -- scenario writes as noblitz = true / "1" / "" becomes the bare word,
     -- a flag written false / "0" is dropped (absent = off), and everything
     -- else stays a k=v pair (difficulty=hard, portfolio=..., cfg=...).
-    if v == true or v == "1" or v == "" then
-      toks[#toks + 1] = k
-    elseif v == false or v == "0" then
-      -- off: no token
+    --
+    -- Only a key the parser knows as a FLAG is treated that way. A valued
+    -- token whose value happens to be 1 (Survival's blitzsuiciders=1 on
+    -- waves 1, 3 and 5) must stay k=v, or the parser drops it on the floor
+    -- and the wave plays with the default. Found on the first wave, Sep 15.
+    if _INIT_FLAG_WORDS[k] then
+      if v == true or v == "1" or v == "" then
+        toks[#toks + 1] = k
+      elseif v == false or v == "0" then
+        -- off: no token
+      else
+        toks[#toks + 1] = k .. "=" .. v
+      end
+    elseif v == false then
+      -- a non-flag written false: nothing to say
     else
       toks[#toks + 1] = k .. "=" .. v
     end

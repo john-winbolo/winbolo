@@ -882,6 +882,9 @@ The table **replaces** the bot's, whole. What the spawn's table said and this
 one does not say is gone, because the brain's table is rebuilt rather than
 merged into. Values are text and numbers, as a spawn's are, so a flag a brain
 reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
+GoalHunter treats only its known flag words that way (`noblitz`, `suicider`,
+`nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
+`blitzsuiciders = "1"` keeps its value.
 
 What the bot does with it is the brain's business, and there are two levels
 to it:
