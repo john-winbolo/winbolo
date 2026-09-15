@@ -1,0 +1,464 @@
+/*
+ * manifest.json (src/scenario/scenario_manifest_json.c): the schema decoded
+ * into ScenarioManifest, written back out with the keys this build does not
+ * read still in it, and the comparison that holds a package's manifest
+ * against the table its script declared.
+ *
+ * run_scenario_manifest_json_round_trip
+ *      — every key of the version 1 schema into the struct, then out to
+ *        text and back in unchanged; an unknown key at the root and an
+ *        unknown key inside lobby both survive the trip
+ * run_scenario_manifest_json_refusals
+ *      — bytes that are not JSON, a root that is not an object, and a
+ *        manifest version that is absent, not a number or not 1, each
+ *        refused with its own message; an unknown rule name and a tag index
+ *        past the map arrive as parse issues with the doc still parsing
+ * run_scenario_manifest_agrees
+ *      — two forms of the same scenario agree whatever order their rules
+ *        and regions are in, and each field that can differ is refused
+ *        with the key an author would look for
+ * run_scenario_manifest_from_values
+ *      — a struct with no JSON behind it goes out as text and comes back
+ *        as the same struct
+ */
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "scenario_lua.h" /* scenarioLuaRuleIndex */
+#include "scenario_manifest_json.h"
+#include "test_harness.h"
+
+/* Every key of the schema, plus two this build has no use for: editor_notes
+ * at the root and seating_hint inside lobby. */
+static const char kFullManifest[] =
+    "{\n"
+    "  \"manifest\": 1,\n"
+    "  \"api\": 1,\n"
+    "  \"name\": \"Survival\",\n"
+    "  \"description\": \"Hold the centre through five waves.\",\n"
+    "  \"game\": \"tournament\",\n"
+    "  \"bound\": true,\n"
+    "  \"lobby\": {\n"
+    "    \"max_players\": 6,\n"
+    "    \"extra_teams\": false,\n"
+    "    \"seating_hint\": \"clockwise\",\n"
+    "    \"teams\": [\n"
+    "      { \"id\": 2, \"bots\": 10, \"max_bots\": 12, \"fielded\": false,\n"
+    "        \"brain\": \"package:horde\" },\n"
+    "      { \"id\": 3, \"bots\": 1, \"max_bots\": 4, \"fielded\": true,\n"
+    "        \"brain\": \"\" }\n"
+    "    ]\n"
+    "  },\n"
+    "  \"rules\": { \"tank_reload_ticks\": 8, \"shell_damage\": 2.5 },\n"
+    "  \"tags\": { \"pills\": { \"3\": [\"outer\"] },\n"
+    "              \"bases\": { \"1\": [\"keep\", \"hq\"] },\n"
+    "              \"starts\": {} },\n"
+    "  \"regions\": { \"keep\": { \"x\": 100, \"y\": 100, \"w\": 12, \"h\": 12 },\n"
+    "                 \"outer\": { \"x\": 4, \"y\": 5, \"w\": 6, \"h\": 7 } },\n"
+    "  \"triggers\": [],\n"
+    "  \"script\": \"main.lua\",\n"
+    "  \"brains\": [\"horde\"],\n"
+    "  \"editor_notes\": \"kept by a build that does not read it\"\n"
+    "}\n";
+
+static ScnManifestDoc *parseText(const char *text, ScnParseReport *rep,
+                                 char *err, size_t errLen) {
+    return scnManifestParse((const uint8_t *)text, strlen(text), rep, err,
+                            errLen);
+}
+
+/* Where the manifest sets one rule, or -1. */
+static int ruleAt(const ScenarioManifest *m, const char *name) {
+    int idx = scenarioLuaRuleIndex(name);
+    int i;
+
+    if (idx < 0) {
+        return -1;
+    }
+    for (i = 0; i < (int)m->numRules; i++) {
+        if ((int)m->rules[i].rule == idx) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int regionAt(const ScenarioManifest *m, const char *name) {
+    int i;
+    for (i = 0; i < (int)m->numRegions; i++) {
+        if (strcmp(m->regions[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Everything the round-trip case asserts about a decoded manifest, so the
+ * first parse and the re-parse are held to the same list. */
+static int fullManifestIsRight(const ScnManifestDoc *d) {
+    const ScenarioManifest *m = scnManifestValues(d);
+    int                     r;
+
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(scnManifestSchemaVersion(d) == 1, "schema is %d",
+                  scnManifestSchemaVersion(d));
+    UT_ASSERT_MSG(m->api == 1, "api is %d", m->api);
+    UT_ASSERT(strcmp(m->name, "Survival") == 0);
+    UT_ASSERT(strcmp(m->description,
+                     "Hold the centre through five waves.") == 0);
+    UT_ASSERT(strcmp(m->game, "tournament") == 0);
+    UT_ASSERT(m->bound);
+
+    UT_ASSERT_MSG(m->lobby.maxPlayers == 6, "max_players is %d",
+                  (int)m->lobby.maxPlayers);
+    UT_ASSERT(!m->lobby.extraTeams);
+    UT_ASSERT_MSG(m->lobby.numTeams == 2, "team count is %d",
+                  (int)m->lobby.numTeams);
+    UT_ASSERT(m->lobby.teams[0].id == 2);
+    UT_ASSERT(m->lobby.teams[0].bots == 10);
+    UT_ASSERT(m->lobby.teams[0].maxBots == 12);
+    UT_ASSERT(!m->lobby.teams[0].fielded);
+    UT_ASSERT(strcmp(m->lobby.teams[0].brain, "package:horde") == 0);
+    UT_ASSERT(m->lobby.teams[1].id == 3);
+    UT_ASSERT(m->lobby.teams[1].bots == 1);
+    UT_ASSERT(m->lobby.teams[1].maxBots == 4);
+    UT_ASSERT(m->lobby.teams[1].fielded);
+    UT_ASSERT(m->lobby.teams[1].brain[0] == '\0');
+
+    UT_ASSERT_MSG(m->numRules == 2, "rule count is %d", (int)m->numRules);
+    r = ruleAt(m, "tank_reload_ticks");
+    UT_ASSERT_MSG(r >= 0, "tank_reload_ticks is not set");
+    UT_ASSERT_MSG(m->rules[r].value == 8.0, "tank_reload_ticks is %g",
+                  m->rules[r].value);
+    r = ruleAt(m, "shell_damage");
+    UT_ASSERT_MSG(r >= 0, "shell_damage is not set");
+    UT_ASSERT_MSG(m->rules[r].value == 2.5, "shell_damage is %g",
+                  m->rules[r].value);
+
+    UT_ASSERT_MSG(m->pillTags[3].count == 1, "pill 3 carries %d tags",
+                  (int)m->pillTags[3].count);
+    UT_ASSERT(strcmp(m->pillTags[3].tag[0], "outer") == 0);
+    UT_ASSERT_MSG(m->baseTags[1].count == 2, "base 1 carries %d tags",
+                  (int)m->baseTags[1].count);
+    UT_ASSERT(strcmp(m->baseTags[1].tag[0], "keep") == 0);
+    UT_ASSERT(strcmp(m->baseTags[1].tag[1], "hq") == 0);
+    UT_ASSERT(m->startTags[1].count == 0);
+
+    UT_ASSERT_MSG(m->numRegions == 2, "region count is %d",
+                  (int)m->numRegions);
+    r = regionAt(m, "keep");
+    UT_ASSERT_MSG(r >= 0, "the keep region is missing");
+    UT_ASSERT(m->regions[r].x == 100 && m->regions[r].y == 100 &&
+              m->regions[r].w == 12 && m->regions[r].h == 12);
+    r = regionAt(m, "outer");
+    UT_ASSERT_MSG(r >= 0, "the outer region is missing");
+    UT_ASSERT(m->regions[r].x == 4 && m->regions[r].y == 5 &&
+              m->regions[r].w == 6 && m->regions[r].h == 7);
+
+    UT_ASSERT(strcmp(scnManifestScriptEntry(d), "main.lua") == 0);
+    UT_ASSERT_MSG(scnManifestBrainCount(d) == 1, "brain count is %d",
+                  scnManifestBrainCount(d));
+    UT_ASSERT(strcmp(scnManifestBrainName(d, 0), "horde") == 0);
+    UT_ASSERT(scnManifestBrainName(d, 1) == NULL);
+    return 0;
+}
+
+int run_scenario_manifest_json_round_trip(void) {
+    char            err[256];
+    char            key[SCN_VALIDATE_KEY_LEN];
+    ScnManifestDoc *first;
+    ScnManifestDoc *again;
+    char           *text;
+    int             rc;
+
+    first = parseText(kFullManifest, NULL, err, sizeof(err));
+    UT_ASSERT_MSG(first != NULL, "the manifest was refused: %s", err);
+
+    rc = fullManifestIsRight(first);
+    if (rc != 0) {
+        scnManifestFree(first);
+        return rc;
+    }
+
+    text = scnManifestWrite(first, err, sizeof(err));
+    if (text == NULL) {
+        scnManifestFree(first);
+        UT_FAIL("the manifest could not be written: %s", err);
+    }
+
+    /* The two keys nothing here decodes, and the triggers list, are still in
+     * the text this build produced. */
+    if (strstr(text, "editor_notes") == NULL) {
+        free(text);
+        scnManifestFree(first);
+        UT_FAIL("the unknown root key was dropped");
+    }
+    if (strstr(text, "seating_hint") == NULL) {
+        free(text);
+        scnManifestFree(first);
+        UT_FAIL("the unknown key inside lobby was dropped");
+    }
+    if (strstr(text, "triggers") == NULL) {
+        free(text);
+        scnManifestFree(first);
+        UT_FAIL("triggers was dropped");
+    }
+
+    again = parseText(text, NULL, err, sizeof(err));
+    free(text);
+    if (again == NULL) {
+        scnManifestFree(first);
+        UT_FAIL("what was written would not parse: %s", err);
+    }
+
+    rc = fullManifestIsRight(again);
+    if (rc == 0 &&
+        !scnManifestAgrees(scnManifestValues(first), scnManifestValues(again),
+                           key, sizeof(key), err, sizeof(err))) {
+        fprintf(stderr, "FAIL %s:%d: the round trip changed %s: %s\n",
+                __FILE__, __LINE__, key, err);
+        rc = 1;
+    }
+
+    scnManifestFree(again);
+    scnManifestFree(first);
+    return rc;
+}
+
+int run_scenario_manifest_json_refusals(void) {
+    static const char *const kBad[] = {
+        "{ this is not json",
+        "[1, 2, 3]",
+        "{ \"api\": 1 }",
+        "{ \"manifest\": \"1\" }",
+        "{ \"manifest\": 2 }",
+    };
+    static const char kSoftProblems[] =
+        "{ \"manifest\": 1,"
+        "  \"rules\": { \"tank_reload_ticks\": 8, \"no_such_rule\": 3 },"
+        "  \"tags\": { \"pills\": { \"99\": [\"far\"] } } }";
+
+    char              err[5][256];
+    char              soft[256];
+    ScnValidateResult sink;
+    ScnParseReport    rep;
+    ScnManifestDoc   *d;
+    int               i;
+    int               j;
+    bool              sawRule = false;
+    bool              sawTag = false;
+
+    for (i = 0; i < 5; i++) {
+        d = parseText(kBad[i], NULL, err[i], sizeof(err[i]));
+        UT_ASSERT_MSG(d == NULL, "refusal %d parsed instead", i);
+        UT_ASSERT_MSG(err[i][0] != '\0', "refusal %d said nothing", i);
+    }
+    for (i = 0; i < 5; i++) {
+        for (j = i + 1; j < 5; j++) {
+            UT_ASSERT_MSG(strcmp(err[i], err[j]) != 0,
+                          "refusals %d and %d share one message: %s", i, j,
+                          err[i]);
+        }
+    }
+
+    /* A rule name that names no rule and a pill index past the map are
+     * reported and dropped; everything else still decodes. */
+    memset(&sink, 0, sizeof(sink));
+    soft[0] = '\0';
+    rep.soft = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink = &sink;
+
+    d = parseText(kSoftProblems, &rep, err[0], sizeof(err[0]));
+    UT_ASSERT_MSG(d != NULL, "a manifest with soft problems was refused: %s",
+                  err[0]);
+    UT_ASSERT_MSG(scnManifestValues(d)->numRules == 1, "rule count is %d",
+                  (int)scnManifestValues(d)->numRules);
+    UT_ASSERT(scnManifestValues(d)->pillTags[3].count == 0);
+    UT_ASSERT_MSG(sink.count >= 2, "%d issues were collected",
+                  (int)sink.count);
+    for (i = 0; i < (int)sink.count; i++) {
+        if (strcmp(sink.issues[i].key, "rules.no_such_rule") == 0) {
+            sawRule = true;
+        }
+        if (strcmp(sink.issues[i].key, "tags.pills[99]") == 0) {
+            sawTag = true;
+        }
+    }
+    UT_ASSERT_MSG(sawRule, "the unknown rule name was not reported");
+    UT_ASSERT_MSG(sawTag, "the out-of-range pill index was not reported");
+    UT_ASSERT(soft[0] != '\0');
+
+    scnManifestFree(d);
+    return 0;
+}
+
+/* One scenario, as both forms would hold it. */
+static void fillBase(ScenarioManifest *m) {
+    memset(m, 0, sizeof(*m));
+    snprintf(m->name, sizeof(m->name), "Survival");
+    snprintf(m->description, sizeof(m->description),
+             "Hold the centre through five waves.");
+    m->api = 1;
+    snprintf(m->game, sizeof(m->game), "tournament");
+    m->bound = true;
+
+    m->lobby.maxPlayers = 6;
+    m->lobby.extraTeams = false;
+    m->lobby.numTeams = 2;
+    m->lobby.teams[0].id = 2;
+    m->lobby.teams[0].bots = 10;
+    m->lobby.teams[0].maxBots = 12;
+    m->lobby.teams[0].fielded = false;
+    snprintf(m->lobby.teams[0].brain, sizeof(m->lobby.teams[0].brain),
+             "package:horde");
+    m->lobby.teams[1].id = 3;
+    m->lobby.teams[1].bots = 1;
+    m->lobby.teams[1].maxBots = 4;
+    m->lobby.teams[1].fielded = true;
+
+    m->numRules = 2;
+    m->rules[0].rule = (uint16_t)scenarioLuaRuleIndex("tank_reload_ticks");
+    m->rules[0].value = 8.0;
+    m->rules[1].rule = (uint16_t)scenarioLuaRuleIndex("shell_damage");
+    m->rules[1].value = 2.5;
+
+    m->pillTags[3].count = 1;
+    snprintf(m->pillTags[3].tag[0], SCN_TAG_LEN, "outer");
+    m->baseTags[1].count = 2;
+    snprintf(m->baseTags[1].tag[0], SCN_TAG_LEN, "keep");
+    snprintf(m->baseTags[1].tag[1], SCN_TAG_LEN, "hq");
+
+    m->numRegions = 2;
+    snprintf(m->regions[0].name, SCN_REGION_NAME_LEN, "keep");
+    m->regions[0].x = 100;
+    m->regions[0].y = 100;
+    m->regions[0].w = 12;
+    m->regions[0].h = 12;
+    snprintf(m->regions[1].name, SCN_REGION_NAME_LEN, "outer");
+    m->regions[1].x = 4;
+    m->regions[1].y = 5;
+    m->regions[1].w = 6;
+    m->regions[1].h = 7;
+}
+
+int run_scenario_manifest_agrees(void) {
+    ScenarioManifest a;
+    ScenarioManifest b;
+    char             key[SCN_VALIDATE_KEY_LEN];
+    char             err[256];
+
+    /* The same scenario twice, with the two keyed tables walked in the other
+     * order — which is what lua_next does from one build to the next. */
+    fillBase(&a);
+    fillBase(&b);
+    b.rules[0] = a.rules[1];
+    b.rules[1] = a.rules[0];
+    b.regions[0] = a.regions[1];
+    b.regions[1] = a.regions[0];
+    UT_ASSERT_MSG(scnManifestAgrees(&a, &b, key, sizeof(key), err,
+                                    sizeof(err)),
+                  "a reordered copy was refused at %s: %s", key, err);
+
+    /* And each field that can differ, named the way the JSON spells it. */
+    fillBase(&b);
+    snprintf(b.name, sizeof(b.name), "Something Else");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "name") == 0, "the key was '%s'", key);
+    UT_ASSERT(err[0] != '\0');
+
+    fillBase(&b);
+    b.bound = false;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "bound") == 0, "the key was '%s'", key);
+
+    fillBase(&b);
+    b.lobby.maxPlayers = 8;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.max_players") == 0, "the key was '%s'",
+                  key);
+
+    fillBase(&b);
+    snprintf(b.lobby.teams[0].brain, sizeof(b.lobby.teams[0].brain),
+             "package:swarm");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].brain") == 0,
+                  "the key was '%s'", key);
+
+    /* The teams array keeps its order, so swapping two teams is a conflict
+     * even though the same two teams are named. */
+    fillBase(&b);
+    b.lobby.teams[0] = a.lobby.teams[1];
+    b.lobby.teams[1] = a.lobby.teams[0];
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strncmp(key, "lobby.teams[0]", 14) == 0,
+                  "the key was '%s'", key);
+
+    fillBase(&b);
+    b.rules[1].value = 3.0;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "rules.shell_damage") == 0, "the key was '%s'",
+                  key);
+
+    fillBase(&b);
+    b.regions[1].w = 9;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "regions.outer") == 0, "the key was '%s'", key);
+
+    fillBase(&b);
+    b.pillTags[3].count = 0;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "tags.pills[3]") == 0, "the key was '%s'", key);
+
+    return 0;
+}
+
+int run_scenario_manifest_from_values(void) {
+    ScenarioManifest base;
+    ScnManifestDoc  *made;
+    ScnManifestDoc  *back;
+    char            *text;
+    char             err[256];
+    char             key[SCN_VALIDATE_KEY_LEN];
+    int              rc = 0;
+
+    fillBase(&base);
+
+    made = scnManifestFromValues(&base, err, sizeof(err));
+    UT_ASSERT_MSG(made != NULL, "a doc could not be built: %s", err);
+    UT_ASSERT(scnManifestSchemaVersion(made) == 1);
+    UT_ASSERT(strcmp(scnManifestScriptEntry(made), "main.lua") == 0);
+    UT_ASSERT_MSG(scnManifestBrainCount(made) == 0, "brain count is %d",
+                  scnManifestBrainCount(made));
+
+    text = scnManifestWrite(made, err, sizeof(err));
+    if (text == NULL) {
+        scnManifestFree(made);
+        UT_FAIL("the manifest could not be written: %s", err);
+    }
+
+    back = parseText(text, NULL, err, sizeof(err));
+    free(text);
+    if (back == NULL) {
+        scnManifestFree(made);
+        UT_FAIL("what was written would not parse: %s", err);
+    }
+
+    if (!scnManifestAgrees(&base, scnManifestValues(back), key, sizeof(key),
+                           err, sizeof(err))) {
+        fprintf(stderr, "FAIL %s:%d: the trip through text changed %s: %s\n",
+                __FILE__, __LINE__, key, err);
+        rc = 1;
+    }
+    if (rc == 0 && strcmp(scnManifestScriptEntry(back), "main.lua") != 0) {
+        fprintf(stderr, "FAIL %s:%d: the script entry came back '%s'\n",
+                __FILE__, __LINE__, scnManifestScriptEntry(back));
+        rc = 1;
+    }
+
+    scnManifestFree(back);
+    scnManifestFree(made);
+    return rc;
+}

@@ -2711,6 +2711,15 @@ int run_scenario_package_bad_framing(void);
 int run_scenario_package_entry_names(void);
 int run_scenario_package_two_open(void);
 
+/* manifest.json (test_scenario_manifest_json.c): the schema into the struct
+ * and back out with the keys this build does not read kept, the refusals a
+ * malformed manifest gets, and the comparison that holds a manifest against
+ * the table a script declared. */
+int run_scenario_manifest_json_round_trip(void);
+int run_scenario_manifest_json_refusals(void);
+int run_scenario_manifest_agrees(void);
+int run_scenario_manifest_from_values(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

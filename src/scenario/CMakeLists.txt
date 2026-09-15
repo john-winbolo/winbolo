@@ -15,7 +15,12 @@
 #                     holding the manifest, the script and any brain
 #                     directories — from a byte buffer rather than a path, so
 #                     the chunk appended to a map, a package file and a blob
-#                     off the network are all read the same way.
+#                     off the network are all read the same way. The
+#                     manifest inside that container is read into and written
+#                     out of the same struct the Lua reader fills, keeping
+#                     the keys this build has no use for, and the two forms
+#                     are held against each other so a package whose script
+#                     restates its table cannot disagree with it.
 #
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
@@ -33,6 +38,7 @@ add_library(scenario_static STATIC
     scenario_host.c
     scenario_events.c
     scenario_lua.c
+    scenario_manifest_json.c
     scenario_package.c
     scenario_sandbox.c
     scenario_validate.c
@@ -76,6 +82,17 @@ target_link_libraries(scenario_static PRIVATE lua_static)
 # the symbols either way. Every binary that links scenario_static already
 # names minizip itself, so this line is what a new one would rely on.
 target_link_libraries(scenario_static PRIVATE minizip)
+
+# cJSON, for manifest.json. It carries no include directory of its own —
+# nothing in the tree links it without naming ${cjson_SOURCE_DIR} too — so
+# the directory is added here beside the link.
+#
+# PRIVATE for the same reason as the two above: scenario_manifest_json.h
+# names no cJSON type, the tree stays inside the library, and a static
+# library passes the link itself along, so the binaries resolve the symbols
+# either way.
+target_link_libraries(scenario_static PRIVATE cjson)
+target_include_directories(scenario_static PRIVATE ${cjson_SOURCE_DIR})
 
 if(NOT MSVC)
     target_compile_options(scenario_static PRIVATE -fcommon)

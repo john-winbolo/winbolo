@@ -3421,6 +3421,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # memory I/O, the refusals a malformed buffer gets, the entry and brain
     # lists, and two containers open at the same time.
     tests/unit/test_scenario_package.c
+    # manifest.json: the version 1 schema decoded into the same struct the
+    # Lua reader fills, written back out with the keys this build does not
+    # read still in it, and the comparison that holds a package's manifest
+    # against the table its script declared.
+    tests/unit/test_scenario_manifest_json.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5451,6 +5456,10 @@ set(_unit_test_names
     scenario_package_bad_framing
     scenario_package_entry_names
     scenario_package_two_open
+    scenario_manifest_json_round_trip
+    scenario_manifest_json_refusals
+    scenario_manifest_agrees
+    scenario_manifest_from_values
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
