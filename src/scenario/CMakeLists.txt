@@ -10,6 +10,13 @@
 #                     without running one: the same parse against a stub game
 #                     table, reported as a list of keys, lines and messages.
 #
+#                     And it reads and writes the WBSC container a scenario
+#                     ships in — the framing, and the ZIP archive behind it
+#                     holding the manifest, the script and any brain
+#                     directories — from a byte buffer rather than a path, so
+#                     the chunk appended to a map, a package file and a blob
+#                     off the network are all read the same way.
+#
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
 #                     nothing under src/bolo/internal/. It is the first
@@ -26,6 +33,7 @@ add_library(scenario_static STATIC
     scenario_host.c
     scenario_events.c
     scenario_lua.c
+    scenario_package.c
     scenario_sandbox.c
     scenario_validate.c
 )
@@ -58,6 +66,16 @@ target_link_libraries(scenario_static PUBLIC SDL3::SDL3)
 # way. scenario_lua.h does name them, and what includes that — the unit
 # tests — links lua_static for itself.
 target_link_libraries(scenario_static PRIVATE lua_static)
+
+# minizip carries zip.h, unzip.h and ioapi.h, and the zlib behind them, for
+# the WBSC container's archive.
+#
+# PRIVATE for the same reason as lua_static: scenario_package.h names no
+# minizip type, so an includer has no business seeing those headers, and a
+# static library still passes the link itself along, so the binaries resolve
+# the symbols either way. Every binary that links scenario_static already
+# names minizip itself, so this line is what a new one would rely on.
+target_link_libraries(scenario_static PRIVATE minizip)
 
 if(NOT MSVC)
     target_compile_options(scenario_static PRIVATE -fcommon)

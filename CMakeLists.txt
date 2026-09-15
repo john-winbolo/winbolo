@@ -3417,6 +3417,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The validator: a script read in a stub VM and checked against the map,
     # the lobby template and the rule catalogue, without a round being run.
     tests/unit/test_scenario_validate.c
+    # The WBSC container: a container written and read back through minizip's
+    # memory I/O, the refusals a malformed buffer gets, the entry and brain
+    # lists, and two containers open at the same time.
+    tests/unit/test_scenario_package.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5443,6 +5447,10 @@ set(_unit_test_names
     scenario_derived_define_region_adds_replaces_and_expires
     scenario_derived_region_loop_terminates
     scenario_derived_fixture_wins_without_on_tick
+    scenario_package_round_trip
+    scenario_package_bad_framing
+    scenario_package_entry_names
+    scenario_package_two_open
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
