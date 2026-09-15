@@ -1,7 +1,7 @@
 # Porting our scenarios onto John's scenario host
 
 This document maps the scenario surface our Survival map and our 90 test
-sidecars were written against — the old `src/server/scenario.c` host, where a
+scripts were written against — the old `src/server/scenario.c` host, where a
 `game` table was handed to every hook — onto the host that is on main:
 `src/scenario/`, documented in [docs/SCENARIO_API.md](docs/SCENARIO_API.md).
 
@@ -14,7 +14,7 @@ Three verdicts are used throughout.
   no help beyond the hook-shape change every file needs.
 - **prelude** — the call is expressible on John's rows, and the shim that
   expresses it lives in `tests/scenario/scenario_compat.lua`, which the gate
-  runner concatenates in front of a sidecar. No sidecar body changes.
+  runner concatenates in front of a script. No script body changes.
 - **gap** — John has no row that expresses it. The entry names the smallest
   host op that would close the gap. **No C is added by this port**; these are
   Andrew's to decide.
@@ -41,15 +41,15 @@ function on_choose_start(p) ... end
 
 91 of our 92 scenario files are affected. Rewriting 92 files by hand for this
 would be 92 chances to make a typo, so the compat prelude does it instead. The
-prelude is concatenated **in front of** the sidecar and installs a metatable on
+prelude is concatenated **in front of** the script and installs a metatable on
 `_G` that catches the moment a hook name is assigned, keeps the function the
-sidecar wrote, and puts a wrapper of John's shape in its place:
+script wrote, and puts a wrapper of John's shape in its place:
 
 ```lua
 _G.on_tick = function(tick) return user_on_tick(game, tick) end
 ```
 
-The sandbox has no `require` and no `dofile` (#339), so a sidecar cannot load
+The sandbox has no `require` and no `dofile` (#339), so a script cannot load
 the prelude itself. Concatenation by the runner is the only way in, and it is
 also the only way the file the server reads stays one file, which is what the
 `<map>.scenario.lua` discovery expects.
@@ -167,7 +167,7 @@ the brain would still route to it.
 John has `remove_pill(n)` and `add_pill(x, y, owner, armour, speed)`, which
 together do the right thing except for one detail — the slot. `pillsAddItem`
 gives out **the lowest free slot**, so putting one pill back while two are
-hidden can hand it a number that is not the one it had, and our sidecars name
+hidden can hand it a number that is not the one it had, and our scripts name
 pills by number.
 
 The prelude therefore forces the slot. To show pill `n`:
@@ -214,7 +214,7 @@ would re-enter the machinery building it. Ours allowed them, and 104 of our
 team so the scripted opponents are hostile to it.
 
 The prelude queues a roster op issued from `on_setup` and flushes the queue at
-the top of `on_start`, before the sidecar's own `on_start` runs. The cost is
+the top of `on_start`, before the script's own `on_start` runs. The cost is
 that the teams settle on the round's first running tick rather than before it.
 No test we have reads a team before its first tick, but this is the one
 behaviour difference the port introduces on purpose, and it is written here so
@@ -316,7 +316,7 @@ GoalHunter re-parsing its tokens on that call.
 ### 5. A pill that is hidden rather than removed
 
 The `remove_pill` + slot-forcing `add_pill` shim above is exact for everything
-our sidecars do with `hide_pill`, but it is not free: it costs three ops where
+our scripts do with `hide_pill`, but it is not free: it costs three ops where
 ours cost one, and it depends on `pillsAddItem` handing out the lowest free
 slot, which is an implementation detail rather than a documented promise.
 
@@ -326,7 +326,7 @@ what our host's `hide_pill` did. It would make the shim three lines instead of
 thirty and would not depend on slot allocation order.
 
 **What the port does instead:** the shim, with a `VERDICT` line from any
-sidecar whose slot forcing does not come back with the number it asked for, so
+script whose slot forcing does not come back with the number it asked for, so
 a drift is a test failure rather than a silent wrong answer.
 
 ### 6. Nothing can see a bot think
@@ -364,8 +364,8 @@ is Andrew's to answer.
 | what | where |
 |---|---|
 | `Survival.map` + `Survival.scenario.lua` | `data/maps/` — beside the map, which is where discovery looks |
-| `RespawnLoadoutTest.map` + sidecar | `data/maps/` |
-| the 90 test sidecars and their maps | `tests/scenario/` |
+| `RespawnLoadoutTest.map` + script | `data/maps/` |
+| the 90 test scripts and their maps | `tests/scenario/` |
 | the compat prelude | `tests/scenario/scenario_compat.lua` |
 | the gate runner | `tests/scenario/run_gate.py` |
 

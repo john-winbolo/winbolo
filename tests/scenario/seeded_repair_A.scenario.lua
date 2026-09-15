@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/seeded_repair_A.map (auto-loaded as
+-- Scenario script for tests/seeded_repair_A.map (auto-loaded as
 -- <map>.scenario.lua).
 --
 -- Arena A: the incident -- a seeded one-hp top-up of the GOAL pill at (127,126)
@@ -22,7 +22,7 @@
 --     is filled back to grass once the tank is ashore and OFF the tile (filling
 --     it under the tank leaves the boat state stuck and the LGM never becomes
 --     available at all).
---   THE TRACE, IN MEMORY.  The old sidecar wrote every change of ARMOUR, OWNER
+--   THE TRACE, IN MEMORY.  The old script wrote every change of ARMOUR, OWNER
 --     and IN_TANK to seeded_repair_A_trace.log and the python driver read it
 --     back.  `io` is not on the scenario sandbox's base list, so the questions
 --     the driver asked of that file are answered from locals: which pill's
@@ -35,7 +35,7 @@ local OTHER_PILL = { 121, 126 }
 local OURS  = { GOAL_PILL, OTHER_PILL }
 local SPAWN = { 128, 126 }
 local GRASS = 7
--- Doubled from the old sidecar's 60: on_tick's tick goes up by 2 per frame on
+-- Doubled from the old script's 60: on_tick's tick goes up by 2 per frame on
 -- this host and by 1 on the old one, so a duration written here means half the
 -- wall time it used to unless it is doubled.
 local FILL_TICK = 120

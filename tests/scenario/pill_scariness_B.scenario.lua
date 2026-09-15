@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/pill_scariness_B.map.  Variant B: the control.
+-- Scenario script for tests/pill_scariness_B.map.  Variant B: the control.
 --
 -- GATE: ticks=6200 bots=0 ai=yesfull gametype=open limit=20
 --

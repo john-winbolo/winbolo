@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/water_pills.map (auto-loaded as <map>.scenario.lua).
+-- Scenario script for tests/water_pills.map (auto-loaded as <map>.scenario.lua).
 --
 -- The map loader "fixes" the terrain under every map-file pillbox to ROAD
 -- (bolo_map.c: RIVER/DEEP_SEA/BUILDING/HALFBUILDING under a pill -> ROAD). So

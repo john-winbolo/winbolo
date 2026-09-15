@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/farm_sectors_A.map (auto-loaded as
+-- Scenario script for tests/farm_sectors_A.map (auto-loaded as
 -- <map>.scenario.lua). Companion to tests/farm_sectors_test.py arena A.
 --
 -- ARENA A: a tank with nothing to do, a forest behind a moat, and a clear

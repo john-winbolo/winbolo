@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/builder_pool_C.map.  Companion to
+-- Scenario script for tests/builder_pool_C.map.  Companion to
 -- tests/builder_pool_test.py variant C -- "two allies, one pill".
 --
 -- Two GoalHunter 1.7 bots pinned to opposite ponds, equidistant from the single

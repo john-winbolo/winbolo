@@ -63,7 +63,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 MAPS = os.path.join(HERE, "maps")
 PRELUDE = os.path.join(HERE, "scenario_compat.lua")
-SIDECAR_MARK = "--@@SIDECAR@@"
+SCRIPT_MARK = "--@@SCRIPT@@"
 
 DEFAULTS = {
     "ticks": "6000",
@@ -83,9 +83,9 @@ VERDICT_RE = re.compile(r"^VERDICT\s+(PASS|FAIL)\s+(\S+)\s*(.*)$")
 def load_prelude():
     with open(PRELUDE, encoding="utf-8") as f:
         text = f.read()
-    if SIDECAR_MARK not in text:
-        sys.exit("scenario_compat.lua has no %s marker" % SIDECAR_MARK)
-    head, tail = text.split(SIDECAR_MARK, 1)
+    if SCRIPT_MARK not in text:
+        sys.exit("scenario_compat.lua has no %s marker" % SCRIPT_MARK)
+    head, tail = text.split(SCRIPT_MARK, 1)
     return head, tail
 
 

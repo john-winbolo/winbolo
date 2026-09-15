@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/drowning_fix_A4.map (auto-loaded as
+-- Scenario script for tests/drowning_fix_A4.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/drowning_fix_test.py arena A4.
 --
 -- ARENA A4 -- THE BOAT-SEEDED LEDGE.  A one-tile-wide grass ledge running south

@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/refuel_topoff_B.map.
+-- Scenario script for tests/refuel_topoff_B.map.
 --
 -- Variant B is variant A plus an IDLE ALLY in the far corner.  The ally is what
 -- the driver's run B is for: it raises refuel_shape's scarcity from 2.50 to
@@ -21,7 +21,7 @@
 --    The EMPTY tank is a loadout policy, not a token.  The driver got it from
 --    -gametype tournament plus -ranked, because serverSimApplyScenarioCommit
 --    otherwise stamps gameScripted over the game type of any map with a
---    sidecar and gameScripted hands out a full tank.  The gate runner passes no
+--    script and gameScripted hands out a full tank.  The gate runner passes no
 --    -ranked, so the same thing is asked for directly: spawn_loadout answers
 --    "tournament" for seat 0, which outlives a respawn the way the spawn's own
 --    loadout field would not.  A tank that starts on 40 shells has drained the
@@ -44,7 +44,7 @@
 --    re-asserted every 300 ticks, with the ARMOUR value alternating 90/89
 --    because the server only emits EVENT_BASE_STOCK when a base's stock
 --    actually CHANGES and the bot's observation has to stay fresh.  Both
---    numbers are DOUBLE the old sidecar's: on_tick's tick goes up by 2 per
+--    numbers are DOUBLE the old script's: on_tick's tick goes up by 2 per
 --    frame on this host and by 1 on the old one, so every duration here means
 --    half the wall time it used to unless it is doubled.  The re-assert is on a
 --    next-due counter rather than `tick % PERIOD == 0`, because game.tick()

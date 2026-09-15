@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/builder_pool_D.map.  Companion to
+-- Scenario script for tests/builder_pool_D.map.  Companion to
 -- tests/builder_pool_test.py variant D -- the RESERVATION test.
 --
 -- Same shape as variant A (a scripted idler owns the pill we take, so

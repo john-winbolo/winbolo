@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/ally_capture_guard_C.map — THE 7-SECOND EXPIRY.
+-- Scenario script for tests/ally_capture_guard_C.map — THE 7-SECOND EXPIRY.
 --
 -- Companion to tests/ally_capture_guard_test.py variant C.
 --
@@ -8,7 +8,7 @@
 -- second.  (No target id: that is the coordinate half of the guard's matching
 -- rule, the half variant A does not exercise.)
 --
--- At REMOVE_AT the sidecar takes that bot out of the game with game.remove_bot,
+-- At REMOVE_AT the script takes that bot out of the game with game.remove_bot,
 -- so the adverts simply STOP.  Nothing tells our bot the ally is gone — the
 -- ally_state slot keeps the last slate it received, and no GoalHunter module
 -- ever deactivates a slot — so the ONLY thing that can end the block is the

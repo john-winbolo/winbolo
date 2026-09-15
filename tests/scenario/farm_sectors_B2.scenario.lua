@@ -1,9 +1,9 @@
--- Scenario sidecar for tests/farm_sectors_B2.map (auto-loaded as
+-- Scenario script for tests/farm_sectors_B2.map (auto-loaded as
 -- <map>.scenario.lua). Companion to tests/farm_sectors_test.py arena B2.
 --
 -- ARENA B: a tank DRIVING east along a road to take a neutral base twenty
 -- tiles away -- which is what gives it the committed route the return-leg
--- prediction walks. The moment it enters column PLANT_X the sidecar plants two
+-- prediction walks. The moment it enters column PLANT_X the script plants two
 -- forests, one PLANT_DX tiles behind and one PLANT_DX ahead, both PLANT_DY rows
 -- south of the drive row. Equal outbound legs by construction; only the walk
 -- HOME can tell them apart.

@@ -1,10 +1,10 @@
--- Scenario sidecar for tests/repair_priority_A.map (auto-loaded as
+-- Scenario script for tests/repair_priority_A.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/repair_priority_test.py arena A.
 --
 -- A 4-hp top-up THREE tiles from the tank and a DEAD pill NINE tiles away, both
 -- ours, both on grass.  The linear repair score is 30 x missing - 0.25 x trip,
 -- so the corpse (450 - ~68) has to beat the near top-up (120 - ~30) and the man
--- has to walk PAST the easy job to do the important one.  This sidecar's jobs
+-- has to walk PAST the easy job to do the important one.  This script's jobs
 -- are the bot, ownership, the pond fill and the trace.
 --
 -- THE BOT IS THE ARENA'S OWN.  The driver pinned four knobs on it with
@@ -25,7 +25,7 @@
 -- back to GRASS once the tank is ashore, which is what the ground would have
 -- been if the engine did not need a puddle to spawn onto.
 --
--- THE TRACE, IN MEMORY.  The old sidecar wrote every change of ARMOUR, OWNER
+-- THE TRACE, IN MEMORY.  The old script wrote every change of ARMOUR, OWNER
 -- and IN_TANK to repair_priority_A_trace.log and the python driver read it
 -- back.  `io` is not on the scenario sandbox's base list, so the two questions
 -- the driver asked of that file are answered from locals instead: did each
@@ -41,7 +41,7 @@ local OURS  = { { 121, 126 }, { 128, 125 } }
 local NEUTRALS = {  }
 local SPAWN = { 130, 126 }
 local GRASS = 7
--- Doubled from the old sidecar's 60: on_tick's tick goes up by 2 per frame on
+-- Doubled from the old script's 60: on_tick's tick goes up by 2 per frame on
 -- this host and by 1 on the old one, so every duration in this file is twice
 -- the number it used to be and means the same wall time.
 local FILL_TICK = 120

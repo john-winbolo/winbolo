@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/builder_pool_B.map.  Companion to
+-- Scenario script for tests/builder_pool_B.map.  Companion to
 -- tests/builder_pool_test.py variant B -- the repair_pill SPLIT.
 --
 -- The arena has no enemies at all, so there is nothing here but ownership and

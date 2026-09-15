@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/defend_alarm_D.map (auto-loaded as <map>.scenario.lua).
+-- Scenario script for tests/defend_alarm_D.map (auto-loaded as <map>.scenario.lua).
 -- Companion to tests/defend_alarm_test.py arena D.
 --
 -- ONE MAP, SEVEN ARENAS on the old host: the arena was chosen by the

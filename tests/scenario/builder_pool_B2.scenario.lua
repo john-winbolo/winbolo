@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/builder_pool_B2.map.  Companion to
+-- Scenario script for tests/builder_pool_B2.map.  Companion to
 -- tests/builder_pool_test.py variant B2 -- "the same arena, with shells
 -- landing on the TANK".
 --

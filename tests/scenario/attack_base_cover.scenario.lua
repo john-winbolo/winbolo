@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/attack_base_cover.map (auto-loaded as
+-- Scenario script for tests/attack_base_cover.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/attack_base_cover_test.py.
 --
 -- Two jobs.

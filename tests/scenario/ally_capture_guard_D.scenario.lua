@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/ally_capture_guard_D.map — THE MOVE-ON.
+-- Scenario script for tests/ally_capture_guard_D.map — THE MOVE-ON.
 --
 -- Companion to tests/ally_capture_guard_test.py variant D.
 --

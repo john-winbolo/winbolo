@@ -1,11 +1,11 @@
--- Scenario sidecar for tests/drowning_B.map (auto-loaded as
+-- Scenario script for tests/drowning_B.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/drowning_test.py arena B.
 --
 -- ARENA B -- WATER IN FRONT OF THE NOSE, THE ONLY WAY OUT BEHIND.  A three-row
 -- grass corridor running east to a NEUTRAL BASE, and a long way round -- a
 -- second corridor far to the north, joined at both ends -- that the tank has no
 -- reason to use.  The tank drives east down the main corridor at its goal; when
--- its centre is CUT_MARGIN_WU short of the next column this sidecar turns that
+-- its centre is CUT_MARGIN_WU short of the next column this script turns that
 -- WHOLE column into deep sea, two tiles short of the base.  The tank is then
 -- nose-on to open water with its goal on the far side of it and its only
 -- remaining route ~40 tiles BACKWARDS round the ring.
@@ -60,7 +60,7 @@ local MAIN_ROWS = { 130, 131, 132 }
 local CUT_MARGIN_WU = 192
 -- ...and only while it is moving slowly enough for that to be true. on_tick
 -- runs once per BRAIN tick (every second sim tick), so this is world units per
--- two sim ticks and a cruising tank measures 8-12.  The sidecar has no speed
+-- two sim ticks and a cruising tank measures 8-12.  The script has no speed
 -- field to read -- l_tank does not expose one -- so it is taken from the
 -- position delta.
 local MAX_APPROACH_WU = 14        -- world units per BRAIN tick (two sim ticks)

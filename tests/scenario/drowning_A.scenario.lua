@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/drowning_A.map (auto-loaded as
+-- Scenario script for tests/drowning_A.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/drowning_test.py arena A.
 --
 -- ARENA A -- THE STAIRCASE SHORELINE.  A two-tile-wide staircase of grass

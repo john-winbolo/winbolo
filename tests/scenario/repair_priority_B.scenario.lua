@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/repair_priority_B.map (auto-loaded as
+-- Scenario script for tests/repair_priority_B.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/repair_priority_test.py arena B.
 --
 -- Two DEAD pills, ours: one five tiles west behind four tiles of SWAMP, one
@@ -22,7 +22,7 @@
 -- back to GRASS once the tank is ashore, which is what the ground would have
 -- been if the engine did not need a puddle to spawn onto.
 --
--- THE TRACE, IN MEMORY.  The old sidecar wrote every change of ARMOUR, OWNER
+-- THE TRACE, IN MEMORY.  The old script wrote every change of ARMOUR, OWNER
 -- and IN_TANK to repair_priority_B_trace.log and the python driver read it
 -- back.  `io` is not on the scenario sandbox's base list, so the two questions
 -- the driver asked of that file are answered from locals instead: did each
@@ -37,7 +37,7 @@ local OURS  = { { 134, 126 }, { 121, 126 } }
 local NEUTRALS = {  }
 local SPAWN = { 126, 126 }
 local GRASS = 7
--- Doubled from the old sidecar's 60: on_tick's tick goes up by 2 per frame on
+-- Doubled from the old script's 60: on_tick's tick goes up by 2 per frame on
 -- this host and by 1 on the old one.
 local FILL_TICK = 120
 local p0 = 0

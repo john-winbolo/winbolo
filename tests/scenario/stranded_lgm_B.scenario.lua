@@ -1,8 +1,8 @@
--- Scenario sidecar for tests/stranded_lgm_B.map (auto-loaded as
+-- Scenario script for tests/stranded_lgm_B.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/stranded_lgm_test.py arena B (the KEEL control -- identical
--- ground and identical sidecar, two cfg= tokens apart).
+-- ground and identical script, two cfg= tokens apart).
 --
--- WHAT THIS SIDECAR IS FOR: it strands the man, once, at a moment the ENGINE
+-- WHAT THIS SCRIPT IS FOR: it strands the man, once, at a moment the ENGINE
 -- has already told us he is on the far side of the gate -- and it does that
 -- with the only tool the scenario API has for the job, set_tile.  There is no
 -- LGM teleport, so his whereabouts are inferred from something the engine
@@ -33,7 +33,7 @@
 -- first measured run had the tank parked ON the gate column at the instant the
 -- repair landed (it holds in plan_position wherever it happens to be, which is
 -- the freeze this whole arena is about), so the flood was refused -- correctly.
--- When that happens the sidecar knocks the pill straight back down to
+-- When that happens the script knocks the pill straight back down to
 -- TOPUP_ARMOUR, the pool sends the man out again, and the next completion is
 -- another chance. So the arena keeps asking until the answer is yes instead of
 -- betting the run on one coincidence. Once the column is river the pill is
@@ -51,7 +51,7 @@
 -- at a parked tank, and a puddle in the middle of it is a tile with no tree
 -- cover.  So the pond is filled back to FOREST once the tank is ashore.
 --
--- WHAT THE OLD TRACE FILE ASKED, AND WHERE IT IS ASKED NOW.  The old sidecar
+-- WHAT THE OLD TRACE FILE ASKED, AND WHERE IT IS ASKED NOW.  The old script
 -- wrote the pill's armour, owner and in_tank to stranded_lgm_B_trace.log and
 -- the python driver read it back, and read the man and the tank out of the
 -- brain's per-tick jsonl.  `io` is not on the scenario sandbox's base list and
@@ -66,7 +66,7 @@ local GATE_X  = 128
 local GATE_Y  = { 122, 123, 124 }
 local FOREST  = 5
 local RIVER   = 1
--- Both doubled from the old sidecar's 60 and 16: on_tick's tick goes up by 2
+-- Both doubled from the old script's 60 and 16: on_tick's tick goes up by 2
 -- per frame on this host and by 1 on the old one, so a duration written here
 -- means half the wall time it used to unless it is doubled.
 local FILL_TICK = 120

@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/harvest_follow_through.map (auto-loaded as
+-- Scenario script for tests/harvest_follow_through.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/harvest_follow_through_test.py.
 --
 -- Three jobs.

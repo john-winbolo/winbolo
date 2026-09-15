@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/blocked_aim.map (auto-loaded as <map>.scenario.lua
+-- Scenario script for tests/blocked_aim.map (auto-loaded as <map>.scenario.lua
 -- by scenarioLoad — there is no command-line flag; it just has to sit beside
 -- the .map).
 --
@@ -14,7 +14,7 @@
 -- move) and there is no RIVER anywhere to build a new one.  The pill stays
 -- deployed, alive and in the way for the whole run.
 --
--- The map loader is what makes the sidecar necessary: bolo_map.c replaces
+-- The map loader is what makes the script necessary: bolo_map.c replaces
 -- RIVER/DEEP_SEA/BUILDING/HALFBUILDING under every map-file pillbox with ROAD,
 -- so terrain written into the .map alone cannot do it.  Restore the sea in
 -- on_setup, which runs before the first snapshot — same trick as

@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/ally_capture_guard_A.map — THE BLOCK.
+-- Scenario script for tests/ally_capture_guard_A.map — THE BLOCK.
 --
 -- Companion to tests/ally_capture_guard_test.py variant A.
 --
@@ -32,7 +32,7 @@ local OUR_CFG = "cfg=CAPTURE_PILL_BASE_COST=1e30;cfg=PILL_REPOSITION_ENABLED=fal
 -- which is the one thing the whole arena depends on.
 local TEAM = 1
 
--- What the python driver read out of the sidecar's trace file.  `io` is not on
+-- What the python driver read out of the script's trace file.  `io` is not on
 -- the scenario sandbox's base list, so the questions the driver asked of that
 -- file are answered here instead, in these four locals.
 local rose_at    = nil    -- tick the corpse's armour first went up (a rebuild)
@@ -109,7 +109,7 @@ end
 
 -- ── the verdict ─────────────────────────────────────────────────────────
 -- PORTED (2026-09-15) from tests/ally_capture_guard_test.py check_A, which
--- read the same facts out of the sidecar's own engine trace: assertion 3 (our
+-- read the same facts out of the script's own engine trace: assertion 3 (our
 -- man never went to the corpse) and assertion 4 (the armour never rose and the
 -- ally ended up carrying the pill).
 --

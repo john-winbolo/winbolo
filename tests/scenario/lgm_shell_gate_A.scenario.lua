@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/lgm_shell_gate_A.map (auto-loaded as
+-- Scenario script for tests/lgm_shell_gate_A.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/lgm_shell_gate_test.py arena A.
 --
 -- OUR DEAD PILL three tiles west of the tank, and ONE NEUTRAL PILLBOX on an
@@ -9,7 +9,7 @@
 -- refuse those ticks (`shell_will_hit`); arena B is the same ground with
 -- cfg=BUILDER_POOL_SHELL_GATE=false and must never print that reason.
 --
--- This sidecar hands the island pill to game.NEUTRAL: a neutral pill shoots
+-- This script hands the island pill to game.NEUTRAL: a neutral pill shoots
 -- everyone, which is why the arena needs no second bot, and the .map owner byte
 -- has no neutral encoding mapRead is guaranteed to keep.
 --

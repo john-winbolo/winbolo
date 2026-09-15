@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/builder_pool_A.map (auto-loaded as
+-- Scenario script for tests/builder_pool_A.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/builder_pool_test.py variant A --
 -- the "stolen blocker" shape.
 --
@@ -14,7 +14,7 @@
 --    -bots tank); the target pill goes to the idler.  on_choose_start pins each
 --    tank to its own pond so they cannot swap ends.
 --
--- 3. RE-WEAR (the reason this sidecar has a set_pill_armour call).  The test's
+-- 3. RE-WEAR (the reason this script has a set_pill_armour call).  The test's
 --    assertion 2 needs a LIVE builder-pool candidate on the ticks the fire
 --    exchange holds back -- otherwise assertion 1 ("nothing was dispatched")
 --    only proves the pool was empty.  Left alone this arena cannot supply one:
@@ -173,7 +173,7 @@ end
 -- LEFT BEHIND, because it is print2 and nothing else: assertions 1 to 3, which
 -- are the variant -- nothing dispatched on any tick whose eligibility verdict
 -- reads `fire_exchange:<substate>`, those held-back ticks having a real
--- candidate on them (which is why this sidecar re-wears the pill at all), and
+-- candidate on them (which is why this script re-wears the pill at all), and
 -- the dispatch that does happen reproducing from its own chips. The re-wear is
 -- kept even so: it is what stops the run being the empty case, and a future
 -- host op that exposes the pool would find the arena already set up for it.

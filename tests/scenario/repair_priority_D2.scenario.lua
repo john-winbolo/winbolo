@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/repair_priority_D2.map (auto-loaded as
+-- Scenario script for tests/repair_priority_D2.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/repair_priority_test.py arena D2.
 --
 -- Arena D's ground, run with cfg=BUILDER_POOL_REPAIR_LINEAR=false: the control.
@@ -20,7 +20,7 @@
 -- which is what the ground would have been if the engine did not need a puddle
 -- to spawn onto.
 --
--- THE TRACE, IN MEMORY, AND THE MAN.  The old sidecar wrote every change of
+-- THE TRACE, IN MEMORY, AND THE MAN.  The old script wrote every change of
 -- ARMOUR, OWNER and IN_TANK to repair_priority_D2_trace.log and the driver read
 -- it back.  `io` is not on the scenario sandbox's base list, so the pill is
 -- followed by index in locals, and the man is read from game.builder(), whose
@@ -31,7 +31,7 @@ local OURS  = { { 119, 126 } }
 local NEUTRALS = { { 116, 126 }, { 115, 126 }, { 115, 125 }, { 115, 127 } }
 local SPAWN = { 126, 126 }
 local GRASS = 7
--- Doubled from the old sidecar's 60: on_tick's tick goes up by 2 per frame on
+-- Doubled from the old script's 60: on_tick's tick goes up by 2 per frame on
 -- this host and by 1 on the old one.
 local FILL_TICK = 120
 local p0 = 0

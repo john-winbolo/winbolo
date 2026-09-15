@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/init_update.map — NEW ORDERS MID-ROUND.
+-- Scenario script for tests/init_update.map — NEW ORDERS MID-ROUND.
 --
 -- This one is not a port. It is the arena for `game.bot_init(p, t)`, the row
 -- that hands a bot already on the field a new init table, and for the

@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/defend_repair.map (auto-loaded as
+-- Scenario script for tests/defend_repair.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/defend_repair_test.py.
 --
 -- Three jobs.

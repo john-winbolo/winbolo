@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/drowning_fix_A3.map (auto-loaded as
+-- Scenario script for tests/drowning_fix_A3.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/drowning_fix_test.py arena A3.
 --
 -- ARENA A3 -- THE NOTCH LEDGE.  Arena A's two-tile staircase descending

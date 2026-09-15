@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/capture_lgm_hunt_H2.map (auto-loaded as <map>.scenario.lua).
+-- Scenario script for tests/capture_lgm_hunt_H2.map (auto-loaded as <map>.scenario.lua).
 -- Companion to tests/capture_lgm_hunt_test.py arena H2.
 --
 -- A bot on capture_pill drives at a dead pillbox to grab it.  The arena keeps
@@ -269,7 +269,7 @@ end
 
 -- ── the verdict ─────────────────────────────────────────────────────────
 -- PORTED (2026-09-15) from tests/capture_lgm_hunt_test.py arena H2: the one
--- assertion it made of the ENGINE rather than of print2 -- the sidecar really
+-- assertion it made of the ENGINE rather than of print2 -- the script really
 -- pulsed the corpse's armour, so something was offered to the armour trigger
 -- at all.  In the driver that check guarded the rest ("nothing was offered to
 -- the trigger"); here it is all that is left.

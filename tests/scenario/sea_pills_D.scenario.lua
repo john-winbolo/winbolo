@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/sea_pills_D.map (auto-loaded as <map>.scenario.lua).
+-- Scenario script for tests/sea_pills_D.map (auto-loaded as <map>.scenario.lua).
 --
 -- Three jobs.
 --

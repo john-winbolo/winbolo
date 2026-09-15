@@ -10,7 +10,7 @@
 --
 --   "park"    drive to exactly the same place and then do NOTHING at all --
 --             no shot, no man, no build.  This is arena B2, the control: the
---             scenario sidecar itself flips the same tile to a wall with
+--             scenario script itself flips the same tile to a wall with
 --             game.set_tile, so a build appears inside the stamp with NO
 --             hostile LGM ever seen there.  Alarm mode must NOT fire on it.
 --

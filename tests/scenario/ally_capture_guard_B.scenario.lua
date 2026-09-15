@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/ally_capture_guard_B.map — THE CONTROL.
+-- Scenario script for tests/ally_capture_guard_B.map — THE CONTROL.
 --
 -- Companion to tests/ally_capture_guard_test.py variant B.
 --
@@ -107,7 +107,7 @@ end
 -- ── the verdict ─────────────────────────────────────────────────────────
 -- PORTED (2026-09-15) from tests/ally_capture_guard_test.py check_B: assertion
 -- 2 (the man WAS sent to the corpse) and assertion 3 (the armour rose off 0, so
--- the rebuild landed), both of which the driver read out of this sidecar's own
+-- the rebuild landed), both of which the driver read out of this script's own
 -- engine trace.
 --
 -- LEFT BEHIND: assertions 0, 1 and 1b — the pool ran at all, the bot logged the

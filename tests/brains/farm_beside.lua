@@ -19,14 +19,14 @@
 -- the hunt box and neither of which shoots anybody.
 --
 --   ROAD on ROAD_MX,ROAD_MY  -- the default.  The tile is GRASS and the
---     scenario sidecar re-stamps it GRASS every tick, so the road is always
+--     scenario script re-stamps it GRASS every tick, so the road is always
 --     still needed and the man keeps being sent.  Grass, not forest, is the
 --     point: the C-side LGM scan hides a tree-covered man more than 3 tiles
 --     out, and this test wants him VISIBLE for the whole approach.
 --
 --   FARM on FARM_MX,FARM_MY  -- run whenever trees drop below TREE_LOW.  A
 --     road costs 2 tree units and we start with 40, so without a top-up the
---     errand runs out after twenty trips.  The sidecar re-stamps that tile
+--     errand runs out after twenty trips.  The script re-stamps that tile
 --     FOREST every tick, so there is always something to chop.
 --
 -- It NEVER fires: a shot at our bot would drag it into tank combat and the

@@ -256,9 +256,9 @@ static void brainListSplitMeta(const char *blob,
 
 /* Try to read "<parent>/<name>/<file>" into buf; returns bytes read (0 if
  * absent/empty). buf is always NUL-terminated. */
-static size_t brainListReadSidecar(const char *parent, const char *name,
-                                   const char *file,
-                                   char *buf, size_t bufSz) {
+static size_t brainListReadBrainFile(const char *parent, const char *name,
+                                     const char *file,
+                                     char *buf, size_t bufSz) {
     char path[1024];
     SDL_snprintf(path, sizeof(path), "%s%c%s%c%s", parent,
 #if defined(_WIN32)
@@ -279,19 +279,19 @@ static size_t brainListReadSidecar(const char *parent, const char *name,
  * directory brains/ and Brains/, then the ones beside the executable).
  * Every brain ships with its own about.txt / modes.txt, so this is a local
  * read on each machine — none of it goes over the wire. */
-static size_t brainListReadSidecarAny(const char *name, const char *file,
-                                      char *blob, size_t blobSz) {
-    size_t got = brainListReadSidecar("brains", name, file, blob, blobSz);
-    if (!got) got = brainListReadSidecar("Brains", name, file, blob, blobSz);
+static size_t brainListReadBrainFileAny(const char *name, const char *file,
+                                        char *blob, size_t blobSz) {
+    size_t got = brainListReadBrainFile("brains", name, file, blob, blobSz);
+    if (!got) got = brainListReadBrainFile("Brains", name, file, blob, blobSz);
     if (!got) {
         const char *base = SDL_GetBasePath();
         if (base) {
             char p[1024];
             SDL_snprintf(p, sizeof(p), "%sbrains", base);
-            got = brainListReadSidecar(p, name, file, blob, blobSz);
+            got = brainListReadBrainFile(p, name, file, blob, blobSz);
             if (!got) {
                 SDL_snprintf(p, sizeof(p), "%sBrains", base);
-                got = brainListReadSidecar(p, name, file, blob, blobSz);
+                got = brainListReadBrainFile(p, name, file, blob, blobSz);
             }
         }
     }
@@ -299,7 +299,7 @@ static size_t brainListReadSidecarAny(const char *name, const char *file,
 }
 
 static size_t brainListReadAboutAny(const char *name, char *blob, size_t blobSz) {
-    return brainListReadSidecarAny(name, "about.txt", blob, blobSz);
+    return brainListReadBrainFileAny(name, "about.txt", blob, blobSz);
 }
 
 /* Is this line of about.txt a "color:" key line? Points *value past the
@@ -516,7 +516,7 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
     if (!name || !name[0]) return false;
 
     char blob[4096];
-    if (!brainListReadSidecarAny(name, "modes.txt", blob, sizeof(blob))) {
+    if (!brainListReadBrainFileAny(name, "modes.txt", blob, sizeof(blob))) {
         return false;
     }
 

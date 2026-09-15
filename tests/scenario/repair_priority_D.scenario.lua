@@ -1,11 +1,11 @@
--- Scenario sidecar for tests/repair_priority_D.map (auto-loaded as
+-- Scenario script for tests/repair_priority_D.map (auto-loaded as
 -- <map>.scenario.lua).  Companion to tests/repair_priority_test.py arena D.
 --
 -- A dead friendly pill seven tiles west, and FOUR NEUTRAL PILLBOXES on an
 -- island the tank cannot reach, whose combined danger field covers the corpse
 -- and the whole of the man's walk.  Under the linear formula there is no
 -- path-safety gate on a repair row at all, so the man must be dispatched
--- anyway.  This sidecar hands the island pills to game.NEUTRAL (a neutral pill
+-- anyway.  This script hands the island pills to game.NEUTRAL (a neutral pill
 -- shoots everyone and is stamped into threat.lua's field exactly like a hostile
 -- one, which is why the arena needs no second bot).
 --
@@ -25,7 +25,7 @@
 -- which is what the ground would have been if the engine did not need a puddle
 -- to spawn onto.
 --
--- THE TRACE, IN MEMORY, AND THE MAN.  The old sidecar wrote every change of
+-- THE TRACE, IN MEMORY, AND THE MAN.  The old script wrote every change of
 -- ARMOUR, OWNER and IN_TANK to repair_priority_D_trace.log and the driver read
 -- it back, and read the man out of the brain's own per-tick jsonl.  `io` is not
 -- on the scenario sandbox's base list and the jsonl is not the scenario's to
@@ -37,7 +37,7 @@ local OURS  = { { 119, 126 } }
 local NEUTRALS = { { 116, 126 }, { 115, 126 }, { 115, 125 }, { 115, 127 } }
 local SPAWN = { 126, 126 }
 local GRASS = 7
--- Doubled from the old sidecar's 60: on_tick's tick goes up by 2 per frame on
+-- Doubled from the old script's 60: on_tick's tick goes up by 2 per frame on
 -- this host and by 1 on the old one.
 local FILL_TICK = 120
 local p0 = 0

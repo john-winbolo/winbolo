@@ -1,28 +1,28 @@
 -- =========================================================================
 -- The compat prelude.
 --
--- Our 90 arena sidecars were written against the old server-side scenario
+-- Our 90 arena scripts were written against the old server-side scenario
 -- host, where every hook was handed a `game` table as its first argument and
 -- the table carried four rows the host on main does not have. This file is
--- what lets those sidecars run unchanged on the host that is on main.
+-- what lets those scripts run unchanged on the host that is on main.
 --
 -- HOW IT IS USED. The sandbox a scenario runs in has no `require` and no
--- `dofile` (#339), so a sidecar cannot load this itself. The gate runner
--- (tests/scenario/run_gate.py) splits this file on the SIDECAR marker below
+-- `dofile` (#339), so a script cannot load this itself. The gate runner
+-- (tests/scenario/run_gate.py) splits this file on the SCRIPT marker below
 -- and writes one temporary file made of
 --
---     <the head>  ..  <the sidecar>  ..  <the tail>
+--     <the head>  ..  <the script>  ..  <the tail>
 --
 -- beside a copy of the arena's map, under the name the map's own discovery
 -- looks for. The server therefore reads one ordinary scenario file and knows
 -- nothing about any of this.
 --
 -- WHAT THE HEAD DOES. It puts four missing rows on the `game` table and
--- softens three others so the calls our sidecars already make are answered
+-- softens three others so the calls our scripts already make are answered
 -- the way the old host answered them. Every one of them is written on rows
 -- the host on main does have; none of it needs C.
 --
--- WHAT THE TAIL DOES. It takes every hook the sidecar declared and puts a
+-- WHAT THE TAIL DOES. It takes every hook the script declared and puts a
 -- wrapper of the host's own shape in its place, so `on_tick(g, tick)` is
 -- called by a host that calls `on_tick(tick)`. It also flushes the roster
 -- ops the head had to defer, and it carries the verdict deadline.
@@ -31,7 +31,7 @@
 -- =========================================================================
 
 -- Rows the head installs itself. The tail must not wrap these with a `game`
--- argument the way it wraps a sidecar's own hooks.
+-- argument the way it wraps a script's own hooks.
 local compat_installed = {}
 
 -- A scenario table is not optional on this host: a file without one is
@@ -81,7 +81,7 @@ end
 -- ── newswire_mute ────────────────────────────────────────────────────────
 -- Ours was one switch that silenced the engine newswire everywhere. This
 -- host asks the announce() policy before every line instead, so the mute is
--- a flag and the policy is the answer. A sidecar that declares its own
+-- a flag and the policy is the answer. A script that declares its own
 -- announce wins: the tail sees it and leaves this one alone.
 
 local newswire_muted = false
@@ -108,7 +108,7 @@ compat_installed.announce = announce
 -- remove_pill and add_pill together do the right thing except for the slot.
 -- pillsAddItem hands out the LOWEST free slot, so putting one pill back
 -- while two are hidden can give it a number it did not have, and our
--- sidecars name pills by number.
+-- scripts name pills by number.
 --
 -- So the slot is forced. To show pill n: re-add every still-hidden pill
 -- below n, in ascending order, each at its own remembered square — each
@@ -146,7 +146,7 @@ local function fill_below(n)
     local got = game.add_pill(r.x, r.y, r.owner, r.armour, r.speed)
     if got ~= k then
       -- The slot did not come back where it was asked for. Say so rather
-      -- than carry on against a pill the sidecar will name by the wrong
+      -- than carry on against a pill the script will name by the wrong
       -- number: a drifted slot is a test failure, not a silent wrong answer.
       game.log(string.format("compat: hide/show slot drift, wanted %d got %s",
                              k, tostring(got)))
@@ -195,7 +195,7 @@ end
 -- NOTE, and it is the one thing this shim cannot fix: the host hands the
 -- init table to the brain as the BRAIN_INIT global, and the GoalHunter
 -- brains read BRAIN_INIT_ARG, the string. The tokens therefore do not reach
--- the brain on main. PORT_MAP.md names it as a gap. Every sidecar that
+-- the brain on main. PORT_MAP.md names it as a gap. Every script that
 -- depends on a token is marked EXPECTED-FAIL for that reason.
 
 -- ── a driver's token string, packed into an init table ───────────────────
@@ -358,7 +358,7 @@ end
 -- goes. A line is at most 128 bytes and the host drops a longer one
 -- silently, so this cuts rather than loses the verdict.
 --
--- A sidecar says its verdict with verdict_pass(why) or verdict_fail(why),
+-- A script says its verdict with verdict_pass(why) or verdict_fail(why),
 -- or answers a question with verdict(ok, why). The first one said is the
 -- one that counts; a later one is ignored, so a check inside on_tick may
 -- fire on every tick without the answer changing under it.
@@ -380,21 +380,21 @@ end
 function verdict_pass(why) verdict(true,  why) end
 function verdict_fail(why) verdict(false, why) end
 
--- A sidecar that wants an answer at a fixed moment sets this and the tail
+-- A script that wants an answer at a fixed moment sets this and the tail
 -- calls it once, on the first tick at or after the deadline, unless a
 -- verdict has already been said. The tick is in game.tick()'s own units,
 -- 100 a second.
 VERDICT_AT   = VERDICT_AT or nil     -- the tick to decide on
 VERDICT_CHECK = VERDICT_CHECK or nil -- function() -> ok, why
 
---@@SIDECAR@@
+--@@SCRIPT@@
 
 -- =========================================================================
--- The tail. Everything below runs after the sidecar's own top level, so it
--- can see the hooks the sidecar declared.
+-- The tail. Everything below runs after the script's own top level, so it
+-- can see the hooks the script declared.
 -- =========================================================================
 
--- Every hook and policy this host calls. A sidecar's version of one takes
+-- Every hook and policy this host calls. A script's version of one takes
 -- `game` first; the host's does not, so each is replaced by a wrapper that
 -- puts the global `game` back in front of whatever the host passes.
 local HOOKS = {
@@ -411,7 +411,7 @@ local HOOKS = {
   "damage_scale",
 }
 
--- The sidecar's own on_setup, on_start and on_tick are taken out of the
+-- The script's own on_setup, on_start and on_tick are taken out of the
 -- wrapping list and handled below: each has compat work to do around it.
 local user = {}
 for _, name in ipairs(HOOKS) do
@@ -422,7 +422,7 @@ for _, name in ipairs(HOOKS) do
   end
 end
 
--- A sidecar that wrote no allow_extra_teams gets none: no opinion is the
+-- A script that wrote no allow_extra_teams gets none: no opinion is the
 -- ordinary rule, which is what the old host did with an undeclared hook.
 
 if user.on_setup then
@@ -438,7 +438,7 @@ end
 
 _G.on_start = function()
   -- Flush the roster ops on_setup could not issue, in the order they were
-  -- asked for, before the sidecar's own on_start sees the round.
+  -- asked for, before the script's own on_start sees the round.
   for i = 1, #deferred do deferred[i]() end
   deferred = {}
   if user.on_start then user.on_start(game) end

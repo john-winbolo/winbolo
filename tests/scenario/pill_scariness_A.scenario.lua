@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/pill_scariness_A.map (auto-loaded as
+-- Scenario script for tests/pill_scariness_A.map (auto-loaded as
 -- <map>.scenario.lua).  Variant A: NEUTRAL-pillbox strays on a healthy pill.
 --
 -- GATE: ticks=6200 bots=0 ai=yesfull gametype=open limit=20
@@ -16,7 +16,7 @@
 --
 -- Three jobs.
 --
--- 1. LOADOUT.  A map with a sidecar boots as gameScripted, and
+-- 1. LOADOUT.  A map with a script boots as gameScripted, and
 --    gameTypeGetItems treats gameScripted exactly like OPEN (40 shells /
 --    40 mines / 40 trees) -- neither -gametype nor scenario.game reaches a
 --    -bots tank.  game.spawn_bot's loadout is the one thing that does (it arms
