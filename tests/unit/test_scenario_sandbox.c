@@ -173,14 +173,21 @@ static void sbUnwatchConsole(ServerSim *sim) {
  *
  * math.randomseed is on the absent list and math.random on the present one,
  * which is the pair that says the host drew the round's seed before the seal
- * rather than losing the seeding with the function. */
+ * rather than losing the seeding with the function.
+ *
+ * The present lists name every global the whitelist keeps rather than a few
+ * of them, because the whitelist is a keep list: a name dropped from it is a
+ * global deleted, and a case that only watched the deletions would let that
+ * through. unpack and rawlen are the one pair asked for together — 5.1 has
+ * the first and 5.2 the second, and either answers for both. */
 int run_scenario_sandbox_removed_names_are_nil(void) {
     static const char *const kMap = "scnsand_names.map";
     static const char *const kLua =
         "local leaks = {}\n"
         "local gone = { \"io\", \"package\", \"require\", \"debug\", \"ffi\",\n"
         "               \"jit\", \"bit\", \"load\", \"loadstring\", \"dofile\",\n"
-        "               \"loadfile\", \"module\", \"newproxy\" }\n"
+        "               \"loadfile\", \"module\", \"newproxy\", \"getfenv\",\n"
+        "               \"setfenv\", \"gcinfo\" }\n"
         "for _, n in ipairs(gone) do\n"
         "  if _G[n] ~= nil then leaks[#leaks + 1] = n end\n"
         "end\n"
@@ -193,11 +200,26 @@ int run_scenario_sandbox_removed_names_are_nil(void) {
         "for _, n in ipairs(osGone) do\n"
         "  if os[n] ~= nil then leaks[#leaks + 1] = \"os.\" .. n end\n"
         "end\n"
-        "local kept = { \"pcall\", \"pairs\", \"tostring\", \"setmetatable\" }\n"
+        "local kept = { \"assert\", \"collectgarbage\", \"error\",\n"
+        "               \"getmetatable\", \"ipairs\", \"next\", \"pairs\",\n"
+        "               \"pcall\", \"print\", \"rawequal\", \"rawget\",\n"
+        "               \"rawset\", \"select\", \"setmetatable\",\n"
+        "               \"tonumber\", \"tostring\", \"type\", \"xpcall\" }\n"
         "for _, n in ipairs(kept) do\n"
         "  if type(_G[n]) ~= \"function\" then\n"
         "    leaks[#leaks + 1] = \"no \" .. n\n"
         "  end\n"
+        "end\n"
+        "local keptTables = { \"_G\", \"coroutine\", \"string\", \"table\",\n"
+        "                     \"math\", \"os\" }\n"
+        "for _, n in ipairs(keptTables) do\n"
+        "  if type(_G[n]) ~= \"table\" then leaks[#leaks + 1] = \"no \" .. n end\n"
+        "end\n"
+        "if type(_VERSION) ~= \"string\" then\n"
+        "  leaks[#leaks + 1] = \"no _VERSION\"\n"
+        "end\n"
+        "if unpack == nil and rawlen == nil then\n"
+        "  leaks[#leaks + 1] = \"no unpack and no rawlen\"\n"
         "end\n"
         "local calls = {\n"
         "  [\"string.format\"] = function() return string.format(\"%d\", 1) end,\n"

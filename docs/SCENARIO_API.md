@@ -64,7 +64,15 @@ start of every round, each time in a Lua state of its own. That means:
 The file may be up to 1 MiB.
 
 **What a script is given.** The state a scenario runs in opens `string`,
-`table`, `math`, `os`, `coroutine` and the base functions, and nothing else.
+`table`, `math`, `os`, `coroutine` and a named list of base functions, and
+nothing else. The base list is `assert`, `collectgarbage`, `error`,
+`getmetatable`, `ipairs`, `next`, `pairs`, `pcall`, `print`, `rawequal`,
+`rawget`, `rawlen`, `rawset`, `select`, `setmetatable`, `tonumber`,
+`tostring`, `type`, `unpack` and `xpcall`, plus `_G` and `_VERSION` — a base
+function this list does not name is not there, whatever your host's Lua
+carries. `unpack` is 5.1's and `rawlen` is 5.2's, so a host has the one its
+own Lua has. `getfenv` and `setfenv` are not on the list, so do not go looking
+for them on a LuaJIT host.
 There is no `io`, so a script cannot read or write a file. There is no
 `package` and no `require`, so it cannot load another module. There is no
 `debug`, and on a LuaJIT host no `ffi`, no `jit` and no `bit`. `load`,

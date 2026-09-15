@@ -27,9 +27,10 @@
  *  Opening them one at a time is what takes io, package,
  *  debug and, under LuaJIT, ffi, jit and bit away: none of
  *  them is ever created, so there is nothing to strip. What
- *  is stripped is the rest — the loaders base carries, the
- *  dump that turns a function into bytecode, and everything
- *  in os but the clock.
+ *  is stripped is the rest — every global the openers left
+ *  that the whitelist does not name, the loaders among them,
+ *  the dump that turns a function into bytecode, and
+ *  everything in os but the clock.
  *
  *  print is replaced rather than removed, because a script
  *  reporting what it did is worth having and stock print
@@ -336,11 +337,6 @@ static void scnSandboxOpenOne(lua_State *L, const char *name,
 
 /* ── Taking a name back ───────────────────────────────────────────── */
 
-static void scnSandboxClearGlobal(lua_State *L, const char *name) {
-    lua_pushnil(L);
-    lua_setglobal(L, name);
-}
-
 /* One field of a library table. The tables were built moments ago by their
    own openers and carry no metatable, so the write is the plain one. */
 static void scnSandboxClearField(lua_State *L, const char *table,
@@ -389,6 +385,80 @@ static void scnSandboxTrimOs(lua_State *L) {
         while (lua_next(L, -2) != 0) {
             lua_pop(L, 1);              /* the value; the key stays */
             if (!scnSandboxOsKeeps(L, -1)) {
+                lua_pushvalue(L, -1);   /* the key again, to write through */
+                lua_pushnil(L);
+                lua_rawset(L, -4);
+            }
+        }
+    }
+    lua_pop(L, 1);
+}
+
+/* Whether the key at idx is one of the globals a script is given.
+ *
+ * Naming one this VM does not have costs nothing, because this list only
+ * decides what is deleted and never creates anything: unpack is 5.1's and
+ * rawlen is 5.2's, so each VM keeps the one it has, and utf8 is only opened
+ * where there is an opener for it.
+ *
+ * collectgarbage, print, pcall and xpcall are here because what a script
+ * ends up calling under those names is written over further down, by the
+ * replacements and the wrappers. Take them away here and there is nothing
+ * left for those to close over. */
+static bool scnSandboxGlobalKeeps(lua_State *L, int idx) {
+    static const char *const kKeep[] = {
+        /* The libraries opened above, and the string naming the VM. */
+        "_G", "coroutine", "string", "table", "math", "os", "utf8",
+        "_VERSION",
+        /* The base functions a script is meant to have. */
+        "assert", "collectgarbage", "error", "getmetatable", "ipairs",
+        "next", "pairs", "pcall", "print", "rawequal", "rawget", "rawlen",
+        "rawset", "select", "setmetatable", "tonumber", "tostring", "type",
+        "unpack", "xpcall"
+    };
+    const char *key;
+    size_t      i;
+
+    /* By type first, for the reason os is: a number key handed to
+       lua_tostring is converted where it sits, and the traversal is over. */
+    if (lua_type(L, idx) != LUA_TSTRING) {
+        return false;
+    }
+    key = lua_tostring(L, idx);
+    for (i = 0; i < sizeof(kKeep) / sizeof(kKeep[0]); i++) {
+        if (strcmp(key, kKeep[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The globals cut to that list. The loaders go with everything else it does
+ * not name: load, loadstring, dofile, loadfile, require, module and newproxy
+ * each bring code in from outside the chunk the host read, which is the one
+ * thing a state running a map file's script must not do. Which of them this
+ * VM had in the first place stopped mattering with the shape — the walk takes
+ * away what is there.
+ *
+ * Named the other way round, as the loaders to take away, this only ever
+ * removed what somebody had thought of, and three names nobody had decided on
+ * were still here: getfenv, setfenv and gcinfo. None of them is a way out
+ * today, with every loader gone, but setfenv(0, {}) replaces the environment
+ * the host looks its own hooks up in, and that is not a thing to be left
+ * behind by omission. A name a later Lua adds is now gone by default instead.
+ *
+ * This runs once every library is open, so the walk covers the library tables
+ * as well as base — which is why those are on the list themselves. The
+ * globals are reached through _G, which both VMs set from the base opener.
+ * Setting an existing global to nil in the middle of a traversal is allowed;
+ * adding one is not, and this adds none. */
+static void scnSandboxTrimGlobals(lua_State *L) {
+    lua_getglobal(L, "_G");
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            lua_pop(L, 1);              /* the value; the key stays */
+            if (!scnSandboxGlobalKeeps(L, -1)) {
                 lua_pushvalue(L, -1);   /* the key again, to write through */
                 lua_pushnil(L);
                 lua_rawset(L, -4);
@@ -528,18 +598,6 @@ static void scnSandboxGuardField(lua_State *L, const char *table,
 /* ── The whitelist ────────────────────────────────────────────────── */
 
 void scnSandboxOpenLibs(lua_State *L) {
-    /* The loaders. Each of them brings code in from outside the chunk the
-       host read, which is the one thing a state running a map file's script
-       must not do. loadstring, module and newproxy are 5.1's and are not
-       there to take on 5.4; require and module come with package, which is
-       never opened, and the writes below are what says so whichever VM this
-       is built against. */
-    static const char *const kStrip[] = {
-        "load", "loadstring", "dofile", "loadfile", "require",
-        "module", "newproxy"
-    };
-    size_t i;
-
     /* base first: under 5.1 and LuaJIT it brings coroutine with it, which is
        why the coroutine opener below is 5.4's alone. */
     scnSandboxOpenOne(L, "_G", luaopen_base);
@@ -556,9 +614,7 @@ void scnSandboxOpenLibs(lua_State *L) {
     scnSandboxOpenOne(L, LUA_UTF8LIBNAME, luaopen_utf8);
 #endif
 
-    for (i = 0; i < sizeof(kStrip) / sizeof(kStrip[0]); i++) {
-        scnSandboxClearGlobal(L, kStrip[i]);
-    }
+    scnSandboxTrimGlobals(L);
 
     /* The other half of the loaders: dump turns a function back into
        bytecode, which the chunk loader refuses to take. */
