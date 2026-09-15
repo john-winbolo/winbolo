@@ -136,11 +136,20 @@ void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum) {
 
     /* The mirror of serverSimAddBot's occupied-seat branch above: that one
        builds the tank, the man and the base timer for a seat the roster
-       already holds, and this one takes the same three back along with the
-       bot that was driving them. Everything the roster knows stays — the
-       connection, the players-table identity, the team, the alliance — so
-       there is no leave to announce, nothing the seat owns changes hands,
-       and no client has to be resynced to find that out. */
+       already holds, and this one takes the same three back. Everything the
+       roster knows stays — the connection, the players-table identity, the
+       team, the alliance — so there is no leave to announce, nothing the
+       seat owns changes hands, and no client has to be resynced to find
+       that out.
+
+       The bot that was driving the tank does not go with it. The tank has
+       to: it leaves the world. What was behind it does not — the ClientSim,
+       the control subscription and the brain instance are parked in the bot
+       pool and handed back to the next spawn that fields this seat, so a
+       wave transition costs the tank and not a VM per seat. The parked
+       runner is released if the seat leaves the roster, at the next round
+       start, or if the refield names a different brain or a different init
+       table (bot_manager.c). */
     if (botManagerIsBot(sim, playerNum)) {
         botManagerRemoveBotKeepSeat(sim, playerNum);
     }
@@ -229,9 +238,13 @@ void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
         botManagerRemoveBot(sim, playerNum);
     } else if (sim->playerConnected[playerNum] &&
                sim->lobbyPlayers[playerNum].isBot) {
-        /* A seat held for a bot with nothing behind it to tear down. The
-           roster entry is the whole of it, so taking it out is the leave
-           path on its own. */
+        /* A seat held for a bot, which the pool does not see: it has no
+           active entry to remove. What it can still have is a runner parked
+           across an unfielding, and the seat is leaving, so that goes with
+           it — a no-op for a seat that was never fielded. The roster entry
+           is the rest of it, and taking that out is the leave path on its
+           own. */
+        botManagerReleaseParkedRunner(sim, playerNum);
         serverSimRemovePlayer(sim, playerNum);
     }
     serverSimPublishLobbySlot(sim, playerNum);

@@ -77,6 +77,10 @@
  * removal + a server-text broadcast naming the kicked bot. */
 #define BOT_CRASH_KICK_THRESHOLD 100
 
+/* Defined below with the removal paths; the parking helpers above them need
+ * it to let a runner go when nobody is going to resume it. */
+static void botTearDownRunner(ServerSim *sim, BotContext *bot);
+
 void botManagerRequestThreads(ServerSim *sim, int total_runners) {
     if (sim == NULL) return;
     if (total_runners < 1) total_runners = 1;
@@ -844,6 +848,157 @@ bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
     return botManagerReloadBrain(sim, &sim->botMgr.bots[playerNum], brainPath);
 }
 
+/* Two init tables are the same when they carry the same pairs in the same
+ * order. Compared pair by pair rather than as bytes: only the first `count`
+ * entries mean anything and each string is read to its terminator. A table
+ * that spells the same configuration in another order reads as different,
+ * which costs a rebuild the wave did not need but never hands a brain a
+ * configuration it was not built with. */
+static bool botInitTablesSame(const ScnTable *a, const ScnTable *b) {
+    uint8_t i;
+
+    if (a->count != b->count) return false;
+    for (i = 0; i < a->count && i < SCN_TABLE_MAX; i++) {
+        if (strcmp(a->kv[i].key, b->kv[i].key) != 0) return false;
+        if (strcmp(a->kv[i].value, b->kv[i].value) != 0) return false;
+    }
+    return true;
+}
+
+/* Whether the runner parked in this context was built for the spawn now
+ * asking for the seat. The brain path chooses the script the VM is running
+ * and the init table was read at that VM's first breath, so a spawn naming
+ * either differently needs a VM of its own. Compared case-insensitively, as
+ * botManagerSetBrainIdx compares the same field.
+ *
+ * Says which of the two differed, at WARN: a script varying its init table
+ * by accident should read as a line in the log rather than as lag on the
+ * wave that pays for the rebuild. */
+static bool botParkedRunnerMatches(const BotContext *bot,
+                                   const char *brainPath,
+                                   const ScnTable *init) {
+    const char *wanted = (brainPath != NULL) ? brainPath : "";
+    ScnTable    none;
+
+    if (SDL_strcasecmp(bot->brainPath, wanted) != 0) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                "botManager: bot %d parked on brain '%s' and refielded with "
+                "'%s'; building a fresh runner",
+                (int)bot->playerNum, bot->brainPath, wanted);
+        return false;
+    }
+    if (init == NULL) {
+        memset(&none, 0, sizeof(none));
+        init = &none;
+    }
+    if (!botInitTablesSame(&bot->initTable, init)) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                "botManager: bot %d parked with a different init table than "
+                "the refield carries; building a fresh runner",
+                (int)bot->playerNum);
+        return false;
+    }
+    return true;
+}
+
+/* Hand a parked runner back to the seat it belongs to. The ClientSim, the
+ * passive transport, the control subscription and the brain instance are all
+ * still here, so this is a tank spawn and a map reload rather than a build.
+ *
+ * What it still has to do:
+ *  - serverSimAddBot, as the full build does. Its occupied-seat branch is
+ *    what fields the seat and builds the server-side tank, the man and the
+ *    base timer for a fielding inside a round.
+ *  - reload the bot's map. A parked ClientSim pulls no snapshots, so its copy
+ *    of the world is as old as the park; this is the one expensive step left,
+ *    and it is far cheaper than a VM.
+ *  - destroy and recreate the bot's own tank on its ClientSim, as
+ *    botManagerOnGameStart does for a round start.
+ *  - re-seed the brain's start tick, so its tick numbers continue the session
+ *    clock rather than the life that ended at the park.
+ *  - flag isFirst. The tank genuinely is new, and the brain is handed
+ *    newtank=TRUE for it the way a respawn is; without it a resumed raider
+ *    would drive its new tank at the goal its previous life was chasing until
+ *    it replanned.
+ *
+ * The brain's own state table is deliberately kept: a wave's bots remember
+ * the round they are in. */
+static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
+                                  const char *brainName, aiType ai,
+                                  gameType game, bool hiddenMines, BYTE team) {
+    BYTE playerNum = bot->playerNum;
+
+    {
+        ServerSimBotConfig cfg = {
+            .brainPath   = bot->brainPath,
+            .brainName   = brainName,
+            .ai          = ai,
+            .gameType    = game,
+            .hiddenMines = hiddenMines,
+            .teamNumber  = team,
+        };
+        if (!serverSimAddBot(sim, playerNum, &cfg)) {
+            return false;
+        }
+    }
+
+    /* Failure from here on empties the seat exactly as the full build's does,
+       so the caller's re-seat path is the same either way. */
+    if (!botLoadMapFromServer(bot, sim)) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                "botManager: failed to reload the map for parked bot %d",
+                (int)playerNum);
+        bot->parked = false;
+        botTearDownRunner(sim, bot);
+        serverSimRemovePlayer(sim, playerNum);
+        return false;
+    }
+
+    if (MY_TANK(bot->cs) != NULL) {
+        tankDestroy(clientSimGetGameSim(bot->cs), &MY_TANK(bot->cs));
+        MY_TANK(bot->cs) = NULL;
+    }
+    tankCreate(clientSimGetGameSim(bot->cs), &MY_TANK(bot->cs));
+
+    bot->ai = ai;
+    *clientSimGetAllowComputerTanks(bot->cs) = ai;
+
+    /* BRAIN_START_ENGINE_TICK is read out of the staged value at VM creation,
+       which this seat is not having, so the live state is written directly. */
+    luaBrainInstanceSetStartEngineTick(&bot->brain,
+                                       (unsigned int)serverSimGetTick(sim));
+    bot->brain.isFirst = true;
+
+    /* The think scratch belongs to a life, not to a runner: a bot parked
+       part-way to the crash kick starts its next life on nothing. */
+    SDL_SetAtomicInt(&bot->abort_flag, 0);
+    bot->thinkDeadlineCounter = 0;
+    bot->killSite[0]          = '\0';
+    bot->wasKilled            = false;
+    bot->consecutiveCrashes   = 0;
+
+    bot->parked = false;
+    bot->active = true;
+    sim->botMgr.numBots++;
+
+    WB_LOG_INFO(WB_LOG_CAT_SIM,
+            "botManager: bot %d back on the field on its parked runner",
+            (int)playerNum);
+    return true;
+}
+
+void botManagerReleaseParkedRunner(ServerSim *sim, BYTE playerNum) {
+    BotContext *bot;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->parked) return;
+
+    bot->parked = false;
+    botTearDownRunner(sim, bot);
+    WB_LOG_INFO(WB_LOG_CAT_SIM,
+            "botManager: bot %d parked runner released", (int)playerNum);
+}
+
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
                       aiType ai, gameType game, bool hiddenMines,
@@ -853,11 +1008,24 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     if (sim == NULL || playerNum >= MAX_TANKS) {
         return false;
     }
-    if (sim->botMgr.bots[playerNum].active) {
+
+    bot = &sim->botMgr.bots[playerNum];
+    /* A seat whose runner was parked across an unfielding takes it back,
+       which is what a wave transition costs instead of a ClientSim, a
+       subscriber registration and a brain VM per seat. A runner built on
+       another brain or another configuration cannot serve this spawn, so it
+       goes and the build below runs. */
+    if (bot->parked) {
+        if (botParkedRunnerMatches(bot, brainPath, init)) {
+            return botResumeParkedRunner(sim, bot, brainName, ai, game,
+                                         hiddenMines, team);
+        }
+        botManagerReleaseParkedRunner(sim, playerNum);
+    }
+    if (bot->active) {
         botManagerRemoveBot(sim, playerNum);
     }
 
-    bot = &sim->botMgr.bots[playerNum];
     memset(bot, 0, sizeof(BotContext));
     bot->sim = sim;
     bot->playerNum = playerNum;
@@ -1514,7 +1682,15 @@ void botManagerOnGameStart(ServerSim *sim) {
     if (sim == NULL) return;
     for (i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &sim->botMgr.bots[i];
-        if (!bot->active) continue;
+        if (!bot->active) {
+            /* A parked runner does not cross a round boundary: it holds a
+             * ClientSim built over the round that has just ended, and the
+             * seat in front of it starts the new round unfielded. Released
+             * here, so a held seat enters a round with nothing behind it,
+             * exactly as it did when an unfield tore the runner down. */
+            botManagerReleaseParkedRunner(sim, i);
+            continue;
+        }
 
         /* Per-game timing telemetry resets at each round start so peak and
          * the overrun rate describe the current game, not an accumulation
@@ -1721,15 +1897,22 @@ void botManagerRemoveBotKeepSeat(ServerSim *sim, BYTE playerNum) {
     bot = &sim->botMgr.bots[playerNum];
     if (!bot->active) return;
 
-    /* Deactivate before the teardown, for the same reason
-     * botManagerRemoveBot does: nothing the teardown reaches may walk
-     * a context that is still active with its ClientSim already gone. */
+    /* Deactivate first, for the same reason botManagerRemoveBot does:
+     * nothing the park reaches may walk a context that is still active. */
     bot->active = false;
     sim->botMgr.numBots--;
 
-    botTearDownRunner(sim, bot);
+    /* The runner stays built. The seat is off the field, not gone — the
+     * tank, the man and the base timer go back to the caller because the
+     * tank leaves the world, but the ClientSim, the control subscription and
+     * the brain wait here for the next fielding of this seat. botManagerAddBot
+     * hands them back when the spawn names the same brain and the same init
+     * table; a round boundary, a destroy or the seat leaving the roster
+     * releases them instead. */
+    bot->parked = true;
 
-    WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d off the field", playerNum);
+    WB_LOG_INFO(WB_LOG_CAT_SIM,
+            "botManager: bot %d off the field, runner parked", playerNum);
 }
 
 void botManagerDestroy(ServerSim *sim) {
@@ -1738,6 +1921,10 @@ void botManagerDestroy(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->botMgr.bots[i].active) {
             botManagerRemoveBot(sim, i);
+        } else {
+            /* A seat can hold a parked runner with no active bot in front of
+             * it, and the branch above would walk straight past it. */
+            botManagerReleaseParkedRunner(sim, i);
         }
     }
 }

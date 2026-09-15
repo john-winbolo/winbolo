@@ -2,32 +2,46 @@
  * What a wave costs: the runner behind a held seat, counted where it is built
  * and torn down.
  *
- * A held seat survives a wave. serverSimUnfieldBot keeps the roster entry, the
- * name, the team, the alliance and the connection, so there is no leave to
- * announce and no client to resync. The runner behind the seat does not
- * survive it: the same call reaches botManagerRemoveBotKeepSeat and then
- * botTearDownRunner, which destroys the brain instance, unregisters the
- * control subscription and destroys the ClientSim. The next spawn naming the
- * seat goes back through botManagerAddBot and builds all three again.
+ * A held seat survives a wave, and so does the runner behind it.
+ * serverSimUnfieldBot keeps the roster entry, the name, the team, the alliance
+ * and the connection, and reaches botManagerRemoveBotKeepSeat, which parks the
+ * ClientSim, the control subscription and the brain instance rather than
+ * destroying them. The next spawn naming the seat goes back through
+ * botManagerAddBot, which hands that runner back: a wave transition costs a
+ * tank spawn and a map reload instead of a VM per seat.
  *
- * These two cases put a number on that, counted at the calls that do the work
- * rather than inferred from the roster: the fixture brain in test_stubs.c
+ * It is handed back only to a spawn naming the brain it is running and the
+ * init table its VM read at its first breath; anything else takes a fresh
+ * runner and says so in the log. And it never outlives the round it was built
+ * in: a round start, a destroy, or the seat leaving the roster releases it.
+ *
+ * These cases put numbers on all of that, counted at the calls that do the
+ * work rather than inferred from the roster: the fixture brain in test_stubs.c
  * records how many brains each slot has been made and how many have been
  * destroyed in all, and the ClientSim and the subscription are read off
  * sim->botMgr.bots[].
  *
- * Both cases field the way a script does — a spawn op onto the roster queue,
- * which the drain makes one entry to a tick — and unfield through the remove
+ * Every case fields the way a script does — a spawn op onto the roster queue,
+ * which the drain makes one entry to a tick — and unfields through the remove
  * op, which on a seat marked keepSeat reaches serverSimUnfieldBot instead of
  * emptying the seat.
  *
- * run_scenario_wave_cost_refield_rebuilds  — one seat fielded, unfielded and
- *                                            fielded again: two brains made,
- *                                            one destroyed, and the seat
- *                                            itself untouched throughout
- * run_scenario_wave_cost_horde_swap_counts — six seats swapped twice: twelve
- *                                            brains made, six destroyed, and
- *                                            no seat off the roster
+ * run_scenario_wave_cost_refield_resumes      — one seat fielded, unfielded and
+ *                                               fielded again: one brain made,
+ *                                               none destroyed, and the same
+ *                                               ClientSim and subscription
+ *                                               throughout
+ * run_scenario_wave_cost_horde_swap_counts    — six seats swapped twice: six
+ *                                               brains made, none destroyed,
+ *                                               and no seat off the roster
+ * run_scenario_wave_cost_other_brain_rebuilds — a refield naming another brain
+ *                                               cannot have the parked runner
+ * run_scenario_wave_cost_other_init_rebuilds  — nor can one carrying another
+ *                                               init table
+ * run_scenario_wave_cost_round_start_releases — a parked runner does not cross
+ *                                               a round boundary
+ * run_scenario_wave_cost_destroy_releases     — nor does it survive
+ *                                               botManagerDestroy
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -44,13 +58,15 @@
                                     * botMgr.bots[] */
 #include "server_sim_lifecycle.h"  /* serverSimSetBotAiType / BrainPath */
 #include "server_sim_scenario.h"
-#include "bot_manager.h"           /* BotContext: the ClientSim and the sub */
+#include "bot_manager.h"           /* BotContext: the ClientSim and the sub,
+                                    * botManagerOnGameStart, botManagerDestroy */
+#include "scenario_table.h"        /* scnTableSet — the init table a spawn carries */
 #include "game_sim.h"
 #include "everard_map.h"
 #include "test_harness.h"
 
 /* Slot 0 holds the human; the horde takes the six seats after it, all on one
- * team, which is the Survival shape. The one-seat case takes the first of
+ * team, which is the Survival shape. The one-seat cases take the first of
  * them. */
 #define WC_TEAM        3
 #define WC_FIRST_SEAT  1
@@ -64,21 +80,41 @@
  * because ctest runs the cases as concurrent processes in one directory and
  * one case's drop would take the file the others are still naming. */
 static char wcBrainPath[128];
+/* A second one, for the case whose refield names a brain the parked runner is
+ * not running. */
+static char wcOtherBrainPath[128];
 
-static bool wcMakeBrainFile(const char *tag) {
+static bool wcWriteBrainFile(char *out, size_t outCap, const char *name) {
     FILE *f;
 
-    SDL_snprintf(wcBrainPath, sizeof(wcBrainPath),
-                 "test_scenario_wave_cost_brain_%s.lua", tag);
-    f = fopen(wcBrainPath, "wb");
+    SDL_strlcpy(out, name, outCap);
+    f = fopen(out, "wb");
     if (f == NULL) return false;
     fputs("-- fixture\n", f);
     fclose(f);
     return true;
 }
 
+static bool wcMakeBrainFile(const char *tag) {
+    char name[128];
+
+    wcOtherBrainPath[0] = '\0';
+    SDL_snprintf(name, sizeof(name),
+                 "test_scenario_wave_cost_brain_%s.lua", tag);
+    return wcWriteBrainFile(wcBrainPath, sizeof(wcBrainPath), name);
+}
+
+static bool wcMakeOtherBrainFile(const char *tag) {
+    char name[128];
+
+    SDL_snprintf(name, sizeof(name),
+                 "test_scenario_wave_cost_other_%s.lua", tag);
+    return wcWriteBrainFile(wcOtherBrainPath, sizeof(wcOtherBrainPath), name);
+}
+
 static void wcDropBrainFile(void) {
     remove(wcBrainPath);
+    if (wcOtherBrainPath[0] != '\0') remove(wcOtherBrainPath);
 }
 
 /* A lobby with one ready human in slot 0 and a server configured to run bots
@@ -111,6 +147,14 @@ static void wcRemoveOp(ScenarioOp *op, BYTE slot) {
     memset(op, 0, sizeof(*op));
     op->type = SCN_OP_ROSTER_REMOVE_BOT;
     op->u.rosterRemoveBot.slot = slot;
+}
+
+/* Queue one op and give the drain the tick it makes its one roster change
+ * in. */
+static bool wcApplyOne(ServerSim *sim, const ScenarioOp *op) {
+    if (serverSimApplyScenarioOp(sim, op, NULL) != SCN_OP_QUEUED) return false;
+    serverSimTick(sim);
+    return true;
 }
 
 /* How many slots are in the roster, counted rather than read off a number the
@@ -176,14 +220,42 @@ static bool wcUnfieldAll(ServerSim *sim) {
     return true;
 }
 
+/* A running round holding one seat, with that seat fielded and then taken off
+ * the field again — so it comes back with its runner parked. */
+static ServerSim *wcParkedSeatSim(BYTE seat) {
+    ServerSim *sim = wcLobbySim();
+    ScenarioOp op;
+
+    if (sim == NULL) return NULL;
+    if (!serverSimAddUnfieldedSeat(sim, seat, "Horde1", WC_TEAM)) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    serverSimStartGame(sim);
+
+    wcSpawnOp(&op, seat);
+    if (!wcApplyOne(sim, &op) || !sim->lobbyPlayers[seat].fielded) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    wcRemoveOp(&op, seat);
+    if (!wcApplyOne(sim, &op) || sim->lobbyPlayers[seat].fielded) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    return sim;
+}
+
 /* ── One seat, fielded twice ──────────────────────────────────────── */
 
-int run_scenario_wave_cost_refield_rebuilds(void) {
+int run_scenario_wave_cost_refield_resumes(void) {
     ServerSim *sim;
     ScenarioOp op;
     const BYTE seat = WC_FIRST_SEAT;
+    ClientSim *parkedCs;
+    SubscriberHandle parkedSub;
 
-    UT_ASSERT(wcMakeBrainFile("refield_rebuilds"));
+    UT_ASSERT(wcMakeBrainFile("refield_resumes"));
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
@@ -197,8 +269,7 @@ int run_scenario_wave_cost_refield_rebuilds(void) {
 
     /* Field it. */
     wcSpawnOp(&op, seat);
-    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
-    serverSimTick(sim);
+    UT_ASSERT(wcApplyOne(sim, &op));
     UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
                   "the spawn did not field the seat");
 
@@ -214,24 +285,31 @@ int run_scenario_wave_cost_refield_rebuilds(void) {
                       SUBSCRIBER_HANDLE_INVALID,
                   "the fielded seat holds no control subscription");
 
-    /* Off the field again: the seat stays, everything behind it goes. */
+    /* The two the refield has to get back, by value. */
+    parkedCs  = sim->botMgr.bots[seat].cs;
+    parkedSub = sim->botMgr.bots[seat].controlSub;
+
+    /* Off the field again: the seat stays, and so does everything behind it. */
     wcRemoveOp(&op, seat);
-    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
-    serverSimTick(sim);
+    UT_ASSERT(wcApplyOne(sim, &op));
     UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
                   "the removal left the seat on the field");
 
-    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
-                  "the seat has had %d brains made for it after one field and "
-                  "one unfield, expected 1", ut_brain_stub_creates(seat));
-    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "taking the seat off the field destroyed %d brains, "
-                  "expected 1", ut_brain_stub_destroys());
-    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == NULL,
-                  "the unfielded seat still holds a ClientSim");
-    UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub ==
-                      SUBSCRIBER_HANDLE_INVALID,
-                  "the unfielded seat still holds a control subscription");
+                  "expected 0 — the runner is parked, not torn down",
+                  ut_brain_stub_destroys());
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the unfielded seat does not read as parked");
+    UT_ASSERT_MSG(!botManagerIsBot(sim, seat),
+                  "a parked seat must not read as an active bot");
+    UT_ASSERT_MSG(serverSimGetNumBots(sim) == 0,
+                  "the bot pool counts %u bots with the seat off the field, "
+                  "expected 0", (unsigned)serverSimGetNumBots(sim));
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == parkedCs,
+                  "the parked seat is holding a different ClientSim");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub == parkedSub,
+                  "the parked seat is holding a different control subscription");
 
     /* And the seat itself is exactly where it was. */
     UT_ASSERT_MSG(sim->playerConnected[seat],
@@ -239,20 +317,29 @@ int run_scenario_wave_cost_refield_rebuilds(void) {
     UT_ASSERT_MSG(sim->lobbyPlayers[seat].keepSeat,
                   "the unfield stopped the seat being the scenario's");
 
-    /* Field it a second time: another brain made, and nothing destroyed for
-       it, so what the refield costs is a second build and not a swap. */
+    /* Field it a second time: nothing made and nothing destroyed, and the
+       same three things behind the seat as the first wave had. */
     wcSpawnOp(&op, seat);
-    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
-    serverSimTick(sim);
+    UT_ASSERT(wcApplyOne(sim, &op));
     UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
                   "the second spawn did not field the seat");
-    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 2,
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
                   "the seat has had %d brains made for it over a field, an "
-                  "unfield and a refield, expected 2",
-                  ut_brain_stub_creates(seat));
-    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
-                  "%d brains were destroyed over the three, expected 1",
+                  "unfield and a refield, expected 1 — the refield resumes the "
+                  "parked runner", ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "%d brains were destroyed over the three, expected 0",
                   ut_brain_stub_destroys());
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == parkedCs,
+                  "the refielded seat is running on a different ClientSim");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub == parkedSub,
+                  "the refielded seat registered another control subscription");
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the refielded seat still reads as parked");
+    UT_ASSERT_MSG(botManagerIsBot(sim, seat),
+                  "the refielded seat is not an active bot");
+    UT_ASSERT_MSG(sim->sim.tanks[seat] != NULL,
+                  "the refield built no tank for the seat");
 
     serverSimDestroy(sim);
     wcDropBrainFile();
@@ -306,9 +393,10 @@ int run_scenario_wave_cost_horde_swap_counts(void) {
     UT_ASSERT_MSG(wcUnfieldAll(sim),
                   "the wave transition did not take all %d seats off the "
                   "field", WC_SEATS);
-    UT_ASSERT_MSG(ut_brain_stub_destroys() == WC_SEATS,
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "taking the wave off the field destroyed %d brains, "
-                  "expected %d", ut_brain_stub_destroys(), WC_SEATS);
+                  "expected 0 — every runner is parked for the next wave",
+                  ut_brain_stub_destroys());
     UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
                   "%d brains had been made by the end of the transition, "
                   "expected the %d the first wave made",
@@ -320,13 +408,13 @@ int run_scenario_wave_cost_horde_swap_counts(void) {
     /* The second wave, into the same six seats. */
     UT_ASSERT_MSG(wcFieldAll(sim),
                   "the second wave did not field all %d seats", WC_SEATS);
-    UT_ASSERT_MSG(wcHordeCreates() == 2 * WC_SEATS,
+    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
                   "two waves over %d held seats made %d brains, expected %d — "
-                  "the runner behind each seat is built again for the second "
-                  "wave", WC_SEATS, wcHordeCreates(), 2 * WC_SEATS);
-    UT_ASSERT_MSG(ut_brain_stub_destroys() == WC_SEATS,
-                  "%d brains were destroyed over the two waves, expected %d",
-                  ut_brain_stub_destroys(), WC_SEATS);
+                  "the runner behind each seat is handed back to the second "
+                  "wave", WC_SEATS, wcHordeCreates(), WC_SEATS);
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "%d brains were destroyed over the two waves, expected 0",
+                  ut_brain_stub_destroys());
     UT_ASSERT_MSG(wcConnectedSeats(sim) == WC_CONNECTED,
                   "the roster holds %d seats with the second wave fielded, "
                   "expected %d", wcConnectedSeats(sim), WC_CONNECTED);
@@ -338,6 +426,193 @@ int run_scenario_wave_cost_horde_swap_counts(void) {
                       "seat %d left the roster over the two waves; all %d "
                       "should still be in it", WC_FIRST_SEAT + i, WC_SEATS);
     }
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* ── A refield the parked runner cannot serve ─────────────────────── */
+
+int run_scenario_wave_cost_other_brain_rebuilds(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("other_brain_rebuilds"));
+    UT_ASSERT(wcMakeOtherBrainFile("other_brain_rebuilds"));
+    ut_brain_stub_arm(true);
+    sim = wcParkedSeatSim(seat);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the seat should have come back with its runner parked");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "%d brains were made fielding the seat once, expected 1",
+                  ut_brain_stub_creates(seat));
+
+    /* The refield names the other brain. The parked runner is running the
+       first one, so it goes and a new one is built. */
+    wcSpawnOp(&op, seat);
+    SDL_strlcpy(op.u.rosterSpawnBot.brain, wcOtherBrainPath,
+                sizeof(op.u.rosterSpawnBot.brain));
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the refield did not field the seat");
+
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 2,
+                  "the seat has had %d brains made for it, expected 2 — a "
+                  "refield on another brain cannot take the parked runner",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+                  "%d brains were destroyed, expected 1 — the parked runner "
+                  "is released to make room for the new one",
+                  ut_brain_stub_destroys());
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the refielded seat still reads as parked");
+    UT_ASSERT_MSG(SDL_strcasecmp(sim->botMgr.bots[seat].brainPath,
+                                 wcOtherBrainPath) == 0,
+                  "the refielded seat is running '%s', expected '%s'",
+                  sim->botMgr.bots[seat].brainPath, wcOtherBrainPath);
+    UT_ASSERT_MSG(sim->playerConnected[seat],
+                  "the rebuild emptied the seat");
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+int run_scenario_wave_cost_other_init_rebuilds(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("other_init_rebuilds"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(serverSimAddUnfieldedSeat(sim, seat, "Horde1", WC_TEAM));
+    serverSimStartGame(sim);
+    UT_ASSERT(sim->state == serverStateRunning);
+
+    /* Fielded with one configuration. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(scnTableSet(&op.u.rosterSpawnBot.init, "role", "guard"));
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the spawn did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "%d brains were made fielding the seat once, expected 1",
+                  ut_brain_stub_creates(seat));
+
+    /* Off the field, and back on carrying another one. The init table is read
+       at the VM's first breath, so the parked runner cannot serve it. */
+    wcRemoveOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the seat should have come back with its runner parked");
+
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(scnTableSet(&op.u.rosterSpawnBot.init, "role", "raider"));
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the refield did not field the seat");
+
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 2,
+                  "the seat has had %d brains made for it, expected 2 — a "
+                  "refield carrying another init table cannot take the parked "
+                  "runner", ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+                  "%d brains were destroyed, expected 1 — the parked runner "
+                  "is released to make room for the new one",
+                  ut_brain_stub_destroys());
+    {
+        const ScnTable *made = ut_brain_stub_init(seat);
+        UT_ASSERT_MSG(made != NULL && made->count == 1 &&
+                          strcmp(made->kv[0].value, "raider") == 0,
+                      "the rebuilt brain was not handed the refield's own "
+                      "init table");
+    }
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* ── A parked runner outlives neither the round nor the pool ──────── */
+
+int run_scenario_wave_cost_round_start_releases(void) {
+    ServerSim *sim;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("round_start_releases"));
+    ut_brain_stub_arm(true);
+    sim = wcParkedSeatSim(seat);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the seat should have come back with its runner parked");
+
+    /* The round start's pass over the bot pool. A parked runner holds a
+       ClientSim built over the round that has just ended, so it does not
+       cross the boundary. */
+    botManagerOnGameStart(sim);
+
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the round start left the runner parked");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == NULL,
+                  "the round start left the parked ClientSim behind");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub ==
+                      SUBSCRIBER_HANDLE_INVALID,
+                  "the round start left the parked control subscription "
+                  "registered");
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+                  "%d brains were destroyed at the round start, expected the "
+                  "1 that was parked", ut_brain_stub_destroys());
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the round start made a brain for a seat that is not on the "
+                  "field: %d made in all, expected 1",
+                  ut_brain_stub_creates(seat));
+
+    /* The seat itself is untouched: a held seat enters the new round the way
+       it entered the last one, with nothing behind it. */
+    UT_ASSERT_MSG(sim->playerConnected[seat],
+                  "the round start emptied the seat");
+    UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
+                  "the round start put the held seat on the field");
+    UT_ASSERT_MSG(serverSimGetNumBots(sim) == 0,
+                  "the bot pool counts %u bots, expected 0",
+                  (unsigned)serverSimGetNumBots(sim));
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+int run_scenario_wave_cost_destroy_releases(void) {
+    ServerSim *sim;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("destroy_releases"));
+    ut_brain_stub_arm(true);
+    sim = wcParkedSeatSim(seat);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the seat should have come back with its runner parked");
+
+    /* The pool going away takes the parked runner with it — the loop over
+       active bots would walk straight past it. */
+    botManagerDestroy(sim);
+
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the destroy left the runner parked");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == NULL,
+                  "the destroy left the parked ClientSim behind");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub ==
+                      SUBSCRIBER_HANDLE_INVALID,
+                  "the destroy left the parked control subscription "
+                  "registered");
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+                  "%d brains were destroyed, expected the 1 that was parked",
+                  ut_brain_stub_destroys());
 
     serverSimDestroy(sim);
     wcDropBrainFile();

@@ -66,6 +66,16 @@ typedef struct {
     ScnTable        initTable;
     BYTE            playerNum;
     bool            active;
+    /* The runner is built and idle: botManagerRemoveBotKeepSeat took this
+     * seat off the field and kept everything behind it — cs, transport,
+     * controlSub, brain, brainPath and initTable all still hold, and the
+     * next fielding of the seat is handed them instead of building them
+     * again. active stays false the whole time a context is parked, because
+     * a parked runner is not ticked, not counted, and not a bot as far as
+     * botManagerIsBot is concerned; every other field is the next life's to
+     * set. Cleared by the resume in botManagerAddBot and by
+     * botManagerReleaseParkedRunner. */
+    bool            parked;
     aiType          ai;
     /* Wall-clock duration of this bot's most recent brain.think call,
      * in milliseconds. Updated every botManagerTick. Surfaced via
@@ -433,6 +443,14 @@ void botInitArgAppendModeTokens(char *arg, size_t argSz,
  *  brain map, and LuaBrainInstance. Registers the player
  *  in the ServerSim.
  *
+ *  A slot holding a runner parked by
+ *  botManagerRemoveBotKeepSeat takes it back instead, when
+ *  brainPath and init are the ones it was built with: the
+ *  seat is fielded, the map is reloaded and the tank is
+ *  rebuilt, and no ClientSim, subscription or brain VM is
+ *  made. A parked runner built on anything else is released
+ *  first and the full build below runs.
+ *
  *ARGUMENTS:
  *  sim         - The ServerSim to attach to
  *  playerNum   - Player slot (0..MAX_TANKS-1)
@@ -602,17 +620,42 @@ void botManagerRemoveBot(struct ServerSim *sim, BYTE playerNum);
 /*********************************************************
  *NAME:          botManagerRemoveBotKeepSeat
  *PURPOSE:
- *  Destroys a bot's brain, transport and ClientSim and
- *  frees its pool entry, leaving the player in the
- *  ServerSim. For a seat that is being taken off the field
- *  and kept: the roster entry, the team and the alliance
- *  are the caller's to keep.
+ *  Takes a bot off the field and parks its runner, leaving
+ *  the player in the ServerSim. For a seat that is being
+ *  taken off the field and kept: the roster entry, the team
+ *  and the alliance are the caller's to keep, and the
+ *  ClientSim, the control subscription and the brain wait
+ *  in the context for the next fielding of the seat.
+ *
+ *  The tank, the man and the base timer are NOT this call's
+ *  — the seat's owner takes those back, because the tank
+ *  leaves the world.
  *
  *ARGUMENTS:
  *  sim       - The ServerSim
- *  playerNum - Player slot whose bot goes
+ *  playerNum - Player slot whose bot comes off the field
  *********************************************************/
 void botManagerRemoveBotKeepSeat(struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerReleaseParkedRunner
+ *PURPOSE:
+ *  Destroys a parked runner — brain, control subscription
+ *  and ClientSim — without touching the roster seat in
+ *  front of it. A no-op on a slot holding no parked runner,
+ *  so a caller can hand it any slot.
+ *
+ *  For the three places a parked runner must not survive:
+ *  a round boundary (botManagerOnGameStart — the ClientSim
+ *  was built over the previous round's world),
+ *  botManagerDestroy, and the seat itself leaving the
+ *  roster (serverSimRemoveBot).
+ *
+ *ARGUMENTS:
+ *  sim       - The ServerSim
+ *  playerNum - Player slot to release
+ *********************************************************/
+void botManagerReleaseParkedRunner(struct ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerDestroy

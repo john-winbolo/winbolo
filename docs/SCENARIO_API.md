@@ -338,6 +338,13 @@ Each team:
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no brain loads until a `spawn_bot` names it. |
 | `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
 
+`max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
+behind it — one ClientSim and one brain VM — across the unfielding that takes
+its bot off the field, so the next wave is handed that runner rather than
+building another. What a round holds is therefore one runner for every seat that
+has been fielded in it, not one for every bot on the field at once, and the seat
+count is what bounds that. They are all released at the round boundary.
+
 ### `scenario.rules`
 
 A table of rule name to value. Names are the ones in [Rules](#rules) —
@@ -851,6 +858,14 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 back to being held when `remove_bot` names it, rather than being emptied — so
 the next wave has it again. A seat that was not the template's is emptied, as a
 removal has always done.
+
+Give a seat the same `brain` and the same `init` table every wave. The runner
+behind a held seat is kept across the unfielding, and it can only be handed to a
+spawn naming the brain it is already running and the configuration its VM read at
+its first breath. A spawn naming either differently gets a runner built for it
+instead, which is what a wave transition costs when it is paid, and a line in
+the server log saying which of the two differed. Orders that change from one
+wave to the next belong in a hint, not in the table the VM read once.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
