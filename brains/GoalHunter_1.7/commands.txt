@@ -150,11 +150,19 @@ CAUTION PING
 
 THREE SHOTS = COME HERE
 
-Fire three shells that run their full range and land on the same open tile
-within about two seconds. The bot within 10 tiles with the cheapest route
-drives there and holds. Forest does not count, and a shell that stops on a
-wall, a building, a pillbox, a base or a tank does not count. If no bot is in
-range, nothing happens and no bot speaks.
+Fire three shells that run their full range and land on the same open tile.
+Fire all three inside about two seconds, and say it cleanly: no other shot in
+the second before the first of them, and no other shot in the second after
+the third. The order goes out one second after the third shot, so a fourth
+shot in that second takes it back.
+
+The bot with the cheapest route drives there and holds, out of the bots that
+were on your screen when the order went out. A bot further away than that
+does not hear you.
+
+Forest does not count, and a shell that stops on a wall, a building, a
+pillbox, a base or a tank does not count. If no bot is in range, nothing
+happens and no bot speaks.
 
 
 MARKERS THE BOTS PLACE

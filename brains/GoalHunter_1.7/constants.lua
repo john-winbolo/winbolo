@@ -4156,6 +4156,12 @@ M.ORDER_TILE_COST       = 4      -- keel 4 (moot; master off)
 -- (never of the sender -- distance is always measured to the target so every
 -- bot computes the same answer).
 M.ORDER_NEARBY_TILES    = 10     -- keel 10 (moot; master off)
+-- THREE SHOTS = COME HERE.  The server's "!goto <mx> <my> <sx> <sy>" line
+-- carries the SHOOTER's tile, and only a bot inside the shooter's screen
+-- takes the order: this is how far that reaches, measured the way a screen
+-- is (the larger of the two axes), so 14 is the 29x29 view.  A "!goto x y"
+-- with no shooter tile -- a human typing it -- keeps ORDER_NEARBY_TILES.
+M.ORDER_SHOT_VIEW_TILES = 14     -- keel 14 (moot; master off)
 -- A line of only bot names SELECTS them; the sender's next order goes to the
 -- selected set with no auction.  The selection lapses after this.
 M.ORDER_SELECT_TICKS    = 500    -- keel 500 (moot; master off)
@@ -4496,6 +4502,7 @@ M.PRESETS = {
     ORDER_STEAL_HOLD_TICKS        = 100,
     ORDER_TILE_COST               = 4,
     ORDER_NEARBY_TILES            = 10,
+    ORDER_SHOT_VIEW_TILES         = 14,
     ORDER_SELECT_TICKS            = 500,
     ORDER_REPEAT_ACK_TICKS        = 50,
     ORDER_TANK_LOST_TICKS         = 500,

@@ -10,6 +10,7 @@
 package.path = "./?.lua;" .. package.path
 
 local ORD = require("orders")
+local C   = require("constants")
 
 -- A roster shaped like a real lobby: one human, four bots.  Socrates and
 -- Seneca share a prefix on purpose (the ambiguity case); Bruce Lee is the
@@ -491,6 +492,30 @@ check("!goto with no square",
       shape(P("!goto")) == "reply:didn't understand", shape(P("!goto")))
 check("!goto with one number",
       shape(P("!goto 40")) == "reply:didn't understand", shape(P("!goto 40")))
+check("!goto with four numbers",
+      shape(P("!goto 100 99 24")) == "reply:didn't understand",
+      shape(P("!goto 100 99 24")))
+check("!goto with a shooter tile off the map",
+      shape(P("!goto 100 99 24 400")) == "reply:didn't understand",
+      shape(P("!goto 100 99 24 400")))
+
+-- The long form the SERVER sends carries the shooter's own tile, and that is
+-- what the range rule reads.  The short form -- a human typing it -- has no
+-- shooter tile and keeps the old rule.
+check("the long form names the shooter's tile",
+      P("!goto 100 99 24 25").who.from_mx == 24
+      and P("!goto 100 99 24 25").who.from_my == 25,
+      tostring(P("!goto 100 99 24 25").who.from_mx))
+check("the long form uses the shooter's view",
+      P("!goto 100 99 24 25").who.near == C.ORDER_SHOT_VIEW_TILES,
+      tostring(P("!goto 100 99 24 25").who.near))
+check("the short form keeps the old ten tiles",
+      P("!goto 100 99").who.near == C.ORDER_NEARBY_TILES
+      and P("!goto 100 99").who.from_mx == nil,
+      tostring(P("!goto 100 99").who.near))
+check("both forms name the same square",
+      shape(P("!goto 100 99 24 25")) == "goto who=ping tgt=here:" .. HERE,
+      shape(P("!goto 100 99 24 25")))
 
 -- The id is the one a bot ping on the same square from the same sender
 -- derives, so a ping and a burst of shots land on ONE order.
@@ -518,6 +543,40 @@ check("a bot further than 10 tiles does not bid",
       foid and tostring(st.orders.auctions[foid].bids[1]) or "no auction")
 check("and it says nothing about it",
       #st.orders.say == 0, tostring(#st.orders.say))
+
+-- THE SHOOTER'S VIEW.  With a shooter tile in the line the range is measured
+-- from the SHOOTER and the way a screen is -- the larger of the two axes --
+-- so the bots that bid are the ones the shooter could see.  This bot sits at
+-- (10,10), and the target is 90 tiles away: the old rule would have refused
+-- every one of these.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "!goto 100 99 24 24", 400, true, false)
+local voidid = next(st.orders.auctions)
+check("a bot 14 tiles from the shooter bids",
+      voidid ~= nil and type(st.orders.auctions[voidid].bids[1]) == "number",
+      voidid and tostring(st.orders.auctions[voidid].bids[1]) or "no auction")
+
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "!goto 100 99 25 25", 400, true, false)
+local outid = next(st.orders.auctions)
+check("a bot 15 tiles from the shooter does not bid",
+      outid ~= nil and st.orders.auctions[outid].bids[1] == nil,
+      outid and tostring(st.orders.auctions[outid].bids[1]) or "no auction")
+check("and it says nothing about that either",
+      #st.orders.say == 0, tostring(#st.orders.say))
+
+-- The larger axis, not the sum: (10,10) to (24,10) is 14 across and 0 down,
+-- which a screen shows and Manhattan distance would also allow, but
+-- (10,10) to (24,24) is 28 by Manhattan and still one screen.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "!goto 100 99 24 10", 400, true, false)
+local flatid = next(st.orders.auctions)
+check("a bot 14 tiles along one axis bids",
+      flatid ~= nil and type(st.orders.auctions[flatid].bids[1]) == "number",
+      flatid and tostring(st.orders.auctions[flatid].bids[1]) or "no auction")
 
 -- An enemy shooting three shells orders nobody about: the sender is not an
 -- ally, so on_chat never reads the line.
@@ -563,7 +622,6 @@ check("'! cp:5' is a command",
       (CMDS.parse("! cp:5") or {}).cmd == "cp", "?")
 
 print("orders.lua — focus pricing")
-local C = require("constants")
 check("no focus -> x1", ORD.focus_mult({}, "attack_pill") == 1.0, "?")
 check("focus bases -> pill goals pay",
       ORD.focus_mult({ _focus = "bases" }, "attack_pill") == C.FOCUS_OTHER_COST_MULT, "?")

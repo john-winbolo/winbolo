@@ -1116,24 +1116,41 @@ cannot be steered into.
 
 | Call | What it does |
 |---|---|
-| `game.shell_expired(p, x, y)` | Posts one of seat `p`'s shells as having run its full range and died over square `(x, y)` with nothing hit. Nothing else about the shell happens: no explosion, no sound, no shell. |
+| `game.shell_expired(p, x, y [, fire_tick])` | Posts one of seat `p`'s shells as having run its full range and died over square `(x, y)` with nothing hit. `fire_tick` is the tick the shell LEFT THE GUN, which is the tick every timing rule in the three-shot detector reads; left out, the shell counts as fired now. Nothing else about the shell happens: no explosion, no sound, no shell. |
 
 **Three shots = go there.** Three full-range shells from one player that die
-on the SAME open square inside two seconds are an order to that player's
-bots: the nearest one within ten squares goes there and holds, for the same
-sixty seconds every other order runs for. Open means grass, road, swamp,
-crater, rubble, river, shallow water or deep sea, a mined square counting as
-whatever is under the mine, and never forest, a wall, a building, a pillbox
-or a base. A script cannot make a seat pull a trigger, and three full-range
-shells landing on a chosen square is not something a round arrives at by
-accident, so `shell_expired` is how a test gives that order:
+on the SAME open square are an order to that player's bots: one of them goes
+there and holds, for the same sixty seconds every other order runs for. Open
+means grass, road, swamp, crater, rubble, river, shallow water or deep sea, a
+mined square counting as whatever is under the mine, and never forest, a
+wall, a building, a pillbox or a base.
+
+The three have to be FIRED inside two seconds of each other, and the burst
+has to stand alone: nothing of that player's fired in the second before the
+first of them, and nothing fired in the second after the third. The order is
+therefore not sent when the third shell lands. It is armed, and the server
+sends it one second after the third shot was fired; a shell fired inside that
+second takes it away again.
+
+Which bots hear it is the SHOOTER's own screen: the line carries the
+shooter's square as well as the target's, and only a bot within fourteen
+squares of the shooter, measured the way a screen is, bids for the job.
+
+A script cannot make a seat pull a trigger, and three full-range shells
+landing on a chosen square is not something a round arrives at by accident,
+so `shell_expired` is how a test gives that order. A real shell is about half
+a second in the air, so a test that cares about the quiet seconds says when
+each shell was fired:
 
 ```lua
-for _ = 1, 3 do game.shell_expired(SHOOTER, 40, 40) end
+game.shell_expired(SHOOTER, 40, 40, t)
+game.shell_expired(SHOOTER, 40, 40, t + 40)
+game.shell_expired(SHOOTER, 40, 40, t + 80)   -- the order goes out at t + 180
 ```
 
-The op is refused with `SCN_OP_WRONG_STATE` outside a running round and with
-`SCN_OP_NO_SUCH_PLAYER` for a seat nobody is in.
+The op is refused with `SCN_OP_WRONG_STATE` outside a running round, with
+`SCN_OP_NO_SUCH_PLAYER` for a seat nobody is in, and with `SCN_OP_RANGE` for
+a negative `fire_tick`.
 
 ---
 

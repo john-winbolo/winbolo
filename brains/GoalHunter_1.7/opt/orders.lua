@@ -249,12 +249,13 @@ function M.parse(text, roster, all_roster)
   for w in s:gmatch("[%w%-']+") do toks[#toks + 1] = w end
   if #toks == 0 then return nil end
 
-  -- ── "!goto <mx> <my>" — THREE SHOTS = GO THERE ───────────────────────
+  -- ── "!goto <mx> <my> [<sx> <sy>]" — THREE SHOTS = COME HERE ──────────
   -- Three of one player's shells that run their full range and land on the
-  -- same open square inside two seconds are an order: go there and hold.
-  -- The SERVER spots the pattern and injects this line with the SHOOTER as
-  -- the sender, so the team check every order runs through is the shooter's
-  -- team, exactly as for a typed line.
+  -- same open square, fired inside two seconds of each other and with a
+  -- quiet second either side, are an order: go there and hold.  The SERVER
+  -- spots the pattern and injects this line with the SHOOTER as the sender,
+  -- so the team check every order runs through is the shooter's team,
+  -- exactly as for a typed line.
   --
   -- FORCED FORM ONLY.  Players have no coordinates to type, so a bare
   -- "goto 40 40" is somebody's chatter and never an order: without the "!"
@@ -264,18 +265,36 @@ function M.parse(text, roster, all_roster)
   -- who.mode is "ping", which gives this order the SAME id a bot ping on
   -- that square from the same sender derives (sender | goto | ping | here |
   -- tile), so every bot agrees on it without exchanging anything.
-  -- who.near is the ten-tile rule: a bot further from the square than that
-  -- does not bid, and nobody in range means nothing happens and no bot
-  -- speaks.
+  --
+  -- THE RANGE RULE, and the reason for sx, sy.  A three-shot order is for
+  -- the bots the SHOOTER could see: sx, sy is the shooter's own tile, put
+  -- in the line by the server, and a bot bids only when its tank is within
+  -- ORDER_SHOT_VIEW_TILES of it measured the way a screen is — the larger
+  -- of the two axes, which is the shooter's 29x29 view.
+  --
+  -- The short form has no shooter tile, which is what a human typing
+  -- "!goto 40 40" sends.  That keeps the old rule: within
+  -- ORDER_NEARBY_TILES of the TARGET, by Manhattan distance.
   if forced and toks[1] == "goto" then
     local mx, my = tonumber(toks[2]), tonumber(toks[3])
-    if #toks ~= 3 or not mx or not my
+    local sx, sy = tonumber(toks[4]), tonumber(toks[5])
+    local ok = (#toks == 3) or (#toks == 5 and sx and sy
+                                and sx >= 0 and sx <= 255
+                                and sy >= 0 and sy <= 255)
+    if not ok or not mx or not my
        or mx < 0 or mx > 255 or my < 0 or my > 255 then
       return { reply = "didn't understand" }
     end
     mx, my = math.floor(mx), math.floor(my)
+    local who
+    if #toks == 5 then
+      who = { mode = "ping", near = C.ORDER_SHOT_VIEW_TILES or 14,
+              from_mx = math.floor(sx), from_my = math.floor(sy) }
+    else
+      who = { mode = "ping", near = C.ORDER_NEARBY_TILES or 10 }
+    end
     return { verb = "goto",
-             who = { mode = "ping", near = C.ORDER_NEARBY_TILES or 10 },
+             who = who,
              target = { kind = "here", id = mx * 256 + my, mx = mx, my = my },
              forced = true }
   end
@@ -1238,14 +1257,27 @@ local function start_order(state, world, info, spec, who, now, want)
   local cost = (not busy) and M.travel_cost(state, world, info, spec) or nil
   if cost and cost >= 1e29 then cost = nil end
   -- RANGE RULE, for the three-shot order: only bots within who.near tiles
-  -- of the square bid at all.  Out of range answers "no" the way a busy bot
-  -- does, so an order nobody is near settles with no winner, and since a
-  -- line is only ever said by a bot that TAKES an order, nothing is said.
+  -- bid at all.  Out of range answers "no" the way a busy bot does, so an
+  -- order nobody is near settles with no winner, and since a line is only
+  -- ever said by a bot that TAKES an order, nothing is said.
+  --
+  -- WHAT the range is measured from depends on who.from_mx.  With it, the
+  -- tile is the SHOOTER's own tile and the distance is Chebyshev: that is
+  -- the shooter's 29x29 view, so the only bots that take a three-shot order
+  -- are the ones the shooter could see when it fired.  Without it (a human
+  -- typing "!goto x y", who has no tile of their own to send) the tile is
+  -- the target and the distance is the old Manhattan one.
   if cost and who.near then
-    local mx, my = M.target_tile(world, state, spec)
     local tmx = bit.rshift(info.tankx or 0, 8)
     local tmy = bit.rshift(info.tanky or 0, 8)
-    if not mx or U.mdist(tmx, tmy, mx, my) > who.near then cost = nil end
+    if who.from_mx then
+      local dx = math.abs(tmx - who.from_mx)
+      local dy = math.abs(tmy - who.from_my)
+      if (dx > dy and dx or dy) > who.near then cost = nil end
+    else
+      local mx, my = M.target_tile(world, state, spec)
+      if not mx or U.mdist(tmx, tmy, mx, my) > who.near then cost = nil end
+    end
   end
   o.auctions[spec.oid] = {
     spec = spec, open = now, bids = {}, answered = {}, want = want or 1,
