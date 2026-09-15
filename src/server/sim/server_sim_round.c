@@ -585,6 +585,12 @@ BYTE serverSimGetNumNeutralPills(ServerSim *sim) {
 }
 
 void serverSimAbortCountdown(ServerSim *sim) {
+    /* The runners this countdown built belong to the round it was leading to,
+     * and that round is not happening. Left parked they would sit in the lobby
+     * for as long as it lasts and then be handed to a later round, each brain
+     * having read the lobby as it stood at this countdown. The next countdown
+     * builds them again against the lobby as it stands then. */
+    botManagerReleaseParkedRunners(sim);
     sim->state = serverStateLobby;
     sim->countdownTicks = 0;
     /* Tell every subscriber the countdown is over — without this the

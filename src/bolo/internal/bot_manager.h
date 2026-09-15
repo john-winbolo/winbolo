@@ -674,9 +674,11 @@ void botManagerReleaseParkedRunner(struct ServerSim *sim, BYTE playerNum);
  *  it; every resume reloads that.
  *
  *  Called at the three round ends — serverSimReturnToLobby,
- *  the map rotation, and the empty reset. Not at the round
- *  START: that path only runs when the pool holds an active
- *  bot, and a round whose whole horde was parked has none.
+ *  the map rotation, and the empty reset — and at a countdown
+ *  abandoned (serverSimAbortCountdown), where the round the
+ *  warm built them for never starts. Not at the round START:
+ *  that path only runs when the pool holds an active bot, and
+ *  a round whose whole horde was parked has none.
  *
  *ARGUMENTS:
  *  sim - The ServerSim

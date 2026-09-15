@@ -5269,6 +5269,7 @@ set(_unit_test_names
     scenario_wave_cost_countdown_warms_seats
     scenario_wave_cost_warmed_field_is_free
     scenario_wave_cost_warm_skips_bad_brain
+    scenario_wave_cost_abort_countdown_releases
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player

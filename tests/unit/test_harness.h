@@ -2414,7 +2414,8 @@ int run_unfielded_seat_on_the_wire(void);
  * handed back when it goes back on. Counted at the calls that do it, for one
  * seat and for a horde of six swapped twice, plus the two refields a parked
  * runner cannot serve, the three places it must not survive, and the warm
- * itself — every seat, a free first fielding, and one seat it cannot serve. */
+ * itself — every seat, a free first fielding, one seat it cannot serve, and a
+ * countdown given up on before the round it was building for. */
 int run_scenario_wave_cost_refield_resumes(void);
 int run_scenario_wave_cost_horde_swap_counts(void);
 int run_scenario_wave_cost_other_brain_rebuilds(void);
@@ -2425,6 +2426,7 @@ int run_scenario_wave_cost_destroy_releases(void);
 int run_scenario_wave_cost_countdown_warms_seats(void);
 int run_scenario_wave_cost_warmed_field_is_free(void);
 int run_scenario_wave_cost_warm_skips_bad_brain(void);
+int run_scenario_wave_cost_abort_countdown_releases(void);
 
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient

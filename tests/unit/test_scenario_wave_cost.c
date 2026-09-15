@@ -59,6 +59,11 @@
  * run_scenario_wave_cost_warm_skips_bad_brain — a seat whose brain will not
  *                                               load is skipped, and the rest
  *                                               are still warmed
+ * run_scenario_wave_cost_abort_countdown_releases
+ *                                             — a countdown given up on takes
+ *                                               the runners it had built with
+ *                                               it, and the next one builds
+ *                                               them again
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -251,6 +256,21 @@ static void wcRunCountdown(ServerSim *sim, int ticks) {
     sim->countdownTicks = ticks;
     sim->warmSkippedSlots = 0;
     for (i = 0; i < ticks; i++) {
+        serverSimTick(sim);
+    }
+}
+
+/* The same countdown stopped part way through, for the cases about a round
+ * that never starts: ticks is the count the all-ready check set and frames is
+ * how many of them are run, so with frames below ticks the last one warms a
+ * seat like the rest and the server is still counting down at the end. */
+static void wcRunCountdownFrames(ServerSim *sim, int ticks, int frames) {
+    int i;
+
+    sim->state = serverStateCountdown;
+    sim->countdownTicks = ticks;
+    sim->warmSkippedSlots = 0;
+    for (i = 0; i < frames; i++) {
         serverSimTick(sim);
     }
 }
@@ -935,6 +955,122 @@ int run_scenario_wave_cost_warm_skips_bad_brain(void) {
                   "the countdown made %d brains, expected %d — one for every "
                   "seat but the one it could not serve",
                   wcHordeCreates(), WC_SEATS - 1);
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* A countdown given up on — someone un-readies, someone drops, or the console
+ * says stop — goes back to the lobby through serverSimAbortCountdown, and the
+ * runners the frames before it had built were built for the round it was
+ * leading to. Left parked they would wait out a lobby that can be edited for
+ * as long as it lasts, and a later round would field brains that read the
+ * lobby as it stood here. */
+int run_scenario_wave_cost_abort_countdown_releases(void) {
+    ServerSim *sim;
+    const int warmed = 3;
+    int i;
+
+    UT_ASSERT(wcMakeBrainFile("abort_countdown_releases"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatHorde(sim));
+
+    /* Three frames of a countdown long enough that none of them is the frame
+       that starts the round: three of the six seats warmed. */
+    wcRunCountdownFrames(sim, WC_SEATS + 1, warmed);
+    UT_ASSERT_MSG(sim->state == serverStateCountdown,
+                  "the server is in state %d after %d countdown frames, "
+                  "expected it to still be counting down — there is nothing to "
+                  "abandon otherwise", (int)sim->state, warmed);
+    UT_ASSERT_MSG(wcHordeCreates() == warmed,
+                  "%d countdown frames made %d brains, expected %d",
+                  warmed, wcHordeCreates(), warmed);
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "the countdown destroyed %d brains, expected 0",
+                  ut_brain_stub_destroys());
+    for (i = 0; i < warmed; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(botManagerHasRunner(sim, seat),
+                      "seat %d holds no runner after the frame that warms it",
+                      (int)seat);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                      "seat %d holds a runner that does not read as parked",
+                      (int)seat);
+    }
+    for (i = warmed; i < WC_SEATS; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(!botManagerHasRunner(sim, seat),
+                      "seat %d was warmed by a countdown that only ran %d "
+                      "frames", (int)seat, warmed);
+    }
+
+    serverSimAbortCountdown(sim);
+
+    UT_ASSERT_MSG(sim->state == serverStateLobby,
+                  "the abandoned countdown left the server in state %d, "
+                  "expected the lobby", (int)sim->state);
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == warmed,
+                  "the abandoned countdown destroyed %d brains, expected the "
+                  "%d it had built", ut_brain_stub_destroys(), warmed);
+    UT_ASSERT_MSG(wcHordeCreates() == warmed,
+                  "%d brains had been made by the end of the abort, expected "
+                  "the %d the countdown made", wcHordeCreates(), warmed);
+    for (i = 0; i < WC_SEATS; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(!botManagerHasRunner(sim, seat),
+                      "seat %d still holds a runner after the countdown was "
+                      "abandoned", (int)seat);
+        UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                      "seat %d still reads as parked after the countdown was "
+                      "abandoned", (int)seat);
+        /* The seats themselves are the lobby's, not the round's: the abort
+           releases what was built for the round and leaves the roster. */
+        UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
+                      "the abort put seat %d on the field", (int)seat);
+        UT_ASSERT_MSG(sim->lobbyPlayers[seat].keepSeat,
+                      "the abort stopped seat %d being the scenario's",
+                      (int)seat);
+    }
+    /* The three the countdown had got to, in detail. The seats behind them
+       were never touched, and a slot that has held nothing still reads its
+       control subscription as the zero it was allocated with rather than the
+       invalid handle a release writes. */
+    for (i = 0; i < warmed; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == NULL,
+                      "seat %d kept its ClientSim through the abort",
+                      (int)seat);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub ==
+                          SUBSCRIBER_HANDLE_INVALID,
+                      "seat %d kept its control subscription through the "
+                      "abort", (int)seat);
+    }
+    UT_ASSERT_MSG(wcConnectedSeats(sim) == WC_CONNECTED,
+                  "the roster holds %d seats after the abort, expected %d — "
+                  "one human and %d held seats",
+                  wcConnectedSeats(sim), WC_CONNECTED, WC_SEATS);
+
+    /* The countdown that does run. Every seat is warmed from nothing, so the
+       three the abandoned one had built cost a second brain each — which is
+       what the release bought: those three read the lobby as it stands now. */
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the second countdown did not start the round, state %d",
+                  (int)sim->state);
+    for (i = 0; i < WC_SEATS; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        const int expect = (i < warmed) ? 2 : 1;
+        UT_ASSERT_MSG(ut_brain_stub_creates(seat) == expect,
+                      "seat %d has had %d brains made for it over the two "
+                      "countdowns, expected %d", (int)seat,
+                      ut_brain_stub_creates(seat), expect);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                      "seat %d has no parked runner behind it after the second "
+                      "countdown", (int)seat);
+    }
 
     serverSimDestroy(sim);
     wcDropBrainFile();
