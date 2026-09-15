@@ -3717,6 +3717,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The rules table over the wire: a mid-round change reaching a connected
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
+    tests/unit/test_lgm_under_fire.c
     tests/unit/test_loopback_sim_rules.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
@@ -4835,6 +4836,11 @@ set(_unit_test_names
     tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
+    # The builder walled in behind his own tank under pillbox fire. The
+    # lagged case is a bug report written as a test and FAILS today on
+    # purpose; the nolag case is its control and passes.
+    lgm_wall_behind_tank_under_fire_lagged
+    lgm_wall_behind_tank_under_fire_nolag
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness

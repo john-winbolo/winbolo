@@ -1046,6 +1046,8 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_client_check_attack_pair",      run_sim_rules_client_check_attack_pair      },
     { "sim_rules_client_check_server_only_pair", run_sim_rules_client_check_server_only_pair },
     { "sim_rules_client_check_valid_applies",    run_sim_rules_client_check_valid_applies    },
+    { "lgm_wall_behind_tank_under_fire_lagged",  run_lgm_wall_behind_tank_under_fire_lagged  },
+    { "lgm_wall_behind_tank_under_fire_nolag",   run_lgm_wall_behind_tank_under_fire_nolag   },
     { "loopback_sim_rules_change",               run_loopback_sim_rules_change               },
     { "loopback_sim_rules_join",                 run_loopback_sim_rules_join                 },
     { "loopback_sim_rules_reclamp",              run_loopback_sim_rules_reclamp              },
