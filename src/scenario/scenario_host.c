@@ -88,6 +88,8 @@
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
 #include "server_sim.h"            /* ServerSim, serverSimConsoleMessage */
+#include "wire_limits.h"           /* LOBBY_MAP_UPLOAD_MAX_BYTES — how much of
+                                    * a map file the chunk test reads */
 #include "scenario_defs.h"         /* SCN_RULE_LIST, ScenarioOp, ScnOpResult */
 #include "server_sim_scenario.h"   /* the funnel and the round-start hook-up */
 
@@ -95,6 +97,8 @@
 #include "scenario_manifest.h"
 #include "scenario_events.h"
 #include "scenario_lua.h"
+#include "scenario_package.h"      /* scnPackageFindInMap — the second way a
+                                    * map can carry a script */
 #include "scenario_sandbox.h"      /* the libraries a scenario state gets */
 #include "scenario_validate.h"     /* ScnParseReport, and the parse this file
                                     * shares with the validator */
@@ -2594,6 +2598,58 @@ static bool scnScriptExists(const char *path) {
     return info.type == SDL_PATHTYPE_FILE;
 }
 
+/* How much of a map file is read when looking for a chunk in it: a whole map
+ * body, plus the bytes the chunk header needs to be recognised. A map has to
+ * fit inside that cap to reach a client at all, so this much of the front
+ * holds every map and the header of whatever was appended after one. */
+#define SCN_MAP_HEAD_BYTES (LOBBY_MAP_UPLOAD_MAX_BYTES + SCN_PACKAGE_HEADER_LEN)
+
+/* Whether a container is appended to the map file itself. The magic answers
+   the question this predicate asks; what is inside the container is the
+   attach's business, so nothing here opens it. */
+static bool scnMapHasChunk(const char *mapPath) {
+    FILE          *f;
+    long           size;
+    size_t         want;
+    uint8_t       *buf;
+    size_t         got;
+    const uint8_t *chunk;
+    size_t         chunkLen;
+    bool           found;
+
+    f = fopen(mapPath, "rb");
+    if (f == NULL) {
+        return false;
+    }
+    /* Read the smaller of the file and the head bound: the lister asks this
+       once per map in a directory, and a plain map should cost its own size
+       rather than the bound's. */
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return false;
+    }
+    size = ftell(f);
+    if (size <= 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    want = ((size_t)size < (size_t)SCN_MAP_HEAD_BYTES)
+               ? (size_t)size
+               : (size_t)SCN_MAP_HEAD_BYTES;
+
+    buf = (uint8_t *)malloc(want);
+    if (buf == NULL) {
+        fclose(f);
+        return false;
+    }
+    got = fread(buf, 1, want, f);
+    fclose(f);
+
+    found = scnPackageFindInMap(buf, got, &chunk, &chunkLen);
+    free(buf);
+    return found;
+}
+
 bool scenarioHostMapHasScript(const char *mapPath) {
     char script[SCN_SCRIPT_PATH_MAX];
 
@@ -2607,10 +2663,13 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     if (!scnEnabled) {
         return false;
     }
-    if (!scnScriptPath(mapPath, script, sizeof(script))) {
-        return false;
+    /* A loose script beside the map is the cheaper of the two tests — a stat
+       against a read — so it goes first. */
+    if (scnScriptPath(mapPath, script, sizeof(script)) &&
+        scnScriptExists(script)) {
+        return true;
     }
-    return scnScriptExists(script);
+    return scnMapHasChunk(mapPath);
 }
 
 /* The lister's question, in the shape the sim's setter takes. No context:

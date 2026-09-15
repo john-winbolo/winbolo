@@ -41,6 +41,8 @@
 #include "zip.h"
 #include "ioapi.h"
 
+#include "bolo_map_validate.h" /* boloMapBodyLength — where a map file ends */
+
 #include "scenario_package.h"
 
 /* The most one minizip read or write call is handed. Both take an unsigned,
@@ -476,6 +478,32 @@ int scnPackageBrainCount(const ScnPackage *p) {
 const char *scnPackageBrainName(const ScnPackage *p, int i) {
     if (p == NULL || i < 0 || i >= p->brainCount) return NULL;
     return p->brainNames[i];
+}
+
+/* Where the map stops is the only thing that says where the chunk starts, so
+ * this asks boloMapBodyLength and then looks for the magic at the byte after.
+ * The container is not opened here: a caller that wants what is inside it
+ * calls scnPackageOpen on what comes back. */
+bool scnPackageFindInMap(const uint8_t *file, size_t len,
+                         const uint8_t **outChunk, size_t *outChunkLen) {
+    size_t body = 0;
+
+    if (outChunk != NULL) *outChunk = NULL;
+    if (outChunkLen != NULL) *outChunkLen = 0;
+    if (file == NULL || outChunk == NULL || outChunkLen == NULL) return false;
+
+    if (!boloMapBodyLength((const unsigned char *)file, len, &body)) {
+        return false;
+    }
+    if (len - body < SCN_PACKAGE_HEADER_LEN) {
+        return false;
+    }
+    if (memcmp(file + body, SCN_PACKAGE_MAGIC, 4) != 0) {
+        return false;
+    }
+    *outChunk = file + body;
+    *outChunkLen = len - body;
+    return true;
 }
 
 /* ------------------------------------------------------------------ */

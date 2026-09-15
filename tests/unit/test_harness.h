@@ -2720,6 +2720,15 @@ int run_scenario_manifest_json_refusals(void);
 int run_scenario_manifest_agrees(void);
 int run_scenario_manifest_from_values(void);
 
+/* Where a map file's map data ends (test_scenario_map_body.c): the measure
+ * itself, the container found after it, the scripted tag it gives the
+ * chooser, and the preview that stops at it. */
+int run_scenario_map_body_length(void);
+int run_scenario_map_find_container(void);
+int run_scenario_map_has_script_chunk(void);
+int run_scenario_map_preview_truncates(void);
+int run_scenario_map_preview_passes_plain_bytes(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

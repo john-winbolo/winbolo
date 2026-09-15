@@ -33,6 +33,7 @@
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange */
 #include "server_sim_join.h"        /* serverSimAssignLobbyStartOnJoin — start reconcile after a map change */
 #include "bolo_rand.h"              /* bolo_rand_below — the rotation's random pick */
+#include "bolo_map_validate.h"      /* boloMapBodyLength — where the preview's read stops */
 #include "client_sim.h"             /* clientSimGetGameSim — the in-process client map reload */
 #include "../../common/md5.h"       /* the compressed-map hash the preview paths compare */
 #include "../../common/mp_diag_log.h"
@@ -1215,14 +1216,46 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!fp) return false;
     if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
     long sz = ftell(fp);
-    if (sz <= 0 || (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES) { fclose(fp); return false; }
+    if (sz <= 0) { fclose(fp); return false; }
     if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+
+    /* A file inside the cap is read whole; one over it is read as a prefix
+       that large. A whole plain map fits inside the cap, so the front of an
+       over-cap file still holds its map however large whatever follows it
+       is — which is how a map with a scenario chunk appended gets read at
+       all, where sizing the read off the file would refuse it outright. */
+    bool   overCap = (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES;
+    size_t want    = overCap ? (size_t)LOBBY_MAP_UPLOAD_MAX_BYTES : (size_t)sz;
+
+    uint8_t *buf = (uint8_t *)malloc(want);
     if (!buf) { fclose(fp); return false; }
-    size_t got = fread(buf, 1, (size_t)sz, fp);
+    size_t got = fread(buf, 1, want, fp);
     fclose(fp);
-    if (got != (size_t)sz) { free(buf); return false; }
+    if (got != want) { free(buf); return false; }
+
+    /* Where the map stops is where this read stops: a chunk appended after a
+       map is the server's business rather than a client's, and the preview
+       only ever wants the map.
+
+       What is not a map is handed back as it was read. This function reads
+       bytes for a caller and does not judge them, and a file that does not
+       parse is a file with no chunk in it to keep back. The one exception is
+       the over-cap file, which only ever got this far because its front
+       might have been a map: with no map in it there is nothing to trim it
+       to, so it is refused, as an over-cap file always has been. */
+    size_t bodyLen = 0;
+    if (boloMapBodyLength(buf, got, &bodyLen)) {
+        if (bodyLen < got) {
+            uint8_t *trimmed = (uint8_t *)realloc(buf, bodyLen);
+            if (trimmed != NULL) buf = trimmed;
+        }
+        got = bodyLen;
+    } else if (overCap) {
+        free(buf);
+        return false;
+    }
+
     *outBytes = buf;
-    *outLen   = (size_t)sz;
+    *outLen   = got;
     return true;
 }

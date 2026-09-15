@@ -3426,6 +3426,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # read still in it, and the comparison that holds a package's manifest
     # against the table its script declared.
     tests/unit/test_scenario_manifest_json.c
+    # Where a map file's map data ends: the measure over synthetic BMAPs, the
+    # container found after one, the scripted tag a packed map gets, and the
+    # lobby preview that stops at the end of the map.
+    tests/unit/test_scenario_map_body.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5460,6 +5464,11 @@ set(_unit_test_names
     scenario_manifest_json_refusals
     scenario_manifest_agrees
     scenario_manifest_from_values
+    scenario_map_body_length
+    scenario_map_find_container
+    scenario_map_has_script_chunk
+    scenario_map_preview_truncates
+    scenario_map_preview_passes_plain_bytes
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

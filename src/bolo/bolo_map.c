@@ -1967,3 +1967,85 @@ bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize) 
   return ok;
 }
 
+/* Step the cursor over n bytes, or say there are not n bytes left. Every
+ * move through the map below goes through here, so nothing is read that the
+ * buffer does not hold. */
+static bool mapBodyTake(size_t len, size_t *pos, size_t n) {
+  if (*pos > len || n > len - *pos) {
+    return false;
+  }
+  *pos += n;
+  return true;
+}
+
+bool boloMapBodyLength(const unsigned char *data, size_t len, size_t *outLen) {
+  size_t pos;
+  BYTE   numPills;
+  BYTE   numBases;
+  BYTE   numStarts;
+
+  if (outLen == NULL) {
+    return false;
+  }
+  *outLen = 0;
+  if (data == NULL) {
+    return false;
+  }
+
+  /* The preamble: the id, the version byte and the three counts. */
+  pos = 0;
+  if (!mapBodyTake(len, &pos, LENGTH_ID + 4)) {
+    return false;
+  }
+  if (memcmp(data, MAP_HEADER, LENGTH_ID) != 0) {
+    return false;
+  }
+  if (data[LENGTH_ID] != CURRENT_MAP_VERSION) {
+    return false;
+  }
+  numPills  = data[LENGTH_ID + 1];
+  numBases  = data[LENGTH_ID + 2];
+  numStarts = data[LENGTH_ID + 3];
+  /* The same counts mapReadStream refuses a file for. */
+  if (numPills > MAX_PILLS || numBases > MAX_BASES || numStarts > MAX_STARTS) {
+    return false;
+  }
+
+  if (!mapBodyTake(len, &pos, (size_t)numPills * SIZEOFBMAP_PILL_INFO) ||
+      !mapBodyTake(len, &pos, (size_t)numBases * SIZEOFBAMP_BASE_INFO) ||
+      !mapBodyTake(len, &pos, (size_t)numStarts * SIZEOFBMAP_START_INFO)) {
+    return false;
+  }
+
+  /* The runs, until the one that says there are no more. datalen counts its
+   * own four-byte header, so a run's data is datalen - 4 bytes. */
+  for (;;) {
+    BYTE datalen;
+    BYTE y;
+    BYTE startx;
+    BYTE endx;
+    size_t header = pos;
+
+    if (!mapBodyTake(len, &pos, SIZEOFBMAP_RUN_HEADER)) {
+      return false;
+    }
+    datalen = data[header];
+    y       = data[header + 1];
+    startx  = data[header + 2];
+    endx    = data[header + 3];
+
+    if (datalen == SIZEOFBMAP_RUN_HEADER && y == MAP_ARRAY_LAST &&
+        startx == MAP_ARRAY_LAST && endx == MAP_ARRAY_LAST) {
+      *outLen = pos;
+      return true;
+    }
+    if (datalen < SIZEOFBMAP_RUN_HEADER || startx > endx) {
+      return false;
+    }
+    if (!mapBodyTake(len, &pos,
+                     (size_t)(datalen - SIZEOFBMAP_RUN_HEADER))) {
+      return false;
+    }
+  }
+}
+

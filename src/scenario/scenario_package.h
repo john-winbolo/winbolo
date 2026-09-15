@@ -87,4 +87,10 @@ bool scnPackageWrite(const ScnPackageEntry *entries, int count,
                      uint8_t **outBytes, size_t *outLen,
                      char *err, size_t errLen);
 
+/* The WBSC chunk appended to a map file, if there is one. Points into the
+   caller's buffer; nothing is copied, and the buffer must outlive the use.
+   False when the file is not a map, or is a map with nothing after it. */
+bool scnPackageFindInMap(const uint8_t *file, size_t len,
+                         const uint8_t **outChunk, size_t *outChunkLen);
+
 #endif /* SCENARIO_PACKAGE_H */
