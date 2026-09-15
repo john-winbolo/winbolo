@@ -43,10 +43,14 @@ extern "C" {
 #include "../../sdl3draw.h"    /* sdl3DrawGetRenderer — the summary's sprites */
 }
 
-/* Selection state for the Visibility dialog. Initialized when the dialog opens,
- * tracked while open, and cleared when closed. Allows selecting "Custom" even
- * when the custom values match a preset; on dialog close, if the values still
- * match a preset, it automatically reverts to that preset. */
+/* Which row the Visibility dialog is showing as chosen. Read off the live
+ * settings each time the dialog opens, and moved by every pick and every
+ * edit made while it is open.
+ *
+ * It exists so the machine hosting the game can sit on Custom even while
+ * its custom values happen to match one of the presets. For anybody else,
+ * and for a host who has not picked Custom, it simply follows the live
+ * match. Nothing is put back on the lobby when the dialog closes. */
 static int s_visSelectedPreset = -1;
 
 /* ── Layout A — editable game settings panel ──────────────────────
@@ -175,6 +179,68 @@ static void lobbyVisibilityApplyPreset(ClientSim *cs, VisibilityPreset p) {
     lobbyVisibilityApply(cs, &want);
 }
 
+/* Commits one edit made along the Custom row, or down the stacked form.
+ * edited is a copy of whatever the control was showing, with the one
+ * field that control changed already set on it.
+ *
+ * An edit like this always lands on Custom, so the dialog's chosen row
+ * moves there. Classic mode comes off because the server refuses an edit
+ * to any of the other six settings while it is on, and lobbyVisibilityApply
+ * sends that "off" ahead of the setting itself.
+ *
+ * customSettings and saveCustom say what this machine keeps, and there
+ * are three cases:
+ *
+ * A set given - the table's Custom row on the machine hosting the game.
+ * The control was showing that saved set, so the edit is written back
+ * into it and persisted, and the next game hosted from this machine
+ * starts there. saveCustom is not read in this case.
+ *
+ * NULL with saveCustom true - the stacked form on the machine hosting the
+ * game. The control was showing the live settings, so the new saved set
+ * is those live values with this one edit on them.
+ *
+ * NULL with saveCustom false - an admin who is not hosting. Only the one
+ * setting that changed goes to the lobby and nothing is saved here: their
+ * saved set belongs to some other game and must not be touched. */
+static void lobbyVisibilityCommitEdit(ClientSim *cs,
+                                      VisibilitySettings *customSettings,
+                                      bool saveCustom,
+                                      VisibilitySettings *edited) {
+    s_visSelectedPreset = (int)visibilityPresetCustom;
+    edited->classicMode = false;
+    if (customSettings != NULL) {
+        *customSettings = *edited;
+        gameFrontSetVisibilityCustom(customSettings);
+    } else if (saveCustom) {
+        gameFrontSetVisibilityCustom(edited);
+    }
+    lobbyVisibilityApply(cs, edited);
+}
+
+/* The same commit for one of the three view columns, where the mode and
+ * the seconds travel as one setting and so have to be sent together
+ * however the cell was changed. The seconds are clamped here, so the
+ * combo, the typed value and the two step buttons all land inside the
+ * range the server will take.
+ *
+ * src may be customSettings itself, which is why the copy is made before
+ * anything is written. customSettings and saveCustom mean what they mean
+ * in lobbyVisibilityCommitEdit above, and are handed straight on. */
+static void lobbyVisibilityCommitView(ClientSim *cs,
+                                      VisibilitySettings *customSettings,
+                                      bool saveCustom,
+                                      const VisibilitySettings *src, int c,
+                                      int policy, int secs) {
+    VisibilitySettings edited = *src;
+
+    if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_MIN_SECS;
+    if (secs > VIEW_DECAY_MAX_SECS) secs = VIEW_DECAY_MAX_SECS;
+    edited.policy[c]    = (uint8_t)policy;
+    edited.decaySecs[c] = (uint16_t)secs;
+    lobbyVisibilityCommitEdit(cs, customSettings, saveCustom, &edited);
+}
+
 /* The one-line version of a set, for the Custom row of the dropdown and
  * the lobby's header line. Short labels and the same value words the
  * controls use, with the two on/off rules named only while they are on,
@@ -241,10 +307,19 @@ void lobbyVisibilityDetailsLine(const VisibilitySettings *v, char *out,
     }
 }
 
-/* Keeps the INI's memory of the host's choice in step with the lobby.
- * Run every frame the form is drawn rather than off each control, so an
- * edit made anywhere — a preset, a Details control, another admin's
- * change on this same machine — is remembered the same way.
+/* Keeps the INI's memory of what the lobby is on in step with the lobby:
+ * the seven per-setting values, and which named set they match. Run every
+ * frame the form is drawn rather than off each control, so a change from
+ * anywhere - a preset, a Details control, another admin - is written down
+ * the same way. The next game hosted from this machine starts there.
+ *
+ * It does not write the hand-made set. A preset reaches the lobby one
+ * setting at a time, so the values read here pass through mixes that
+ * match no named set while it is going on, and saving those would leave
+ * the player's own set replaced by a half-applied preset. That set is
+ * written only where this machine edits or picks something, which is
+ * lobbyVisibilityCommitEdit and the two Custom picks. A preset going on,
+ * or a change made from another machine, therefore cannot overwrite it.
  *
  * Only the machine actually running the server writes: visiting somebody
  * else's lobby as an admin must not rewrite what this player hosts with.
@@ -255,7 +330,7 @@ static void lobbyVisibilityRemember(ClientSim *cs, int myPlayerNum) {
 
     VisibilitySettings live;
     lobbyVisibilityRead(cs, &live);
-    gameFrontRememberVisibility(&live);
+    gameFrontRememberVisibility(&live, /*saveCustom*/ false);
 }
 
 /* ── The Details table's columns ──────────────────────────────────
@@ -568,8 +643,8 @@ static float lobbyVisibilityValueColumnMinWidth(float s) {
  * same cursor: they are picture only, because an item added second at the
  * same place does not take the hover from the one already there. So the
  * circle, the name and the blank space beside it are one target with one
- * highlight, and the radio still reads its checked state from the live
- * match rather than from anything this remembers.
+ * highlight, and the radio reads its checked state from sel, which is the
+ * row the dialog has chosen.
  *
  * tip is what the row means, the same sentence the dropdown puts on its
  * entry for the same set. It is read off the target rather than off the
@@ -585,17 +660,21 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
     float  rowH    = ImGui::GetFrameHeight();
 
     if (disabled) ImGui::BeginDisabled();
+    /* The Selectable and the radio drawn back over it are one target in
+     * one spot, so both are kept out of the running for the window's
+     * default focus - flagging only the first hands the focus to the
+     * second. The dialog says where it wants the focus instead, with a
+     * SetItemDefaultFocus on its Close button. */
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
     /* Never drawn as selected: the radio is what says which row is on, and
      * a filled cell behind a checked radio says it twice. DontClosePopups so
      * clicking a preset row keeps the dialog open until Close or Esc. */
-    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
     if (ImGui::Selectable("##row", false,
                           ImGuiSelectableFlags_DontClosePopups,
                           ImVec2(cellW, rowH))
         && !sel) {
         clicked = true;
     }
-    ImGui::PopItemFlag();
     /* Read before the radio and the name are drawn over it, and shown after
      * EndDisabled so a non-host still gets to read what the row does. */
     bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -603,6 +682,7 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
     if (ImGui::RadioButton("##pick", sel) && !sel) {
         clicked = true;
     }
+    ImGui::PopItemFlag();
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(name);
@@ -613,33 +693,34 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
     return clicked;
 }
 
-/* If classic mode is on, an edit to any of the six settings is refused by
- * the server, so turn it off before sending the setting. */
-static void lobbyVisibilityEnsureClassicOff(ClientSim *cs) {
-    if (clientSimGetClassicMode(cs)) {
-        uint8_t off = 0;
-        lobbySendSetting(cs, LST_CLASSIC_MODE, &off, 1);
-    }
-}
-
-/* Column c of the Custom row (or a row of the stacked form): editable,
+/* Column c of the Custom row, or one row of the stacked form: editable,
  * behind the same sprite the preset rows above it carry so the column
- * reads the same all the way down.
+ * reads the same all the way down. Each control is the one the panel has
+ * always used, one to a cell now rather than a stack of rows.
  *
- * When customSettings is non-NULL (the table view's Custom row), the
- * control displays and updates the remembered custom settings,
- * persisting them and applying them to the lobby so any change lands on
- * Custom without clobbering other custom settings.
+ * There are two things the cell can be showing, and customSettings says
+ * which. Given a set - which is this machine's own saved custom set, and
+ * only on the table's Custom row on the machine hosting the game - the
+ * cell shows that set and every edit goes back into it, so the whole set
+ * stays together and lands on the lobby as one. Given NULL - the stacked
+ * form, and the Custom row for anybody who is not hosting - the cell
+ * shows the live settings and an edit sends only the setting it holds.
  *
- * When customSettings is NULL (the stacked form), the control displays
- * the live match setting and edits it directly. */
+ * realHost says whether this machine is running the server, and decides
+ * what an edit saves when the cell is showing the live settings. On the
+ * hosting machine the saved set becomes those live values with this edit
+ * on them, because the player made that edit here. For anybody else
+ * nothing is saved: their saved set belongs to some other game. When
+ * customSettings is given the flag does not matter, because the set is
+ * written through customSettings instead.
+ *
+ * Both go out through lobbyVisibilityCommitEdit, which turns classic mode
+ * off first: while it is on the server refuses an edit to any of the six. */
 static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
                                       float maxCtrlW, float s,
                                       bool stackSeconds,
-                                      VisibilitySettings *customSettings) {
-    static const uint8_t viewLst[3] = {
-        LST_PILL_VIEW, LST_BASE_VIEW, LST_ALLY_VIEW
-    };
+                                      VisibilitySettings *customSettings,
+                                      bool realHost) {
     const ImGuiStyle &st = ImGui::GetStyle();
     VisibilitySettings live;
     const VisibilitySettings *src = customSettings;
@@ -686,17 +767,8 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
 
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##mode", &policy, modes, 4)) {
-            s_visSelectedPreset = (int)visibilityPresetCustom;
-            if (customSettings != NULL) {
-                customSettings->policy[c]    = (uint8_t)policy;
-                customSettings->decaySecs[c] = (uint16_t)secs;
-                customSettings->classicMode  = false;
-                gameFrontSetVisibilityCustom(customSettings);
-                lobbyVisibilityApply(cs, customSettings);
-            } else {
-                lobbyVisibilityEnsureClassicOff(cs);
-                lobbyVisibilitySendView(cs, viewLst[c], policy, secs);
-            }
+            lobbyVisibilityCommitView(cs, customSettings, realHost, src, c,
+                                      policy, secs);
         }
         /* The seconds show only while the cell is on Decay. In the table
          * they go on a second line inside the cell, because beside the
@@ -727,19 +799,8 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
             if (ImGui::InputInt("##decay", &secs, oneLine ? 1 : 0,
                                 oneLine ? 5 : 0,
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                s_visSelectedPreset = (int)visibilityPresetCustom;
-                if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_MIN_SECS;
-                if (secs > VIEW_DECAY_MAX_SECS) secs = VIEW_DECAY_MAX_SECS;
-                if (customSettings != NULL) {
-                    customSettings->policy[c]    = (uint8_t)policy;
-                    customSettings->decaySecs[c] = (uint16_t)secs;
-                    customSettings->classicMode  = false;
-                    gameFrontSetVisibilityCustom(customSettings);
-                    lobbyVisibilityApply(cs, customSettings);
-                } else {
-                    lobbyVisibilityEnsureClassicOff(cs);
-                    lobbyVisibilitySendView(cs, viewLst[c], policy, secs);
-                }
+                lobbyVisibilityCommitView(cs, customSettings, realHost, src, c,
+                                          policy, secs);
             }
             ImGui::SameLine(0, st.ItemInnerSpacing.x);
             ImGui::TextUnformatted(secsLbl);
@@ -748,35 +809,13 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
                  * line and the same size, so the cell reads as one control
                  * that has folded rather than two different ones. */
                 if (ImGui::Button("-", ImVec2(frame, frame))) {
-                    s_visSelectedPreset = (int)visibilityPresetCustom;
-                    int newSecs = secs - 1;
-                    if (newSecs < VIEW_DECAY_MIN_SECS) newSecs = VIEW_DECAY_MIN_SECS;
-                    if (customSettings != NULL) {
-                        customSettings->policy[c]    = (uint8_t)policy;
-                        customSettings->decaySecs[c] = (uint16_t)newSecs;
-                        customSettings->classicMode  = false;
-                        gameFrontSetVisibilityCustom(customSettings);
-                        lobbyVisibilityApply(cs, customSettings);
-                    } else {
-                        lobbyVisibilityEnsureClassicOff(cs);
-                        lobbyVisibilitySendView(cs, viewLst[c], policy, newSecs);
-                    }
+                    lobbyVisibilityCommitView(cs, customSettings, realHost,
+                                              src, c, policy, secs - 1);
                 }
                 ImGui::SameLine(0, st.ItemInnerSpacing.x);
                 if (ImGui::Button("+", ImVec2(frame, frame))) {
-                    s_visSelectedPreset = (int)visibilityPresetCustom;
-                    int newSecs = secs + 1;
-                    if (newSecs > VIEW_DECAY_MAX_SECS) newSecs = VIEW_DECAY_MAX_SECS;
-                    if (customSettings != NULL) {
-                        customSettings->policy[c]    = (uint8_t)policy;
-                        customSettings->decaySecs[c] = (uint16_t)newSecs;
-                        customSettings->classicMode  = false;
-                        gameFrontSetVisibilityCustom(customSettings);
-                        lobbyVisibilityApply(cs, customSettings);
-                    } else {
-                        lobbyVisibilityEnsureClassicOff(cs);
-                        lobbyVisibilitySendView(cs, viewLst[c], policy, newSecs);
-                    }
+                    lobbyVisibilityCommitView(cs, customSettings, realHost,
+                                              src, c, policy, secs + 1);
                 }
             }
         }
@@ -788,17 +827,9 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
         int sel = src->alliesInTrees ? 0 : 1;
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##trees", &sel, yesNo, 2)) {
-            s_visSelectedPreset = (int)visibilityPresetCustom;
-            if (customSettings != NULL) {
-                customSettings->alliesInTrees = (sel == 0);
-                customSettings->classicMode   = false;
-                gameFrontSetVisibilityCustom(customSettings);
-                lobbyVisibilityApply(cs, customSettings);
-            } else {
-                lobbyVisibilityEnsureClassicOff(cs);
-                uint8_t v = (sel == 0) ? 1 : 0;
-                lobbySendSetting(cs, LST_ALLIES_IN_TREES, &v, 1);
-            }
+            VisibilitySettings edited = *src;
+            edited.alliesInTrees = (sel == 0);
+            lobbyVisibilityCommitEdit(cs, customSettings, realHost, &edited);
         }
     } else if (c == 4) {
         const char *windows[] = {
@@ -810,17 +841,9 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##window", &window, windows,
                          (int)OVERVIEW_WINDOW_COUNT)) {
-            s_visSelectedPreset = (int)visibilityPresetCustom;
-            if (customSettings != NULL) {
-                customSettings->overviewWindow = (uint8_t)window;
-                customSettings->classicMode    = false;
-                gameFrontSetVisibilityCustom(customSettings);
-                lobbyVisibilityApply(cs, customSettings);
-            } else {
-                lobbyVisibilityEnsureClassicOff(cs);
-                uint8_t v = (uint8_t)window;
-                lobbySendSetting(cs, LST_OVERVIEW_WINDOW, &v, 1);
-            }
+            VisibilitySettings edited = *src;
+            edited.overviewWindow = (uint8_t)window;
+            lobbyVisibilityCommitEdit(cs, customSettings, realHost, &edited);
         }
     } else {
         const char *yesNo[] = {
@@ -830,20 +853,11 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
         int sel = (src->lineOfSight != (uint8_t)lineOfSightOff) ? 0 : 1;
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##sight", &sel, yesNo, 2)) {
-            s_visSelectedPreset = (int)visibilityPresetCustom;
-            if (customSettings != NULL) {
-                customSettings->lineOfSight = (sel == 0)
-                                                  ? (uint8_t)lineOfSightBuildingsAndTrees
-                                                  : (uint8_t)lineOfSightOff;
-                customSettings->classicMode = false;
-                gameFrontSetVisibilityCustom(customSettings);
-                lobbyVisibilityApply(cs, customSettings);
-            } else {
-                lobbyVisibilityEnsureClassicOff(cs);
-                uint8_t v = (sel == 0) ? (uint8_t)lineOfSightBuildingsAndTrees
-                                       : (uint8_t)lineOfSightOff;
-                lobbySendSetting(cs, LST_LINE_OF_SIGHT, &v, 1);
-            }
+            VisibilitySettings edited = *src;
+            edited.lineOfSight = (sel == 0)
+                                     ? (uint8_t)lineOfSightBuildingsAndTrees
+                                     : (uint8_t)lineOfSightOff;
+            lobbyVisibilityCommitEdit(cs, customSettings, realHost, &edited);
         }
     }
     /* The hover is read before the badge draws, so the tooltip belongs to
@@ -914,7 +928,12 @@ static void lobbyRenderVisibilityTooltip(const VisibilitySettings *v,
  * on the Custom entry's hover, which has room for it.
  *
  * width is the item width to use. Pass 0 to have it sized to the widest
- * entry, which is what a caller with room to spare wants. */
+ * entry, which is what a caller with room to spare wants.
+ *
+ * dialogSelectedPreset is the Details dialog's chosen row, handed in so
+ * the dropdown inside that dialog shows and moves the same row the table
+ * would. The lobby's own Visibility row passes nothing and simply reads
+ * whichever set the live settings match. */
 static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
                                        float width, bool disabled,
                                        uint32_t visLocks, float s,
@@ -974,9 +993,10 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
                                   langGetText(visibilityPresetDescId(preset)));
             }
         }
-        /* Custom is listed whether or not the host has ever made a set - the
-         * row the settings can land on must never be missing from the list -
-         * but with none made it names nothing and picking it does nothing. */
+        /* Custom is listed whether or not a set has ever been made here -
+         * the row the settings can land on must never be missing from the
+         * list. Picking it puts this machine's saved set on the lobby, and
+         * with none ever saved it puts whatever the hosting settings held. */
         bool customSel = (dialogSelectedPreset != NULL)
                              ? (*dialogSelectedPreset == (int)visibilityPresetCustom)
                              : (livePreset == visibilityPresetCustom);
@@ -1023,11 +1043,18 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
  * dropdown the lobby row carries, then the six settings stacked one to a
  * row the way the panel laid them out before the table existed.
  *
- * Nothing is remembered across the switch because nothing here is state:
- * both bodies read the live settings and write through the same senders,
- * so resizing past the threshold changes the shape and nothing else. */
+ * The controls here always show the live settings and send one setting at
+ * a time, which is why they are handed no saved set to write into. The
+ * chosen row is the one thing the two bodies share, so resizing past the
+ * threshold changes the shape and how far one edit reaches, nothing more.
+ *
+ * realHost is passed down to the cells so that an edit made here on the
+ * machine hosting the game still saves a custom set - the live values
+ * with that edit on them. Without it, the only way to save a set would be
+ * the table form, which a narrow popup never shows. */
 static void lobbyRenderVisibilityStackedForm(ClientSim *cs, bool effectiveHost,
-                                             uint32_t visLocks, float s) {
+                                             uint32_t visLocks, float s,
+                                             bool realHost) {
     const ImGuiStyle &st = ImGui::GetStyle();
     float labelW = 0.0f;
     int   c;
@@ -1058,7 +1085,7 @@ static void lobbyRenderVisibilityStackedForm(ClientSim *cs, bool effectiveHost,
         lobbyVisibilityCustomCell(cs, c, effectiveHost,
                                   lobbyVisibilityValueColumnMinWidth(s)
                                       + 60.0f * s,
-                                  s, false, NULL);
+                                  s, false, NULL, realHost);
     }
 }
 
@@ -1232,19 +1259,27 @@ void lobbyRenderGameSettingsPanel(ClientSim *cs,
  * collapsing-header chrome. Host-gated by every caller. */
 void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     const bool spectator = clientSimIsSpectator(cs);
+    /* The one machine actually running the server, which is not the same
+     * thing as effectiveHost below - that is also true in an open-host
+     * lobby and for an admin. Only the real host writes its own saved
+     * visibility set from this dialog, so only there is that set worth
+     * showing and worth editing in place. */
+    bool realHost = lobbyIsHost(cs, myPlayerNum);
     /* Same effective-host test the panel computes, recomputed here so the
      * per-control disabled state is identical whether the body renders in
      * the desktop collapsing header or the controller Settings tab. */
-    bool effectiveHost = !spectator && (lobbyIsHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+    bool effectiveHost = !spectator && (realHost || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                            & PLAYER_FLAG_ADMIN)));
 
-    /* Remember what the visibility settings have been put on, so the next
-     * game hosted from this machine starts there. Done once for the form
-     * rather than off each control, so an edit from the dropdown, from the
-     * Details popup or from another admin on this machine is all caught
-     * the same way. */
+    /* Write down what the visibility settings have been put on, so the
+     * next game hosted from this machine starts there. Done once for the
+     * form rather than off each control, so a change from the dropdown,
+     * from the Details popup or from another admin is all caught the same
+     * way. This writes the values and which named set they match; the
+     * saved custom set is not written here, only where this machine edits
+     * or picks something. */
     lobbyVisibilityRemember(cs, myPlayerNum);
 
     /* Settings body uses a smaller font than the rest of the lobby so
@@ -1662,21 +1697,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
          * window cannot hold it, so the host is given the edge to drag
          * rather than a body that quietly hides its last two columns. */
         if (ImGui::BeginPopupModal(visTitle, &s_visOpen, 0)) {
-            /* Do not auto-focus the first cell with a nav outline when the
-             * dialog is first opened. */
+            /* Each opening starts on whatever the lobby is actually set
+             * to, so the dialog never opens showing a row from last time. */
             if (ImGui::IsWindowAppearing()) {
-                ImGuiContext *g = ImGui::GetCurrentContext();
-                if (g) {
-                    g->NavInitRequest = false;
-                    g->NavInitResult.ID = 0;
-                    g->NavId = 0;
-                    g->NavCursorVisible = false;
-                }
-                ImGuiWindow *win = ImGui::GetCurrentWindow();
-                if (win) {
-                    win->NavLastIds[0] = 0;
-                    win->NavLastIds[1] = 0;
-                }
                 VisibilitySettings liveInit;
                 lobbyVisibilityRead(cs, &liveInit);
                 s_visSelectedPreset = (int)visibilityPresetMatch(&liveInit);
@@ -1687,19 +1710,43 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
              * themselves, so the table shows what every preset does and
              * what the host can do instead in the same grid.
              *
-             * The radio says which row the lobby is on, and that is read
-             * off the settings rather than remembered, so an edit made
-             * anywhere moves it. */
+             * The radio says which row is chosen. That follows the live
+             * settings, so an edit made anywhere moves it; the one thing
+             * it remembers is the real host sitting on Custom. */
             VisibilitySettings live;
             lobbyVisibilityRead(cs, &live);
             VisibilityPreset livePreset = visibilityPresetMatch(&live);
-            if (s_visSelectedPreset < 0) {
-                s_visSelectedPreset = (int)livePreset;
-            }
             uint32_t visLocks =
                 clientSimGetLobbyServerLocks(cs) & kVisibilityLockMask;
             bool presetDisabled = !effectiveHost || visLocks != 0;
-            if (!gameFrontVisibilityCustomSaved) {
+            /* What the Custom row shows and edits. On the machine hosting
+             * the game the row shows that machine's own saved set, and an
+             * edit along the row goes back into it. Nobody else has a set
+             * worth showing here: theirs is left over from some other
+             * game, so for them the row shows the live settings and each
+             * control edits the one setting it holds.
+             *
+             * The saved set is no longer kept in step with the lobby every
+             * frame, so on Custom it can differ from the live settings -
+             * a change made by another admin from another machine does not
+             * reach it. The radio still says Custom in that case, and the
+             * row shows the set this machine would host with. */
+            VisibilitySettings *customRow =
+                realHost ? &gameFrontVisibilityCustom : NULL;
+            /* The chosen row follows the live match, because the lobby is
+             * what the dialog is showing. The one exception is the real
+             * host sitting on Custom on purpose: the set behind that row
+             * can match a preset, and the pick has to stick anyway. */
+            if (!realHost ||
+                s_visSelectedPreset != (int)visibilityPresetCustom) {
+                s_visSelectedPreset = (int)livePreset;
+            }
+            /* With no set ever saved, the globals hold the hosting
+             * settings read at start-up. Two things in them the row cannot
+             * show: classic mode on, which has no column and would grey
+             * the whole row out, and a decay below the least the server
+             * takes. Put both on something the row can show first. */
+            if (customRow != NULL && !gameFrontVisibilityCustomSaved) {
                 gameFrontVisibilityCustom.classicMode = false;
                 for (int ci = 0; ci < (int)VIEW_CATEGORY_COUNT; ci++) {
                     if (gameFrontVisibilityCustom.decaySecs[ci] < VIEW_DECAY_MIN_SECS) {
@@ -1747,9 +1794,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 
             /* Table or stacked form, decided by the room there actually is
              * rather than by the screen: the host drags the edge and the
-             * body follows on the next frame. Nothing is carried across the
-             * switch - both read the live settings and write through the
-             * same senders - so the change is shape only.
+             * body follows on the next frame. The chosen row carries
+             * across the switch; how far one edit reaches does not,
+             * because the stacked form always sends a single setting.
              *
              * The table never scrolls sideways. A column scrolled off the
              * right edge is a column the host does not know exists, which
@@ -1768,7 +1815,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                                    | ImGuiTableFlags_PadOuterX;
 
             if (!wideEnough) {
-                lobbyRenderVisibilityStackedForm(cs, effectiveHost, visLocks, s);
+                lobbyRenderVisibilityStackedForm(cs, effectiveHost, visLocks, s,
+                                                 realHost);
             } else if (ImGui::BeginTable("##vispresets", VIS_COLUMN_COUNT + 1,
                                          tflags, ImVec2(0.0f, 0.0f))) {
                 ImGui::TableSetupColumn("##name",
@@ -1825,28 +1873,39 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 
                 {
                     bool sel = (s_visSelectedPreset == (int)visibilityPresetCustom);
-                    /* A Custom row with no set behind it cannot be picked —
-                     * there is nothing to go back to. Changing one of the
-                     * controls along it is how the lobby lands here. */
-                    bool pickable = effectiveHost && visLocks == 0;
+                    /* Only the machine hosting the game can pick this row:
+                     * picking it puts that machine's saved custom set on
+                     * the lobby, and with none ever saved it puts whatever
+                     * the hosting settings held. Everybody else lands on
+                     * Custom by changing one of the controls along the row,
+                     * which is why they get no radio to press. */
+                    bool pickable = realHost && visLocks == 0;
+                    /* Custom has no fixed description - what it does is
+                     * the set itself - so its hover is that set spelled
+                     * out. Which set is the same question the row's cells
+                     * answer: the hosting machine's saved one, or the live
+                     * settings while the lobby is on Custom. With neither,
+                     * the hover says what the row is for instead. Same as
+                     * the dropdown's Custom entry. */
+                    const VisibilitySettings *rowSet = NULL;
                     char customRowLine[192];
                     customRowLine[0] = '\0';
-                    if (gameFrontVisibilityCustomSaved) {
-                        lobbyVisibilityDetailsLine(&gameFrontVisibilityCustom,
-                                                   customRowLine,
+                    if (customRow != NULL && gameFrontVisibilityCustomSaved) {
+                        rowSet = &gameFrontVisibilityCustom;
+                    } else if (livePreset == visibilityPresetCustom) {
+                        rowSet = &live;
+                    }
+                    if (rowSet != NULL) {
+                        lobbyVisibilityDetailsLine(rowSet, customRowLine,
                                                    sizeof(customRowLine));
                     }
                     ImGui::PushID("custom");
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
-                    /* Custom has no fixed description - what it does is
-                     * the set itself - so its hover is that set spelled
-                     * out, and with none saved it says what the row is for
-                     * instead. Same as the dropdown's Custom entry. */
                     if (lobbyVisibilityRowPick(
                             langGetText(STR_DLGLOBBY_PRESET_CUSTOM), sel,
                             !pickable,
-                            gameFrontVisibilityCustomSaved
+                            rowSet != NULL
                                 ? customRowLine
                                 : langGetText(STR_DLGLOBBY_PRESET_CUSTOM_DESC))) {
                         s_visSelectedPreset = (int)visibilityPresetCustom;
@@ -1859,8 +1918,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                         /* No cap: a stretched cell hands its width to
                          * the control inside it. */
                         lobbyVisibilityCustomCell(cs, c, effectiveHost,
-                                                  0.0f, s, true,
-                                                  &gameFrontVisibilityCustom);
+                                                  0.0f, s, true, customRow,
+                                                  realHost);
                     }
                     ImGui::PopID();
                 }
@@ -1877,17 +1936,14 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 != WBUI::FOOTER_NONE) {
                 wantClose = true;
             }
+            /* The Close button is the last item the footer draws, so this
+             * lands on it. The nav cursor is always drawn in this app, so
+             * some item shows the focus outline the moment the dialog
+             * opens. The Close button is a better place for it than the
+             * first cell of the grid, where it looks like a value about to
+             * be changed. */
+            ImGui::SetItemDefaultFocus();
             if (wantClose) {
-                if (effectiveHost && visLocks == 0 &&
-                    s_visSelectedPreset == (int)visibilityPresetCustom) {
-                    VisibilitySettings cur;
-                    lobbyVisibilityRead(cs, &cur);
-                    VisibilityPreset match = visibilityPresetMatch(&cur);
-                    if (match != visibilityPresetCustom) {
-                        lobbyVisibilityApplyPreset(cs, match);
-                    }
-                }
-                s_visSelectedPreset = -1;
                 ImGui::CloseCurrentPopup();
             }
 
