@@ -20,6 +20,42 @@
 -- Bolo angles: 0 = North, 64 = East, 128 = South, 192 = West.  TURNRIGHT
 -- increases the angle, TURNLEFT decreases it.
 
+-- A scenario that spawns this brain hands it its `spawn_bot{ init = {...} }`
+-- table as the global BRAIN_INIT. This brain reads BRAIN_INIT_ARG, the
+-- "k=v;k=v" string, so flatten the table into that string before anything
+-- parses it. Same rule as brains/GoalHunter_1.7/init.lua: keys sorted so the
+-- string is the same every time, a value of "1" or true becoming the bare
+-- word, "0" or false dropped, everything else staying k=v. A string already
+-- in BRAIN_INIT_ARG -- the command-line path -- keeps its place.
+do
+  local t = rawget(_G, "BRAIN_INIT")
+  if type(t) == "table" then
+    local keys = {}
+    for k, v in pairs(t) do
+      if type(k) == "string" and k ~= "" and v ~= nil then keys[#keys + 1] = k end
+    end
+    table.sort(keys)
+    local toks = {}
+    for _, k in ipairs(keys) do
+      local v = t[k]
+      if type(v) ~= "boolean" then v = tostring(v) end
+      if v == true or v == "1" or v == "" then
+        toks[#toks + 1] = k
+      elseif v == false or v == "0" then
+        -- off: no token
+      else
+        toks[#toks + 1] = k .. "=" .. v
+      end
+    end
+    if #toks > 0 then
+      local a = rawget(_G, "BRAIN_INIT_ARG")
+      local flat = table.concat(toks, ";")
+      if type(a) == "string" and a ~= "" then flat = a .. ";" .. flat end
+      rawset(_G, "BRAIN_INIT_ARG", flat)
+    end
+  end
+end
+
 local brain = {}
 
 local PARK_MX, PARK_MY = 126, 120     -- tests/generate_defend_alarm_map.py

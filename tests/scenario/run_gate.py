@@ -27,8 +27,8 @@ A line game.log is handed is dropped silently past 128 bytes, so the prelude
 cuts one rather than losing it. An arena that says nothing before its tick
 limit is a FAIL with the reason "no verdict".
 
-PER-ARENA FLAGS. An arena states what it needs on a GATE line in its own
-header, anywhere in the first forty lines:
+PER-ARENA FLAGS. An arena states what it needs on a GATE line of its own,
+anywhere in the file (most put it beside the verdict, at the foot):
 
     -- GATE: ticks=6000 bots=2 gametype=tournament ai=yesfull
 
@@ -117,16 +117,26 @@ def gate_options(name):
             m = GATE_RE.match(line)
             if not m:
                 continue
+            # A GATE line is read left to right. A `key=value` word starts a
+            # new key; every word after it belongs to that key's value, so a
+            # reason may be a whole sentence. Two things follow, and both
+            # were bugs before they were rules: a reason may contain an `=`
+            # (a cfg=X=false token, say) without being read as a new key, and
+            # a reason written across two GATE lines is joined rather than
+            # having its first half quietly dropped.
+            last = None
             for word in m.group(1).split():
-                if "=" in word:
+                if last in ("skip", "expect"):
+                    opts[last] += " " + word
+                elif "=" in word:
                     k, v = word.split("=", 1)
-                    opts[k] = v
-                else:
-                    # "expect=fail the rest is the reason" and "skip=..." keep
-                    # their trailing words as the reason.
-                    for k in ("skip", "expect"):
-                        if opts.get(k):
-                            opts[k] += " " + word
+                    if k in ("skip", "expect") and opts.get(k):
+                        opts[k] += " " + v      # a second line continues it
+                    else:
+                        opts[k] = v
+                    last = k
+                elif last is not None:
+                    opts[last] += " " + word
     return opts
 
 
