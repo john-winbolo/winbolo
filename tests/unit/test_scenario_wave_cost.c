@@ -56,6 +56,12 @@
  *                                               runner behind every held seat
  * run_scenario_wave_cost_warmed_field_is_free — and the wave that fields one
  *                                               builds nothing
+ * run_scenario_wave_cost_warmed_init_rebuilds — unless it carries an init
+ *                                               table, which the warm had
+ *                                               none of: that seat pays for a
+ *                                               second brain once, and the
+ *                                               rebuilt runner is the one that
+ *                                               parks and matches after it
  * run_scenario_wave_cost_warm_skips_bad_brain — a seat whose brain will not
  *                                               load is skipped, and the rest
  *                                               are still warmed
@@ -906,6 +912,99 @@ int run_scenario_wave_cost_warmed_field_is_free(void) {
                   "the fielded seat is not an active bot");
     UT_ASSERT_MSG(sim->sim.tanks[seat] != NULL,
                   "the fielding built no tank for the seat");
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* The warm builds every held seat's runner with no init table, because the
+ * template the countdown reads carries none. A wave whose spawn names one of
+ * those seats WITH an init table cannot take that runner: the table is read at
+ * the VM's first breath. So the seat costs a second brain, once, and the
+ * runner the rebuild leaves behind is the one the rest of the round parks and
+ * resumes.
+ *
+ * This is the ordinary path for every scenario that configures its bots, not a
+ * script varying a seat's table, and bot_manager says so at INFO rather than
+ * WARN. This binary captures no wb_log output, so the case counts the brains
+ * and reads the context; which level the line went out at is not asserted
+ * here. */
+int run_scenario_wave_cost_warmed_init_rebuilds(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("warmed_init_rebuilds"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatHorde(sim));
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the countdown did not start the round, state %d",
+                  (int)sim->state);
+
+    /* What the warm left behind: a parked runner that was built ahead of the
+       round and holds no configuration of its own. */
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the countdown left seat %d without a runner", (int)seat);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].warmed,
+                  "seat %d's runner does not read as warmed", (int)seat);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].initTable.count == 0,
+                  "the warm gave seat %d an init table of %u entries, expected "
+                  "none", (int)seat,
+                  (unsigned)sim->botMgr.bots[seat].initTable.count);
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the warm made %d brains for seat %d, expected 1",
+                  ut_brain_stub_creates(seat), (int)seat);
+
+    /* The wave fields that one seat, carrying a configuration. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(scnTableSet(&op.u.rosterSpawnBot.init, "role", "guard"));
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the spawn did not field the seat");
+
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 2,
+                  "the seat has had %d brains made for it, expected 2 — the "
+                  "warm's and the one the spawn's init table costs",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+                  "%d brains were destroyed, expected 1 — the warmed runner is "
+                  "released to make room for the new one",
+                  ut_brain_stub_destroys());
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].warmed,
+                  "the rebuilt runner still reads as warmed");
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the fielded seat still reads as parked");
+    UT_ASSERT_MSG(botManagerIsBot(sim, seat),
+                  "the fielded seat is not an active bot");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].initTable.count == 1,
+                  "the fielded seat holds an init table of %u entries, "
+                  "expected the 1 the spawn carried",
+                  (unsigned)sim->botMgr.bots[seat].initTable.count);
+
+    /* And from here the rebuilt runner behaves like any other: off the field
+       it parks carrying the spawn's table, and a wave handing it the same one
+       takes it back rather than paying a third time. */
+    wcRemoveOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the removal did not park the rebuilt runner");
+
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(scnTableSet(&op.u.rosterSpawnBot.init, "role", "guard"));
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the refield did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 2,
+                  "the seat has had %d brains made for it over the warm, the "
+                  "rebuild and a refield on the same init table, expected 2",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+                  "%d brains were destroyed over the three, expected the 1 the "
+                  "rebuild released", ut_brain_stub_destroys());
 
     serverSimDestroy(sim);
     wcDropBrainFile();

@@ -2412,7 +2412,7 @@ int run_unfielded_seat_on_the_wire(void);
  * the control subscription behind a held seat, built across the countdown
  * before the round is played, parked when the seat comes off the field and
  * handed back when it goes back on. Counted at the calls that do it, for one
- * seat and for a horde of six swapped twice, plus the two refields a parked
+ * seat and for a horde of six swapped twice, plus the three refields a parked
  * runner cannot serve, the three places it must not survive, and the warm
  * itself — every seat, a free first fielding, one seat it cannot serve, and a
  * countdown given up on before the round it was building for. */
@@ -2425,6 +2425,7 @@ int run_scenario_wave_cost_horde_parked_releases(void);
 int run_scenario_wave_cost_destroy_releases(void);
 int run_scenario_wave_cost_countdown_warms_seats(void);
 int run_scenario_wave_cost_warmed_field_is_free(void);
+int run_scenario_wave_cost_warmed_init_rebuilds(void);
 int run_scenario_wave_cost_warm_skips_bad_brain(void);
 int run_scenario_wave_cost_abort_countdown_releases(void);
 

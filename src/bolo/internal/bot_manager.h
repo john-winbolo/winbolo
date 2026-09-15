@@ -78,6 +78,13 @@ typedef struct {
      * set. Cleared by the resume in botManagerAddBot and by
      * botManagerReleaseParkedRunner. */
     bool            parked;
+    /* Set by botManagerWarmRunner on a runner built ahead of the round with no
+     * init table, and cleared with parked by the resume in botManagerAddBot
+     * and by botManagerReleaseParkedRunner. It lets the match test tell a
+     * runner that never had an init table from one whose table changed: the
+     * first is the ordinary cost of a spawn carrying configuration, the second
+     * is a script handing the same seat two different tables. */
+    bool            warmed;
     aiType          ai;
     /* Wall-clock duration of this bot's most recent brain.think call,
      * in milliseconds. Updated every botManagerTick. Surfaced via
@@ -696,6 +703,9 @@ void botManagerReleaseParkedRunners(struct ServerSim *sim);
  *
  *  Built with an empty init table, so a spawn carrying one
  *  does not match and rebuilds, exactly as it does today.
+ *  The context is marked warmed, so that rebuild is reported
+ *  at INFO as the expected cost of the spawn's table rather
+ *  than as a script handing the seat two different ones.
  *
  *  Returns false, having built nothing, when the slot
  *  already holds a runner (active or parked), when no brain

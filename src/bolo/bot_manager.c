@@ -873,7 +873,9 @@ static bool botInitTablesSame(const ScnTable *a, const ScnTable *b) {
  *
  * Says which of the two differed, at WARN: a script varying its init table
  * by accident should read as a line in the log rather than as lag on the
- * wave that pays for the rebuild. */
+ * wave that pays for the rebuild. The exception is a warmed runner, which
+ * was built before the round with no init table at all: a spawn carrying one
+ * has varied nothing, so that rebuild is reported at INFO. */
 static bool botParkedRunnerMatches(const BotContext *bot,
                                    const char *brainPath,
                                    const ScnTable *init) {
@@ -892,6 +894,13 @@ static bool botParkedRunnerMatches(const BotContext *bot,
         init = &none;
     }
     if (!botInitTablesSame(&bot->initTable, init)) {
+        if (bot->warmed && bot->initTable.count == 0 && init->count != 0) {
+            WB_LOG_INFO(WB_LOG_CAT_SIM,
+                    "botManager: seat %d was warmed with no init table and the "
+                    "spawn carries one; building its runner now",
+                    (int)bot->playerNum);
+            return false;
+        }
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                 "botManager: bot %d parked with a different init table than "
                 "the refield carries; building a fresh runner",
@@ -960,6 +969,7 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
                 "botManager: failed to reload the map for parked bot %d",
                 (int)playerNum);
         bot->parked = false;
+        bot->warmed = false;
         botTearDownRunner(sim, bot);
         serverSimRemovePlayer(sim, playerNum);
         return false;
@@ -1009,6 +1019,7 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
     bot->maxThinkMs           = 0.0;
 
     bot->parked = false;
+    bot->warmed = false;
     bot->active = true;
     sim->botMgr.numBots++;
 
@@ -1025,6 +1036,7 @@ void botManagerReleaseParkedRunner(ServerSim *sim, BYTE playerNum) {
     if (!bot->parked) return;
 
     bot->parked = false;
+    bot->warmed = false;
     botTearDownRunner(sim, bot);
     WB_LOG_INFO(WB_LOG_CAT_SIM,
             "botManager: bot %d parked runner released", (int)playerNum);
@@ -1220,8 +1232,11 @@ bool botManagerWarmRunner(ServerSim *sim, BYTE playerNum,
     }
 
     /* Parked exactly as an unfielded seat's runner is, so the fielding that
-     * takes it back is the ordinary resume and not a case of its own. */
+     * takes it back is the ordinary resume and not a case of its own. Marked
+     * warmed as well, so a spawn carrying an init table reads as this runner
+     * never having had one rather than as the seat's table changing. */
     bot->parked = true;
+    bot->warmed = true;
     WB_LOG_INFO(WB_LOG_CAT_SIM,
             "botManager: seat %d warmed on brain '%s'",
             (int)playerNum, brainName);
