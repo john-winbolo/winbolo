@@ -4918,7 +4918,11 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         ImGui::Separator();
+#ifdef __APPLE__
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
+#else
+        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS), "Ctrl+,"))                                        sdl3ImguiShowSettings();
+#endif
         ImGui::EndMenu();
     }
 
@@ -5975,6 +5979,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 continue;
             case SDL_SCANCODE_K:
                 sdl3ImguiShowKeySetup();
+                continue;
+            case SDL_SCANCODE_COMMA:
+                /* Ctrl+, opens Settings, the shortcut most desktop apps use. */
+                sdl3ImguiShowSettings();
                 continue;
             case SDL_SCANCODE_S:
                 windowSaveMap(cs);
