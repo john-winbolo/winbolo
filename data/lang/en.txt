@@ -774,6 +774,16 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Only a skin in your own skins folder can be publish
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it.
 STR_DLGSKIN_RECFILTER_LBL=Recommended filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(recommended)
+STR_DLGSKIN_FOGSTYLE=Fog of war style
+STR_DLGSKIN_FOGSTYLE_TIP=How ground you cannot see into is drawn. It changes the picture on your own screen only; the server sends the same map whichever you pick.
+STR_DLGSKIN_FOGSTYLE_GREY=Grey
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight. This is the standard look.
+STR_DLGSKIN_FOGSTYLE_DARK=Darker
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Ground you cannot see into is taken towards black. Roads are already black, so a road under fog looks the same as a road in plain sight.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Darker with road edges
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Darker, with a soft grey line drawn inside the edge of each fogged road square. It gives back the road shape that the darkening swallows.
+STR_DLGSKIN_FOGSTYLE_NONE=None
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=The map is not shaded at all, so remembered ground looks the same as ground in plain sight. It hides nothing the other styles show: which tanks and shots are drawn is the server's rule, not this setting's.
 
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config

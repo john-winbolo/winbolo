@@ -3724,6 +3724,15 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
     gfxSetTextureFilter((GfxTextureFilter)v);
   }
+  /* Fog of war look: 0 Grey / 1 Darker / 2 Darker with road edges / 3 None.
+     Grey is what both views drew before the setting existed, so a prefs file
+     without the key leaves the game looking exactly as it did. */
+  prefsGetString("SETTINGS", "FogStyle", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)FOG_STYLE_GREY || v >= FOG_STYLE_COUNT) v = 0;
+    gfxSetFogStyle((FogStyle)v);
+  }
 
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
@@ -4400,6 +4409,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
   intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TextureFilter", buff);
+  intToStr((int)gfxGetFogStyle(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "FogStyle", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

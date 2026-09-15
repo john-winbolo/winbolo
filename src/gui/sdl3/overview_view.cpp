@@ -43,6 +43,7 @@
 
 #include "overview_view.h"
 #include "overview_fog.h"   /* overviewFogBuildMask and the fog's constants */
+#include "fog_roads_draw.h" /* the road outlines the Darker + roads look adds */
 #include "key_claims.h"     /* keyIsClaimedByGame */
 #include "build_cursor.h"   /* buildCursorSetTile */
 
@@ -63,6 +64,7 @@ extern "C" {
 #include "sprite_positions.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
+#include "gfx_settings.h"    /* gfxGetFogStyle — the player's fog of war look */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "ping_marker.h"     /* pingMarkerDraw — the on-map ping pass */
 #include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
@@ -363,9 +365,9 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
      * keeps the edge where the mask puts it. The view target above is set the
      * same way. */
     SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
-    /* The fog's colour — src is white, so this alone picks it. Grey rather
-     * than black: see fog_look.h for why a darkening had nothing to work on. */
-    SDL_SetTextureColorMod(v->fog, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B);
+    /* The fog's colour is the colour mod — src is white, so that alone picks
+     * it — and the player can change it while the game runs, so it is set per
+     * frame in overviewViewDrawFog rather than once here. */
     v->fogRenderer = r;
     return true;
 }
@@ -422,8 +424,17 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
  * flags are 64K of bytes. */
 static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                                 const OverviewCamera *cam, int viewW, int viewH,
-                                const OverviewMap *om) {
+                                const OverviewMap *om,
+                                int left, int top, int right, int bottom) {
+    /* What the player has asked fog to look like. None draws nothing at all,
+     * so the mask is not even rebuilt: the one that is already there stays
+     * good, and picking a look that washes again uses it. */
+    FogStyle      style = gfxGetFogStyle();
+    unsigned char fogR = 0, fogG = 0, fogB = 0;
+
+    if (fogLookColour(style, &fogR, &fogG, &fogB) == 0) return;
     if (!overviewViewEnsureFog(v, r)) return;
+    SDL_SetTextureColorMod(v->fog, fogR, fogG, fogB);
 
     /* With line of sight on, the hidden squares move as the tank drives without
      * any rect moving, so the map's generation is what the mask is held against
@@ -455,6 +466,54 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                       tilePx * (float)MAP_ARRAY_SIZE,
                       tilePx * (float)MAP_ARRAY_SIZE };
     SDL_RenderTexture(r, v->fog, NULL, &dst);
+
+    /* The road outlines the Darker + roads look adds, over the blit that has
+     * just gone down. A second walk of the visible squares rather than a pass
+     * folded into the terrain loop: the mask the outlines are gated on is
+     * built here, and a square is only reached at all if the mask says it is
+     * fogged, which most of a zoomed-out map is not.
+     *
+     * Dropped outright once a square is too small to hold the fade, which is
+     * where the outline would be a line over the whole road rather than an
+     * edge on it — and where there are the most squares to walk. */
+    if (fogLookDrawsRoadEdges(style) &&
+        tilePx >= (float)(FOG_ROAD_BANDS * 2)) {
+        FogRoadPainter painter;
+        fogRoadPainterBegin(&painter, r);
+        for (int mx = left; mx <= right; mx++) {
+            for (int my = top; my <= bottom; my++) {
+                if (v->fogMask[(size_t)my * OVERVIEW_FOG_MASK_SIDE +
+                               (size_t)mx] == 0) {
+                    continue;
+                }
+                /* Off the map reads as never seen, which is not road. The map
+                 * border is deep sea in every map the game ships, so this is
+                 * a guard rather than a case that comes up. */
+                unsigned char tl = om->tile[mx][my];
+                unsigned char lt = (mx > 0) ? om->tile[mx - 1][my]
+                                            : (unsigned char)OVERVIEW_UNSEEN;
+                unsigned char rt = (mx < MAP_ARRAY_SIZE - 1)
+                                       ? om->tile[mx + 1][my]
+                                       : (unsigned char)OVERVIEW_UNSEEN;
+                unsigned char up = (my > 0) ? om->tile[mx][my - 1]
+                                            : (unsigned char)OVERVIEW_UNSEEN;
+                unsigned char dn = (my < MAP_ARRAY_SIZE - 1)
+                                       ? om->tile[mx][my + 1]
+                                       : (unsigned char)OVERVIEW_UNSEEN;
+                unsigned char edges = fogRoadEdges(tl, lt, rt, up, dn);
+                if (edges == 0) continue;
+
+                float ex = 0.0f, ey = 0.0f;
+                overviewCameraWorldToScreen(cam, viewW, viewH, (float)mx,
+                                            (float)my, &ex, &ey);
+                /* Rounded the way the terrain pass rounds, so a band sits on
+                 * the tile it belongs to rather than half a pixel off it. */
+                fogRoadPainterSquare(&painter, edges, SDL_roundf(ex),
+                                     SDL_roundf(ey), tilePx, tilePx);
+            }
+        }
+        fogRoadPainterEnd(&painter);
+    }
 }
 
 /* Black over the finished frame, for as long as the sim says the death is in
@@ -1044,7 +1103,8 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                        &left, &top, &right, &bottom)) {
             overviewViewDrawTerrain(r, tiles, sheetScale, &v->cam, w, h, om,
                                     left, top, right, bottom);
-            overviewViewDrawFog(v, r, &v->cam, w, h, om);
+            overviewViewDrawFog(v, r, &v->cam, w, h, om,
+                                left, top, right, bottom);
         }
 
         /* Smart pings on the ground, on the same terms the classic view draws

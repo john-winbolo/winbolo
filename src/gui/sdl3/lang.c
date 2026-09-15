@@ -2036,6 +2036,16 @@ static const LangEntry langTable[] = {
     {1984, "This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it."},
     {1985, "Recommended filter:"},
     {1986, "(recommended)"},
+    {2204, "Fog of war style"},
+    {2205, "How ground you cannot see into is drawn. It changes the picture on your own screen only; the server sends the same map whichever you pick."},
+    {2206, "Grey"},
+    {2207, "Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight. This is the standard look."},
+    {2208, "Darker"},
+    {2209, "Ground you cannot see into is taken towards black. Roads are already black, so a road under fog looks the same as a road in plain sight."},
+    {2210, "Darker with road edges"},
+    {2211, "Darker, with a soft grey line drawn inside the edge of each fogged road square. It gives back the road shape that the darkening swallows."},
+    {2212, "None"},
+    {2213, "The map is not shaded at all, so remembered ground looks the same as ground in plain sight. It hides nothing the other styles show: which tanks and shots are drawn is the server's rule, not this setting's."},
 
     /* Voice section of the Display/Sound settings tab */
     {2030, "Voice"},

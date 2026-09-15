@@ -818,6 +818,20 @@
 #define STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP  1984
 #define STR_DLGSKIN_RECFILTER_LBL           1985
 #define STR_DLGSKIN_RECOMMENDED_TAG         1986
+/* Fog of war style: the dropdown, its four looks, and a line each saying
+ * what the look does. Sits with the other graphics settings because it is
+ * one - it changes how the client paints ground the player is remembering,
+ * and changes nothing the server sends. */
+#define STR_DLGSKIN_FOGSTYLE                2204
+#define STR_DLGSKIN_FOGSTYLE_TIP            2205
+#define STR_DLGSKIN_FOGSTYLE_GREY           2206
+#define STR_DLGSKIN_FOGSTYLE_GREY_TIP       2207
+#define STR_DLGSKIN_FOGSTYLE_DARK           2208
+#define STR_DLGSKIN_FOGSTYLE_DARK_TIP       2209
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS      2210
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP  2211
+#define STR_DLGSKIN_FOGSTYLE_NONE           2212
+#define STR_DLGSKIN_FOGSTYLE_NONE_TIP       2213
 
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771

@@ -49,6 +49,7 @@ static GfxTileDetail     s_tileDetail     = GFX_TILE_DETAIL_CLASSIC;
 static GfxAnimSmoothness s_animSmoothness = GFX_ANIM_CLASSIC;
 static bool              s_smoothShells   = false;
 static GfxTextureFilter  s_textureFilter  = GFX_FILTER_NEAREST;
+static FogStyle          s_fogStyle       = FOG_STYLE_GREY;
 
 GfxTileDetail gfxGetTileDetail(void) { return s_tileDetail; }
 
@@ -85,4 +86,14 @@ void gfxSetTextureFilter(GfxTextureFilter v) {
         n = (int)GFX_FILTER_NEAREST;
     }
     s_textureFilter = (GfxTextureFilter)n;
+}
+
+FogStyle gfxGetFogStyle(void) { return s_fogStyle; }
+
+void gfxSetFogStyle(FogStyle v) {
+    int n = (int)v;
+    if (n < (int)FOG_STYLE_GREY || n >= FOG_STYLE_COUNT) {
+        n = (int)FOG_STYLE_GREY;
+    }
+    s_fogStyle = (FogStyle)n;
 }

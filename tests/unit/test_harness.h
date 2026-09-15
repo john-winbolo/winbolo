@@ -1482,6 +1482,20 @@ int run_overview_scroll(void);
  * the mask, and no regions at all fogs the whole map. */
 int run_overview_fog(void);
 
+/* Fog of war looks (test_fog_roads.c): each of the four styles washes towards
+ * the colour it says it does, None washes at all, only Darker + roads draws
+ * the road outline, the band fade falls to nothing, and the setting store
+ * clamps a value from outside the enum back to Grey. */
+int run_fog_style_looks(void);
+int run_fog_style_setting(void);
+
+/* The road outline's edge mask (test_fog_roads.c): only road squares are
+ * banded, only on the sides facing something that is not road, so a wide road
+ * is outlined round the outside and not ruled into squares; a square at the
+ * edge of the grid is banded as if open ground lay beyond it. */
+int run_fog_road_edges(void);
+int run_fog_road_edge_masks(void);
+
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
  * behind it while the building itself is seen, the same building beside the

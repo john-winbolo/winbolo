@@ -16,16 +16,18 @@
  * Name:          gfx_settings.h
  * Purpose:
  *   Holds the graphics settings the player picks - tile
- *   detail, animation smoothness, smooth shells and
- *   texture filtering - for the code that draws with them.
- *   Every value defaults to 0, which is what the game did
- *   before these settings existed.
+ *   detail, animation smoothness, smooth shells, texture
+ *   filtering and the fog of war look - for the code that
+ *   draws with them.  Every value defaults to 0, which is
+ *   what the game did before these settings existed.
  *********************************************************/
 
 #ifndef GFX_SETTINGS_H
 #define GFX_SETTINGS_H
 
 #include <stdbool.h>
+
+#include "fog_look.h" /* FogStyle - what fog over unseen ground looks like */
 
 #ifdef __cplusplus
 extern "C" {
@@ -67,6 +69,13 @@ bool              gfxGetSmoothShells(void);
 void              gfxSetSmoothShells(bool v);
 GfxTextureFilter  gfxGetTextureFilter(void);
 void              gfxSetTextureFilter(GfxTextureFilter v);
+
+/* What both views wash ground the player cannot see into with.  Read by the
+   classic view's tile pass and by the full screen map's fog pass; fog_look.h
+   says what each value looks like.  Grey is the default, which is what the
+   game drew before the setting existed. */
+FogStyle          gfxGetFogStyle(void);
+void              gfxSetFogStyle(FogStyle v);
 
 #ifdef __cplusplus
 }

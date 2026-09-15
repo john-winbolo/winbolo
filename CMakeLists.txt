@@ -3663,6 +3663,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_view_policy.c
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
+    # The fog of war look the player picks and the road outline one of them
+    # draws. Both are header-only arithmetic (fog_look.h, fog_roads.h), so
+    # only the test itself is added here; the setting store it also exercises
+    # comes in with gfx_settings.c above.
+    tests/unit/test_fog_roads.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_sight.c
     tests/unit/test_overview_snapshot.c
@@ -4766,6 +4771,10 @@ set(_unit_test_names
     overview_camera
     overview_scroll
     overview_fog
+    fog_style_looks
+    fog_style_setting
+    fog_road_edges
+    fog_road_edge_masks
     overview_hud_layout
     sight
     overview_dead_tank
